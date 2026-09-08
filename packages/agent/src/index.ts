@@ -15,7 +15,8 @@ export {
   type InferPolicy,
   type InferRequest,
   type ModelResolution,
-  type Render
+  type Render,
+  type TrajectoryFilter
 } from "./inference/contract"
 export { inferenceFromHistory, inferenceMachine, type InferenceMachineProjection } from "./inference/machine"
 export { ModelRef, modelRefOf } from "./inference/reference"

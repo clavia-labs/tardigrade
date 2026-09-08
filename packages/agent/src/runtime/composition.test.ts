@@ -337,6 +337,149 @@ describe("infer component", () => {
     expect(events.at(-1)?.type).toBe("TurnCompleted")
   })
 
+  test("no trajectory filters preserve the model trajectory", async () => {
+    const seen: InferRequest[] = []
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = assembled(infer([nativeOutput], TEST_MODEL))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "go" })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(seen[0]?.trajectory).toMatchObject([{ type: "MessageReceived", id: "m1", text: "go" }])
+    expect(events.find((event) => event.type === "MessageReceived")).toMatchObject({ id: "m1", text: "go" })
+  })
+
+  test("one trajectory filter changes only the model input", async () => {
+    const seen: InferRequest[] = []
+    const projected = viewComponent("projected", (events) => ({
+      system: [events.some((event) => event.type === "MessageReceived") ? "message projected" : "waiting"],
+      tools: [],
+      context: [],
+      output: [],
+      trajectoryFilters: [
+        (trajectory) => trajectory.filter((event) => event.type !== "MessageReceived")
+      ]
+    }))
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = assembled(infer([projected, nativeOutput], TEST_MODEL))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "go" })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(seen[0]?.trajectory).toEqual([])
+    expect(seen[0]?.system).toContain("message projected")
+    expect(events.find((event) => event.type === "MessageReceived")).toMatchObject({ id: "m1", text: "go" })
+    expect(renderOf([projected, nativeOutput], events).system).toContain("message projected")
+  })
+
+  test("trajectory filters compose in component order", async () => {
+    const order: string[] = []
+    const seen: InferRequest[] = []
+    const first = viewComponent("first-filter", {
+      system: [],
+      tools: [],
+      context: [],
+      output: [],
+      trajectoryFilters: [
+        (trajectory) => {
+          order.push("first")
+          return trajectory.slice(1)
+        }
+      ]
+    })
+    const second = viewComponent("second-filter", {
+      system: [],
+      tools: [],
+      context: [],
+      output: [],
+      trajectoryFilters: [
+        (trajectory) => {
+          order.push("second")
+          return trajectory
+        }
+      ]
+    })
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = assembled(infer([first, second, nativeOutput], TEST_MODEL))
+    await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "go" })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(order).toEqual(["first", "second"])
+    expect(seen[0]?.trajectory).toEqual([])
+  })
+
+  test("each trajectory filter receives an isolated event array", async () => {
+    let source: ReadonlyArray<Event> = []
+    const seen: InferRequest[] = []
+    const first = viewComponent("source-filter", {
+      system: [],
+      tools: [],
+      context: [],
+      output: [],
+      trajectoryFilters: [
+        (trajectory) => {
+          source = trajectory
+          return trajectory
+        }
+      ]
+    })
+    const second = viewComponent("mutating-filter", {
+      system: [],
+      tools: [],
+      context: [],
+      output: [],
+      trajectoryFilters: [
+        (trajectory) => {
+          const mutable = trajectory as Event[]
+          mutable.splice(0, mutable.length)
+          return mutable
+        }
+      ]
+    })
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = assembled(infer([first, second, nativeOutput], TEST_MODEL))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "go" })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(source).toMatchObject([{ type: "MessageReceived", id: "m1", text: "go" }])
+    expect(seen[0]?.trajectory).toEqual([])
+    expect(events.find((event) => event.type === "MessageReceived")).toMatchObject({ id: "m1", text: "go" })
+  })
+
   test("a call outside the derived tools answers unknown-tool naming the composed tools", async () => {
     const mind = Layer.succeed(Infer, {
       react: (request: InferRequest) => {

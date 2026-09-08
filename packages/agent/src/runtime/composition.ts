@@ -7,7 +7,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ToolSpec } from "../inference/request"
 import { fallbackOf, type OutputFallback } from "../output/contract"
 import { agentKeys } from "../log/events"
-import type { InferPolicy } from "../inference/contract"
+import type { InferPolicy, TrajectoryFilter } from "../inference/contract"
 import { inferenceMachine } from "../inference/machine"
 import { modelPolicyOverrideOf, type ModelPolicyOverride } from "../inference/access"
 import { incrementalToolsComponentFrom, toolConcurrencyOf, toolConcurrencyInstruction, DEFAULT_TOOL_CONCURRENCY, type ToolConcurrency, type Answer, type PendingCall } from "./tools"
@@ -61,6 +61,7 @@ export interface AgentView {
   readonly tools: ReadonlyArray<AgentTool<unknown>>
   readonly context: ReadonlyArray<ContextFragment>
   readonly output: ReadonlyArray<OutputFragment>
+  readonly trajectoryFilters?: ReadonlyArray<TrajectoryFilter>
 }
 
 // AgentComponent is a core component whose view is interpreted by its infer root.
@@ -85,16 +86,26 @@ export const defineOutputFallback = <R>(component: AgentComponent<R>): OutputFal
   return { ...component, machine: { ...component.machine, output }, [OutputFallbackMarker]: true }
 }
 
+const combinedTrajectoryFilters = (
+  left: ReadonlyArray<TrajectoryFilter> | undefined,
+  right: ReadonlyArray<TrajectoryFilter> | undefined
+): ReadonlyArray<TrajectoryFilter> | undefined =>
+  left === undefined ? right : right === undefined ? left : [...left, ...right]
+
 // AGENT_VIEW_ALGEBRA preserves every view contribution in component order. renderOf
 // applies the agent-specific collision and rendering rules to the combined value.
 export const AGENT_VIEW_ALGEBRA: ViewAlgebra<AgentView> = {
   empty: { system: [], tools: [], context: [], output: [] },
-  combine: (left, right) => ({
-    system: [...left.system, ...right.system],
-    tools: [...left.tools, ...right.tools],
-    context: [...left.context, ...right.context],
-    output: [...left.output, ...right.output]
-  })
+  combine: (left, right) => {
+    const trajectoryFilters = combinedTrajectoryFilters(left.trajectoryFilters, right.trajectoryFilters)
+    return {
+      system: [...left.system, ...right.system],
+      tools: [...left.tools, ...right.tools],
+      context: [...left.context, ...right.context],
+      output: [...left.output, ...right.output],
+      ...(trajectoryFilters === undefined ? {} : { trajectoryFilters })
+    }
+  }
 }
 
 // outputFrom resolves the output strategy the assembly declares. A turn has one final response,
@@ -220,7 +231,8 @@ export const infer = <
   const incrementalInference = inferenceMachine(inferPolicy, {
     initial: childMachine.initial,
     step: childMachine.step,
-    output: (state) => renderView(childMachine.output(state).view, toolConcurrency)
+    output: (state) => renderView(childMachine.output(state).view, toolConcurrency),
+    trajectoryFilters: (state) => childMachine.output(state).view.trajectoryFilters ?? []
   }) as TransitionProjection<unknown, R>
   const incrementalTools = incrementalToolsComponentFrom(
     AGENT_VIEW_ALGEBRA.empty,

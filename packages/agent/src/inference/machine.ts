@@ -45,7 +45,8 @@ import {
   Infer,
   type InferPolicy,
   type ModelResolution,
-  type Render
+  type Render,
+  type TrajectoryFilter
 } from "./contract"
 
 // The inference machine derives a model attempt when the current turn has no unanswered tool call or terminal.
@@ -241,12 +242,23 @@ const openRejection = (events: ReadonlyArray<Event>): Event | undefined => {
     .at(-1)
 }
 
+const filteredTrajectory = (
+  trajectory: ReadonlyArray<Event>,
+  filters: ReadonlyArray<TrajectoryFilter>
+): ReadonlyArray<Event> => {
+  if (filters.length === 0) return trajectory
+  let filtered = [...trajectory]
+  for (const filter of filters) filtered = [...filter(filtered)]
+  return filtered
+}
+
 // Render derives what the model is shown over this log: the assembly owns it (runtime/composition.ts,
 // renderOf).
 interface InferDerivation {
   readonly slice: ReadonlyArray<Event>
   readonly epoch: number
   readonly trajectory: () => ReadonlyArray<Event>
+  readonly trajectoryFiltersAfter: (event: Event) => ReadonlyArray<TrajectoryFilter>
   readonly modelFailures: number
   readonly rendered: ReturnType<Render>
   readonly renderAfter: (event: Event) => ReturnType<Render>
@@ -422,7 +434,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
           })
           yield* events.append([mark])
           const actualRender = derived.renderAfter(mark)
-          const trajectory = input.trajectory()
+          const trajectory = filteredTrajectory(input.trajectory(), derived.trajectoryFiltersAfter(mark))
           let partialOutput = ""
           let physicalAttempt = ""
           let partialPersisted = false
@@ -543,11 +555,14 @@ export const inferenceFromHistory = (policy: Partial<InferPolicy>, render: Rende
         String((event as { readonly cause?: unknown }).cause) === "model"
     ).length,
     rendered: render(log),
-    renderAfter: (event) => render([...log, event])
+    renderAfter: (event) => render([...log, event]),
+    trajectoryFiltersAfter: () => []
   })
 }
 
-export type InferenceMachineProjection<State> = Machine<Event, State, ReturnType<Render>>
+export type InferenceMachineProjection<State> = Machine<Event, State, ReturnType<Render>> & {
+  readonly trajectoryFilters?: (state: State) => ReadonlyArray<TrajectoryFilter>
+}
 
 interface IncrementalInferState<State> {
   readonly turns: TurnProjectionState
@@ -584,7 +599,8 @@ export const inferenceMachine = <State>(
       trajectory: () => trajectoryFrom(state.turns),
       modelFailures: Option.getOrElse(HashMap.get(state.modelFailures, turn), () => 0),
       rendered: projection.output(state.render),
-      renderAfter: (event) => projection.output(projection.step(state.render, event))
+      renderAfter: (event) => projection.output(projection.step(state.render, event)),
+      trajectoryFiltersAfter: (event) => projection.trajectoryFilters?.(projection.step(state.render, event)) ?? []
     })
   }
 })

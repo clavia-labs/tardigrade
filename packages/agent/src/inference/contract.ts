@@ -17,6 +17,9 @@ export interface InferPolicy {
 // DEFAULT_INFER_POLICY is the inference machine policy used when a caller supplies no override.
 export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3, models: DEFAULT_MODEL_POLICY_OVERRIDE }
 
+// TrajectoryFilter derives the read-only event trajectory supplied to one model attempt.
+export type TrajectoryFilter = (trajectory: ReadonlyArray<Event>) => ReadonlyArray<Event>
+
 // InferRequest is one attempt's trajectory and model-facing surface. The actor derives the surface so a binding holds no tool, context, or output policy.
 export interface InferRequest {
   readonly trajectory: ReadonlyArray<Event>
