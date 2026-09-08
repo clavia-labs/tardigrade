@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.23.0](https://github.com/clavia-labs/tardigrade/compare/v0.22.3...v0.23.0) (2026-09-08)
+
+
+### Features
+
+* **api:** bound tree and roster reads ([#379](https://github.com/clavia-labs/tardigrade/issues/379)) ([fb9ebbf](https://github.com/clavia-labs/tardigrade/commit/fb9ebbf279615329624e64d498eba8794f113009))
+* **core:** derive transition identities ([9b6ce9d](https://github.com/clavia-labs/tardigrade/commit/9b6ce9d4ce58881e3903e2281975e2cf51a3ded2))
+
+
+### Bug Fixes
+
+* **agent:** journal partial output on cancellation ([#386](https://github.com/clavia-labs/tardigrade/issues/386)) ([6e5b601](https://github.com/clavia-labs/tardigrade/commit/6e5b601eecd5bf2ca22b2346284e656b950e3864))
+* **agent:** remove placement input ([#406](https://github.com/clavia-labs/tardigrade/issues/406)) ([842c052](https://github.com/clavia-labs/tardigrade/commit/842c052527755c377360a6521c30f4efea39f4d7))
+* **agent:** require invocation handles ([#404](https://github.com/clavia-labs/tardigrade/issues/404)) ([eb01f58](https://github.com/clavia-labs/tardigrade/commit/eb01f58b8466382ce1d3ca351e8932797860dc8f))
+* **core:** bound cancellation delivery ([#405](https://github.com/clavia-labs/tardigrade/issues/405)) ([c2350cd](https://github.com/clavia-labs/tardigrade/commit/c2350cdb409c733201f7189567fcff0637119112))
+* **core:** retain operation ownership ([#403](https://github.com/clavia-labs/tardigrade/issues/403)) ([9b8bd88](https://github.com/clavia-labs/tardigrade/commit/9b8bd885b09f188f2b0bb783559903bcd1db661e))
+
 ## [0.22.3](https://github.com/clavia-labs/tardigrade/compare/v0.22.2...v0.22.3) (2026-09-07)
 
 
