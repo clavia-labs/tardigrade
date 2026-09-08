@@ -16,14 +16,12 @@ interface CallPlan {
   readonly callId: string
   readonly failures: number
   readonly failurePoint: "record" | "before" | "after"
-  readonly placement: "colocated" | "independent" | undefined
 }
 
 const callPlan = fc.record({
   callId: fc.stringMatching(/^[a-z][a-z0-9_]{0,12}$/),
   failures: fc.integer({ min: 0, max: 4 }),
-  failurePoint: fc.constantFrom<CallPlan["failurePoint"]>("record", "before", "after"),
-  placement: fc.option(fc.constantFrom<"colocated" | "independent">("colocated", "independent"), { nil: undefined })
+  failurePoint: fc.constantFrom<CallPlan["failurePoint"]>("record", "before", "after")
 })
 
 const plans = fc.uniqueArray(callPlan, { selector: (plan) => plan.callId, minLength: 1, maxLength: 7 })
@@ -109,7 +107,7 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
     for (let attempt = 0; attempt <= plan.failures; attempt++) {
       const result = await Effect.runPromise(
         run(
-          { text: plan.callId, background: true, ...(plan.placement === undefined ? {} : { placement: plan.placement }) },
+          { text: plan.callId, background: true },
           { callId: plan.callId }
         ).pipe(Effect.provide(environment), Effect.exit)
       )

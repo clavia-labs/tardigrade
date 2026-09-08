@@ -123,12 +123,12 @@ describe("agentsPackage", () => {
         const parent = parseThreadAddress("mem:main:rejected-spawn")
         const invocation = { method: "message", id, epoch: 0 }
         const events: Event[] = [threadCreated(parent, undefined, 0), { ...turn(id), call: { invocation } }]
-        const rejected = new Error('Bun host does not support "independent" thread placement')
+        const rejected = new Error("child delivery rejected")
         let unboundedDelivery = false
         const servicesFor = (log: Event[]) => Layer.mergeAll(
           liveEnv(log, []),
           Layer.succeed(Router, { send: (envelope) => Effect.suspend(() => {
-            if (!isActorEnvelope(envelope) || envelope.lineage?.placement !== "independent") return Effect.void
+            if (!isActorEnvelope(envelope)) return Effect.void
             if (envelope.event.type === "CancellationRequested") {
               unboundedDelivery ||= !log.some((event) => event.type === "CancellationDispatched" &&
                 event.request === envelope.event.request)
@@ -140,7 +140,7 @@ describe("agentsPackage", () => {
           const callId = `${id}/${child}`
           events.push(called(callId, id))
           const outcome = await Effect.runPromise(agentsPackage().methods.run!({
-            text: "work", placement: "independent"
+            text: "work"
           }, { callId }).pipe(Effect.exit, Effect.provide(servicesFor(events))))
           expect(outcome._tag).toBe("Failure")
           events.push({ type: "PackageReturned", callId, turn: id, result: { error: rejected.message }, at: 3 })
@@ -240,7 +240,7 @@ describe("agentsPackage", () => {
     expect(system).not.toContain("agents.continue")
     expect(system).toContain("agents.providers({cursor?: string, search?: string, limit?: number})")
     expect(system).toContain("agents.models({cursor?: string, search?: string, limit?: number, provider?: string, sort?: \"promptUsdPerToken\" | \"completionUsdPerToken\" | \"cachedPromptUsdPerToken\" | \"cacheWritePromptUsdPerToken\", order?: \"asc\" | \"desc\", unpriced?: \"first\" | \"last\"})")
-    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, model?: {provider: string, model_id: string}, budget?: number, placement?: \"colocated\" | \"independent\", escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string, handle?: {target: object, invocation: object}}")
+    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, model?: {provider: string, model_id: string}, budget?: number, escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string, handle?: {target: object, invocation: object}}")
   })
 
   test("catalog searches return the host API pages", async () => {
@@ -331,22 +331,14 @@ describe("agentsPackage", () => {
     expect(sent[0]?.event).toMatchObject({ escalatable: true })
   })
 
-  test("a run carries its requested thread placement", async () => {
+  test("a run leaves new child placement to the host", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     await Effect.runPromise(
       pkg.methods.run!({ text: "scout", background: true, placement: "independent" }, { callId: "independent-child" })
         .pipe(Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [turn("m1"), called("independent-child", "m1")] })))
     )
-    expect(sent[0]?.lineage?.placement).toBe("independent")
-  })
-
-  test("a run refuses an unknown thread placement", async () => {
-    const result = await Effect.runPromise(
-      agentsPackage().methods.run!({ text: "scout", background: true, placement: "nearby" }, { callId: "bad-placement" })
-        .pipe(Effect.provide(env("mem:main:ag.root", [], { "ag.root": [turn("m1"), called("bad-placement", "m1")] })))
-    )
-    expect(result).toEqual({ error: "agents.run placement must be colocated or independent" })
+    expect(sent[0]?.lineage?.placement).toBeUndefined()
   })
 
   test("the callId identifies the child invocation and the link returns to the parent", async () => {
