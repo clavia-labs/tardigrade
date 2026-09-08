@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { boundaryId, messageSubjects, replySubjectOf } from "../interaction/provider-message"
+import { component } from "../component/machine"
 import {
   assertEventSubjects,
   assertSubjectLookup,
@@ -27,6 +28,20 @@ describe("composeSubjects", () => {
   test("duplicate prefixes fail during composition", () => {
     const rival: SubjectFragment = { prefixes: ["custom:"], subjectsOf: () => [] }
     expect(() => composeSubjects(customSubjects, rival)).toThrow('subject prefix "custom:" claimed by fragments 0 and 1')
+  })
+
+  test("the native component constructor retains keys and subjects", () => {
+    const keys = { prefixes: ["key:"], keyOf: () => undefined }
+    const mounted = component({
+      name: "indexed",
+      keys,
+      subjects: customSubjects,
+      initial: () => undefined,
+      step: (state) => state,
+      output: () => ({ view: undefined, transitions: [] })
+    })
+    expect(mounted.keys).toBe(keys)
+    expect(mounted.subjects).toBe(customSubjects)
   })
 
   test("lookup bounds reject empty, oversized, and over-count subject sets", () => {

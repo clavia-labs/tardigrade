@@ -8,6 +8,8 @@ import {
 import type { Transition } from "@clavia/tardigrade-core/transition"
 import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
 import type { InvocationCancellation } from "../interaction/events"
+import type { KeyFragment } from "../log/keys"
+import type { SubjectFragment } from "../log/subjects"
 import type { Component } from "./component"
 import type { ComponentOutput } from "./output"
 
@@ -40,6 +42,8 @@ export interface ComponentDefinition<State, View, Requirements = never>
   readonly name: string
   // children declares the component identities this wrapper may forward (transition/migration.test.ts).
   readonly children?: ReadonlyArray<Component<unknown, unknown>>
+  readonly keys?: KeyFragment
+  readonly subjects?: SubjectFragment
   readonly step: (state: State, event: Event, context: TransitionContext) => State
   readonly cancelState?: (
     state: State,
@@ -96,6 +100,8 @@ export const component = <State, View, Requirements = never>(
     name: definition.name,
     [TRANSITION_COMPONENT_IDS]: identities,
     machine: eraseMachine(definition, identities),
+    ...(definition.keys === undefined ? {} : { keys: definition.keys }),
+    ...(definition.subjects === undefined ? {} : { subjects: definition.subjects }),
     ...(definition[COMPONENT_CONTRACT] === undefined ? {} : { [COMPONENT_CONTRACT]: definition[COMPONENT_CONTRACT] })
   }
 }
