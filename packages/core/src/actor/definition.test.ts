@@ -92,7 +92,7 @@ describe("actor", () => {
       deadlineAt: 21,
       at: 1
     }, alarmFired({ scheduledFor: 21, at: 21 })])
-    expect(transitions.some((transition) => transition.key === JSON.stringify([1, "actor.method-timeouts", "timeout"]))).toBe(true)
+    expect(transitions.some((transition) => transition.key === JSON.stringify([1, "actor.deadlines", "timeout"]))).toBe(true)
   })
 
   test("steps each method and component projection once per event", () => {

@@ -121,12 +121,12 @@ const alarmFor = (alarms: ReadonlyArray<AlarmFired>, deadlineAt: number): AlarmF
 }
 
 const timeoutTransition = (dispatch: OwnedDispatch, at: number) =>
-  bindTransitionContext(dispatch.owner, "actor.method-timeouts").intent("timeout", {
+  bindTransitionContext(dispatch.owner, "actor.deadlines").intent("timeout", {
     type: "CallTimedOut", ...dispatch.terminal, at
   } satisfies CallTimedOut, { invocation: null })
 
 const deadlineCancellationTransition = ({ owner, invocation, deadlineAt }: InvocationDeadline) =>
-  bindTransitionContext(owner, "actor.method-timeouts").intent("deadline", (at) => cancellationRequested({
+  bindTransitionContext(owner, "actor.deadlines").intent("cancel", (at) => cancellationRequested({
     request: `deadline/${invocation.method}/${invocation.id}/${invocation.epoch}/${deadlineAt}`,
     invocation, cause: "deadline", deadlineAt, at
   }), { invocation: null })
@@ -287,7 +287,7 @@ export const methodTimeoutComponent = (methods: ActorMethods): Component<undefin
     readonly timeout: MethodTimeoutProjectionState
   }
   return component<State, undefined>({
-    name: "actor.method-timeouts",
+    name: "actor.deadlines",
     initial: () => ({
       methods: initialMethodStates(methods),
       timeout: initialMethodTimeoutState()

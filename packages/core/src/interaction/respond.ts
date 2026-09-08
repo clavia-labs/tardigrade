@@ -88,7 +88,7 @@ const linkedCalls = (
 }
 
 const responseTransition = (response: ActorMethodResponse, link: Link<unknown, ThreadAddress>, owner: Event) =>
-  bindTransitionContext(owner, "actor.methods").effect("deliver", {
+  bindTransitionContext(owner, "actor.responses").effect("deliver", {
       invocation: null,
       input: { response, link },
       act: ({ response: current, link: accepted }) =>
@@ -191,7 +191,7 @@ export const methodResponseComponent = (methods: ActorMethods): Component<undefi
     readonly response: MethodResponseProjectionState
   }
   return component<State, undefined, Router | Self>({
-    name: "actor.methods",
+    name: "actor.responses",
     initial: () => ({
       methods: initialMethodStates(methods),
       response: initialMethodResponseState()

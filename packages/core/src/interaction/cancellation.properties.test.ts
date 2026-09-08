@@ -249,7 +249,7 @@ describe("cancellation properties", () => {
         timeoutState = reduceMethodTimeoutState(timeoutState, event)
       }
       expect(methodTimeoutTransitions(methods, methodStates, timeoutState).map((transition) => transition.key), current.name)
-        .toEqual(current.cancellable ? [JSON.stringify([1, "actor.method-timeouts", "deadline"])] : [])
+        .toEqual(current.cancellable ? [JSON.stringify([1, "actor.deadlines", "cancel"])] : [])
     }
   })
 

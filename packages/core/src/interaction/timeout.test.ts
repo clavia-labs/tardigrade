@@ -144,11 +144,11 @@ describe("method alarms", () => {
     const complete = methodDeadlineCancellationDerivation(workMethods)(log)
     expect(complete).toHaveLength(1)
     expect(complete.map((transition) => transition.key))
-      .toEqual([JSON.stringify([1, "actor.method-timeouts", "deadline"])])
+      .toEqual([JSON.stringify([1, "actor.deadlines", "cancel"])])
     const transition = complete[0]
     expect(transition?.kind).toBe("intent")
     if (transition?.kind !== "intent") return
-    expect(transition.events(transition.input, 50)).toEqual([{ ...deadlineCancellation("work-1", 40, 50), transitionRef: { seq: 1, component: "actor.method-timeouts", tag: "deadline" } }])
+    expect(transition.events(transition.input, 50)).toEqual([{ ...deadlineCancellation("work-1", 40, 50), transitionRef: { seq: 1, component: "actor.deadlines", tag: "cancel" } }])
     let methodStates = initialMethodStates(workMethods)
     let timeoutState = initialMethodTimeoutState()
     for (const [index, raw] of log.entries()) {
@@ -178,7 +178,7 @@ describe("method alarms", () => {
       timeoutMs: 39,
       deadlineAt: 40,
       at: 43,
-      transitionRef: { seq: 1, component: "actor.method-timeouts", tag: "timeout" }
+      transitionRef: { seq: 1, component: "actor.deadlines", tag: "timeout" }
     }])
   })
 
@@ -214,8 +214,8 @@ describe("method alarms", () => {
     const first = project(log)[0]!
     const reversed = project([...log].reverse())[0]!
     expect(first).toMatchObject({ type: "CallTimedOut", call: "inspect-1", at: 43,
-      transitionRef: { seq: 3, component: "actor.method-timeouts", tag: "timeout" } })
-    expect(reversed).toEqual({ ...first, transitionRef: { seq: 1, component: "actor.method-timeouts", tag: "timeout" } })
+      transitionRef: { seq: 3, component: "actor.deadlines", tag: "timeout" } })
+    expect(reversed).toEqual({ ...first, transitionRef: { seq: 1, component: "actor.deadlines", tag: "timeout" } })
   })
 
   test("a response and timeout claim the same caller terminal key", () => {
