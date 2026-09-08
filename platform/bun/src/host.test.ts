@@ -627,7 +627,8 @@ describe("the bun host", () => {
     ])
     expect(thread.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
       { migration_id: 1, name: "thread_identity" },
-      { migration_id: 2, name: "thread_events" }
+      { migration_id: 2, name: "thread_events" },
+      { migration_id: 3, name: "thread_subjects" }
     ])
     actor.close()
     thread.close()
