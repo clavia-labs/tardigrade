@@ -32,12 +32,12 @@ import {
   type ModelPolicyOverride
 } from "../inference/access"
 
-// DEFAULT_MAX_DEPTH leaves delegation depth unbounded unless a ceiling is inherited (agents.test.ts).
-export const DEFAULT_MAX_DEPTH: number | undefined = undefined
+// DEFAULT_MAX_DEPTH limits delegation to five edges from the root unless configured or inherited (agents.test.ts).
+export const DEFAULT_MAX_DEPTH = 5
 
 // SpawnOptions configures child budgets, model access, output contracts, and inherited metadata.
 export interface SpawnOptions {
-  // maxDepth sets the deepest permitted child depth, with the root at zero (e2e/actor/mortyplicity.test.ts). An inherited ceiling can only be tightened.
+  // maxDepth sets the deepest permitted child depth, with the root at zero (e2e/actor/mortyplicity.test.ts). An inherited ceiling can only be tightened; omission uses the inherited ceiling or DEFAULT_MAX_DEPTH.
   readonly maxDepth?: number | undefined
   // outputs supplies named output contracts available to child runs.
   readonly outputs?: Readonly<Record<string, OutputContract>>
@@ -304,7 +304,7 @@ const inheritedModelsOf = (events: ReadonlyArray<Event>): ModelPolicy => {
 
 // agentsPackage exposes model discovery, child dispatch, and result retrieval.
 export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self | EventLog | ThreadAllocator> => {
-  const { maxDepth = DEFAULT_MAX_DEPTH } = options
+  const { maxDepth } = options
   if (maxDepth !== undefined && (!Number.isSafeInteger(maxDepth) || maxDepth < 0)) {
     throw new Error("agentsPackage maxDepth must be a non-negative safe integer")
   }
@@ -474,7 +474,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           if (parentRun === undefined) {
             return yield* Effect.die(new Error(`agents.run ${ctx.callId} has no parent turn`))
           }
-          const ceiling = created.maxDepth === undefined ? maxDepth
+          const ceiling = created.maxDepth === undefined ? maxDepth ?? DEFAULT_MAX_DEPTH
             : maxDepth === undefined ? created.maxDepth : Math.min(created.maxDepth, maxDepth)
           const child = yield* childClaimOf(events, created, parentRun.turn, ctx.callId, source, ceiling, name)
           if ("error" in child) return child

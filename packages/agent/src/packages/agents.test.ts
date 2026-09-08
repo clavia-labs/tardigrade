@@ -621,14 +621,21 @@ describe("delegation depth", () => {
       Effect.provide(liveEnv(events, sent))
     )
 
-  test("omitted depth is unbounded and invalid ceilings fail construction", async () => {
-    expect(DEFAULT_MAX_DEPTH).toBeUndefined()
+  test("omitted depth defaults to five and invalid ceilings fail construction", async () => {
+    expect(DEFAULT_MAX_DEPTH).toBe(5)
     for (const maxDepth of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
       expect(() => agentsPackage({ maxDepth })).toThrow("non-negative safe integer")
     }
     const sent: Sent[] = []
-    await Effect.runPromise(spawn(logAt(100), sent))
-    expect(sent[0]?.lineage).toEqual({ parent: root, depth: 101 })
+    await Effect.runPromise(spawn(logAt(4), sent))
+    expect(sent[0]?.lineage).toEqual({ parent: root, depth: 5, maxDepth: 5 })
+    expect(await Effect.runPromise(spawn(logAt(5), []))).toMatchObject({ maxDepth: 5, attemptedDepth: 6 })
+    const overridden: Sent[] = []
+    await Effect.runPromise(spawn(logAt(5), overridden, 7))
+    expect(overridden[0]?.lineage).toMatchObject({ depth: 6, maxDepth: 7 })
+    const inherited: Sent[] = []
+    await Effect.runPromise(spawn(logAt(6, 7), inherited))
+    expect(inherited[0]?.lineage).toMatchObject({ depth: 7, maxDepth: 7 })
   })
 
   test.each([
