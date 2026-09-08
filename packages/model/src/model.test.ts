@@ -726,32 +726,11 @@ describe("ephemeral inference deltas", () => {
       ).pipe(Effect.provide(layer)) as Effect.Effect<Action>
     )
     expect(action).toMatchObject({ kind: "complete", output: "hello" })
-    expect(deltas).toEqual([
-      {
-        actor: "test",
-        instance: "main",
-        thread: "root",
-        turn: "m1",
-        logicalAttempt: "m1/infer/0",
-        physicalAttempt: "physical-1",
-        model: { provider: "openai", model_id: "gpt-test" },
-        blockIndex: 0,
-        sequence: 0,
-        text: "hel"
-      },
-      {
-        actor: "test",
-        instance: "main",
-        thread: "root",
-        turn: "m1",
-        logicalAttempt: "m1/infer/0",
-        physicalAttempt: "physical-1",
-        model: { provider: "openai", model_id: "gpt-test" },
-        blockIndex: 0,
-        sequence: 1,
-        text: "lo"
-      }
-    ])
+    expect(deltas).toEqual(["hel", "lo"].map((text, sequence) => ({
+      actor: "test", instance: "main", thread: "root", turn: "m1",
+      logicalAttempt: "m1/infer/0", physicalAttempt: "physical-1",
+      model: { provider: "openai", model_id: "gpt-test" }, blockIndex: 0, sequence, text
+    })))
   })
 
   test("a retried attempt streams onDelta under a fresh physical identity", async () => {

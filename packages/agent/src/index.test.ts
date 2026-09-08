@@ -187,9 +187,7 @@ describe("an assembled agent", () => {
     expect(log.some((event) => event.type === "TurnCompleted")).toBe(false)
   })
 
-  // streamOf builds the delta sequence a binding emits while the provider streams: the same
-  // identity the request carried, one logical attempt, and the physical attempt the fragments
-  // belong to.
+  // streamOf emits normalized text deltas for a physical attempt.
   const streamOf = (
     request: InferRequest,
     key: string | undefined,
@@ -220,11 +218,20 @@ describe("an assembled agent", () => {
     })
   }
 
+  const cancelAfter = async (mind: ReturnType<typeof rlm>, started: Promise<void>) => {
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), { type: "MessageReceived", id: "m1", text: "wait", at: 1 } as Event)
+    const driving = mind.host.drive()
+    await started
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "CancellationRequested", request: "x1", invocation: { method: "message", id: "m1", epoch: 0 },
+      cause: "requested", reason: "operator stopped it", at: 2
+    } as Event)
+    await driving
+    return mind.host.read(ROOT_THREAD)
+  }
+
   test.each(["inference", "tool"])("text outcomes derive from the log when cancelling during %s", async (stage) => {
-    let markStarted!: () => void
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve
-    })
+    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
     let inferred = 0
     const components = [tool({
       spec: { name: "read", description: "read", inputSchema: {} },
@@ -241,25 +248,7 @@ describe("an assembled agent", () => {
       await new Promise<void>(() => {})
       return { kind: "complete", output: "late" }
     }, components)
-    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
-      type: "MessageReceived",
-      id: "m1",
-      text: "wait",
-      at: 1
-    } as Event)
-    const driving = mind.host.drive()
-    await started
-    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
-      type: "CancellationRequested",
-      request: "x1",
-      invocation: { method: "message", id: "m1", epoch: 0 },
-      cause: "requested",
-      reason: "operator stopped it",
-      at: 2
-    } as Event)
-    await driving
-
-    const log = mind.host.read(ROOT_THREAD)
+    const log = await cancelAfter(mind, started)
     const expected = [
       { text: "Let me check.", owner: 0, interrupted: false },
       ...(stage === "inference" ? [{ text: "hello world", owner: 1, interrupted: true }] : [])
@@ -282,10 +271,7 @@ describe("an assembled agent", () => {
   })
 
   test("a retried physical attempt journals only the text it streamed", async () => {
-    let markStarted!: () => void
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve
-    })
+    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
     const mind = rlm(async (request, key, _signal, onDelta) => {
       streamOf(request, key, "p1", ["the first attempt died"], onDelta)
       streamOf(request, key, "p2", ["second ", "try"], onDelta)
@@ -293,24 +279,7 @@ describe("an assembled agent", () => {
       await new Promise<void>(() => {})
       return { kind: "complete", output: "late" }
     })
-    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
-      type: "MessageReceived",
-      id: "m1",
-      text: "wait",
-      at: 1
-    } as Event)
-    const driving = mind.host.drive()
-    await started
-    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
-      type: "CancellationRequested",
-      request: "x1",
-      invocation: { method: "message", id: "m1", epoch: 0 },
-      cause: "requested",
-      at: 2
-    } as Event)
-    await driving
-
-    const log = mind.host.read(ROOT_THREAD)
+    const log = await cancelAfter(mind, started)
     expect(log.filter((event) => event.type === "TextReturned"))
       .toEqual([expect.objectContaining({ text: "second try", turn: "m1" })])
     expect(textOutcomes(log, "m1")).toEqual([{ text: "second try", owner: 0, interrupted: true }])
@@ -329,10 +298,7 @@ describe("an assembled agent", () => {
   })
 
   test("a provider that settles on the abort signal journals its partial exactly once", async () => {
-    let markStarted!: () => void
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve
-    })
+    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
     const mind = rlm(async (request, key, signal, onDelta) => {
       streamOf(request, key, "p1", ["half ", "an answer"], onDelta)
       markStarted()
@@ -346,24 +312,7 @@ describe("an assembled agent", () => {
         failure: { cause: "inference_error", attempts: 1 }
       }
     })
-    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
-      type: "MessageReceived",
-      id: "m1",
-      text: "wait",
-      at: 1
-    } as Event)
-    const driving = mind.host.drive()
-    await started
-    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
-      type: "CancellationRequested",
-      request: "x1",
-      invocation: { method: "message", id: "m1", epoch: 0 },
-      cause: "requested",
-      at: 2
-    } as Event)
-    await driving
-
-    const log = mind.host.read(ROOT_THREAD)
+    const log = await cancelAfter(mind, started)
     const partials = log.filter(
       (event) => event.type === "TextReturned"
     )

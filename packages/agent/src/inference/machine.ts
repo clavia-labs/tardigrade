@@ -461,16 +461,9 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             if (partialOutput === "" || partialPersisted) return Effect.void
             partialPersisted = true
             return Clock.currentTimeMillis.pipe(
-              Effect.flatMap((at) =>
-                events.append([
-                  textReturned({
-                    text: partialOutput,
-                    turn: input.turn,
-                    ...epochStamp(input.epoch),
-                    at
-                  })
-                ])
-              ),
+              Effect.flatMap((at) => events.append([textReturned({
+                text: partialOutput, turn: input.turn, ...epochStamp(input.epoch), at
+              })])),
               Effect.asVoid
             )
           }
