@@ -123,7 +123,7 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
         threads={threads.data ?? []}
       />
       <main className="shell">
-        <header className="root-head"><strong>RLM chat</strong></header>
+        <header className="root-head"><strong>Recursive Chat</strong></header>
         <Transcript
           empty="Ask this agent about the files in its workspace."
           onOpenThread={setSelectedChild}
