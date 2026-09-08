@@ -371,6 +371,17 @@ article a { color: inherit; }
 
 .package-call { margin-left: 24px; }
 
+.activity-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px 8px 12px;
+}
+
+.activity-steps .tool-call { max-width: 100%; }
+
+.activity-steps .package-call { margin-left: 12px; max-width: calc(100% - 12px); }
+
 .tool-call summary {
   min-height: 30px;
   padding: 6px 9px;
@@ -385,7 +396,7 @@ article a { color: inherit; }
 
 .tool-call summary svg { width: 14px; height: 14px; flex: 0 0 auto; }
 
-.tool-call[open] .tool-caret { transform: rotate(90deg); }
+.tool-call[open] > summary > .tool-caret { transform: rotate(90deg); }
 
 .tool-spinner { margin-left: auto; }
 

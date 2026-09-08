@@ -31,14 +31,33 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
       row.type === "PackageCalled" && value(row, "callId")?.startsWith(`${id}.`))
     return calls.length > 0 && calls.every(({ event: row }) => value(row, "name") === "agents.result")
   }
+  const visible = messages.filter(({ event }) => !isAgentResultCollector(event))
+  const isToolActivity = (event: Event | undefined): boolean => event?.type === "ToolCalled" || event?.type === "PackageCalled"
+  const toolComplete = (event: Event): boolean => event.type === "ToolCalled"
+    ? toolsReturned.has(value(event, "callId"))
+    : packagesReturned.has(value(event, "callId"))
+  const renderTool = ({ event, seq }: EventRow): ReactElement => {
+    const complete = toolComplete(event)
+    return (
+      <details className={`tool-call${event.type === "PackageCalled" ? " package-call" : ""}`} key={seq}>
+        <summary>
+          <CaretRight className="tool-caret" />
+          {value(event, "name") === "execute" ? <Code /> : <PackageIcon />}
+          <span>{toolTitle(event, complete)}</span>
+          {complete ? null : <CircleNotch className="spin tool-spinner" />}
+        </summary>
+        <pre><code>{toolContent(event)}</code></pre>
+      </details>
+    )
+  }
   return (
     <section className="messages" aria-live="polite">
       {messages.length === 0 ? <p className="empty">{empty}</p> : null}
-      {messages.map(({ event, seq }, index) => {
+      {visible.map(({ event, seq }, index) => {
         if (event.type === "ChildCreated") {
-          if (messages[index - 1]?.event.type === "ChildCreated") return null
+          if (visible[index - 1]?.event.type === "ChildCreated") return null
           const group: Array<EventRow> = []
-          for (const row of messages.slice(index)) {
+          for (const row of visible.slice(index)) {
             if (row.event.type !== "ChildCreated") break
             group.push(row)
           }
@@ -81,20 +100,23 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
           )
         }
         if (event.type === "ToolCalled" || event.type === "PackageCalled") {
-          if (isAgentResultCollector(event)) return null
-          const complete = event.type === "ToolCalled"
-            ? toolsReturned.has(value(event, "callId"))
-            : packagesReturned.has(value(event, "callId"))
-          const execute = value(event, "name") === "execute"
+          if (isToolActivity(visible[index - 1]?.event)) return null
+          const group: EventRow[] = []
+          for (const row of visible.slice(index)) {
+            if (!isToolActivity(row.event)) break
+            group.push(row)
+          }
+          if (group.length === 1) return renderTool(group[0]!)
+          const complete = group.filter(({ event }) => toolComplete(event)).length
           return (
-            <details className={`tool-call${event.type === "PackageCalled" ? " package-call" : ""}`} key={seq}>
+            <details className="tool-call tool-activity" key={seq}>
               <summary>
                 <CaretRight className="tool-caret" />
-                {execute ? <Code /> : <PackageIcon />}
-                <span>{toolTitle(event, complete)}</span>
-                {complete ? null : <CircleNotch className="spin tool-spinner" />}
+                <Code />
+                <span>{complete === group.length ? `${group.length} steps completed` : `${complete} of ${group.length} steps completed`}</span>
+                {complete === group.length ? null : <CircleNotch className="spin tool-spinner" aria-label="Tools are running" />}
               </summary>
-              <pre><code>{toolContent(event)}</code></pre>
+              <div className="activity-steps">{group.map(renderTool)}</div>
             </details>
           )
         }
