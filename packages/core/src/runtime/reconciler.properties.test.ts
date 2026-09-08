@@ -653,3 +653,42 @@ test("tagged transitions reject conflicting invocation ownership", async () => {
     .rejects.toThrow("completion event already carries an invocation reference")
   expect(events).toHaveLength(1)
 })
+
+
+test("explicitly detached control transitions finish after invocation cancellation", async () => {
+  const invocation = { method: "run", id: "one", epoch: 0 }
+  const events: Event[] = [
+    { type: "Requested", call: { invocation } },
+    { type: "CancellationRequested", request: "stop", invocation, cause: "requested" }
+  ]
+  const worker = taggedComponent({
+    name: "control",
+    select: (event) => event.type === "Requested" ? event : undefined,
+    derive: (_event, ctx) => [ctx.effect("deliver", {
+      invocation: null,
+      input: undefined,
+      act: () => Effect.gen(function* () {
+        expect(Option.isNone(yield* Effect.serviceOption(InvocationScope))).toBe(true)
+        return { type: "Delivered" }
+      })
+    })]
+  })
+  const runtime = { ...runtimeOf(worker), cancellationOf: () => "running" as const }
+  expect(enabled(runtime, events)[0]!.invocation).toBeUndefined()
+  await Effect.runPromise(settleActor(runtime).pipe(Effect.provide(memory(events))))
+  expect(events.at(-1)).toEqual({ type: "Delivered", transitionRef: { seq: 1, component: "control", tag: "deliver" } })
+})
+
+test("tagged intents construct domain events at commit time", () => {
+  const worker = taggedComponent({
+    name: "control",
+    select: (event) => event.type === "Requested" ? event : undefined,
+    derive: (_event, ctx) => [ctx.intent("deliver", (at) => ({ type: "Delivered", at }), { invocation: null })]
+  })
+  const transition = enabled(runtimeOf(worker), [{ type: "Requested" }])[0]!
+  expect(transition.kind).toBe("intent")
+  if (transition.kind !== "intent") return
+  expect(transition.events(transition.input, 123)).toEqual([
+    { type: "Delivered", at: 123, transitionRef: { seq: 1, component: "control", tag: "deliver" } }
+  ])
+})

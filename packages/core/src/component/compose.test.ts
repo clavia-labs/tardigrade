@@ -1,7 +1,8 @@
+import type { TransitionContext } from "./machine"
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { effect } from "@clavia/tardigrade-core/effect"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { eventAt, type Event } from "@clavia/tardigrade-core/event"
 import { intent } from "@clavia/tardigrade-core/intent"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
 import {
@@ -161,19 +162,19 @@ describe("components", () => {
   test("composition preserves incremental child projections", () => {
     const member = (name: string) => defineComponent({
       name,
-      initial: () => false,
-      step: (ready: boolean, event: Event) => ready || event.type === "Ready",
-      output: (ready: boolean) => ({
+      initial: (): TransitionContext | undefined => undefined,
+      step: (ready, event, ctx) => ready ?? (event.type === "Ready" ? ctx : undefined),
+      output: (ready) => ({
         view: { names: ready ? [name] : [] },
-        transitions: ready ? [intent({ key: name, input: undefined, events: () => [] })] : []
+        transitions: ready ? [ready.intent("commit", { type: "Committed" })] : []
       })
     })
     const composed = composeComponents("incremental", facts, [member("left"), member("right")])
     const projection = transitionProjectionOf(composed)
-    const state = projection.step(projection.initial(), { type: "Ready" })
+    const state = projection.step(projection.initial(), eventAt({ type: "Ready" }, 1))
 
     expect(composed.machine).toBeDefined()
-    expect(projection.output(state).map((transition) => transition.key)).toEqual(["left", "right"])
+    expect(projection.output(state).map((transition) => transition.key)).toEqual([JSON.stringify([1, "left", "commit"]), JSON.stringify([1, "right", "commit"])])
     expect(deriveComponent(composed, [{ type: "Ready" }]).view).toEqual({ names: ["left", "right"] })
   })
 
@@ -189,13 +190,13 @@ describe("components", () => {
     }
     const member = (name: string, eventType: string) => defineComponent({
       name,
-      initial: () => false,
-      step: (ready: boolean, event: Event) => ready || event.type === eventType,
-      output: (ready: boolean) => {
+      initial: (): TransitionContext | undefined => undefined,
+      step: (ready, event, ctx) => ready ?? (event.type === eventType ? ctx : undefined),
+      output: (ready) => {
         derivations.set(name, (derivations.get(name) ?? 0) + 1)
         return {
           view: { names: ready ? [name] : [] },
-          transitions: ready ? [intent({ key: name, input: undefined, events: () => [] })] : []
+          transitions: ready ? [ready.intent("commit", { type: "Committed" })] : []
         }
       }
     })
@@ -220,7 +221,7 @@ describe("components", () => {
     ]))
     expect(combinations).toBe(3)
 
-    const changed = projection.step(ignored, { type: "LeftReady" })
+    const changed = projection.step(ignored, eventAt({ type: "LeftReady" }, 2))
 
     expect(changed).not.toBe(ignored)
     expect(projection.output(changed).view).toEqual({ names: ["left"] })
@@ -236,20 +237,20 @@ describe("components", () => {
   test("cached composition passes child state to cancellation projections", () => {
     const child = defineComponent({
       name: "cancellable",
-      initial: () => 0,
-      step: (count: number, event: Event) => event.type === "Observed" ? count + 1 : count,
+      initial: () => ({ count: 0, ctx: undefined as TransitionContext | undefined }),
+      step: (state, event, ctx) => event.type === "Observed" ? { count: state.count + 1, ctx } : state,
       output: () => ({ view: facts.empty, transitions: [] }),
-      cancelState: (count: number) => [intent({ key: `cancel:${count}`, input: undefined, events: () => [] })]
+      cancelState: (state) => state.ctx === undefined ? [] : [state.ctx.intent("cancel", { type: "Cancelled", count: state.count })]
     })
     const composed = composeComponents("cached-cancellation", facts, [child])
     const projection = composed.machine
-    const state = projection.step(projection.initial(), { type: "Observed" })
+    const state = projection.step(projection.initial(), eventAt({ type: "Observed" }, 1))
 
     expect(projection.cancel?.(state, {
       request: "x1",
       invocation: { method: "work", id: "w1", epoch: 0 },
       cause: "requested"
-    }).map((transition) => transition.key)).toEqual(["cancel:1"])
+    }).map((transition) => transition.kind === "intent" ? transition.events(transition.input, 0) : [])).toEqual([[{ type: "Cancelled", count: 1, transitionRef: { seq: 1, component: "cancellable", tag: "cancel" } }]])
   })
 
   test("composition refuses colliding key fragments", () => {

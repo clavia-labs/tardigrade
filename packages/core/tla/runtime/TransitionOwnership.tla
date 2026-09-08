@@ -2,7 +2,7 @@
 EXTENDS Naturals, Sequences, FiniteSets
 
 (* TransitionOwnership checks invocation inheritance across an intent/effect event chain (DeclarationOwner, EventOwner, ScopeCorrect, CancellationObserved). TransitionDeclarations.tla establishes reference uniqueness separately. Expected ownership is tracked independently from carried metadata. *)
-CONSTANTS None, MaxEvents, CarryDeclaration, CarryCompletion, RejectOverride,
+CONSTANTS None, Detach, MaxEvents, CarryDeclaration, CarryCompletion, RejectOverride,
           BindScope, KeepScopeDetails, MatchMode, CheckStart, SignalActive,
           CheckResult, Fair
 
@@ -28,7 +28,7 @@ Same(a, b) == CASE MatchMode = "exact" -> a = b
                [] MatchMode = "noMethod" -> a.id = b.id /\ a.epoch = b.epoch
                [] MatchMode = "noId" -> a.method = b.method /\ a.epoch = b.epoch
 IsCancelled(owner) == IF owner = None THEN FALSE ELSE \E c \in cancelled : Same(owner, c)
-Inherited(event, explicit) == IF explicit = None THEN event.owner ELSE explicit
+Inherited(event, explicit) == IF explicit = Detach THEN None ELSE IF explicit = None THEN event.owner ELSE explicit
 Carried(event, explicit) == IF CarryDeclaration THEN Inherited(event, explicit) ELSE None
 Last == events[Len(events)]
 
@@ -44,13 +44,13 @@ Init ==
   /\ badStart = FALSE
   /\ badPublication = FALSE
 
-(* Declare models bindTransitionContext and both tagged constructors. An unowned event may acquire explicit ownership; an owned event rejects a different explicit invocation, including a different epoch. *)
+(* Declare models bindTransitionContext and both tagged constructors. An unowned event may acquire explicit ownership; an owned event rejects a different explicit invocation, including a different epoch. Detach explicitly removes invocation ownership for control delivery after cancellation, while preserving transition identity. *)
 Declare(kind, explicit) ==
   /\ phase = "idle" /\ Len(events) < MaxEvents
-  /\ RejectOverride => (Last.owner = None \/ explicit = None \/ explicit = Last.owner)
+  /\ RejectOverride => (Last.owner = None \/ explicit = None \/ explicit = Detach \/ explicit = Last.owner)
   /\ transition' = [source |-> Len(events), ref |-> <<Last.seq, "worker", "step">>,
        kind |-> kind, explicit |-> explicit,
-       expected |-> IF Last.expected = None THEN explicit ELSE Last.expected,
+       expected |-> IF explicit = Detach THEN None ELSE IF Last.expected = None THEN explicit ELSE Last.expected,
        owner |-> Carried(Last, explicit)]
   /\ phase' = "ready"
   /\ signalled' = FALSE
@@ -117,7 +117,7 @@ CommitIntent ==
   /\ UNCHANGED <<transition, cancelled, signalled, scopes, checkedCancellation, badPublication>>
 
 Next ==
-  \/ \E kind \in Kinds, explicit \in Owners : Declare(kind, explicit)
+  \/ \E kind \in Kinds, explicit \in Owners \cup {Detach} : Declare(kind, explicit)
   \/ Replay \/ Suppress \/ StartEffect \/ CheckCompletion \/ CommitEffect \/ CommitIntent
   \/ \E target \in Invocations : Cancel(target)
 Progress == WF_vars(Suppress) /\ WF_vars(StartEffect) /\ WF_vars(CheckCompletion)
@@ -134,7 +134,7 @@ TypeOK ==
   /\ badStart \in BOOLEAN /\ badPublication \in BOOLEAN
   /\ transition = None \/
        (transition.source \in 1..Len(events) /\ transition.kind \in Kinds
-        /\ transition.owner \in Owners /\ transition.expected \in Owners /\ transition.explicit \in Owners)
+        /\ transition.owner \in Owners /\ transition.expected \in Owners /\ transition.explicit \in Owners \cup {Detach})
 
 ReferenceStable == IF transition = None THEN TRUE ELSE
   transition.ref = <<events[transition.source].seq, "worker", "step">>
@@ -148,7 +148,7 @@ NoCancelledStart == ~badStart
 NoObservedCancelledResults == ~badPublication
 PendingSettles == phase \in {"ready", "running", "checked"} ~> phase \in {"idle", "finished"}
 
-(* DeclarationOwner and EventOwner hold by mutual induction when metadata is preserved and conflicting overrides are rejected. Init agrees on root ownership. Declare either preserves an owned event's expected owner or supplies the explicit owner of an unowned event. AppendCompletion copies that expected owner to the next event. Replay reconstructs the same declaration. Every other action preserves both owners. This argument includes None and treats intent and effect declarations identically. *)
+(* DeclarationOwner and EventOwner hold by mutual induction when metadata is preserved and conflicting overrides are rejected. Init agrees on root ownership. Declare preserves an owned event's expected owner, supplies the explicit owner of an unowned event, or explicitly detaches control delivery to None. AppendCompletion copies that expected owner to the next event. Replay reconstructs the same declaration. Every other action preserves both owners. This argument includes None and treats intent and effect declarations identically. *)
 
 (* ScopeCorrect follows because StartEffect binds the full accepted Context of the carried owner and DeclarationOwner equates that owner to the expected owner. CancellationIsolation follows from exact equality on method, id, and epoch. CheckStart blocks already cancelled owners; Cancel signals an active effect of exactly its target invocation. CheckCompletion suppresses results when the observed prefix includes cancellation. These arguments depend on the corresponding switches being enabled and do not establish cancellation/append atomicity or exactly-once execution. *)
 

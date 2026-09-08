@@ -1,4 +1,4 @@
-import type { Event } from "@clavia/tardigrade-core/event"
+import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
 import type { Transition } from "@clavia/tardigrade-core/transition"
 import type { InvocationCancellation } from "../interaction/events"
 import type { Component } from "./component"
@@ -32,11 +32,12 @@ export const componentRefinementTrace = <View, Requirements>(
   log: ReadonlyArray<Event>,
   cancellationsAt: (prefix: ReadonlyArray<Event>) => ReadonlyArray<InvocationCancellation> = () => []
 ): ReadonlyArray<ComponentRefinementStep<View, Requirements>> => {
+  const positioned = log.map((event, index) => eventAt(event, eventPositionOf(event) ?? index + 1))
   const machine = component.machine
   let state = machine.initial()
   const trace: Array<ComponentRefinementStep<View, Requirements>> = []
   for (let length = 0; length <= log.length; length++) {
-    const prefix = log.slice(0, length)
+    const prefix = positioned.slice(0, length)
     trace.push({
       prefix,
       replay: complete.derive(prefix),
@@ -47,7 +48,7 @@ export const componentRefinementTrace = <View, Requirements>(
         incremental: machine.cancel?.(state, cancellation) ?? []
       }))
     })
-    const event = log[length]
+    const event = positioned[length]
     if (event !== undefined) state = machine.step(state, event)
   }
   return trace

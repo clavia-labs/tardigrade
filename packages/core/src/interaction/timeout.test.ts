@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { eventAt, type Event } from "@clavia/tardigrade-core/event"
 import {
   alarmFired,
   deadlineCancellationEventsAt,
@@ -144,14 +144,15 @@ describe("method alarms", () => {
     const complete = methodDeadlineCancellationDerivation(workMethods)(log)
     expect(complete).toHaveLength(1)
     expect(complete.map((transition) => transition.key))
-      .toEqual([`cx:${JSON.stringify(["work", "work-1", 0])}`])
+      .toEqual([JSON.stringify([1, "actor.method-timeouts", "deadline"])])
     const transition = complete[0]
     expect(transition?.kind).toBe("intent")
     if (transition?.kind !== "intent") return
-    expect(transition.events(transition.input, 50)).toEqual([deadlineCancellation("work-1", 40, 50)])
+    expect(transition.events(transition.input, 50)).toEqual([{ ...deadlineCancellation("work-1", 40, 50), transitionRef: { seq: 1, component: "actor.method-timeouts", tag: "deadline" } }])
     let methodStates = initialMethodStates(workMethods)
     let timeoutState = initialMethodTimeoutState()
-    for (const event of log) {
+    for (const [index, raw] of log.entries()) {
+      const event = eventAt(raw, index + 1)
       methodStates = reduceMethodStates(workMethods, methodStates, event)
       timeoutState = reduceMethodTimeoutState(timeoutState, event)
     }
@@ -176,7 +177,8 @@ describe("method alarms", () => {
       target: "inspector:main:shared",
       timeoutMs: 39,
       deadlineAt: 40,
-      at: 43
+      at: 43,
+      transitionRef: { seq: 1, component: "actor.method-timeouts", tag: "timeout" }
     }])
   })
 
@@ -201,18 +203,19 @@ describe("method alarms", () => {
     ])).toEqual([])
   })
 
-  test("alarm projection is independent of event order", () => {
+  test("alarm selection is independent of arrival order while references follow the owning dispatch", () => {
     const log: ReadonlyArray<Event> = [
       { type: "AlarmFired", scheduledFor: 45, at: 45 },
       { type: "AlarmFired", scheduledFor: 40, at: 43 },
       dispatched("inspect-1", 40)
     ]
-    const project = (events: ReadonlyArray<Event>) => methodTimeoutDerivation(events).map((transition) => ({
-      key: transition.key,
-      input: transition.input,
-      events: transition.kind === "intent" ? transition.events(transition.input, 999) : []
-    }))
-    expect(project(log)).toEqual(project([...log].reverse()))
+    const project = (events: ReadonlyArray<Event>) => methodTimeoutDerivation(events).flatMap((transition) =>
+      transition.kind === "intent" ? transition.events(transition.input, 999) : [])
+    const first = project(log)[0]!
+    const reversed = project([...log].reverse())[0]!
+    expect(first).toMatchObject({ type: "CallTimedOut", call: "inspect-1", at: 43,
+      transitionRef: { seq: 3, component: "actor.method-timeouts", tag: "timeout" } })
+    expect(reversed).toEqual({ ...first, transitionRef: { seq: 1, component: "actor.method-timeouts", tag: "timeout" } })
   })
 
   test("a response and timeout claim the same caller terminal key", () => {

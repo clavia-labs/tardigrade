@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Schema } from "effect"
 import fc from "fast-check"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { eventAt, type Event } from "@clavia/tardigrade-core/event"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { intent } from "@clavia/tardigrade-core/intent"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
@@ -243,12 +243,13 @@ describe("cancellation properties", () => {
 
       let methodStates = initialMethodStates(methods)
       let timeoutState = initialMethodTimeoutState()
-      for (const event of [head, alarm]) {
+      for (const [index, raw] of [head, alarm].entries()) {
+        const event = eventAt(raw, index + 1)
         methodStates = reduceMethodStates(methods, methodStates, event)
         timeoutState = reduceMethodTimeoutState(timeoutState, event)
       }
       expect(methodTimeoutTransitions(methods, methodStates, timeoutState).map((transition) => transition.key), current.name)
-        .toEqual(current.cancellable ? [`cx:${JSON.stringify([parent.method, parent.id, parent.epoch])}`] : [])
+        .toEqual(current.cancellable ? [JSON.stringify([1, "actor.method-timeouts", "deadline"])] : [])
     }
   })
 

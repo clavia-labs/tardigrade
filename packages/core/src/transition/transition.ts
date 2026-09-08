@@ -39,7 +39,7 @@ export const transitionKeyOf = (event: Event): string | undefined => "transition
 interface TaggedEffectOptions<Input, Result extends Event, Requirements = never> {
   readonly key?: never
   readonly ref?: never
-  readonly invocation?: InvocationRef
+  readonly invocation?: InvocationRef | null
   readonly concurrent?: boolean
   readonly interrupts?: (input: Input, event: Event) => boolean
   readonly input: Input
@@ -50,7 +50,7 @@ interface TaggedEffectOptions<Input, Result extends Event, Requirements = never>
 export interface TransitionContext {
   readonly invocation?: InvocationRef
   readonly effect: <Input, Result extends Event, Requirements = never>(tag: string, options: TaggedEffectOptions<Input, Result, Requirements>) => ExternalEffect<never, Requirements>
-  readonly intent: (tag: string, completion: Event, options?: { readonly invocation?: InvocationRef }) => Intent<never>
+  readonly intent: (tag: string, completion: Event | ((at: number) => Event), options?: { readonly invocation?: InvocationRef | null }) => Intent<never>
   readonly matches: (tag: string, event: Event) => boolean
 }
 
@@ -65,7 +65,9 @@ export const bindTransitionContext = (event: Event, component: string): Transiti
   }
   const owner = recorded ?? accepted
   const inherited = owner === undefined ? undefined : Object.freeze({ ...owner })
-  const invocationOf = (explicit: InvocationRef | undefined): InvocationRef | undefined => {
+  // invocationOf permits explicit detachment for control delivery after cancellation (runtime/reconciler.properties.test.ts).
+  const invocationOf = (explicit: InvocationRef | null | undefined): InvocationRef | undefined => {
+    if (explicit === null) return undefined
     if (explicit === undefined) return inherited
     const decoded = Schema.decodeSync(InvocationRef)(explicit)
     if (inherited !== undefined && !sameInvocation(inherited, decoded)) {
@@ -101,13 +103,13 @@ export const bindTransitionContext = (event: Event, component: string): Transiti
       references.set(transition, ref)
       return transition
     },
-    intent: (tag: string, result: Event, options?: { readonly invocation?: InvocationRef }) => {
+    intent: (tag: string, result: Event | ((at: number) => Event), options?: { readonly invocation?: InvocationRef | null }) => {
       const ref = reference(tag)
       const invocation = invocationOf(options?.invocation)
       const transition = Object.freeze(intent({
         key: transitionKey(ref), input: result,
         ...(invocation === undefined ? {} : { invocation }),
-        events: (input) => [complete(ref, invocation, input)]
+        events: (input, at) => [complete(ref, invocation, typeof input === "function" ? input(at) : input)]
       }))
       references.set(transition, ref)
       return transition
