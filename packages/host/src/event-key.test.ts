@@ -29,7 +29,6 @@ test("memory storage absorbs repeated invocation identities without an applicati
 test("host storage deduplicates runtime completions within each owning log", async () => {
   const worker = component({
     name: "worker",
-    keys: "runtime",
     initial: () => [] as ReadonlyArray<TransitionContext>,
     step: (pending, event, ctx) => event.type === "Requested" ? [...pending, ctx] : pending,
     output: (pending) => ({

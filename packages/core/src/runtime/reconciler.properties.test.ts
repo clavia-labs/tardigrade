@@ -8,8 +8,10 @@ import {
   settleActor,
   type Actor
 } from "./index"
-import { component, composeComponents, deriveComponent, transitionProjectionOf, type Component, type TransitionContext } from "../component"
+import { component, cancelComponent, composeComponents, deriveComponent, transitionProjectionOf, type Component, type TransitionContext } from "../component"
 import { actorRuntimeOf } from "./actor"
+import { InvocationScope } from "./context"
+import { EffectInterruptions, effectInterruptionRegistry } from "./reconciler"
 import { effect } from "@clavia/tardigrade-core/effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { intent } from "@clavia/tardigrade-core/intent"
@@ -55,7 +57,6 @@ describe("actor reconciliation", () => {
     ]
     const worker = component({
       name: "worker",
-      keys: "runtime",
       initial: () => [] as ReadonlyArray<{ readonly owner: unknown; readonly ctx: TransitionContext }>,
       step: (pending, event, ctx) => event.type === "Requested" ? [...pending, { owner: event.owner, ctx }] : pending,
       output: (pending) => ({
@@ -237,7 +238,6 @@ const taggedComponent = <Input, R = never>(definition: {
   readonly derive: (input: Input, ctx: TestTransitionContext) => ReadonlyArray<Transition<never, R>>
 }) => component({
   name: definition.name,
-  keys: "runtime",
   initial: () => ({
     owners: [] as ReadonlyArray<{ readonly input: Input; readonly ctx: TransitionContext }>,
     events: [] as ReadonlyArray<Event>
@@ -396,7 +396,6 @@ export const taggedTransitionContract = (ctx: TransitionContext): void => {
 test("complete component replay supplies positions and rejects unpositioned tagged transitions", () => {
   const worker = component({
     name: "worker",
-    keys: "runtime",
     initial: (): TransitionContext | undefined => undefined,
     step: (state, event, ctx) => event.type === "Requested" ? ctx : state,
     output: (ctx) => ({ view: undefined, transitions: ctx === undefined ? [] : [ctx.intent("execute", { type: "Executed" })] })
@@ -428,7 +427,6 @@ test("tag-only declarations preserve identity, completion correlation, and repla
       const sorted = (values: ReadonlyArray<Event>) => values.map((value) => JSON.stringify(value)).sort()
       const makeRuntime = (reverse = false) => runtimeOf(...(reverse ? [...names].reverse() : names).map((name) => component({
         name,
-        keys: "runtime",
         initial: () => [] as ReadonlyArray<{ request: unknown; ctx: TransitionContext; remaining: typeof tags }>,
         step: (state, event, ctx) => event.type === "Requested"
           ? [...state, { request: event.request, ctx, remaining: tags }]
@@ -496,4 +494,162 @@ test("tag-only declarations reject duplicate local tags before dispatch", async 
     expect(calls).toBe(0)
     expect(events).toEqual([{ type: "Requested" }])
   }), { numRuns: 100 })
+})
+
+
+test("components reject manual transitions in output and cancellation", () => {
+  const manual = [
+    intent({ key: "manual", input: undefined, events: () => [{ type: "Completed" }] }),
+    effect({ key: "manual", input: undefined, act: () => Effect.succeed([{ type: "Completed" }]) })
+  ]
+  for (const transition of manual) {
+    for (const cancellation of [false, true]) {
+      const worker = component({
+        name: "worker",
+        initial: () => false,
+        step: () => true,
+        output: (ready) => ({ view: undefined, transitions: ready && !cancellation ? [transition] : [] }),
+        cancelState: () => [transition]
+      })
+      const events = [{ type: "Requested" }]
+      expect(() => cancellation
+        ? cancelComponent(worker, events, { request: "stop", invocation: { method: "run", id: "1", epoch: 0 }, cause: "requested" })
+        : enabled(runtimeOf(worker), events)).toThrow('component "worker" requires transitions declared through its context')
+    }
+  }
+})
+
+test("components reject transitions from another component context", () => {
+  const source = taggedComponent({
+    name: "source",
+    select: (event) => event.type === "Requested" ? event : undefined,
+    derive: (_input, ctx) => [ctx.intent("execute", { type: "Completed" })]
+  })
+  const events = [{ type: "Requested" }]
+  const borrowed = deriveComponent(source, events).transitions
+  const other = component({
+    name: "other",
+    initial: () => false,
+    step: () => true,
+    output: (ready) => ({ view: undefined, transitions: ready ? borrowed : [] })
+  })
+  expect(() => enabled(runtimeOf(other), events)).toThrow('transition belongs to component "source", not "other"')
+})
+
+test("cancellation validates the shared intent and effect tag namespace", () => {
+  const worker = component({
+    name: "worker",
+    initial: (): TransitionContext | undefined => undefined,
+    step: (_state, _event, ctx) => ctx,
+    output: () => ({ view: undefined, transitions: [] }),
+    cancelState: (ctx) => ctx === undefined ? [] : [
+      ctx.intent("stop", { type: "Stopped" }),
+      ctx.effect("stop", { input: undefined, act: () => Effect.succeed({ type: "Stopped" }) })
+    ]
+  })
+  expect(() => cancelComponent(worker, [{ type: "Requested" }], {
+    request: "stop", invocation: { method: "run", id: "1", epoch: 0 }, cause: "requested"
+  })).toThrow("duplicate transition tag")
+})
+
+
+test("tagged transitions inherit invocation ownership through completions and replay", async () => {
+  const invocation = { method: "run", id: "one", epoch: 2 }
+  const call = { invocation, parent: { method: "parent", id: "p", epoch: 0 }, deadlineAt: 1000 }
+  const events: Event[] = [{ type: "Requested", call }]
+  const observed: unknown[] = []
+  const worker = () => taggedComponent({
+    name: "worker",
+    select: (event) => event.type === "Requested" || event.type === "Dispatched" ? event : undefined,
+    derive: (event, ctx) => event.type === "Requested"
+      ? [ctx.intent("dispatch", { type: "Dispatched" })]
+      : [ctx.effect("execute", {
+        input: undefined,
+        act: () => Effect.gen(function* () {
+          const scope = yield* Effect.serviceOption(InvocationScope)
+          observed.push(Option.isSome(scope) ? scope.value.context : undefined)
+          return { type: "Completed" }
+        })
+      })]
+  })
+  expect(enabled(runtimeOf(worker()), events)[0]!.invocation).toEqual(invocation)
+  await Effect.runPromise(settleActor(runtimeOf(worker())).pipe(Effect.provide(memory(events))))
+  expect(observed).toEqual([call])
+  expect(events.slice(1).map((event) => event.invocationRef)).toEqual([invocation, invocation])
+  const replayed: Event[] = JSON.parse(JSON.stringify(events))
+  await Effect.runPromise(settleActor(runtimeOf(worker())).pipe(Effect.provide(memory(replayed))))
+  expect(replayed).toEqual(events)
+  expect(observed).toHaveLength(1)
+})
+
+test("tagged invocation effects observe live cancellation and discard their result", async () => {
+  const invocation = { method: "run", id: "one", epoch: 2 }
+  const events: Event[] = [{ type: "Requested", call: { invocation } }]
+  const registry = effectInterruptionRegistry()
+  const signals: boolean[] = []
+  const worker = taggedComponent({
+    name: "worker",
+    select: (event) => event.type === "Requested" ? event : undefined,
+    derive: (_event, ctx) => [ctx.effect("execute", {
+      input: undefined,
+      act: (_input, { signal }) => Effect.gen(function* () {
+        const log = yield* EventLog
+        const other = { type: "CancellationRequested", request: "other", invocation: { ...invocation, epoch: 3 }, cause: "requested" }
+        yield* log.append([other])
+        registry.interrupt([other])
+        signals.push(signal.aborted)
+        const own = { type: "CancellationRequested", request: "own", invocation, cause: "requested" }
+        yield* log.append([own])
+        registry.interrupt([own])
+        signals.push(signal.aborted)
+        return { type: "Completed" }
+      })
+    })]
+  })
+  const runtime = { ...runtimeOf(worker), cancellationOf: () => "running" as const }
+  await Effect.runPromise(settleActor(runtime).pipe(
+    Effect.provide(memory(events)), Effect.provideService(EffectInterruptions, registry)
+  ))
+  expect(signals).toEqual([false, true])
+  expect(events.some((event) => event.type === "Completed")).toBe(false)
+})
+
+test("tagged effect declarations preserve explicit invocation and interruption options", () => {
+  const invocation = { method: "run", id: "one", epoch: 0 }
+  const interrupts = (_input: undefined, event: Event) => event.type === "Invalidated"
+  const options = { invocation, interrupts, concurrent: true, input: undefined, act: () => Effect.succeed({ type: "Completed" }) }
+  const worker = taggedComponent({
+    name: "worker",
+    select: (event) => event.type === "Requested" ? event : undefined,
+    derive: (_event, ctx) => [ctx.effect("execute", options)]
+  })
+  const transition = enabled(runtimeOf(worker), [{ type: "Requested" }])[0]!
+  expect(transition.invocation).toEqual(invocation)
+  expect(transition.kind === "effect" && transition.interrupts).toBe(interrupts)
+  expect(transition.kind === "effect" && transition.concurrent).toBe(true)
+})
+
+
+test("tagged transitions reject conflicting invocation ownership", async () => {
+  const invocation = { method: "run", id: "one", epoch: 0 }
+  const other = { ...invocation, epoch: 1 }
+  const events: Event[] = [{ type: "Requested", call: { invocation } }]
+  for (const isIntent of [false, true]) {
+    const worker = taggedComponent({
+      name: "worker",
+      select: (event) => event.type === "Requested" ? event : undefined,
+      derive: (_event, ctx) => [isIntent
+        ? ctx.intent("execute", { type: "Completed" }, { invocation: other })
+        : ctx.effect("execute", { invocation: other, input: undefined, act: () => Effect.succeed({ type: "Completed" }) })]
+    })
+    expect(() => enabled(runtimeOf(worker), events)).toThrow("transition invocation conflicts with its owning event")
+  }
+  const worker = taggedComponent({
+    name: "worker",
+    select: (event) => event.type === "Requested" ? event : undefined,
+    derive: (_event, ctx) => [ctx.intent("execute", { type: "Completed", invocationRef: other })]
+  })
+  await expect(Effect.runPromise(settleActor(runtimeOf(worker)).pipe(Effect.provide(memory(events)))))
+    .rejects.toThrow("completion event already carries an invocation reference")
+  expect(events).toHaveLength(1)
 })

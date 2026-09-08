@@ -6,7 +6,6 @@ import {
   type Projection
 } from "@clavia/tardigrade-core/projection"
 import type { Transition } from "@clavia/tardigrade-core/transition"
-import type { KeyFragment } from "../log/keys"
 import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
 import type { InvocationCancellation } from "../interaction/events"
 import type { Component } from "./component"
@@ -44,7 +43,6 @@ export interface ComponentDefinition<State, View, Requirements = never>
     state: State,
     cancellation: InvocationCancellation
   ) => ReadonlyArray<Transition<never, Requirements>>
-  readonly keys?: KeyFragment | "runtime"
   readonly [COMPONENT_CONTRACT]?: ComponentContract
 }
 
@@ -52,12 +50,13 @@ const eraseMachine = <State, View, Requirements>(
   definition: ComponentDefinition<State, View, Requirements>
 ): ComponentMachine<View, Requirements> => {
   const cancelState = definition.cancelState
+  const identity = definition.name
   const projection = materializeProjection<State, ComponentOutput<View, Requirements>>({
     initial: definition.initial,
-    step: (state, event) => definition.step(state, event, bindTransitionContext(event, definition.name, definition.keys === "runtime")),
+    step: (state, event) => definition.step(state, event, bindTransitionContext(event, identity)),
     output: (state) => {
       const output = definition.output(state)
-      validateTransitions(output.transitions)
+      validateTransitions(output.transitions, identity)
       return output
     }
   })
@@ -70,7 +69,7 @@ const eraseMachine = <State, View, Requirements>(
       ? {}
       : {
           cancel: (state: unknown, cancellation: InvocationCancellation) =>
-            cancelState((state as CachedState).state, cancellation)
+            validateTransitions(cancelState((state as CachedState).state, cancellation), identity)
         })
   }
 }
@@ -88,12 +87,11 @@ export const component = <State, View, Requirements = never>(
       `component "${definition.name}" requires initial, step, and output; use legacyComponent for derive(log) definitions`
     )
   }
-  if (definition.keys === "runtime" && definition.name.length === 0) throw new Error("runtime-keyed components require a nonempty name")
+  if (typeof definition.name !== "string" || definition.name.length === 0) throw new Error("components require a nonempty name")
   return {
     name: definition.name,
-    ...(definition.keys === "runtime" ? { [TRANSITION_COMPONENT_IDS]: [definition.name] } : {}),
+    [TRANSITION_COMPONENT_IDS]: [definition.name],
     machine: eraseMachine(definition),
-    ...(definition.keys === undefined || definition.keys === "runtime" ? {} : { keys: definition.keys }),
     ...(definition[COMPONENT_CONTRACT] === undefined ? {} : { [COMPONENT_CONTRACT]: definition[COMPONENT_CONTRACT] })
   }
 }
