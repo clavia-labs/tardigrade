@@ -94,6 +94,14 @@ describe("modelRequest tool and prompt policy", () => {
     expect(modelRequest(head([], schema), CODE).tools.map((t) => t.name)).toEqual(["execute", "answer"])
   })
 
+  test("native structured output keeps work tools but removes the emulated answer tool", () => {
+    const schema = { type: "object", properties: { a: { type: "string" } } }
+    const req = modelRequest(head([], schema), CODE, {}, "native")
+    expect(req.tools.map((tool) => tool.name)).toEqual(["execute"])
+    expect(req.system).toContain("model provider enforces")
+    expect(req.system).toContain("do not call a tool merely to answer")
+  })
+
   test("once the budget is spent, execute is dropped and the nudge is added", () => {
     const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }])
     const req = modelRequest(spent, CODE)

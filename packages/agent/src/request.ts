@@ -68,6 +68,9 @@ const SYSTEM = (surface: string): string =>
 const ANSWER_NUDGE =
   "This turn declares an output schema. Finish by calling the answer tool: its arguments are your final answer and MUST conform to its schema. Never answer in prose."
 
+const NATIVE_ANSWER_NUDGE =
+  "This turn declares an output schema that the model provider enforces on the final response. When the work is done, return the final answer directly; do not call a tool merely to answer."
+
 const BUDGET_NUDGE =
   "Your tool budget for this turn is spent, so the work tools are gone. Finish now: answer with your best result from what you have already gathered."
 
@@ -176,16 +179,19 @@ export const renderMessages = (
 export const modelRequest = (
   trajectory: ReadonlyArray<Event>,
   render: { readonly system: string; readonly tools: ReadonlyArray<ToolSpec> },
-  context: Partial<ContextPolicy> = {}
+  context: Partial<ContextPolicy> = {},
+  structuredOutput: "answer-tool" | "native" = "answer-tool"
 ): ModelRequest => {
   const schema = outputSchemaOf(trajectory)
   const spent = budgetSpent(trajectory)
   const canRequest = canRequestBudget(trajectory)
   const work = spent ? [] : render.tools
-  const withAnswer = schema === undefined ? work : [...work, answerTool(schema)]
+  const withAnswer = schema === undefined || structuredOutput === "native" ? work : [...work, answerTool(schema)]
   const tools = canRequest ? [...withAnswer, REQUEST_BUDGET_TOOL] : withAnswer
   const framed = SYSTEM(render.system)
-  const base = schema === undefined ? framed : `${framed}\n${ANSWER_NUDGE}`
+  const base = schema === undefined
+    ? framed
+    : `${framed}\n${structuredOutput === "native" ? NATIVE_ANSWER_NUDGE : ANSWER_NUDGE}`
   const budgetLine = canRequest ? `${BUDGET_NUDGE}\n${ESCALATE_NUDGE}` : BUDGET_NUDGE
   return { system: spent ? `${base}\n${budgetLine}` : base, messages: renderMessages(trajectory, context), tools }
 }
