@@ -123,9 +123,9 @@ describe("actor cancellation", () => {
       request,
       { type: "WorkCleaned", id: "w1", at: 3 } as Event
     ], { work }, [component], keyOf)?.[0]
-    expect(terminal).toMatchObject({ kind: "intent", key: "cancelled:w1" })
+    expect(terminal).toMatchObject({ kind: "intent", key: JSON.stringify([2, "actor.cancellations", "finish"]) })
     if (terminal?.kind !== "intent") throw new Error("expected the cancellation terminal intent")
-    expect(terminal.events(terminal.input, 4)).toEqual([{ type: "WorkCancelled", id: "w1", at: 4 }])
+    expect(terminal.events(terminal.input, 4)).toMatchObject([{ type: "WorkCancelled", id: "w1", at: 4 }])
   })
 
   test("distinct invocation cancellations progress without a shared settlement barrier", () => {
@@ -155,7 +155,7 @@ describe("actor cancellation", () => {
         : undefined
 
     expect(cancellationTransitionsOf(events, { work }, [component], keyOf)
-      ?.map((transition) => transition.key)).toEqual(["cancelled:w2", "clean:w1"])
+      ?.map((transition) => transition.key)).toEqual([JSON.stringify([4, "actor.cancellations", "finish"]), "clean:w1"])
     expect(cancellationTransitionsOf([
       ...events,
       { type: "WorkCancelled", id: "w2", at: 6 } as Event
@@ -164,7 +164,7 @@ describe("actor cancellation", () => {
       ...events,
       { type: "WorkCancelled", id: "w2", at: 6 } as Event,
       { type: "WorkCleaned", id: "w1", at: 7 } as Event
-    ], { work }, [component], keyOf)?.map((transition) => transition.key)).toEqual(["cancelled:w1"])
+    ], { work }, [component], keyOf)?.map((transition) => transition.key)).toEqual([JSON.stringify([3, "actor.cancellations", "finish"])])
   })
 
   test("a parent reaches and waits for every linked child cancellation", async () => {
@@ -196,7 +196,7 @@ describe("actor cancellation", () => {
     const cancelCall = 'cancel:["x1","worker:main:child","work","child",0]'
 
     const transition = cancellationTransitionsOf<never>([started, link, request], { work }, [], keyOf)?.[0]
-    expect(transition?.key).toBe(`cxsend:${cancelCall}`)
+    expect(transition?.key).toBe(JSON.stringify([2, "actor.cancellations", "cancel"]))
     expect(transition?.kind).toBe("effect")
     if (transition?.kind !== "effect") throw new Error("expected a child cancellation effect")
     const sent: Array<{ readonly lineage?: unknown }> = []
@@ -228,7 +228,7 @@ describe("actor cancellation", () => {
         target: "worker:main:child",
         at: 3
       } as Event
-    ], { work }, [], keyOf)?.map((transition) => transition.key)).toEqual([`cxwait:${cancelCall}`])
+    ], { work }, [], keyOf)?.map((transition) => transition.key)).toEqual([JSON.stringify([2, "actor.cancellations", "wait"])])
     expect(cancellationTransitionsOf([
       started,
       link,
@@ -243,7 +243,7 @@ describe("actor cancellation", () => {
         from: "worker:main:child",
         at: 3
       } as Event
-    ], { work }, [], keyOf)?.map((transition) => transition.key)).toEqual(["cancelled:parent"])
+    ], { work }, [], keyOf)?.map((transition) => transition.key)).toEqual([JSON.stringify([3, "actor.cancellations", "finish"])])
   })
 
   test("an unreachable child is discharged at the configured cancellation deadline", async () => {
@@ -280,7 +280,7 @@ describe("actor cancellation", () => {
 
     const beforeDeadline = [started, link, request, ...dispatched]
     expect(cancellationTransitionsOf(beforeDeadline, { work }, [], keyOf, 7)?.map((item) => item.key))
-      .toEqual(['cxwait:cancel:["x1","worker:main:child","work","child",0]'])
+      .toEqual([JSON.stringify([2, "actor.cancellations", "wait"])])
     const alarm = alarmFired({ scheduledFor: dispatch.deadlineAt, at: dispatch.deadlineAt })
     const timeout = methodTimeoutDerivation([...beforeDeadline, alarm])[0]
     if (timeout?.kind !== "intent") throw new Error("expected the cancellation timeout intent")
@@ -297,7 +297,7 @@ describe("actor cancellation", () => {
       [],
       keyOf,
       7
-    )?.map((item) => item.key)).toEqual(["cancelled:parent"])
+    )?.map((item) => item.key)).toEqual([JSON.stringify([3, "actor.cancellations", "finish"])])
   })
 
   test("core ignores unsupported and nonexistent cancellation targets", () => {

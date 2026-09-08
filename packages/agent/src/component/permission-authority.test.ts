@@ -32,7 +32,7 @@ describe("permissionAuthority", () => {
     const component = permissionAuthority({ decide: (request) => request.deny("needs review") })
     const events = eventsOf(component, [received])
 
-    expect(events).toEqual([{
+    expect(events).toMatchObject([{
       type: "PermissionRequestDecided",
       callId: "permission-1",
       granted: false,

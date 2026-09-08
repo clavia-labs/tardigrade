@@ -71,7 +71,7 @@ describe("renderMessages", () => {
       { type: "MessageReceived", id: "m2", text: "queued follow-up", at: 4 },
       { type: "ToolCalled", callId: "c2", name: "execute", arguments: { code: "write" }, turn: "m1", at: 5 },
       { type: "ToolReturned", callId: "c2", result: { ok: 2 }, turn: "m1", at: 6 },
-      { type: "CompactionCompleted", keepFrom: "c:c2", summary: "read the base contract", at: 7 }
+      { type: "CompactionCompleted", keepFrom: `c:${JSON.stringify(["m1", "c2"])}`, summary: "read the base contract", at: 7 }
     ]
     const messages = renderMessages(trajectoryOf(raw))
     expect(messages[0]).toMatchObject({ role: "user", content: "draft the addendum" }) // the open head, verbatim

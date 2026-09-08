@@ -1,7 +1,8 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { HashMap, HashSet, Schema } from "effect"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
-import { intent, type Transition } from "@clavia/tardigrade-core/runtime"
+import { type Transition } from "@clavia/tardigrade-core/runtime"
 import { handles, component, type Component } from "@clavia/tardigrade-core/actor"
 import { formatThreadAddress, isThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { BudgetDecision } from "../actor/budget"
@@ -86,6 +87,7 @@ const authorityTransition = (
   if (received === undefined) return undefined
 
   const id = String(received.id ?? "")
+  const context = bindTransitionContext(received, "budget-authority")
   const amount = Number(received.amount ?? 0)
   const request: BudgetRequest = {
     id,
@@ -105,28 +107,13 @@ const authorityTransition = (
     const decision = Schema.decodeSync(BudgetDecision)(proposed)
     if ("granted" in decision) {
       const grant = decision.granted
-      return intent({
-        key: `ba:${id}`,
-        input: { id, grant },
-        events: (input, at) => [budgetRequestDecided({ callId: input.id, grant: input.grant, at })]
-      })
+      return context.intent("decide", (at) => budgetRequestDecided({ callId: id, grant, at }))
     }
-    return intent({
-      key: `ba:${id}`,
-      input: { id, reason: decision.reason },
-      events: (input, at) => [budgetRequestDecided({
-        callId: input.id,
-        grant: 0,
-        ...(input.reason === undefined ? {} : { reason: input.reason }),
-        at
-      })]
-    })
+    return context.intent("decide", (at) => budgetRequestDecided({
+      callId: id, grant: 0, ...(decision.reason === undefined ? {} : { reason: decision.reason }), at
+    }))
   } catch (failure) {
-    return intent({
-      key: `ba:${id}`,
-      input: { id, error: failureMessage(failure) },
-      events: (input, at) => [budgetRequestFailed({ callId: input.id, error: input.error, at })]
-    })
+    return context.intent("decide", (at) => budgetRequestFailed({ callId: id, error: failureMessage(failure), at }))
   }
 }
 
@@ -135,7 +122,6 @@ export const budgetAuthority = (options: BudgetAuthorityOptions = {}): Component
   const decide = options.decide ?? DEFAULT_BUDGET_DECISION
   return handles(requestBudgetMethod, component({
     name: "budget-authority",
-    keys: budgetAuthorityKeys,
     initial: (): BudgetAuthorityState => ({ next: 0, pending: HashMap.empty(), settled: HashSet.empty() }),
     step: reduceAuthority,
     output: (state) => {

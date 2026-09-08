@@ -1,14 +1,17 @@
+import type { Event } from "../event"
+import { bindTransitionContext, validateTransitions, transitionComponentIds, TRANSITION_COMPONENT_IDS, type TransitionContext } from "../transition/transition"
 import {
   materializeProjection,
   type MaterializedProjectionState,
   type Projection
 } from "@clavia/tardigrade-core/projection"
 import type { Transition } from "@clavia/tardigrade-core/transition"
-import type { KeyFragment } from "../log/keys"
 import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
 import type { InvocationCancellation } from "../interaction/events"
 import type { Component } from "./component"
 import type { ComponentOutput } from "./output"
+
+export type { TransitionContext } from "../transition/transition"
 
 export type { InvocationCancellation } from "../interaction/events"
 
@@ -33,24 +36,32 @@ export interface ComponentMachine<View, Requirements = never>
 
 // ComponentDefinition is the typed author surface for a component machine.
 export interface ComponentDefinition<State, View, Requirements = never>
-  extends Projection<State, ComponentOutput<View, Requirements>> {
+  extends Omit<Projection<State, ComponentOutput<View, Requirements>>, "step"> {
   readonly name: string
+  // children declares the component identities this wrapper may forward (transition/migration.test.ts).
+  readonly children?: ReadonlyArray<Component<unknown, unknown>>
+  readonly step: (state: State, event: Event, context: TransitionContext) => State
   readonly cancelState?: (
     state: State,
     cancellation: InvocationCancellation
   ) => ReadonlyArray<Transition<never, Requirements>>
-  readonly keys?: KeyFragment
   readonly [COMPONENT_CONTRACT]?: ComponentContract
 }
 
 const eraseMachine = <State, View, Requirements>(
-  definition: ComponentDefinition<State, View, Requirements>
+  definition: ComponentDefinition<State, View, Requirements>,
+  identities: ReadonlyArray<string>
 ): ComponentMachine<View, Requirements> => {
   const cancelState = definition.cancelState
+  const identity = definition.name
   const projection = materializeProjection<State, ComponentOutput<View, Requirements>>({
     initial: definition.initial,
-    step: definition.step,
-    output: definition.output
+    step: (state, event) => definition.step(state, event, bindTransitionContext(event, identity)),
+    output: (state) => {
+      const output = definition.output(state)
+      validateTransitions(output.transitions, identities)
+      return output
+    }
   })
   type CachedState = MaterializedProjectionState<State, ComponentOutput<View, Requirements>>
   return {
@@ -61,7 +72,7 @@ const eraseMachine = <State, View, Requirements>(
       ? {}
       : {
           cancel: (state: unknown, cancellation: InvocationCancellation) =>
-            cancelState((state as CachedState).state, cancellation)
+            validateTransitions(cancelState((state as CachedState).state, cancellation), identities)
         })
   }
 }
@@ -79,10 +90,12 @@ export const component = <State, View, Requirements = never>(
       `component "${definition.name}" requires initial, step, and output; use legacyComponent for derive(log) definitions`
     )
   }
+  if (typeof definition.name !== "string" || definition.name.length === 0) throw new Error("components require a nonempty name")
+  const identities = transitionComponentIds([{ [TRANSITION_COMPONENT_IDS]: [definition.name] }, ...(definition.children ?? [])])
   return {
     name: definition.name,
-    machine: eraseMachine(definition),
-    ...(definition.keys === undefined ? {} : { keys: definition.keys }),
+    [TRANSITION_COMPONENT_IDS]: identities,
+    machine: eraseMachine(definition, identities),
     ...(definition[COMPONENT_CONTRACT] === undefined ? {} : { [COMPONENT_CONTRACT]: definition[COMPONENT_CONTRACT] })
   }
 }

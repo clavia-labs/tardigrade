@@ -223,7 +223,7 @@ export const infer = <
   const toolsMachine = incrementalTools.machine
   const root = component({
     name: "infer",
-    keys: rootKeys(combined.keys),
+    children: [combined, incrementalTools],
     initial: () => ({
       children: childMachine.initial(),
       inference: incrementalInference.initial(),
@@ -252,5 +252,5 @@ export const infer = <
       }
     }
   }) as AgentComponent<R>
-  return handles(agentMessageMethod, inheritComponentContract(root, combined))
+  return handles(agentMessageMethod, inheritComponentContract({ ...root, keys: rootKeys(combined.keys) }, combined))
 }

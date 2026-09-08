@@ -1,3 +1,4 @@
+import { transitionKeyOf, transitionComponentIds } from "../transition/transition"
 import type { Event } from "../event"
 import type { InvocationRef } from "../interaction/invocation"
 import type { ActorMethodCancellationState } from "../interaction/state"
@@ -50,12 +51,15 @@ export const actorFromProjections = <R = never>({
   guards,
   control,
   legacy
-}: ActorRuntimeOptions<R>): Actor<R> => ({
-  projections: transitions,
-  keyOf,
-  ...(legacy?.cancellationOf === undefined ? {} : { cancellationOf: legacy.cancellationOf }),
-  ...(legacy?.cancellationResiduals === undefined ? {} : { cancellationResiduals: legacy.cancellationResiduals }),
-  ...(guards === undefined ? {} : { guardProjections: guards }),
-  ...(control === undefined ? {} : { projection: control })
-})
+}: ActorRuntimeOptions<R>): Actor<R> => {
+  transitionComponentIds(transitions)
+  return {
+    projections: transitions,
+    keyOf: (event) => transitionKeyOf(event) ?? keyOf(event),
+    ...(legacy?.cancellationOf === undefined ? {} : { cancellationOf: legacy.cancellationOf }),
+    ...(legacy?.cancellationResiduals === undefined ? {} : { cancellationResiduals: legacy.cancellationResiduals }),
+    ...(guards === undefined ? {} : { guardProjections: guards }),
+    ...(control === undefined ? {} : { projection: control })
+  }
+}
 

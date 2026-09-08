@@ -1,3 +1,4 @@
+import { TRANSITION_COMPONENT_IDS } from "../transition/transition"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
 import {
@@ -18,6 +19,7 @@ import type { ComponentOutput } from "./output"
  */
 export interface Component<View, Requirements = never> {
   readonly name: string
+  readonly [TRANSITION_COMPONENT_IDS]?: ReadonlyArray<string>
   readonly machine: ComponentMachine<View, Requirements>
   readonly keys?: KeyFragment
   readonly [COMPONENT_CONTRACT]?: ComponentContract
@@ -37,7 +39,7 @@ export const cancelComponent = <View, Requirements>(
 ): ReadonlyArray<Transition<never, Requirements>> => {
   const cancel = component.machine.cancel
   if (cancel === undefined) return []
-  const state = log.reduce(component.machine.step, component.machine.initial())
+  const state = replayProjection({ ...component.machine, output: (state) => state }, log)
   return cancel(state, cancellation)
 }
 
@@ -46,8 +48,11 @@ export type ComponentRequirements<C> = C extends Component<unknown, infer R> ? R
 
 // transitionProjectionOf exposes a component's enabled work as a transition projection.
 export const transitionProjectionOf = <V, R>(component: Component<V, R>): ErasedTransitionProjection<R> =>
-  eraseTransitionProjection({
-    initial: component.machine.initial,
-    step: component.machine.step,
-    output: (state) => component.machine.output(state).transitions
+  ({
+    [TRANSITION_COMPONENT_IDS]: component[TRANSITION_COMPONENT_IDS] ?? [],
+    ...eraseTransitionProjection({
+      initial: component.machine.initial,
+      step: component.machine.step,
+      output: (state) => component.machine.output(state).transitions
+    })
   })

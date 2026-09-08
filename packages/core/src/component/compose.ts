@@ -1,3 +1,4 @@
+import { TRANSITION_COMPONENT_IDS, transitionComponentIds, validateTransitions } from "../transition/transition"
 import { Chunk } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { materializeProjection, type MaterializedProjectionState } from "@clavia/tardigrade-core/projection"
@@ -9,7 +10,6 @@ import {
   type ComponentRequirements
 } from "./component"
 import {
-  component,
   type ComponentMachine,
   type InvocationCancellation
 } from "./machine"
@@ -74,6 +74,8 @@ export const composeComponents = <
   }
 
   const members = components as ReadonlyArray<Component<View, Requirements>>
+  if (typeof name !== "string" || name.length === 0) throw new Error("components require a nonempty name")
+  const componentIds = transitionComponentIds([{ [TRANSITION_COMPONENT_IDS]: [name] }, ...members])
   const fragments = members.flatMap((component) => component.keys === undefined ? [] : [component.keys])
   const keys = fragments.length === 0
     ? undefined
@@ -102,10 +104,7 @@ export const composeComponents = <
     return [...cancel(state, node.left, cancellation), ...cancel(state, node.right, cancellation)]
   }
 
-  return component<CompositionState, View, Requirements>({
-    name,
-    ...(keys === undefined ? {} : { keys }),
-    [COMPONENT_CONTRACT]: mergeComponentContracts(members),
+  const projection = materializeProjection<CompositionState, Output>({
     initial: () => {
       const children = materialized.map((machine) => machine.initial())
       const root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
@@ -146,7 +145,25 @@ export const composeComponents = <
         output: reconcileComponentOutput(name, reconcile, Chunk.toReadonlyArray(history), root.output)
       }
     },
-    output: (state) => state.output,
-    cancelState: (state: CompositionState, cancellation: InvocationCancellation) => cancel(state, state.root, cancellation)
+    output: (state) => {
+      validateTransitions(state.output.transitions)
+      return state.output
+    }
   })
+  type CachedState = MaterializedProjectionState<CompositionState, Output>
+  return {
+    name,
+    [TRANSITION_COMPONENT_IDS]: componentIds,
+    [COMPONENT_CONTRACT]: mergeComponentContracts(members),
+    ...(keys === undefined ? {} : { keys }),
+    machine: {
+      initial: projection.initial,
+      step: (state, event) => projection.step(state as CachedState, event),
+      output: (state) => projection.output(state as CachedState),
+      cancel: (cached, cancellation) => {
+        const state = (cached as CachedState).state
+        return validateTransitions(cancel(state, state.root, cancellation))
+      }
+    }
+  }
 }

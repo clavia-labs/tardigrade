@@ -1,7 +1,8 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { HashMap, HashSet, Schema } from "effect"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
-import { intent, type Transition } from "@clavia/tardigrade-core/runtime"
+import { type Transition } from "@clavia/tardigrade-core/runtime"
 import { externallyHandled, handles, component as defineComponent, type Component } from "@clavia/tardigrade-core/actor"
 import { formatThreadAddress, isThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { PermissionDecision, requestPermissionMethod } from "../actor/permission"
@@ -85,6 +86,7 @@ const authorityTransition = (
   if (received === undefined) return undefined
 
   const id = String(received.id ?? "")
+  const context = bindTransitionContext(received, "permission-authority")
   const request: PermissionRequest = {
     id,
     request: String(received.request ?? ""),
@@ -100,31 +102,18 @@ const authorityTransition = (
 
   try {
     const decision = Schema.decodeSync(PermissionDecision)(decide(request))
-    return intent({
-      key: `pa:${id}`,
-      input: { id, decision },
-      events: (input, at) => [permissionRequestDecided({
-        callId: input.id,
-        granted: "granted" in input.decision,
-        ...("denied" in input.decision && input.decision.reason !== undefined
-          ? { reason: input.decision.reason }
-          : {}),
-        at
-      })]
-    })
+    return context.intent("decide", (at) => permissionRequestDecided({
+      callId: id, granted: "granted" in decision,
+      ...("denied" in decision && decision.reason !== undefined ? { reason: decision.reason } : {}), at
+    }))
   } catch (failure) {
-    return intent({
-      key: `pa:${id}`,
-      input: { id, error: failureMessage(failure) },
-      events: (input, at) => [permissionRequestFailed({ callId: input.id, error: input.error, at })]
-    })
+    return context.intent("decide", (at) => permissionRequestFailed({ callId: id, error: failureMessage(failure), at }))
   }
 }
 
 const authorityComponent = (decide?: DecidePermission): Component<undefined> => {
   const component: Component<undefined> = defineComponent({
     name: "permission-authority",
-    keys: permissionAuthorityKeys,
     initial: (): PermissionAuthorityState => ({ next: 0, pending: HashMap.empty(), settled: HashSet.empty() }),
     step: reduceAuthority,
     output: (state) => {
@@ -137,7 +126,7 @@ const authorityComponent = (decide?: DecidePermission): Component<undefined> => 
     }
   })
   return decide === undefined
-    ? externallyHandled(requestPermissionMethod, component)
+    ? externallyHandled(requestPermissionMethod, { ...component, keys: permissionAuthorityKeys })
     : handles(requestPermissionMethod, component)
 }
 

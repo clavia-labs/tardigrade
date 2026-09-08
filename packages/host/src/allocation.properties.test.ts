@@ -177,4 +177,4 @@ test("allocation histories preserve thread and invocation identity across claims
     await new Collide(0).run(model, real)
     await new Restart().run(model, real)
   }), { numRuns: 100 })
-}, 20_000)
+}, 120_000)

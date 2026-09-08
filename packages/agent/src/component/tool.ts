@@ -1,5 +1,4 @@
 import { Clock, Effect } from "effect"
-import { effect } from "@clavia/tardigrade-core/runtime"
 import { component, legacyComponent } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { toolReturned } from "../log/events"
@@ -15,7 +14,8 @@ export interface NativeTool<R = never> {
 // tool derives fixed tool bindings from their specifications and effect handlers.
 export const tool = <R = never>(
   bindings: NativeTool<R> | ReadonlyArray<NativeTool<R>>,
-  system: string | ((log: ReadonlyArray<Event>) => string) = ""
+  system: string | ((log: ReadonlyArray<Event>) => string) = "",
+  options: { readonly name?: string } = {}
 ): AgentComponent<R> => {
   const tools: ReadonlyArray<NativeTool<R>> = Array.isArray(bindings)
     ? bindings as ReadonlyArray<NativeTool<R>>
@@ -31,13 +31,12 @@ export const tool = <R = never>(
           serve: (call) => {
             const stamp = call.turn === undefined ? {} : { turn: call.turn }
             return [
-              effect({
-                key: `tr:${call.callId}`,
+              call.context.effect("answer", {
                 ...(call.turn === undefined
                   ? {}
                   : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }),
                 input: { callId: call.callId, arguments: call.arguments, turn: call.turn },
-                act: (input, signal) =>
+                act: (input, { signal }) =>
                   Effect.gen(function* () {
                     const result = yield* tool.run(input.arguments, {
                       callId: input.callId,
@@ -57,9 +56,9 @@ export const tool = <R = never>(
       transitions: []
     })
   return typeof system === "function"
-    ? legacyComponent({ name: "tools", derive: (log) => derive(system(log)) })
+    ? legacyComponent({ name: options.name ?? "tools", derive: (log) => derive(system(log)) })
     : component({
-        name: "tools",
+        name: options.name ?? "tools",
         initial: () => system,
         step: (state: string) => state,
         output: derive
@@ -69,5 +68,6 @@ export const tool = <R = never>(
 // LATER(0.20.0): Remove toolList after callers migrate to tool.
 export const toolList = <R = never>(
   bindings: NativeTool<R> | ReadonlyArray<NativeTool<R>>,
-  system: string | ((log: ReadonlyArray<Event>) => string) = ""
-): AgentComponent<R> => tool(bindings, system)
+  system: string | ((log: ReadonlyArray<Event>) => string) = "",
+  options: { readonly name?: string } = {}
+): AgentComponent<R> => tool(bindings, system, options)

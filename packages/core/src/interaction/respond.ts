@@ -1,7 +1,7 @@
 import { type ActorMethodResponse, type ResponseDelivered, type ResponseReceived } from "./events"
 import { Clock, Effect, Schema } from "effect"
-import { effect } from "@clavia/tardigrade-core/effect"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
+import { bindTransitionContext } from "../transition/transition"
 import { Self } from "../runtime/context"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../log/index"
@@ -68,8 +68,8 @@ const delivered = (log: ReadonlyArray<Event>, response: ActorMethodResponse): bo
 const linkedCalls = (
   log: ReadonlyArray<Event>,
   methods: ActorMethods
-): ReadonlyArray<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress> }> => {
-  const calls: Array<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress> }> = []
+): ReadonlyArray<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress>; readonly owner: Event }> => {
+  const calls: Array<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress>; readonly owner: Event }> = []
   for (const event of log) {
     const call = responseCallOf(event)
     if (call === undefined) continue
@@ -80,40 +80,42 @@ const linkedCalls = (
       const state = declaration.state(log, invocation)
       if (state === undefined || state.status === "pending") continue
       const response = responseOf(terminalOf(name, declaration, state), invocation)
-      if (!delivered(log, response)) calls.push({ response, link: call.link })
+      if (!delivered(log, response)) calls.push({ response, link: call.link, owner: event })
       break
     }
   }
   return calls
 }
 
-const responseTransition = (response: ActorMethodResponse, link: Link<unknown, ThreadAddress>) =>
-  effect({
-      key: `mres:${invocationKey(response.invocation)}`,
+const responseTransition = (response: ActorMethodResponse, link: Link<unknown, ThreadAddress>, owner: Event) =>
+  bindTransitionContext(owner, "actor.responses").effect("deliver", {
+      invocation: null,
       input: { response, link },
       act: ({ response: current, link: accepted }) =>
         Effect.gen(function* () {
           const at = yield* Clock.currentTimeMillis
           yield* sendResponse(current, accepted, at)
-          return [{
+          return {
             type: "ResponseDelivered",
             method: current.invocation.method,
             call: current.invocation.id,
             ...(current.invocation.epoch === 0 ? {} : { epoch: current.invocation.epoch }),
             at
-          } satisfies ResponseDelivered]
+          } satisfies ResponseDelivered
         })
     })
 
 // methodResponseDerivation derives method reports from linked calls and their declared state projections.
 export const methodResponseDerivation = (methods: ActorMethods): CompleteTransitionDerivation<Router | Self> => (log) =>
-  linkedCalls(log, methods).slice(0, 1).map(({ response, link }) => responseTransition(response, link))
+  linkedCalls(log.map((event, index) => eventAt(event, eventPositionOf(event) ?? index + 1)), methods)
+    .slice(0, 1).map(({ response, link, owner }) => responseTransition(response, link, owner))
 
 /** @deprecated Use methodResponseDerivation. This compatibility name describes a complete-history transition derivation. */
 export const methodResponseReactor = (methods: ActorMethods): CompleteTransitionDerivation<Router | Self> =>
   methodResponseDerivation(methods)
 
 interface IncrementalResponseCall {
+  readonly owner: Event
   readonly id: string
   readonly invocation?: InvocationRef
   readonly link: Link<unknown, ThreadAddress>
@@ -130,7 +132,7 @@ const responseCallOf = (event: Event): IncrementalResponseCall | undefined => {
   const id = typeof invocation?.id === "string" ? invocation.id : candidate.id
   if (typeof id !== "string" || typeof candidate.link !== "object" || candidate.link === null ||
     !("source" in candidate.link) || !("target" in candidate.link) || !isThreadAddress(candidate.link.target)) return undefined
-  return { id, ...(invocation === undefined ? {} : { invocation }),
+  return { owner: event, id, ...(invocation === undefined ? {} : { invocation }),
     link: candidate.link as Link<unknown, ThreadAddress> }
 }
 
@@ -176,7 +178,7 @@ export const methodResponseTransitions = (
       const current = invocationStateOf(name, method, invocation)
       if (current === undefined || current.status === "pending" || state.delivered.has(invocationKey(invocation))) continue
       const response = responseOf(terminalOf(name, method, current), invocation)
-      return [responseTransition(response, call.link)]
+      return [responseTransition(response, call.link, call.owner)]
     }
   }
   return []
@@ -189,8 +191,7 @@ export const methodResponseComponent = (methods: ActorMethods): Component<undefi
     readonly response: MethodResponseProjectionState
   }
   return component<State, undefined, Router | Self>({
-    name: "actor.methods",
-    keys: methodResponseKeys,
+    name: "actor.responses",
     initial: () => ({
       methods: initialMethodStates(methods),
       response: initialMethodResponseState()

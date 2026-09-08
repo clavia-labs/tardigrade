@@ -1,4 +1,5 @@
-import { intent, Self, type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
+import { bindTransitionContext, type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { Self, type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
 import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
 import { actorInvocationContextOf } from "@clavia/tardigrade-core/interaction/invocation"
 import { calls, composeComponents, inheritComponentContract, component as defineComponent, type ThreadTarget, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
@@ -113,28 +114,17 @@ export const canRequestBudget = (trajectory: ReadonlyArray<Event>): boolean =>
 const wallFor = (
   trajectory: ReadonlyArray<Event>,
   policy: BudgetPolicy,
-  used: number
+  used: number,
+  context: TransitionContext
 ): Intent<never> | undefined => {
   if (trajectory.length === 0 || budgetPhase(trajectory) !== "spending") return undefined
   const budget = budgetOf(trajectory, policy)
   if (used <= budget) return undefined
   const head = turnHead(trajectory) as { id?: unknown } | undefined
   const turn = head?.id === undefined ? undefined : String(head.id)
-  return intent({
-    key: `bw:${turn ?? ""}/${budget}`,
-    ...(turn === undefined ? {} : {
-      invocation: { method: "message", id: turn, epoch: turnEpochOf(trajectory, turn) }
-    }),
-    input: { turn, budget, used },
-    events: (input, at) => [
-      budgetExhausted({
-        budget: input.budget,
-        used: input.used,
-        ...(input.turn === undefined ? {} : { turn: input.turn }),
-        at
-      })
-    ]
-  })
+  return context.intent("budget.wall", (at) => budgetExhausted({
+    budget, used, ...(turn === undefined ? {} : { turn }), at
+  }), (turn === undefined ? {} : { invocation: { method: "message", id: turn, epoch: turnEpochOf(trajectory, turn) } }))
 }
 
 const REQUEST_BUDGET_TOOL: ToolSpec = {
@@ -165,7 +155,7 @@ const requestBudgetTool: AgentTool = {
   serve: (call, log, answer) => {
     const stamp = call.turn === undefined ? {} : { turn: call.turn }
     const requested = log.some(
-      (event) => event.type === "BudgetRequested" && field(event, "callId") === call.callId
+      (event) => event.type === "BudgetRequested" && field(event, "callId") === call.callId && (event.turn ?? "") === (call.turn ?? "")
     )
     if (requested) {
       const decision = log.find(
@@ -191,14 +181,9 @@ const requestBudgetTool: AgentTool = {
       return [answer({ error: `request_budget takes amount as a positive integer; got ${JSON.stringify(amount)}` })]
     }
     return [
-      intent({
-        key: `br:${call.callId}`,
-        ...(call.turn === undefined ? {} : {
-          invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 }
-        }),
-        input: { callId: call.callId, reason: String(args?.reason ?? ""), amount },
-        events: (input, at) => [budgetRequested({ ...input, ...stamp, at })]
-      })
+      call.context.intent("budget.request", (at) => budgetRequested({
+        callId: call.callId, reason: String(args?.reason ?? ""), amount, ...stamp, at
+      }), (call.turn === undefined ? {} : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }))
     ]
   }
 }
@@ -237,10 +222,11 @@ const budgetCommunication = (
     event.type === "BudgetRequested" &&
     !log.some((decision) =>
       (decision.type === "BudgetGranted" || decision.type === "BudgetDenied") &&
-      String((decision as { readonly callId?: unknown }).callId) === String((event as { readonly callId?: unknown }).callId)
+      String((decision as { readonly callId?: unknown }).callId) === String((event as { readonly callId?: unknown }).callId) && decision.turn === event.turn
     )
-  ) as { readonly callId?: unknown; readonly reason?: unknown; readonly amount?: unknown; readonly turn?: unknown } | undefined
+  ) as Event | undefined
   if (requested === undefined) return []
+  const context = bindTransitionContext(requested, "budget")
   const turn = String(requested.turn ?? "")
   const request = String(requested.callId ?? "")
   const target = authorityFor(log, turn, authority)
@@ -259,29 +245,19 @@ const budgetCommunication = (
       reason: String(requested.reason ?? ""),
       amount: Number(requested.amount ?? 0)
     }
-  })
+  }, { context, tag: "authority" })
   if (call.transitions.length > 0) return call.transitions
   if (call.state.status === "pending") return []
   const output = call.state.status === "completed" ? call.state.output : undefined
   const grant = Number(output !== undefined && "granted" in output ? output.granted : 0)
   const reason = output !== undefined && "denied" in output ? output.reason : undefined
-  return [intent({
-    key: `bdec:${request}`,
-    invocation,
-    input: { request, turn, grant, reason, state: call.state },
-    events: (current, at) => Number.isSafeInteger(current.grant) && current.grant > 0
-      ? [budgetGranted({ amount: current.grant, callId: current.request, turn: current.turn, at })]
-      : [budgetDenied({
-          reason: typeof current.reason === "string"
-            ? current.reason
-            : current.state.status === "failed"
-              ? current.state.error
-              : "the budget authority denied the request",
-          callId: current.request,
-          turn: current.turn,
-          at
-        })]
-  })]
+  return [context.intent("decide", (at) => Number.isSafeInteger(grant) && grant > 0
+    ? budgetGranted({ amount: grant, callId: request, turn, at })
+    : budgetDenied({
+        reason: typeof reason === "string" ? reason : call.state.status === "failed"
+          ? call.state.error : "the budget authority denied the request",
+        callId: request, turn, at
+      }), { invocation })]
 }
 
 const usedBy = (trajectory: ReadonlyArray<Event>, toolNames: ReadonlySet<string>): number =>
@@ -302,7 +278,7 @@ const guardedTool = <R>(
         error: "Tool budget reached. Do not call this tool again. Answer now with your best result from what you have already gathered."
       })] as ReadonlyArray<Transition<never, R>>
     }
-    const wall = wallFor(trajectory, policy, usedBy(trajectory, toolNames))
+    const wall = wallFor(trajectory, policy, usedBy(trajectory, toolNames), call.context)
     if (wall !== undefined) return [wall]
     return tool.serve(call, log, answer)
   }
@@ -323,7 +299,7 @@ export const budget = <
   const childMachine = combined.machine
   const common = {
     name: "budget",
-    ...(combined.keys === undefined ? {} : { keys: combined.keys })
+    children: [combined]
   }
   const derived = (children: ReturnType<typeof childMachine.output>, trajectory: ReadonlyArray<Event>, log: ReadonlyArray<Event>) => {
     const spent = budgetSpent(trajectory)

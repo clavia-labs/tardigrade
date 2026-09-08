@@ -33,7 +33,7 @@ export interface ModelResolution {
   readonly models?: ModelPolicy
 }
 
-// Infer provides one model action for one inference request. key is the ModelCalled attempt identity and may be forwarded as a provider idempotency key. Action call ids must be fresh across turns because recorded tool pairs deduplicate by call id.
+// Infer provides one model action per request; key identifies its ModelCalled attempt. Reused call IDs within a turn fail before dispatch (index.test.ts, "a turn rejects reused provider IDs before dispatch, including after resume").
 export class Infer extends Context.Service<
   Infer,
   {

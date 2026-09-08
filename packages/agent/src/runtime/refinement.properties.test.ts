@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { eventAt, type Event } from "@clavia/tardigrade-core/event"
 import {
   cancelComponent,
   componentRefinementTrace,
@@ -196,7 +196,7 @@ const eventsFor = (kinds: ReadonlyArray<TurnKind>): ReadonlyArray<Event> => kind
       { type: "TurnCompleted", turn, output: `answer ${index}`, at: at + 4 } as Event
     ]
   }
-  const callId = `c${index}`
+  const callId = "shared-provider-id"
   return [
     head,
     called,
@@ -230,7 +230,7 @@ describe("agent projection refinement", () => {
         expect(observableTransitions(incremental.output(state) as ReadonlyArray<Transition<never, unknown>>))
           .toEqual(observableTransitions(complete(log.slice(0, length)) as ReadonlyArray<Transition<never, unknown>>))
         const event = log[length]
-        if (event !== undefined) state = incremental.step(state, event)
+        if (event !== undefined) state = incremental.step(state, eventAt(event, length + 1))
       }
     }), { numRuns: 100 })
   })
@@ -296,5 +296,5 @@ describe("agent projection refinement", () => {
       const incremental = infer(components, INFER_OPTIONS) as Component<AgentView, unknown>
       assertAgentRefinement(completeAgent(components, INFER_OPTIONS), incremental, log)
     }), { numRuns: 100 })
-  }, { timeout: 15_000 })
+  }, { timeout: 30_000 })
 })

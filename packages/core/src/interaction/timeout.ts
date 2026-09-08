@@ -1,6 +1,7 @@
 import { type AlarmFired, type CallTimedOut } from "./events"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { intent } from "@clavia/tardigrade-core/intent"
+import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
+import { bindTransitionContext } from "../transition/transition"
+import type { Intent } from "@clavia/tardigrade-core/intent"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../log/index"
@@ -47,12 +48,15 @@ const terminalCalls = (log: ReadonlyArray<Event>): ReadonlySet<string> => new Se
   return reference === undefined ? [] : [invocationCoordinateKey(reference)]
 }))
 
-const dispatchesOf = (log: ReadonlyArray<Event>): ReadonlyArray<RecordedDispatch> => log.flatMap((event) => {
+interface OwnedDispatch extends RecordedDispatch { readonly owner: Event }
+
+const dispatchesOf = (log: ReadonlyArray<Event>): ReadonlyArray<OwnedDispatch> => log.flatMap((event) => {
   const dispatch = recordedDispatchOf(event)
-  return dispatch === undefined ? [] : [dispatch]
+  return dispatch === undefined ? [] : [{ ...dispatch, owner: event }]
 })
 
 interface InvocationDeadline {
+  readonly owner: Event
   readonly invocation: InvocationRef
   readonly deadlineAt: number
 }
@@ -66,7 +70,7 @@ const invocationDeadlinesOf = (log: ReadonlyArray<Event>): ReadonlyArray<Invocat
     const key = invocationKey(invocation)
     if (seen.has(key)) return []
     seen.add(key)
-    return [{ invocation, deadlineAt: context.deadlineAt }]
+    return [{ owner: event, invocation, deadlineAt: context.deadlineAt }]
   })
 }
 
@@ -116,31 +120,16 @@ const alarmFor = (alarms: ReadonlyArray<AlarmFired>, deadlineAt: number): AlarmF
   return earliest
 }
 
-const timeoutTransition = (dispatch: RecordedDispatch, at: number) => intent({
-  key: terminalStorageKey(dispatch.terminal),
-  input: { dispatch, at },
-  events: ({ dispatch: current, at: firedAt }) => [{
-    type: "CallTimedOut",
-    ...current.terminal,
-    at: firedAt
-  } satisfies CallTimedOut]
-})
+const timeoutTransition = (dispatch: OwnedDispatch, at: number) =>
+  bindTransitionContext(dispatch.owner, "actor.deadlines").intent("timeout", {
+    type: "CallTimedOut", ...dispatch.terminal, at
+  } satisfies CallTimedOut, { invocation: null })
 
-const deadlineCancellationTransition = (invocation: InvocationRef, deadlineAt: number) => intent({
-  key: `cx:${invocationKey(invocation)}`,
-  input: {
+const deadlineCancellationTransition = ({ owner, invocation, deadlineAt }: InvocationDeadline) =>
+  bindTransitionContext(owner, "actor.deadlines").intent("cancel", (at) => cancellationRequested({
     request: `deadline/${invocation.method}/${invocation.id}/${invocation.epoch}/${deadlineAt}`,
-    invocation,
-    deadlineAt
-  },
-  events: (current, at) => [cancellationRequested({
-    request: current.request,
-    invocation: current.invocation,
-    cause: "deadline",
-    deadlineAt: current.deadlineAt,
-    at
-  })]
-})
+    invocation, cause: "deadline", deadlineAt, at
+  }), { invocation: null })
 
 // deadlineCancellationsAt selects crossed deadlines for running cancellable invocations (timeout.test.ts, "cancellation selection projects one cancellation from an eligible invocation").
 const deadlineCancellationsAt = (
@@ -149,7 +138,7 @@ const deadlineCancellationsAt = (
   at: number
 ): ReadonlyArray<InvocationDeadline> => {
   const views = new Map<string, ActorMethodView<unknown>>()
-  return invocationDeadlinesOf(log).flatMap(({ invocation, deadlineAt }) => {
+  return invocationDeadlinesOf(log).flatMap(({ owner, invocation, deadlineAt }) => {
     if (deadlineAt > at) return []
     const method = methods[invocation.method]
     if (method === undefined || method.cancellation === undefined || invocationSettled(log, invocation)) return []
@@ -158,7 +147,7 @@ const deadlineCancellationsAt = (
       view = replayProjection(method.projection, log)
       views.set(invocation.method, view)
     }
-    return cancellationStateOf(method, view, invocation) !== "running" ? [] : [{ invocation, deadlineAt }]
+    return cancellationStateOf(method, view, invocation) !== "running" ? [] : [{ owner, invocation, deadlineAt }]
   })
 }
 
@@ -179,7 +168,8 @@ export const deadlineCancellationEventsAt = (
   )
 
 // methodTimeoutDerivation turns alarm facts into method terminals without reading a clock.
-export const methodTimeoutDerivation: CompleteTransitionDerivation = (log) => {
+export const methodTimeoutDerivation: CompleteTransitionDerivation = (events) => {
+  const log = events.map((event, index) => eventAt(event, eventPositionOf(event) ?? index + 1))
   const terminal = terminalCalls(log)
   const alarms = alarmsOf(log)
   return dispatchesOf(log).flatMap((dispatch) => {
@@ -190,14 +180,15 @@ export const methodTimeoutDerivation: CompleteTransitionDerivation = (log) => {
 }
 
 // methodDeadlineCancellationDerivation repairs missing cancellations from recorded alarms (timeout.test.ts, "legacy recovery derives an alarm's missing cancellation exactly once").
-export const methodDeadlineCancellationDerivation = (methods: ActorMethods): CompleteTransitionDerivation => (log) => {
+export const methodDeadlineCancellationDerivation = (methods: ActorMethods): CompleteTransitionDerivation => (events) => {
+  const log = events.map((event, index) => eventAt(event, eventPositionOf(event) ?? index + 1))
   const latestAlarmAt = alarmsOf(log).reduce<number | undefined>(
     (latest, alarm) => latest === undefined ? alarm.at : Math.max(latest, alarm.at),
     undefined
   )
   if (latestAlarmAt === undefined) return []
   return deadlineCancellationsAt(log, methods, latestAlarmAt)
-    .map(({ invocation, deadlineAt }) => deadlineCancellationTransition(invocation, deadlineAt))
+    .map(deadlineCancellationTransition)
 }
 
 /** @deprecated Use methodTimeoutDerivation. This compatibility name describes a complete-history transition derivation. */
@@ -208,7 +199,7 @@ export const methodDeadlineCancellationReactor = (methods: ActorMethods): Comple
   methodDeadlineCancellationDerivation(methods)
 
 export interface MethodTimeoutProjectionState {
-  readonly dispatches: ReadonlyMap<string, RecordedDispatch>
+  readonly dispatches: ReadonlyMap<string, OwnedDispatch>
   readonly terminalCalls: ReadonlySet<string>
   readonly alarms: ReadonlyArray<AlarmFired>
   readonly deadlines: ReadonlyMap<string, InvocationDeadline>
@@ -268,8 +259,8 @@ export const methodTimeoutTransitions = (
   methods: ActorMethods,
   methodStates: ReadonlyMap<string, unknown>,
   state: MethodTimeoutProjectionState
-): ReadonlyArray<ReturnType<typeof intent>> => {
-  const transitions = [] as Array<ReturnType<typeof intent>>
+): ReadonlyArray<Intent<never>> => {
+  const transitions = [] as Array<Intent<never>>
   for (const dispatch of state.dispatches.values()) {
     if (state.terminalCalls.has(invocationCoordinateKey(dispatch.reference))) continue
     const alarm = alarmFor(state.alarms, dispatch.terminal.deadlineAt)
@@ -284,7 +275,7 @@ export const methodTimeoutTransitions = (
     if (state.settledInvocations.has(invocationKey(invocation)) || current?.status !== "pending") continue
     const alarm = alarmFor(state.alarms, deadline.deadlineAt)
     if (alarm === undefined || cancellationStateOf(method, view, invocation) !== "running") continue
-    transitions.push(deadlineCancellationTransition(invocation, deadline.deadlineAt))
+    transitions.push(deadlineCancellationTransition(deadline))
   }
   return transitions
 }
@@ -296,8 +287,7 @@ export const methodTimeoutComponent = (methods: ActorMethods): Component<undefin
     readonly timeout: MethodTimeoutProjectionState
   }
   return component<State, undefined>({
-    name: "actor.method-timeouts",
-    keys: methodTimeoutKeys,
+    name: "actor.deadlines",
     initial: () => ({
       methods: initialMethodStates(methods),
       timeout: initialMethodTimeoutState()

@@ -1,3 +1,4 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
@@ -7,7 +8,7 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { Router } from "@clavia/tardigrade-core/transport/router"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { Self, actorRuntimeOf, effect, settleActor } from "@clavia/tardigrade-core/runtime"
+import { Self, actorRuntimeOf, settleActor } from "@clavia/tardigrade-core/runtime"
 import { actor, composeComponents, deriveComponent, legacyComponent } from "@clavia/tardigrade-core/actor"
 import {
   CODE_VIEW_ALGEBRA,
@@ -387,7 +388,7 @@ describe("infer component", () => {
   })
 
   test("two components declaring one tool name collide at construction", () => {
-    expect(() => assembled(infer([echoTable, tool([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }]), nativeOutput], TEST_MODEL))).toThrow(
+    expect(() => assembled(infer([echoTable, tool([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }], "", { name: "other-tools" }), nativeOutput], TEST_MODEL))).toThrow(
       'tool "echo" declared more than once'
     )
   })
@@ -498,12 +499,12 @@ describe("infer component", () => {
   test("system contributes static or projected instructions as a component", () => {
     const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }]
     const fixed = system("review the repository")
-    const projected = system((events) => `recorded events: ${events.length}`)
+    const projected = system((events) => `recorded events: ${events.length}`, { name: "system.history" })
     const incremental = system({
       initial: () => 0,
       step: (count, event) => count + (event.type === "PackageInstalled" ? 1 : 0),
       output: (count) => `installed packages: ${count}`
-    })
+    }, { name: "system.packages" })
     const render = renderOf([
       fixed,
       projected,
@@ -594,28 +595,20 @@ describe("infer component", () => {
     })
     const upkeep: CodeComponent = legacyComponent({
       name: "upkeep",
-      keys: {
-        prefixes: ["up:"],
-        keyOf: (event) => event.type === "CodeUpkeepCompleted" ? `up:${String(event.id)}` : undefined
-      },
-      derive: () => ({
+      derive: (events) => ({
         view: { packages: [] },
-        transitions: [
-          effect({
-            key: "up:daily",
-            input: undefined,
-            act: () => Effect.succeed([{ type: "CodeUpkeepCompleted", id: "daily" }])
-          })
-        ]
+        transitions: events.filter((event) => event.type === "DailyRequested").map((event) =>
+          bindTransitionContext(event, "upkeep").effect("refresh", {
+            input: undefined, act: () => Effect.succeed({ type: "CodeUpkeepCompleted", id: "daily" })
+          }))
       })
     })
     const nested = composeComponents("knowledge", CODE_VIEW_ALGEBRA, [notes, upkeep, search])
     const component = codeMode([nested])
-    const derived = deriveComponent(component, [])
+    const derived = deriveComponent(component, [{ type: "DailyRequested" }])
 
     expect(derived.view.system[0]).toContain("notes: the team's notes\nsearch: the team's index")
-    expect(derived.transitions.map((transition) => transition.key)).toEqual(["up:daily"])
-    expect(component.keys?.keyOf({ type: "CodeUpkeepCompleted", id: "daily" })).toBe("up:daily")
+    expect(derived.transitions.map((transition) => transition.key)).toEqual([JSON.stringify([1, "upkeep", "refresh"])])
   })
 
   test("codeMode rejects duplicate package names inside nested code components", () => {

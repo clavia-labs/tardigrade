@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import fc from "fast-check"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { intent } from "@clavia/tardigrade-core/intent"
+import { bindTransitionContext, type TransitionContext } from "../transition/transition"
 import { enabled } from "../runtime"
 import { actor } from "../actor"
 import {
@@ -14,7 +15,7 @@ import {
   type TransitionReconciler,
   type ViewAlgebra
 } from "./index"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { eventAt, type Event } from "@clavia/tardigrade-core/event"
 
 interface Facts {
   readonly names: ReadonlyArray<string>
@@ -32,25 +33,15 @@ const facts: ViewAlgebra<Facts> = {
 
 const leafComponent = (leaf: Leaf): Component<Facts> => {
   const name = `leaf-${leaf.id}`
-  const key = `${name}:work`
   return legacyComponent({
     name,
-    keys: {
-      prefixes: [`${name}:`],
-      keyOf: (event) =>
-        event.type === "Committed" && Number((event as { owner?: unknown }).owner) === leaf.id
-          ? key
-          : undefined
-    },
     derive: (log) => {
-      const visible = log.some(
-        (event) => event.type === "Triggered" && String((event as { trigger?: unknown }).trigger) === leaf.trigger
-      )
+      const owner = log.find((event) => event.type === "Triggered" && String(event.trigger) === leaf.trigger)
       return {
-        view: { names: visible ? [name] : [] },
-        transitions: visible
-          ? [effect({ key, input: { owner: leaf.id }, act: () => Effect.succeed([]) })]
-          : []
+        view: { names: owner === undefined ? [] : [name] },
+        transitions: owner === undefined ? [] : [bindTransitionContext(owner, name).effect("commit", {
+          input: { owner: leaf.id }, act: (input) => Effect.succeed({ type: "Committed", ...input })
+        })]
       }
     }
   })
@@ -58,24 +49,16 @@ const leafComponent = (leaf: Leaf): Component<Facts> => {
 
 const incrementalLeafComponent = (leaf: Leaf): Component<Facts> => {
   const name = `leaf-${leaf.id}`
-  const key = `${name}:work`
   return component({
     name,
-    keys: {
-      prefixes: [`${name}:`],
-      keyOf: (event) =>
-        event.type === "Committed" && Number((event as { owner?: unknown }).owner) === leaf.id
-          ? key
-          : undefined
-    },
-    initial: () => false,
-    step: (visible: boolean, event: Event) => visible ||
-      event.type === "Triggered" && String((event as { trigger?: unknown }).trigger) === leaf.trigger,
-    output: (visible: boolean) => ({
-      view: { names: visible ? [name] : [] },
-      transitions: visible
-        ? [effect({ key, input: { owner: leaf.id }, act: () => Effect.succeed([]) })]
-        : []
+    initial: (): TransitionContext | undefined => undefined,
+    step: (owner, event, ctx) => owner ??
+      (event.type === "Triggered" && String(event.trigger) === leaf.trigger ? ctx : undefined),
+    output: (owner) => ({
+      view: { names: owner === undefined ? [] : [name] },
+      transitions: owner === undefined ? [] : [owner.effect("commit", {
+        input: { owner: leaf.id }, act: (input) => Effect.succeed({ type: "Committed", ...input })
+      })]
     })
   })
 }
@@ -142,8 +125,8 @@ describe("recursive component composition", () => {
 
           const event = log[length]
           if (event !== undefined) {
-            childStates = machines.map((machine, index) => machine.step(childStates[index]!, event))
-            composedState = composed.step(composedState, event)
+            childStates = machines.map((machine, index) => machine.step(childStates[index]!, eventAt(event, length + 1)))
+            composedState = composed.step(composedState, eventAt(event, length + 1))
           }
         }
       }),
@@ -209,8 +192,8 @@ describe("recursive component composition", () => {
             }
             const event = log[length]
             if (event !== undefined) {
-              flatState = flatProjection.step(flatState, event)
-              nestedState = nestedProjection.step(nestedState, event)
+              flatState = flatProjection.step(flatState, eventAt(event, length + 1))
+              nestedState = nestedProjection.step(nestedState, eventAt(event, length + 1))
             }
           }
         }

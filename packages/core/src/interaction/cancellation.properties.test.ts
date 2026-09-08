@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Schema } from "effect"
 import fc from "fast-check"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { eventAt, type Event } from "@clavia/tardigrade-core/event"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { intent } from "@clavia/tardigrade-core/intent"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
@@ -220,14 +220,14 @@ describe("cancellation properties", () => {
     for (const current of cases) {
       const methods = { message: current.method }
       const control = actorCancellationProjection(methods, [], terminalKeyOf)!
-      const controlState = [head, cancellation].reduce(control.step, control.initial())
+      const controlState = [head, cancellation].map((event, index) => eventAt(event, index + 1)).reduce(control.step, control.initial())
       expect(control.output(controlState).residuals?.map((transition) => transition.key), current.name)
         .toEqual(current.cancellable
-          ? [`cancelled:${JSON.stringify([parent.method, parent.id, parent.epoch])}`]
+          ? [JSON.stringify([2, "actor.cancellations", "finish"])]
           : undefined)
-      const linkedState = [head, linked, cancellation].reduce(control.step, control.initial())
+      const linkedState = [head, linked, cancellation].map((event, index) => eventAt(event, index + 1)).reduce(control.step, control.initial())
       expect(control.output(linkedState).residuals?.map((transition) => transition.key), current.name)
-        .toEqual(current.cancellable ? ['cxsend:cancel:["x1","worker:main:child","inspect","m1",0]'] : undefined)
+        .toEqual(current.cancellable ? [JSON.stringify([2, "actor.cancellations", "cancel"])] : undefined)
 
       const cancelMethod = cancellationMethodFor(methods)
       const cancelInvocation = { method: "$cancel", id: "x1", epoch: 0 }
@@ -243,12 +243,13 @@ describe("cancellation properties", () => {
 
       let methodStates = initialMethodStates(methods)
       let timeoutState = initialMethodTimeoutState()
-      for (const event of [head, alarm]) {
+      for (const [index, raw] of [head, alarm].entries()) {
+        const event = eventAt(raw, index + 1)
         methodStates = reduceMethodStates(methods, methodStates, event)
         timeoutState = reduceMethodTimeoutState(timeoutState, event)
       }
       expect(methodTimeoutTransitions(methods, methodStates, timeoutState).map((transition) => transition.key), current.name)
-        .toEqual(current.cancellable ? [`cx:${JSON.stringify([parent.method, parent.id, parent.epoch])}`] : [])
+        .toEqual(current.cancellable ? [JSON.stringify([1, "actor.deadlines", "cancel"])] : [])
     }
   })
 
@@ -321,7 +322,7 @@ describe("cancellation properties", () => {
     ]
     const transitions = cancellationTransitionsOf(events, methods, [], terminalKeyOf)
     expect(transitions?.map((transition) => transition.key)).toEqual([
-      `cancelled:${JSON.stringify([parent.method, parent.id, parent.epoch])}`
+      JSON.stringify([4, "actor.cancellations", "finish"])
     ])
   })
 
@@ -373,7 +374,7 @@ describe("cancellation properties", () => {
       ...initial,
       { type: "CallTerminated", invocation: parent, at: 3 } as Event
     ], methods, [component], terminalKeyOf)?.map((transition) => transition.key)).toEqual([
-      `cancelled:${JSON.stringify([parent.method, parent.id, parent.epoch])}`
+      JSON.stringify([2, "actor.cancellations", "finish"])
     ])
   })
 
@@ -398,7 +399,7 @@ describe("cancellation properties", () => {
     const childRequest = `cancel:${JSON.stringify(["x1", "worker:main:child", child.method, child.id, child.epoch])}`
 
     expect(cancellationTransitionsOf(initial, methods, [], terminalKeyOf)
-      ?.map((transition) => transition.key)).toEqual([`cxsend:${childRequest}`])
+      ?.map((transition) => transition.key)).toEqual([JSON.stringify([2, "actor.cancellations", "cancel"])])
     const projection = actorCancellationProjection(methods, [], terminalKeyOf)!
     for (const mismatch of [
       { from: "worker:main:other-child", epoch: 0 },
@@ -409,10 +410,10 @@ describe("cancellation properties", () => {
         status: "completed", output: { cancelled: true }, ...mismatch, at: 5
       }]
       expect(cancellationTransitionsOf(events, methods, [], terminalKeyOf)?.map((transition) => transition.key))
-        .toEqual([`cxsend:${childRequest}`])
-      const state = events.reduce(projection.step, projection.initial())
+        .toEqual([JSON.stringify([2, "actor.cancellations", "cancel"])])
+      const state = events.map((event, index) => eventAt(event, index + 1)).reduce(projection.step, projection.initial())
       expect(projection.output(state).residuals?.map((transition) => transition.key))
-        .toEqual([`cxsend:${childRequest}`])
+        .toEqual([JSON.stringify([2, "actor.cancellations", "cancel"])])
     }
     expect(cancellationTransitionsOf([
       ...initial,
@@ -427,7 +428,7 @@ describe("cancellation properties", () => {
         at: 5
       } as Event
     ], methods, [], terminalKeyOf)?.map((transition) => transition.key)).toEqual([
-      `cancelled:${JSON.stringify([parent.method, parent.id, parent.epoch])}`
+      JSON.stringify([4, "actor.cancellations", "finish"])
     ])
   })
 })

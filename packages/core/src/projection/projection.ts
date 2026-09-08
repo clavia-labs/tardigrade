@@ -1,4 +1,4 @@
-import type { Event } from "@clavia/tardigrade-core/event"
+import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
 import type { Machine } from "@clavia/tardigrade-core/machine"
 
 /**
@@ -26,7 +26,10 @@ export type Projection<State, Value> = Machine<Event, State, Value>
 export const replayProjection = <State, Value>(
   projection: Projection<State, Value>,
   events: ReadonlyArray<Event>
-): Value => projection.output(events.reduce(projection.step, projection.initial()))
+): Value => projection.output(events.reduce(
+  (state, event, index) => projection.step(state, eventAt(event, eventPositionOf(event) ?? index + 1)),
+  projection.initial()
+))
 
 // MaterializedProjectionState pairs projection state with the value derived from that state.
 export interface MaterializedProjectionState<State, Value> {

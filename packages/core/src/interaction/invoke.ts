@@ -5,6 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { intent } from "@clavia/tardigrade-core/intent"
 import { Self } from "../runtime/context"
 import type { Transition } from "@clavia/tardigrade-core/transition"
+import type { TransitionContext } from "../transition/transition"
 import type { KeyFragment } from "../log/index"
 import { formatThreadAddress } from "../transport/endpoint"
 import { Router } from "../transport/router"
@@ -109,7 +110,8 @@ export const actorCall = <
   Name extends MethodName<Methods>
 >(
   log: ReadonlyArray<Event>,
-  request: ActorCallOptions<Methods, Name>
+  request: ActorCallOptions<Methods, Name>,
+  transitionScope?: { readonly context: TransitionContext; readonly tag: string }
 ): ActorCallFor<Methods[Name], ActorMethodOutput<Methods[Name]>, Router | Self> => {
   const parent = request.parent === undefined ? undefined : decodeInvocationCoordinate(request.parent)
   const options = parent === undefined ? { ...request, id: request.id! } : {
@@ -149,6 +151,16 @@ export const actorCall = <
     call: Omit<ActorCall<ActorMethodOutput<Methods[Name]>, Router | Self>, "invocation" | "reference">
   ): ActorCallFor<Methods[Name], ActorMethodOutput<Methods[Name]>, Router | Self> => ({
     ...call,
+    transitions: transitionScope === undefined ? call.transitions : call.transitions.map((transition) => {
+      const tag = `${transitionScope.tag}.${transition.kind === "intent" ? "plan" : "send"}`
+      return transition.kind === "intent"
+        ? transitionScope.context.intent(tag, (at) => transition.events(transition.input, at), (transition.invocation === undefined ? {} : { invocation: transition.invocation }))
+        : transitionScope.context.effect(tag, {
+            input: transition.input,
+            ...(transition.invocation === undefined ? {} : { invocation: transition.invocation }),
+            act: (input, { signal }) => transition.act(input, signal)
+          })
+    }),
     invocation,
     reference,
     ...(options.context === undefined ? {} : { context: options.context }),
@@ -159,7 +171,7 @@ export const actorCall = <
             ...cancellation,
             target: options.target,
             invocation
-          })
+          }, transitionScope === undefined ? undefined : { context: transitionScope.context, tag: `${transitionScope.tag}.cancel` })
         })
   }) as ActorCallFor<Methods[Name], ActorMethodOutput<Methods[Name]>, Router | Self>
   const response = invocationTerminalOf(log, reference)
@@ -306,7 +318,8 @@ export const actorCall = <
 // cancelInvocation projects the durable core control call paired with one target invocation.
 export const cancelInvocation = <Methods extends ActorMethods>(
   log: ReadonlyArray<Event>,
-  options: CancelInvocationOptions<Methods>
+  options: CancelInvocationOptions<Methods>,
+  transitionScope?: { readonly context: TransitionContext; readonly tag: string }
 ): ActorCall<CancellationResult, Router | Self> => {
   const method = cancellationMethodFor(targetMethods(options.target))
   return actorCall(log, {
@@ -321,5 +334,5 @@ export const cancelInvocation = <Methods extends ActorMethods>(
       ...(options.reason === undefined ? {} : { reason: options.reason })
     },
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })
-  })
+  }, transitionScope)
 }

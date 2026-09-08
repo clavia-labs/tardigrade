@@ -1,8 +1,8 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { Context, Effect, Encoding, Layer, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 import { allocateRootThread } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { effect } from "@clavia/tardigrade-core/effect"
 import {
   ActorDO,
   ThreadDO,
@@ -109,7 +109,7 @@ const encryptedEventCodec = (thread: string, key: Promise<CryptoKey>): Cloudflar
 })
 
 interface EchoState {
-  readonly requests: ReadonlyMap<string, string>
+  readonly requests: ReadonlyMap<string, Event>
   readonly completions: ReadonlyMap<string, string>
 }
 
@@ -119,8 +119,8 @@ const stepEchoState = (state: EchoState, event: Event): EchoState => {
   const value = event as { readonly id?: unknown; readonly text?: unknown }
   const id = String(value.id ?? "")
   if (event.type === "EchoRequested") {
-    if (state.requests.get(id) === String(value.text ?? "")) return state
-    return { ...state, requests: new Map(state.requests).set(id, String(value.text ?? "")) }
+    if (state.requests.get(id)?.text === String(value.text ?? "")) return state
+    return { ...state, requests: new Map(state.requests).set(id, event) }
   }
   if (event.type === "EchoCompleted") {
     if (state.completions.get(id) === String(value.text ?? "")) return state
@@ -152,26 +152,15 @@ const echo = actorMethod({
 const { worker } = createWorker(actor({
   name: "echo",
   methods: { echo },
-  components: [component({
+  components: [{ ...component({
     name: "echo",
-    keys: {
-      prefixes: ["echo-request:", "echo-complete:", "indexed-record:"],
-      keyOf: (event) => {
-        const id = String((event as { readonly id?: unknown }).id)
-        if (event.type === "EchoRequested") return `echo-request:${id}`
-        if (event.type === "EchoCompleted") return `echo-complete:${id}`
-        if (event.type === "IndexedRecord") return `indexed-record:${String((event as { readonly secretId?: unknown }).secretId)}`
-        return undefined
-      }
-    },
     initial: initialEchoState,
     step: stepEchoState,
     output: (state) => ({
       view: undefined,
-      transitions: [...state.requests].flatMap(([id, text]) => state.completions.has(id) ? [] : [effect({
-        key: `echo-complete:${id}`,
+      transitions: [...state.requests].flatMap(([id, event]) => state.completions.has(id) ? [] : [bindTransitionContext(event, "echo").effect("echo", {
         invocation: { method: "echo", id, epoch: 0 },
-        input: { id, text },
+        input: { id, text: String(event.text ?? "") },
         act: (input) => Effect.gen(function* () {
           if (input.text === "allocate-root") {
             const root = yield* allocateRootThread({ name: "echo", methods: { echo } }, {
@@ -187,7 +176,7 @@ const { worker } = createWorker(actor({
         }).pipe(Effect.orDie)
       })])
     })
-  })]
+  }), keys: { prefixes: ["indexed-record:"], keyOf: (event: Event) => event.type === "IndexedRecord" ? `indexed-record:${String(event.secretId)}` : undefined } }]
 }), {
   layersFor: ({ env, thread }: CloudflareWorkerLayerContext<FixtureEnv>) =>
     Layer.succeed(ThreadApplication, { prefix: env.APPLICATION_PREFIX, thread, calls: 0 }),

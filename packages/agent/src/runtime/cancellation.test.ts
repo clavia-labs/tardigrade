@@ -1,3 +1,4 @@
+import { eventAt } from "@clavia/tardigrade-core/event"
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { cancelComponent } from "@clavia/tardigrade-core/component"
@@ -18,7 +19,7 @@ describe("tool cancellation", () => {
       reason: "operator stopped it"
     })
 
-    expect(transitions.map((transition) => transition.key)).toEqual(["tr:tool-1", "tr:tool-2"])
+    expect(transitions.map((transition) => transition.key)).toEqual([JSON.stringify([1, "agent.tools", "answer"]), JSON.stringify([2, "agent.tools", "answer"])])
   })
 
   test("the incremental tool projection derives the same cancellation obligations", () => {
@@ -33,7 +34,7 @@ describe("tool cancellation", () => {
       { type: "ToolCalled", callId: "tool-1", name: "write", arguments: {}, turn: "m1", at: 1 },
       { type: "ToolCalled", callId: "tool-2", name: "read", arguments: {}, turn: "m1", at: 2 }
     ]
-    const state = events.reduce(projection.step, projection.initial())
+    const state = events.map((event, index) => eventAt(event, index + 1)).reduce(projection.step, projection.initial())
     const cancellation = { request: "x1", invocation, cause: "requested" as const }
 
     expect(projection.cancel?.(state, cancellation).map((transition) => transition.key))
@@ -74,4 +75,20 @@ describe("tool cancellation", () => {
     expect(reactor(log)).toEqual([])
     expect(served).toBe(false)
   })
+})
+
+test("a return or cancellation resolves only its owning pending call", () => {
+  const child = { initial: () => undefined, step: (state: unknown) => state, output: () => ({ view: undefined, transitions: [] }) }
+  const tools = incrementalToolsComponentFrom(undefined, child, () => [])
+  const events: ReadonlyArray<Event> = [
+    { type: "ToolCalled", callId: "7", name: "missing", arguments: {}, turn: "first" },
+    { type: "ToolCalled", callId: "7", name: "missing", arguments: {}, turn: "second" }
+  ]
+  const cancellation = { request: "cancel", invocation: { method: "message", id: "first", epoch: 0 }, cause: "requested" as const }
+  expect(cancelComponent(tools, events, cancellation).map((transition) => transition.key))
+    .toEqual([JSON.stringify([1, "agent.tools", "answer"])])
+  const completed = [...events, { type: "ToolReturned", callId: "7", turn: "first", result: 1 }]
+  const state = completed.map((event, index) => eventAt(event, index + 1)).reduce(tools.machine.step, tools.machine.initial())
+  expect(tools.machine.output(state).transitions.map((transition) => transition.key))
+    .toEqual([JSON.stringify([2, "agent.tools", "answer"])])
 })

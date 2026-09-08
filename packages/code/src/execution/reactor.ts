@@ -1,8 +1,8 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { Clock, Deferred, Effect, Fiber } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { effect } from "@clavia/tardigrade-core/effect"
 import { transitionProjection, type TransitionProjection } from "@clavia/tardigrade-core/transition"
 import { annotationsOf, type Package, type PackageRequirements } from "../package/definition"
 import { checkInput, renderSignature } from "./contract"
@@ -375,11 +375,7 @@ export interface CodeProjectionState {
   readonly replies: ReadonlySet<string>
 }
 
-// codeReactorFor derives the executable head as one transition: the settle is the record
-// (`cs:<execId>` through codeKeys), one attempt is the act. `workOwed` is the readiness gate:
-// a blocked head (open BlockedOn calls, no awaited reply home) derives nothing, so the thread
-// rests honestly and a landing reply re-derives it. An attempt that parks mid-act returns
-// BlockedOn evidence instead of the settle; the reconciler reads that as blocked, never wedged.
+// codeReactorFor owns execution at its CodeDispatched event and completes on CodeSettled (reactor.test.ts). A parked attempt appends BlockedOn evidence and leaves execution pending until a reply arrives.
 //
 // The packages arrive as values, and what they need arrives with them: the reactor's environment
 // is the spill store plus the union of the packages' own requirements, so a thread assembled with a
@@ -487,28 +483,26 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
         break
       }
       if (selected === undefined) return []
-      const owed = { execId: selected.execId }
-      const dispatch = selected.dispatch
-    const d = dispatch as { code?: unknown; at?: unknown }
-    const turn = turnOf(dispatch)
-    const epoch = eventEpochOf(dispatch)
-      return [
-      effect<
-        { execId: string; code: string; turn: string | undefined; epoch: number; at: number | undefined },
-        KeyValueStore.KeyValueStore | R
-      >({
-        key: `cs:${owed.execId}`,
+      const { execId, dispatch } = selected
+      const turn = turnOf(dispatch)
+      const epoch = eventEpochOf(dispatch)
+      return [bindTransitionContext(dispatch, "code").effect("execute", {
         ...(turn === undefined ? {} : { invocation: { method: "message", id: turn, epoch } }),
         input: {
-          execId: owed.execId,
-          code: String(d.code ?? ""),
+          execId,
+          code: String(dispatch.code ?? ""),
           turn,
           epoch,
-          at: typeof d.at === "number" ? d.at : undefined
+          at: typeof dispatch.at === "number" ? dispatch.at : undefined
         },
-        act: (input) => executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.epoch, input.at)
-      })
-      ]
+        act: (input) => Effect.gen(function* () {
+          const result = yield* executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.epoch, input.at)
+          if (result.some((event) => event.type === "CodeSettled")) return result
+          const log = yield* EventLog
+          if (result.length > 0) yield* log.append(result)
+          return []
+        })
+      })]
     }
   })
 }

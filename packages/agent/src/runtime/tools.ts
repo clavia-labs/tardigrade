@@ -1,4 +1,6 @@
-import { intent, type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
+import { bindTransitionContext, type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
+import { type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import { toolReturned } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -18,6 +20,7 @@ import {
 // PendingCall identifies the head unanswered ToolCalled event.
 export interface PendingCall {
   readonly callId: string
+  readonly context: TransitionContext
   readonly name: string
   readonly arguments: unknown
   readonly turn?: string
@@ -35,16 +38,20 @@ export type Serve<R = never> = (
   answer: Answer
 ) => ReadonlyArray<Transition<never, R>> | undefined
 
+const callKey = (event: Event): string => JSON.stringify([event.turn ?? null, event.callId])
+const positioned = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => log.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
+const contextFor = (event: Event): TransitionContext => bindTransitionContext(event, "agent.tools")
+
 const str = (v: unknown): string => String(v ?? "")
 
 // pendingCall returns the earliest unanswered ToolCalled event by time and call ID.
 const pendingCall = (log: ReadonlyArray<Event>): PendingCall | undefined => {
   const answered = new Set(
-    log.filter((e) => e.type === "ToolReturned").map((e) => str((e as { callId?: unknown }).callId))
+    log.filter((e) => e.type === "ToolReturned").map(callKey)
   )
   const head = log
     .filter((e) => {
-      if (e.type !== "ToolCalled" || answered.has(str((e as { callId?: unknown }).callId))) return false
+      if (e.type !== "ToolCalled" || answered.has(callKey(e))) return false
       const turn = (e as { turn?: unknown }).turn
       return turn === undefined || turnTerminalOf(log, String(turn)) === undefined
     })
@@ -53,10 +60,11 @@ const pendingCall = (log: ReadonlyArray<Event>): PendingCall | undefined => {
       const ai = str((a as { callId?: unknown }).callId)
       const bi = str((b as { callId?: unknown }).callId)
       return d !== 0 ? d : ai < bi ? -1 : 1
-    })[0] as { callId?: unknown; name?: unknown; arguments?: unknown; turn?: unknown; epoch?: unknown } | undefined
+    })[0] as Event | undefined
   if (head === undefined) return undefined
   return {
     callId: str(head.callId),
+    context: contextFor(head),
     name: str(head.name),
     arguments: head.arguments,
     ...(head.turn === undefined ? {} : { turn: str(head.turn) }),
@@ -76,19 +84,13 @@ const unknownToolError = (name: string, offered: ReadonlyArray<{ readonly name: 
 export const toolsReactorFrom = <R = never>(
   serve: Serve<R>,
   toolsFor: (log: ReadonlyArray<Event>, call: PendingCall) => ReadonlyArray<{ readonly name: string }>
-): CompleteTransitionDerivation<R> => (log) => {
+): CompleteTransitionDerivation<R> => (history) => {
+  const log = positioned(history)
   const call = pendingCall(log)
   if (call === undefined) return []
   const stamp = call.turn === undefined ? {} : { turn: call.turn }
-  const answering = (result: unknown): Intent<never> =>
-    intent({
-      key: `tr:${call.callId}`,
-      ...(call.turn === undefined ? {} : {
-        invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 }
-      }),
-      input: { callId: call.callId, result },
-      events: (input, at) => [toolReturned({ callId: input.callId, result: input.result, ...stamp, at })]
-    })
+  const answering = (result: unknown): Intent<never> => call.context.intent("answer", (at) =>
+    toolReturned({ callId: call.callId, result, ...stamp, at }), (call.turn === undefined ? {} : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }))
 
   const served = serve(call, log, answering)
   if (served === undefined) {
@@ -99,39 +101,32 @@ export const toolsReactorFrom = <R = never>(
 
 // cancelTools settles every open tool call owned by the cancelled message invocation.
 const toolCancellationTransitions = (
-  calls: ReadonlyArray<string>,
+  calls: ReadonlyArray<PendingCall>,
   cancellation: InvocationCancellation
-): ReadonlyArray<Transition<never>> => calls.map((callId) => intent({
-  key: `tr:${callId}`,
-  input: { callId, cancellation },
-  events: (input, at) => {
-    const reason = input.cancellation.reason === undefined
-      ? "cancelled"
-      : `cancelled: ${input.cancellation.reason}`
-    return [toolReturned({
-      callId: input.callId,
-      result: { error: reason },
-      turn: input.cancellation.invocation.id,
-      at
-    })]
-  }
-}))
+): ReadonlyArray<Transition<never>> => calls.map((call) => call.context.intent("answer", (at) =>
+  toolReturned({
+    callId: call.callId,
+    result: { error: cancellation.reason === undefined ? "cancelled" : `cancelled: ${cancellation.reason}` },
+    turn: cancellation.invocation.id,
+    at
+  }), { invocation: null }))
 
 const cancelTools = (
-  log: ReadonlyArray<Event>,
+  history: ReadonlyArray<Event>,
   cancellation: InvocationCancellation
 ): ReadonlyArray<Transition<never>> => {
+  const log = positioned(history)
   if (cancellation.invocation.method !== "message") return []
   const answered = new Set(
     log.filter((event) => event.type === "ToolReturned")
-      .map((event) => String((event as { readonly callId?: unknown }).callId))
+      .map(callKey)
   )
   const calls = log.flatMap((event) =>
     event.type === "ToolCalled" &&
       String((event as { readonly turn?: unknown }).turn) === cancellation.invocation.id &&
       eventEpochOf(event) === cancellation.invocation.epoch &&
-      !answered.has(String((event as { readonly callId?: unknown }).callId))
-      ? [String((event as { readonly callId?: unknown }).callId)]
+      !answered.has(callKey(event))
+      ? [{ context: contextFor(event), callId: String(event.callId), name: String(event.name), arguments: event.arguments }]
       : []
   )
   return toolCancellationTransitions(calls, cancellation)
@@ -145,7 +140,7 @@ export const toolsComponentFrom = <V, R = never>(
 ): Component<V, R> => {
   const dispatch = toolsReactorFrom(serve, toolsFor)
   return legacyComponent({
-    name: "tools",
+    name: "agent.tools",
     cancel: cancelTools,
     derive: (log) => ({ view: empty, transitions: dispatch(log) })
   })
@@ -179,7 +174,7 @@ export const incrementalToolsComponentFrom = <V, R = never>(
   child: ComponentMachine<V, R>,
   toolsOf: (view: V) => ReadonlyArray<ProjectedTool<R>>
 ): Component<V, R> => component<IncrementalToolsState<R>, V, R>({
-  name: "tools",
+  name: "agent.tools",
   initial: (): IncrementalToolsState => ({
     child: child.initial(),
     turns: initialTurnProjection(),
@@ -188,7 +183,7 @@ export const incrementalToolsComponentFrom = <V, R = never>(
     offers: HashMap.empty(),
     heads: HashMap.empty()
   }),
-  step: (state, event) => {
+  step: (state, event, context) => {
     const eventTurn = String((event as { readonly turn?: unknown }).turn ?? "")
     let before: ReadonlyArray<ProjectedTool<R>> | undefined
     const offeredBefore = (): ReadonlyArray<ProjectedTool<R>> => {
@@ -209,13 +204,14 @@ export const incrementalToolsComponentFrom = <V, R = never>(
     let nextOrder = state.nextOrder
     if (event.type === "ToolCalled") {
       const callId = str((event as { readonly callId?: unknown }).callId)
-      if (!HashMap.has(pending, callId)) {
+      if (!HashMap.has(pending, callKey(event))) {
         const currentTurn = turnViewFrom(state.turns)
         const turn = (event as { readonly turn?: unknown }).turn
         const turnId = turn === undefined ? undefined : str(turn)
         const epoch = (event as { readonly epoch?: unknown }).epoch
         const call: PendingCall = {
           callId,
+          context,
           name: str((event as { readonly name?: unknown }).name),
           arguments: (event as { readonly arguments?: unknown }).arguments,
           ...(turnId === undefined ? {} : { turn: turnId }),
@@ -240,12 +236,12 @@ export const incrementalToolsComponentFrom = <V, R = never>(
           log: Chunk.fromIterable([...prefix, event]),
           order: nextOrder
         }
-        pending = HashMap.set(pending, callId, record)
+        pending = HashMap.set(pending, callKey(event), record)
         nextOrder += 1
       }
     }
     if (event.type === "ToolReturned") {
-      pending = HashMap.remove(pending, str((event as { readonly callId?: unknown }).callId))
+      pending = HashMap.remove(pending, callKey(event))
     }
     if (event.type === "TurnCompleted" || event.type === "TurnFailed" || event.type === "TurnCancelled") {
       pending = HashMap.filter(pending, (record) =>
@@ -269,7 +265,7 @@ export const incrementalToolsComponentFrom = <V, R = never>(
         record.call.turn === cancellation.invocation.id &&
         (record.call.epoch ?? 0) === cancellation.invocation.epoch
       )
-      .map((record) => record.call.callId)
+      .map((record) => record.call)
     return toolCancellationTransitions(calls, cancellation)
   },
   output: (state) => {
@@ -281,14 +277,9 @@ export const incrementalToolsComponentFrom = <V, R = never>(
     const tool = current.offered.find((candidate) => candidate.spec.name === current!.call.name)
     const log = Chunk.toReadonlyArray(current.log)
     const stamp = current.call.turn === undefined ? {} : { turn: current.call.turn }
-    const answering = (result: unknown): Intent<never> => intent({
-      key: `tr:${current!.call.callId}`,
-      ...(current!.call.turn === undefined ? {} : {
-        invocation: { method: "message", id: current!.call.turn, epoch: current!.call.epoch ?? 0 }
-      }),
-      input: { callId: current.call.callId, result },
-      events: (input, at) => [toolReturned({ callId: input.callId, result: input.result, ...stamp, at })]
-    })
+    const call = current.call
+    const answering = (result: unknown): Intent<never> => call.context.intent("answer", (at) =>
+      toolReturned({ callId: call.callId, result, ...stamp, at }), (call.turn === undefined ? {} : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }))
     const transitions = tool?.serve(current.call, log, answering)
     return {
       view: empty,

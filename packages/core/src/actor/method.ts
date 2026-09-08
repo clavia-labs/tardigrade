@@ -1,3 +1,4 @@
+import type { TransitionContext } from "../transition/transition"
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { replayProjection, type Projection } from "@clavia/tardigrade-core/projection"
@@ -35,23 +36,24 @@ export interface InvalidDurableMethodInput {
 export interface DurableMethodInput {
   readonly schema: Schema.ConstraintDecoder<unknown>
   readonly matches: (event: Event) => boolean
-  readonly keyOf: (input: InvalidDurableMethodInput) => string
   readonly reject: (input: InvalidDurableMethodInput, at: number) => Event
   readonly projection?: ErasedDurableInputProjection
 }
 
 export interface DurableInputProjection<State>
-  extends Projection<State, ReadonlyArray<Transition<never>>> {}
+  extends Omit<Projection<State, ReadonlyArray<Transition<never>>>, "step"> {
+  readonly step: (state: State, event: Event, context: TransitionContext) => State
+}
 
 export interface ErasedDurableInputProjection
-  extends Projection<unknown, ReadonlyArray<Transition<never>>> {}
+  extends DurableInputProjection<unknown> {}
 
 // durableInputProjection preserves a typed validation quotient behind the heterogeneous method contract.
 export const durableInputProjection = <State>(
   projection: DurableInputProjection<State>
 ): ErasedDurableInputProjection => ({
   initial: projection.initial,
-  step: (state, event) => projection.step(state as State, event),
+  step: (state, event, context) => projection.step(state as State, event, context),
   output: (state) => projection.output(state as State)
 })
 

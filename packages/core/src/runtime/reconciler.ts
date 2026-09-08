@@ -1,3 +1,5 @@
+import { eventAt } from "../event"
+import { concurrentTransition, validateTransitions } from "../transition/transition"
 import { Cause, Clock, Context, Effect, Option, type Tracer } from "effect"
 import { actorRuntimeOf, type ActorSource } from "./actor"
 import { Self, InvocationScope, InvocationSuspended, ThreadAllocationScope } from "./context"
@@ -67,7 +69,8 @@ const advanceCache = <R>(a: Actor<R>, cache: ProjectionCache<R>, events: Readonl
   const states = new Map(cache.states)
   let actorState = cache.actorState
   let trigger = cache.trigger
-  for (const event of events) {
+  for (const [index, raw] of events.entries()) {
+    const event = eventAt(raw, cache.watermark + index + 1)
     const key = a.keyOf(event)
     if (key !== undefined) recorded.add(key)
     trigger = linkOf(event) ?? trigger
@@ -173,16 +176,17 @@ const runExternalEffect = <R>(
 // enabled returns derived transitions whose keys the log does not record.
 export const enabled = <R>(source: ActorSource<R>, events: ReadonlyArray<Event>): ReadonlyArray<Transition<never, R>> => {
   const a = actorRuntimeOf(source)
-  const recorded = recordedKeys(events, a.keyOf)
+  const positioned = events.map((event, index) => eventAt(event, index + 1))
+  const recorded = recordedKeys(positioned, a.keyOf)
   const states = new Map<ErasedTransitionProjection<R>, unknown>()
   let actorState = a.projection?.initial()
   for (const projection of a.projections) {
     let state = projection.initial()
-    for (const event of events) state = projection.step(state, event)
+    for (const event of positioned) state = projection.step(state, event)
     states.set(projection, state)
   }
   if (a.projection !== undefined) {
-    for (const event of events) actorState = a.projection.step(actorState, event)
+    for (const event of positioned) actorState = a.projection.step(actorState, event)
   }
   return enabledFrom(a, events, recorded, states, actorState)
 }
@@ -219,9 +223,9 @@ const enabledFrom = <R>(
     ? a.cancellationResiduals?.(events)
     : actorOutput!.residuals
   const residuals = (residualTransitions ?? []).map((transition) =>
-    transition.kind === "effect" ? { ...transition, concurrent: true } : transition
+    transition.kind === "effect" ? concurrentTransition(transition) : transition
   )
-  return [...continuations, ...residuals].filter((transition) => !recorded.has(transition.key))
+  return validateTransitions([...continuations, ...residuals]).filter((transition) => !recorded.has(transition.key))
 }
 
 // restingActor reports whether the log enables no transition
