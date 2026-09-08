@@ -145,6 +145,7 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
       </main>
       {selectedChild === undefined ? null : (
         <SideThread
+          thread={selectedChild}
           error={childEvents.error ?? sendChild.error ?? cancel.error}
           key={selectedChild}
           loading={childEvents.isLoading}

@@ -113,6 +113,7 @@ button, input { font: inherit; }
 
 .subagent-link {
   width: auto;
+  max-width: 100%;
   height: 28px;
   padding: 4px 8px;
   position: relative;
@@ -126,7 +127,7 @@ button, input { font: inherit; }
   font-size: 12px;
 }
 
-.subagent-link svg { width: 14px; height: 14px; }
+.subagent-link svg { width: 14px; height: 14px; flex-shrink: 0; }
 
 .subagent-link::before {
   width: 10px;
@@ -154,7 +155,14 @@ button, input { font: inherit; }
   font-size: 12px;
 }
 
-.subagent-single svg { width: 14px; height: 14px; }
+.subagent-single svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+.subagent-name, .side-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .subagent-tree {
   max-width: calc(82% - 24px);
@@ -224,6 +232,7 @@ button, input { font: inherit; }
 }
 
 .side-title {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;

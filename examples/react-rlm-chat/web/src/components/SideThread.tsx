@@ -6,7 +6,7 @@ import type { EventRow } from "@clavia/tardigrade-client"
 import { Composer } from "./Composer"
 import { Transcript } from "./Transcript"
 
-export const SideThread = ({ cancelling, error, loading, onCancel, onClose, onOpenThread, onSend, pending, rows, running, streamingText }: {
+export const SideThread = ({ cancelling, error, loading, onCancel, onClose, onOpenThread, onSend, pending, rows, running, streamingText, thread }: {
   readonly cancelling: boolean
   readonly error: unknown
   readonly loading: boolean
@@ -18,6 +18,7 @@ export const SideThread = ({ cancelling, error, loading, onCancel, onClose, onOp
   readonly rows: ReadonlyArray<EventRow>
   readonly running: boolean
   readonly streamingText: string
+  readonly thread: string
 }): ReactElement => {
   const terminal = rows.findLast(({ event }) =>
     event.type === "TurnCompleted" || event.type === "TurnFailed" || event.type === "TurnCancelled")
@@ -29,7 +30,7 @@ export const SideThread = ({ cancelling, error, loading, onCancel, onClose, onOp
         <ArrowLeft />
       </Button>
       <div className="side-title">
-        <strong>Subagent</strong>
+        <strong title={thread}>{thread}</strong>
         {running ? (
           <CircleNotch className="spin side-status-spinner" aria-label="Subagent is running" />
         ) : failed ? <span>failed</span> : null}

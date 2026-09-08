@@ -48,7 +48,7 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
             return id === undefined ? null : (
               <Button className="subagent-single" key={seq} onClick={() => onOpenThread(id)}>
                 <Worm />
-                <span>Subagent</span>
+                <span className="subagent-name" title={id}>{id}</span>
                 {pending === 0 ? null : <CircleNotch className="spin tree-spinner" aria-label="Subagent is running" />}
               </Button>
             )
@@ -67,12 +67,12 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
                 )}
               </summary>
               <div className="tree-children">
-                {group.map((child, childIndex) => {
+                {group.map((child) => {
                   const id = childThread(child.event)
                   return id === undefined ? null : (
                     <Button className="subagent-link" key={child.seq} onClick={() => onOpenThread(id)}>
                       <Worm />
-                      Subagent {childIndex + 1}
+                      <span className="subagent-name" title={id}>{id}</span>
                     </Button>
                   )
                 })}

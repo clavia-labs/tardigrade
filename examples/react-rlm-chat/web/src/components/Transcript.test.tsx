@@ -13,5 +13,5 @@ test("a recorded opaque child renders a subagent control", () => {
   }]
   const html = renderToStaticMarkup(<Transcript empty="Empty" rows={rows} streamingText="" onOpenThread={() => {}} />)
   expect(html).toContain('class="subagent-single"')
-  expect(html).toContain("Subagent")
+  expect(html).toContain("a".repeat(64))
 })
