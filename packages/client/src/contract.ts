@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 import { Event } from "@clavia/tardigrade-core/log/event"
+import { MAX_SUBJECT_LENGTH, MAX_SUBJECTS_PER_LOOKUP } from "@clavia/tardigrade-core/log/subjects"
 import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
 import { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
@@ -57,6 +58,9 @@ export const InvalidRequest = problemKind("invalid-request", "Invalid Request", 
 
 // UnknownThread reports a thread whose log has no ThreadCreated event (apps/server/src/api.test.ts, "a log that never existed is the only 404").
 export const UnknownThread = problemKind("unknown-thread", "Unknown Thread", 404)
+
+// UnknownFact reports a durable coordinate no event in the log answers.
+export const UnknownFact = problemKind("unknown-fact", "Unknown Fact", 404)
 
 // UnknownActor reports an actor instance that no write has created.
 export const UnknownActor = problemKind("unknown-actor", "Unknown Actor", 404)
@@ -450,6 +454,24 @@ export const Append = Schema.StructWithRest(
 
 export type Append = typeof Append.Type
 
+const FactSubject = Schema.String.pipe(
+  Schema.check(Schema.makeFilter(
+    (value: string) => value.length > 0 && value.length <= MAX_SUBJECT_LENGTH,
+    { title: `between 1 and ${MAX_SUBJECT_LENGTH} characters` }
+  ))
+)
+
+export const FactsRequest = Schema.Struct({
+  subjects: Schema.Array(FactSubject).pipe(
+    Schema.check(Schema.makeFilter(
+      (subjects: ReadonlyArray<string>) => subjects.length > 0 && subjects.length <= MAX_SUBJECTS_PER_LOOKUP,
+      { title: `between 1 and ${MAX_SUBJECTS_PER_LOOKUP} subjects` }
+    ))
+  )
+}).annotate({ identifier: "FactsRequest" })
+
+export type FactsRequest = typeof FactsRequest.Type
+
 // Seq identifies a position in a log as a non-negative integer.
 export const Seq = Schema.Int.pipe(
   Schema.check(Schema.makeFilter((value: number) => value >= 0, { title: "at or above zero" }))
@@ -504,6 +526,18 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
   HttpApiEndpoint.get("events", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
     query: { after: SeqQuery, limit: SeqQuery, types: Schema.optionalKey(Schema.String) },
+    success: Schema.Array(EventRow),
+    error: [UnknownActor.schema, UnknownThread.schema]
+  }),
+  HttpApiEndpoint.get("fact", "/v1/actors/:id/threads/:thread/fact", {
+    params: RuntimeThreadParams,
+    query: { key: Schema.optionalKey(Schema.NonEmptyString), subject: Schema.optionalKey(FactSubject) },
+    success: EventRow,
+    error: [InvalidRequest.schema, UnknownActor.schema, UnknownThread.schema, UnknownFact.schema]
+  }),
+  HttpApiEndpoint.post("facts", "/v1/actors/:id/threads/:thread/facts", {
+    params: RuntimeThreadParams,
+    payload: FactsRequest,
     success: Schema.Array(EventRow),
     error: [UnknownActor.schema, UnknownThread.schema]
   }),

@@ -17,11 +17,14 @@ export interface AppendResult {
  * ThreadEventStore is the durable boundary for one thread's event log.
  *
  *   ThreadEventStore
- *     ├── append(events)       commit an atomic event batch
- *     ├── read                 read the complete log
- *     ├── head                 read the latest durable sequence
- *     ├── readFrom(mark)       read the event tail after a mark
- *     └── readPage(mark, size) read a bounded tail with sequence numbers
+ *     ├── append(events)         commit an atomic event batch
+ *     ├── read                   read the complete log
+ *     ├── head                   read the latest durable sequence
+ *     ├── readFrom(mark)         read the event tail after a mark
+ *     ├── readPage(mark, size)   read a bounded tail with sequence numbers
+ *     ├── readKey(key)           read the event at one deduplication key
+ *     ├── readSubject(subject)   read the latest event for one subject
+ *     └── readSubjects(subjects) read the deduplicated rows for bounded subjects
  */
 export interface ThreadEventStore {
   readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<AppendResult>
@@ -29,6 +32,9 @@ export interface ThreadEventStore {
   readonly head: Effect.Effect<number>
   readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>
   readonly readPage: (mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
+  readonly readKey: (key: string) => Effect.Effect<ThreadEventRow | undefined>
+  readonly readSubject: (subject: string) => Effect.Effect<ThreadEventRow | undefined>
+  readonly readSubjects: (subjects: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
 }
 
 /**

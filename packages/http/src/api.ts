@@ -13,6 +13,7 @@ import {
   RESERVED_ACTOR,
   unacceptableField,
   UnknownActor,
+  UnknownFact,
   UnknownProjection,
   UnknownThread,
   type ActorSummary,
@@ -442,6 +443,41 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
             .map((event, index) => ({ seq: index + 1, event }))
             .filter((row) => row.seq > (after ?? 0) && (types === undefined || types.includes(row.event.type)))
             .slice(0, page ?? limit)
+        }))
+      .handle("fact", ({ params, query }) =>
+        Effect.gen(function*() {
+          const threads = yield* actorOf(yield* Threads, params.id)
+          const coordinate: { readonly key: string } | { readonly subject: string } | undefined =
+            query.key !== undefined && query.subject === undefined
+              ? { key: query.key }
+              : query.subject !== undefined && query.key === undefined
+                ? { subject: query.subject }
+                : undefined
+          if (coordinate === undefined) {
+            return yield* Effect.fail(InvalidRequest.of(
+              "A fact query names exactly one coordinate: `key` or `subject`, never both and never neither."
+            ))
+          }
+          if ((yield* threads.head(params.thread)) === 0) {
+            return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.thread)))
+          }
+          const row = "key" in coordinate
+            ? yield* threads.readKey(params.thread, coordinate.key)
+            : yield* threads.readSubject(params.thread, coordinate.subject)
+          if (row === undefined) {
+            return yield* Effect.fail(UnknownFact.of("key" in coordinate
+              ? `No event in this thread's log answers the key ${JSON.stringify(coordinate.key)}.`
+              : `No event in this thread's log answers the subject ${JSON.stringify(coordinate.subject)}.`))
+          }
+          return row
+        }))
+      .handle("facts", ({ params, payload }) =>
+        Effect.gen(function*() {
+          const threads = yield* actorOf(yield* Threads, params.id)
+          if ((yield* threads.head(params.thread)) === 0) {
+            return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.thread)))
+          }
+          return yield* threads.readSubjects(params.thread, payload.subjects)
         }))
       .handle("tree", ({ params, query }) =>
         Effect.gen(function*() {

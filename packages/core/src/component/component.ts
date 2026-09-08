@@ -7,6 +7,7 @@ import {
   type Transition
 } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../log/keys"
+import type { SubjectFragment } from "../log/subjects"
 import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
 import type { InvocationCancellation } from "../interaction/events"
 import type { ComponentMachine } from "./machine"
@@ -15,13 +16,14 @@ import type { ComponentOutput } from "./output"
 /**
  * Component is a named machine over an actor log.
  *
- * Its view composes with other components, its transitions describe owed work, and its keys identify the durable events that satisfy that work.
+ * Its view composes with other components, its transitions describe owed work, its keys identify durable occurrences, and its subjects identify durable facts.
  */
 export interface Component<View, Requirements = never> {
   readonly name: string
   readonly [TRANSITION_COMPONENT_IDS]?: ReadonlyArray<string>
   readonly machine: ComponentMachine<View, Requirements>
   readonly keys?: KeyFragment
+  readonly subjects?: SubjectFragment
   readonly [COMPONENT_CONTRACT]?: ComponentContract
 }
 

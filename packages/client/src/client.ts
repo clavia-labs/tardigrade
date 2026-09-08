@@ -31,6 +31,7 @@ import {
   type ThreadSummary,
   type TreeBounds,
   type EventRow,
+  type FactsRequest,
   type Health,
   MethodState,
   type MethodAccepted,
@@ -116,6 +117,11 @@ export interface EventsOptions {
   readonly types?: ReadonlyArray<string> | undefined
 }
 
+// FactCoordinate states exactly one durable key or latest-wins subject.
+export type FactCoordinate =
+  | { readonly key: string; readonly subject?: never }
+  | { readonly subject: string; readonly key?: never }
+
 export interface CatalogPageOptions {
   readonly cursor?: string | undefined
   readonly limit?: number | undefined
@@ -194,6 +200,8 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   // tree reads one thread's spawn family beneath it, bounded by `options` when stated (contract.ts, TreeBounds).
   readonly tree: (actor: string, thread: string, options?: Omit<TreeBounds, "root">) => Promise<ThreadNode>
   readonly events: (actor: string, thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
+  readonly fact: (actor: string, thread: string, coordinate: FactCoordinate) => Promise<EventRow>
+  readonly facts: (actor: string, thread: string, request: FactsRequest) => Promise<ReadonlyArray<EventRow>>
   // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
   // platform requires nothing but `type` (contract.ts, Append).
   readonly append: (actor: string, thread: string, event: Append) => Promise<Accepted>
@@ -401,6 +409,13 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
       run(api.threads.tree({ params: { id: actor, thread }, query: boundsQuery(options ?? {}) })),
     events: (actor, thread, events = {}) =>
       run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
+    fact: (actor, thread, coordinate) =>
+      run(api.threads.fact({
+        params: { id: actor, thread },
+        query: coordinate.key === undefined ? { subject: coordinate.subject } : { key: coordinate.key }
+      })),
+    facts: (actor, thread, request) =>
+      run(api.threads.facts({ params: { id: actor, thread }, payload: request })),
     append,
     allocateRoot: (actor, name) => run(api.threads.allocateRoot({ query: {}, params: { id: actor }, payload: name === undefined ? {} : { name } })),
     methods: () => run(api.methods.methods({})),

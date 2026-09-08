@@ -3,6 +3,7 @@ import { Chunk } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Transition } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../log/keys"
+import type { SubjectFragment } from "../log/subjects"
 import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
 import type { InvocationCancellation } from "../interaction/events"
 import type { Component } from "./component"
@@ -17,6 +18,7 @@ export interface LegacyComponentDefinition<View, Requirements = never> {
     cancellation: InvocationCancellation
   ) => ReadonlyArray<Transition<never, Requirements>>
   readonly keys?: KeyFragment
+  readonly subjects?: SubjectFragment
   readonly [COMPONENT_CONTRACT]?: ComponentContract
 }
 
@@ -41,6 +43,7 @@ export const legacyComponent = <View, Requirements = never>(
           })
     },
     ...(definition.keys === undefined ? {} : { keys: definition.keys }),
+    ...(definition.subjects === undefined ? {} : { subjects: definition.subjects }),
     ...(definition[COMPONENT_CONTRACT] === undefined ? {} : { [COMPONENT_CONTRACT]: definition[COMPONENT_CONTRACT] })
   }
 }

@@ -3,7 +3,8 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteMigrator } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { AppendResult, ThreadEventStore } from "@clavia/tardigrade-core/log"
+import { messageSubjects } from "@clavia/tardigrade-core/interaction/provider-message"
+import { assertEventSubjects, assertSubject, assertSubjectLookup, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 
 export interface EventRow {
   readonly seq: number
@@ -42,6 +43,15 @@ export const hmacSha256EventKeyIndex = (
   return `hmac-sha256:${digest}`
 })
 
+const subjectIndexSchema = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql.unsafe(`CREATE TABLE event_subjects (
+    subject TEXT PRIMARY KEY,
+    seq INTEGER NOT NULL,
+    event TEXT NOT NULL
+  ) WITHOUT ROWID`)
+})
+
 const actorMigrations = SqliteMigrator.fromRecord({
   "0001_actor_runtime": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -57,7 +67,8 @@ const actorMigrations = SqliteMigrator.fromRecord({
       PRIMARY KEY (seq)
     ) WITHOUT ROWID`)
     yield* sql.unsafe("CREATE UNIQUE INDEX events_key ON events (key) WHERE key IS NOT NULL")
-  })
+  }),
+  "0002_actor_subjects": subjectIndexSchema
 })
 
 const createThreadIdentity = Effect.gen(function* () {
@@ -81,7 +92,8 @@ const threadMigrations = SqliteMigrator.fromRecord({
       PRIMARY KEY (seq)
     ) WITHOUT ROWID`)
     yield* sql.unsafe("CREATE UNIQUE INDEX events_key ON events (key) WHERE key IS NOT NULL")
-  })
+  }),
+  "0003_thread_subjects": subjectIndexSchema
 })
 
 const initializeDatabase = (loader: SqliteMigrator.Loader): Effect.Effect<void, never, SqlClient.SqlClient> =>
@@ -99,17 +111,20 @@ export class CloudflareEventStore implements ThreadEventStore {
   readonly keyOf: (event: Event) => string | undefined
   readonly codec: CloudflareEventCodec
   readonly indexKey: CloudflareEventKeyIndex
+  readonly subjectsOf: (event: Event) => ReadonlyArray<string>
 
   constructor(
     sql: SqlClient.SqlClient,
     keyOf: (event: Event) => string | undefined,
     codec: CloudflareEventCodec = plaintextEventCodec,
-    indexKey: CloudflareEventKeyIndex = plaintextEventKeyIndex
+    indexKey: CloudflareEventKeyIndex = plaintextEventKeyIndex,
+    subjectsOf?: (event: Event) => ReadonlyArray<string>
   ) {
     this.sql = sql
     this.keyOf = keyOf
     this.codec = codec
     this.indexKey = indexKey
+    this.subjectsOf = subjectsOf ?? messageSubjects.subjectsOf
   }
 
   initialize(): Effect.Effect<void> {
@@ -165,6 +180,51 @@ export class CloudflareEventStore implements ThreadEventStore {
         Effect.orDie
       )
   }
+  readKey(key: string): Effect.Effect<ThreadEventRow | undefined> {
+    return this.indexKey(key).pipe(
+      Effect.flatMap((indexed) => this.rowAt("SELECT seq, event FROM events WHERE key = ?", indexed)),
+      Effect.orDie
+    )
+  }
+
+  readSubject(subject: string): Effect.Effect<ThreadEventRow | undefined> {
+    return Effect.sync(() => assertSubject(subject)).pipe(
+      Effect.flatMap(() => this.indexKey(subject)),
+      Effect.flatMap((indexed) => this.rowAt("SELECT seq, event FROM event_subjects WHERE subject = ?", indexed)),
+      Effect.orDie
+    )
+  }
+
+  readSubjects(subjects: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<ThreadEventRow>> {
+    return Effect.sync(() => assertSubjectLookup(subjects)).pipe(
+      Effect.flatMap(() => Effect.forEach(subjects, this.indexKey)),
+      Effect.flatMap((indexed) => this.sql.withTransaction(Effect.forEach(
+        indexed,
+        (subject) => this.rowAt("SELECT seq, event FROM event_subjects WHERE subject = ?", subject)
+      ))),
+      Effect.map((rows) => {
+        const unique = new Map<number, ThreadEventRow>()
+        for (const row of rows) {
+          if (row !== undefined) unique.set(row.seq, row)
+        }
+        return [...unique.values()].sort((left, right) => left.seq - right.seq)
+      }),
+      Effect.orDie
+    )
+  }
+
+  private rowAt(statement: string, indexed: string): Effect.Effect<ThreadEventRow | undefined> {
+    return this.sql.unsafe<{ readonly seq: number; readonly event: string }>(statement, [indexed]).pipe(
+      Effect.flatMap((rows) => {
+        const row = rows[0]
+        if (row === undefined) return Effect.succeed(undefined)
+        return this.decode([JSON.parse(row.event) as Event]).pipe(
+          Effect.map((events) => ({ seq: Number(row.seq), event: events[0]! }))
+        )
+      }),
+      Effect.orDie
+    )
+  }
 
   private decode(events: ReadonlyArray<Event>): Effect.Effect<ReadonlyArray<Event>> {
     return this.codec.decode(events).pipe(
@@ -189,11 +249,17 @@ export class CloudflareEventStore implements ThreadEventStore {
     const keyOf = this.keyOf
     const codec = this.codec
     const indexKey = this.indexKey
+    const subjectsOf = this.subjectsOf
     return Effect.gen(function* () {
       const indexedKeys = yield* Effect.forEach(events, (event) => {
         const eventKey = keyOf(event)
         return eventKey === undefined ? Effect.void : indexKey(eventKey)
       })
+      const subjectsByEvent = events.map(subjectsOf)
+      yield* Effect.sync(() => {
+        for (const subjects of subjectsByEvent) assertEventSubjects(subjects)
+      })
+      const indexedSubjects = yield* Effect.forEach(subjectsByEvent, (subjects) => Effect.forEach(subjects, indexKey))
       const encoded = yield* codec.encode(events)
       if (encoded.length !== events.length) {
         return yield* Effect.die(new Error("event codec encode must preserve batch length"))
@@ -216,10 +282,17 @@ export class CloudflareEventStore implements ThreadEventStore {
               )
               if (present.length > 0) continue
             }
+            const serialized = JSON.stringify(event)
             yield* sql.unsafe(
               "INSERT INTO events (seq, key, event) VALUES (?, ?, ?)",
-              [seq, indexedKey ?? null, JSON.stringify(event)]
+              [seq, indexedKey ?? null, serialized]
             )
+            for (const indexedSubject of indexedSubjects[index]!) {
+              yield* sql.unsafe(
+                "INSERT INTO event_subjects (subject, seq, event) VALUES (?, ?, ?) ON CONFLICT(subject) DO UPDATE SET seq = excluded.seq, event = excluded.event",
+                [indexedSubject, seq, serialized]
+              )
+            }
             seq += 1
             appended += 1
           }

@@ -402,6 +402,42 @@ describe("the bun host", () => {
     await h.close()
   })
 
+  test("exact facts return the latest indexed subject", async () => {
+    const h = await createBunHost({
+      ...options(freshPath()),
+      subjectsOf: (event) => event.type === "Done" && typeof event.fact === "string" ? [`fact:${event.fact}`, "fact:latest"] : []
+    })
+    await h.seed("facts", [
+      created("facts"),
+      { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event,
+      { type: "MessageReceived", id: "out.reply", text: "first", at: 2 } as Event,
+      { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 } as Event,
+      { type: "Done", id: "same", fact: "accepted", at: 4 } as Event,
+      { type: "Done", id: "same", fact: "absorbed", at: 5 } as Event
+    ])
+    expect(await h.head("facts")).toBe(5)
+    expect(await h.readKey("facts", "thread:created")).toEqual({ seq: 1, event: created("facts") })
+    expect(await h.readSubject("facts", "msg:m1")).toEqual({
+      seq: 2,
+      event: { type: "MessageReceived", id: "m1", text: "go", at: 1 }
+    })
+    expect(await h.readSubject("facts", "reply:out")).toEqual({
+      seq: 4,
+      event: { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 }
+    })
+    expect(await h.readSubject("facts", "fact:accepted")).toEqual({
+      seq: 5,
+      event: { type: "Done", id: "same", fact: "accepted", at: 4 }
+    })
+    expect(await h.readSubject("facts", "fact:absorbed")).toBeUndefined()
+    expect(await h.readSubjects("facts", ["reply:out", "msg:m1", "fact:latest", "reply:out"])).toEqual([
+      { seq: 2, event: { type: "MessageReceived", id: "m1", text: "go", at: 1 } },
+      { seq: 4, event: { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 } },
+      { seq: 5, event: { type: "Done", id: "same", fact: "accepted", at: 4 } }
+    ])
+    await h.close()
+  })
+
   test("refuses an unkeyed cross-thread event, identically to the reference host", async () => {
     const h = await createBunHost(options(freshPath()))
     expect(h.commitRoot("bun:default:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-thread event")

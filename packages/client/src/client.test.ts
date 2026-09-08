@@ -157,6 +157,21 @@ describe("the address a call goes to", () => {
     expect(url.searchParams.has("limit")).toBe(false)
   })
 
+  test("facts use exclusive singular coordinates and a bounded batch payload", async () => {
+    answer = () => Response.json({ seq: 3, event: { type: "Done", at: 1 } })
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
+    await client.fact("main", "root", { subject: "run:latest" })
+    const singular = lastUrl()
+    expect(singular.pathname).toBe("/v1/actors/main/threads/root/fact")
+    expect(Object.fromEntries(singular.searchParams)).toEqual({ subject: "run:latest" })
+
+    answer = emptyList
+    await client.facts("main", "root", { subjects: ["run:latest", "run:input"] })
+    expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/facts")
+    expect(calls.at(-1)?.method).toBe("POST")
+    expect(JSON.parse(calls.at(-1)?.body ?? "")).toEqual({ subjects: ["run:latest", "run:input"] })
+  })
+
   test("stated bounds are query params on the tree and roster reads, absent ones absent", async () => {
     const client = makeActorClient({ baseUrl: "http://localhost:4111" , fetch: stub })
     await client.list("main", { root: "inv-81", maxDepth: 2, maxNodes: 50 })

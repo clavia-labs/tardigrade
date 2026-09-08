@@ -5,11 +5,12 @@ import type { ActorMethodCancellationState } from "../interaction/state"
 import type { Projection } from "../projection/projection"
 import type { ErasedTransitionProjection, Transition } from "../transition"
 
-// Actor carries its runtime projection, validation guards, and durable key projection.
+// Actor carries its runtime projection, validation guards, durable key projection, and optional durable subject projection.
 export interface Actor<R = never> {
   readonly projections: ReadonlyArray<ErasedTransitionProjection<R>>
   readonly guardProjections?: ReadonlyArray<ErasedTransitionProjection<R>>
   readonly keyOf: (e: Event) => string | undefined
+  readonly subjectsOf?: (event: Event) => ReadonlyArray<string>
   readonly cancellationOf?: (
     events: ReadonlyArray<Event>,
     invocation: InvocationRef
@@ -35,6 +36,7 @@ export interface ActorProjection<R = never> extends Projection<unknown, ActorPro
 export interface ActorRuntimeOptions<R = never> {
   readonly transitions: ReadonlyArray<ErasedTransitionProjection<R>>
   readonly keyOf: Actor<R>["keyOf"]
+  readonly subjectsOf?: Actor<R>["subjectsOf"]
   readonly guards?: ReadonlyArray<ErasedTransitionProjection<R>>
   readonly control?: ActorProjection<R>
   // legacy carries complete-log cancellation callbacks for compatibility actors.
@@ -48,6 +50,7 @@ export interface ActorRuntimeOptions<R = never> {
 export const actorFromProjections = <R = never>({
   transitions,
   keyOf,
+  subjectsOf,
   guards,
   control,
   legacy
@@ -57,6 +60,7 @@ export const actorFromProjections = <R = never>({
     projections: transitions,
     keyOf: (event) => transitionKeyOf(event) ?? keyOf(event),
     ...(legacy?.cancellationOf === undefined ? {} : { cancellationOf: legacy.cancellationOf }),
+    ...(subjectsOf === undefined ? {} : { subjectsOf }),
     ...(legacy?.cancellationResiduals === undefined ? {} : { cancellationResiduals: legacy.cancellationResiduals }),
     ...(guards === undefined ? {} : { guardProjections: guards }),
     ...(control === undefined ? {} : { projection: control })

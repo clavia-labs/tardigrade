@@ -35,6 +35,7 @@
     "./projection/*": "./src/projection/*.ts",
     "./runtime/*": "./src/runtime/*.ts",
     "./agent": "./src/agent.ts",
+    "./client": "./src/client.ts",
     "./core": "./src/core.ts",
     "./code": "./src/code.ts",
     "./agent/*": "./src/*.ts",
@@ -43,6 +44,7 @@
   "dependencies": {
     "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "effect": "4.0.0-rc.110",
     "@clavia/tardigrade-bun": "workspace:*"

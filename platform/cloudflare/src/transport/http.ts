@@ -1,11 +1,12 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
+import { FactsRequest, UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ModelPolicy } from "@clavia/tardigrade-agent"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import type { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog-availability"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { MAX_SUBJECT_LENGTH, MAX_SUBJECTS_PER_LOOKUP } from "@clavia/tardigrade-core/log/subjects"
 import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrade-http/methods"
@@ -177,6 +178,64 @@ export const cloudflareHttp = ({
         }).pipe(Effect.match({
           onFailure: (error) => json({ error }, 500),
           onSuccess: (rows) => json(rows)
+        }))
+      })
+    )),
+    HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/fact", workerRoute((request, env) =>
+      Effect.gen(function* () {
+        const params = yield* HttpRouter.params
+        const instance = params.id ?? ""
+        const thread = params.thread ?? ""
+        if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+        const stub = yield* Effect.promise(() => threadStub(env, actorName(), instance, thread))
+        if (stub === undefined) return json({ error: "unknown thread" }, 404)
+        const query = new URL(request.url, "http://worker").searchParams
+        const key = query.get("key")
+        const subject = query.get("subject")
+        if (
+          (key === null) === (subject === null) ||
+          key === "" ||
+          subject === "" ||
+          (subject !== null && subject.length > MAX_SUBJECT_LENGTH)
+        ) {
+          return json({ error: `a fact query requires one nonempty key or one subject of at most ${MAX_SUBJECT_LENGTH} characters` }, 400)
+        }
+        return yield* Effect.tryPromise({
+          try: () => stub.stub.fact(stub.thread, {
+            ...(key === null ? {} : { key }),
+            ...(subject === null ? {} : { subject })
+          }),
+          catch: (cause) => cause instanceof Error ? cause.message : String(cause)
+        }).pipe(Effect.match({
+          onFailure: (error) => json({ error }, 500),
+          onSuccess: (resolved) => resolved.head === 0
+            ? json({ error: "unknown thread" }, 404)
+            : resolved.row === null
+              ? json({ error: "unknown fact" }, 404)
+              : json(resolved.row)
+        }))
+      })
+    )),
+    HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/facts", workerRoute((request, env) =>
+      Effect.gen(function* () {
+        const params = yield* HttpRouter.params
+        const instance = params.id ?? ""
+        const thread = params.thread ?? ""
+        if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+        const stub = yield* Effect.promise(() => threadStub(env, actorName(), instance, thread))
+        if (stub === undefined) return json({ error: "unknown thread" }, 404)
+        const payload = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
+        if (!Schema.is(FactsRequest)(payload)) {
+          return json({ error: `facts require 1 to ${MAX_SUBJECTS_PER_LOOKUP} subjects of at most ${MAX_SUBJECT_LENGTH} characters each` }, 400)
+        }
+        return yield* Effect.tryPromise({
+          try: () => stub.stub.facts(stub.thread, payload.subjects),
+          catch: (cause) => cause instanceof Error ? cause.message : String(cause)
+        }).pipe(Effect.match({
+          onFailure: (error) => json({ error }, 500),
+          onSuccess: (resolved) => resolved.head === 0
+            ? json({ error: "unknown thread" }, 404)
+            : json(resolved.rows)
         }))
       })
     )),

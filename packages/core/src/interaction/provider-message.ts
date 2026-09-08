@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import type { KeyFragment } from "../log/index"
+import type { KeyFragment, SubjectFragment } from "../log/index"
 
 // MessageReceived is the canonical inbound: an agent's turn, a mailbox's sink, a worker's brief, and a reply coming home are all this event. id is the dedup key everywhere. source names the arriving connection; chat and sender are provider coordinates; from is the delivering actor's address; input is a run's instance input; data is the provider's structured record. sender and from are separate namespaces on purpose: sender authored the message in the world, from delivered it here, receivers route by from and criteria match sender, so neither can impersonate the other.
 export const MessageReceived = Schema.Struct({
@@ -52,6 +52,24 @@ export const replyId = (id: string): string => `${id}${REPLY_SUFFIX}`
 // boundaryId identifies one reported boundary of a turn. Round zero preserves the ordinary reply convention.
 export const boundaryId = (turn: string, round: number): string =>
   round === 0 ? replyId(turn) : `${replyId(turn)}.${round}`
+// replySubjectOf derives the outbound id a reply id answers. Later boundary rounds supersede earlier replies for that outbound id.
+const replyIdPattern = new RegExp(`^(.+)${REPLY_SUFFIX.replace(/\./g, "\\.")}(?:\\.\\d+)?$`)
+export const replySubjectOf = (id: string): string | undefined => {
+  const matched = replyIdPattern.exec(id)
+  const outbound = matched?.[1]
+  return outbound === undefined ? undefined : `reply:${outbound}`
+}
+
+// messageSubjects indexes each inbound message by id and each reply by the outbound id it answers.
+export const messageSubjects: SubjectFragment = {
+  prefixes: ["msg:", "reply:"],
+  subjectsOf: (event) => {
+    if (event.type !== "MessageReceived" && event.type !== "ResponseReceived") return []
+    const id = event.id
+    if (typeof id !== "string" || id === "") return []
+    return [replySubjectOf(id) ?? `msg:${id}`]
+  }
+}
 
 // boundaryEvent constructs one typed boundary report sent to a caller through a reversed link.
 export const boundaryEvent = (args: {

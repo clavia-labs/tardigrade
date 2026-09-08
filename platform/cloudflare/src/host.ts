@@ -47,6 +47,7 @@ export type CloudflareThreadHostOptions<R> = {
   readonly providers?: ReadonlyArray<Provider>
   readonly routes?: ReadonlyArray<TransportRoute>
   readonly keyOf?: (event: Event) => string | undefined
+  readonly subjectsOf?: (event: Event) => ReadonlyArray<string>
   readonly store?: CloudflareThreadStorePolicy
   readonly commitObserver?: CommitObserver
   readonly retainCommitTask?: (task: Promise<void>) => void
@@ -56,6 +57,10 @@ export interface CloudflareThreadHost {
   readonly identity: ThreadAddress
   readonly read: () => Promise<ReadonlyArray<Event>>
   readonly readPage: (mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
+  readonly head: () => Promise<number>
+  readonly readKey: (key: string) => Promise<ThreadEventRow | undefined>
+  readonly readSubject: (subject: string) => Promise<ThreadEventRow | undefined>
+  readonly readSubjects: (subjects: ReadonlyArray<string>) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly commitRoot: (event: Event) => Promise<void>
@@ -91,7 +96,13 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined =>
     hostEventKeyOf(event, options.keyOf)
-  const events = new CloudflareEventStore(sql, storeKeyOf, options.store?.codec, options.store?.indexKey)
+  const events = new CloudflareEventStore(
+    sql,
+    storeKeyOf,
+    options.store?.codec,
+    options.store?.indexKey,
+    options.subjectsOf
+  )
   const interruptions = effectInterruptionRegistry()
   await Effect.runPromise(events.initialize())
   const sync = Effect.promise(() => options.storage.sync())
@@ -171,7 +182,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     read: events.read,
     head: events.head,
     readFrom: (mark: number) => events.readFrom(mark),
-    readPage: (mark: number, limit: number) => events.readPage(mark, limit)
+    readPage: (mark: number, limit: number) => events.readPage(mark, limit),
+    readKey: (key: string) => events.readKey(key),
+    readSubject: (subject: string) => events.readSubject(subject),
+    readSubjects: (subjects: ReadonlyArray<string>) => events.readSubjects(subjects)
   }
   const ports = Layer.mergeAll(
     Layer.succeed(EventLog, eventLogFrom(store)),
@@ -228,6 +242,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     identity,
     read: () => Effect.runPromise(events.read),
     readPage: (mark, limit) => Effect.runPromise(events.readPage(mark, limit)),
+    head: () => Effect.runPromise(events.head),
+    readKey: (key) => Effect.runPromise(events.readKey(key)),
+    readSubject: (subject) => Effect.runPromise(events.readSubject(subject)),
+    readSubjects: (subjects) => Effect.runPromise(events.readSubjects(subjects)),
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),
     commitRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined)),

@@ -21,10 +21,14 @@ const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
   storage: { kind: "memory" },
   instances: Effect.succeed([]),
-  ensure: () => Effect.succeed({ allocateRoot: () => Effect.die(new Error("unexpected allocation")), methods: {}, statusOf: () => "settled", storage: { kind: "memory" }, append: () => Effect.void, events: () => Effect.succeed([]), eventsPage: () => Effect.succeed([]), awaitHead: () => Effect.never, actorEventsPage: () => Effect.succeed([]), actorThreads: Effect.succeed({ cursor: 0, threads: [] }), actorThread: () => Effect.never, awaitActorHead: () => Effect.never, list: Effect.succeed([]), settled: Effect.void }),
+  ensure: () => Effect.succeed({ allocateRoot: () => Effect.die(new Error("unexpected allocation")), methods: {}, statusOf: () => "settled", storage: { kind: "memory" }, append: () => Effect.void, events: () => Effect.succeed([]), eventsPage: () => Effect.succeed([]), head: () => Effect.succeed(0), readKey: () => Effect.succeed(undefined), readSubject: () => Effect.succeed(undefined), readSubjects: () => Effect.succeed([]), awaitHead: () => Effect.never, actorEventsPage: () => Effect.succeed([]), actorThreads: Effect.succeed({ cursor: 0, threads: [] }), actorThread: () => Effect.never, awaitActorHead: () => Effect.never, list: Effect.succeed([]), settled: Effect.void }),
   instance: () => Effect.succeed(undefined as ActorThreads | undefined),
   append: () => Effect.void,
   events: () => Effect.succeed([]),
+  head: () => Effect.succeed(0),
+  readKey: () => Effect.succeed(undefined),
+  readSubject: () => Effect.succeed(undefined),
+  readSubjects: () => Effect.succeed([]),
   list: () => Effect.succeed([]),
   settled: () => Effect.void
 })
@@ -76,6 +80,8 @@ const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellation"],
   ["get", "/v1/actors/{id}/threads"],
   ["get", "/v1/actors/{id}/threads/{thread}/events"],
+  ["get", "/v1/actors/{id}/threads/{thread}/fact"],
+  ["post", "/v1/actors/{id}/threads/{thread}/facts"],
   ["get", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
   ["get", "/v1/actors/{id}/threads/{thread}/tree"],
   ["get", "/healthz"]
