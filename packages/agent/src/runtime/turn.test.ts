@@ -1,3 +1,4 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { actor } from "@clavia/tardigrade-core/actor"
 import { describe, expect, test } from "bun:test"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
@@ -5,7 +6,7 @@ import { Clock, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { send, settleActor, effect, enabled } from "@clavia/tardigrade-core/runtime"
+import { send, settleActor, enabled } from "@clavia/tardigrade-core/runtime"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { guestBindings, Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox/service"
 import { Router } from "@clavia/tardigrade-core/transport/router"
@@ -167,7 +168,7 @@ describe("the agent with execute as the only tool", () => {
       "ModelCalled",
       "TurnCompleted"
     ])
-    expect(events[4]).toMatchObject({ callId: "t1.0", name: "zohorecruit.insert_record" })
+    expect(events[4]).toMatchObject({ callId: `${String(events[3]!.execId)}.0`, name: "zohorecruit.insert_record" })
     expect(events[8]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
     expect(spies).toEqual({ insert: 1, search: 1 })
     expect(count.calls).toBe(2)
@@ -182,7 +183,7 @@ describe("the agent with execute as the only tool", () => {
     const spilled: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "read the contract", at: 1 },
       { type: "ToolCalled", callId: "t1", name: "execute", arguments: { code: "return await docs.read()" }, turn: "m1", at: 2 },
-      { type: "CodeDispatched", execId: "t1", code: "return await docs.read()", turn: "m1", at: 3 },
+      { type: "CodeDispatched", transitionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, execId: "t1", code: "return await docs.read()", turn: "m1", at: 3 },
       {
         type: "CodeSettled",
         execId: "t1",
@@ -217,7 +218,7 @@ describe("the agent with execute as the only tool", () => {
     const crashed: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "add the JD and search candidates", at: 1 },
       { type: "ToolCalled", callId: "t1", name: "execute", arguments: { code: CODE }, turn: "m1", at: 2 },
-      { type: "CodeDispatched", execId: "t1", code: CODE, turn: "m1", at: 3 },
+      { type: "CodeDispatched", transitionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, execId: "t1", code: CODE, turn: "m1", at: 3 },
       { type: "PackageCalled", callId: "t1.0", name: "zohorecruit.insert_record", arguments: { title: "IC design lead" }, turn: "m1", at: 4 },
       { type: "PackageReturned", callId: "t1.0", result: { id: "jd-91" }, turn: "m1", at: 5 }
     ]
@@ -1022,7 +1023,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => legac
       log.filter((e) => e.type === "OutputRetryRequested").map((e) => String((e as { rejection?: unknown }).rejection))
     )
     const owed = rejections.find((e) => !answered.has(String((e as { attempt?: unknown }).attempt))) as
-      | { attempt?: string; turn?: string }
+      | Event
       | undefined
     const view = {
       system: [],
@@ -1036,8 +1037,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => legac
       return {
         view,
         transitions: [
-          effect({
-            key: `tn:${String(owed.turn)}`,
+          bindTransitionContext(owed, "output.house-style").effect("reject", {
             input: { turn: String(owed.turn) },
             act: (input) =>
               Effect.gen(function* () {
@@ -1051,8 +1051,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => legac
     return {
       view,
       transitions: [
-        effect({
-          key: `oq:${String(owed.attempt)}`,
+        bindTransitionContext(owed, "output.house-style").effect("retry", {
           input: { rejection: String(owed.attempt), turn: String(owed.turn) },
           act: (input) =>
             Effect.gen(function* () {

@@ -9,7 +9,7 @@ export type SystemText = string | ((log: ReadonlyArray<Event>) => string)
 export type SystemProjection<State> = Machine<Event, State, string>
 
 // system contributes instructions derived from the current log.
-export const system = <State = never>(text: SystemText | SystemProjection<State>): AgentComponent => {
+export const system = <State = never>(text: SystemText | SystemProjection<State>, options: { readonly name?: string } = {}): AgentComponent => {
   const derive = (value: string) => ({
     view: {
       system: [value],
@@ -21,16 +21,16 @@ export const system = <State = never>(text: SystemText | SystemProjection<State>
   })
   if (typeof text === "object") {
     return component({
-      name: "system",
+      name: options.name ?? "system",
       initial: text.initial,
       step: text.step,
       output: (state) => derive(text.output(state))
     })
   }
   return typeof text === "function"
-    ? legacyComponent({ name: "system", derive: (log) => derive(text(log)) })
+    ? legacyComponent({ name: options.name ?? "system", derive: (log) => derive(text(log)) })
     : component({
-        name: "system",
+        name: options.name ?? "system",
         initial: () => text,
         step: (state: string) => state,
         output: derive

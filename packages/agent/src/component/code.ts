@@ -1,6 +1,7 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { Chunk } from "effect"
-import { intent, type Transition } from "@clavia/tardigrade-core/runtime"
+import { type Transition } from "@clavia/tardigrade-core/runtime"
 import { composeComponents, inheritComponentContract, component as defineComponent, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { type InvocationCancellation } from "@clavia/tardigrade-core/interaction/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -77,21 +78,15 @@ const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer)
     ...(call.turn === undefined ? {} : { turn: call.turn }),
     ...(call.epoch === undefined || call.epoch === 0 ? {} : { epoch: call.epoch })
   }
-  if (log.some((e) => e.type === "CodeDispatched" && String((e as { execId?: unknown }).execId) === call.callId)) {
-    const outcome = settleFor(log, call.callId)
+  const dispatched = log.find((event) => event.type === "CodeDispatched" && call.context.matches("dispatch", event))
+  if (dispatched !== undefined) {
+    const outcome = settleFor(log, String(dispatched.execId))
     return outcome === undefined ? [] : [answer(outcome)]
   }
   const code = String((call.arguments as { code?: unknown } | undefined)?.code ?? "")
-  return [
-    intent({
-      key: `cd:${call.callId}`,
-      ...(call.turn === undefined
-        ? {}
-        : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }),
-      input: { execId: call.callId, code },
-      events: (input, at) => [codeDispatched({ execId: input.execId, code: input.code, ...stamp, at })]
-    })
-  ]
+  const dispatch = call.context.intent("dispatch", (at) =>
+    codeDispatched({ execId: dispatch.key, code, ...stamp, at }), (call.turn === undefined ? {} : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }))
+  return [dispatch]
 }
 
 export interface CodeModeOptions {
@@ -117,21 +112,15 @@ const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
 }
 
 const codeCancellationTransition = <R>(
-  execId: string,
+  dispatch: Event,
   cancellation: InvocationCancellation
-): ReadonlyArray<Transition<never, R>> => [intent({
-  key: `cs:${execId}`,
-  input: { execId, cancellation },
-  events: (input, at) => [codeSettled({
-    execId: input.execId,
-    error: input.cancellation.reason === undefined
-      ? "cancelled"
-      : `cancelled: ${input.cancellation.reason}`,
-    turn: input.cancellation.invocation.id,
-    ...(input.cancellation.invocation.epoch === 0 ? {} : { epoch: input.cancellation.invocation.epoch }),
-    at
-  })]
-})] as ReadonlyArray<Transition<never, R>>
+): ReadonlyArray<Transition<never, R>> => [bindTransitionContext(dispatch, "code").intent("execute", (at) => codeSettled({
+  execId: String(dispatch.execId),
+  error: cancellation.reason === undefined ? "cancelled" : `cancelled: ${cancellation.reason}`,
+  turn: cancellation.invocation.id,
+  ...(cancellation.invocation.epoch === 0 ? {} : { epoch: cancellation.invocation.epoch }),
+  at
+}), { invocation: null })]
 
 // codeMode composes code components and exposes their package scope through one execute tool.
 export const codeMode = <
@@ -151,7 +140,7 @@ export const codeMode = <
   codeReactorFor(options.policy ?? {}, packagesOf(childMachine.initial()))
   const common = {
     name: "code",
-    keys: rootKeys(combined.keys)
+    children: [combined]
   }
   const staticSystem = typeof options.system === "string" ? options.system : undefined
   const dynamicSystem = typeof options.system === "function" ? options.system : undefined
@@ -179,7 +168,7 @@ export const codeMode = <
             if (execution.settled.has(execId)) continue
             if (String((dispatch as { readonly turn?: unknown }).turn) !== cancellation.invocation.id) continue
             if (eventEpochOf(dispatch) !== cancellation.invocation.epoch) continue
-            return codeCancellationTransition<R>(execId, cancellation)
+            return codeCancellationTransition<R>(dispatch, cancellation)
           }
           return []
         },
@@ -207,5 +196,5 @@ export const codeMode = <
           }
         }
       }) as AgentComponent<R>
-  return inheritComponentContract<AgentView, R>(component, combined)
+  return inheritComponentContract<AgentView, R>({ ...component, keys: rootKeys(combined.keys) }, combined)
 }

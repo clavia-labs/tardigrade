@@ -1,7 +1,9 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 import { Cause, Clock, Effect } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { HashMap, Option } from "effect"
-import { intent, effect, Self } from "@clavia/tardigrade-core/runtime"
+import { Self } from "@clavia/tardigrade-core/runtime"
 import { transitionProjection, type CompleteTransitionDerivation, type TransitionProjection } from "@clavia/tardigrade-core/transition"
 import { modelCalled, outputRejected, outputRepaired, textReturned, turnFailed } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -251,9 +253,6 @@ const awaitingTool = (slice: ReadonlyArray<Event>): boolean => {
 const terminated = (slice: ReadonlyArray<Event>): boolean =>
   slice.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed" || e.type === "TurnCancelled")
 
-const terminalKey = (turn: string, epoch: number): string =>
-  epoch === 0 ? `tn:${turn}` : `tn:${turn}/${epoch}`
-
 const rejectionsIn = (events: ReadonlyArray<Event>): ReadonlyArray<Event> =>
   events.filter((event) => event.type === "OutputRejected")
 
@@ -287,6 +286,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
   const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
   const slice = derived.slice
   if (slice.length === 0 || awaitingTool(slice) || terminated(slice)) return []
+  const context = bindTransitionContext(slice[slice.length - 1]!, "infer")
   const head = slice[0] as Event & { id?: unknown }
   const turn = String(head.id)
   const epoch = derived.epoch
@@ -321,23 +321,9 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
       readonly policy: unknown
     }
   ) => [
-    intent({
-      key: terminalKey(turn, epoch),
-      invocation: { method: "message", id: turn, epoch },
-      input: { turn, epoch, attempt, ...input },
-      events: (given, at) => [
-        turnFailed({
-          error: given.error,
-          cause: given.cause,
-          attempts: given.attempts,
-          attemptKey: given.attempt,
-          policy: given.policy,
-          turn: given.turn,
-          ...epochStamp(given.epoch),
-          at
-        })
-      ]
-    })
+    context.intent("fail", (at) => turnFailed({
+      ...input, attemptKey: attempt, turn, ...epochStamp(epoch), at
+    }), { invocation: { method: "message", id: turn, epoch } })
   ]
   // A declaration that is not a contract this repository can serve ends the turn here, before a
   // socket opens. It is the same class the binding reports when an endpoint cannot promise a
@@ -397,8 +383,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
   // its mark. The completed tool calls count logical attempts, so an operator resume keeps the
   // failed inference's provider idempotency key. The mark ordinal remains unique per physical run.
   return [
-    effect({
-      key: `mc:${turn}/${marks}`,
+    context.effect("infer", {
       invocation: { method: "message", id: turn, epoch },
       input: {
         turn,
@@ -422,7 +407,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               },
         contract
       },
-      act: (input, signal) =>
+      act: (input, { signal }) =>
         Effect.gen(function* () {
           const events = yield* EventLog
           const self = yield* Self
@@ -488,7 +473,15 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               )
             )
           const after = yield* Clock.currentTimeMillis
-          const consequence = consequenceOf(action, {
+          const duplicate = action.kind === "call" && trajectory.some((event) =>
+            event.type === "ToolCalled" && event.turn === input.turn && event.callId === action.callId)
+          const checked: Action = duplicate ? {
+            kind: "fail", error: `duplicate tool call ID ${JSON.stringify(action.callId)} within turn ${JSON.stringify(input.turn)}`,
+            ...(action.usage === undefined ? {} : { usage: action.usage }),
+            ...(action.endpoint === undefined ? {} : { endpoint: action.endpoint }),
+            failure: { cause: "inference_error", attempts: 1 }
+          } : action
+          const consequence = consequenceOf(checked, {
             turn: input.turn,
             epoch: input.epoch,
             attempt: input.attempt,
@@ -525,7 +518,8 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
 }
 
 // inferenceFromHistory derives inference through complete replay.
-export const inferenceFromHistory = (policy: Partial<InferPolicy>, render: Render): CompleteTransitionDerivation<Infer | EventLog | Self> => (log) => {
+export const inferenceFromHistory = (policy: Partial<InferPolicy>, render: Render): CompleteTransitionDerivation<Infer | EventLog | Self> => (history) => {
+  const log = history.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
   const slice = turnView(log)
   const turn = String((slice[0] as { readonly id?: unknown } | undefined)?.id ?? "")
   return inferTransitionsFor(policy, {

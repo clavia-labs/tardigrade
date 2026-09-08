@@ -25,7 +25,7 @@ describe("budgetAuthority", () => {
     const component = budgetAuthority({ decide: (request) => request.grant(3) })
     const events = eventsOf(component, [received])
 
-    expect(events).toEqual([{ type: "BudgetRequestDecided", callId: "budget-1", grant: 3, at: 2 }])
+    expect(events).toMatchObject([{ type: "BudgetRequestDecided", callId: "budget-1", grant: 3, at: 2 }])
     expect(budgetAuthorityKeys.keyOf(events[0]!)).toBe("ba:budget-1")
     expect(deriveComponent(component, [received, ...events]).transitions).toEqual([])
   })
@@ -38,7 +38,7 @@ describe("budgetAuthority", () => {
     })
     const events = eventsOf(component, [received])
 
-    expect(events).toEqual([{
+    expect(events).toMatchObject([{
       type: "BudgetRequestFailed",
       callId: "budget-1",
       error: "policy unavailable",
@@ -51,7 +51,7 @@ describe("budgetAuthority", () => {
   test("rejects an invalid grant as a durable method failure", () => {
     const component = budgetAuthority({ decide: (request) => request.grant(0) })
 
-    expect(eventsOf(component, [received])).toEqual([{
+    expect(eventsOf(component, [received])).toMatchObject([{
       type: "BudgetRequestFailed",
       callId: "budget-1",
       error: "budget grant must be a positive integer, got 0",

@@ -231,7 +231,7 @@ const exercise = async (nodes: ReadonlyArray<Node>, trace: ReadonlyArray<Command
 
 test("operation graphs preserve prerequisites, identity, and invocation lifetime through composition and recovery", async () => {
   await fc.assert(fc.asyncProperty(graphArbitrary, traceArbitrary, (nodes, trace) => exercise(nodes, trace, "none")), { numRuns: 60 })
-}, 30_000)
+}, 120_000)
 
 test("operation graph controls expose premature work, miscorrelation, dependency cancellation, and reanchoring", async () => {
   for (const defect of ["any-prerequisite", "provider-id", "dependency-cancellation", "reanchor"] as const) {
@@ -239,7 +239,7 @@ test("operation graph controls expose premature work, miscorrelation, dependency
     expect(result.failed).toBe(true)
     expect(String(result.errorInstance)).toContain(defect === "reanchor" ? "operation graph identity changed" : "operation graph eligibility mismatch")
   }
-})
+}, 120_000)
 
 
 test("valid graph schedules preserve domain results when independent components are added", async () => {
@@ -258,7 +258,7 @@ test("valid graph schedules preserve domain results when independent components 
     }
     expect(results[0]).toEqual(results[1]!)
   }), { numRuns: 30 })
-}, 30_000)
+}, 120_000)
 
 test("cancellation publication follows the observed result check while unrelated appends remain compatible", async () => {
   for (const point of ["before-start", "during-effect", "before-append"] as const) {

@@ -1,5 +1,5 @@
 import type { Event } from "../event"
-import { bindTransitionContext, validateTransitions, TRANSITION_COMPONENT_IDS, type TransitionContext } from "../transition/transition"
+import { bindTransitionContext, validateTransitions, transitionComponentIds, TRANSITION_COMPONENT_IDS, type TransitionContext } from "../transition/transition"
 import {
   materializeProjection,
   type MaterializedProjectionState,
@@ -38,6 +38,8 @@ export interface ComponentMachine<View, Requirements = never>
 export interface ComponentDefinition<State, View, Requirements = never>
   extends Omit<Projection<State, ComponentOutput<View, Requirements>>, "step"> {
   readonly name: string
+  // children declares the component identities this wrapper may forward (transition/migration.test.ts).
+  readonly children?: ReadonlyArray<Component<unknown, unknown>>
   readonly step: (state: State, event: Event, context: TransitionContext) => State
   readonly cancelState?: (
     state: State,
@@ -47,7 +49,8 @@ export interface ComponentDefinition<State, View, Requirements = never>
 }
 
 const eraseMachine = <State, View, Requirements>(
-  definition: ComponentDefinition<State, View, Requirements>
+  definition: ComponentDefinition<State, View, Requirements>,
+  identities: ReadonlyArray<string>
 ): ComponentMachine<View, Requirements> => {
   const cancelState = definition.cancelState
   const identity = definition.name
@@ -56,7 +59,7 @@ const eraseMachine = <State, View, Requirements>(
     step: (state, event) => definition.step(state, event, bindTransitionContext(event, identity)),
     output: (state) => {
       const output = definition.output(state)
-      validateTransitions(output.transitions, identity)
+      validateTransitions(output.transitions, identities)
       return output
     }
   })
@@ -69,7 +72,7 @@ const eraseMachine = <State, View, Requirements>(
       ? {}
       : {
           cancel: (state: unknown, cancellation: InvocationCancellation) =>
-            validateTransitions(cancelState((state as CachedState).state, cancellation), identity)
+            validateTransitions(cancelState((state as CachedState).state, cancellation), identities)
         })
   }
 }
@@ -88,10 +91,11 @@ export const component = <State, View, Requirements = never>(
     )
   }
   if (typeof definition.name !== "string" || definition.name.length === 0) throw new Error("components require a nonempty name")
+  const identities = transitionComponentIds([{ [TRANSITION_COMPONENT_IDS]: [definition.name] }, ...(definition.children ?? [])])
   return {
     name: definition.name,
-    [TRANSITION_COMPONENT_IDS]: [definition.name],
-    machine: eraseMachine(definition),
+    [TRANSITION_COMPONENT_IDS]: identities,
+    machine: eraseMachine(definition, identities),
     ...(definition[COMPONENT_CONTRACT] === undefined ? {} : { [COMPONENT_CONTRACT]: definition[COMPONENT_CONTRACT] })
   }
 }

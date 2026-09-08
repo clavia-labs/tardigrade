@@ -62,7 +62,7 @@ const guardedTool = <R>(tool: AgentTool<R>, options: PermissionsOptions): AgentT
         reason: subject.reason
       },
       ...(subject.timeoutMs === undefined ? {} : { timeoutMs: subject.timeoutMs })
-    })
+    }, { context: pending.context, tag: "permission" })
     if (call.transitions.length > 0) return call.transitions
     if (call.state.status === "pending") return []
     if (call.state.status === "failed") {
@@ -101,7 +101,7 @@ export const permissions = <
   })
   const common = {
     name: "permissions",
-    ...(combined.keys === undefined ? {} : { keys: combined.keys })
+    children: [combined]
   }
   const component: AgentComponent<R | Router | Self> = defineComponent({
     ...common,

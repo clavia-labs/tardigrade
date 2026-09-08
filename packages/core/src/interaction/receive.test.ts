@@ -33,3 +33,12 @@ test("ordinary events and response call strings remain unchanged", () => {
   const reply = { type: "ResponseReceived", call: "call", at: 2 }
   expect(receivedEventOf({ target, event: reply, link })).toBe(reply)
 })
+
+test("ingress cannot claim a local transition completion or invocation owner", () => {
+  for (const metadata of [
+    { transitionRef: { seq: 1, component: "local", tag: "answer" } },
+    { invocationRef: context.invocation }
+  ]) {
+    expect(() => receivedEventOf({ target, event: { ...event, ...metadata } })).toThrow("runtime-owned")
+  }
+})

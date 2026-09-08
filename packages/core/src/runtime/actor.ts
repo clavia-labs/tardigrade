@@ -1,5 +1,5 @@
 import type { Event } from "../event"
-import { transitionKeyOf, transitionComponentIds } from "../transition/transition"
+import { transitionKeyOf, transitionComponentIds, TRANSITION_COMPONENT_IDS } from "../transition/transition"
 import { actorFromProjections, type Actor } from "./definition"
 import type { Self } from "./context"
 import { transitionProjectionOf, type Component } from "../component/index"
@@ -36,14 +36,18 @@ export const compileActor = <R>(
   components: ReadonlyArray<Component<unknown, R>>,
   childTimeoutMs: number
 ): Actor<R | Router | Self> => {
-  transitionComponentIds(components)
   const inputValidation = methodInputValidationComponents(methods)
+  transitionComponentIds([
+    ...components, ...inputValidation,
+    { [TRANSITION_COMPONENT_IDS]: ["actor.responses", "actor.deadlines", "actor.cancellations"] }
+  ])
   const fragments = [...inputValidation, ...components].flatMap((component) => component.keys === undefined ? [] : [component.keys])
   const responseMethods = {
     ...methods,
     [CANCELLATION_CONTROL_METHOD]: cancellationMethodFor(methods)
   }
-  const keyOf = composeKeys(...fragments, cancellationKeys, methodCallKeys, methodTimeoutKeys, methodResponseKeys)
+  const semanticKeyOf = composeKeys(...fragments, cancellationKeys, methodCallKeys, methodTimeoutKeys, methodResponseKeys)
+  const keyOf = (event: Event) => transitionKeyOf(event) ?? semanticKeyOf(event)
   const projection = actorProjection(methods, responseMethods, components, keyOf, childTimeoutMs)
   const validationProjections = inputValidation.map(transitionProjectionOf)
   return actorFromProjections({

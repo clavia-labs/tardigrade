@@ -1,3 +1,4 @@
+import { eventAt } from "@clavia/tardigrade-core/event"
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { cancelComponent } from "@clavia/tardigrade-core/component"
@@ -15,9 +16,9 @@ describe("code cancellation", () => {
       reason: "operator stopped it"
     })[0]
 
-    expect(transition).toMatchObject({ kind: "intent", key: "cs:exec-1" })
+    expect(transition).toMatchObject({ kind: "intent", key: JSON.stringify([1, "code", "execute"]) })
     if (transition?.kind !== "intent") return
-    expect(transition.events(transition.input, 2)).toEqual([{
+    expect(transition.events(transition.input, 2)).toMatchObject([{
       type: "CodeSettled",
       execId: "exec-1",
       error: "cancelled: operator stopped it",
@@ -37,7 +38,7 @@ describe("code cancellation", () => {
       invocation: { method: "message", id: "m1", epoch: 0 },
       cause: "requested" as const
     }
-    const state = events.reduce(projection.step, projection.initial())
+    const state = events.map((event, index) => eventAt(event, index + 1)).reduce(projection.step, projection.initial())
 
     expect(projection.cancel?.(state, cancellation).map((transition) => transition.key))
       .toEqual(cancelComponent(component, events, cancellation).map((transition) => transition.key))

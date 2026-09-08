@@ -82,12 +82,12 @@ describe("budget admission reacts to BudgetExhausted", () => {
 
   test("admission commits an intent before code execution becomes an effect", () => {
     const log = turn(1, 12)
-    const admission = rootReactor(log).find((transition) => transition.key === "cd:c1")
+    const admission = rootReactor(log).find((transition) => transition.key === JSON.stringify([2, "agent.tools", "dispatch"]))
     expect(admission?.kind).toBe("intent")
     const execution = rootReactor([
       ...log,
-      { type: "CodeDispatched", execId: "c1", code: "x1", turn: "m1", at: 3 }
-    ]).find((transition) => transition.key === "cs:c1")
+      ...(admission?.kind === "intent" ? admission.events(admission.input, 3) : [])
+    ]).find((transition) => JSON.parse(transition.key)[2] === "execute")
     expect(execution?.kind).toBe("effect")
   })
 
@@ -99,9 +99,9 @@ describe("budget admission reacts to BudgetExhausted", () => {
     })
     const defaultTwo = (events: ReadonlyArray<Event>) => enabled(defaultTwoActor, events)
 
-    expect(defaultTwo(turn(2)).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
-    expect(defaultTwo(turn(3)).map((transition) => transition.key)).toContain("bw:m1/2")
-    expect(defaultTwo(turn(3, 9)).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
+    expect(defaultTwo(turn(2)).some((transition) => JSON.parse(transition.key)[2] === "budget.wall")).toBe(false)
+    expect(defaultTwo(turn(3)).map((transition) => transition.key)).toContain(JSON.stringify([6, "agent.tools", "budget.wall"]))
+    expect(defaultTwo(turn(3, 9)).some((transition) => JSON.parse(transition.key)[2] === "budget.wall")).toBe(false)
     expect(budgetOf(turn(1), { limit: 2 })).toBe(2)
     expect(budgetOf(turn(1, 9), { limit: 2 })).toBe(9)
   })
@@ -114,7 +114,7 @@ describe("budget admission reacts to BudgetExhausted", () => {
   test("the first call past the limit derives the wall without deriving dispatch", () => {
     const keys = rootReactor(turn(3, 2)).map((transition) => transition.key)
 
-    expect(keys).toContain("bw:m1/2")
+    expect(keys).toContain(JSON.stringify([6, "agent.tools", "budget.wall"]))
     expect(keys).not.toContain("cd:c3")
   })
 
@@ -150,14 +150,14 @@ describe("budget admission reacts to BudgetExhausted", () => {
 
   test("the wall records the applied limit and observed demand", async () => {
     const log = turn(3, 2)
-    const wall = rootReactor(log).find((transition) => transition.key === "bw:m1/2")!
+    const wall = rootReactor(log).find((transition) => transition.key === JSON.stringify([6, "agent.tools", "budget.wall"]))!
     expect(wall.kind).toBe("intent")
     if (wall.kind !== "intent") throw new Error("budget wall must be an intent")
     const emitted = wall.events(wall.input, 0)
 
     expect(emitted).toHaveLength(1)
     expect(emitted[0]).toMatchObject({ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1" })
-    expect(rootReactor([...log, ...emitted]).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
+    expect(rootReactor([...log, ...emitted]).some((transition) => JSON.parse(transition.key)[2] === "budget.wall")).toBe(false)
   })
 
   test("the admission fold reads neither clock nor randomness", () => {
@@ -170,7 +170,7 @@ describe("budget admission reacts to BudgetExhausted", () => {
       throw new Error("random in the budget guard")
     }
     try {
-      expect(rootReactor(turn(3, 2)).map((transition) => transition.key)).toContain("bw:m1/2")
+      expect(rootReactor(turn(3, 2)).map((transition) => transition.key)).toContain(JSON.stringify([6, "agent.tools", "budget.wall"]))
     } finally {
       Date.now = realNow
       Math.random = realRandom
@@ -202,7 +202,7 @@ describe("the budget component boundary", () => {
       { type: "ToolCalled", callId: "r2", name: "read", arguments: {}, turn: "m1", at: 3 }
     ]
 
-    expect(root(log).map((transition) => transition.key)).toContain("bw:m1/1")
+    expect(root(log).map((transition) => transition.key)).toContain(JSON.stringify([4, "agent.tools", "budget.wall"]))
   })
 
   test("a wall withdraws only tools inside the budget subtree", () => {

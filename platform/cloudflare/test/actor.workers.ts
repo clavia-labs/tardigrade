@@ -79,15 +79,6 @@ const hold = actorMethod({
 })
 const holdComponent = component<undefined, undefined>({
   name: "hold",
-  keys: {
-    prefixes: ["hold-request:", "hold-complete:", "hold-cancel:"],
-    keyOf: (event) => {
-      if (event.type === "HoldRequested") return `hold-request:${String((event as { readonly id?: unknown }).id)}`
-      if (event.type === "HoldCompleted") return `hold-complete:${String((event as { readonly id?: unknown }).id)}`
-      if (event.type === "HoldCancelled") return `hold-cancel:${String((event as { readonly id?: unknown }).id)}`
-      return undefined
-    }
-  },
   initial: () => undefined,
   step: () => undefined,
   output: () => ({ view: undefined, transitions: [] })
@@ -109,7 +100,7 @@ const deadlineThreadHost = (state: DurableObjectState, thread: string) =>
     actorInstance: "main",
     thread,
     actor: holdDeadlineActor,
-    keyOf: holdDeadlineRuntime.keyOf
+    keyOf: (event) => holdDeadlineRuntime.keyOf(event) ?? (event.type === "HoldCompleted" ? `hold-complete:${String(event.id)}` : undefined)
   })
 
 beforeAll(async () => {

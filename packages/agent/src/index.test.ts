@@ -1,3 +1,4 @@
+import { definePackage } from "@clavia/tardigrade-code/package/definition"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
@@ -229,8 +230,8 @@ describe("an assembled agent", () => {
     })
     const records = mind.host.read(ROOT_THREAD).filter((event): event is ChildCreated => event.type === "ChildCreated")
     expect(records).toMatchObject([
-      { callId: "t1.0", turn: "run-0", address: { actor: "mem", instance: "main" }, depth: 1 },
-      { callId: "t1.1", turn: "run-0", address: { actor: "mem", instance: "main" }, depth: 1 }
+      { callId: `${String(mind.host.read(ROOT_THREAD).find((event) => event.type === "CodeDispatched")!.execId)}.0`, turn: "run-0", address: { actor: "mem", instance: "main" }, depth: 1 },
+      { callId: `${String(mind.host.read(ROOT_THREAD).find((event) => event.type === "CodeDispatched")!.execId)}.1`, turn: "run-0", address: { actor: "mem", instance: "main" }, depth: 1 }
     ])
     // The graph existed: two child threads, each with a served turn.
     expect(new Set(records.map((record) => record.address.thread)).size).toBe(2)
@@ -479,6 +480,62 @@ describe("an assembled agent", () => {
     })
     // The store holds the result's JSON, so the offset counts the opening quote too.
     const answer = await mind.run("spill then search")
-    expect(answer.output).toBe("w1.result:20001:NEEDLE:20008")
+    expect(answer.output).toBe(`${String(mind.host.read(ROOT_THREAD).find((event) => event.type === "CodeSettled")!.tmp)}:20001:NEEDLE:20008`)
   })
+})
+
+test("reused provider IDs execute and correlate independently across turns and cold replay", async () => {
+  for (const mode of ["native", "code"] as const) {
+    const dispatched: unknown[] = []
+    const run = (input: unknown) => Effect.sync(() => { dispatched.push(input); return input })
+    const surface = mode === "native"
+      ? tool({ spec: { name: "echo", description: "echo", inputSchema: {} }, run })
+      : codeMode([definePackage({ name: "probe", description: "echo", methods: { echo: run } })])
+    const assembled = actor({ name: "test-agent", methods: agentMethods, components: [infer([surface, nativeOutput], TEST_MODEL)] })
+    const react: Mind = async (request) => {
+      const turn = request.identity.turn
+      const returned = request.trajectory.find((event) => event.type === "ToolReturned" && event.turn === turn)
+      if (returned !== undefined) return { kind: "complete", output: JSON.stringify(returned.result) }
+      const head = request.trajectory.find((event) => event.type === "MessageReceived" && event.id === turn)!
+      return { kind: "call", callId: "7", name: mode === "native" ? "echo" : "execute",
+        arguments: mode === "native" ? head.text : { code: "return await probe.echo(brief)" }, text: "working" }
+    }
+    const first = hosted(assembled, react)
+    const expected = (value: string) => JSON.stringify(mode === "native" ? value : { result: value })
+    expect((await first.run("one")).output).toBe(expected("one"))
+    expect((await first.run("two")).output).toBe(expected("two"))
+    const events = first.host.read(ROOT_THREAD)
+    const returns = events.filter((event) => event.type === "ToolReturned")
+    expect(returns.map((event) => event.callId)).toEqual(["7", "7"])
+    expect(new Set(returns.map((event) => JSON.stringify(event.transitionRef))).size).toBe(2)
+    expect(events.filter((event) => event.type === "TextReturned")).toHaveLength(2)
+    const restarted = hosted(assembled, react, JSON.parse(JSON.stringify(events)) as ReadonlyArray<Event>)
+    await restarted.host.drive()
+    expect(dispatched).toEqual(["one", "two"])
+    expect((await restarted.run("three")).output).toBe(expected("three"))
+    expect(dispatched).toEqual(["one", "two", "three"])
+    if (mode === "code") {
+      const pairs = restarted.host.read(ROOT_THREAD).filter((event) => event.type === "PackageReturned")
+      expect(pairs.map((event) => event.result)).toEqual(["one", "two", "three"])
+      expect(new Set(pairs.map((event) => event.callId)).size).toBe(3)
+    }
+  }
+})
+
+test("a turn rejects reused provider IDs before dispatch, including after resume", async () => {
+  let dispatched = 0
+  const surface = tool({ spec: { name: "echo", description: "echo", inputSchema: {} }, run: () => Effect.sync(() => ++dispatched) })
+  const assembled = actor({ name: "test-agent", methods: agentMethods, components: [infer([surface, nativeOutput], TEST_MODEL)] })
+  const usage = { promptTokens: 3, completionTokens: 2 }
+  const endpoint = { provider: "test", model: "test-model" }
+  const mind = hosted(assembled, async () => ({ kind: "call", callId: "7", name: "echo", arguments: {}, usage, endpoint }))
+  const first = await mind.run("go")
+  expect(first.error).toContain("duplicate tool call ID")
+  expect(dispatched).toBe(1)
+  expect(mind.host.read(ROOT_THREAD).findLast((event) => event.type === "TurnFailed"))
+    .toMatchObject({ cause: "inference_error", usage, endpoint })
+  expect((await mind.resume(first.turn)).error).toContain("duplicate tool call ID")
+  expect(dispatched).toBe(1)
+  await mind.host.drive()
+  expect(dispatched).toBe(1)
 })

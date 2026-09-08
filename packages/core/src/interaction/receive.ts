@@ -15,6 +15,7 @@ export const receivedEventOf = (delivery: {
   readonly call?: unknown
 }): Event => {
   const { target, event, link } = delivery
+  if ("transitionRef" in event || "invocationRef" in event) throw new Error("delivery cannot carry runtime-owned completion metadata")
   if (link !== undefined && !sameThreadAddress(target, link.target)) throw new Error("delivery link does not match target")
   const embedded = typeof event.call === "object" && event.call !== null
     ? decodeActorInvocationContext(event.call) : undefined

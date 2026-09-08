@@ -129,14 +129,6 @@ const hold = actorMethod({
 })
 const holdComponent = component<undefined, undefined>({
   name: "hold",
-  keys: {
-    prefixes: ["hold-request:", "hold-cancel:"],
-    keyOf: (event) => {
-      if (event.type === "HoldRequested") return `hold-request:${String((event as { readonly id?: unknown }).id)}`
-      if (event.type === "HoldCancelled") return `hold-cancel:${String((event as { readonly id?: unknown }).id)}`
-      return undefined
-    }
-  },
   initial: () => undefined,
   step: () => undefined,
   output: () => ({ view: undefined, transitions: [] })
@@ -493,7 +485,7 @@ describe("the bun host", () => {
       scheduledFor: 50,
       at: 53
     })
-    expect(await recovered.read("caller")).toContainEqual({
+    expect(await recovered.read("caller")).toContainEqual(expect.objectContaining({
       type: "CallTimedOut",
       call: "inspect-1",
       method: "inspect",
@@ -501,7 +493,7 @@ describe("the bun host", () => {
       timeoutMs: 50,
       deadlineAt: 50,
       at: 53
-    })
+    }))
     expect(recoveredAlarm.pending).toEqual([])
     expect(await recovered.resting()).toBe(true)
     await recovered.close()

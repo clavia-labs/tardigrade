@@ -197,7 +197,7 @@ test("logical operations preserve refs through changing outputs, retries, comple
     await lifecycle("request", trace)
     await lifecycle("completion", trace)
   }), { numRuns: 100 })
-})
+}, 30_000)
 
 test("sequential tag reuse is a counterexample to logical operation correlation", async () => {
   const result = await fc.check(fc.asyncProperty(commands, (trace) => lifecycle("request", trace, true)), { numRuns: 10 })

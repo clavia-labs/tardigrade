@@ -1,7 +1,7 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { Context, Effect, Layer, Schema } from "effect"
 import { actor, actorMethod, component } from "tardie"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { effect } from "@clavia/tardigrade-core/effect"
 
 import type { DevLayersFor } from "../../src/dev"
 
@@ -10,7 +10,7 @@ class Greeting extends Context.Service<Greeting, { readonly prefix: string; read
 ) {}
 
 interface GreetingState {
-  readonly requests: ReadonlyMap<string, string>
+  readonly requests: ReadonlyMap<string, Event>
   readonly replies: ReadonlyMap<string, string>
 }
 
@@ -18,7 +18,7 @@ const initial = (): GreetingState => ({ requests: new Map(), replies: new Map() 
 const step = (state: GreetingState, event: Event): GreetingState => {
   const value = event as { readonly id?: unknown; readonly text?: unknown }
   const id = String(value.id ?? "")
-  if (event.type === "GreetingRequested") return { ...state, requests: new Map(state.requests).set(id, String(value.text ?? "")) }
+  if (event.type === "GreetingRequested") return { ...state, requests: new Map(state.requests).set(id, event) }
   if (event.type === "GreetingCompleted") return { ...state, replies: new Map(state.replies).set(id, String(value.text ?? "")) }
   return state
 }
@@ -46,22 +46,12 @@ export const layeredActor = actor({
   methods: { greet },
   components: [component({
     name: "greeting",
-    keys: {
-      prefixes: ["greeting-request:", "greeting-complete:"],
-      keyOf: (event) => {
-        const id = String((event as { readonly id?: unknown }).id ?? "")
-        if (event.type === "GreetingRequested") return `greeting-request:${id}`
-        if (event.type === "GreetingCompleted") return `greeting-complete:${id}`
-        return undefined
-      }
-    },
     initial,
     step,
     output: (state) => ({
       view: undefined,
-      transitions: [...state.requests].flatMap(([id, text]) => state.replies.has(id) ? [] : [effect({
-        key: `greeting:${id}`,
-        input: { id, text },
+      transitions: [...state.requests].flatMap(([id, event]) => state.replies.has(id) ? [] : [bindTransitionContext(event, "greeting").effect("greet", {
+        input: { id, text: String(event.text ?? "") },
         act: (input) => Effect.gen(function*() {
           const greeting = yield* Greeting
           return [{ type: "GreetingCompleted", ...input, text: `${greeting.prefix}:${greeting.thread}:${input.text}` }]

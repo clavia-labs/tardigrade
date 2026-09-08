@@ -1,5 +1,6 @@
 import { Schema } from "effect"
-import { intent } from "@clavia/tardigrade-core/intent"
+import { bindTransitionContext } from "../transition/transition"
+import { eventAt, eventPositionOf } from "../event"
 import { component, legacyComponent, type Component } from "@clavia/tardigrade-core/component"
 import type { ActorMethods, InvalidDurableMethodInput } from "./method"
 
@@ -16,6 +17,7 @@ const errorOf = (
 }
 
 const transitionsFor = (
+  name: string,
   method: ActorMethods[string],
   log: InvalidDurableMethodInput["log"]
 ) => {
@@ -26,11 +28,8 @@ const transitionsFor = (
     const error = errorOf(contract.schema, event)
     if (error === undefined) return []
     const input: InvalidDurableMethodInput = { event, index, log, error }
-    return [intent({
-      key: contract.keyOf(input),
-      input,
-      events: (current, at) => [contract.reject(current, at)]
-    })]
+    return [bindTransitionContext(event, `actor.method-input.${name}`).intent("reject", (at) =>
+      contract.reject(input, at), { invocation: null })]
   })
 }
 
@@ -38,7 +37,10 @@ const transitionsFor = (
 export const methodInputValidationTransitions = (
   methods: ActorMethods,
   log: InvalidDurableMethodInput["log"]
-) => Object.values(methods).flatMap((method) => transitionsFor(method, log))
+) => {
+  const events = log.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
+  return Object.entries(methods).flatMap(([name, method]) => transitionsFor(name, method, events))
+}
 
 // methodInputValidationComponents mount each method's durable input contract (packages/agent/src/runtime/composition.test.ts, "a historical model string durably fails its turn").
 export const methodInputValidationComponents = (
@@ -49,7 +51,7 @@ export const methodInputValidationComponents = (
   return [projection === undefined
     ? legacyComponent({
         name: `actor.method-input.${name}`,
-        derive: (log) => ({ view: undefined, transitions: transitionsFor(method, log) })
+        derive: (log) => ({ view: undefined, transitions: transitionsFor(name, method, log) })
       })
     : component({
         name: `actor.method-input.${name}`,

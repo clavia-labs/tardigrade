@@ -1,3 +1,4 @@
+import { eventAt } from "@clavia/tardigrade-core/event"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -51,7 +52,7 @@ describe("the compaction measure and guard", () => {
     const log: Event[] = []
     for (const event of openTurn(16)) {
       log.push(event)
-      state = projection.step(state, event)
+      state = projection.step(state, eventAt(event, log.length))
       expect(projection.output(state).transitions.map((transition) => transition.key))
         .toEqual(reactor(log).map((transition) => transition.key))
     }
@@ -178,7 +179,7 @@ describe("the compaction pass", () => {
     const suffix = suffixOf(log)
     expect(suffix[0]!.type).toBe("ToolCalled")
     const callId = String((suffix[0] as { callId?: unknown }).callId)
-    expect(checkpointOf(log).keepFrom).toBe(`c:${callId}`)
+    expect(checkpointOf(log).keepFrom).toBe(`c:${JSON.stringify([suffix[0]!.turn ?? null, callId])}`)
     expect(suffix.some((e) => e.type === "ToolReturned" && String((e as { callId?: unknown }).callId) === callId)).toBe(
       true
     )
@@ -240,7 +241,7 @@ describe("a projected repair is invisible to compaction as well as to the render
     let state = projection.initial()
     for (const event of events) {
       log.push(event)
-      state = projection.step(state, event)
+      state = projection.step(state, eventAt(event, log.length))
       expect(projection.output(state).transitions.map((transition) => ({
         key: transition.key,
         input: transition.input
@@ -288,4 +289,14 @@ describe("a projected repair is invisible to compaction as well as to the render
     // The rejection is still a fact of the log; only every reader of the projection dropped it.
     expect(log.some((e) => e.type === "OutputRejected")).toBe(true)
   })
+})
+
+test("a compaction checkpoint distinguishes reused provider IDs across turns", () => {
+  const events: ReadonlyArray<Event> = [
+    { type: "ToolCalled", turn: "first", callId: "7" },
+    { type: "ToolReturned", turn: "first", callId: "7", result: "old" },
+    { type: "ToolCalled", turn: "second", callId: "7" },
+    { type: "ToolReturned", turn: "second", callId: "7", result: "new" }
+  ]
+  expect(keepFromIndex(events, `c:${JSON.stringify(["second", "7"])}`)).toBe(2)
 })

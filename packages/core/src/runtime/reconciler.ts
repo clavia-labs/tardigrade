@@ -1,5 +1,5 @@
 import { eventAt } from "../event"
-import { validateTransitions } from "../transition/transition"
+import { concurrentTransition, validateTransitions } from "../transition/transition"
 import { Cause, Clock, Context, Effect, Option, type Tracer } from "effect"
 import { actorRuntimeOf, type ActorSource } from "./actor"
 import { Self, InvocationScope, InvocationSuspended, ThreadAllocationScope } from "./context"
@@ -223,7 +223,7 @@ const enabledFrom = <R>(
     ? a.cancellationResiduals?.(events)
     : actorOutput!.residuals
   const residuals = (residualTransitions ?? []).map((transition) =>
-    transition.kind === "effect" ? { ...transition, concurrent: true } : transition
+    transition.kind === "effect" ? concurrentTransition(transition) : transition
   )
   return validateTransitions([...continuations, ...residuals]).filter((transition) => !recorded.has(transition.key))
 }

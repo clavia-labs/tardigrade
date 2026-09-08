@@ -35,8 +35,8 @@ export const transitionKeyOf = (event: Event): string | undefined => "transition
   ? transitionKey(Schema.decodeUnknownSync(TransitionRef)(event.transitionRef))
   : undefined
 
-// TaggedEffectOptions declares an action whose completion identity is supplied by its context.
-interface TaggedEffectOptions<Input, Result extends Event, Requirements = never> {
+// TaggedEffectOptions declares an action whose final returned event carries its completion ref; an empty batch leaves it pending (migration.test.ts).
+interface TaggedEffectOptions<Input, Result extends Event | ReadonlyArray<Event>, Requirements = never> {
   readonly key?: never
   readonly ref?: never
   readonly invocation?: InvocationRef | null
@@ -50,8 +50,8 @@ interface TaggedEffectOptions<Input, Result extends Event, Requirements = never>
 // Tags must keep identifying the same logical operation across outputs for that owner; retries reuse the tag, while new operations need a different tag or owner (tla/runtime/TransitionDeclarations.tla, AuthorAllows; runtime/transition-lifecycle.properties.test.ts).
 export interface TransitionContext {
   readonly invocation?: InvocationRef
-  readonly effect: <Input, Result extends Event, Requirements = never>(tag: string, options: TaggedEffectOptions<Input, Result, Requirements>) => ExternalEffect<never, Requirements>
-  readonly intent: (tag: string, completion: Event | ((at: number) => Event), options?: { readonly invocation?: InvocationRef | null }) => Intent<never>
+  readonly effect: <Input, Result extends Event | ReadonlyArray<Event>, Requirements = never>(tag: string, options: TaggedEffectOptions<Input, Result, Requirements>) => ExternalEffect<never, Requirements>
+  readonly intent: (tag: string, completion: Event | ReadonlyArray<Event> | ((at: number) => Event | ReadonlyArray<Event>), options?: { readonly invocation?: InvocationRef | null }) => Intent<never>
   readonly matches: (tag: string, event: Event) => boolean
 }
 
@@ -81,15 +81,22 @@ export const bindTransitionContext = (event: Event, component: string): Transiti
     if (seq === undefined) throw new Error("tagged transitions require a recorded event position")
     return Object.freeze(Schema.decodeSync(TransitionRef)({ seq, component, tag }))
   }
-  const complete = (transitionRef: TransitionRef, invocation: InvocationRef | undefined, completion: Event): Event => {
-    Schema.decodeSync(Event)(completion)
-    if ("transitionRef" in completion) throw new Error("completion event already carries a transition reference")
-    if ("invocationRef" in completion) throw new Error("completion event already carries an invocation reference")
-    return { ...completion, transitionRef, ...(invocation === undefined ? {} : { invocationRef: invocation }) }
+  const complete = (transitionRef: TransitionRef, invocation: InvocationRef | undefined, result: Event | ReadonlyArray<Event>): ReadonlyArray<Event> => {
+    const events: ReadonlyArray<Event> = Array.isArray(result) ? result : [result as Event]
+    return events.map((completion, index) => {
+      Schema.decodeSync(Event)(completion)
+      if ("transitionRef" in completion) throw new Error("completion event already carries a transition reference")
+      if ("invocationRef" in completion) throw new Error("completion event already carries an invocation reference")
+      return {
+        ...completion,
+        ...(index === events.length - 1 ? { transitionRef } : {}),
+        ...(invocation === undefined ? {} : { invocationRef: invocation })
+      }
+    })
   }
   return Object.freeze({
     ...(inherited === undefined ? {} : { invocation: inherited }),
-    effect: <Input, Result extends Event, Requirements = never>(tag: string, options: TaggedEffectOptions<Input, Result, Requirements>) => {
+    effect: <Input, Result extends Event | ReadonlyArray<Event>, Requirements = never>(tag: string, options: TaggedEffectOptions<Input, Result, Requirements>) => {
       if (options.key !== undefined || options.ref !== undefined) throw new Error("transition identity is supplied by the runtime")
       const ref = reference(tag)
       const invocation = invocationOf(options.invocation)
@@ -99,18 +106,18 @@ export const bindTransitionContext = (event: Event, component: string): Transiti
         ...(invocation === undefined ? {} : { invocation }),
         ...(options.concurrent === undefined ? {} : { concurrent: options.concurrent }),
         ...(options.interrupts === undefined ? {} : { interrupts: options.interrupts }),
-        act: (input: Input, signal: AbortSignal) => Effect.map(options.act(input, { signal }), (result) => [complete(ref, invocation, result)])
+        act: (input: Input, signal: AbortSignal) => Effect.map(options.act(input, { signal }), (result) => complete(ref, invocation, result))
       }))
       references.set(transition, ref)
       return transition
     },
-    intent: (tag: string, result: Event | ((at: number) => Event), options?: { readonly invocation?: InvocationRef | null }) => {
+    intent: (tag: string, result: Event | ReadonlyArray<Event> | ((at: number) => Event | ReadonlyArray<Event>), options?: { readonly invocation?: InvocationRef | null }) => {
       const ref = reference(tag)
       const invocation = invocationOf(options?.invocation)
       const transition = Object.freeze(intent({
         key: transitionKey(ref), input: result,
         ...(invocation === undefined ? {} : { invocation }),
-        events: (input, at) => [complete(ref, invocation, typeof input === "function" ? input(at) : input)]
+        events: (input, at) => complete(ref, invocation, typeof input === "function" ? input(at) : input)
       }))
       references.set(transition, ref)
       return transition
@@ -122,20 +129,28 @@ export const bindTransitionContext = (event: Event, component: string): Transiti
 // validateTransitions enforces component ownership and rejects duplicate intent/effect tags within the supplied output (tla/runtime/TransitionDeclarations.tla, RuntimeAllows; runtime/reconciler.properties.test.ts).
 export const validateTransitions = <R>(
   transitions: ReadonlyArray<Transition<never, R>>,
-  component?: string
+  component?: string | ReadonlyArray<string>
 ): ReadonlyArray<Transition<never, R>> => {
   const seen = new Set<string>()
   for (const transition of transitions) {
     const ref = references.get(transition)
     if (component !== undefined) {
       if (ref === undefined) throw new Error(`component "${component}" requires transitions declared through its context`)
-      if (ref.component !== component) throw new Error(`transition belongs to component "${ref.component}", not "${component}"`)
+      if (!(typeof component === "string" ? [component] : component).includes(ref.component)) throw new Error(`transition belongs to component "${ref.component}", not "${component}"`)
     }
     if (ref === undefined) continue
     if (seen.has(transition.key)) throw new Error(`duplicate transition tag "${ref.tag}" for component "${ref.component}" at event ${ref.seq}`)
     seen.add(transition.key)
   }
   return transitions
+}
+
+// concurrentTransition preserves scoped identity when cancellation cleanup becomes concurrent (migration.test.ts).
+export const concurrentTransition = <R>(transition: ExternalEffect<never, R>): ExternalEffect<never, R> => {
+  const concurrent = Object.freeze({ ...transition, concurrent: true })
+  const reference = references.get(transition)
+  if (reference !== undefined) references.set(concurrent, reference)
+  return concurrent
 }
 
 export const TRANSITION_COMPONENT_IDS = Symbol("transitionComponentIds")

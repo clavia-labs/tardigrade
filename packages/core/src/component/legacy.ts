@@ -1,3 +1,4 @@
+import { TRANSITION_COMPONENT_IDS } from "../transition/transition"
 import { Chunk } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Transition } from "@clavia/tardigrade-core/transition"
@@ -23,9 +24,11 @@ export interface LegacyComponentDefinition<View, Requirements = never> {
 export const legacyComponent = <View, Requirements = never>(
   definition: LegacyComponentDefinition<View, Requirements>
 ): Component<View, Requirements> => {
+  if (typeof definition.name !== "string" || definition.name.length === 0) throw new Error("components require a nonempty name")
   const cancel = definition.cancel
   return {
     name: definition.name,
+    [TRANSITION_COMPONENT_IDS]: [definition.name],
     machine: {
       initial: () => Chunk.empty<Event>(),
       step: (events, event) => Chunk.append(events as Chunk.Chunk<Event>, event),

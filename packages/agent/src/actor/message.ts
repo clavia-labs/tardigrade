@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { MessageReceived, messageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { actorMethod, durableInputProjection } from "@clavia/tardigrade-core/actor/method"
-import { intent } from "@clavia/tardigrade-core/runtime"
+import { type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import {
   initialTurnProjection,
@@ -32,15 +32,10 @@ export const AgentMessageReceived = Schema.Struct({
 
 const turnOf = (event: Event): string => String((event as { readonly id?: unknown }).id)
 
-const terminalKey = (event: Event, log: ReadonlyArray<Event>): string => {
-  const turn = turnOf(event)
-  const epoch = turnEpochOf(log, turn)
-  return epoch === 0 ? `tn:${turn}` : `tn:${turn}/${epoch}`
-}
 
 interface MessageValidationState {
   readonly turns: ReturnType<typeof initialTurnProjection>
-  readonly invalid: ReadonlyArray<{ readonly event: Event; readonly error: string }>
+  readonly invalid: ReadonlyArray<{ readonly event: Event; readonly error: string; readonly context: TransitionContext }>
 }
 
 // agentMessageMethod exposes an agent turn as the generic message actor method.
@@ -50,7 +45,6 @@ export const agentMessageMethod = actorMethod({
   durableInput: {
     schema: AgentMessageReceived,
     matches: (event) => event.type === "MessageReceived",
-    keyOf: ({ event, log }) => terminalKey(event, log),
     reject: ({ event, log, error }, at) => {
       const turn = turnOf(event)
       const epoch = turnEpochOf(log, turn)
@@ -66,7 +60,7 @@ export const agentMessageMethod = actorMethod({
     },
     projection: durableInputProjection({
       initial: (): MessageValidationState => ({ turns: initialTurnProjection(), invalid: [] }),
-      step: (state, event): MessageValidationState => {
+      step: (state, event, context): MessageValidationState => {
         let error: string | undefined
         if (event.type === "MessageReceived") {
           try {
@@ -77,25 +71,17 @@ export const agentMessageMethod = actorMethod({
         }
         return {
           turns: reduceTurnProjection(state.turns, event),
-          invalid: error === undefined ? state.invalid : [...state.invalid, { event, error }]
+          invalid: error === undefined ? state.invalid : [...state.invalid, { event, error, context }]
         }
       },
-      output: (state) => state.invalid.map(({ event, error }) => {
+      output: (state) => state.invalid.map(({ event, error, context }) => {
         const turn = turnOf(event)
         const epoch = turnEpochFrom(state.turns, turn)
-        return intent({
-          key: epoch === 0 ? `tn:${turn}` : `tn:${turn}/${epoch}`,
-          input: { turn, epoch, error },
-          events: (input, at) => [turnFailed({
-            error: `invalid MessageReceived: ${input.error}; send a new corrected message`,
-            cause: "message_invalid",
-            attempts: 0,
-            attemptKey: `${input.turn}/message`,
-            turn: input.turn,
-            ...(input.epoch === 0 ? {} : { epoch: input.epoch }),
-            at
-          })]
-        })
+        return context.intent("reject", (at) => turnFailed({
+          error: `invalid MessageReceived: ${error}; send a new corrected message`,
+          cause: "message_invalid", attempts: 0, attemptKey: `${turn}/message`, turn,
+          ...(epoch === 0 ? {} : { epoch }), at
+        }), { invocation: null })
       })
     })
   },

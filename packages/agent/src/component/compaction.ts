@@ -1,5 +1,7 @@
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 import { Clock, Effect, HashSet } from "effect"
-import { effect, Self, type Transition } from "@clavia/tardigrade-core/runtime"
+import { Self, type Transition } from "@clavia/tardigrade-core/runtime"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import { compactionCompleted } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -224,7 +226,7 @@ export const keepFromIndex = (events: ReadonlyArray<Event>, keepFrom: string): n
   for (let i = 0; i < events.length; i++) {
     const e = events[i]!
     const v = e as { callId?: unknown; id?: unknown }
-    if (keepFrom.startsWith("c:") && e.type === "ToolCalled" && String(v.callId) === keepFrom.slice(2)) return i
+    if (keepFrom.startsWith("c:") && e.type === "ToolCalled" && JSON.stringify([e.turn ?? null, v.callId]) === keepFrom.slice(2)) return i
     if (keepFrom.startsWith("m:") && e.type === "MessageReceived" && String(v.id) === keepFrom.slice(2)) return i
   }
   return 0
@@ -257,7 +259,7 @@ const atRoundBoundary = (log: ReadonlyArray<Event>): boolean => {
 // names an event the projection cannot see, so it is no boundary.
 const boundaryIdOf = (e: Event, served: ReadonlySet<string>): string | undefined => {
   const v = e as { callId?: unknown; id?: unknown }
-  if (e.type === "ToolCalled") return `c:${String(v.callId)}`
+  if (e.type === "ToolCalled") return `c:${JSON.stringify([e.turn ?? null, v.callId])}`
   if (e.type === "MessageReceived" && served.has(String(v.id))) return `m:${String(v.id)}`
   return undefined
 }
@@ -352,10 +354,11 @@ const compactionTransition = (
   model: ModelRef | undefined,
   summary: string,
   keepFrom: string,
-  span: ReadonlyArray<Event>
+  span: ReadonlyArray<Event>,
+  owner: Event
 ): ReadonlyArray<Transition<never, Infer | Self>> => [
-    effect({
-      key: `cc:${keepFrom}`,
+    bindTransitionContext(owner, "compaction").effect("summarize", {
+      invocation: null,
       input: {
         keepFrom,
         summary,
@@ -414,7 +417,8 @@ const compactionTransition = (
     })
   ]
 
-export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): CompleteTransitionDerivation<Infer | Self> => (log) => {
+export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): CompleteTransitionDerivation<Infer | Self> => (history) => {
+  const log = history.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
   const model = policy.model ?? selectedModelOf(log)
   const resolved = contextPolicyFrom(log, policy)
   // The projection runs first, so the guard, the cut, and the brief all read the history the
@@ -426,7 +430,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Compl
   if (cut === undefined) return []
   const prior = checkpointOf(view)
   const span = view.slice(keepFromIndex(view, prior.keepFrom), cut.index)
-  return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span)
+  return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span, view[cut.index]!)
 }
 
 // compaction derives one resolved context contribution and the transitions governed by the same
@@ -494,7 +498,7 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
     if (cut === undefined) return []
     const prior = checkpointOf(suffix)
     const span = suffix.slice(keepFromIndex(suffix, prior.keepFrom), cut.index)
-    return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span)
+    return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span, suffix[cut.index]!)
   }
   return component({
     name: "compaction",

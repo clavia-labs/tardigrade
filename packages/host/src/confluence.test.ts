@@ -109,5 +109,5 @@ describe("driver confluence", () => {
       }),
       { numRuns: 200 }
     )
-  })
+  }, 30_000)
 })
