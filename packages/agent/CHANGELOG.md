@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.24.0](https://github.com/clavia-labs/tardigrade/compare/v0.23.0...v0.24.0) (2026-09-08)
+
+
+### Features
+
+* **agent:** bound and name delegation ([#408](https://github.com/clavia-labs/tardigrade/issues/408)) ([05565ef](https://github.com/clavia-labs/tardigrade/commit/05565efc8a58495f9ab9de5342f10592ae9094b4))
+
+
+### Bug Fixes
+
+* support parallel tool calls ([#411](https://github.com/clavia-labs/tardigrade/issues/411)) ([bb039f7](https://github.com/clavia-labs/tardigrade/commit/bb039f73767a0a0d6902b0be668beabf19fc02e5))
+
 ## [0.23.0](https://github.com/clavia-labs/tardigrade/compare/v0.22.3...v0.23.0) (2026-09-08)
 
 
