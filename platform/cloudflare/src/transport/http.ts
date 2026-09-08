@@ -14,10 +14,7 @@ import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
 import type { Env } from "../env"
 import type { CloudflareDirectory } from "./directory"
 
-// treeBoundsOf reads the bounds of GET /v1/actors/:id/threads from its query string: an absent
-// bound reads as undefined, and a bound that is not the integer it must be reads as its error.
-// `maxDepth` counts levels beneath the start, `maxNodes` counts nodes in total, and both must
-// hold a whole count (contract.ts, TreeBounds).
+// treeBoundsOf validates optional subtree, depth, and node limits (test/actor.workers.ts).
 const treeBoundsOf = (
   request: HttpServerRequest.HttpServerRequest
 ): { readonly bounds: TreeBounds } | { readonly error: string } => {

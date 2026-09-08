@@ -56,12 +56,7 @@ const firstAt = (events: ReadonlyArray<Event>): number => {
   return Number.POSITIVE_INFINITY
 }
 
-// treeOf builds the forest from ChildCreated edges in parent logs. Child ThreadCreated records
-// confirm identity, while the parent log owns discovery. `bounds` bounds the construction, not the
-// result: the walk starts at `root`, builds at most `maxDepth` levels beneath its start, and
-// builds at most `maxNodes` nodes, so a node the bounds exclude is never built and never
-// summarized (projections.test.ts, "treeOf bounds what it builds"). An unknown `root` reads as
-// undefined, because the forest cannot see a thread no log claims.
+// treeOf builds a forest within the requested bounds; an unknown root returns undefined (apps/server/src/projections.test.ts).
 export const treeOf = (
   logs: ReadonlyMap<string, ReadonlyArray<Event>>,
   statusOf: ThreadStatusOf,
@@ -98,10 +93,6 @@ export const treeOf = (
   }
   const root = bounds.root
   if (root !== undefined && !createdLogs.has(root)) return undefined
-  // A claim cycle is not reachable through minted call ids, but the map is an argument, so the walk
-  // carries the guard rather than trusting its caller. The node budget counts down to zero and the
-  // walk stops, so a node past maxNodes or maxDepth is never built (projections.test.ts,
-  // "treeOf bounds what it builds").
   const walked = new Set<string>()
   let remaining = bounds.maxNodes
   const node = (id: string, parent: string | undefined, level: number): ThreadNode | undefined => {
@@ -109,16 +100,24 @@ export const treeOf = (
     walked.add(id)
     if (remaining !== undefined) remaining -= 1
     const events = createdLogs.get(id) ?? []
-    const children = bounds.maxDepth !== undefined && level >= bounds.maxDepth ? [] :
-      (childrenOf.get(id) ?? []).filter((child) => !walked.has(child)).sort(order)
-        .map((child) => node(child, id, level + 1))
-        .filter((child): child is ThreadNode => child !== undefined)
+    const children: ThreadNode[] = []
+    if ((bounds.maxDepth === undefined || level < bounds.maxDepth) && remaining !== 0) {
+      for (const child of (childrenOf.get(id) ?? []).filter((child) => !walked.has(child)).sort(order)) {
+        const built = node(child, id, level + 1)
+        if (built === undefined) break
+        children.push(built)
+      }
+    }
     return { ...summaryOf(id, events, statusOf, parent), children }
   }
   const starts = root === undefined
     ? [...createdLogs.keys()].filter((id) => !parents.has(id)).sort(order)
     : [root]
-  return starts
-    .map((id) => node(id, parents.get(id), 0))
-    .filter((node): node is ThreadNode => node !== undefined)
+  const tree: ThreadNode[] = []
+  for (const id of starts) {
+    const built = node(id, parents.get(id), 0)
+    if (built === undefined) break
+    tree.push(built)
+  }
+  return tree
 }

@@ -157,10 +157,7 @@ export const ThreadNode = Schema.Struct({
   children: Schema.Array(Schema.suspend((): Schema.Codec<ThreadNode> => ThreadNode))
 }).annotate({ identifier: "ThreadNode" })
 
-// TreeBounds names the opt-in bounds of a tree or roster read. A read with a `root` builds only
-// that subtree, `maxDepth` is the number of levels it builds beneath its start, and `maxNodes`
-// caps the nodes the read builds in total (apps-server/src/projections.test.ts, "treeOf bounds
-// what it builds").
+// TreeBounds selects a subtree and caps its depth below each start and total node count (apps/server/src/projections.test.ts).
 export interface TreeBounds {
   readonly root?: string | undefined
   readonly maxDepth?: number | undefined
@@ -460,12 +457,10 @@ export const Seq = Schema.Int.pipe(
 
 const SeqQuery = Schema.optionalKey(Seq)
 
-// TreeDepth is a read's `maxDepth` bound: the levels it builds beneath its start, a non-negative
-// integer where zero keeps the start childless (apps-server/src/projections.test.ts, "treeOf bounds what it builds").
+// TreeDepth counts levels below the start; zero excludes children (apps/server/src/projections.test.ts).
 const TreeDepth = Seq
 
-// TreeNodeCount is a read's `maxNodes` bound: the nodes it builds in total, a positive integer
-// so a bounded read always builds its start (apps-server/src/projections.test.ts, "treeOf bounds what it builds").
+// TreeNodeCount includes the start node and must be positive (apps/server/src/api.test.ts).
 const TreeNodeCount = Schema.Int.pipe(
   Schema.check(Schema.makeFilter((value: number) => value > 0, { title: "above zero" }))
 )

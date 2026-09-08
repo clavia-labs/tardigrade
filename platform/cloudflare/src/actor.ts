@@ -67,11 +67,7 @@ const actorSupervisorOf = (
   keyOf: actorEventKeyOf
 })
 
-// threadTreeOf builds the tree of an actor's registered threads from its roster records, bounded
-// by `bounds` when stated: the walk starts at `root`, builds at most `maxDepth` levels beneath its
-// start, and builds at most `maxNodes` nodes, so a node the bounds exclude is never built
-// (actor.workers.ts, "a bounded tree read never builds what it does not return"). An unknown
-// `root` reads as undefined, because the roster has no such thread.
+// threadTreeOf builds registered threads within the requested bounds; an unknown root returns undefined (test/actor.workers.ts).
 const threadTreeOf = (
   rows: ReadonlyArray<ActorThreadRecord>,
   bounds: TreeBounds = {}
@@ -104,18 +100,23 @@ const threadTreeOf = (
     built += 1
     visited.add(id)
     const next = new Set(ancestors).add(id)
-    const walked = maxDepth !== undefined && level >= maxDepth ? [] :
-      [...children.get(id) ?? []].sort()
-        .map((child) => node(child, next, level + 1))
-        .filter((child): child is ActorThreadNode => child !== undefined)
-    return { ...entry, children: walked }
+    const descendants: ActorThreadNode[] = []
+    if ((maxDepth === undefined || level < maxDepth) && (maxNodes === undefined || built < maxNodes)) {
+      for (const child of [...children.get(id) ?? []].sort()) {
+        const result = node(child, next, level + 1)
+        if (result === undefined) break
+        descendants.push(result)
+      }
+    }
+    return { ...entry, children: descendants }
   }
-  const tree = (root === undefined ? roots.sort() : [root])
-    .map((start) => node(start, new Set(), 0))
-    .filter((node): node is ActorThreadNode => node !== undefined)
-  // The orphan check holds only for the unbounded walk: a bounded read stops on purpose, so the
-  // entries it never reached are not orphans (actor.workers.ts, "a bounded tree read never builds
-  // what it does not return").
+  const tree: ActorThreadNode[] = []
+  for (const start of root === undefined ? roots.sort() : [root]) {
+    const result = node(start, new Set(), 0)
+    if (result === undefined) break
+    tree.push(result)
+  }
+  // Partial reads cannot establish whether the full roster is connected (test/actor.workers.ts).
   if (root === undefined && maxDepth === undefined && maxNodes === undefined && visited.size !== entries.size) {
     throw new Error("thread tree contains an orphan or cycle")
   }

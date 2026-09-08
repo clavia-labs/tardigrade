@@ -400,13 +400,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       .handle("list", ({ params, query }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(yield* Threads, params.id)
-          // The listing is the forest flattened, bounded by the caller's query. An unknown root is
-          // the one absent answer treeOf can read (projections.ts, treeOf).
-          const tree = treeOf(logsOf(yield* threads.list), threads.statusOf, {
-            root: query.root,
-            maxDepth: query.maxDepth,
-            maxNodes: query.maxNodes
-          })
+          const tree = treeOf(logsOf(yield* threads.list), threads.statusOf, query)
           if (tree === undefined) {
             if (query.root === undefined) {
               return yield* Effect.die(new Error("a roster read without a root cannot be absent"))
@@ -431,15 +425,8 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       .handle("tree", ({ params, query }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(yield* Threads, params.id)
-          // The logs are read whole because parentage is a claim in the PARENT's log, while the
-          // tree is built from the caller's thread alone: the walk starts there, so the rest of
-          // the forest is never built (projections.ts, treeOf).
-          const tree = treeOf(logsOf(yield* threads.list), threads.statusOf, {
-            root: params.thread,
-            maxDepth: query.maxDepth,
-            maxNodes: query.maxNodes
-          })
-          const node = tree === undefined ? undefined : tree[0]
+          const tree = treeOf(logsOf(yield* threads.list), threads.statusOf, { ...query, root: params.thread })
+          const node = tree?.[0]
           if (node === undefined) {
             return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.thread)))
           }

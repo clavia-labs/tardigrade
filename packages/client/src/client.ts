@@ -192,7 +192,7 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   // list reads the actor's roster, bounded by `options` when stated (contract.ts, TreeBounds).
   readonly list: (actor: string, options?: TreeBounds) => Promise<ReadonlyArray<ThreadSummary>>
   // tree reads one thread's spawn family beneath it, bounded by `options` when stated (contract.ts, TreeBounds).
-  readonly tree: (actor: string, thread: string, options?: TreeBounds) => Promise<ThreadNode>
+  readonly tree: (actor: string, thread: string, options?: Omit<TreeBounds, "root">) => Promise<ThreadNode>
   readonly events: (actor: string, thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
   // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
   // platform requires nothing but `type` (contract.ts, Append).
@@ -330,8 +330,7 @@ const eventsQuery = (options: EventsOptions) => {
   return query
 }
 
-// The bounds query the tree and roster reads accept, built like eventsQuery so an absent bound is
-// an absent key (contract.ts, TreeBounds).
+// boundsQuery omits absent query parameters (client.test.ts).
 const boundsQuery = (options: TreeBounds) => {
   const query: { root?: string; maxDepth?: number; maxNodes?: number } = {}
   if (options.root !== undefined) query.root = options.root
