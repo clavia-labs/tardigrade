@@ -291,6 +291,7 @@ button, input { font: inherit; }
 }
 
 article {
+  min-width: 0;
   max-width: 82%;
   padding: 11px 14px;
   border-radius: var(--ui-radius-message);
@@ -328,6 +329,35 @@ article blockquote {
 }
 
 article a { color: inherit; }
+
+.markdown-table {
+  max-width: 100%;
+  margin-block: 0 10px;
+  overflow-x: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-control);
+}
+
+.markdown-table table {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.markdown-table th, .markdown-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ui-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-table th {
+  background: var(--ui-surface-muted);
+  font-weight: 600;
+}
+
+.markdown-table tbody tr:last-child td { border-bottom: 0; }
 
 .tool-call {
   max-width: 82%;
