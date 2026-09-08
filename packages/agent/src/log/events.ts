@@ -90,11 +90,12 @@ export const ModelCalled = Schema.Struct({
   at: Schema.Finite
 })
 
-// TextReturned is the prose the model emitted alongside its decision: working commentary,
-// journaled and never delivered. The final answer is `TurnCompleted.output`, never this.
+// TextReturned journals model prose; its following action or cancellation determines whether inference finished (index.test.ts, "text outcomes derive from the log when cancelling during %s"). The final answer lives on TurnCompleted.output.
 export const TextReturned = Schema.Struct({
   type: Schema.Literal("TextReturned"),
   text: Schema.String,
+  turn: Schema.optional(Schema.String),
+  epoch: Schema.optional(Schema.Finite),
   at: Schema.Finite
 })
 
@@ -475,9 +476,9 @@ export const modelCalled = (
     }
   } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
-
-export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
-  ({ type: "TextReturned", ...fields }) as Event
+export const textReturned = (
+  fields: { readonly text: string } & EpochStamp
+): Event => ({ type: "TextReturned", ...fields }) as Event
 
 export const turnCompleted = (
   fields: {

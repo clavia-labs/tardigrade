@@ -454,13 +454,37 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
           yield* events.append([mark])
           const actualRender = derived.renderAfter(mark)
           const trajectory = input.trajectory()
+          let partialOutput = ""
+          let physicalAttempt = ""
+          let partialPersisted = false
+          const persistPartialOutput = () => {
+            if (partialOutput === "" || partialPersisted) return Effect.void
+            partialPersisted = true
+            return Clock.currentTimeMillis.pipe(
+              Effect.flatMap((at) => events.append([textReturned({
+                text: partialOutput, turn: input.turn, ...epochStamp(input.epoch), at
+              })])),
+              Effect.asVoid
+            )
+          }
           const action = yield* binding
-            .react({
-              trajectory,
-              identity: { ...self, turn: input.turn },
-              model: selected,
-              ...actualRender
-            }, input.attempt, signal)
+            .react(
+              {
+                trajectory,
+                identity: { ...self, turn: input.turn },
+                model: selected,
+                ...actualRender
+              },
+              input.attempt,
+              signal,
+              (delta) => {
+                if (physicalAttempt !== delta.physicalAttempt) {
+                  physicalAttempt = delta.physicalAttempt
+                  partialOutput = ""
+                }
+                partialOutput += delta.text
+              }
+            )
             .pipe(
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
@@ -470,6 +494,11 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
                       error: failureMessage(cause),
                       failure: { cause: "inference_error", attempts: 1 }
                     })
+              ),
+              Effect.onInterrupt(persistPartialOutput),
+              // Abort can settle the provider before interruption; both paths share the persistence guard (index.test.ts).
+              Effect.ensuring(
+                Effect.suspend(() => signal?.aborted === true ? persistPartialOutput() : Effect.void)
               )
             )
           const after = yield* Clock.currentTimeMillis

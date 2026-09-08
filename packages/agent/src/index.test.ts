@@ -10,6 +10,7 @@ import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
 import { createHost, type Host, type ThreadEnv } from "@clavia/tardigrade-host/host"
 import type { Action } from "./log/events"
 import { Infer, NativeOutputSupport, type InferRequest } from "./inference/contract"
+import type { InferDelta } from "./inference/observer"
 import { boundaryOf } from "./output/boundary"
 import { resumeTurn } from "./runtime/resume"
 import { agentsPackage } from "./packages/agents"
@@ -28,7 +29,12 @@ const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-mode
 // routes briefs and replies, parks and wakes the root, and ask returns
 // when the root settles. No app imports anywhere.
 
-type Mind = (request: InferRequest, key?: string) => Promise<Action>
+type Mind = (
+  request: InferRequest,
+  key?: string,
+  signal?: AbortSignal,
+  onDelta?: (delta: InferDelta) => void
+) => Promise<Action>
 
 type Settled = { readonly turn: string; readonly output?: string; readonly error?: string }
 
@@ -51,7 +57,10 @@ const hosted = (
     Layer.mergeAll(
       KeyValueStore.layerMemory,
       jsSandboxFor({}),
-      Layer.succeed(Infer, { react: (request: InferRequest, key?: string) => Effect.promise(() => mind(request, key)) }),
+      Layer.succeed(Infer, {
+        react: (request: InferRequest, key?: string, signal?: AbortSignal, onDelta?: (delta: InferDelta) => void) =>
+          Effect.promise(() => mind(request, key, signal, onDelta))
+      }),
       Layer.succeed(NativeOutputSupport, { withTools: true })
     )
   const host: Host = createHost<TestR>({
@@ -176,6 +185,145 @@ describe("an assembled agent", () => {
       expect.objectContaining({ request: "x1", turn: "m1", reason: "operator stopped it" })
     ])
     expect(log.some((event) => event.type === "TurnCompleted")).toBe(false)
+  })
+
+  // streamOf emits normalized text deltas for a physical attempt.
+  const streamOf = (
+    request: InferRequest,
+    key: string | undefined,
+    physical: string,
+    chunks: ReadonlyArray<string>,
+    onDelta: ((delta: InferDelta) => void) | undefined
+  ) => {
+    for (const [sequence, text] of chunks.entries()) {
+      onDelta?.({
+        ...request.identity,
+        logicalAttempt: key ?? request.identity.turn,
+        physicalAttempt: physical,
+        model: request.model ?? { provider: "test", model_id: "test-model" },
+        blockIndex: 0,
+        sequence,
+        text
+      })
+    }
+  }
+
+  const textOutcomes = (log: ReadonlyArray<Event>, turn: string) => {
+    const events = log.filter((event) => event.turn === turn)
+    return events.flatMap((event, index) => {
+      if (event.type !== "TextReturned") return []
+      const owner = events.slice(0, index).findLast((prior) => prior.type === "ModelCalled")
+      const next = events[index + 1]
+      return [{ text: event.text, owner: owner?.ordinal, interrupted: next?.type === "TurnCancelled" }]
+    })
+  }
+
+  const cancelAfter = async (mind: ReturnType<typeof rlm>, started: Promise<void>) => {
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), { type: "MessageReceived", id: "m1", text: "wait", at: 1 } as Event)
+    const driving = mind.host.drive()
+    await started
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "CancellationRequested", request: "x1", invocation: { method: "message", id: "m1", epoch: 0 },
+      cause: "requested", reason: "operator stopped it", at: 2
+    } as Event)
+    await driving
+    return mind.host.read(ROOT_THREAD)
+  }
+
+  test.each(["inference", "tool"])("text outcomes derive from the log when cancelling during %s", async (stage) => {
+    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
+    let inferred = 0
+    const components = [tool({
+      spec: { name: "read", description: "read", inputSchema: {} },
+      run: () => {
+        if (stage === "inference") return Effect.succeed("ok")
+        markStarted()
+        return Effect.never
+      }
+    })]
+    const mind = rlm(async (request, key, _signal, onDelta) => {
+      if (inferred++ === 0) return { kind: "call", callId: "read-1", name: "read", arguments: {}, text: "Let me check." }
+      streamOf(request, key, "p1", ["hello ", "world"], onDelta)
+      markStarted()
+      await new Promise<void>(() => {})
+      return { kind: "complete", output: "late" }
+    }, components)
+    const log = await cancelAfter(mind, started)
+    const expected = [
+      { text: "Let me check.", owner: 0, interrupted: false },
+      ...(stage === "inference" ? [{ text: "hello world", owner: 1, interrupted: true }] : [])
+    ]
+    expect(textOutcomes(log, "m1")).toEqual(expected)
+    expect(log.filter((event) => event.type === "TextReturned").every((event) => !("partial" in event))).toBe(true)
+    expect(textOutcomes(JSON.parse(JSON.stringify(log)), "m1")).toEqual(expected)
+    expect(log.some((event) => event.type === "TurnCompleted")).toBe(false)
+
+    // The reload reads the same stopped answer back: replay of a cancelled turn neither
+    // re-infers nor appends a second partial.
+    let calls = 0
+    const reloaded = rlm(async () => {
+      calls += 1
+      return { kind: "complete", output: "must not run" }
+    }, [work()], log)
+    await reloaded.host.drive()
+    expect(calls).toBe(0)
+    expect(reloaded.host.read(ROOT_THREAD)).toEqual(log)
+  })
+
+  test("a retried physical attempt journals only the text it streamed", async () => {
+    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
+    const mind = rlm(async (request, key, _signal, onDelta) => {
+      streamOf(request, key, "p1", ["the first attempt died"], onDelta)
+      streamOf(request, key, "p2", ["second ", "try"], onDelta)
+      markStarted()
+      await new Promise<void>(() => {})
+      return { kind: "complete", output: "late" }
+    })
+    const log = await cancelAfter(mind, started)
+    expect(log.filter((event) => event.type === "TextReturned"))
+      .toEqual([expect.objectContaining({ text: "second try", turn: "m1" })])
+    expect(textOutcomes(log, "m1")).toEqual([{ text: "second try", owner: 0, interrupted: true }])
+  })
+
+  test("a normally completing inference journals no partial", async () => {
+    const mind = rlm(async (request, key, _signal, onDelta) => {
+      streamOf(request, key, "p1", ["an ", "answer"], onDelta)
+      return { kind: "complete", output: "an answer" }
+    })
+    const answer = await mind.run("go")
+    expect(answer.output).toBe("an answer")
+    expect(mind.host.read(ROOT_THREAD).some(
+      (event) => event.type === "TextReturned"
+    )).toBe(false)
+  })
+
+  test("a provider that settles on the abort signal journals its partial exactly once", async () => {
+    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
+    const mind = rlm(async (request, key, signal, onDelta) => {
+      streamOf(request, key, "p1", ["half ", "an answer"], onDelta)
+      markStarted()
+      await new Promise<void>((resolve) => {
+        if (signal?.aborted === true) resolve()
+        else signal?.addEventListener("abort", () => resolve(), { once: true })
+      })
+      return {
+        kind: "fail",
+        error: "the connection was aborted",
+        failure: { cause: "inference_error", attempts: 1 }
+      }
+    })
+    const log = await cancelAfter(mind, started)
+    const partials = log.filter(
+      (event) => event.type === "TextReturned"
+    )
+    expect(partials).toEqual([expect.objectContaining({ text: "half an answer", turn: "m1" })])
+    expect(textOutcomes(log, "m1")).toEqual([{ text: "half an answer", owner: 0, interrupted: true }])
+    // Whichever side of the abort race wins, the turn ends in exactly one terminal.
+    const terminals = log.filter(
+      (event) => event.type === "TurnCancelled" || event.type === "TurnFailed" || event.type === "TurnCompleted"
+    )
+    expect(terminals).toHaveLength(1)
+    expect(log.indexOf(partials[0]!)).toBeLessThan(log.indexOf(terminals[0]!))
   })
 
   test("distinct cancel calls absorb into one terminal and both receive a response", async () => {
