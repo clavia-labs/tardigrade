@@ -46,7 +46,8 @@ interface TaggedEffectOptions<Input, Result extends Event, Requirements = never>
   readonly act: (input: Input, context: { readonly signal: AbortSignal }) => Effect.Effect<Result, never, EventLog | Requirements>
 }
 
-// TransitionContext binds tagged declarations and result queries to one component and event, inheriting invocation ownership when present (runtime/reconciler.properties.test.ts).
+// TransitionContext binds declarations and result queries to one component and event, inheriting invocation ownership when present (runtime/reconciler.properties.test.ts).
+// Tags must keep identifying the same logical operation across outputs for that owner; retries reuse the tag, while new operations need a different tag or owner (tla/runtime/TransitionDeclarations.tla, AuthorAllows; runtime/transition-lifecycle.properties.test.ts).
 export interface TransitionContext {
   readonly invocation?: InvocationRef
   readonly effect: <Input, Result extends Event, Requirements = never>(tag: string, options: TaggedEffectOptions<Input, Result, Requirements>) => ExternalEffect<never, Requirements>
@@ -118,7 +119,7 @@ export const bindTransitionContext = (event: Event, component: string): Transiti
   })
 }
 
-// validateTransitions enforces component ownership and a shared intent/effect tag namespace (tla/runtime/TransitionDeclarations.tla, UniqueRefs; runtime/reconciler.properties.test.ts).
+// validateTransitions enforces component ownership and rejects duplicate intent/effect tags within the supplied output (tla/runtime/TransitionDeclarations.tla, RuntimeAllows; runtime/reconciler.properties.test.ts).
 export const validateTransitions = <R>(
   transitions: ReadonlyArray<Transition<never, R>>,
   component?: string

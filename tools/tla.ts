@@ -58,6 +58,7 @@ export const checks: ReadonlyArray<Check> = [
   counterexample("runtime", "TransitionDeclarations", "TransitionDeclarationsDuplicateNames.cfg", "Invariant UniqueRefs is violated"),
   counterexample("runtime", "TransitionDeclarations", "TransitionDeclarationsDuplicateTags.cfg", "Invariant UniqueRefs is violated"),
   counterexample("runtime", "TransitionDeclarations", "TransitionDeclarationsSplitKinds.cfg", "Invariant UniqueRefs is violated"),
+  counterexample("runtime", "TransitionDeclarations", "TransitionDeclarationsTagReuse.cfg", "Invariant UniqueRefs is violated"),
   pass("runtime", "TransitionIdentity", "TransitionIdentity.cfg"),
   pass("runtime", "TransitionIdentity", "TransitionIdentityLive.cfg"),
   counterexample("runtime", "TransitionIdentity", "TransitionIdentityNoOwner.cfg", "Invariant ExactResolution is violated"),
