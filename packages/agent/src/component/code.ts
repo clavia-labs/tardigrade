@@ -16,10 +16,12 @@ import {
   type Package
 } from "@clavia/tardigrade-code/package/definition"
 import type { AgentComponent, AgentView } from "../runtime/composition"
-import type { Answer, PendingCall } from "../runtime/tools"
+import { toolConcurrencyOf, type ToolConcurrency, type Answer, type PendingCall } from "../runtime/tools"
 import type { ToolSpec } from "../inference/request"
 
 export const DEFAULT_CODE_SUMMARY_MAX_LENGTH = 240
+// DEFAULT_CODE_TOOL_CONCURRENCY serializes execute admission (runtime/batches.test.ts).
+export const DEFAULT_CODE_TOOL_CONCURRENCY: ToolConcurrency = 1
 
 const executeTool = (summaryMaxLength: number): ToolSpec => ({
   name: "execute",
@@ -90,6 +92,7 @@ const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer)
 }
 
 export interface CodeModeOptions {
+  readonly toolConcurrency?: ToolConcurrency
   readonly policy?: Partial<CodePolicy>
   readonly system?: string | ((log: ReadonlyArray<Event>) => string)
   readonly summaryMaxLength?: number
@@ -133,6 +136,7 @@ export const codeMode = <
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = KeyValueStore.KeyValueStore | ComponentR
   const summaryMaxLength = summaryMaxLengthOf(options.summaryMaxLength)
+  const toolConcurrency = toolConcurrencyOf(options.toolConcurrency ?? DEFAULT_CODE_TOOL_CONCURRENCY)
   const combined = composeComponents("code.children", CODE_VIEW_ALGEBRA, components) as CodeComponent<ComponentR>
   const childMachine = combined.machine
   const packagesOf = (state: unknown): ReadonlyArray<Package<ComponentR>> =>
@@ -185,6 +189,7 @@ export const codeMode = <
               system: [dynamicSystem?.(Chunk.toReadonlyArray(state.history)) ?? staticSystem ?? codeSystemFor(packages)],
               tools: [{
                 spec: executeTool(summaryMaxLength),
+                concurrency: toolConcurrency,
                 serve: (call: PendingCall, current: ReadonlyArray<Event>, answer: Answer) => serveCode(current, call, answer)
               }],
               context: [],

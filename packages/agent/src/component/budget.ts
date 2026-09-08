@@ -270,15 +270,20 @@ const guardedTool = <R>(
   toolNames: ReadonlySet<string>,
   policy: BudgetPolicy
 ): AgentTool<R> => ({
-  spec: tool.spec,
+  ...tool,
   serve: (call, log, answer): ReadonlyArray<Transition<never, R>> => {
     const trajectory = turnView(log)
-    if (budgetSpent(trajectory)) {
+    const callIndex = trajectory.findIndex((event) => event.type === "ToolCalled" && event.callId === call.callId)
+    const admitted = callIndex === -1 ? trajectory : trajectory.slice(0, callIndex + 1)
+    const used = usedBy(admitted, toolNames)
+    const admittedBatchCall = callIndex !== -1 && trajectory[callIndex]!.batchId !== undefined &&
+      !budgetSpent(admitted) && used <= budgetOf(trajectory, policy)
+    if (budgetSpent(trajectory) && !admittedBatchCall) {
       return [answer({
         error: "Tool budget reached. Do not call this tool again. Answer now with your best result from what you have already gathered."
       })] as ReadonlyArray<Transition<never, R>>
     }
-    const wall = wallFor(trajectory, policy, usedBy(trajectory, toolNames), call.context)
+    const wall = wallFor(trajectory, policy, used, call.context)
     if (wall !== undefined) return [wall]
     return tool.serve(call, log, answer)
   }

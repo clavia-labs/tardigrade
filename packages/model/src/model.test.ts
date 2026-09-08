@@ -65,6 +65,17 @@ const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "
 // and tested in agent/request.test.ts.
 
 describe("actionOf", () => {
+  test("multiple calls preserve provider order including calls beside execute", () => {
+    expect(actionOf({ content: "Reading files", toolCalls: [
+      { id: "read-1", type: "function", function: { name: "read", arguments: '{"path":"lease"}' } },
+      { id: "exec-2", type: "function", function: { name: "execute", arguments: '{"code":"return 2"}' } },
+      { id: "read-3", type: "function", function: { name: "read", arguments: '{"path":"amendment"}' } }
+    ] } as never)).toEqual({ kind: "calls", text: "Reading files", calls: [
+      { callId: "read-1", name: "read", arguments: { path: "lease" } },
+      { callId: "exec-2", name: "execute", arguments: { code: "return 2" } },
+      { callId: "read-3", name: "read", arguments: { path: "amendment" } }
+    ] })
+  })
   test("a tool call acts, with its prose riding along", () => {
     const action = actionOf({
       content: "let me check",
@@ -269,6 +280,27 @@ const sse = (events: ReadonlyArray<unknown>): Response => {
 }
 
 describe("infer end to end", () => {
+  test("interleaved streamed calls become one complete batch", async () => {
+    const fetchImpl = (async () => sse([
+      { id: "r1", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [
+        { index: 0, id: "a", type: "function", function: { name: "read", arguments: '{"path":' } },
+        { index: 1, id: "b", type: "function", function: { name: "read", arguments: '{"path":' } }
+      ] } }] },
+      { id: "r1", choices: [{ index: 0, delta: { tool_calls: [
+        { index: 1, function: { arguments: '"amendment"}' } },
+        { index: 0, function: { arguments: '"lease"}' } }
+      ] } }] },
+      { id: "r1", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
+    ])) as unknown as typeof globalThis.fetch
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl })
+    const action = await Effect.runPromise(Effect.flatMap(Infer, (model) =>
+      model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "read", at: 1 }]))
+    ).pipe(Effect.provide(layer)))
+    expect(action).toMatchObject({ kind: "calls", calls: [
+      { callId: "a", name: "read", arguments: { path: "lease" } },
+      { callId: "b", name: "read", arguments: { path: "amendment" } }
+    ] })
+  })
   test("a streamed tool call becomes a call action", async () => {
     let requested: { url: string; body: unknown } | null = null
     const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {

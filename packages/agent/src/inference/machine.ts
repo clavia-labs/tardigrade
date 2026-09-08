@@ -173,7 +173,7 @@ const completionOf = (action: Action & { readonly kind: "complete" }, usage: unk
 // usageIn reads the spend as unknown rather than absent (usage.test.ts, "unknown is sticky").
 // `endpoint` is separate from spend on purpose: an endpoint that reports no tokens still has to
 // be named in the log (events.ts, Endpoint).
-const consequenceOf = (action: Action, ctx: Consequence): Event => {
+const consequenceOf = (action: Exclude<Action, { readonly kind: "calls" }>, ctx: Consequence): Event => {
   const usage = action.usage ?? {}
   if (action.kind === "call" && ctx.contract !== undefined && action.mode === undefined) {
     return {
@@ -222,6 +222,19 @@ const consequenceOf = (action: Action, ctx: Consequence): Event => {
           ...stampOf(action),
           at: ctx.at
         } as Event)
+}
+
+// consequencesOf records a batch in provider order with one usage entry (runtime/batches.test.ts).
+const consequencesOf = (action: Action, ctx: Consequence): ReadonlyArray<Event> => {
+  if (action.kind !== "calls") return [consequenceOf(action, ctx)]
+  if (ctx.contract !== undefined && action.mode === undefined) {
+    return [consequenceOf({ ...action, ...action.calls[0], kind: "call" }, ctx)]
+  }
+  return action.calls.map((call, index) => {
+    const event = consequenceOf({ ...action, ...call, kind: "call" }, ctx)
+    const { usage, ...rest } = event
+    return { ...rest, batchId: ctx.attempt, batchIndex: index, ...(index === 0 ? { usage } : {}) } as Event
+  })
 }
 
 const failureMessage = (cause: Cause.Cause<never>): string => {
@@ -308,7 +321,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
   // A rejected response is a spent logical attempt: the next ask must not reuse the idempotency
   // key, or a deduping provider answers the correction with the response it just refused.
   const rejected = rejectionsIn(slice).length
-  const logicalAttempt = slice.filter((e) => e.type === "ToolCalled").length + modelFailures + rejected
+  const logicalAttempt = slice.filter((e) => e.type === "ToolCalled" && (e.batchIndex === undefined || e.batchIndex === 0)).length + modelFailures + rejected
   const attempt = `${turn}/infer/${logicalAttempt}`
   const rendered = derived.rendered
   const fallback = rendered.output?.fallback
@@ -502,22 +515,28 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               )
             )
           const after = yield* Clock.currentTimeMillis
-          const duplicate = action.kind === "call" && trajectory.some((event) =>
-            event.type === "ToolCalled" && event.turn === input.turn && event.callId === action.callId)
-          const checked: Action = duplicate ? {
-            kind: "fail", error: `duplicate tool call ID ${JSON.stringify(action.callId)} within turn ${JSON.stringify(input.turn)}`,
+          const calls = action.kind === "calls" ? action.calls : action.kind === "call" ? [action] : []
+          const seen = new Set(trajectory.filter((event) => event.type === "ToolCalled" && event.turn === input.turn).map((event) => String(event.callId)))
+          const duplicate = calls.find((call) => {
+            if (seen.has(call.callId)) return true
+            seen.add(call.callId)
+            return false
+          })
+          const invalid = action.kind === "calls" && calls.length === 0
+          const checked: Action = duplicate !== undefined || invalid ? {
+            kind: "fail", error: duplicate === undefined ? "the model returned an empty tool batch" : `duplicate tool call ID ${JSON.stringify(duplicate.callId)} within turn ${JSON.stringify(input.turn)}`,
             ...(action.usage === undefined ? {} : { usage: action.usage }),
             ...(action.endpoint === undefined ? {} : { endpoint: action.endpoint }),
             failure: { cause: "inference_error", attempts: 1 }
           } : action
-          const consequence = consequenceOf(checked, {
+          const consequences = consequencesOf(checked, {
             turn: input.turn,
             epoch: input.epoch,
             attempt: input.attempt,
             at: after,
             contract: input.contract
           })
-          const repaired = consequence.type === "TurnCompleted"
+          const repaired = consequences.some((event) => event.type === "TurnCompleted")
             ? trajectory.filter((event) => {
                 if (event.type !== "OutputRejected") return false
                 const value = event as { readonly turn?: unknown; readonly epoch?: unknown; readonly mode?: unknown }
@@ -529,7 +548,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               })
             : []
           return [
-            ...(action.kind === "call" && action.text !== undefined && action.text !== ""
+            ...((action.kind === "call" || action.kind === "calls") && action.text !== undefined && action.text !== ""
               ? [textReturned({ text: action.text, turn: input.turn, at: after })]
               : []),
             ...repaired.map((event) => outputRepaired({
@@ -539,7 +558,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               ...epochStamp(input.epoch),
               at: after
             })),
-            consequence
+            ...consequences
           ]
         })
     })

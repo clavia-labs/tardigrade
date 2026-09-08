@@ -226,7 +226,10 @@ export const keepFromIndex = (events: ReadonlyArray<Event>, keepFrom: string): n
   for (let i = 0; i < events.length; i++) {
     const e = events[i]!
     const v = e as { callId?: unknown; id?: unknown }
-    if (keepFrom.startsWith("c:") && e.type === "ToolCalled" && JSON.stringify([e.turn ?? null, v.callId]) === keepFrom.slice(2)) return i
+    if (keepFrom.startsWith("c:") && e.type === "ToolCalled" && JSON.stringify([e.turn ?? null, v.callId]) === keepFrom.slice(2)) {
+      if (e.batchId === undefined) return i
+      return events.findIndex((event) => event.type === "ToolCalled" && event.turn === e.turn && event.epoch === e.epoch && event.batchId === e.batchId)
+    }
     if (keepFrom.startsWith("m:") && e.type === "MessageReceived" && String(v.id) === keepFrom.slice(2)) return i
   }
   return 0
@@ -259,7 +262,7 @@ const atRoundBoundary = (log: ReadonlyArray<Event>): boolean => {
 // names an event the projection cannot see, so it is no boundary.
 const boundaryIdOf = (e: Event, served: ReadonlySet<string>): string | undefined => {
   const v = e as { callId?: unknown; id?: unknown }
-  if (e.type === "ToolCalled") return `c:${JSON.stringify([e.turn ?? null, v.callId])}`
+  if (e.type === "ToolCalled" && (e.batchIndex === undefined || e.batchIndex === 0)) return `c:${JSON.stringify([e.turn ?? null, v.callId])}`
   if (e.type === "MessageReceived" && served.has(String(v.id))) return `m:${String(v.id)}`
   return undefined
 }
