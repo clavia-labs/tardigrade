@@ -7,6 +7,7 @@
     "paths": {
       "tardie/worker": ["../../../platform/cloudflare/src/index.ts"],
       "tardie/model/*": ["../../../packages/model/src/*.ts"],
+      "tardie/http/*": ["../../../packages/http/src/*.ts"],
       "tardie/bun/*": ["../../../platform/bun/src/*.ts"],
       "tardie/server/*": ["../../../apps/server/src/*.ts"]
     }
