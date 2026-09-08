@@ -1,8 +1,9 @@
 import { CancellationRequested, CancellationInput, CancellationResult, type CancellationDispatched, type InvocationCancellation } from "./events"
-import { Clock, Effect, Schema } from "effect"
+import { Cause, Clock, Effect, Schema } from "effect"
 import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
 import { bindTransitionContext, transitionKeyOf } from "../transition/transition"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
+import { EventLog } from "../log"
 import { Self } from "../runtime/context"
 import type { ActorProjection } from "../runtime/definition"
 import type { Transition } from "@clavia/tardigrade-core/transition"
@@ -198,21 +199,29 @@ const childCancellationTransitions = <R>(
     const cancel = childCancellationRef(cancellation, reference)
     const disposition = dispositionOf(reference, cancel)
     if (disposition === "done") return []
-    if (disposition === "dispatched") {
-      return [context.effect("wait", {
-        invocation: null,
-        input: undefined,
-        act: () => Effect.succeed([])
-      })]
-    }
-    return [context.effect("cancel", {
+    return [context.effect(disposition === "ready" ? "cancel" : "wait", {
       invocation: null,
       input: { cancel, child, cancellation, lineage },
       act: (input) => Effect.gen(function* () {
         const at = yield* Clock.currentTimeMillis
-        const deadlineAt = at + timeoutMs
-        if (!Number.isSafeInteger(deadlineAt)) {
-          throw new Error("child cancellation deadlineAt must be a safe integer")
+        const events: CancellationDispatched[] = []
+        if (disposition === "ready") {
+          const deadlineAt = at + timeoutMs
+          if (!Number.isSafeInteger(deadlineAt)) {
+            throw new Error("child cancellation deadlineAt must be a safe integer")
+          }
+          events.push({
+            type: "CancellationDispatched",
+            reference: input.cancel,
+            request: input.cancel.invocation.id,
+            invocation: input.child,
+            target: formatThreadAddress(input.cancel.target),
+            timeoutMs,
+            deadlineAt,
+            at
+          })
+          const log = yield* EventLog
+          yield* log.append(events)
         }
         yield* sendInvocation({
           target: input.cancel.target,
@@ -226,17 +235,10 @@ const childCancellationTransitions = <R>(
             at
           }),
           ...(input.lineage === undefined ? {} : { lineage: input.lineage })
-        })
-        return [{
-          type: "CancellationDispatched",
-          reference: input.cancel,
-          request: input.cancel.invocation.id,
-          invocation: input.child,
-          target: formatThreadAddress(input.cancel.target),
-          timeoutMs,
-          deadlineAt,
-          at
-        } satisfies CancellationDispatched]
+        }).pipe(Effect.catchCause((cause) => Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("Child cancellation delivery failed", cause)))
+        return events
       })
     })]
   }) as ReadonlyArray<Transition<never, R | Router | Self>>

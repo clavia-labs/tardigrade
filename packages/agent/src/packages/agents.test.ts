@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import fc from "fast-check"
 import { isActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { decodeActorInvocationContext } from "@clavia/tardigrade-core/interaction/invocation"
 import { Cause, Effect, Layer, Schema } from "effect"
@@ -14,6 +15,9 @@ import { type ActorMethodState } from "@clavia/tardigrade-core/interaction/state
 import { invocationResponseId, type InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { agentsPackage, INLINE_OUTPUT_NAME } from "./agents"
+import { cancellationTransitionsOf } from "@clavia/tardigrade-core/interaction/cancellation"
+import { alarmFired, earliestDeadlineOf, methodTimeoutDerivation } from "@clavia/tardigrade-core/interaction/timeout"
+import { agentMethods } from "../actor/methods"
 import { output, type OutputContract } from "../output/contract"
 import {
   formatThreadAddress,
@@ -111,6 +115,70 @@ const expectedThread = async (turn: string, call: string) => (await Effect.runPr
 }))).thread
 
 describe("agentsPackage", () => {
+  test("rejected child deliveries cannot strand cancellation across retries and replay", async () => {
+    await fc.assert(fc.asyncProperty(
+      fc.string({ minLength: 1, maxLength: 20 }),
+      fc.integer({ min: 1, max: 4 }), fc.integer({ min: 1, max: 4 }), fc.boolean(),
+      async (id, children, retries, replay) => {
+        const parent = parseThreadAddress("mem:main:rejected-spawn")
+        const invocation = { method: "message", id, epoch: 0 }
+        const events: Event[] = [threadCreated(parent, undefined, 0), { ...turn(id), call: { invocation } }]
+        const rejected = new Error('Bun host does not support "independent" thread placement')
+        let unboundedDelivery = false
+        const servicesFor = (log: Event[]) => Layer.mergeAll(
+          liveEnv(log, []),
+          Layer.succeed(Router, { send: (envelope) => Effect.suspend(() => {
+            if (!isActorEnvelope(envelope) || envelope.lineage?.placement !== "independent") return Effect.void
+            if (envelope.event.type === "CancellationRequested") {
+              unboundedDelivery ||= !log.some((event) => event.type === "CancellationDispatched" &&
+                event.request === envelope.event.request)
+            }
+            return Effect.die(rejected)
+          }) })
+        )
+        for (let child = 0; child < children; child++) {
+          const callId = `${id}/${child}`
+          events.push(called(callId, id))
+          const outcome = await Effect.runPromise(agentsPackage().methods.run!({
+            text: "work", placement: "independent"
+          }, { callId }).pipe(Effect.exit, Effect.provide(servicesFor(events))))
+          expect(outcome._tag).toBe("Failure")
+          events.push({ type: "PackageReturned", callId, turn: id, result: { error: rejected.message }, at: 3 })
+        }
+        let log: Event[] = replay ? JSON.parse(JSON.stringify(events)) : events
+        const keyOf = (event: Event) => event.type === "TurnCancelled" ? `cancelled:${event.turn}` : undefined
+        let originalDeadline: number | undefined
+        for (let retry = 0; retry < retries; retry++) {
+          log.push({ type: "CancellationRequested", request: `stop/${retry}`, invocation, cause: "requested", at: 4 + retry })
+          for (const transition of cancellationTransitionsOf<never>(log, agentMethods, [], keyOf) ?? []) {
+            if (transition.kind === "intent") log.push(...transition.events(transition.input, 5 + retry))
+            else log.push(...await Effect.runPromise(transition.act(transition.input, new AbortController().signal).pipe(
+              Effect.provide(servicesFor(log))
+            )))
+          }
+          const deadline = earliestDeadlineOf(log)
+          if (retry === 0) originalDeadline = deadline
+          expect(deadline).toBe(originalDeadline)
+          if (replay) log = JSON.parse(JSON.stringify(log))
+        }
+        expect(unboundedDelivery).toBe(false)
+        let deadline = earliestDeadlineOf(log)
+        expect(deadline).toBeDefined()
+        while (deadline !== undefined) {
+          log.push(alarmFired({ scheduledFor: deadline, at: deadline }))
+          for (const transition of methodTimeoutDerivation(log) ?? []) {
+            if (transition.kind === "intent") log.push(...transition.events(transition.input, deadline))
+          }
+          deadline = earliestDeadlineOf(log)
+        }
+        for (const transition of cancellationTransitionsOf<never>(log, agentMethods, [], keyOf) ?? []) {
+          if (transition.kind === "intent") log.push(...transition.events(transition.input, Date.now()))
+        }
+        expect(log.filter((event) => event.type === "TurnCancelled" && event.turn === id)).toHaveLength(1)
+      }
+    ), { numRuns: 100 })
+  })
+
   test("a host allocated coordinate is recorded and reused without allocating on replay", async () => {
     const parent = parseThreadAddress("mem:main:root")
     const target = { ...parent, thread: "allocated-by-host" }
