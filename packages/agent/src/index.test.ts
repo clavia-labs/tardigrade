@@ -210,18 +210,38 @@ describe("an assembled agent", () => {
     }
   }
 
-  test("a cancelled inference journals the answer it had already streamed", async () => {
+  const textOutcomes = (log: ReadonlyArray<Event>, turn: string) => {
+    const events = log.filter((event) => event.turn === turn)
+    return events.flatMap((event, index) => {
+      if (event.type !== "TextReturned") return []
+      const owner = events.slice(0, index).findLast((prior) => prior.type === "ModelCalled")
+      const next = events[index + 1]
+      return [{ text: event.text, owner: owner?.ordinal, interrupted: next?.type === "TurnCancelled" }]
+    })
+  }
+
+  test.each(["inference", "tool"])("text outcomes derive from the log when cancelling during %s", async (stage) => {
     let markStarted!: () => void
     const started = new Promise<void>((resolve) => {
       markStarted = resolve
     })
+    let inferred = 0
+    const components = [tool({
+      spec: { name: "read", description: "read", inputSchema: {} },
+      run: () => {
+        if (stage === "inference") return Effect.succeed("ok")
+        markStarted()
+        return Effect.never
+      }
+    })]
     const mind = rlm(async (request, key, _signal, onDelta) => {
+      if (inferred++ === 0) return { kind: "call", callId: "read-1", name: "read", arguments: {}, text: "Let me check." }
       streamOf(request, key, "p1", ["hello ", "world"], onDelta)
       markStarted()
       await new Promise<void>(() => {})
       return { kind: "complete", output: "late" }
-    })
-    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+    }, components)
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
       type: "MessageReceived",
       id: "m1",
       text: "wait",
@@ -229,7 +249,7 @@ describe("an assembled agent", () => {
     } as Event)
     const driving = mind.host.drive()
     await started
-    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
       type: "CancellationRequested",
       request: "x1",
       invocation: { method: "message", id: "m1", epoch: 0 },
@@ -240,15 +260,13 @@ describe("an assembled agent", () => {
     await driving
 
     const log = mind.host.read(ROOT_THREAD)
-    const partialsOf = (events: ReadonlyArray<Event>) =>
-      events.filter((event) => event.type === "TextReturned" && (event as { readonly partial?: unknown }).partial === true)
-    expect(partialsOf(log)).toEqual([
-      expect.objectContaining({ text: "hello world", partial: true, turn: "m1" })
-    ])
-    // The prose precedes the terminal that explains it, the order a tool answer keeps.
-    expect(log.findIndex((event) => partialsOf([event]).length > 0)).toBeLessThan(
-      log.findIndex((event) => event.type === "TurnCancelled")
-    )
+    const expected = [
+      { text: "Let me check.", owner: 0, interrupted: false },
+      ...(stage === "inference" ? [{ text: "hello world", owner: 1, interrupted: true }] : [])
+    ]
+    expect(textOutcomes(log, "m1")).toEqual(expected)
+    expect(log.filter((event) => event.type === "TextReturned").every((event) => !("partial" in event))).toBe(true)
+    expect(textOutcomes(JSON.parse(JSON.stringify(log)), "m1")).toEqual(expected)
     expect(log.some((event) => event.type === "TurnCompleted")).toBe(false)
 
     // The reload reads the same stopped answer back: replay of a cancelled turn neither
@@ -258,6 +276,7 @@ describe("an assembled agent", () => {
       calls += 1
       return { kind: "complete", output: "must not run" }
     }, [work()], log)
+    await reloaded.host.drive()
     expect(calls).toBe(0)
     expect(reloaded.host.read(ROOT_THREAD)).toEqual(log)
   })
@@ -274,7 +293,7 @@ describe("an assembled agent", () => {
       await new Promise<void>(() => {})
       return { kind: "complete", output: "late" }
     })
-    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
       type: "MessageReceived",
       id: "m1",
       text: "wait",
@@ -282,7 +301,7 @@ describe("an assembled agent", () => {
     } as Event)
     const driving = mind.host.drive()
     await started
-    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
       type: "CancellationRequested",
       request: "x1",
       invocation: { method: "message", id: "m1", epoch: 0 },
@@ -292,8 +311,9 @@ describe("an assembled agent", () => {
     await driving
 
     const log = mind.host.read(ROOT_THREAD)
-    expect(log.filter((event) => event.type === "TextReturned" && (event as { readonly partial?: unknown }).partial === true))
-      .toEqual([expect.objectContaining({ text: "second try", partial: true, turn: "m1" })])
+    expect(log.filter((event) => event.type === "TextReturned"))
+      .toEqual([expect.objectContaining({ text: "second try", turn: "m1" })])
+    expect(textOutcomes(log, "m1")).toEqual([{ text: "second try", owner: 0, interrupted: true }])
   })
 
   test("a normally completing inference journals no partial", async () => {
@@ -304,7 +324,7 @@ describe("an assembled agent", () => {
     const answer = await mind.run("go")
     expect(answer.output).toBe("an answer")
     expect(mind.host.read(ROOT_THREAD).some(
-      (event) => event.type === "TextReturned" && (event as { readonly partial?: unknown }).partial === true
+      (event) => event.type === "TextReturned"
     )).toBe(false)
   })
 
@@ -326,7 +346,7 @@ describe("an assembled agent", () => {
         failure: { cause: "inference_error", attempts: 1 }
       }
     })
-    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
       type: "MessageReceived",
       id: "m1",
       text: "wait",
@@ -334,7 +354,7 @@ describe("an assembled agent", () => {
     } as Event)
     const driving = mind.host.drive()
     await started
-    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+    await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
       type: "CancellationRequested",
       request: "x1",
       invocation: { method: "message", id: "m1", epoch: 0 },
@@ -345,9 +365,10 @@ describe("an assembled agent", () => {
 
     const log = mind.host.read(ROOT_THREAD)
     const partials = log.filter(
-      (event) => event.type === "TextReturned" && (event as { readonly partial?: unknown }).partial === true
+      (event) => event.type === "TextReturned"
     )
-    expect(partials).toEqual([expect.objectContaining({ text: "half an answer", partial: true, turn: "m1" })])
+    expect(partials).toEqual([expect.objectContaining({ text: "half an answer", turn: "m1" })])
+    expect(textOutcomes(log, "m1")).toEqual([{ text: "half an answer", owner: 0, interrupted: true }])
     // Whichever side of the abort race wins, the turn ends in exactly one terminal.
     const terminals = log.filter(
       (event) => event.type === "TurnCancelled" || event.type === "TurnFailed" || event.type === "TurnCompleted"

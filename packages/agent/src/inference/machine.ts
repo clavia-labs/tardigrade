@@ -454,12 +454,6 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
           yield* events.append([mark])
           const actualRender = derived.renderAfter(mark)
           const trajectory = input.trajectory()
-          // An attempt stopped mid-stream journals what the model had already said. The deltas
-          // arrive through the binding's onDelta seam and accumulate per physical attempt, so a
-          // retried attempt's partial carries only its own text (index.test.ts, "a retried
-          // physical attempt journals only the text it streamed"). The terminal follows, so the
-          // prose precedes the state transition it explains (index.test.ts, "a cancelled
-          // inference journals the answer it had already streamed").
           let partialOutput = ""
           let physicalAttempt = ""
           let partialPersisted = false
@@ -471,7 +465,6 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
                 events.append([
                   textReturned({
                     text: partialOutput,
-                    partial: true,
                     turn: input.turn,
                     ...epochStamp(input.epoch),
                     at
@@ -510,10 +503,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
                     })
               ),
               Effect.onInterrupt(persistPartialOutput),
-              // The provider can settle on the abort signal before Effect observes the
-              // interrupt. The shared guard makes both finalizers one durable write
-              // (index.test.ts, "a provider that settles on the abort signal journals its
-              // partial exactly once").
+              // Abort can settle the provider before interruption; both paths share the persistence guard (index.test.ts).
               Effect.ensuring(
                 Effect.suspend(() => signal?.aborted === true ? persistPartialOutput() : Effect.void)
               )
