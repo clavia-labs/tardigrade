@@ -35,6 +35,9 @@
     "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*"
   },
+  "devDependencies": {
+    "fast-check": "^4.9.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"

@@ -68,7 +68,7 @@ test("an actor graph covers concurrent calls, budget negotiation, structured out
             agents.run({ text: "worker " + worker, budget: 1, escalatable: true, output: "worker" })
           ));
           const background = await agents.run({ text: "background", background: true });
-          const later = await agents.result({ id: background.callId });
+          const later = await agents.result({ handle: background.handle });
           return { foreground: foreground.map((answer) => answer.output), background: later.output };`
         }
       }

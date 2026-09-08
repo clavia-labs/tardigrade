@@ -2,25 +2,17 @@ import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { trajectoryOf, turnEpochOf, turnHead, turnTerminalOf, turnView } from "./turns"
 
-// `heads()` (private to this module) is what `turnHead`/`turnView` fold over: every
-// `MessageReceived`, except a reply a package call was still parked on when it landed. That
-// exclusion is what stops a foreground `agents.run`/`tasks.fire` park from also spawning a ghost
-// turn once its outer turn completes and the reply row is still sitting on the log, unconsumed by
-// anything turnHead itself understands. A background spawn's reply is the opposite case: the call
-// that fired it has already returned by the time the reply lands, so it is NOT excluded, and
-// heads its own turn exactly as `agents.run({background:true})`/`tasks.fire({background:true})`
-// promise.
-
-describe("turnHead: a reply claimed by a still-open package call", () => {
-  test("is excluded: it never heads a turn on its own", () => {
+describe("turnHead: message and response events", () => {
+  test("an invocation response never heads a turn", () => {
     const log: ReadonlyArray<Event> = [
       { type: "PackageCalled", callId: "c1", name: "agents.run", arguments: {}, turn: "m1", at: 1 },
-      { type: "MessageReceived", id: "c1.reply", outcome: "completed", text: "4", from: "child", at: 2 }
+      { type: "BlockedOn", callId: "c1", turn: "m1", awaiting: "c1.reply", at: 2 },
+      { type: "ResponseReceived", id: "c1.reply", status: "completed", output: "4", from: "child", at: 3 }
     ]
     expect(turnHead(log)).toBeUndefined()
   })
 
-  test("a reply for a call that had already returned is not excluded: it heads its own turn", () => {
+  test("a message starts a turn after a package returns", () => {
     const log: ReadonlyArray<Event> = [
       { type: "PackageCalled", callId: "c1", name: "agents.run", arguments: {}, turn: "m1", at: 1 },
       { type: "PackageReturned", callId: "c1", result: { dispatched: true }, turn: "m1", at: 2 },
@@ -35,10 +27,7 @@ describe("turnHead: a reply claimed by a still-open package call", () => {
     expect(turnHead(log)).toMatchObject({ id: "m1" })
   })
 
-  test("a reply id from a different package's minted scheme (run-prefixed) is unaffected", () => {
-    // `tasks.fire` mints `run-<callId>` (`mintedRunId`), never the bare call id, so its own
-    // reply's id never matches a `PackageCalled.callId` verbatim: this predicate structurally
-    // never claims it, whatever the call's own open/closed state.
+  test("a reply-shaped message ID starts a turn", () => {
     const log: ReadonlyArray<Event> = [
       { type: "PackageCalled", callId: "c1", name: "tasks.fire", arguments: {}, turn: "m1", at: 1 },
       { type: "MessageReceived", id: "run-c1.reply", outcome: "completed", text: "done", from: "child", at: 2 }

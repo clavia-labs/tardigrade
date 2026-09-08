@@ -12,7 +12,7 @@ import { definePackage, type Package } from "@clavia/tardigrade-code/package/def
 import { eventEpochOf, turnOf, turnView } from "@clavia/tardigrade-code/execution/turns"
 import { budgetPolicyOf, type BudgetPolicy } from "../component/budget"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
-import { childInvocationRef, legacyChildHandle } from "./agents-compat"
+import { childInvocationRef } from "./agents-compat"
 import { ChildCreated, childCreated, childLineageOf, ChildPlacement, threadCreatedOf, type ThreadCreated, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { allocateChildCoordinate as allocateChildThread, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
@@ -377,9 +377,10 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
         input: {
           type: "object",
           properties: {
-            handle: { ...invocationCoordinateJsonSchema, description: "the invocation handle returned by agents.run" },
-            id: { type: "string", description: "legacy callId; accepted only when one recorded dispatch matches" }
-          }
+            handle: { ...invocationCoordinateJsonSchema, description: "the invocation handle returned by agents.run" }
+          },
+          required: ["handle"],
+          additionalProperties: false
         },
         output: {
           type: "object",
@@ -535,24 +536,14 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
       // result validates a background response against its recorded output contract (agents.test.ts, "a later call cannot invent a contract the run never declared").
       result: (args, ctx) =>
         Effect.gen(function* () {
-          const a = args as { id?: unknown; handle?: unknown } | undefined
+          const a = args as { handle?: unknown } | undefined
+          if (!Schema.is(InvocationCoordinate)(a?.handle)) return { error: "agents.result needs a valid invocation handle" }
+          const handle = a.handle
           const log = yield* EventLog
           const events = yield* log.read
-          let record: ChildCreated
-          if (a?.handle !== undefined) {
-            if (!Schema.is(InvocationCoordinate)(a.handle)) return { error: "agents.result needs a valid invocation handle" }
-            const handle = a.handle
-            const found = events.find((event): event is ChildCreated => Schema.is(ChildCreated)(event) &&
-              invocationCoordinateKey(childInvocationRef(event)) === invocationCoordinateKey(handle))
-            if (found === undefined) return { error: "no recorded child dispatch for this invocation handle" }
-            record = found
-          } else {
-            const id = String(a?.id ?? "")
-            if (id === "") return { error: "agents.result needs { handle } or a legacy { id }" }
-            const found = legacyChildHandle(events, id)
-            if ("error" in found) return found
-            record = found
-          }
+          const record = events.find((event): event is ChildCreated => Schema.is(ChildCreated)(event) &&
+            invocationCoordinateKey(childInvocationRef(event)) === invocationCoordinateKey(handle))
+          if (record === undefined) return { error: "no recorded child dispatch for this invocation handle" }
           const reference = childInvocationRef(record)
           const id = reference.invocation.id
           const reply = childResultOf(events, reference)

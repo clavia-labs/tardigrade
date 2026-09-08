@@ -1,6 +1,5 @@
 import { Chunk, HashMap, HashSet, Option } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { REPLY_SUFFIX } from "./ids"
 import { eventEpochOf, turnOf } from "./turns"
 
 interface TurnRecord {
@@ -22,7 +21,6 @@ export interface TurnProjectionState {
   readonly heads: HashMap.HashMap<string, TurnHeadRecord>
   readonly open: HashMap.HashMap<string, number>
   readonly turns: HashMap.HashMap<string, TurnRecord>
-  readonly openPackages: HashSet.HashSet<string>
   readonly served: HashSet.HashSet<string>
   readonly trajectory: Chunk.Chunk<Event>
 }
@@ -41,7 +39,6 @@ export const initialTurnProjection = (): TurnProjectionState => ({
   heads: HashMap.empty(),
   open: HashMap.empty(),
   turns: HashMap.empty(),
-  openPackages: HashSet.empty(),
   served: HashSet.empty(),
   trajectory: Chunk.empty()
 })
@@ -52,30 +49,14 @@ const field = (event: Event, name: string): string =>
 const terminal = (event: Event): boolean =>
   event.type === "TurnCompleted" || event.type === "TurnFailed" || event.type === "TurnCancelled"
 
-const claimedReply = (state: TurnProjectionState, event: Event): boolean => {
-  const id = field(event, "id")
-  return id.endsWith(REPLY_SUFFIX) && HashSet.has(state.openPackages, id.slice(0, -REPLY_SUFFIX.length))
-}
-
 const advanceEpoch = (record: TurnRecord): number => {
   let epoch = record.epoch
   while (HashSet.has(record.failed, epoch) && HashSet.has(record.resumed, epoch)) epoch += 1
   return epoch
 }
 
-const reducePackageCalls = (state: TurnProjectionState, event: Event): TurnProjectionState => {
-  if (event.type !== "PackageCalled" && event.type !== "PackageReturned") return state
-  const call = field(event, "callId")
-  return {
-    ...state,
-    openPackages: event.type === "PackageCalled"
-      ? HashSet.add(state.openPackages, call)
-      : HashSet.remove(state.openPackages, call)
-  }
-}
-
 const reduceHead = (state: TurnProjectionState, event: Event): TurnProjectionState => {
-  if (event.type !== "MessageReceived" || claimedReply(state, event)) return state
+  if (event.type !== "MessageReceived") return state
   const id = field(event, "id")
   if (HashMap.has(state.heads, id)) return state
   const turn = Option.getOrElse(HashMap.get(state.turns, id), emptyTurn)
@@ -138,8 +119,7 @@ const reduceTrajectory = (state: TurnProjectionState, event: Event): TurnProject
 
 // reduceTurnProjection advances the quotient by one durable event.
 export const reduceTurnProjection = (state: TurnProjectionState, event: Event): TurnProjectionState => {
-  const packages = reducePackageCalls(state, event)
-  const headed = reduceHead(packages, event)
+  const headed = reduceHead(state, event)
   const turned = reduceTurn(headed, event)
   return reduceTrajectory(turned, event)
 }
