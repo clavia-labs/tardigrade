@@ -13,7 +13,7 @@ import { eventEpochOf, turnOf, turnView } from "@clavia/tardigrade-code/executio
 import { budgetPolicyOf, type BudgetPolicy } from "../component/budget"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { childInvocationRef } from "./agents-compat"
-import { ChildCreated, childCreated, childLineageOf, ChildPlacement, threadCreatedOf, type ThreadCreated, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
+import { ChildCreated, childCreated, childLineageOf, threadCreatedOf, type ThreadCreated, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { allocateChildCoordinate as allocateChildThread, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import {
@@ -223,16 +223,12 @@ const parentRunOf = (call: Event): { readonly turn: string; readonly epoch: numb
 
 // childClaimOf scopes a child to its parent turn and call, preserving recorded addresses on replay (agents.test.ts).
 const childClaimOf = (
-  placement: unknown,
   events: ReadonlyArray<Event>,
   parent: ThreadCreated,
   parentRunId: string,
   callId: string,
   source: ThreadAddress
 ) => Effect.gen(function* () {
-  if (placement !== undefined && !Schema.is(ChildPlacement)(placement)) {
-    return { error: "agents.run placement must be colocated or independent" }
-  }
   const sent = events.findLastIndex((event) =>
     event.type === "PackageCalled" &&
     event.callId === callId &&
@@ -250,7 +246,7 @@ const childClaimOf = (
     throw new Error(`child ${callId} has an invalid creation record`)
   }
   const lineage: ThreadLineage = recorded === undefined
-    ? childLineageOf(parent, placement as ChildPlacement | undefined)
+    ? childLineageOf(parent)
     : {
         parent: parent.address,
         depth: recorded.depth,
@@ -357,7 +353,6 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
               additionalProperties: false
             },
             budget: { type: "integer", description: "max tool calls before the agent must answer, a whole number of calls; keeps a research agent bounded" },
-            placement: { type: "string", enum: ["colocated", "independent"], description: "place the child relative to this thread's host" },
             escalatable: { type: "boolean", description: "true: at its budget the child may ask its parent's budget authority for more before answering" }
           },
           required: ["text"]
@@ -434,7 +429,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           }
           const self = formatThreadAddress(source)
           const a = args as
-            | { text?: unknown; background?: unknown; output?: unknown; outputSchema?: unknown; model?: unknown; budget?: unknown; escalatable?: unknown; placement?: unknown }
+            | { text?: unknown; background?: unknown; output?: unknown; outputSchema?: unknown; model?: unknown; budget?: unknown; escalatable?: unknown }
             | undefined
           const text = String(a?.text ?? "")
           if (text === "") return { error: "agents.run needs { text }" }
@@ -445,8 +440,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           if (parentRun === undefined) {
             return yield* Effect.die(new Error(`agents.run ${ctx.callId} has no parent turn`))
           }
-          const child = yield* childClaimOf(a?.placement, events, created, parentRun.turn, ctx.callId, source)
-          if ("error" in child) return child
+          const child = yield* childClaimOf(events, created, parentRun.turn, ctx.callId, source)
           const { lineage, recorded: recordedChild, target } = child
           const reference: InvocationCoordinate = recordedChild === undefined
             ? invocationCoordinateOf(target, { method: "message", id: ctx.callId, epoch: 0 })
