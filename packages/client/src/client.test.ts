@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Schema } from "effect"
+import fc from "fast-check"
 import { ACTOR_ARTIFACT_VERSION, agentMethods } from "@clavia/tardigrade-agent"
 import type { ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
 
@@ -395,12 +396,23 @@ describe("resuming a turn", () => {
   const failed = { type: "TurnFailed", turn: "m1", error: "boom" }
   const client = () => makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
 
-  test("a failed turn resumes without a turns projection", async () => {
-    answer = accepting([message, failed])
-    expect(await client().resume("main", "root", "m1")).toEqual({ actor: "main", thread: "root" })
-    expect(calls).toHaveLength(3)
-    expect(calls.every((call) => new URL(call.url).pathname === "/v1/actors/main/threads/root/events")).toBe(true)
-    expect(JSON.parse(calls.at(-1)!.body!)).toEqual({ type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1 })
+  test("resuming a failed turn is invariant under consistent ID renaming", async () => {
+    await fc.assert(fc.asyncProperty(
+      fc.string({ minLength: 1 }), fc.string({ minLength: 1 }),
+      async (original, renamed) => {
+        const resume = async (turn: string) => {
+          calls.length = 0
+          answer = accepting([{ ...message, id: turn }, { ...failed, turn }])
+          const result = await client().resume("main", "root", turn)
+          expect(calls).toHaveLength(3)
+          expect(calls.every((call) => new URL(call.url).pathname === "/v1/actors/main/threads/root/events")).toBe(true)
+          const event = JSON.parse(calls.at(-1)!.body!)
+          expect(event).toEqual({ type: "TurnResumed", turn, failedEpoch: 0, epoch: 1 })
+          return { result, event: { ...event, turn: "<turn>" } }
+        }
+        expect(await resume(renamed)).toEqual(await resume(original))
+      }
+    ), { numRuns: 200 })
   })
 
   test("resume follows every event page", async () => {

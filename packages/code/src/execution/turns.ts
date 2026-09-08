@@ -1,5 +1,4 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { REPLY_SUFFIX } from "./ids"
 
 // Turn attribution. A turn is headed by one MessageReceived; every event serving it carries
 // turn: <head id>. Attribution is a fact the event carries, never a derivation from position,
@@ -51,29 +50,8 @@ const activeStamped = (log: ReadonlyArray<Event>, turn: string): ReadonlyArray<E
   return stamped(log, turn).filter((event) => !isTerminal(event) || eventEpochOf(event) === epoch)
 }
 
-// claimedByPark: a reply an open package call was awaiting when it landed belongs to that call,
-// never to a fresh turn of its own; the awaiting body harvests it, and nothing else may react
-// to it as inbound. The verdict reads only events before the reply's own position, so later
-// appends cannot rewrite it (tla/projection/Projection.tla, PrefixFaithful). A background spawn's reply is
-// the opposite case and is meant to head its own turn: its call returned at once, so no call is
-// open for it. Only agents.run ids can ever match: tasks.fire mints run- prefixed ids
-// (mintedRunId, src/grammar/grammar.ts), so a task reply is structurally never claimed.
-const claimedByPark = (log: ReadonlyArray<Event>, index: number): boolean => {
-  const id = idOf(log[index]!)
-  if (!id.endsWith(REPLY_SUFFIX)) return false
-  const callId = id.slice(0, -REPLY_SUFFIX.length)
-  let open = false
-  for (let i = 0; i < index; i++) {
-    const e = log[i]!
-    if (e.type !== "PackageCalled" && e.type !== "PackageReturned") continue
-    if (String((e as { callId?: unknown }).callId) !== callId) continue
-    open = e.type === "PackageCalled"
-  }
-  return open
-}
-
 const heads = (log: ReadonlyArray<Event>): ReadonlyArray<Event> =>
-  log.filter((e, i) => e.type === "MessageReceived" && !claimedByPark(log, i))
+  log.filter((event) => event.type === "MessageReceived")
 
 // turnHead returns the current turn's head: the earliest message with no stamped terminal.
 export const turnHead = (log: ReadonlyArray<Event>): Event | undefined =>

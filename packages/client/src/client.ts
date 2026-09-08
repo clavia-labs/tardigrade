@@ -1,5 +1,4 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { REPLY_SUFFIX } from "@clavia/tardigrade-core/interaction/provider-message"
 import { boundaryOf } from "@clavia/tardigrade-agent/output/boundary"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import { Effect, type Schema } from "effect"
@@ -436,7 +435,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     // agentKeys).
     resume: async (actor, thread, turn) => {
       const log = await logOf(actor, thread)
-      if (turn.endsWith(REPLY_SUFFIX) || !log.some((event) => event.type === "MessageReceived" && String((event as { id?: unknown }).id ?? "") === turn)) {
+      if (!log.some((event) => event.type === "MessageReceived" && String((event as { id?: unknown }).id ?? "") === turn)) {
         throw new ProblemError({
           ...ResumeRefused.of(`No turn named ${JSON.stringify(turn)} has been served on this thread.`)
         })

@@ -99,6 +99,11 @@ const legacyChild = (callId: string): Event => ({
   address: { actor: "mem", instance: "main", thread: `ag.${callId}` }, depth: 1, at: 2
 })
 
+const recordedHandle = (id: string): InvocationCoordinate => ({
+  target: { actor: "mem", instance: "main", thread: `ag.${id}` },
+  invocation: { method: "message", id, epoch: 0 }
+})
+
 const expectedThread = async (turn: string, call: string) => (await Effect.runPromise(testAllocator.allocate({
   kind: "child",
   parent: parseThreadAddress("mem:main:ag.root"),
@@ -439,10 +444,19 @@ describe("agentsPackage", () => {
       "ag.root": [legacyChild("c8"), response("c8", "cancelled", "")]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
-      pkg.methods.result!({ id: "c8" }, { callId: "r8" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
+      pkg.methods.result!({ handle: recordedHandle("c8") }, { callId: "r8" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
     )
     expect(answer).toEqual({ error: "cancelled" })
     expect(sent.length).toBe(0)
+  })
+
+  test("result requires an invocation handle even when a bare ID has one match", async () => {
+    const pkg = agentsPackage()
+    const threads = { "ag.root": [legacyChild("c6"), response("c6", "completed", "answer")] }
+    const result = await Effect.runPromise(pkg.methods.result!({ id: "c6" }, { callId: "read" }).pipe(
+      Effect.provide(env("mem:main:ag.root", [], threads))
+    ))
+    expect(result).toEqual({ error: "agents.result needs a valid invocation handle" })
   })
 
   test("result reads the response from its own log", async () => {
@@ -454,7 +468,7 @@ describe("agentsPackage", () => {
       ]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
-      pkg.methods.result!({ id: "c6" }, { callId: "c7" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
+      pkg.methods.result!({ handle: recordedHandle("c6") }, { callId: "c7" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
     )
     expect(answer).toEqual({ error: "nope" })
   })
@@ -592,7 +606,7 @@ describe("a child is named by its parent address, run, and call", () => {
     expect(sent).toHaveLength(3)
   })
 
-  test("handles distinguish reused calls while ambiguous legacy handles fail", async () => {
+  test("handles distinguish reused calls while bare IDs fail", async () => {
     const events: Event[] = [
       threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
       turn("parent-a"), called("same", "parent-a")
@@ -615,7 +629,7 @@ describe("a child is named by its parent address, run, and call", () => {
     expect(parked).toBeInstanceOf(Park)
     expect((parked as Park).awaiting).toBe(invocationResponseId(second.handle))
     const legacy = await Effect.runPromise(pkg.methods.result!({ id: "same" }, { callId: "legacy" }).pipe(Effect.provide(environment)))
-    expect(legacy).toHaveProperty("error", expect.stringContaining("ambiguous"))
+    expect(legacy).toHaveProperty("error", expect.stringContaining("invocation handle"))
     events.push({
       ...response("same", "cancelled", "stopped"),
       id: invocationResponseId(second.handle), reference: second.handle,
@@ -824,7 +838,7 @@ describe("a run stays bound to the schema it was started under", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage({ outputs })
     return Effect.runPromise(
-      pkg.methods.result!({ id: "b1" }, { callId: "later" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threadsFor)))
+      pkg.methods.result!({ handle: recordedHandle("b1") }, { callId: "later" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threadsFor)))
     )
   }
 

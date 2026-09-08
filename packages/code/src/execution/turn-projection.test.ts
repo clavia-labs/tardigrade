@@ -36,11 +36,12 @@ describe("incremental turn projection", () => {
     ), { numRuns: 500 })
   })
 
-  test("a parked package reply does not become a turn head", () => {
+  test("an invocation response does not become a turn head", () => {
     const log: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m0" } as Event,
       { type: "PackageCalled", callId: "run-1", turn: "m0" } as Event,
-      { type: "MessageReceived", id: "run-1/reply" } as Event,
+      { type: "BlockedOn", callId: "run-1", turn: "m0", awaiting: "run-1/reply" },
+      { type: "ResponseReceived", id: "run-1/reply" } as Event,
       { type: "PackageReturned", callId: "run-1", turn: "m0" } as Event,
       { type: "TurnCompleted", turn: "m0" } as Event
     ]
@@ -74,4 +75,44 @@ describe("incremental turn projection", () => {
     expect(turnViewFrom(state)).toEqual(turnView(log))
     expect(trajectoryFrom(state)).toEqual(trajectoryOf(log))
   })
+})
+
+test("message and response event types determine whether a turn starts", () => {
+  const check = (events: ReadonlyArray<Event>, expected: string | undefined) => {
+    expect(turnView(events)[0]?.id).toBe(expected)
+    expect(turnViewFrom(events.reduce(reduceTurnProjection, initialTurnProjection()))[0]?.id).toBe(expected)
+  }
+  const call: Event = { type: "PackageCalled", callId: "same", turn: "owner" }
+  check([call, { type: "MessageReceived", id: "same.reply" }], "same.reply")
+  check([call, { type: "BlockedOn", callId: "same", turn: "owner", awaiting: "opaque-response" },
+    { type: "MessageReceived", id: "opaque-response" }], "opaque-response")
+  check([call, { type: "BlockedOn", callId: "same", turn: "other", awaiting: "opaque-response" },
+    { type: "MessageReceived", id: "opaque-response" }], "opaque-response")
+  check([call, { type: "ResponseReceived", id: "same.reply" }], undefined)
+})
+
+test("event types preserve turn attribution regardless of waits, ID suffixes, and replay", () => {
+  fc.assert(fc.property(
+    fc.string({ minLength: 1, maxLength: 20 }), fc.boolean(), fc.boolean(), fc.boolean(),
+    (base, waited, closed, isMessage) => {
+      const reply = `${base}.reply`
+      const first = { seq: 12, component: "code", tag: "dispatch" }
+      const second = { seq: 19, component: "code", tag: "dispatch" }
+      const call: Event = { type: "PackageCalled", executionRef: first, ordinal: 0, callId: base, turn: "owner" }
+      const returned: Event = { type: "PackageReturned", executionRef: first, ordinal: 0, callId: base, turn: "owner" }
+      const history: Event[] = [
+        call,
+        { type: "PackageCalled", executionRef: second, ordinal: 0, callId: base, turn: "owner" },
+        { type: "PackageReturned", executionRef: second, ordinal: 0, callId: base, turn: "owner" },
+        ...(waited ? [{ type: "BlockedOn", executionRef: first, ordinal: 0, callId: base, turn: "owner", awaiting: reply }] : []),
+        ...(closed ? [returned] : []),
+        { type: isMessage ? "MessageReceived" : "ResponseReceived", id: reply }
+      ]
+      const expected = isMessage ? reply : undefined
+      for (const log of [history, [...history, returned], JSON.parse(JSON.stringify(history)) as Event[]]) {
+        expect(turnView(log)[0]?.id).toBe(expected)
+        expect(turnViewFrom(log.reduce(reduceTurnProjection, initialTurnProjection()))[0]?.id).toBe(expected)
+      }
+    }
+  ), { numRuns: 200 })
 })
