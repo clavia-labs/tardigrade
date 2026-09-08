@@ -1,8 +1,33 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { childCreated, childLineageOf, isThreadCreated, sameThreadLineage, threadCreated, threadCreatedOf, threadKeys } from "./relations"
+import { childCreated, childLineageOf, isThreadCreated, sameThreadLineage, threadCreated, threadCreatedForDelivery, threadCreatedOf, threadKeys } from "./relations"
 
 describe("thread creation", () => {
+  test("depth ceilings survive creation and cannot change on redelivery", () => {
+    const root = { ...threadCreated({ actor: "agent", instance: "main", thread: "root" }, undefined, 1), maxDepth: 2 }
+    const lineage = childLineageOf(root)
+    const child = threadCreated({ ...root.address, thread: "child" }, lineage, 2)
+    expect(child).toMatchObject({ depth: 1, maxDepth: 2 })
+    expect(childCreated("call", child.address, lineage, 2)).toMatchObject({ depth: 1, maxDepth: 2 })
+    expect(threadCreatedForDelivery([child], child.address, lineage, root.address)).toEqual(child)
+    for (const maxDepth of [undefined, 1, 3]) {
+      expect(() => threadCreatedForDelivery([child], child.address, { parent: root.address, depth: 1, ...(maxDepth === undefined ? {} : { maxDepth }) }, root.address))
+        .toThrow("already has different lineage")
+    }
+  })
+
+  test("invalid ceilings and child depths beyond the ceiling are rejected", () => {
+    const root = threadCreated({ actor: "agent", instance: "main", thread: "root" }, undefined, 1)
+    const target = { ...root.address, thread: "child" }
+    for (const maxDepth of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(isThreadCreated({ ...root, maxDepth })).toBe(false)
+      expect(() => threadCreatedForDelivery([], target, { parent: root.address, depth: 1, maxDepth }, root.address))
+        .toThrow("invalid child lineage")
+    }
+    expect(() => threadCreatedForDelivery([], target, { parent: root.address, depth: 3, maxDepth: 2 }, root.address))
+      .toThrow("invalid child lineage")
+  })
+
   test("a root records depth zero and no parent", () => {
     const created = threadCreated({ actor: "agent", instance: "main", thread: "root" }, undefined, 11)
     expect(created).toEqual({

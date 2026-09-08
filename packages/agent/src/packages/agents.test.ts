@@ -14,7 +14,7 @@ import { methodResponseDerivation } from "@clavia/tardigrade-core/interaction/re
 import { type ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
 import { invocationResponseId, type InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
-import { agentsPackage, INLINE_OUTPUT_NAME } from "./agents"
+import { agentsPackage, DEFAULT_MAX_DEPTH, INLINE_OUTPUT_NAME } from "./agents"
 import { cancellationTransitionsOf } from "@clavia/tardigrade-core/interaction/cancellation"
 import { alarmFired, earliestDeadlineOf, methodTimeoutDerivation } from "@clavia/tardigrade-core/interaction/timeout"
 import { agentMethods } from "../actor/methods"
@@ -240,7 +240,7 @@ describe("agentsPackage", () => {
     expect(system).not.toContain("agents.continue")
     expect(system).toContain("agents.providers({cursor?: string, search?: string, limit?: number})")
     expect(system).toContain("agents.models({cursor?: string, search?: string, limit?: number, provider?: string, sort?: \"promptUsdPerToken\" | \"completionUsdPerToken\" | \"cachedPromptUsdPerToken\" | \"cacheWritePromptUsdPerToken\", order?: \"asc\" | \"desc\", unpriced?: \"first\" | \"last\"})")
-    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, model?: {provider: string, model_id: string}, budget?: number, escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string, handle?: {target: object, invocation: object}}")
+    expect(system).toContain("agents.run({text: string, name?: string, background?: boolean, output?: unknown, model?: {provider: string, model_id: string}, budget?: number, escalatable?: boolean}) -> {output?: unknown, error?: string, maxDepth?: number, attemptedDepth?: number, dispatched?: boolean, callId?: string, handle?: {target: object, invocation: object}}")
   })
 
   test("catalog searches return the host API pages", async () => {
@@ -572,6 +572,121 @@ const liveEnv = (events: Event[], sent: Array<Sent>) => {
     }))
   )
 }
+
+describe("child thread names", () => {
+  test("named calls retain their address on replay and reject competing calls", async () => {
+    const parent = parseThreadAddress("mem:main:naming-root")
+    const args = { text: "research", name: "sauna-safety", background: true }
+    const events: Event[] = [threadCreated(parent, undefined, 0), turn("names"),
+      { ...called("first", "names"), arguments: args },
+      { ...called("second", "names"), arguments: args }]
+    const sent: Sent[] = []
+    const allocator = registeredThreadAllocator(memoryThreadDirectory())
+    const run = (callId: string, input: unknown = args) => agentsPackage().methods.run!(input, { callId }).pipe(
+      Effect.provideService(ThreadAllocator, allocator), Effect.provide(liveEnv(events, sent))
+    )
+    const [first, second] = await Promise.all([Effect.runPromise(run("first")), Effect.runPromise(run("second"))])
+    expect(first).toMatchObject({ handle: { target: { ...parent, thread: args.name } } })
+    expect(second).toEqual({ error: 'agents.run thread name "sauna-safety" is already claimed; choose another name' })
+    expect(sent).toHaveLength(1)
+    expect(await Effect.runPromise(run("first"))).toEqual(first)
+    expect(events.filter((event) => event.type === "ChildCreated")).toHaveLength(1)
+    expect(sent.map((envelope) => envelope.link.target)).toEqual(Array(2).fill({ ...parent, thread: args.name }))
+  })
+
+  test("invalid names are refused before allocation", async () => {
+    const parent = parseThreadAddress("mem:main:invalid-name-root")
+    const events: Event[] = [threadCreated(parent, undefined, 0), turn("names"), called("call", "names")]
+    const sent: Sent[] = []
+    for (const name of ["", null, 7, {}]) {
+      const result = await Effect.runPromise(agentsPackage().methods.run!({ text: "work", name }, { callId: "call" }).pipe(
+        Effect.provideService(ThreadAllocator, { allocate: () => Effect.die(new Error("unexpected allocation")) }),
+        Effect.provide(liveEnv(events, sent))
+      ))
+      expect(result).toEqual({ error: "agents.run name must be a non-empty string" })
+    }
+    expect(events).toHaveLength(3)
+    expect(sent).toEqual([])
+  })
+})
+
+describe("delegation depth", () => {
+  const root = parseThreadAddress("mem:main:depth-root")
+  const logAt = (depth: number, maxDepth?: number): Event[] => [
+    { ...threadCreated(root, undefined, 0), depth, ...(maxDepth === undefined ? {} : { maxDepth }) },
+    turn("depth-turn"), called("depth-call", "depth-turn")
+  ]
+  const spawn = (events: Event[], sent: Sent[], maxDepth?: number) =>
+    agentsPackage({ maxDepth }).methods.run!({ text: "work", background: true }, { callId: "depth-call" }).pipe(
+      Effect.provide(liveEnv(events, sent))
+    )
+
+  test("omitted depth defaults to five and invalid ceilings fail construction", async () => {
+    expect(DEFAULT_MAX_DEPTH).toBe(5)
+    for (const maxDepth of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => agentsPackage({ maxDepth })).toThrow("non-negative safe integer")
+    }
+    const sent: Sent[] = []
+    await Effect.runPromise(spawn(logAt(4), sent))
+    expect(sent[0]?.lineage).toEqual({ parent: root, depth: 5, maxDepth: 5 })
+    expect(await Effect.runPromise(spawn(logAt(5), []))).toMatchObject({ maxDepth: 5, attemptedDepth: 6 })
+    const overridden: Sent[] = []
+    await Effect.runPromise(spawn(logAt(5), overridden, 7))
+    expect(overridden[0]?.lineage).toMatchObject({ depth: 6, maxDepth: 7 })
+    const inherited: Sent[] = []
+    await Effect.runPromise(spawn(logAt(6, 7), inherited))
+    expect(inherited[0]?.lineage).toMatchObject({ depth: 7, maxDepth: 7 })
+  })
+
+  test.each([
+    { depth: 0, background: false }, { depth: 0, background: true },
+    { depth: 2, background: false }, { depth: 2, background: true }
+  ])("depth $depth refusal has no spawn effects with background=$background", async ({ depth, background }) => {
+    const events = logAt(depth, depth)
+    const before = structuredClone(events)
+    const sent: Sent[] = []
+    let reservations = 0
+    let allocations = 0
+    const result = await Effect.runPromise(agentsPackage({
+      reserve: async () => { reservations++; return 10 }
+    }).methods.run!({ text: "work", background }, { callId: "depth-call" }).pipe(
+      Effect.provideService(ThreadAllocator, { allocate: () => Effect.sync(() => { allocations++; return { ...root, thread: "unexpected" } }) }),
+      Effect.provide(liveEnv(events, sent))
+    ))
+    expect(result).toEqual({ error: `agents.run cannot spawn at depth ${depth + 1}; maxDepth is ${depth}`, maxDepth: depth, attemptedDepth: depth + 1 })
+    expect(reservations).toBe(0)
+    expect(allocations).toBe(0)
+    expect(sent).toEqual([])
+    expect(events).toEqual(before)
+  })
+
+  test("later turns retain the inherited ceiling and local options can tighten it", async () => {
+    const events = logAt(1, 3)
+    events.push(turn("later"), called("depth-call", "later"))
+    const sent: Sent[] = []
+    await Effect.runPromise(spawn(events, sent, 2))
+    expect(sent[0]?.lineage).toMatchObject({ depth: 2, maxDepth: 2 })
+  })
+
+  test("replayed dispatch retains its admitted ceiling after configuration changes", async () => {
+    let events = logAt(0)
+    const sent: Sent[] = []
+    await expect(Effect.runPromise(agentsPackage({ maxDepth: 2 }).methods.run!(
+      { text: "work", background: true }, { callId: "depth-call" }
+    ).pipe(
+      Effect.provideService(Router, { send: () => Effect.die(new Error("delivery interrupted")) }),
+      Effect.provide(liveEnv(events, sent))
+    ))).rejects.toThrow("delivery interrupted")
+    events = JSON.parse(JSON.stringify(events))
+    await Effect.runPromise(spawn(events, sent, 0))
+    await Effect.runPromise(spawn(events, sent, 10))
+    expect(sent.map((entry) => entry.lineage)).toEqual(Array(2).fill({ parent: root, depth: 1, maxDepth: 2 }))
+    expect(events.filter((entry) => entry.type === "ChildCreated")).toHaveLength(1)
+    expect(events.find((entry) => entry.type === "ChildCreated")).toMatchObject({ maxDepth: 2 })
+  })
+
+
+})
 
 // A turn head served through the actor method machinery carries its call context, deadline
 // included (packages/core/src/communication/envelope.test.ts, "methodEnvelopeOf").

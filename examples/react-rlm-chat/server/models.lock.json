@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "configDigest": "sha256:1d295be66f8cdabe4d30c63d4e68622f42fe610e088126a3d4bf2d15594051c9",
+  "configDigest": "sha256:92c6ebeb03f4371da3cc475521f951d86d9e3322b156db3474b268d0cf6da165",
   "catalog": {
     "source": "models.dev",
-    "revision": "W/\"6e5923ca92c07854b0ba05c29dd448ac\"",
-    "refreshedAt": 1788540678621,
+    "revision": "W/\"1463f29040b934738b6891448251a4e7\"",
+    "refreshedAt": 1788862521660,
     "status": "cached",
     "providers": [
       {
@@ -17,16 +17,16 @@
         ],
         "models": [
           {
-            "id": "openai/gpt-5.6-terra",
-            "name": "GPT-5.6 Terra",
+            "id": "openai/gpt-6-astra",
+            "name": "GPT-6 Astra",
             "metadata": {
               "contextWindowTokens": 1050000,
               "maxOutputTokens": 128000,
               "pricing": {
-                "promptUsdPerToken": 0.000002,
-                "completionUsdPerToken": 0.000012,
-                "cachedPromptUsdPerToken": 2.0000000000000002e-7,
-                "cacheWritePromptUsdPerToken": 0.0000025
+                "promptUsdPerToken": 0.00001,
+                "completionUsdPerToken": 0.00005,
+                "cachedPromptUsdPerToken": 0.000001,
+                "cacheWritePromptUsdPerToken": 0.0000125
               },
               "toolCall": true,
               "structuredOutput": true,

@@ -3,6 +3,7 @@ import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { threadAddressOf } from "@clavia/tardigrade-core/transport/endpoint"
 import { alarmFired } from "@clavia/tardigrade-core/interaction/timeout"
+import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import type { Action } from "tardie/log/events"
 import {
   actor,
@@ -88,6 +89,89 @@ const action = ({ kind, ...fields }: Action): Action => ({
 
 const field = (event: Event, name: string): unknown =>
   (event as Record<string, unknown>)[name]
+
+test.each([false, true])("Mortys inherit Rick's depth ceiling with background=%s", async (background) => {
+  await fc.assert(fc.asyncProperty(fc.record({
+    maxDepth: fc.integer({ min: 0, max: 3 }),
+    siblings: fc.integer({ min: 1, max: 3 }),
+    widen: fc.boolean(),
+    named: fc.boolean(),
+    concurrency: fc.integer({ min: 1, max: 6 }),
+    schedule: fc.array(fc.nat(), { minLength: 8, maxLength: 32 })
+  }), async ({ maxDepth, siblings, widen, named, concurrency, schedule }) => {
+    const assemble = (ceiling: number | undefined) => validateActor(actor({
+      name: "depth-citadel",
+      methods: { message: agentMethods.message },
+      components: [infer([budget([codeMode([agentsPackage({ maxDepth: ceiling })])]), nativeOutput], TEST_MODEL)]
+    }))
+    const rootActor = assemble(maxDepth)
+    const childActor = assemble(widen ? maxDepth + 10 : undefined)
+    const mind: Mind = async ({ trajectory }) => {
+      const head = trajectory.findLast((event) => event.type === "MessageReceived")!
+      const turn = String(field(head, "id"))
+      const [level, path] = String(field(head, "text")).split(":")
+      const generation = Number(level)
+      if (generation > maxDepth) return { kind: "fail", error: "Morty escaped the depth ceiling" }
+      const returned = trajectory.find((event) => event.type === "ToolReturned" && field(event, "turn") === turn) as {
+        readonly result?: { readonly result?: unknown }
+      } | undefined
+      if (returned !== undefined) return { kind: "complete", output: JSON.stringify(returned.result?.result) }
+      return {
+        kind: "call", callId: `${turn}-replicate`, name: "execute",
+        arguments: {
+          code: `return await Promise.all(Array.from({ length: ${siblings} }, async (_, index) => {
+            const name = ${JSON.stringify(path)} + "-" + index;
+            const answer = await agents.run({ text: ${JSON.stringify(String(generation + 1) + ":")} + name, background: ${background}, ...(${named} ? { name } : {}) });
+            if (answer.error) return answer;
+            const terminal = ${background} ? await agents.result({ handle: answer.handle }) : answer;
+            return JSON.parse(terminal.output);
+          }));`
+        }
+      }
+    }
+    let pick = 0
+    const scenario = actorScenario(rootActor, mind, {
+      actorFor: (thread) => thread === ROOT_THREAD ? rootActor : childActor,
+      driver: { maxConcurrentThreads: concurrency },
+      pick: (dirty) => {
+        const threads = [...dirty].sort()
+        return threads[schedule[pick++ % schedule.length]! % threads.length]!
+      }
+    })
+    const answer = await scenario.run("0:rick")
+    expect(answer.error).toBeUndefined()
+    const expected = (depth: number): unknown => Array.from({ length: siblings }, () => depth === maxDepth
+      ? { error: `agents.run cannot spawn at depth ${depth + 1}; maxDepth is ${maxDepth}`, maxDepth, attemptedDepth: depth + 1 }
+      : expected(depth + 1))
+    expect(JSON.parse(answer.output ?? "null")).toEqual(expected(0))
+    const pending = [{ thread: ROOT_THREAD, depth: 0 }]
+    while (pending.length > 0) {
+      const { thread, depth } = pending.pop()!
+      const events = scenario.host.read(thread)
+      expect(threadCreatedOf(events)?.depth).toBe(depth)
+      if (depth > 0) expect(threadCreatedOf(events)?.maxDepth).toBe(maxDepth)
+      expect(events.filter((event) => event.type === "TurnCompleted")).toHaveLength(1)
+      const children = childThreadsOf(events)
+      expect(children.size).toBe(depth === maxDepth ? 0 : siblings)
+      expect(events.filter((event) => event.type === "InvocationLinked")).toHaveLength(depth === maxDepth ? 0 : siblings)
+      for (const [callId, child] of children) {
+        if (named) {
+          const call = events.find((event) => event.type === "PackageCalled" && field(event, "callId") === callId)!
+          expect(child).toBe((field(call, "arguments") as { readonly name: string }).name)
+        }
+        pending.push({ thread: child, depth: depth + 1 })
+      }
+    }
+    expect(scenario.host.resting()).toBe(true)
+  }), {
+    numRuns: 12,
+    examples: [
+      [{ maxDepth: 2, siblings: 2, widen: false, named: false, concurrency: 1, schedule: Array(8).fill(0) }],
+      [{ maxDepth: 2, siblings: 2, widen: true, named: true, concurrency: 3, schedule: Array(8).fill(1) }],
+      [{ maxDepth: 0, siblings: 2, widen: true, named: true, concurrency: 2, schedule: Array(8).fill(0) }]
+    ]
+  })
+}, 30_000)
 
 const responseFor = (
   trajectory: ReadonlyArray<Event>,

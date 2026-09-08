@@ -10,7 +10,7 @@ import { isActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { threadCreated, threadCreatedOf, threadKeys, type ChildCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { createHost } from "@clavia/tardigrade-host/host"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
-import { agentsPackage } from "./agents"
+import { agentsPackage, DEFAULT_MAX_DEPTH } from "./agents"
 
 interface CallPlan {
   readonly callId: string
@@ -137,6 +137,7 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
       address: record.address,
       parent,
       depth: record.depth,
+      maxDepth: DEFAULT_MAX_DEPTH,
       ...(record.placement === undefined ? {} : { placement: record.placement }),
       at: expect.any(Number)
     })

@@ -3,7 +3,7 @@ import { agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode,
 import { fetchPackage, workspacePackage } from "tardie/code"
 
 const actorName = "react-chat"
-const terra = { provider: "openrouter", model_id: "openai/gpt-5.6-terra" } as const
+const astra = { provider: "openrouter", model_id: "openai/gpt-6-astra" } as const
 
 const actorInstructions = `
 You are a research assistant.
@@ -18,11 +18,11 @@ export default actor({
     infer([
       system(actorInstructions),
       budget([
-        codeMode([fetchPackage(), agentsPackage(), workspacePackage()])
+        codeMode([fetchPackage(), agentsPackage({ maxDepth: 2 }), workspacePackage()])
       ], { authority: caller() }),
       compaction(),
       outputValidateOnce
-    ], { models: { default: terra, allow: [{ provider: terra.provider, model_ids: [terra.model_id] }] } }),
+    ], { models: { default: astra, allow: [{ provider: astra.provider, model_ids: [astra.model_id] }] } }),
     budgetAuthority()
   ]
 })

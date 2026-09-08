@@ -609,18 +609,19 @@ describe("the bun host", () => {
   })
 
   test("a child creation and its first delivery commit together", async () => {
-    const h = await createBunHost(options(freshPath()))
+    const path = freshPath()
+    const h = await createBunHost(options(path))
     const parent = parseThreadAddress("bun:default:parent")
     const target = parseThreadAddress("bun:default:child")
     const first = envelopeOf(
       linkOf(parent, target),
       { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
-      { parent, depth: 1 }
+      { parent, depth: 1, maxDepth: 2 }
     )
     await h.commit(first)
     await h.commit(first)
     expect(await h.read("child")).toEqual([
-      threadCreated(target, { parent, depth: 1 }, 7),
+      threadCreated(target, { parent, depth: 1, maxDepth: 2 }, 7),
       expect.objectContaining({ type: "MessageReceived", id: "m1", link: first.link })
     ])
     await expect(h.commit(envelopeOf(
@@ -629,6 +630,9 @@ describe("the bun host", () => {
       { parent: parseThreadAddress("bun:default:other"), depth: 1 }
     ))).rejects.toThrow("already has different lineage")
     await h.close()
+    const reopened = await createBunHost(options(path))
+    expect((await reopened.read("child"))[0]).toMatchObject({ depth: 1, maxDepth: 2 })
+    await reopened.close()
   })
 
   test("a refused initial actor delivery leaves no partial creation", async () => {
