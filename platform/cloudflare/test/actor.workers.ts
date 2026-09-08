@@ -962,6 +962,7 @@ describe("cloudflare actor", () => {
     const lineage = {
       parent,
       depth: 1,
+      maxDepth: 2,
       placement: "independent" as const
     }
     const requested = await runInDurableObject(directory, (_instance, state) => {
@@ -1017,6 +1018,7 @@ describe("cloudflare actor", () => {
     })
     const childEvents = await threadStub("ag.directory-child").events("ag.directory-child")
     expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
+    expect(childEvents[0]).toMatchObject({ depth: 1, maxDepth: 2 })
     const actorEvents = await runInDurableObject(directory, (_instance, state) =>
       state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray()
     )

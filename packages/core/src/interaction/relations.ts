@@ -18,6 +18,7 @@ export type ChildPlacement = typeof ChildPlacement.Type
 export interface ThreadLineage {
   readonly parent: ThreadAddressType
   readonly depth: number
+  readonly maxDepth?: number
   readonly placement?: ChildPlacement
 }
 
@@ -27,6 +28,7 @@ export const ThreadCreated = Schema.Struct({
   address: ThreadAddress,
   parent: Schema.optional(ThreadAddress),
   depth: ThreadDepth,
+  maxDepth: Schema.optional(ThreadDepth),
   placement: Schema.optional(ChildPlacement),
   at: Schema.Finite
 })
@@ -41,6 +43,7 @@ export const ChildCreated = Schema.Struct({
   invocation: Schema.optional(InvocationRef),
   address: ThreadAddress,
   depth: ThreadDepth,
+  maxDepth: Schema.optional(ThreadDepth),
   placement: Schema.optional(ChildPlacement),
   at: Schema.Finite
 })
@@ -61,6 +64,7 @@ export const childCreated = (
   ...(invocation === undefined ? {} : { invocation }),
   address,
   depth: lineage.depth,
+  ...(lineage.maxDepth === undefined ? {} : { maxDepth: lineage.maxDepth }),
   ...(lineage.placement === undefined ? {} : { placement: lineage.placement }),
   at
 })
@@ -68,10 +72,11 @@ export const childCreated = (
 // isThreadCreated reports whether an open event carries a valid durable thread identity.
 export const isThreadCreated = (event: Event | undefined): event is ThreadCreated => {
   if (event?.type !== "ThreadCreated") return false
-  const value = event as { readonly address?: unknown; readonly parent?: unknown; readonly depth?: unknown; readonly placement?: unknown; readonly at?: unknown }
+  const value = event as { readonly address?: unknown; readonly parent?: unknown; readonly depth?: unknown; readonly maxDepth?: unknown; readonly placement?: unknown; readonly at?: unknown }
   return Schema.is(ThreadAddress)(value.address) &&
     (value.parent === undefined || Schema.is(ThreadAddress)(value.parent)) &&
     typeof value.depth === "number" && Number.isSafeInteger(value.depth) && value.depth >= 0 &&
+    (value.maxDepth === undefined || (typeof value.maxDepth === "number" && Number.isSafeInteger(value.maxDepth) && value.maxDepth >= 0)) &&
     (value.placement === undefined || Schema.is(ChildPlacement)(value.placement)) &&
     typeof value.at === "number" && Number.isFinite(value.at)
 }
@@ -94,7 +99,9 @@ export const threadCreatedForDelivery = (
     throw new Error(`thread ${address} creation address does not match its target`)
   }
   if (lineage !== undefined) {
-    if (lineage.depth <= 0 || sameThreadAddress(lineage.parent, target)) {
+    if (!Number.isSafeInteger(lineage.depth) || lineage.depth <= 0 ||
+      (lineage.maxDepth !== undefined && (!Number.isSafeInteger(lineage.maxDepth) || lineage.maxDepth < lineage.depth)) ||
+      sameThreadAddress(lineage.parent, target)) {
       throw new Error(`thread ${address} has invalid child lineage`)
     }
     if (!isThreadAddress(source) || !sameThreadAddress(lineage.parent, source)) {
@@ -113,6 +120,7 @@ export const threadCreatedForDelivery = (
 export const childLineageOf = (parent: ThreadCreated, placement?: ChildPlacement): ThreadLineage => ({
   parent: parent.address,
   depth: parent.depth + 1,
+  ...(parent.maxDepth === undefined ? {} : { maxDepth: parent.maxDepth }),
   ...(placement === undefined ? {} : { placement })
 })
 
@@ -126,6 +134,7 @@ export const threadCreated = (
   address,
   ...(lineage === undefined ? {} : { parent: lineage.parent }),
   depth: lineage?.depth ?? 0,
+  ...(lineage?.maxDepth === undefined ? {} : { maxDepth: lineage.maxDepth }),
   ...(lineage?.placement === undefined ? {} : { placement: lineage.placement }),
   at
 })
@@ -137,6 +146,7 @@ export const sameThreadAddress = (left: ThreadAddressType, right: ThreadAddressT
 // sameThreadLineage reports whether a creation claim matches a stored identity.
 export const sameThreadLineage = (created: ThreadCreated, lineage: ThreadLineage): boolean =>
   created.parent !== undefined && sameThreadAddress(created.parent, lineage.parent) && created.depth === lineage.depth &&
+  created.maxDepth === lineage.maxDepth &&
   (created.placement === undefined || lineage.placement === undefined || created.placement === lineage.placement)
 
 // threadKeys gives each log one durable creation occurrence, scoped to the run that minted the

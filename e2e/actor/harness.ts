@@ -49,6 +49,7 @@ export interface ActorScenario {
 }
 
 export interface ActorScenarioOptions {
+  readonly actorFor?: HostOptions<TestR>["actorFor"]
   readonly pick?: HostOptions<TestR>["pick"]
   readonly driver?: HostOptions<TestR>["driver"]
 }
@@ -70,7 +71,7 @@ export const actorScenario = (
     )
   const host: Host = createHost<TestR>({
     actorName: "mem",
-    actorFor: () => assembled,
+    actorFor: options.actorFor ?? (() => assembled),
     layersFor,
     keyOf: actorRuntimeOf(assembled).keyOf,
     ...(options.pick === undefined ? {} : { pick: options.pick }),

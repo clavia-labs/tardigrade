@@ -133,6 +133,7 @@ export { boundaryOf, outputOf, type Boundary } from "./output/boundary"
 export {
   agentsPackage,
   INLINE_OUTPUT_NAME,
+  DEFAULT_MAX_DEPTH,
   type AgentCatalog,
   type AgentCatalogQuery,
   type AgentModelCatalogQuery,
