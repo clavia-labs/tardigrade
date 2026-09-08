@@ -20,12 +20,12 @@ import { createCloudflareThreadHost, type CloudflareThreadHost } from "./host"
 import type { Env } from "./env"
 import { DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, type BackgroundTaskOwner, DEFAULT_BACKGROUND_TASK_OWNER, backgroundTaskOwnerOf, retainBackgroundTask, mountedActor, EMPTY_MODEL_SCOPE, modelCatalogForConfig, deployed, directory, modelConfigFrom, modelsFrom, modelLayer, nonNegativeInteger, optionalNonNegativeInteger, sandboxTransportOf, assemblyOf } from "./assembly"
 
-interface ThreadFactAnswer {
+export interface ThreadFactAnswer {
   readonly head: number
   readonly row: { readonly seq: number; readonly event: Event } | null
 }
 
-interface ThreadFactsAnswer {
+export interface ThreadFactsAnswer {
   readonly head: number
   readonly rows: ReadonlyArray<ThreadEventRow>
 }

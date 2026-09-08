@@ -13,6 +13,7 @@ import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrad
 import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-http/models"
 import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
 import type { Env } from "../env"
+import type { ThreadFactAnswer, ThreadFactsAnswer } from "../thread"
 import type { CloudflareDirectory } from "./directory"
 
 // treeBoundsOf validates optional subtree, depth, and node limits (test/actor.workers.ts).
@@ -204,7 +205,7 @@ export const cloudflareHttp = ({
           try: () => stub.stub.fact(stub.thread, {
             ...(key === null ? {} : { key }),
             ...(subject === null ? {} : { subject })
-          }),
+          }) as Promise<ThreadFactAnswer>,
           catch: (cause) => cause instanceof Error ? cause.message : String(cause)
         }).pipe(Effect.match({
           onFailure: (error) => json({ error }, 500),
@@ -229,7 +230,7 @@ export const cloudflareHttp = ({
           return json({ error: `facts require 1 to ${MAX_SUBJECTS_PER_LOOKUP} subjects of at most ${MAX_SUBJECT_LENGTH} characters each` }, 400)
         }
         return yield* Effect.tryPromise({
-          try: () => stub.stub.facts(stub.thread, payload.subjects),
+          try: () => stub.stub.facts(stub.thread, payload.subjects) as Promise<ThreadFactsAnswer>,
           catch: (cause) => cause instanceof Error ? cause.message : String(cause)
         }).pipe(Effect.match({
           onFailure: (error) => json({ error }, 500),
