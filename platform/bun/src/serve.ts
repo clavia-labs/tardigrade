@@ -15,7 +15,7 @@ export interface ServeOptions {
   readonly idleTimeoutSeconds?: number
   readonly port?: number
   readonly hostname?: string
-  readonly token?: string
+  readonly token?: string | undefined
   readonly api?: Omit<ApiOptions, "token">
   readonly disableLogger?: boolean
 }

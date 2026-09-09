@@ -2,7 +2,7 @@ import { cloudflareHttp } from "./transport/http"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import type { Env } from "./env"
 import { mountedActor, directory, providerAvailabilityFrom, modelPolicyFrom, publicCatalog, methodsOf, type CloudflareWorkerArguments, type CloudflareWorkerOptions, type DeploymentModelScope, mountActor } from "./assembly"
-import { modelAdapters as defaultModelAdapters, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
+import type { ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
 import { ActorDO } from "./actor"
 import { ThreadDO } from "./thread"
 export { ActorDO, type ActorThreadNode } from "./actor"
@@ -18,7 +18,7 @@ const http = cloudflareHttp({
 
 export type WorkerHttp<WorkerEnv extends Env = Env> = Required<Pick<ExportedHandler<WorkerEnv>, "fetch">>
 
-const worker: WorkerHttp<Env> = {
+const worker: ExportedHandler<Env> = {
   fetch: (request, env, context) => mountedActor === undefined
     ? Response.json({ error: "no actor is mounted; call createWorker(actor) in the Worker entry point" }, { status: 503 })
     : http.fetch!(request, env, context)
@@ -85,10 +85,9 @@ export const serveWorker = workerHttp
 // createWorker preserves the combined Worker host and HTTP factory.
 export const createWorker = <R, const Methods extends ActorMethods, WorkerEnv extends Env = Env>(
   definition: Actor<R, Methods>,
-  ...[options]: CloudflareWorkerArguments<R, WorkerEnv>
-) => {
-  const { modelAdapters, modelScope, ...hostOptions } = options ?? {} as CloudflareWorkerOptions<R, WorkerEnv>
-  const services = workerModelServices({ adapters: modelAdapters ?? defaultModelAdapters(), ...(modelScope === undefined ? {} : { scope: modelScope }) })
-  const host = defineWorkerHost<R, Methods, WorkerEnv>(definition, ...[{ ...hostOptions, services }] as WorkerHostArguments<R, WorkerEnv>)
-  return { worker: workerHttp(host), ActorDO: host.ActorDO, ThreadDO: host.ThreadDO }
-}
+  ...options: CloudflareWorkerArguments<R, WorkerEnv>
+) => ({
+  worker: cloudflareWorker<R, Methods, WorkerEnv>(definition, ...options),
+  ActorDO,
+  ThreadDO
+})

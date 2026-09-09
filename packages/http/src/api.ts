@@ -210,17 +210,20 @@ const streamCursor = Effect.gen(function*() {
   return { from: lastEventId ?? after } as const
 })
 
-const streamResponseOf = (body: Stream.Stream<Uint8Array>, signal?: AbortSignal) => Effect.succeed(HttpServerResponse.stream(signal === undefined ? body : body.pipe(
-  Stream.interruptWhen(Effect.callback<void>((resume) => {
-    const stop = () => resume(Effect.void)
-    if (signal.aborted) stop()
-    else signal.addEventListener("abort", stop, { once: true })
-    return Effect.sync(() => signal.removeEventListener("abort", stop))
+const streamResponseOf = (body: Stream.Stream<Uint8Array>, signal?: AbortSignal) => {
+  const stream = signal === undefined ? body : body.pipe(
+    Stream.interruptWhen(Effect.callback<void>((resume) => {
+      const stop = () => resume(Effect.void)
+      if (signal.aborted) stop()
+      else signal.addEventListener("abort", stop, { once: true })
+      return Effect.sync(() => signal.removeEventListener("abort", stop))
+    }))
+  )
+  return Effect.succeed(HttpServerResponse.stream(stream, {
+    contentType: "text/event-stream",
+    headers: { "cache-control": "no-cache" }
   }))
-), {
-  contentType: "text/event-stream",
-  headers: { "cache-control": "no-cache" }
-}))
+}
 
 // tail streams one thread with its durable sequence as both the page cursor and SSE id.
 const tail = (

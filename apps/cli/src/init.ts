@@ -135,7 +135,7 @@ const host = await createBunHost({
 })
 
 try {
-  const server = await serve(host, { port: config.port, api, ...(config.token === undefined ? {} : { token: config.token }) })
+  const server = await serve(host, { port: config.port, token: config.token, api })
   try {
     await new Promise<void>((resolve) => {
       const stop = () => { process.off("SIGINT", stop); process.off("SIGTERM", stop); resolve() }

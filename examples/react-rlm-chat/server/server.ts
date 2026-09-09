@@ -30,8 +30,8 @@ const host = await createBunHost({
 try {
   const server = await serve(host, {
     port: config.port,
-    api,
-    ...(config.token === undefined ? {} : { token: config.token })
+    token: config.token,
+    api
   })
   try {
     console.log(`Recursive Chat listening at ${server.url}`)
