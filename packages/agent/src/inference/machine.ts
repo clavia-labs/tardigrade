@@ -541,7 +541,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               ...(action.kind === "fail" ? { error: action.error, ...(action.text === undefined ? {} : { text: action.text }) } : {}), at: after
             }),
             ...(action.kind === "calls" && action.text !== undefined && action.text !== ""
-              ? [textReturned({ text: action.text, turn: input.turn, at: after })]
+              ? [textReturned({ text: action.text, turn: input.turn, ...epochStamp(input.epoch), at: after })]
               : []),
             ...repaired.map((event) => outputRepaired({
               replaced: String((event as { readonly attempt?: unknown }).attempt ?? ""),
