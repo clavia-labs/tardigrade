@@ -561,6 +561,30 @@ describe("an assembled agent", () => {
     expect(log.filter((event) => event.type === "ResponseDelivered")).toHaveLength(0)
   })
 
+  test("mixed text and tool calls retain the resumed execution epoch", async () => {
+    let calls = 0
+    const components = [
+      tool([{
+        spec: { name: "read", description: "read", inputSchema: { type: "object", properties: {} } },
+        run: () => Effect.succeed("contents")
+      }])
+    ]
+    const mind = rlm(async ({ trajectory }) => {
+      calls += 1
+      if (calls === 1) return { kind: "fail", error: "retry me" }
+      const returned = trajectory.find((event) => event.type === "ToolReturned")
+      return returned === undefined
+        ? { kind: "calls", calls: [{ callId: "read-resumed", name: "read", arguments: {} }], text: "resumed preamble" }
+        : { kind: "complete", output: "done" }
+    }, components)
+
+    const failed = await mind.run("go")
+    await mind.resume(failed.turn)
+    expect(mind.host.read(ROOT_THREAD)).toContainEqual(
+      expect.objectContaining({ type: "TextReturned", turn: failed.turn, epoch: 1, text: "resumed preamble" })
+    )
+  })
+
   test("only a failed active epoch can resume", async () => {
     const mind = rlm(async () => ({ kind: "complete", output: "done" }))
     const completed = await mind.run("finish")
