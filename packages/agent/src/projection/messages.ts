@@ -88,23 +88,31 @@ const messagesFrom = (
     batches.set(key, calls)
   }
   const emitted = new Set<string>()
-  let pendingText: string | null = null
+  let pendingText: { readonly text: string; readonly turn: string; readonly epoch: number } | null = null
   for (const event of projected.slice(from)) {
     const value = event as Record<string, unknown>
     switch (event.type) {
       case "MessageReceived":
+        pendingText = null
         messages.push(userMessageOf(event, resolved))
         break
       case "TextReturned":
-        pendingText = String(value.text ?? "")
+        pendingText = {
+          text: String(value.text ?? ""),
+          turn: String(value.turn ?? ""),
+          epoch: Number(value.epoch ?? 0)
+        }
         break
       case "ToolCalled": {
         const key = responses.keys.get(event)
         if (key !== undefined && emitted.has(key)) break
         if (key !== undefined) emitted.add(key)
+        const matchesPendingText = pendingText !== null &&
+          pendingText.turn === String(value.turn ?? "") &&
+          pendingText.epoch === Number(value.epoch ?? 0)
         messages.push({
           role: "assistant",
-          content: pendingText,
+          content: pendingText !== null && matchesPendingText ? pendingText.text : null,
           toolCalls: key === undefined ? [callOf(event)] : batches.get(key)!
         })
         pendingText = null
@@ -128,12 +136,15 @@ const messagesFrom = (
         break
       }
       case "TurnCompleted":
+        pendingText = null
         messages.push({ role: "assistant", content: String(value.output ?? "") })
         break
       case "TurnFailed":
+        pendingText = null
         messages.push({ role: "assistant", content: `the turn failed: ${String(value.error ?? "")}` })
         break
       case "TurnCancelled": {
+        pendingText = null
         const reason = String(value.reason ?? "")
         messages.push({
           role: "assistant",
