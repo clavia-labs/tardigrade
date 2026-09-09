@@ -55,6 +55,8 @@ const rlm = actor({
 })
 ```
 
+The `budget` component records its starting allowance as `BudgetGranted` before inference. Set `{ limit: 20, authority: caller() }` to start with 20 tool calls; the default is `DEFAULT_BUDGET_POLICY.limit`, which is 40. Further grants add to that allowance. Each tool call uses only the grants recorded before it, so a later grant cannot admit an earlier refused call. Restarting with a different default leaves a recorded allowance unchanged.
+
 ## How it is assembled
 
 <div className="rlm-parts">

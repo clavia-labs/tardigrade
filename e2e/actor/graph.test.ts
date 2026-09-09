@@ -59,19 +59,14 @@ test("an actor graph covers concurrent calls, budget negotiation, structured out
       if (returned !== undefined) {
         return { kind: "complete", output: JSON.stringify(returned.result?.result) }
       }
-      return {
-        kind: "call",
-        callId: "cover",
-        name: "execute",
-        arguments: {
+      return { kind: "calls", calls: [{ callId: "cover", name: "execute", arguments: {
           code: `const foreground = await Promise.all(Array.from({ length: 5 }, (_, worker) =>
             agents.run({ text: "worker " + worker, budget: 1, escalatable: true, output: "worker" })
           ));
           const background = await agents.run({ text: "background", background: true });
           const later = await agents.result({ handle: background.handle });
           return { foreground: foreground.map((answer) => answer.output), background: later.output };`
-        }
-      }
+        } }] }
     }
     if (brief === "background") return { kind: "complete", output: "background-ok" }
     const worker = Number(brief.slice("worker ".length))
@@ -82,24 +77,19 @@ test("an actor graph covers concurrent calls, budget negotiation, structured out
       event.type === "ToolReturned" && String((event as { readonly callId?: unknown }).callId) === id
     )
     if (!called(`${turn}-first`)) {
-      return action({ kind: "call", callId: `${turn}-first`, name: "execute", arguments: { code: `return "first-${worker}";` } })
+      return action({ kind: "calls", calls: [{ callId: `${turn}-first`, name: "execute", arguments: { code: `return "first-${worker}";` } }] })
     }
     if (!called(`${turn}-wall`)) {
-      return action({ kind: "call", callId: `${turn}-wall`, name: "execute", arguments: { code: `return "wall-${worker}";` } })
+      return action({ kind: "calls", calls: [{ callId: `${turn}-wall`, name: "execute", arguments: { code: `return "wall-${worker}";` } }] })
     }
     if (!called(`${turn}-budget`)) {
-      return action({
-        kind: "call",
-        callId: `${turn}-budget`,
-        name: "request_budget",
-        arguments: { reason: `worker ${worker} needs one verified follow-up`, amount: 2 }
-      })
+      return action({ kind: "calls", calls: [{ callId: `${turn}-budget`, name: "request_budget", arguments: { reason: `worker ${worker} needs one verified follow-up`, amount: 2 } }] })
     }
     if (slice.some((event) => event.type === "BudgetDenied")) {
       return action({ kind: "complete", output: JSON.stringify({ worker, status: "denied" }) })
     }
     if (!called(`${turn}-after`)) {
-      return action({ kind: "call", callId: `${turn}-after`, name: "execute", arguments: { code: `return "after-${worker}";` } })
+      return action({ kind: "calls", calls: [{ callId: `${turn}-after`, name: "execute", arguments: { code: `return "after-${worker}";` } }] })
     }
     if (returned(`${turn}-after`)) {
       return action({ kind: "complete", output: JSON.stringify({ worker, status: "granted" }) })

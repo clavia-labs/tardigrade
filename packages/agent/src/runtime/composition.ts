@@ -249,13 +249,14 @@ export const infer = <
     output: (state) => {
       const children = childMachine.output(state.children)
       const inferred = incrementalInference.output(state.inference)
-      const resolvingModel = inferred.some((transition) => transition.key.startsWith("mr:"))
       return {
         view: children.view,
-        transitions: resolvingModel ? inferred : [
+        // Component intents commit policy decisions before inference or tool admission (batches.test.ts, "an initial grant fixes the allowance across restart and a changed default").
+        transitions: [
+          ...children.transitions.filter((transition) => transition.kind === "intent"),
           ...inferred,
           ...toolsMachine.output(state.tools).transitions,
-          ...children.transitions
+          ...children.transitions.filter((transition) => transition.kind !== "intent")
         ]
       }
     }

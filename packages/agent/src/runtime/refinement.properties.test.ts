@@ -157,12 +157,9 @@ const completeAgent = (
     derive: (log) => {
       const children = deriveComponent(combined, log)
       const inferred = inference(log)
-      const resolvingModel = inferred.some((transition) => transition.key.startsWith("mr:"))
       return {
         view: children.view,
-        transitions: resolvingModel
-          ? inferred
-          : [...inferred, ...deriveComponent(tools, log).transitions, ...children.transitions]
+        transitions: [...children.transitions.filter((transition) => transition.kind === "intent"), ...inferred, ...deriveComponent(tools, log).transitions, ...children.transitions.filter((transition) => transition.kind !== "intent")]
       }
     },
     cancel: (log, cancellation) => [

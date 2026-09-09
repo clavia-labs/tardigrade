@@ -49,15 +49,15 @@ export const ToolCalled = Schema.Struct({
   callId: Schema.String,
   name: Schema.String,
   arguments: Schema.Unknown,
+  responseId: Schema.optional(Schema.String),
   batchId: Schema.optional(Schema.String),
   batchIndex: Schema.optional(Schema.Finite),
-  // The spend of the attempt this call answered (packages/agent/src/inference/usage.ts). An empty object
-  // is an attempt with unreported spend; an absent field is an event no attempt produced.
+  // usage preserves historical response spend; new responses use ModelReturned (inference/usage.test.ts).
   usage: Schema.optional(Schema.Unknown),
   endpoint: Schema.optional(Endpoint),
   // A tool call may be one response in a turn that declares final output. Its effective mode is
   // recorded here so replay does not decide how this attempt ran from a current capability
-  // (inference/machine.ts, consequenceOf).
+  // (inference/machine.ts, consequencesOf).
   mode: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Finite),
   at: Schema.Finite
@@ -72,10 +72,7 @@ export const ToolReturned = Schema.Struct({
   at: Schema.Finite
 })
 
-// ModelCalled is the ask to the model and the attempt mark in one, appended before the inference
-// runs. A committed acting consequence after it is the answer, and that consequence's `usage`
-// field is the attempt's spend. Consecutive `ModelCalled` with nothing between them are
-// attempts that died, and the give-up guard reads that count.
+// ModelCalled records the attempt before inference; an interrupted attempt can remain unanswered (runtime/turn.test.ts).
 export const ModelCalled = Schema.Struct({
   type: Schema.Literal("ModelCalled"),
   callId: Schema.String,
@@ -89,6 +86,20 @@ export const ModelCalled = Schema.Struct({
   output: Schema.optional(OutputPolicy),
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// ModelReturned settles a model attempt and owns its response usage (runtime/batches.test.ts).
+export const ModelReturned = Schema.Struct({
+  type: Schema.Literal("ModelReturned"),
+  callId: Schema.String,
+  ordinal: Schema.Finite,
+  outcome: Schema.Literals(["returned", "failed"]),
+  usage: Schema.Unknown,
+  endpoint: Schema.optional(Endpoint),
+  error: Schema.optional(Schema.String),
+  epoch: Schema.optional(Schema.Finite),
+  turn: Schema.String,
   at: Schema.Finite
 })
 
@@ -316,6 +327,7 @@ export const PermissionRequestFailed = Schema.Struct({
 export const BudgetGranted = Schema.Struct({
   type: Schema.Literal("BudgetGranted"),
   amount: Schema.Finite, // the tool calls added to this turn's budget
+  initial: Schema.optional(Schema.Boolean),
   // The BudgetRequested this grant answers. The dedup key reads it: a grant is summed into the
   // ceiling (component/budget.ts), so a redelivered grant landing twice would silently
   // double the budget; keyed by the request it answers, the store absorbs the repeat.
@@ -336,6 +348,7 @@ export const BudgetDenied = Schema.Struct({
 export const AgentEvent = Schema.Union([
   MessageReceived,
   ModelCalled,
+  ModelReturned,
   TextReturned,
   ToolCalled,
   ToolReturned,
@@ -390,7 +403,6 @@ export interface ToolCall {
 }
 
 export type Action =
-  | ({ readonly kind: "call"; readonly callId: string; readonly name: string; readonly arguments: unknown; readonly text?: string } & Served)
   | ({ readonly kind: "calls"; readonly calls: readonly [ToolCall, ...ToolCall[]]; readonly text?: string } & Served)
   | ({ readonly kind: "complete"; readonly output: string } & Served)
   | ({
@@ -410,13 +422,14 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bdec:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
+  prefixes: ["tr:", "bdec:", "bi:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
       case "ToolReturned":
         return `tr:${String(v.callId)}`
       case "BudgetGranted":
+        if (v.initial === true) return `bi:${String(v.turn)}`
         return v.callId === undefined ? undefined : `bdec:${String(v.callId)}`
       case "BudgetDenied":
         return v.callId === undefined ? undefined : `bdec:${String(v.callId)}`
@@ -432,6 +445,8 @@ export const agentKeys: KeyFragment = {
         // repetition that evidences died attempts is preserved. A mark predating the ordinal
         // lands unkeyed, which the folds tolerate.
         return v.ordinal === undefined ? undefined : `mc:${String(v.turn)}/${String(v.ordinal)}`
+      case "ModelReturned":
+        return `mr:${String(v.turn)}/${String(v.ordinal)}`
       case "BudgetExhausted":
         // The wall's occurrence is the ceiling it fired at: a grant raises it, so a second
         // crossing keys anew.
@@ -486,6 +501,18 @@ export const modelCalled = (
     }
   } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
+export const modelReturned = (
+  fields: {
+    readonly callId: string
+    readonly ordinal: number
+    readonly turn: string
+    readonly outcome: "returned" | "failed"
+    readonly usage: unknown
+    readonly endpoint?: unknown
+    readonly error?: string
+  } & EpochStamp
+): Event => ({ type: "ModelReturned", ...fields }) as Event
+
 export const textReturned = (
   fields: { readonly text: string } & EpochStamp
 ): Event => ({ type: "TextReturned", ...fields }) as Event
@@ -589,7 +616,7 @@ export const permissionRequestFailed = (
 ): Event => ({ type: "PermissionRequestFailed", ...fields }) as Event
 
 export const budgetGranted = (
-  fields: { readonly amount: number; readonly callId?: string } & Stamp
+  fields: { readonly amount: number; readonly callId?: string; readonly initial?: boolean } & Stamp
 ): Event => ({ type: "BudgetGranted", ...fields }) as Event
 
 export const budgetDenied = (

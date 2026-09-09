@@ -62,28 +62,18 @@ const scripted = ({ trajectory }: InferRequest): Action => {
     | undefined
   if (brief === ONBOARDING_BRIEF) {
     if (returned !== undefined) return { kind: "complete", output: ONBOARDING_FINDINGS }
-    return {
-      kind: "call",
-      callId: "research-repository",
-      name: "execute",
-      arguments: {
+    return { kind: "calls", calls: [{ callId: "research-repository", name: "execute", arguments: {
         summary: "Research the repository in parallel and synthesize its architecture.",
         code: "const findings = await Promise.all([agents.run({ text: 'Read the documentation and summarize the framework contract.' }), agents.run({ text: 'Inspect the packages and platforms, then summarize the actor runtime.' })]); return findings.map((finding) => finding.output);"
-      }
-    }
+      } }] }
   }
   if (!brief.startsWith(SPAWN_BRIEF)) return { kind: "complete", output: `ok: ${brief}` }
   if (returned !== undefined) return { kind: "complete", output: JSON.stringify(returned.result?.result ?? null) }
-  return {
-    kind: "call",
-    callId: brief.slice(SPAWN_BRIEF.length),
-    name: "execute",
-    arguments: {
+  return { kind: "calls", calls: [{ callId: brief.slice(SPAWN_BRIEF.length), name: "execute", arguments: {
       code: `const kids = await Promise.all([${
         Array.from({ length: FIXTURE_FANOUT }, (_, i) => `agents.run({ text: "survey shard ${i + 1}" })`).join(", ")
       }]); return kids.map((k) => k.output);`
-    }
-  }
+    } }] }
 }
 
 const testModel = { provider: "test", model_id: "scripted" } as const

@@ -130,10 +130,41 @@ const codeThenComplete = (count: { calls: number }) =>
       return Effect.succeed(
         returned
           ? { kind: "complete" as const, output: "created jd-91, 3 candidates found" }
-          : { kind: "call" as const, callId: "t1", name: "execute", arguments: { code: CODE } }
+          : { kind: "calls" as const, calls: [{ callId: "t1", name: "execute", arguments: { code: CODE } }] as const }
       )
     }
   })
+
+test("a model response and its consequences share one append", async () => {
+  const history: Event[] = []
+  const appends: ReadonlyArray<Event>[] = []
+  const agent = assembled(infer([
+    tool({ spec: { name: "read", description: "Read", inputSchema: {} }, run: () => Effect.succeed("read") }),
+    nativeOutput
+  ], TEST_MODEL))
+  await run(receive(agent, { id: "m1", text: "read both" }), Layer.mergeAll(
+    noRouter,
+    KeyValueStore.layerMemory,
+    Layer.succeed(EventLog, withWatermark({
+      read: Effect.succeed(history),
+      append: (events) => Effect.sync(() => { appends.push(events); history.push(...events) })
+    })),
+    Layer.succeed(Infer, { react: () => Effect.succeed(history.some((event) => event.type === "ToolCalled")
+      ? { kind: "complete" as const, output: "done" }
+      : { kind: "calls" as const, text: "Reading both", calls: [
+          { callId: "a", name: "read", arguments: {} },
+          { callId: "b", name: "read", arguments: {} }
+        ] as const }) })
+  ))
+  const responses = appends.filter((events) => events.some((event) => event.type === "ModelReturned"))
+  expect(responses.map((events) => events.map((event) => event.type))).toEqual([
+    ["ModelReturned", "TextReturned", "ToolCalled", "ToolCalled"],
+    ["ModelReturned", "TurnCompleted"]
+  ])
+  expect(responses[0]!.filter((event) => event.type === "ToolCalled").map((event) => event.callId)).toEqual(["a", "b"])
+  expect(appends.filter((events) => events.some((event) => event.type === "ModelCalled")))
+    .toHaveLength(2)
+})
 
 describe("the agent with execute as the only tool", () => {
   test("the model's code runs with every package call recorded", async () => {
@@ -156,7 +187,9 @@ describe("the agent with execute as the only tool", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
+      "BudgetGranted",
       "ModelCalled",
+      "ModelReturned",
       "ToolCalled",
       "CodeDispatched",
       "PackageCalled",
@@ -166,10 +199,11 @@ describe("the agent with execute as the only tool", () => {
       "CodeSettled",
       "ToolReturned",
       "ModelCalled",
+      "ModelReturned",
       "TurnCompleted"
     ])
-    expect(events[4]).toMatchObject({ callId: `${String(events[3]!.execId)}.0`, name: "zohorecruit.insert_record" })
-    expect(events[8]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
+    expect(events[6]).toMatchObject({ callId: `${String(events[5]!.execId)}.0`, name: "zohorecruit.insert_record" })
+    expect(events[10]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
     expect(spies).toEqual({ insert: 1, search: 1 })
     expect(count.calls).toBe(2)
     expect(rootReactor(events)).toHaveLength(0)
@@ -250,7 +284,7 @@ describe("the agent with execute as the only tool", () => {
           return Effect.succeed(
             returned
               ? { kind: "fail" as const, error: "the body is broken" }
-              : { kind: "call" as const, callId: "t1", name: "execute", arguments: { code: "throw new Error('boom')" } }
+              : { kind: "calls" as const, calls: [{ callId: "t1", name: "execute", arguments: { code: "throw new Error('boom')" } }] as const }
           )
         }
       }),
@@ -350,7 +384,7 @@ describe("the agent with execute as the only tool", () => {
     expect(count.calls).toBe(1)
   })
 
-  test("the consequence records the action's spend and who was called", async () => {
+  test("the model return records response spend and who was called", async () => {
     const spent = {
       promptTokens: 10,
       completionTokens: 4,
@@ -377,10 +411,12 @@ describe("the agent with execute as the only tool", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
+      "BudgetGranted",
       "ModelCalled",
+      "ModelReturned",
       "TurnCompleted"
     ])
-    expect(events.find((e) => e.type === "TurnCompleted")).toMatchObject({
+    expect(events.find((e) => e.type === "ModelReturned")).toMatchObject({
       turn: "m1",
       usage: spent
     })
@@ -415,9 +451,9 @@ describe("the agent with execute as the only tool", () => {
       cause: "inference_attempts_exhausted",
       attempts: 2,
       attemptKey: "m1/infer/0",
-      policy: retry,
-      usage: {}
+      policy: retry
     })
+    expect(events.find((event) => event.type === "ModelReturned")).toMatchObject({ outcome: "failed", usage: {}, callId: "m1/infer/0" })
   })
 })
 
@@ -501,13 +537,7 @@ describe("a turn that declares an output contract", () => {
           Effect.succeed(
             trajectory.some((e) => e.type === "ToolReturned")
               ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: NATIVE_MODE }
-              : {
-                  kind: "call" as const,
-                  callId: "c1",
-                  name: "execute",
-                  arguments: { code: "return 1" },
-                  mode: NATIVE_MODE
-                }
+              : { kind: "calls" as const, calls: [{ callId: "c1", name: "execute", arguments: { code: "return 1" } }] as const, mode: NATIVE_MODE }
           )
       }),
       jsSandbox,
@@ -532,7 +562,7 @@ describe("a turn that declares an output contract", () => {
       KeyValueStore.layerMemory,
       Layer.succeed(Infer, {
         react: () =>
-          Effect.succeed({ kind: "call" as const, callId: "c1", name: "execute", arguments: { code: "return 1" } })
+          Effect.succeed({ kind: "calls" as const, calls: [{ callId: "c1", name: "execute", arguments: { code: "return 1" } }] as const })
       }),
       jsSandbox,
       noRouter
@@ -930,7 +960,7 @@ describe("the mind on a native surface", () => {
           return Effect.succeed(
             returned !== undefined
               ? { kind: "complete" as const, output: String(returned.result) }
-              : { kind: "call" as const, callId: "n1", name: "read", arguments: { path: "/contract.md" } }
+              : { kind: "calls" as const, calls: [{ callId: "n1", name: "read", arguments: { path: "/contract.md" } }] as const }
           )
         }
       })
@@ -945,9 +975,11 @@ describe("the mind on a native surface", () => {
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
       "ModelCalled",
+      "ModelReturned",
       "ToolCalled",
       "ToolReturned",
       "ModelCalled",
+      "ModelReturned",
       "TurnCompleted"
     ])
     expect(reads).toEqual(["/contract.md"])

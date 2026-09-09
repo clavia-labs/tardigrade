@@ -1,5 +1,6 @@
 import { Context, Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { LegacyCallAction } from "./action-compat"
 import type { Action } from "../log/events"
 import type { ContextPolicy } from "../component/compaction"
 import type { OutputFallback } from "../output/contract"
@@ -42,7 +43,7 @@ export class Infer extends Context.Service<
       key?: string,
       signal?: AbortSignal,
       onDelta?: (delta: InferDelta) => void
-    ) => Effect.Effect<Action>
+    ) => Effect.Effect<Action | LegacyCallAction>
     readonly resolve?: (reference?: ModelRef) => ModelResolution
   }
 >()("agent/Infer") {}

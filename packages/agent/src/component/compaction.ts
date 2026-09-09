@@ -1,3 +1,4 @@
+import { firstResponseCallIndex } from "../log/response"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 import { Clock, Effect, HashSet } from "effect"
@@ -227,8 +228,7 @@ export const keepFromIndex = (events: ReadonlyArray<Event>, keepFrom: string): n
     const e = events[i]!
     const v = e as { callId?: unknown; id?: unknown }
     if (keepFrom.startsWith("c:") && e.type === "ToolCalled" && JSON.stringify([e.turn ?? null, v.callId]) === keepFrom.slice(2)) {
-      if (e.batchId === undefined) return i
-      return events.findIndex((event) => event.type === "ToolCalled" && event.turn === e.turn && event.epoch === e.epoch && event.batchId === e.batchId)
+      return firstResponseCallIndex(events, e)
     }
     if (keepFrom.startsWith("m:") && e.type === "MessageReceived" && String(v.id) === keepFrom.slice(2)) return i
   }
@@ -260,9 +260,9 @@ const atRoundBoundary = (log: ReadonlyArray<Event>): boolean => {
 // boundaryIdOf returns the identity a cut at this event would record: a ToolCalled keeps its
 // return beside it, and a served head opens its turn whole. Any other position splits a pair or
 // names an event the projection cannot see, so it is no boundary.
-const boundaryIdOf = (e: Event, served: ReadonlySet<string>): string | undefined => {
+const boundaryIdOf = (e: Event, served: ReadonlySet<string>, log: ReadonlyArray<Event>): string | undefined => {
   const v = e as { callId?: unknown; id?: unknown }
-  if (e.type === "ToolCalled" && (e.batchIndex === undefined || e.batchIndex === 0)) return `c:${JSON.stringify([e.turn ?? null, v.callId])}`
+  if (e.type === "ToolCalled" && log[firstResponseCallIndex(log, e)] === e) return `c:${JSON.stringify([e.turn ?? null, v.callId])}`
   if (e.type === "MessageReceived" && served.has(String(v.id))) return `m:${String(v.id)}`
   return undefined
 }
@@ -288,11 +288,11 @@ const cutOf = (
     }
   }
   for (let i = Math.min(raw, log.length - 1); i > priorIndex; i--) {
-    const id = boundaryIdOf(log[i]!, served)
+    const id = boundaryIdOf(log[i]!, served, log)
     if (id !== undefined) return { keepFrom: id, index: i }
   }
   for (let i = Math.max(raw + 1, priorIndex + 1); i < log.length; i++) {
-    const id = boundaryIdOf(log[i]!, served)
+    const id = boundaryIdOf(log[i]!, served, log)
     if (id !== undefined) return { keepFrom: id, index: i }
   }
   return undefined

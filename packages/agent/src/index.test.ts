@@ -133,17 +133,12 @@ const scripted = async ({ trajectory }: { trajectory: ReadonlyArray<Event> }): P
     return { kind: "complete", output: JSON.stringify(returned.result?.result ?? null) }
   }
   const turns = trajectory.filter((e) => e.type === "MessageReceived").length
-  return {
-    kind: "call",
-    callId: `t${turns}`,
-    name: "execute",
-    arguments: {
+  return { kind: "calls", calls: [{ callId: `t${turns}`, name: "execute", arguments: {
       code: `const [a, b] = await Promise.all([
         agents.run({ text: "sum 2+2" }),
         agents.run({ text: "sum 3+3" })
       ]); return a.output + "," + b.output;`
-    }
-  }
+    } }] }
 }
 
 describe("an assembled agent", () => {
@@ -242,7 +237,7 @@ describe("an assembled agent", () => {
       }
     })]
     const mind = rlm(async (request, key, _signal, onDelta) => {
-      if (inferred++ === 0) return { kind: "call", callId: "read-1", name: "read", arguments: {}, text: "Let me check." }
+      if (inferred++ === 0) return { kind: "calls", calls: [{ callId: "read-1", name: "read", arguments: {} }], text: "Let me check." }
       streamOf(request, key, "p1", ["hello ", "world"], onDelta)
       markStarted()
       await new Promise<void>(() => {})
@@ -501,7 +496,7 @@ describe("an assembled agent", () => {
     const mind = rlm(async ({ trajectory }) => {
       const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
       if (returned !== undefined) return { kind: "complete", output: String(returned.result) }
-      return { kind: "call", callId: "n1", name: "read", arguments: { path: "/contract.md" } }
+      return { kind: "calls", calls: [{ callId: "n1", name: "read", arguments: { path: "/contract.md" } }] }
     }, components)
     const answer = await mind.run("read the contract")
     expect(answer.output).toBe("contents of /contract.md")
@@ -532,7 +527,7 @@ describe("an assembled agent", () => {
       keys.push(String(key))
       failureInRequest.push(trajectory.some((event) => event.type === "TurnFailed"))
       const returned = trajectory.find((event) => event.type === "ToolReturned")
-      if (returned === undefined) return { kind: "call", callId: "read-1", name: "read", arguments: {} }
+      if (returned === undefined) return { kind: "calls", calls: [{ callId: "read-1", name: "read", arguments: {} }] }
       postToolCalls += 1
       if (postToolCalls === 1) throw new Error("provider connection ended")
       return { kind: "complete", output: String((returned as { result?: unknown }).result) }
@@ -595,7 +590,7 @@ describe("an assembled agent", () => {
     const mind = rlm(async ({ trajectory }) => {
       const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: { error?: string } } | undefined
       if (returned !== undefined) return { kind: "complete", output: String(returned.result?.error) }
-      return { kind: "call", callId: "x1", name: "execute", arguments: { code: "return 1" } }
+      return { kind: "calls", calls: [{ callId: "x1", name: "execute", arguments: { code: "return 1" } }] }
     }, components)
     const answer = await mind.run("go")
     expect(answer.output).toContain("unknown tool: execute")
@@ -609,20 +604,15 @@ describe("an assembled agent", () => {
       const start = trajectory.reduce((n, e, i) => (e.type === "MessageReceived" ? i : n), 0)
       const returns = trajectory.slice(start).filter((e) => e.type === "ToolReturned") as ReadonlyArray<{ result?: { result?: unknown } }>
       if (returns.length === 0) {
-        return { kind: "call", callId: "w1", name: "execute", arguments: { code: `return "a".repeat(20000) + "NEEDLE";` } }
+        return { kind: "calls", calls: [{ callId: "w1", name: "execute", arguments: { code: `return "a".repeat(20000) + "NEEDLE";` } }] }
       }
       if (returns.length === 1) {
-        return {
-          kind: "call",
-          callId: "w2",
-          name: "execute",
-          arguments: {
+        return { kind: "calls", calls: [{ callId: "w2", name: "execute", arguments: {
             code: `const found = await workspace.grep({ pattern: "NEEDLE" });
                 const hit = found.matches[0];
                 const back = await workspace.read({ ref: hit.ref, offset: hit.offset, length: 6 });
                 return hit.ref + ":" + hit.offset + ":" + back.slice + ":" + back.size;`
-          }
-        }
+          } }] }
       }
       return { kind: "complete", output: String(returns[1]!.result?.result ?? "") }
     })
@@ -645,8 +635,7 @@ test("reused provider IDs execute and correlate independently across turns and c
       const returned = request.trajectory.find((event) => event.type === "ToolReturned" && event.turn === turn)
       if (returned !== undefined) return { kind: "complete", output: JSON.stringify(returned.result) }
       const head = request.trajectory.find((event) => event.type === "MessageReceived" && event.id === turn)!
-      return { kind: "call", callId: "7", name: mode === "native" ? "echo" : "execute",
-        arguments: mode === "native" ? head.text : { code: "return await probe.echo(brief)" }, text: "working" }
+      return { kind: "calls", calls: [{ callId: "7", name: mode === "native" ? "echo" : "execute", arguments: mode === "native" ? head.text : { code: "return await probe.echo(brief)" } }], text: "working" }
     }
     const first = hosted(assembled, react)
     const expected = (value: string) => JSON.stringify(mode === "native" ? value : { result: value })
@@ -676,12 +665,14 @@ test("a turn rejects reused provider IDs before dispatch, including after resume
   const assembled = actor({ name: "test-agent", methods: agentMethods, components: [infer([surface, nativeOutput], TEST_MODEL)] })
   const usage = { promptTokens: 3, completionTokens: 2 }
   const endpoint = { provider: "test", model: "test-model" }
-  const mind = hosted(assembled, async () => ({ kind: "call", callId: "7", name: "echo", arguments: {}, usage, endpoint }))
+  const mind = hosted(assembled, async () => ({ kind: "calls", calls: [{ callId: "7", name: "echo", arguments: {} }], usage, endpoint }))
   const first = await mind.run("go")
   expect(first.error).toContain("duplicate tool call ID")
   expect(dispatched).toBe(1)
   expect(mind.host.read(ROOT_THREAD).findLast((event) => event.type === "TurnFailed"))
-    .toMatchObject({ cause: "inference_error", usage, endpoint })
+    .toMatchObject({ cause: "inference_error", endpoint })
+  expect(mind.host.read(ROOT_THREAD).findLast((event) => event.type === "ModelReturned"))
+    .toMatchObject({ outcome: "returned", usage, endpoint })
   expect((await mind.resume(first.turn)).error).toContain("duplicate tool call ID")
   expect(dispatched).toBe(1)
   await mind.host.drive()
