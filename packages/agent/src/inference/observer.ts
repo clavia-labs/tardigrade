@@ -9,13 +9,14 @@ export interface InferenceIdentity {
   readonly turn: string
 }
 
-// InferDelta is ephemeral normalized text from one physical provider request. Sequence is zero-based within that request, so a consumer can detect a dropped delta (model.test.ts, "observes normalized text without changing the terminal action").
+// InferDelta is ephemeral answer or reasoning text from one physical provider request. Sequence is zero-based within that request, so a consumer can detect a dropped delta (model.test.ts, "observes normalized text without changing the terminal action").
 export interface InferDelta extends InferenceIdentity {
   readonly logicalAttempt: string
   readonly physicalAttempt: string
   readonly model: ModelRef
   readonly blockIndex: number
   readonly sequence: number
+  readonly kind?: "text" | "reasoning"
   readonly text: string
 }
 

@@ -1,4 +1,5 @@
 import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
+import { protocolOptionsOf } from "./reasoning"
 import { compatibleResponseFormat } from "./output"
 import type { ModelAdapter } from "./adapter"
 
@@ -7,6 +8,7 @@ export const openAICompatibleAdapter: ModelAdapter = {
   id: "tanstack/openai-compatible",
   protocols: ["openai-responses", "openai-chat-completions"],
   start: ({ config, request, mode, maxTokens, fetch, messages, tools, systemPrompts }) => {
+    const options = protocolOptionsOf(config.protocol, config.options).options
     const responseFormat = compatibleResponseFormat(request.output, mode)
     const adapter = openaiCompatibleText(config.model, {
       name: "tardigrade",
@@ -24,6 +26,8 @@ export const openAICompatibleAdapter: ModelAdapter = {
         systemPrompts,
         modelOptions: {
           max_tokens: maxTokens,
+          ...(config.protocol === "openai-responses" ? { store: false, include: ["reasoning.encrypted_content"] } : {}),
+          ...options,
           ...(responseFormat === undefined ? {} : { response_format: responseFormat })
         } as never,
         logger: new Proxy({}, { get: () => () => {} }) as never

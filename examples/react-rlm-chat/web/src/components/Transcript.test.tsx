@@ -41,3 +41,14 @@ test("tool groups preserve child and answer boundaries and report pending work",
   events.push({ type: "ToolReturned", callId: "third" } as Event)
   expect(render()).not.toContain("1 of 2 steps completed")
 })
+
+test("reasoning display uses the recorded text and hides opaque continuation", () => {
+  const rows: EventRow[] = [{ seq: 1, event: {
+    type: "ModelReturned", reasoning: "Compare both sources", continuation: { payload: [{ signature: "secret-signature" }] }
+  } as Event }]
+  const html = renderToStaticMarkup(<Transcript empty="Empty" rows={rows} streamingText="" onOpenThread={() => {}} />)
+  expect(html).toContain("Reasoning")
+  expect(html).toContain("Compare both sources")
+  expect(html).not.toContain("secret-signature")
+  expect(html).not.toContain(" open=")
+})

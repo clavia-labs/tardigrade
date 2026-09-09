@@ -16,6 +16,7 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
   const messages = rows.filter(({ event }) =>
     event.type === "MessageReceived" || event.type === "ToolCalled" || event.type === "ChildCreated" ||
     (event.type === "PackageCalled" && !value(event, "name")?.startsWith("agents.")) ||
+    (event.type === "ModelReturned" && typeof event.reasoning === "string") ||
     event.type === "TurnCompleted" || event.type === "TurnFailed"
   )
   const toolsReturned = new Set(rows
@@ -54,6 +55,12 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
     <section className="messages" aria-live="polite">
       {messages.length === 0 ? <p className="empty">{empty}</p> : null}
       {visible.map(({ event, seq }, index) => {
+        if (event.type === "ModelReturned") return (
+          <details className="tool-call" key={seq}>
+            <summary>Reasoning</summary>
+            <MarkdownMessage>{String(event.reasoning)}</MarkdownMessage>
+          </details>
+        )
         if (event.type === "ChildCreated") {
           if (visible[index - 1]?.event.type === "ChildCreated") return null
           const group: Array<EventRow> = []

@@ -173,6 +173,8 @@ const renderedChars = (e: Event, policy: ContextPolicy): number => {
   switch (e.type) {
     case "MessageReceived":
       return Math.min(String(v.text ?? "").length, policy.messageRenderCap)
+    case "ModelReturned":
+      return v.continuation === undefined ? 0 : JSON.stringify(v.continuation).length
     case "TextReturned":
       return String(v.text ?? "").length
     case "ToolCalled":
@@ -228,7 +230,10 @@ export const keepFromIndex = (events: ReadonlyArray<Event>, keepFrom: string): n
     const e = events[i]!
     const v = e as { callId?: unknown; id?: unknown }
     if (keepFrom.startsWith("c:") && e.type === "ToolCalled" && JSON.stringify([e.turn ?? null, v.callId]) === keepFrom.slice(2)) {
-      return events.indexOf(responsesOf(events).firstCalls.get(e)!)
+      const first = responsesOf(events).firstCalls.get(e)!
+      const response = events.findIndex((event) => event.type === "ModelReturned" && event.continuation !== undefined &&
+        event.callId === first.responseId && event.turn === first.turn && (event.epoch ?? 0) === (first.epoch ?? 0))
+      return response < 0 ? events.indexOf(first) : response
     }
     if (keepFrom.startsWith("m:") && e.type === "MessageReceived" && String(v.id) === keepFrom.slice(2)) return i
   }
@@ -290,11 +295,17 @@ const cutOf = (
   }
   for (let i = Math.min(raw, log.length - 1); i > priorIndex; i--) {
     const id = boundaryIdOf(log[i]!, served, firstCalls)
-    if (id !== undefined) return { keepFrom: id, index: i }
+    if (id !== undefined) {
+      const index = keepFromIndex(log, id)
+      if (index > priorIndex) return { keepFrom: id, index }
+    }
   }
   for (let i = Math.max(raw + 1, priorIndex + 1); i < log.length; i++) {
     const id = boundaryIdOf(log[i]!, served, firstCalls)
-    if (id !== undefined) return { keepFrom: id, index: i }
+    if (id !== undefined) {
+      const index = keepFromIndex(log, id)
+      if (index > priorIndex) return { keepFrom: id, index }
+    }
   }
   return undefined
 }

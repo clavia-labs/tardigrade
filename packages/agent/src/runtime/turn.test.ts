@@ -136,6 +136,7 @@ const codeThenComplete = (count: { calls: number }) =>
   })
 
 test("a model response and its consequences share one append", async () => {
+  const continuation = { protocol: "test", provider: "test", model: "test", endpoint: "test", payload: [{ signature: "opaque" }] }
   const history: Event[] = []
   const appends: ReadonlyArray<Event>[] = []
   const agent = assembled(infer([
@@ -151,7 +152,7 @@ test("a model response and its consequences share one append", async () => {
     })),
     Layer.succeed(Infer, { react: () => Effect.succeed(history.some((event) => event.type === "ToolCalled")
       ? { kind: "complete" as const, output: "done" }
-      : { kind: "calls" as const, text: "Reading both", calls: [
+      : { kind: "calls" as const, text: "Reading both", reasoning: "Compare both", continuation, calls: [
           { callId: "a", name: "read", arguments: {} },
           { callId: "b", name: "read", arguments: {} }
         ] as const }) })
@@ -161,6 +162,7 @@ test("a model response and its consequences share one append", async () => {
     ["ModelReturned", "TextReturned", "ToolCalled", "ToolCalled"],
     ["ModelReturned", "TurnCompleted"]
   ])
+  expect(responses[0]![0]).toMatchObject({ continuation, reasoning: "Compare both" })
   expect(responses[0]!.filter((event) => event.type === "ToolCalled").map((event) => event.callId)).toEqual(["a", "b"])
   expect(appends.filter((events) => events.some((event) => event.type === "ModelCalled")))
     .toHaveLength(2)

@@ -280,6 +280,20 @@ describe("an assembled agent", () => {
     expect(textOutcomes(log, "m1")).toEqual([{ text: "second try", owner: 0, interrupted: true }])
   })
 
+  test("reasoning deltas never become partial answer text on cancellation", async () => {
+    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
+    const mind = rlm(async (request, key, _signal, onDelta) => {
+      streamOf(request, key, "p1", ["private reasoning"], (delta) => onDelta?.({ ...delta, kind: "reasoning" }))
+      streamOf(request, key, "p1", ["visible answer"], onDelta)
+      markStarted()
+      await new Promise<void>(() => {})
+      return { kind: "complete", output: "late" }
+    })
+    const log = await cancelAfter(mind, started)
+    expect(log.filter((event) => event.type === "TextReturned"))
+      .toEqual([expect.objectContaining({ text: "visible answer", turn: "m1" })])
+  })
+
   test("a normally completing inference journals no partial", async () => {
     const mind = rlm(async (request, key, _signal, onDelta) => {
       streamOf(request, key, "p1", ["an ", "answer"], onDelta)

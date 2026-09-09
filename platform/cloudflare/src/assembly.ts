@@ -110,7 +110,7 @@ export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolic
 export const deployed = (name: string): boolean => mountedActor?.actor.name === name
 export const directory = cloudflareDirectory(deployed)
 
-interface CloudflareProvider extends ModelProviderConfig {
+type CloudflareProvider = ModelProviderConfig & {
   readonly apiKey: string
 }
 

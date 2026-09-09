@@ -54,7 +54,7 @@ import type { Action } from "@clavia/tardigrade-agent/log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
 const testAdapters = modelAdapters(openAICompatibleAdapter, anthropicAdapter, registeredBedrockAdapter)
-const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "contextWindowTokens"> & { readonly protocol?: ModelProtocol }>(
+const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "contextWindowTokens" | "options"> & { readonly protocol?: ModelProtocol }>(
   config: C,
   options: ModelInferOptions = {}
 ) => infer({ protocol: "openai-chat-completions", provider: "test", contextWindowTokens: 128_000, ...config }, testAdapters, options)

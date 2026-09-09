@@ -167,6 +167,21 @@ describe("the compaction pass", () => {
     expect(briefed()).toContain("run 1")
   })
 
+  test("continuation boundaries stay whole and repeated compaction advances", async () => {
+    const responseRound = (i: number): Event[] => [
+      { type: "ModelReturned", turn: "m0", callId: `response-${i}`, continuation: { payload: [{ signature: `opaque-${i}` }] }, at: i },
+      ...round(i).map((event) => event.type === "ToolCalled" ? { ...event, responseId: `response-${i}` } : event)
+    ]
+    const first = await run([head, ...Array.from({ length: 16 }, (_, i) => responseRound(i)).flat()])
+    const firstIndex = keepFromIndex(first.log, checkpointOf(first.log).keepFrom)
+    expect(first.log[firstIndex]?.type).toBe("ModelReturned")
+    expect(first.briefed()).not.toContain("opaque-")
+    const second = await run([...first.log, ...Array.from({ length: 16 }, (_, i) => responseRound(i + 16)).flat()])
+    const secondIndex = keepFromIndex(second.log, checkpointOf(second.log).keepFrom)
+    expect(secondIndex).toBeGreaterThan(firstIndex)
+    expect(second.log[secondIndex]?.type).toBe("ModelReturned")
+  })
+
   test("a pass can select its model", async () => {
     const selected = { provider: "test", model_id: "compact" } as const
     const { log, model } = await run(openTurn(16), { ...TEST_POLICY, model: selected })

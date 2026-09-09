@@ -24,13 +24,13 @@ export const useStreamingText = (id: string | undefined, rows: ReadonlyArray<Eve
           return {
             physicalAttempt: delta.physicalAttempt,
             nextSequence: delta.sequence + 1,
-            text: delta.sequence === 0 ? delta.text : "",
+            text: delta.sequence === 0 && delta.kind !== "reasoning" ? delta.text : "",
             complete: delta.sequence !== 0
           }
         }
         if (current.complete) return current
         if (delta.sequence !== current.nextSequence) return { ...current, text: "", complete: true }
-        return { ...current, nextSequence: delta.sequence + 1, text: current.text + delta.text }
+        return { ...current, nextSequence: delta.sequence + 1, text: current.text + (delta.kind === "reasoning" ? "" : delta.text) }
       })
     })
   }, [id, rows.length > 0])

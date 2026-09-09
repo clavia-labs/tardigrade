@@ -451,7 +451,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
                   physicalAttempt = delta.physicalAttempt
                   partialOutput = ""
                 }
-                partialOutput += delta.text
+                if (delta.kind !== "reasoning") partialOutput += delta.text
               }
             )
             .pipe(
@@ -508,6 +508,8 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               callId: input.attempt, ordinal: input.ordinal, turn: input.turn, ...epochStamp(input.epoch),
               outcome: action.kind === "fail" ? "failed" : "returned",
               usage: action.usage ?? {}, ...stampOf(action),
+              ...(action.reasoning === undefined ? {} : { reasoning: action.reasoning }),
+              ...(action.continuation === undefined ? {} : { continuation: action.continuation }),
               ...(action.kind === "fail" ? { error: action.error } : {}), at: after
             }),
             ...(action.kind === "calls" && action.text !== undefined && action.text !== ""

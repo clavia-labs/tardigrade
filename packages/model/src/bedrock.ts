@@ -1,3 +1,4 @@
+import { protocolOptionsOf } from "./reasoning"
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
@@ -132,6 +133,7 @@ export const bedrockAdapter: ModelAdapter = {
   id: "tanstack/bedrock-converse",
   protocols: ["bedrock-converse"],
   start: ({ config, request, mode, maxTokens, bounds, messages, tools, systemPrompts }) => {
+    protocolOptionsOf(config.protocol, config.options)
     const stops: { stopReason?: string } = {}
     const reported: { usage?: unknown } = {}
     const adapter = bedrockConverseTextAdapter(config, maxTokens, bounds, request.output, mode, stops, reported)

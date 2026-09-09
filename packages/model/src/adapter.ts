@@ -5,6 +5,9 @@ import type { OutputMode } from "@clavia/tardigrade-agent/output/contract"
 import type { ModelPricing } from "@clavia/tardigrade-agent/inference/usage"
 import type { ModelProtocol } from "./directory"
 import type { OutputCapability } from "./output"
+import type { ProtocolOptions } from "./reasoning"
+
+export type { ModelOptionsByProtocol, ThinkingConfig } from "./reasoning"
 
 export interface StreamBounds {
   readonly firstChunkMs: number
@@ -17,11 +20,12 @@ export type ModelFetch = (
   init?: Parameters<typeof globalThis.fetch>[1]
 ) => Promise<Response>
 
-export interface ModelConfig {
+export type ModelConfig = ModelConnection & ProtocolOptions
+
+interface ModelConnection {
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
-  readonly protocol: ModelProtocol
   readonly provider: string
   // region selects the AWS region for a Bedrock Converse connection.
   readonly region?: string

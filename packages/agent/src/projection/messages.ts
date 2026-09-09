@@ -1,3 +1,4 @@
+import type { ProviderContinuation } from "../inference/continuation"
 import { responsesOf } from "../log/response"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replayProjection, type Projection } from "@clavia/tardigrade-core/projection"
@@ -16,6 +17,7 @@ export interface AgentToolCall {
 }
 
 export interface AgentMessage {
+  readonly continuation?: ProviderContinuation
   readonly role: "user" | "assistant" | "tool"
   readonly content: string | null
   readonly toolCalls?: ReadonlyArray<AgentToolCall>
@@ -89,6 +91,13 @@ const messagesFrom = (
   }
   const emitted = new Set<string>()
   let pendingText: string | null = null
+  const responseKey = (event: Event, id: unknown) => JSON.stringify([event.turn ?? null, event.epoch ?? 0, id])
+  const continuations = new Map(projected.filter((event) => event.type === "ModelReturned" && event.continuation !== undefined)
+    .map((event) => [responseKey(event, event.callId), event.continuation as ProviderContinuation]))
+  const continuationOf = (event: Event, id: unknown) => {
+    const continuation = id === undefined ? undefined : continuations.get(responseKey(event, id))
+    return continuation === undefined ? {} : { continuation }
+  }
   for (const event of projected.slice(from)) {
     const value = event as Record<string, unknown>
     switch (event.type) {
@@ -105,6 +114,7 @@ const messagesFrom = (
         messages.push({
           role: "assistant",
           content: pendingText,
+          ...continuationOf(event, value.responseId),
           toolCalls: key === undefined ? [callOf(event)] : batches.get(key)!
         })
         pendingText = null
@@ -122,13 +132,13 @@ const messagesFrom = (
         break
       }
       case "OutputRejected": {
-        messages.push({ role: "assistant", content: String(value.text ?? "") })
+        messages.push({ role: "assistant", content: String(value.text ?? ""), ...continuationOf(event, value.attempt) })
         const feedback = feedbackFor(value, decided)
         if (feedback !== undefined) messages.push({ role: "user", content: feedback })
         break
       }
       case "TurnCompleted":
-        messages.push({ role: "assistant", content: String(value.output ?? "") })
+        messages.push({ role: "assistant", content: String(value.output ?? ""), ...continuationOf(event, value.attemptKey) })
         break
       case "TurnFailed":
         messages.push({ role: "assistant", content: `the turn failed: ${String(value.error ?? "")}` })

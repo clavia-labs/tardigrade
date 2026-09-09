@@ -109,13 +109,51 @@ OPENROUTER_API_KEY='your-deployment-secret'
 
 The generated `bun run dev` script reads local credentials from `.dev.vars`. A hosted process reads the same credential names from its platform secret store. The manifest contains names such as `OPENROUTER_API_KEY`, never their values.
 
+A provider can set request options per model ID under `models`. Put this field beside its `baseUrl`, `protocol`, and `env` fields. For an `openai-responses` connection:
+
+```jsonc
+"models": {
+  "gpt-5": {
+    "options": {
+      "reasoning": { "effort": "high" }
+    }
+  },
+  "gpt-5-mini": {
+    "options": {
+      "reasoning": { "effort": "low" }
+    }
+  }
+}
+```
+
+The model entries are optional request overrides. They do not add catalog metadata, select the default, or grant model access; `default` and `allow` retain those roles. Omitted entries, empty entries, and omitted options preserve provider reasoning defaults. Both Bun and Workers read this configuration; regenerate `models.lock.json` after changing it. Direct `infer` callers supply the same native fields in `config.options`.
+
+The protocol determines which options TypeScript accepts. JSON configuration validates the same fields at runtime. Supported options are currently limited to reasoning controls:
+
+| Protocol | Native options |
+| --- | --- |
+| `openai-responses` | `reasoning: { effort: "high" }` |
+| `openai-chat-completions` | `reasoning_effort: "high"` |
+| `anthropic-messages` | `thinking: { type: "adaptive" }`, `output_config: { effort: "high" }` |
+| `bedrock-converse` | Request options are unsupported |
+
+Anthropic thinking also accepts `disabled`, or `enabled` with a positive integer `budget_tokens`. Adaptive thinking accepts `display: "summarized"` or `display: "omitted"`. These fields use TanStack's native thinking types and pass through unchanged. OpenAI effort accepts `none`, `minimal`, `low`, `medium`, or `high`; Anthropic effort accepts `low`, `medium`, `high`, `xhigh`, `max`, or `null`, matching the installed TanStack types. The provider checks which controls the selected model supports. See [Anthropic thinking controls](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking) and [OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning).
+
+Manual Anthropic thinking requires `budget_tokens` below the request output limit. The adapter rejects a budget that would make the SDK raise that limit. Direct `infer` callers can set `maxTokensLadder` and `maxOutputTokens` to accommodate their budget.
+
+Reasoning controls configure each request, including requests after tool results. Completed Anthropic Messages and OpenAI Responses outputs retain their native assistant response on `ModelReturned.continuation` when reasoning is present. The runtime commits that event atomically with its tool-call or completion events. Request reconstruction restores compatible responses, including signed thinking, redacted thinking, and encrypted reasoning items. Continuation stays with its original response through recovery and compaction; opaque blocks are never summarized or edited.
+
+Continuation compatibility requires the same configured provider, protocol, model, and endpoint fingerprint. A changed coordinate omits continuation from the outgoing request while retaining the durable record. The fingerprint hashes the complete configured endpoint, so the log contains no endpoint credentials or query values. OpenAI Responses requests use `store: false` and request encrypted reasoning for stateless replay. The adapter owns these continuation fields; user options cannot override them.
+
+`ModelReturned.reasoning` stores displayable reasoning text or summaries when returned by these providers. It is separate from the opaque continuation payload. Recursive Chat renders that text in a collapsible Reasoning block. A missing display field means no text was returned, even if encrypted continuation exists.
+
 The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and catalog requests do not read the cache file on each request. With no valid source or cache, both catalog endpoints answer 503. Provider credentials never appear in either response.
 
 Catalog responses use cursor pagination. They include `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and optional `next_cursor`. The default limit is `50` and callers can state another positive integer. Search is a case-insensitive substring over IDs and names. `GET /v1/models` also accepts an exact provider filter. Pass `next_cursor` with the same filters to continue. A cursor records the catalog revision and query, so a changed revision or filter returns 400 and the caller starts again without a cursor.
 
 ## Live inference output
 
-The server publishes normalized model text at `GET /v1/actors/{instance}/threads/{thread}/inference/stream`. The SSE connection carries output produced after it opens and does not replay. Each delta names the actor, instance, thread, turn, logical attempt, physical provider request, model, text block, and sequence. `makeActorClient().followInference(...)` opens the stream for a public thread ID.
+The server publishes normalized model text at `GET /v1/actors/{instance}/threads/{thread}/inference/stream`. The SSE connection carries output produced after it opens and does not replay. Each delta names the actor, instance, thread, turn, logical attempt, physical provider request, model, text block, and sequence. Reasoning deltas carry `kind: "reasoning"`; ordinary text retains an absent kind for compatibility. Consumers must separate reasoning from answer text while tracking the shared sequence across both kinds. `makeActorClient().followInference(...)` opens the stream for a public thread ID.
 
 For another WebSocket, Redis, pub/sub, or telemetry transport, supply an observer as the fourth argument to `modelLayer(config, snapshot, adapters, observer)` when composing model services:
 

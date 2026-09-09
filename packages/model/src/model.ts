@@ -1,3 +1,4 @@
+import { responseStateOf, withContinuation } from "./continuation"
 import { Cause, Clock, Effect, Fiber, Layer, Queue, Random, Stream } from "effect"
 import {
   StreamProcessor,
@@ -320,6 +321,7 @@ type BodyReader = {
 // stamps `provider` on each chunk; `model` is standard). Wire-reported provenance beats the
 // configured stamp: it is observed, never declared.
 interface Wire {
+  readonly events?: ReadonlyArray<unknown>
   readonly usage?: unknown
   readonly usageReports?: ReadonlyArray<unknown>
   readonly provider?: string
@@ -362,11 +364,14 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
     }
   }
   let last: Wire = {}
+  const events: unknown[] = []
   for (const line of text.split(/\r?\n/)) {
     const payload = line.startsWith("data:") ? line.slice(5).trim() : ""
     if (payload === "" || payload === "[DONE]") continue
     try {
-      const next = wireOf(JSON.parse(payload) as never)
+      const parsed = JSON.parse(payload)
+      events.push(parsed)
+      const next = wireOf(parsed as never)
       const usageReports =
         next.usage === undefined ? last.usageReports : [...(last.usageReports ?? []), next.usage]
       // Refusal deltas arrive in pieces, like content: each chunk carries the next fragment.
@@ -380,9 +385,10 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
       // a keep-alive or a malformed line is not usage
     }
   }
-  if (Object.keys(last).length > 0) return last
+  if (events.length > 0) return { ...last, events }
   try {
-    const wire = wireOf(JSON.parse(text) as never)
+    const parsed = JSON.parse(text)
+    const wire = { ...wireOf(parsed as never), events: [parsed] }
     if (Object.keys(wire).length === 0) return undefined
     return wire.usage === undefined ? wire : { ...wire, usageReports: [wire.usage] }
   } catch {
@@ -491,13 +497,22 @@ const observed = (
   if (logicalAttempt === undefined) throw new Error("an observed inference requires a logical attempt identity")
   let blockIndex = -1
   let sequence = 0
+  let modernReasoning = false
+  const thinkingSteps = new Set<string>()
   return Stream.fromAsyncIterable(stream, (cause) => cause).pipe(
     Stream.tap((chunk) => {
-      if (chunk.type === "TEXT_MESSAGE_START") {
+      if (chunk.type === "REASONING_MESSAGE_START") modernReasoning = true
+      if (chunk.type === "STEP_STARTED" && chunk.stepType === "thinking") {
+        thinkingSteps.add(chunk.stepId ?? chunk.stepName)
+        if (!modernReasoning) blockIndex += 1
+      }
+      if (chunk.type === "TEXT_MESSAGE_START" || chunk.type === "REASONING_MESSAGE_START") {
         blockIndex += 1
         return Effect.void
       }
-      if (chunk.type !== "TEXT_MESSAGE_CONTENT" || typeof chunk.delta !== "string" || chunk.delta === "") {
+      const reasoning = chunk.type === "REASONING_MESSAGE_CONTENT" ||
+        (!modernReasoning && chunk.type === "STEP_FINISHED" && thinkingSteps.has(chunk.stepId ?? chunk.stepName))
+      if ((chunk.type !== "TEXT_MESSAGE_CONTENT" && !reasoning) || !("delta" in chunk) || typeof chunk.delta !== "string" || chunk.delta === "") {
         return Effect.void
       }
       if (blockIndex < 0) blockIndex = 0
@@ -508,6 +523,7 @@ const observed = (
         model,
         blockIndex,
         sequence: sequence++,
+        ...(reasoning ? { kind: "reasoning" as const } : {}),
         text: chunk.delta
       }
       if (onDelta !== undefined) onDelta(delta)
@@ -626,7 +642,8 @@ export const infer = <const C extends ModelConfig>(
     const attemptSignal = signal === undefined
       ? attemptController.signal
       : AbortSignal.any([signal, attemptController.signal])
-    const fetcher = withCapture(config.fetch, keyForRung, sink, attemptSignal)
+    const capturedFetch = withCapture(config.fetch, keyForRung, sink, attemptSignal)
+    const fetcher = withContinuation(capturedFetch, config, req.messages)
     const fallbackSystem = fallbackSystemFor(req.output, mode)
     const attempt = selectedAdapter.start({
       config,
@@ -695,7 +712,7 @@ export const infer = <const C extends ModelConfig>(
       if (stopClass === "violation") {
         throw failed(new ViolatedError("the provider could not produce output matching the schema it was given"), usage, endpoint)
       }
-      return stamped(served(withSpend(actionOf(result), usage), endpoint))
+      return stamped(served(withSpend({ ...actionOf(result), ...await responseStateOf(wire?.events ?? [], config) }, usage), endpoint))
     } catch (e) {
       attemptController.abort()
       await sink.reader?.cancel().catch(() => undefined)

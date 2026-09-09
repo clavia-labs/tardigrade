@@ -1,3 +1,4 @@
+import { protocolOptionsOf, type ProtocolOptions } from "./reasoning"
 import { Effect, Layer } from "effect"
 import { Infer, intersectModelPolicies, modelAllowedBy, type ModelPolicy, type ModelRef, type InferenceObserver } from "@clavia/tardigrade-agent"
 import type { Action } from "@clavia/tardigrade-agent/log/events"
@@ -18,12 +19,11 @@ export interface ModelHostConfig {
 // answers /healthz, and says why a turn cannot run (config.ts, ModelConfig).
 export const MISSING_MODEL = "no model provider is configured: run `tdg setup`"
 
-interface SelectedModel {
+type SelectedModel = ProtocolOptions & {
   readonly model_id: string
   readonly provider: string
   readonly baseUrl: string
   readonly apiKey: string
-  readonly protocol: ModelConfig["providers"][string]["protocol"]
   readonly region?: string
   readonly contextWindowTokens: number
   readonly maxOutputTokens?: number
@@ -59,8 +59,8 @@ const connectionFrom = (
   }
   return {
     baseUrl: provider.baseUrl,
-    apiKey,
     protocol: provider.protocol,
+    apiKey,
     ...(provider.region === undefined ? {} : { region: provider.region })
   }
 }
@@ -103,14 +103,15 @@ export const selectedModelFrom = (
   }
   const catalogModel = catalogModelFrom(catalog.snapshot, selected)
   const metadata = catalogModel.metadata
+  const options = config.providers[selected.provider]?.models?.[selected.model_id]?.options
   if (metadata.contextWindowTokens === undefined) {
     throw new Error(`model catalog has no context window for ${selected.provider}/${selected.model_id}`)
   }
   return {
     ...selected,
+    ...protocolOptionsOf(provider.protocol, options),
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
-    protocol: provider.protocol,
     ...(provider.region === undefined ? {} : { region: provider.region }),
     contextWindowTokens: metadata.contextWindowTokens,
     ...(metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: metadata.maxOutputTokens }),
@@ -183,10 +184,10 @@ export const modelLayer = (
         })
       }
       const binding = infer({
+        ...protocolOptionsOf(selected.protocol, selected.options),
         baseUrl: selected.baseUrl,
         apiKey: selected.apiKey,
         model: selected.model_id,
-        protocol: selected.protocol,
         provider: selected.provider,
         ...(selected.region === undefined ? {} : { region: selected.region }),
         contextWindowTokens: selected.contextWindowTokens,

@@ -95,6 +95,11 @@ export const ModelReturned = Schema.Struct({
   callId: Schema.String,
   ordinal: Schema.Finite,
   outcome: Schema.Literals(["returned", "failed"]),
+  reasoning: Schema.optional(Schema.String),
+  continuation: Schema.optional(Schema.Struct({
+    protocol: Schema.String, provider: Schema.String, model: Schema.String, endpoint: Schema.String,
+    payload: Schema.Array(Schema.Unknown)
+  })),
   usage: Schema.Unknown,
   endpoint: Schema.optional(Endpoint),
   error: Schema.optional(Schema.String),
@@ -390,6 +395,8 @@ export interface AttemptEndpoint {
 // declared one must state it: the reactor records it and reads it back on replay, and it refuses
 // to invent one (inference/machine.ts, completionOf).
 type Served = {
+  readonly reasoning?: string
+  readonly continuation?: import("../inference/continuation").ProviderContinuation
   readonly usage?: Usage
   readonly endpoint?: AttemptEndpoint
   readonly mode?: import("../output/contract").OutputMode
