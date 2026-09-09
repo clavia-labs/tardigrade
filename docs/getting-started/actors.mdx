@@ -52,7 +52,7 @@ A host runs the actor and owns its storage, threads, and message delivery. The B
 
 ```ts
 import { defineActor } from "tardie/core"
-import { createHost } from "tardie/bun"
+import { createBunHost } from "tardie/bun"
 import { layersFor } from "./layers"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"
@@ -64,7 +64,7 @@ const meeseeks = defineActor(
   [infer, codeMode(mcpPackage)],
 )
 
-const host = await createHost({
+const host = await createBunHost({
   actor: meeseeks,
   storage: "./data",
   layersFor,
@@ -190,7 +190,7 @@ This script defines an actor, creates its host, invokes two threads, and closes 
 
 ```ts expanded
 import { defineActor } from "tardie/core"
-import { createHost } from "tardie/bun"
+import { createBunHost } from "tardie/bun"
 import { layersFor } from "./layers"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"
@@ -202,7 +202,7 @@ const meeseeks = defineActor(
   [infer, codeMode(mcpPackage)],
 )
 
-const host = await createHost({
+const host = await createBunHost({
   actor: meeseeks,
   storage: "./data",
   layersFor,
