@@ -40,6 +40,7 @@ After the setup, you should see the following files:
   - `wrangler.jsonc` Cloudflare Worker configuration
   - `celld.jsonc` Self-hosted Celld configuration
   - `models.lock.json` Resolved deployment model scope
+  - `migrations/0001_catalog.sql` Model catalog database schema
   - `package.json` Dependencies and module metadata
 </Filesystem>
 
@@ -147,7 +148,7 @@ Run the generated Bun API server directly:
 bun run dev
 ```
 
-The server runs on `localhost:4242` by default. Edit `server.ts` to change how the actor and API are assembled.
+The server runs on `localhost:4242` by default. Check `curl localhost:4242/healthz` from another shell to confirm it is ready. Edit `server.ts` to change how the actor and API are assembled.
 
 ### Send your first message
 
@@ -238,7 +239,7 @@ tdg call message '{"text":"How about San Francisco?"}' --thread quickstart
 
 ### Deploy your agent
 
-Now that we've tested our agent, let's deploy it. To deploy the agent on Cloudflare, run:
+Before the first Cloudflare deployment, follow the [Cloudflare setup guide](/docs/platforms/cloudflare#configure) to create the catalog database, apply its migration, and set secrets. Then deploy the agent:
 
 ```bash variant="single"
 bun run deploy:cloudflare

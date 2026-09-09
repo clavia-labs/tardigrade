@@ -31,7 +31,7 @@ interface Actor {
 }
 ```
 
-For example, an actor named `meeseeks` exposes a message method and uses components for inference and code execution with an MCP package.
+For example, an actor named `meeseeks` exposes a message method and uses components for inference and code execution with an MCP package. The `./components`, `./methods`, `./packages`, and `./layers` modules in this guide belong to your application. For a runnable project with these services already assembled, start with the [Quickstart](/docs/quickstart).
 
 ```ts
 import { defineActor } from "tardie/core"
@@ -180,7 +180,7 @@ curl -X POST 'http://localhost:4242/v1/actors/rick/threads/main/methods/message'
   -d '{"text":"What is the portal code?"}'
 ```
 
-The `Idempotency-Key` header makes retries reuse the same call. The server returns `202 Accepted` with a receipt and a `Location` header. Send a `GET` request to that location to read the result.
+The `Idempotency-Key` header makes retries reuse the same call. The server returns `202 Accepted` with a receipt and a `Location` header. Poll that location with `GET` until the state is `completed`, `failed`, or `cancelled`; the first read may still be `pending`.
 
 Remote applications connect through the Client SDK. A local script can use `host` directly. Stop the HTTP server with `await server.close()` before closing its host.
 

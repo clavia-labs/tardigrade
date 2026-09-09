@@ -49,7 +49,7 @@ curl localhost:4242/v1/actors/main/threads/inv-81/methods/message/calls/m1
 # {"status":"completed","output":"…"}
 ```
 
-Calling a method is the application ingress. Allocate a thread first, then use its assigned ID and a stable call ID. The method schema validates the body. Repeating the same call URL is absorbed by the log.
+Calling a method is the application ingress. Allocate a thread first, then use its assigned ID and a stable call ID. The method schema validates the body. Repeating the same call URL is absorbed by the log. A successful submission returns `202 Accepted`; poll its `Location` until the state is `completed`, `failed`, or `cancelled`.
 
 Appending is the lower-level ingress for channels and interventions on an existing thread. Allocation records `ThreadCreated` before application events. A spawned child records its parent address and depth in that creation event, so the tree survives changes to thread naming.
 

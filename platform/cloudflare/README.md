@@ -57,10 +57,15 @@ Point `wrangler.jsonc` at your Worker entry point and declare these bindings:
 
 Declare `ActorDO` and `ThreadDO` as SQLite classes in the Durable Object migrations. Create the catalog database, copy its identifier into the D1 binding, and apply the [catalog migration](migrations/0001_catalog.sql). The generated project includes this configuration.
 
-Run these commands from your application directory, using the credential name configured for your provider:
+Use the `database_name` from `wrangler.jsonc`. For a project named `tardie-agent`, create the database from your application directory:
 
 ```sh
-bunx wrangler d1 create tardigrade-catalog
+bunx wrangler d1 create tardie-agent-catalog
+```
+
+Copy the returned `database_id` into the existing `CATALOG_DB` entry in `wrangler.jsonc`. Then apply the migration, set credentials using the names configured for your provider, and deploy:
+
+```sh
 bunx wrangler d1 migrations apply CATALOG_DB --remote
 bunx wrangler secret put TARDIGRADE_TOKEN
 bunx wrangler secret put OPENAI_API_KEY
@@ -69,7 +74,7 @@ bunx wrangler deploy
 
 `/healthz`, `/v1/providers`, and `/v1/models` are public. Other API routes require `Authorization: Bearer <TARDIGRADE_TOKEN>`. Missing server authentication returns `503`; an incorrect token returns `401`.
 
-See the [Cloudflare guide](../../docs/platforms/cloudflare.mdx) for deployment and the [actor guide](../../docs/getting-started/actors.mdx) for thread allocation and method calls.
+See the [Cloudflare guide](../../docs/platforms/cloudflare.mdx) for local verification and deployment and the [actor guide](../../docs/getting-started/actors.mdx) for thread allocation and method calls.
 
 ## Host options
 

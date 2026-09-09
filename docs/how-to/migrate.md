@@ -105,7 +105,7 @@ const invocation = await client.call(instance, thread.thread, "message", {
 
 Use a stable `conversationId` as the requested thread name and a stable `messageId` for each user turn. Retain the assigned thread coordinate. Reuse the message ID when retrying the call so the log absorbs the duplicate. `client.state(invocation)` reads its durable result.
 
-Replace AI SDK UI transport and `useChat` state with application state derived from Tardigrade events. Follow a thread after its last rendered sequence:
+Replace AI SDK UI transport and `useChat` state with application state derived from Tardigrade events. In a browser, follow a thread after its last rendered sequence:
 
 ```ts
 const stop = client.follow(instance, thread.thread, {
@@ -120,7 +120,7 @@ const stop = client.follow(instance, thread.thread, {
 
 Render `MessageReceived` as the user turn, `TextReturned` as working text, `ToolCalled` and `ToolReturned` as progress, `TurnCompleted` as the final answer, and `TurnFailed` as the failure. The stream carries durable event-level updates. It does not carry provider token chunks.
 
-Browser `EventSource` cannot attach the bearer token used by `TARDIGRADE_TOKEN`. Keep a protected Tardigrade server private and relay its authenticated event stream through the application backend. Use `client.events(instance, thread.thread, { after })` as a polling fallback when the relay is unavailable.
+Bun and Node consumers without `EventSource` can poll `client.events(instance, thread.thread, { after })` or supply an `eventSource` factory in the follow options. Browser `EventSource` cannot attach the bearer token used by `TARDIGRADE_TOKEN`. Keep a protected Tardigrade server private and relay its authenticated event stream through the application backend. Use `client.events(instance, thread.thread, { after })` as a polling fallback when the relay is unavailable.
 
 Keep an existing public API route as an adapter until every caller uses the new event and result shapes. Remove the adapter after its consumers and tests move to the Tardigrade client.
 
