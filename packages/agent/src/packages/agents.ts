@@ -16,6 +16,7 @@ import { childInvocationRef } from "./agents-compat"
 import { ChildCreated, childCreated, childLineageOf, threadCreatedOf, type ThreadCreated, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { allocateChildCoordinate as allocateChildThread, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { ACTOR_METHOD_NAME_PATTERN, type ActorMethodDeclaration } from "@clavia/tardigrade-core/actor/method"
 import {
   formatThreadAddress,
   type ThreadAddress
@@ -35,6 +36,21 @@ import {
 // DEFAULT_MAX_DEPTH limits delegation to five edges from the root unless configured or inherited (agents.test.ts).
 export const DEFAULT_MAX_DEPTH = 5
 
+export interface ChildInitializationContext {
+  readonly parent: ThreadAddress
+  readonly child: InvocationCoordinate
+  readonly parentInvocation: { readonly method: string; readonly id: string; readonly epoch: number }
+  readonly callId: string
+  readonly text: string
+  readonly parentInput?: unknown
+}
+
+export interface ChildInitializer {
+  readonly methodName: string
+  readonly method: ActorMethodDeclaration
+  readonly input: (context: ChildInitializationContext) => unknown | Promise<unknown>
+}
+
 // SpawnOptions configures child budgets, model access, output contracts, and inherited metadata.
 export interface SpawnOptions {
   // maxDepth sets the deepest permitted child depth, with the root at zero (e2e/actor/mortyplicity.test.ts). An inherited ceiling can only be tightened; omission uses the inherited ceiling or DEFAULT_MAX_DEPTH.
@@ -51,6 +67,8 @@ export interface SpawnOptions {
   readonly shadowOf?: () => boolean
   // worldOf supplies the world label forwarded to child briefs.
   readonly worldOf?: () => string | undefined
+  // initializeChild gates first child delivery on one durable initializer invocation.
+  readonly initializeChild?: ChildInitializer
   readonly budget?: Partial<BudgetPolicy>
 }
 
@@ -226,6 +244,11 @@ const parentRunOf = (call: Event): { readonly turn: string; readonly epoch: numb
   return turn === undefined ? undefined : { turn, epoch: eventEpochOf(call) }
 }
 
+const messageInputOf = (event: Event, id: string): unknown =>
+  event.type === "MessageReceived" && "id" in event && String(event.id) === id && "input" in event
+    ? event.input
+    : undefined
+
 // childClaimOf scopes a child to its parent turn and call, preserving recorded addresses on replay (agents.test.ts).
 const childClaimOf = (
   events: ReadonlyArray<Event>,
@@ -307,6 +330,10 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
   const { maxDepth } = options
   if (maxDepth !== undefined && (!Number.isSafeInteger(maxDepth) || maxDepth < 0)) {
     throw new Error("agentsPackage maxDepth must be a non-negative safe integer")
+  }
+  const initializeChild = options.initializeChild
+  if (initializeChild !== undefined && !ACTOR_METHOD_NAME_PATTERN.test(initializeChild.methodName)) {
+    throw new Error(`agentsPackage initializeChild methodName must match ${String(ACTOR_METHOD_NAME_PATTERN)}`)
   }
   const actorNameOf = options.actorNameOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
@@ -526,6 +553,66 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             invocation: reference.invocation,
             ...(parent === undefined ? {} : { parent }),
             ...(parentDeadline?.call?.deadlineAt === undefined ? {} : { deadlineAt: parentDeadline.call.deadlineAt })
+          }
+          if (initializeChild !== undefined) {
+            const initialization = invocationCoordinateOf(target, {
+              method: initializeChild.methodName,
+              id: `initialize:${ctx.callId}`,
+              epoch: 0
+            })
+            const terminal = invocationTerminalOf(events, initialization)
+            if (terminal === undefined) {
+              const at = yield* Clock.currentTimeMillis
+              const parentInput = events.map((event) => messageInputOf(event, parentRun.turn))
+                .find((input) => input !== undefined)
+              const input = yield* Effect.promise(() => Promise.resolve(initializeChild.input({
+                parent: source,
+                child: reference,
+                parentInvocation: owner,
+                callId: ctx.callId,
+                text,
+                ...(parentInput === undefined ? {} : { parentInput })
+              })))
+              const context: ActorInvocationContext = {
+                invocation: initialization.invocation,
+                parent: owner,
+                ...(parentDeadline?.call?.deadlineAt === undefined ? {} : { deadlineAt: parentDeadline.call.deadlineAt })
+              }
+              const prepared = prepareInvocation({
+                reference: initialization,
+                method: initializeChild.method,
+                context,
+                input,
+                at
+              })
+              const records: Event[] = recordedChild === undefined
+                ? [childCreated(ctx.callId, target, lineage, at, parentRun.turn, reference.invocation)]
+                : []
+              records.push(invocationLinked({
+                parent: owner,
+                owner: operation._tag === "Some" ? operation.value : { type: "invocation", ref: owner },
+                child: context,
+                target: formatThreadAddress(target),
+                lineage,
+                at
+              }))
+              yield* log.append(records)
+              yield* sendInvocation({
+                target,
+                context,
+                lineage,
+                event: { ...prepared.event, from: self, at }
+              })
+              return yield* new Park({ callId: ctx.callId, awaiting: invocationResponseId(initialization) })
+            }
+            const state = invocationResultOf(terminal, initializeChild.method.output)
+            if (state.status === "failed") return { error: state.error.replace(/^error: /, "") }
+            if (state.status === "cancelled") {
+              return { error: state.reason === undefined ? "child initialization cancelled" : `child initialization cancelled: ${state.reason}` }
+            }
+            if (state.status !== "completed") {
+              return yield* Effect.die(new Error(`child initializer ${initializeChild.methodName} returned a pending terminal`))
+            }
           }
           const dispatch = (at: number) => Effect.gen(function* () {
             const prepared = prepareInvocation({

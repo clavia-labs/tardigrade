@@ -201,6 +201,76 @@ describe("agentsPackage", () => {
     expect(events.filter((event) => event.type === "ChildCreated")).toMatchObject([{ address: target }])
   })
 
+  test("a child initializer settles before the first child message is delivered", async () => {
+    const events: Event[] = [
+      { ...turn("parent"), input: { tenant: "acme" } },
+      called("child", "parent")
+    ]
+    const sent: Sent[] = []
+    const appended: Event[] = []
+    const initialize = legacyActorMethod({
+      input: Schema.Unknown,
+      output: Schema.Boolean,
+      event: ({ invocation, input, at }) => ({
+        type: "Initialized",
+        id: invocation.id,
+        input,
+        at
+      }),
+      state: () => ({ status: "pending" })
+    })
+    const pkg = agentsPackage({
+      initializeChild: {
+        methodName: "initialize",
+        method: initialize,
+        input: ({ parent, child, parentInvocation, callId, text, parentInput }) => ({
+          parent,
+          child,
+          parentInvocation,
+          callId,
+          text,
+          parentInput
+        })
+      }
+    })
+    const invoke = () => pkg.methods.run!({ text: "investigate", background: true }, { callId: "child" })
+      .pipe(Effect.provide(env("mem:main:ag.root", sent, { "ag.root": events }, appended)))
+
+    expect(await Effect.runPromise(invoke().pipe(Effect.flip, Effect.orDie))).toBeInstanceOf(Park)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.event).toMatchObject({
+      type: "Initialized",
+      input: {
+        parent: parseThreadAddress("mem:main:ag.root"),
+        parentInvocation: { method: "message", id: "parent", epoch: 0 },
+        callId: "child",
+        text: "investigate",
+        parentInput: { tenant: "acme" }
+      }
+    })
+    const target = sent[0]!.link.target as ThreadAddress
+    const initialization = {
+      target,
+      invocation: decodeActorInvocationContext(sent[0]!.call).invocation
+    }
+    events.push(...appended, {
+      type: "ResponseReceived",
+      id: invocationResponseId(initialization),
+      reference: initialization,
+      method: "initialize",
+      call: initialization.invocation.id,
+      status: "completed",
+      output: true,
+      from: formatThreadAddress(target),
+      at: 3
+    })
+    appended.length = 0
+
+    await expect(Effect.runPromise(invoke())).resolves.toMatchObject({ dispatched: true })
+    expect(sent).toHaveLength(2)
+    expect(sent[1]!.event).toMatchObject({ type: "MessageReceived", id: "child", text: "investigate" })
+  })
+
   test("a foreground child records its invocation owner", async () => {
     const sent: Array<Sent> = []
     const appended: Array<Event> = []
