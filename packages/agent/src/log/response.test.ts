@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { firstResponseCallIndex, returnedAttemptCount, toolResponseKey } from "./response"
+import { responsesOf } from "./response"
 
 test.each(["current", "legacy", "singleton"])("response readers preserve %s history", (format) => {
   const calls: Event[] = [0, 1].map((index) => ({
@@ -11,9 +11,10 @@ test.each(["current", "legacy", "singleton"])("response readers preserve %s hist
     ? [{ type: "ModelReturned", callId: "response", outcome: "returned", at: 1 }, ...calls]
     : calls
   const before = JSON.stringify(history)
-  expect(firstResponseCallIndex(history, calls[1]!)).toBe(format === "current" ? 1 : format === "legacy" ? 0 : 1)
-  expect(returnedAttemptCount(history)).toBe(format === "singleton" ? 2 : 1)
-  expect(toolResponseKey(calls[0]!)).toBe(toolResponseKey(calls[1]!))
+  const responses = responsesOf(history)
+  expect(responses.firstCalls.get(calls[1]!)).toBe(calls[format === "singleton" ? 1 : 0]!)
+  expect(responsesOf(history).returnedAttempts).toBe(format === "singleton" ? 2 : 1)
+  expect(responses.keys.get(calls[0]!)).toBe(responses.keys.get(calls[1]!))
   expect(JSON.stringify(history)).toBe(before)
 })
 
@@ -25,7 +26,9 @@ test("response counts distinguish retries, rejections and old consequences", () 
     { type: "OutputRejected", attempt: "retry", at: 2 },
     { type: "OutputRejected", attempt: "old", at: 3 }
   ]
-  expect(returnedAttemptCount(history)).toBe(2)
-  expect(toolResponseKey({ type: "ToolCalled", turn: "a", responseId: "same", at: 1 }))
-    .not.toBe(toolResponseKey({ type: "ToolCalled", turn: "b", responseId: "same", at: 1 }))
+  expect(responsesOf(history).returnedAttempts).toBe(2)
+  const calls: Event[] = ["a", "b"].map((turn) => ({ type: "ToolCalled", turn, responseId: "same", at: 1 }))
+  const responses = responsesOf(calls)
+  expect(responses.keys.get(calls[0]!)).not.toBe(responses.keys.get(calls[1]!))
+  expect(responses.firstCalls.get(calls[1]!)).toBe(calls[1]!)
 })

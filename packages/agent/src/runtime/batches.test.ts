@@ -65,6 +65,7 @@ describe("tool batches", () => {
       })
       await original.start()
       const grantIndex = original.read().findIndex((event) => event.type === "BudgetGranted")
+      expect(grantIndex).toBeLessThan(original.read().findIndex((event) => event.type === "ModelCalled"))
       const pending = original.read().slice(0, grantIndex + 1)
       const resumed = setup(components(replacement), complete, {}, pending)
       await resumed.host.wake(ROOT)
@@ -244,26 +245,6 @@ describe("tool batches", () => {
       hold.resolve()
       await driving
     }
-  })
-
-  test("an initial grant fixes the allowance across restart and a changed default", async () => {
-    const initial = setup([budget([tool({ spec, run: () => Effect.succeed("read") })], { limit: 1 })],
-      (request) => request.trajectory.some((event) => event.type === "ToolCalled") ? complete() : batch(call("a"), call("b")))
-    await initial.start()
-    const history = initial.read()
-    expect(history.filter((event) => event.type !== "ThreadCreated").slice(0, 3).map((event) => event.type)).toEqual(["MessageReceived", "BudgetGranted", "ModelCalled"])
-    expect(history.filter((event) => event.type === "BudgetGranted")).toMatchObject([{ amount: 1, initial: true, turn: TURN }])
-    const pending = history.slice(0, history.findLastIndex((event) => event.type === "ToolCalled") + 1)
-    const ran: string[] = []
-    const recovered = setup([budget([tool({ spec, run: (_input, context) => Effect.sync(() => {
-      ran.push(context.callId)
-      return context.callId
-    }) })], { limit: 2 })], complete, {}, pending)
-    await recovered.host.wake(ROOT)
-    await recovered.host.drive()
-    expect(ran).toEqual(["a"])
-    expect(recovered.read().filter((event) => event.type === "BudgetGranted")).toHaveLength(1)
-    expect(recovered.read().find((event) => event.type === "ToolReturned" && event.callId === "b")?.result).toMatchObject({ error: expect.stringContaining("Tool budget reached") })
   })
 
   test.each([undefined, 1])("historical resume with a changed default and recorded budget %s", async (recordedBudget) => {

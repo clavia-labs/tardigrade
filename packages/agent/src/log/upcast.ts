@@ -17,7 +17,8 @@ export interface ReadHistory {
 // upcast normalizes a history into read metadata without changing or synthesizing stored events (upcast.test.ts).
 // Budget metadata describes a single turn. An undefined starting allowance requires the caller's fallback; an unrecorded historical default remains unknown.
 export const upcast = (events: ReadonlyArray<Event>): ReadHistory => {
-  const responses = events.filter((event) => event.type === "ModelReturned")
+  const responseKey = (event: Event, id: unknown) => JSON.stringify([event.turn ?? null, event.epoch ?? 0, id])
+  const responses = new Set(events.filter((event) => event.type === "ModelReturned").map((event) => responseKey(event, event.callId)))
   const head = events.find((event) => event.type === "MessageReceived")
   const initial = events.some((event) => event.type === "BudgetGranted" && event.initial === true)
   return {
@@ -27,11 +28,10 @@ export const upcast = (events: ReadonlyArray<Event>): ReadHistory => {
         ? event.outcome === "returned"
         : event.type === "ToolCalled"
           ? event.responseId === undefined && (event.batchIndex === undefined || event.batchIndex === 0)
-          : event.type === "OutputRejected" && !responses.some((reply) =>
-              reply.callId === event.attempt && reply.turn === event.turn && (reply.epoch ?? 0) === (event.epoch ?? 0))
+          : event.type === "OutputRejected" && !responses.has(responseKey(event, event.attempt))
       return {
         event,
-        ...(response === undefined ? {} : { responseKey: JSON.stringify([event.turn ?? null, event.epoch ?? 0, response]) }),
+        ...(response === undefined ? {} : { responseKey: responseKey(event, response) }),
         advancesInference
       }
     }),

@@ -1,4 +1,4 @@
-import { returnedAttemptCount } from "../log/response"
+import { responsesOf } from "../log/response"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 import { Cause, Clock, Effect } from "effect"
@@ -168,23 +168,30 @@ const completionOf = (action: Action & { readonly kind: "complete" }, ctx: Conse
 // consequencesOf records each tool request separately under its model response (runtime/batches.test.ts).
 const consequencesOf = (action: Action, ctx: Consequence): ReadonlyArray<Event> => {
   if (action.kind === "complete") return [completionOf(action, ctx)]
+  const stamp = {
+    turn: ctx.turn,
+    ...epochStamp(ctx.epoch),
+    ...(action.mode === undefined ? {} : { mode: action.mode }),
+    ...stampOf(action),
+    at: ctx.at
+  }
   if (action.kind === "fail") return [{
-    type: "TurnFailed", error: action.error, turn: ctx.turn, ...epochStamp(ctx.epoch),
-    cause: action.failure?.cause ?? "model", attemptKey: ctx.attempt,
-    ...(action.failure === undefined ? {} : { attempts: action.failure.attempts, policy: action.failure.policy }),
-    ...(action.mode === undefined ? {} : { mode: action.mode }), ...stampOf(action), at: ctx.at
-  } as Event]
+    ...stamp,
+    type: "TurnFailed",
+    error: action.error,
+    cause: action.failure?.cause ?? "model",
+    attemptKey: ctx.attempt,
+    ...(action.failure === undefined ? {} : { attempts: action.failure.attempts, policy: action.failure.policy })
+  }]
   if (ctx.contract !== undefined && action.mode === undefined) return [{
+    ...stamp,
     type: "TurnFailed",
     error: `the model binding answered a turn declaring "${ctx.contract.name}" with a tool call but did not state the output mode it ran in`,
-    turn: ctx.turn, ...epochStamp(ctx.epoch), cause: "inference_error", attempts: 1,
-    attemptKey: ctx.attempt, ...stampOf(action), at: ctx.at
-  } as Event]
-  return action.calls.map((call) => ({
-    type: "ToolCalled", ...call, responseId: ctx.attempt,
-    ...(action.mode === undefined ? {} : { mode: action.mode }),
-    ...stampOf(action), turn: ctx.turn, ...epochStamp(ctx.epoch), at: ctx.at
-  } as Event))
+    cause: "inference_error",
+    attempts: 1,
+    attemptKey: ctx.attempt
+  }]
+  return action.calls.map((call) => ({ type: "ToolCalled", ...call, ...stamp, responseId: ctx.attempt }))
 }
 
 const failureMessage = (cause: Cause.Cause<never>): string => {
@@ -270,7 +277,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
   const modelFailures = derived.modelFailures
   // A rejected response is a spent logical attempt: the next ask must not reuse the idempotency
   // key, or a deduping provider answers the correction with the response it just refused.
-  const logicalAttempt = returnedAttemptCount(slice) + modelFailures
+  const logicalAttempt = responsesOf(slice).returnedAttempts + modelFailures
   const attempt = `${turn}/infer/${logicalAttempt}`
   const rendered = derived.rendered
   const fallback = rendered.output?.fallback

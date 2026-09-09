@@ -251,7 +251,7 @@ export const infer = <
       const inferred = incrementalInference.output(state.inference)
       return {
         view: children.view,
-        // Component intents commit policy decisions before inference or tool admission (batches.test.ts, "an initial grant fixes the allowance across restart and a changed default").
+        // Component intents commit policy decisions before inference or tool admission (batches.test.ts, "generated starting allowances are recorded once before inference and survive restart").
         transitions: [
           ...children.transitions.filter((transition) => transition.kind === "intent"),
           ...inferred,

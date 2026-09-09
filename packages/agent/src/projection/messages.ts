@@ -1,4 +1,4 @@
-import { toolResponseKey as batchKey } from "../log/response"
+import { responsesOf } from "../log/response"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replayProjection, type Projection } from "@clavia/tardigrade-core/projection"
 import { terminalReportOutcomeOf } from "@clavia/tardigrade-core/interaction/provider-message"
@@ -73,6 +73,7 @@ const messagesFrom = (
   )
   if (openHead !== -1 && openHead < from) messages.push(userMessageOf(projected[openHead]!, resolved))
   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
+  const responses = responsesOf(projected)
   const batches = new Map<string, AgentToolCall[]>()
   const callOf = (event: Event): AgentToolCall => ({
     id: String(event.callId),
@@ -80,7 +81,7 @@ const messagesFrom = (
     arguments: JSON.stringify(event.arguments ?? {})
   })
   for (const event of projected.slice(from)) {
-    const key = batchKey(event)
+    const key = responses.keys.get(event)
     if (event.type !== "ToolCalled" || key === undefined) continue
     const calls = batches.get(key) ?? []
     calls.push(callOf(event))
@@ -98,7 +99,7 @@ const messagesFrom = (
         pendingText = String(value.text ?? "")
         break
       case "ToolCalled": {
-        const key = batchKey(event)
+        const key = responses.keys.get(event)
         if (key !== undefined && emitted.has(key)) break
         if (key !== undefined) emitted.add(key)
         messages.push({

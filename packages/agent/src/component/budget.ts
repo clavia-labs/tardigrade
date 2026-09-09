@@ -264,7 +264,10 @@ const admissionOf = (trajectory: ReadonlyArray<Event>, toolNames: ReadonlySet<st
     if (event.type === "BudgetGranted") remaining += Number(event.amount ?? 0)
     if (event.type !== "ToolCalled" || !toolNames.has(String(event.name))) continue
     const admitted = remaining > 0
-    if (admitted) { remaining -= 1; used += 1 }
+    if (admitted) {
+      remaining -= 1
+      used += 1
+    }
     if (event.callId === callId) return { admitted, used: admitted ? used : used + 1 }
   }
   return { admitted: false, used: used + 1 }
@@ -313,7 +316,7 @@ export const budget = <
         }))]
       : []
     const spent = budgetSpent(trajectory)
-    const turn = String((turnHead(trajectory) as { readonly id?: unknown } | undefined)?.id ?? "")
+    const turn = String(head?.id ?? "")
     const canRequest = canRequestBudget(trajectory) && authorityFor(log, turn, options.authority) !== undefined
     const toolNames = new Set(children.view.tools.map((tool) => tool.spec.name))
     return {
