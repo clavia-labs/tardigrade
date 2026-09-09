@@ -1,8 +1,8 @@
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
-import { Effect, ManagedRuntime, Schema } from "effect"
+import { Effect, Layer, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
-import { codeMode, Infer, renderOf } from "@clavia/tardigrade-agent"
+import { agentMethods, codeMode, infer, Infer, nativeOutput, NativeOutputSupport, renderOf } from "@clavia/tardigrade-agent"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
@@ -195,6 +195,90 @@ describe("cloudflare actor", () => {
     }, "message-1/model/0", undefined, (delta) => { streamed.push(delta.text) }))
     expect(action).toMatchObject({ kind: "complete", output: "partial" })
     expect(streamed).toEqual(["partial"])
+  })
+
+  test("a cancelled Cloudflare inference journals its streamed partial before the terminal", async () => {
+    await runInDurableObject(threadStub("partial-cancel"), async (_instance, state) => {
+      const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
+      const { promise: release, resolve } = Promise.withResolvers<void>()
+      const adapter: ModelAdapter = {
+        id: "partial-cancel",
+        protocols: ["openai-chat-completions"],
+        start: () => ({
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "TEXT_MESSAGE_START", messageId: "partial-1", role: "assistant", timestamp: 1 } as never
+              yield { type: "TEXT_MESSAGE_CONTENT", messageId: "partial-1", delta: "stopped partial", timestamp: 2 } as never
+              markStarted()
+              await release
+              yield { type: "TEXT_MESSAGE_END", messageId: "partial-1", timestamp: 3 } as never
+            }
+          }
+        })
+      }
+      const config = {
+        default: { provider: "openai", model_id: "gpt-test" },
+        allow: "*" as const,
+        providers: {
+          openai: {
+            baseUrl: "https://api.openai.test/v1",
+            protocol: "openai-chat-completions" as const,
+            env: ["OPENAI_API_KEY"]
+          }
+        }
+      }
+      const catalog: ModelCatalog = {
+        source: "models.dev",
+        revision: "partial-cancel",
+        refreshedAt: 1,
+        status: "cached",
+        providers: [{
+          id: "openai",
+          name: "OpenAI",
+          env: ["OPENAI_API_KEY"],
+          models: [{ id: "gpt-test", metadata: { contextWindowTokens: 32_000, maxOutputTokens: 4_000 } }]
+        }]
+      }
+      const definition = actor({
+        name: "echo",
+        methods: agentMethods,
+        components: [infer([nativeOutput], { models: { default: config.default, allow: "*" } })]
+      })
+      const host = await createCloudflareThreadHost({
+        storage: state.storage,
+        actorName: "echo",
+        actorInstance: "main",
+        thread: "partial-cancel",
+        actor: definition,
+        layers: Layer.mergeAll(
+          modelLayer(modelsFrom(env as Env, config), catalog, modelAdapters(adapter)),
+          Layer.succeed(NativeOutputSupport, { withTools: true })
+        ),
+        keyOf: actorRuntimeOf(definition).keyOf
+      })
+      await host.commitRoot({ type: "MessageReceived", id: "message-1", text: "wait", at: 1 })
+      const driving = host.drive()
+      await started
+      await host.commitRoot({
+        type: "CancellationRequested",
+        request: "cancel-1",
+        invocation: { method: "message", id: "message-1", epoch: 0 },
+        cause: "requested",
+        at: 2
+      })
+      resolve()
+      await driving
+      const log = await host.read()
+      const partial = log.findIndex(
+        (event) => event.type === "TextReturned" && event.turn === "message-1" && event.text === "stopped partial"
+      )
+      const terminal = log.findIndex(
+        (event) => event.type === "TurnCancelled" && event.turn === "message-1"
+      )
+      expect(partial).toBeGreaterThanOrEqual(0)
+      expect(terminal).toBeGreaterThan(partial)
+      await host.close()
+    })
   })
 
   test("root and staged creation await the host allocator before persistence", async () => {
