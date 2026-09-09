@@ -48,6 +48,7 @@ export interface ChildInitializationContext {
 export interface ChildInitializer {
   readonly methodName: string
   readonly method: ActorMethodDeclaration
+  readonly invocationId?: (context: ChildInitializationContext) => string
   readonly input: (context: ChildInitializationContext) => unknown | Promise<unknown>
 }
 
@@ -555,24 +556,25 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             ...(parentDeadline?.call?.deadlineAt === undefined ? {} : { deadlineAt: parentDeadline.call.deadlineAt })
           }
           if (initializeChild !== undefined) {
+            const parentInput = events.map((event) => messageInputOf(event, parentRun.turn))
+              .find((input) => input !== undefined)
+            const initializationContext: ChildInitializationContext = {
+              parent: source,
+              child: reference,
+              parentInvocation: owner,
+              callId: ctx.callId,
+              text,
+              ...(parentInput === undefined ? {} : { parentInput })
+            }
             const initialization = invocationCoordinateOf(target, {
               method: initializeChild.methodName,
-              id: `initialize:${ctx.callId}`,
+              id: initializeChild.invocationId?.(initializationContext) ?? `initialize:${ctx.callId}`,
               epoch: 0
             })
             const terminal = invocationTerminalOf(events, initialization)
             if (terminal === undefined) {
               const at = yield* Clock.currentTimeMillis
-              const parentInput = events.map((event) => messageInputOf(event, parentRun.turn))
-                .find((input) => input !== undefined)
-              const input = yield* Effect.promise(() => Promise.resolve(initializeChild.input({
-                parent: source,
-                child: reference,
-                parentInvocation: owner,
-                callId: ctx.callId,
-                text,
-                ...(parentInput === undefined ? {} : { parentInput })
-              })))
+              const input = yield* Effect.promise(() => Promise.resolve(initializeChild.input(initializationContext)))
               const context: ActorInvocationContext = {
                 invocation: initialization.invocation,
                 parent: owner,

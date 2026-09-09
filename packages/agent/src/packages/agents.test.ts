@@ -253,6 +253,7 @@ describe("agentsPackage", () => {
       target,
       invocation: decodeActorInvocationContext(sent[0]!.call).invocation
     }
+    expect(initialization.invocation.id).toBe("initialize:child")
     events.push(...appended, {
       type: "ResponseReceived",
       id: invocationResponseId(initialization),
@@ -269,6 +270,37 @@ describe("agentsPackage", () => {
     await expect(Effect.runPromise(invoke())).resolves.toMatchObject({ dispatched: true })
     expect(sent).toHaveLength(2)
     expect(sent[1]!.event).toMatchObject({ type: "MessageReceived", id: "child", text: "investigate" })
+  })
+
+  test("a child initializer can define its durable invocation id", async () => {
+    const events: Event[] = [turn("parent"), called("child", "parent")]
+    const sent: Sent[] = []
+    const initialize = legacyActorMethod({
+      input: Schema.Unknown,
+      output: Schema.Boolean,
+      event: ({ invocation, at }) => ({
+        type: "Initialized",
+        id: invocation.id,
+        at
+      }),
+      state: () => ({ status: "pending" })
+    })
+    const pkg = agentsPackage({
+      initializeChild: {
+        methodName: "initialize",
+        method: initialize,
+        invocationId: ({ parentInvocation, callId }) => `custom:${parentInvocation.id}:${callId}`,
+        input: () => true
+      }
+    })
+
+    const parked = pkg.methods.run!({ text: "investigate", background: true }, { callId: "child" }).pipe(
+      Effect.provide(env("mem:main:ag.root", sent, { "ag.root": events }, [])),
+      Effect.flip,
+      Effect.orDie
+    )
+    expect(await Effect.runPromise(parked)).toBeInstanceOf(Park)
+    expect(decodeActorInvocationContext(sent[0]!.call).invocation.id).toBe("custom:parent:child")
   })
 
   test("a foreground child records its invocation owner", async () => {
