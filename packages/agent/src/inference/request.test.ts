@@ -59,6 +59,21 @@ describe("renderMessages", () => {
     expect(messages[2]).toMatchObject({ toolCallId: "call_1", content: '{"result":1}' })
   })
 
+  test("late text from a cancelled turn never becomes the next turn's tool preamble", () => {
+    const messages = renderMessages([
+      { type: "MessageReceived", id: "stopped", text: "start", at: 1 },
+      { type: "TurnCancelled", turn: "stopped", cause: "requested", at: 2 },
+      { type: "MessageReceived", id: "next", text: "continue", at: 3 },
+      { type: "TextReturned", text: "late stopped text", turn: "stopped", at: 4 },
+      { type: "ToolCalled", callId: "next-tool", name: "execute", arguments: {}, turn: "next", at: 5 }
+    ])
+    expect(messages.at(-1)).toEqual({
+      role: "assistant",
+      content: null,
+      toolCalls: [{ id: "next-tool", name: "execute", arguments: "{}" }]
+    })
+  })
+
   test("a checkpoint survives the projection: identity anchors the same event in log and render", () => {
     // A queued mid-turn message shifts every raw index by one once the projection excludes it. An
     // index checkpoint would slice the render one event late and open it with a dangling tool

@@ -98,7 +98,7 @@ const messageEntriesFrom = (
     batches.set(key, calls)
   }
   const emitted = new Set<string>()
-  let pendingText: string | null = null
+  let pendingText: { readonly text: string; readonly turn: string; readonly epoch: number } | null = null
   const continuations = new Map(projected.filter((event) => event.type === "ModelReturned" && event.continuation !== undefined)
     .map((event) => [responseKeyOf(event, event.callId), event.continuation as ProviderContinuation]))
   const continuationOf = (event: Event, id: unknown) => {
@@ -109,10 +109,11 @@ const messageEntriesFrom = (
     const value = event as Record<string, unknown>
     switch (event.type) {
       case "MessageReceived":
+        pendingText = null
         push(event, userMessageOf(event, resolved))
         break
       case "TextReturned":
-        pendingText = String(value.text ?? "")
+        pendingText = { text: String(value.text ?? ""), turn: String(value.turn ?? ""), epoch: Number(value.epoch ?? 0) }
         break
       case "ToolCalled": {
         const key = responses.keys.get(event)
@@ -120,7 +121,7 @@ const messageEntriesFrom = (
         if (key !== undefined) emitted.add(key)
         push(event, {
           role: "assistant",
-          content: pendingText,
+          content: pendingText !== null && pendingText.turn === String(value.turn ?? "") && pendingText.epoch === Number(value.epoch ?? 0) ? pendingText.text : null,
           ...continuationOf(event, value.responseId),
           toolCalls: key === undefined ? [callOf(event)] : batches.get(key)!
         })
@@ -146,9 +147,11 @@ const messageEntriesFrom = (
         break
       }
       case "TurnCompleted":
+        pendingText = null
         push(event, { role: "assistant", content: String(value.output ?? ""), ...continuationOf(event, value.attemptKey) })
         break
       case "TurnFailed":
+        pendingText = null
         push(event, { role: "assistant", content: `the turn failed: ${upcastError(value.error).message}` })
         break
       case "TurnCancelled": {
