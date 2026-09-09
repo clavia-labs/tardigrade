@@ -75,7 +75,7 @@ Use `host` to allocate threads and call methods from the surrounding application
 
 ### Supply component requirements
 
-`layersFor(thread)` returns an Effect layer supplying services your components need, such as `Infer` for model calls. Bun supplies the log, routing, thread identity, allocation, and workspace storage. TypeScript requires `layersFor` only when additional services are needed.
+`layersFor(thread, instance)` returns an Effect layer supplying services your components need, such as `Infer` for model calls. Bun supplies the log, routing, thread identity, allocation, and workspace storage. TypeScript requires `layersFor` only when additional services are needed.
 
 ```ts
 import { modelLayer } from "./model"
@@ -277,13 +277,14 @@ Durable Object namespaces
     └── ["meeseeks","rick","lab"]    # lab
 ```
 
-The Bun host stores each thread beside its actor instance's database. It encodes the thread ID as a base64url filename:
+The Bun host encodes the JSON pair `[actor, instance]` as the instance database filename. It stores each thread beside that database, using the thread ID as a base64url filename:
 
 ```ts
 import { Buffer } from "node:buffer"
 import { join } from "node:path"
 
-const actorDatabase = "/data/meeseeks-rick.sqlite"
+const instanceFile = Buffer.from(JSON.stringify(["meeseeks", "rick"])).toString("base64url")
+const actorDatabase = join("/data", `${instanceFile}.sqlite`)
 const thread = "main"
 const filename = Buffer.from(thread, "utf8").toString("base64url")
 const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
@@ -291,8 +292,8 @@ const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
 
 ```text
 /data/
-├── meeseeks-rick.sqlite          # Rick's instance database
-└── meeseeks-rick.sqlite.threads/
+├── WyJtZWVzZWVrcyIsInJpY2siXQ.sqlite          # Rick's instance database
+└── WyJtZWVzZWVrcyIsInJpY2siXQ.sqlite.threads/
     ├── bWFpbg.sqlite          # main
     └── bGFi.sqlite            # lab
 ```

@@ -6,13 +6,13 @@ An actor is a behavior definition. A thread is one durable run of that actor. Ev
 
 `ThreadEventStore` is the storage contract for one thread. Its operations do not accept a thread identifier because the store already has that identity. Host ingress, host reads, and reactors use the same store object, so append policy and read behavior cannot diverge between paths.
 
-An actor instance is a durable supervisor. Its event log records `ThreadRequested` and `ThreadCreated`, and its thread tree is a projection of those events. Event data remains in each thread's store.
+An actor instance is a durable supervisor. Its event log records `ThreadRequested` and `ThreadRegistered`, and its thread tree is a projection of those events. Event data remains in each thread's store.
 
 The parent thread records `ChildCreated` before sending the child's first delivery. The child records `ThreadCreated` as the first event in its own log. The parent record owns discovery and carries the requested placement. The child record confirms its identity, parent, depth, and placement after the host applies its default.
 
 ## Durable Object layout
 
-An actor definition gives the actor its name, methods, reactors, and model catalog. Each actor instance gets an Actor DO that runs the actor supervisor and owns its identity and thread tree. Root and child Thread DOs are physical peers. A parent-child edge records logical ancestry and does not nest one Durable Object inside another.
+An actor definition gives the actor its name, methods, and components. Model services are supplied by the host. Each actor instance gets an Actor DO that runs the actor supervisor and owns its identity and thread tree. Root and child Thread DOs are physical peers. A parent-child edge records logical ancestry and does not nest one Durable Object inside another.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/actor-thread-layout-dark.svg">

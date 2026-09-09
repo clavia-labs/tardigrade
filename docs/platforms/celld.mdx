@@ -24,7 +24,7 @@ const services = workerModelServices({
 const host = defineWorkerHost(definition, { services })
 const http = workerHttp(host)
 
-// host exposes the HTTP handler and Durable Object classes (platform/cloudflare/test/actor.workers.ts).
+// host exposes the Durable Object classes (platform/cloudflare/test/actor.workers.ts).
 // HTTP request -> Worker handler
 //                  +-- ActorDO: allocates and tracks threads
 //                  +-- ThreadDO: stores events and executes a thread

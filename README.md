@@ -173,7 +173,7 @@ const releaseAnalyst = actor({
 })
 ```
 
-- `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless the actor narrows it with `models`.
+- `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless its `infer` options narrow it with `models`.
 
 - `compaction()` uses the selected model's catalog window. It summarizes at 80 percent and retains a 50 percent tail. Pass `fireRatio` and `keepRatio` to change those values. Each checkpoint records the policy it applied.
 
@@ -196,7 +196,7 @@ Each action and result becomes an event that every component can interpret.
 <details>
 <summary>Bind a model and durable SQLite host</summary>
 
-The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment.
+The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment. This example registers the adapter for OpenAI Responses and compatible chat completions; use the adapter for your configured protocol.
 
 ```ts
 import { createBunHost } from "tardie/bun"

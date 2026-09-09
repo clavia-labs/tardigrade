@@ -23,7 +23,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 
 | Existing concern | Tardigrade home |
 | --- | --- |
-| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `actor({ name, methods, components: [infer([...])] })`; pass `models: { allow?, default? }` to narrow or override the host policy |
+| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `actor({ name, methods, components: [infer([...])] })`; pass `{ models: { allow?, default? } }` as the second argument to `infer` to narrow or override the host policy |
 | System instructions | `system(...)` |
 | Tool declarations and handlers | Package components mounted through `codeMode`, or fixed tools mounted through `tool` |
 | `stopWhen`, maximum steps, and retry options | `budget`, `infer` policy, and domain components with explicit policy values |
@@ -31,7 +31,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 | Message arrays and conversation storage | One append-only event log per thread |
 | Structured output | `output(...)` plus `outputValidateOnce` or `outputRepairFor(...)` |
 | Lifecycle callbacks and telemetry | Recorded events, usage projections, and host telemetry |
-| AI SDK UI stream protocol | `makeActorClient().append()` plus the durable event stream from `follow()` |
+| AI SDK UI stream protocol | `makeActorClient().call()` plus the durable event stream from `follow()` |
 
 Install Tardigrade with the repository's package manager. Bun 1.4 or later runs the CLI and the durable SQLite host.
 
@@ -88,24 +88,27 @@ Replace direct model invocation in the application backend with the generated cl
 
 ```ts
 import { makeActorClient } from "tardie/client"
+import { agentMethods } from "tardie/agent"
 
 const client = makeActorClient({
-  baseUrl: process.env.TARDIGRADE_URL!
+  baseUrl: process.env.TARDIGRADE_URL!,
+  methods: agentMethods
 })
 
-await client.append(threadId, {
-  type: "MessageReceived",
+const instance = "main"
+const thread = await client.allocateRoot(instance, conversationId)
+const invocation = await client.call(instance, thread.thread, "message", {
   id: messageId,
-  text
+  input: { text }
 })
 ```
 
-Mint `threadId` once per conversation and `messageId` once per user turn. Reuse the same message id when retrying delivery so the log absorbs the duplicate.
+Use a stable `conversationId` as the requested thread name and a stable `messageId` for each user turn. Retain the assigned thread coordinate. Reuse the message ID when retrying the call so the log absorbs the duplicate. `client.state(invocation)` reads its durable result.
 
 Replace AI SDK UI transport and `useChat` state with application state derived from Tardigrade events. Follow a thread after its last rendered sequence:
 
 ```ts
-const stop = client.follow(threadId, {
+const stop = client.follow(instance, thread.thread, {
   after: lastSequence,
   onEvent: ({ seq, event }) => {
     lastSequence = seq
@@ -117,7 +120,7 @@ const stop = client.follow(threadId, {
 
 Render `MessageReceived` as the user turn, `TextReturned` as working text, `ToolCalled` and `ToolReturned` as progress, `TurnCompleted` as the final answer, and `TurnFailed` as the failure. The stream carries durable event-level updates. It does not carry provider token chunks.
 
-Browser `EventSource` cannot attach the bearer token used by `TARDIGRADE_TOKEN`. Keep a protected Tardigrade server private and relay its authenticated event stream through the application backend. Use `client.events(threadId, { after })` as a polling fallback when the relay is unavailable.
+Browser `EventSource` cannot attach the bearer token used by `TARDIGRADE_TOKEN`. Keep a protected Tardigrade server private and relay its authenticated event stream through the application backend. Use `client.events(instance, thread.thread, { after })` as a polling fallback when the relay is unavailable.
 
 Keep an existing public API route as an adapter until every caller uses the new event and result shapes. Remove the adapter after its consumers and tests move to the Tardigrade client.
 
@@ -125,26 +128,38 @@ Keep an existing public API route as an adapter until every caller uses the new 
 
 Import history into a separate SQLite database. Keep the source store unchanged until the new system passes validation and its rollback window ends. Stop writes or take a consistent export before conversion.
 
-Use `createBunHost().seed()` for imported history. `seed` appends a complete batch without waking the actor, so recorded conversations do not run again during import.
+Use `createBunHost().seed()` from `tardie/bun/host` for imported history. This lower-level host opens one actor instance database; its actor name, instance ID, and database filename must match the host that will serve it. `seed` appends a complete batch without waking the actor, so recorded conversations do not run again during import.
 
 ```ts
+import { join } from "node:path"
 import { createBunHost } from "tardie/bun/host"
 import type { Event } from "tardie/core/event"
-import { threadOf } from "tardie/server/host"
+import definition from "./actor"
 
+const storage = ".tardigrade/imported"
+const instance = "main"
+const filename = Buffer.from(JSON.stringify([definition.name, instance])).toString("base64url")
 const host = await createBunHost({
-  database: ".tardigrade/imported.sqlite",
+  database: join(storage, `${filename}.sqlite`),
+  actorName: definition.name,
+  actorInstance: instance,
   actorFor: () => undefined
 })
 
-const turn = "legacy:conversation-42:message-7"
-const events: Event[] = [
-  { type: "MessageReceived", id: turn, text: "What changed?", at: 1_700_000_000_000 },
-  { type: "TurnCompleted", turn, output: "The deployment changed.", at: 1_700_000_001_000 }
-]
-
-await host.seed(threadOf("legacy-conversation-42"), events)
-await host.close()
+try {
+  const thread = await host.allocate({
+    kind: "root",
+    coordinate: { actor: definition.name, instance, thread: "legacy-conversation-42" }
+  })
+  const turn = "legacy:conversation-42:message-7"
+  const events: Event[] = [
+    { type: "MessageReceived", id: turn, text: "What changed?", at: 1_700_000_000_000 },
+    { type: "TurnCompleted", turn, output: "The deployment changed.", at: 1_700_000_001_000 }
+  ]
+  await host.seed(thread.thread, events)
+} finally {
+  await host.close()
+}
 ```
 
 Derive stable thread, turn, and call ids from legacy identifiers. Preserve event order and timestamps. Every imported `MessageReceived` must have one terminal in its active epoch.
@@ -153,13 +168,13 @@ Map a complete tool exchange between its message and terminal as `ToolCalled` fo
 
 Map an incomplete legacy turn to `TurnFailed` with the same turn id, a clear import error, and `cause: "inference_error"`. Include any saved partial assistant text as `TextReturned` before the failure. This keeps every imported thread settled and makes the incomplete state visible.
 
-Refuse to write the import into an existing target database. A fresh target makes the script repeatable from the unchanged source and prevents duplicate unkeyed history events.
+Before running the script, refuse an existing target storage directory. A fresh target makes the script repeatable from the unchanged source and prevents duplicate unkeyed history events.
 
 Validate the import before cutover:
 
 1. Compare source conversation, message, tool call, tool result, and terminal counts with the target events.
 2. Check that timestamps and ids retain their order and that every call and turn is complete.
-3. Start `TARDIGRADE_DB=.tardigrade/imported.sqlite bun run dev`, inspect representative threads with `tdg events`, and confirm that no turn is pending and `tdg ls` reports no imported thread as running or blocked.
+3. Start `TARDIGRADE_ACTOR_DATA=.tardigrade/imported bun run dev`, inspect representative threads with `tdg events`, and confirm that no turn is pending and `tdg ls` reports no imported thread as running or blocked.
 4. Send a new message to an imported thread and verify that the model receives the imported context and produces one new terminal.
 5. Stop and restart the server, then confirm the imported history and new turn remain available.
 
