@@ -2,7 +2,7 @@ import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
-import { Infer } from "@clavia/tardigrade-agent"
+import { codeMode, Infer, renderOf } from "@clavia/tardigrade-agent"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
@@ -21,7 +21,7 @@ import {
   type ActorThreadNode,
   type Env
 } from "../src/worker"
-import { modelAdapters } from "@clavia/tardigrade-model/adapter"
+import { modelAdapters, type ModelAdapter } from "@clavia/tardigrade-model/adapter"
 import { modelLayer, modelsFrom, mountedActor } from "../src/assembly"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
@@ -158,8 +158,21 @@ describe("cloudflare actor", () => {
       .rejects.toThrow("does not match model configuration")
     expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
+    const adapter: ModelAdapter = {
+      id: "streaming-test",
+      protocols: ["openai-chat-completions"],
+      start: () => ({
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "TEXT_MESSAGE_START", messageId: "stream-1", role: "assistant", timestamp: 1 } as never
+            yield { type: "TEXT_MESSAGE_CONTENT", messageId: "stream-1", delta: "partial", timestamp: 2 } as never
+            yield { type: "TEXT_MESSAGE_END", messageId: "stream-1", timestamp: 3 } as never
+          }
+        }
+      })
+    }
     const binding = await Effect.runPromise(Infer.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, config), scope.catalog, modelAdapters())
+      modelLayer(modelsFrom(env as Env, config), scope.catalog, modelAdapters(adapter))
     )))
     expect(binding.resolve()).toMatchObject({
       model: config.default,
@@ -170,9 +183,18 @@ describe("cloudflare actor", () => {
     })
     expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
     const restricted = await Effect.runPromise(Infer.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog, modelAdapters())
+      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog, modelAdapters(adapter))
     )))
     expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
+    const streamed: string[] = []
+    const action = await Effect.runPromise(binding.react({
+      trajectory: [{ type: "MessageReceived", id: "message-1", text: "go", at: 1 }],
+      identity: { actor: "echo", instance: "main", thread: "root", turn: "message-1" },
+      model: config.default,
+      ...renderOf([codeMode(), nativeOutput], [])
+    }, "message-1/model/0", undefined, (delta) => { streamed.push(delta.text) }))
+    expect(action).toMatchObject({ kind: "complete", output: "partial" })
+    expect(streamed).toEqual(["partial"])
   })
 
   test("root and staged creation await the host allocator before persistence", async () => {
