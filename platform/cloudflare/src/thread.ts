@@ -15,15 +15,11 @@ import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service
 import { layerWorkerLoaderSandbox, type SandboxBridgeCall, type SandboxBridgeLease, type WorkerLoaderSandboxLimits } from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareThreadSchema } from "./storage"
-import { assertSubject, assertSubjectLookup, type ThreadEventRow } from "@clavia/tardigrade-core/log"
+import { assertSubjectLookup, type ThreadEventRow } from "@clavia/tardigrade-core/log"
 import { createCloudflareThreadHost, type CloudflareThreadHost } from "./host"
 import type { Env } from "./env"
 import { DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, type BackgroundTaskOwner, DEFAULT_BACKGROUND_TASK_OWNER, backgroundTaskOwnerOf, retainBackgroundTask, mountedActor, EMPTY_MODEL_SCOPE, modelCatalogForConfig, deployed, directory, modelConfigFrom, modelsFrom, modelLayer, nonNegativeInteger, optionalNonNegativeInteger, sandboxTransportOf, assemblyOf } from "./assembly"
 
-export interface ThreadFactAnswer {
-  readonly head: number
-  readonly row: { readonly seq: number; readonly event: Event } | null
-}
 
 export interface ThreadFactsAnswer {
   readonly head: number
@@ -382,28 +378,6 @@ export class ThreadDO extends DurableObject<Env> {
     return selected
   }
 
-  async fact(
-    thread: string,
-    query: { readonly key?: string; readonly subject?: string }
-  ): Promise<ThreadFactAnswer> {
-    if (this.thread() !== thread) {
-      throw new Error("request thread does not match the Thread DO identity")
-    }
-    if ((query.key === undefined) === (query.subject === undefined)) {
-      throw new Error("a fact query names exactly one coordinate: key or subject")
-    }
-    const coordinate = query.key ?? query.subject
-    if (coordinate === undefined || coordinate.length === 0) {
-      throw new Error("a fact coordinate must be a nonempty string")
-    }
-    if (query.subject !== undefined) assertSubject(query.subject)
-    const host = await this.host()
-    const head = await host.head()
-    const row = query.key === undefined
-      ? await host.readSubject(coordinate)
-      : await host.readKey(coordinate)
-    return { head, row: row ?? null }
-  }
 
   async status(): Promise<{ readonly status: "resting" | "driving"; readonly dirty: number }> {
     const host = await this.host()

@@ -58,8 +58,6 @@ export interface CloudflareThreadHost {
   readonly read: () => Promise<ReadonlyArray<Event>>
   readonly readPage: (mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly head: () => Promise<number>
-  readonly readKey: (key: string) => Promise<ThreadEventRow | undefined>
-  readonly readSubject: (subject: string) => Promise<ThreadEventRow | undefined>
   readonly readSubjects: (subjects: ReadonlyArray<string>) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
@@ -183,8 +181,6 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     head: events.head,
     readFrom: (mark: number) => events.readFrom(mark),
     readPage: (mark: number, limit: number) => events.readPage(mark, limit),
-    readKey: (key: string) => events.readKey(key),
-    readSubject: (subject: string) => events.readSubject(subject),
     readSubjects: (subjects: ReadonlyArray<string>) => events.readSubjects(subjects)
   }
   const ports = Layer.mergeAll(
@@ -243,8 +239,6 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     read: () => Effect.runPromise(events.read),
     readPage: (mark, limit) => Effect.runPromise(events.readPage(mark, limit)),
     head: () => Effect.runPromise(events.head),
-    readKey: (key) => Effect.runPromise(events.readKey(key)),
-    readSubject: (subject) => Effect.runPromise(events.readSubject(subject)),
     readSubjects: (subjects) => Effect.runPromise(events.readSubjects(subjects)),
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),

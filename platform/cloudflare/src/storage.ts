@@ -4,7 +4,7 @@ import { SqlClient } from "effect/unstable/sql"
 import { SqliteMigrator } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { messageSubjects } from "@clavia/tardigrade-core/interaction/provider-message"
-import { assertEventSubjects, assertSubject, assertSubjectLookup, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
+import { assertEventSubjects, assertSubjectLookup, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 
 export interface EventRow {
   readonly seq: number
@@ -179,20 +179,6 @@ export class CloudflareEventStore implements ThreadEventStore {
         }),
         Effect.orDie
       )
-  }
-  readKey(key: string): Effect.Effect<ThreadEventRow | undefined> {
-    return this.indexKey(key).pipe(
-      Effect.flatMap((indexed) => this.rowAt("SELECT seq, event FROM events WHERE key = ?", indexed)),
-      Effect.orDie
-    )
-  }
-
-  readSubject(subject: string): Effect.Effect<ThreadEventRow | undefined> {
-    return Effect.sync(() => assertSubject(subject)).pipe(
-      Effect.flatMap(() => this.indexKey(subject)),
-      Effect.flatMap((indexed) => this.rowAt("SELECT seq, event FROM event_subjects WHERE subject = ?", indexed)),
-      Effect.orDie
-    )
   }
 
   readSubjects(subjects: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<ThreadEventRow>> {

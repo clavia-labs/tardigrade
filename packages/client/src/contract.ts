@@ -59,8 +59,6 @@ export const InvalidRequest = problemKind("invalid-request", "Invalid Request", 
 // UnknownThread reports a thread whose log has no ThreadCreated event (apps/server/src/api.test.ts, "a log that never existed is the only 404").
 export const UnknownThread = problemKind("unknown-thread", "Unknown Thread", 404)
 
-// UnknownFact reports a durable coordinate no event in the log answers.
-export const UnknownFact = problemKind("unknown-fact", "Unknown Fact", 404)
 
 // UnknownActor reports an actor instance that no write has created.
 export const UnknownActor = problemKind("unknown-actor", "Unknown Actor", 404)
@@ -528,12 +526,6 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
     query: { after: SeqQuery, limit: SeqQuery, types: Schema.optionalKey(Schema.String) },
     success: Schema.Array(EventRow),
     error: [UnknownActor.schema, UnknownThread.schema]
-  }),
-  HttpApiEndpoint.get("fact", "/v1/actors/:id/threads/:thread/fact", {
-    params: RuntimeThreadParams,
-    query: { key: Schema.optionalKey(Schema.NonEmptyString), subject: Schema.optionalKey(FactSubject) },
-    success: EventRow,
-    error: [InvalidRequest.schema, UnknownActor.schema, UnknownThread.schema, UnknownFact.schema]
   }),
   HttpApiEndpoint.post("facts", "/v1/actors/:id/threads/:thread/facts", {
     params: RuntimeThreadParams,

@@ -721,28 +721,14 @@ describe("facts", () => {
   test("native message subjects resolve without scanning and missing subjects stay missing", async () => {
     const result = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const found = await get(base, "/v1/actors/main/threads/alpha/fact?subject=msg%3Am1")
-      const missing = await get(base, "/v1/actors/main/threads/alpha/fact?subject=msg%3Amissing")
-      const invalid = await get(base, "/v1/actors/main/threads/alpha/fact?key=one&subject=two")
       const batch = await post(base, "/v1/actors/main/threads/alpha/facts", {
         subjects: ["msg:missing", "msg:m1", "msg:m1"]
       })
-      return {
-        found: { status: found.status, body: await found.json() as EventRow },
-        missing: { status: missing.status, body: await missing.json() as Record<string, unknown> },
-        invalid: { status: invalid.status, body: await invalid.json() as Record<string, unknown> },
-        batch: { status: batch.status, body: await batch.json() as ReadonlyArray<EventRow> }
-      }
+      return { status: batch.status, body: await batch.json() as ReadonlyArray<EventRow> }
     })
-    expect(result.found.status).toBe(200)
-    expect(result.found.body.event).toMatchObject({ type: "MessageReceived", id: "m1" })
-    expect(result.missing.status).toBe(404)
-    expect(result.missing.body).toMatchObject({ title: "Unknown Fact", status: 404 })
-    expect(result.invalid.status).toBe(400)
-    expect(result.invalid.body).toMatchObject({ title: "Invalid Request", status: 400 })
-    expect(result.batch.status).toBe(200)
-    expect(result.batch.body).toHaveLength(1)
-    expect(result.batch.body[0]?.event).toMatchObject({ type: "MessageReceived", id: "m1" })
+    expect(result.status).toBe(200)
+    expect(result.body).toHaveLength(1)
+    expect(result.body[0]?.event).toMatchObject({ type: "MessageReceived", id: "m1" })
   })
 })
 
@@ -781,8 +767,6 @@ describe("the event stream", () => {
         return rows.filter((row) => row.seq > mark).slice(0, limit)
       }),
       head: () => Effect.succeed(head),
-      readKey: () => Effect.succeed(undefined),
-      readSubject: () => Effect.succeed(undefined),
       readSubjects: () => Effect.succeed([]),
       awaitHead: (_id, mark) => head > mark ? Effect.succeed(head) : Effect.callback<number>((resume) => {
         const wake = (head: number) => {
@@ -809,8 +793,6 @@ describe("the event stream", () => {
       append: () => Effect.void,
       events: () => Effect.succeed(rows.map((row) => row.event)),
       head: () => Effect.succeed(head),
-      readKey: () => Effect.succeed(undefined),
-      readSubject: () => Effect.succeed(undefined),
       readSubjects: () => Effect.succeed([]),
       list: () => Effect.succeed([]),
       settled: () => Effect.void

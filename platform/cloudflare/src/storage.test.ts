@@ -33,7 +33,6 @@ describe("CloudflareEventStore facts", () => {
     const opened = await open(freshPath())
     await Effect.runPromise(opened.store.initialize())
     await Effect.runPromise(opened.store.append([created, snapshot("first", 1), snapshot("latest", 2)]))
-    expect(await Effect.runPromise(opened.store.readKey("thread:created"))).toEqual({ seq: 1, event: created })
     expect(await Effect.runPromise(opened.store.readSubjects([
       "snapshot:latest",
       "snapshot:first",
@@ -65,7 +64,7 @@ describe("CloudflareEventStore facts", () => {
     } finally {
       raw.close()
     }
-    expect(await Effect.runPromise(opened.store.readSubject("snapshot:latest"))).toEqual({ seq: 2, event: snapshot("latest", 1) })
+    expect(await Effect.runPromise(opened.store.readSubjects(["snapshot:latest"]))).toEqual([{ seq: 2, event: snapshot("latest", 1) }])
     await opened.dispose()
   })
 })

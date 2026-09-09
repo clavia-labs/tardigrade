@@ -47,8 +47,6 @@ test("the adapter translates public operations while preserving raw directory re
     events: (thread) => capture(thread).pipe(Effect.as([])),
     eventsPage: (thread) => capture(thread).pipe(Effect.as([])),
     head: (thread) => capture(thread).pipe(Effect.as(0)),
-    readKey: (thread) => capture(thread).pipe(Effect.as(undefined)),
-    readSubject: (thread) => capture(thread).pipe(Effect.as(undefined)),
     readSubjects: (thread) => capture(thread).pipe(Effect.as([])),
     awaitHead: (thread) => capture(thread).pipe(Effect.as(0)),
     actorEventsPage: () => Effect.succeed([]),

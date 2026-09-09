@@ -402,7 +402,7 @@ describe("the bun host", () => {
     await h.close()
   })
 
-  test("exact facts return the latest indexed subject", async () => {
+  test("bounded facts return the latest indexed subjects", async () => {
     const h = await createBunHost({
       ...options(freshPath()),
       subjectsOf: (event) => event.type === "Done" && typeof event.fact === "string" ? [`fact:${event.fact}`, "fact:latest"] : []
@@ -416,20 +416,6 @@ describe("the bun host", () => {
       { type: "Done", id: "same", fact: "absorbed", at: 5 } as Event
     ])
     expect(await h.head("facts")).toBe(5)
-    expect(await h.readKey("facts", "thread:created")).toEqual({ seq: 1, event: created("facts") })
-    expect(await h.readSubject("facts", "msg:m1")).toEqual({
-      seq: 2,
-      event: { type: "MessageReceived", id: "m1", text: "go", at: 1 }
-    })
-    expect(await h.readSubject("facts", "reply:out")).toEqual({
-      seq: 4,
-      event: { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 }
-    })
-    expect(await h.readSubject("facts", "fact:accepted")).toEqual({
-      seq: 5,
-      event: { type: "Done", id: "same", fact: "accepted", at: 4 }
-    })
-    expect(await h.readSubject("facts", "fact:absorbed")).toBeUndefined()
     expect(await h.readSubjects("facts", ["reply:out", "msg:m1", "fact:latest", "reply:out"])).toEqual([
       { seq: 2, event: { type: "MessageReceived", id: "m1", text: "go", at: 1 } },
       { seq: 4, event: { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 } },

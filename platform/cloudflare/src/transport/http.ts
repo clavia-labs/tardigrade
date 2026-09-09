@@ -13,7 +13,7 @@ import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrad
 import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-http/models"
 import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
 import type { Env } from "../env"
-import type { ThreadFactAnswer, ThreadFactsAnswer } from "../thread"
+import type { ThreadFactsAnswer } from "../thread"
 import type { CloudflareDirectory } from "./directory"
 
 // treeBoundsOf validates optional subtree, depth, and node limits (test/actor.workers.ts).
@@ -179,41 +179,6 @@ export const cloudflareHttp = ({
         }).pipe(Effect.match({
           onFailure: (error) => json({ error }, 500),
           onSuccess: (rows) => json(rows)
-        }))
-      })
-    )),
-    HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/fact", workerRoute((request, env) =>
-      Effect.gen(function* () {
-        const params = yield* HttpRouter.params
-        const instance = params.id ?? ""
-        const thread = params.thread ?? ""
-        if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
-        const stub = yield* Effect.promise(() => threadStub(env, actorName(), instance, thread))
-        if (stub === undefined) return json({ error: "unknown thread" }, 404)
-        const query = new URL(request.url, "http://worker").searchParams
-        const key = query.get("key")
-        const subject = query.get("subject")
-        if (
-          (key === null) === (subject === null) ||
-          key === "" ||
-          subject === "" ||
-          (subject !== null && subject.length > MAX_SUBJECT_LENGTH)
-        ) {
-          return json({ error: `a fact query requires one nonempty key or one subject of at most ${MAX_SUBJECT_LENGTH} characters` }, 400)
-        }
-        return yield* Effect.tryPromise({
-          try: () => stub.stub.fact(stub.thread, {
-            ...(key === null ? {} : { key }),
-            ...(subject === null ? {} : { subject })
-          }) as Promise<ThreadFactAnswer>,
-          catch: (cause) => cause instanceof Error ? cause.message : String(cause)
-        }).pipe(Effect.match({
-          onFailure: (error) => json({ error }, 500),
-          onSuccess: (resolved) => resolved.head === 0
-            ? json({ error: "unknown thread" }, 404)
-            : resolved.row === null
-              ? json({ error: "unknown fact" }, 404)
-              : json(resolved.row)
         }))
       })
     )),

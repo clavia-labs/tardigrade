@@ -21,7 +21,6 @@ export {
   type ControlClientOptions,
   type CatalogPageOptions,
   type EventsOptions,
-  type FactCoordinate,
   type FollowOptions,
   type FollowInferenceOptions,
   type FollowThreadsOptions,

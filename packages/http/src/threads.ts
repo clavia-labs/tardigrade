@@ -22,8 +22,6 @@ export interface ActorThreads {
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly eventsPage: (id: string, mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
   readonly head: (id: string) => Effect.Effect<number>
-  readonly readKey: (id: string, key: string) => Effect.Effect<ThreadEventRow | undefined>
-  readonly readSubject: (id: string, subject: string) => Effect.Effect<ThreadEventRow | undefined>
   readonly readSubjects: (id: string, subjects: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
   readonly awaitHead: (id: string, mark: number) => Effect.Effect<number>
   readonly actorEventsPage: (mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
@@ -53,8 +51,6 @@ export class Threads extends Context.Service<
     readonly append: (actor: string, thread: string, event: Event) => Effect.Effect<void>
     readonly events: (actor: string, thread: string) => Effect.Effect<ReadonlyArray<Event>>
     readonly head: (actor: string, thread: string) => Effect.Effect<number>
-    readonly readKey: (actor: string, thread: string, key: string) => Effect.Effect<ThreadEventRow | undefined>
-    readonly readSubject: (actor: string, thread: string, subject: string) => Effect.Effect<ThreadEventRow | undefined>
     readonly readSubjects: (actor: string, thread: string, subjects: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
     readonly list: (actor: string) => ActorThreads["list"]
     readonly settled: (actor: string) => Effect.Effect<void>

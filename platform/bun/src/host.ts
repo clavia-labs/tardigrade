@@ -91,8 +91,6 @@ export interface BunHost {
   readonly read: (thread: string) => Promise<ReadonlyArray<Event>>
   readonly readPage: (thread: string, mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly head: (thread: string) => Promise<number>
-  readonly readKey: (thread: string, key: string) => Promise<ThreadEventRow | undefined>
-  readonly readSubject: (thread: string, subject: string) => Promise<ThreadEventRow | undefined>
   readonly readSubjects: (thread: string, subjects: ReadonlyArray<string>) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly awaitHead: (thread: string, mark: number, signal?: AbortSignal) => Promise<number>
   readonly readActorPage: (mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
@@ -421,16 +419,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
       Effect.orDie
     )
-    const readKey: ThreadEventStore["readKey"] = (key) => sql<{ seq: number; event: string }>`
-      SELECT seq, event FROM events WHERE key = ${key}
-    `.pipe(
-      Effect.map((rows) => {
-        const row = rows[0]
-        return row === undefined ? undefined : { seq: Number(row.seq), event: JSON.parse(row.event) as Event }
-      }),
-      Effect.orDie
-    )
-    const readSubject: ThreadEventStore["readSubject"] = (subject) => Effect.sync(() => assertSubject(subject)).pipe(
+    const readSubject = (subject: string): Effect.Effect<ThreadEventRow | undefined> => Effect.sync(() => assertSubject(subject)).pipe(
       Effect.flatMap(() => sql<{ seq: number; event: string }>`
         SELECT seq, event FROM event_subjects WHERE subject = ${subject}
       `),
@@ -496,7 +485,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
     return {
       runtime,
-      store: { append, read, head, readFrom, readPage, readKey, readSubject, readSubjects },
+      store: { append, read, head, readFrom, readPage, readSubjects },
       commits,
       interruptions,
       ...(commitDispatcher === undefined ? {} : { commitDispatcher }),
@@ -706,14 +695,6 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     head: async (thread) => {
       const threadRuntime = await runtimeOf(thread)
       return threadRuntime.runtime.runPromise(threadRuntime.store.head)
-    },
-    readKey: async (thread, key) => {
-      const threadRuntime = await runtimeOf(thread)
-      return threadRuntime.runtime.runPromise(threadRuntime.store.readKey(key))
-    },
-    readSubject: async (thread, subject) => {
-      const threadRuntime = await runtimeOf(thread)
-      return threadRuntime.runtime.runPromise(threadRuntime.store.readSubject(subject))
     },
     readSubjects: async (thread, subjects) => {
       const threadRuntime = await runtimeOf(thread)
