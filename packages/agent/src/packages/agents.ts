@@ -550,11 +550,6 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
               context.invocation.id === owner.id &&
               context.invocation.epoch === owner.epoch
           }) as ({ readonly call?: ActorInvocationContext } & Event) | undefined
-          const childContext: ActorInvocationContext = {
-            invocation: reference.invocation,
-            ...(parent === undefined ? {} : { parent }),
-            ...(parentDeadline?.call?.deadlineAt === undefined ? {} : { deadlineAt: parentDeadline.call.deadlineAt })
-          }
           if (initializeChild !== undefined) {
             const parentInput = events.map((event) => messageInputOf(event, parentRun.turn))
               .find((input) => input !== undefined)
@@ -615,6 +610,11 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             if (state.status !== "completed") {
               return yield* Effect.die(new Error(`child initializer ${initializeChild.methodName} returned a pending terminal`))
             }
+          }
+          const childContext: ActorInvocationContext = {
+            invocation: reference.invocation,
+            ...(parent === undefined ? {} : { parent }),
+            ...(parentDeadline?.call?.deadlineAt === undefined ? {} : { deadlineAt: parentDeadline.call.deadlineAt })
           }
           const dispatch = (at: number) => Effect.gen(function* () {
             const prepared = prepareInvocation({
