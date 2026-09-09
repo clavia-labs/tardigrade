@@ -102,7 +102,7 @@ test("init, serve, discover, call, inspect, cancel, and restart a generated quic
   try {
     await run("init", "tardie-agent", "--provider", "fixture", "--provider-config", JSON.stringify({ protocol: "openai-chat-completions", baseUrl: `${model.url}v1`, env: ["FIXTURE_KEY"] }), "--default-model", "test", "--json")
     cwd = join(root, "tardie-agent")
-    expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("createWorker")
+    expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("defineWorkerHost")
     await run("lint", "actor.ts", "--json")
     expect(JSON.parse(await run("build", join(cwd, "actor.ts"), "--out", join(cwd, "artifact"), "--json"))).toMatchObject({ manifest: { name: "tardie-agent" } })
     expect(JSON.parse(await run("models", "lock", "--json"))).toMatchObject({ schema: 1 })

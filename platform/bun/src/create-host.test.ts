@@ -7,7 +7,7 @@ import { defineActor, legacyComponent } from "@clavia/tardigrade-core/actor"
 import { legacyActorMethod } from "@clavia/tardigrade-core/actor/method-compat"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { allocateRootThread } from "@clavia/tardigrade-core/actor/allocation"
-import { createHost } from "./create-host"
+import { createBunHost, createHost } from "./create-host"
 import { serve } from "./serve"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 import { connect } from "../../../packages/client/src/connect"
@@ -39,7 +39,7 @@ const actor = defineActor("tardie", { message }, [responder])
 
 test("local and HTTP references preserve allocations and results across restart", async () => {
   const storage = await mkdtemp(join(tmpdir(), "tardie-sdk-"))
-  let host = await createHost({ actor, storage })
+  let host = await createBunHost({ actor, storage })
   let server: Awaited<ReturnType<typeof serve>> | undefined
   try {
     const rick = await host.allocateRootThread({ instance: "rick", name: "main" })

@@ -1,243 +1,103 @@
 # Cloudflare platform
 
-This binding mounts each actor supervisor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, event log, and thread tree. D1 stores the public model catalog. Actors using the supplied inference binding pass their deployment model scope through `modelScope`. Actors without inference do not need a model lock or provider credentials. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
+Run Tardigrade actors on Cloudflare Workers and SQLite Durable Objects. The Worker handles HTTP requests, an `ActorDO` allocates and tracks threads, and each `ThreadDO` stores and executes a thread. Celld uses the same Worker entry point.
 
-Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/platforms/celld.mdx) covers the generated manifest and node configuration.
+## Worker entry point
 
-Cloudflare assigns background tasks to the `host` by default because a Durable Object remains active while ongoing work exists. Hosts that end background work with the request set `backgroundTaskOwner: "request"` or `TARDIGRADE_BACKGROUND_TASK_OWNER=request`. Request ownership registers each reconciliation drive with `waitUntil`. The generated Celld manifest sets this variable.
-
-## Thread isolation
-
-Each actor thread has a separate Thread DO, SQLite database, driver, alarm lifecycle, and isolate heap. The object name derives from the actor definition and thread identity. Actor delivery uses the complete `ThreadAddress`, so a child thread routes to its own Thread DO when it uses the same actor definition.
+`tdg init` generates the entry point and deployment configuration. `tdg setup` configures a model provider and writes `models.lock.json`.
 
 ```ts
-import { createWorker } from "tardie/worker"
 import definition from "./actor"
+import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
+import { modelAdapters } from "tardie/model/adapter"
+import { openAICompatibleAdapter } from "tardie/model/openai"
+import modelLock from "./models.lock.json"
 
-const { worker, ActorDO, ThreadDO } = createWorker(definition)
+const services = workerModelServices({
+  adapters: modelAdapters(openAICompatibleAdapter),
+  scope: modelScopeFrom(modelLock)
+})
 
-export { ActorDO, ThreadDO }
-export default worker
+const host = defineWorkerHost(definition, { services })
+const http = workerHttp(host)
+
+export const { ActorDO, ThreadDO } = host
+export default { fetch: http.fetch }
 ```
 
-The application entry point supplies its actor. Point the application's Wrangler configuration at that entry point. The platform module has no default actor.
+`workerModelServices` selects the model adapters and catalog snapshot. `defineWorkerHost` registers the actor and exposes its Durable Object classes. `workerHttp` supplies the HTTP handler. Cloudflare calls `fetch` when a request arrives and creates object instances when they are addressed. The entry point registers one actor definition per module.
 
-The standard Durable Object adapter supports `independent` placement. Pass `defaultChildPlacement: "independent"` to state the default explicitly. A request for `colocated` placement fails because ordinary Durable Object namespaces cannot guarantee it. A future Facets adapter can advertise `colocated` placement without changing the actor or thread contracts.
+An actor that does not use model inference can omit `services`. Register the adapters required by your configured providers; `modelAdapters` accepts several adapters.
 
-The Actor DO projects each thread's parent, depth, and placement from its event log. `GET /v1/threads` reads this projection without fetching Thread DO logs. Thread-specific method and event routes select the matching Thread DO.
+## Runtime and storage
 
-## Model catalog storage
+```text
+HTTP request -> Worker handler
+                 +-- ActorDO [actor, instance]
+                 |     allocates threads and tracks their relationships
+                 +-- ThreadDO [actor, instance, thread]
+                       stores events and workspace data
+                       executes the actor and schedules recovery alarms
+```
 
-The `CATALOG_DB` D1 binding stores one normalized catalog for the deployment. Provider and model rows belong to an unpublished generation until one source-row update makes that generation active. A failed refresh leaves the prior generation readable. Actor and Thread DO databases contain no catalog tables or catalog events.
+Each thread has its own Durable Object and SQLite storage. Child threads use separate objects. The host supports `independent` placement; requests for `colocated` placement are rejected. Alarms resume interrupted work and enforce unresolved method deadlines.
 
-Create the database, copy its identifier into the `CATALOG_DB` entry in `wrangler.jsonc`, and apply the included migrations before deployment:
+Model inference reads the catalog snapshot bundled in `models.lock.json`. Provider connections and credentials come from the Worker environment. The host checks that the lock matches the model configuration. Run `tdg models lock` to refresh it. Public catalog discovery uses the `CATALOG_DB` D1 binding.
+
+## Bindings and deployment
+
+Point `wrangler.jsonc` at your Worker entry point and declare these bindings:
+
+| Binding | Purpose |
+| --- | --- |
+| `ACTORS` | Durable Object namespace for `ActorDO` |
+| `THREADS` | Durable Object namespace for `ThreadDO` |
+| `CATALOG_DB` | D1 database for public model catalog discovery |
+| `LOADER` | Worker Loader used by Code Mode |
+
+Declare `ActorDO` and `ThreadDO` as SQLite classes in the Durable Object migrations. Create the catalog database, copy its identifier into the D1 binding, and apply the [catalog migration](migrations/0001_catalog.sql). The generated project includes this configuration.
+
+Run these commands from your application directory, using the credential name configured for your provider:
 
 ```sh
 bunx wrangler d1 create tardigrade-catalog
 bunx wrangler d1 migrations apply CATALOG_DB --remote
+bunx wrangler secret put TARDIGRADE_TOKEN
+bunx wrangler secret put OPENAI_API_KEY
+bunx wrangler deploy
 ```
 
-Every successful `tdg setup` command refreshes the public catalog, applies the configured providers and model policy, and writes `models.lock.json`. Run `tdg models lock` directly to refresh the lock without changing configuration. The generated Worker imports that file, validates its schema, and gives the resolved snapshot to every Thread DO runtime. Thread activation and turns resolve models from bundle memory without a D1 request. A selected model records the lock's catalog revision in the thread log.
+`/healthz`, `/v1/providers`, and `/v1/models` are public. Other API routes require `Authorization: Bearer <TARDIGRADE_TOKEN>`. Missing server authentication returns `503`; an incorrect token returns `401`.
 
+See the [Cloudflare guide](../../docs/platforms/cloudflare.mdx) for deployment and the [actor guide](../../docs/getting-started/actors.mdx) for thread allocation and method calls.
 
-## Application services
+## Host options
 
-An actor can require an application Effect service. Pass `layersFor` to `cloudflareWorker` to build that service from the Worker environment and current thread. Tardigrade merges the returned layer with its model, HTTP, sandbox, event-log, and workspace layers. It constructs the application layer separately for each thread settlement, so mutable service state is shared only when the supplied Layer explicitly shares it.
+Pass application hooks and policies to `defineWorkerHost(definition, options)`:
 
-```ts
-import { Context, Effect, Layer } from "effect"
-import { ActorDO, ThreadDO, cloudflareWorker, type CloudflareWorkerLayerContext, type Env as TardigradeEnv } from "tardie/cloudflare"
+| Option | Purpose |
+| --- | --- |
+| `layersFor` | Supply application Effect services using the Worker environment, actor instance, and thread |
+| `storeFor` | Select event encoding and event-key indexing for each thread |
+| `inferenceObserverFor` | Receive transient model output through an application binding |
+| `defaultChildPlacement` | Set the supported child placement, `independent` |
+| `backgroundTaskOwner` | Keep work with the host or attach it to the request through `waitUntil` |
 
-interface Env extends TardigradeEnv {
-  readonly CUSTOMERS: D1Database
-}
+The [option types](src/worker.ts) and [application hooks](src/assembly.ts) define the available overrides. The [Worker environment](src/env.ts) lists configuration bindings for authentication, model discovery, recovery alarms, and sandbox limits. Event encoding and key management are described by the [storage policies](src/storage.ts); [integration tests](test/actor.workers.ts) exercise application services, storage, routing, and recovery.
 
-class CustomerStore extends Context.Service<
-  CustomerStore,
-  { readonly find: (id: string) => Effect.Effect<unknown> }
->()("application/CustomerStore") {}
+## Celld
 
-export { ActorDO, ThreadDO }
-export default cloudflareWorker(definition, {
-  layersFor: ({ env, thread }: CloudflareWorkerLayerContext<Env>) => Layer.succeed(CustomerStore, {
-    find: id => Effect.promise(() => env.CUSTOMERS.prepare("SELECT * FROM customers WHERE thread = ? AND id = ?").bind(thread, id).first())
-  })
-})
-```
+Celld runs the same Worker and Durable Object exports on a self-hosted fleet. Its generated manifest selects `replay` sandbox transport and `request` background-task ownership. Cloudflare defaults to direct capability transport and `host` ownership.
 
-The callback may require Tardigrade's thread ports while constructing its layer. The returned Layer has a `never` error channel.
+Follow the [Celld guide](../../docs/platforms/celld.mdx) for deployment and node configuration. The [Worker Loader platform](../worker-loader/README.md) covers sandbox policies and tests on both runtimes.
 
-## Thread creation
+## Verify this platform
 
-Create an actor instance, then create each root thread through its Actor DO before writing events to the Thread DO. Creation is idempotent. The actor supervisor records `ThreadRequested` and `ThreadCreated`, and it initializes the Thread DO identity. Later event appends and method calls address the Thread DO directly. An unknown thread returns `404`.
+From the repository root:
 
-A child Thread DO stages `ThreadCreated` and its initial message before the Actor DO records `ThreadRequested`. The actor supervisor then transfers recovery ownership to the child and records `ThreadCreated`. Thread listings project created threads from the actor log. The Actor DO alarm retries unfinished requests, and duplicate child delivery is absorbed.
-
-```ts
-await fetch("/v1/actors/customer-42", { method: "PUT", headers })
-await fetch("/v1/actors/customer-42/threads/conversation-7", { method: "PUT", headers })
-await fetch("/v1/actors/customer-42/threads/conversation-7/events", {
-  method: "POST",
-  headers: { ...headers, "content-type": "application/json" },
-  body: JSON.stringify({ type: "MessageReceived", id: "message-1", text: "Hello" })
-})
-```
-
-## Event store policy
-
-Pass `storeFor` to set each thread's event store policy. The callback receives the Worker environment and thread identity, then returns `codec` for event bodies and `indexKey` for event keys. The store derives the logical key from the plaintext event, applies `indexKey`, encodes the body, and commits both values in one transaction. Host ingress, reactor appends, API reads, recovery, deadlines, and alarms use the policy. Encryption and key management remain application concerns.
-
-The codec must preserve batch length and order in both directions. `hmacSha256EventKeyIndex` creates a deterministic thread-bound HMAC index that hides identifiers stored in event keys. Give it HMAC key material separate from any body encryption key. Omitting `storeFor` uses the SQLite store with the plaintext codec and plaintext event keys.
-
-## Model adapters
-
-The Worker registers the protocol implementations its configured providers use. Each adapter is a separate import, so a bundle includes its provider library only when the Worker selects it. Host startup fails with the missing protocol and a registration instruction when configuration names an unregistered protocol.
-
-```ts
-import { ActorDO, ThreadDO, cloudflareWorker } from "tardie/cloudflare"
-import { modelAdapters } from "tardie/model/adapter"
-import { anthropicAdapter } from "tardie/model/anthropic"
-
-export { ActorDO, ThreadDO }
-export default cloudflareWorker(definition, {
-  modelAdapters: modelAdapters(anthropicAdapter)
-})
-```
-
-Register several adapters when the host configures providers with several protocols:
-
-```ts
-import { anthropicAdapter } from "tardie/model/anthropic"
-import { openAICompatibleAdapter } from "tardie/model/openai"
-
-modelAdapters(anthropicAdapter, openAICompatibleAdapter)
-```
-
-Amazon Bedrock is an optional peer dependency. Install its provider packages and register `bedrockAdapter` from `tardie/model/bedrock` when the host uses `bedrock-converse`.
-
-## Live inference output
-
-Pass `inferenceObserverFor` to observe normalized text while a provider stream is active. The factory receives the Worker environment and thread, so delivery can use a deployment binding. Deltas are ephemeral and carry actor, thread, turn, logical attempt, physical attempt, model, block, sequence, and text identity.
-
-```ts
-import { Effect } from "effect"
-import { ActorDO, ThreadDO, cloudflareWorker, type CloudflareWorkerLayerContext, type Env as TardigradeEnv } from "tardie/cloudflare"
-
-interface Env extends TardigradeEnv {
-  readonly LIVE_OUTPUT: Queue
-}
-
-export { ActorDO, ThreadDO }
-export default cloudflareWorker(definition, {
-  modelAdapters: modelAdapters(anthropicAdapter),
-  inferenceObserverFor: ({ env }: CloudflareWorkerLayerContext<Env>) => ({
-    onDelta: (delta) => Effect.promise(() => env.LIVE_OUTPUT.send(delta))
-  })
-})
-```
-
-Observer delivery uses the exported `DEFAULT_INFERENCE_OBSERVER_POLICY`. Supply `policy.bufferCapacity` and `policy.deliveryTimeoutMs` on the returned observer to override it. A full queue drops new deltas. Observer failure and timeout leave inference unchanged. The durable terminal event remains authoritative, and replaying settled history emits no deltas.
-
-## Verify and deploy
-
-```bash
+```sh
 bun run --cwd platform/cloudflare typecheck
 bun run --cwd platform/cloudflare test
 bun run --cwd platform/cloudflare test:workers
 bun run --cwd platform/cloudflare bundle
 ```
-
-The [Worker Loader platform](../worker-loader/README.md) owns Code Mode sandbox policy and its shared workerd and Celld runtime tests.
-
-Set authentication before using the event API:
-
-```bash
-cd platform/cloudflare
-bunx wrangler secret put TARDIGRADE_TOKEN
-```
-
-Store each provider credential as a Wrangler secret:
-
-```bash
-cd platform/cloudflare
-bunx wrangler secret put OPENAI_API_KEY
-```
-
-Set `TARDIGRADE_CONFIG.models` under `vars` in `wrangler.jsonc`. The visible configuration names the default model reference, provider routes, and credential variable names:
-
-```jsonc
-{
-  "vars": {
-    "TARDIGRADE_CONFIG": {
-      "models": {
-        "default": { "provider": "openai", "model_id": "gpt-5.2" },
-        "providers": {
-          "openai": {
-            "baseUrl": "https://api.openai.com/v1",
-            "protocol": "openai-responses",
-            "env": ["OPENAI_API_KEY"]
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-A host without model configuration records a failed turn that names the missing configuration. `tdg models lock` validates the public catalog from models.dev and writes the deployment model scope to `models.lock.json`. Provider connections and secrets stay outside the lock.
-
-## HTTP shapes
-
-`GET /healthz`, `GET /v1/providers`, and `GET /v1/models` are public. The catalog routes return paginated views of the validated snapshot loaded from D1 into isolate memory. These routes expose the public catalog. Thread inference uses the model scope embedded in the Worker bundle.
-
-```json
-{ "status": "resting", "dirty": 0 }
-```
-
-Every method and thread endpoint requires `Authorization: Bearer <TARDIGRADE_TOKEN>`. A host without `TARDIGRADE_TOKEN` returns status `503` with `{ "error": "authentication is not configured" }`. An incorrect token returns status `401` with `{ "error": "unauthorized" }`.
-
-`GET /v1/methods` returns the input and output schema for each callable method on the mounted actor.
-
-`GET /v1/threads` has no input body and returns each durable thread with its event count.
-
-```json
-[{ "id": "root", "events": 5 }]
-```
-
-`POST /v1/threads/{thread}/events` accepts an event object. A root message has this shape:
-
-```json
-{ "type": "MessageReceived", "id": "m1", "text": "Research sauna safety." }
-```
-
-The response has status `202` and identifies the accepted destination.
-
-```json
-{ "thread": "root" }
-```
-
-`GET /v1/threads/{thread}/events` accepts `after`, `limit`, and comma-separated `types` query parameters. It returns sequence numbers beside the stored events.
-
-```json
-[
-  { "seq": 1, "event": { "type": "ThreadCreated", "thread": "root", "depth": 0 } },
-  { "seq": 2, "event": { "type": "MessageReceived", "id": "m1", "text": "Research sauna safety." } }
-]
-```
-
-## Configuration
-
-| Name | Default | Effect |
-| --- | --- | --- |
-| `TARDIGRADE_TOKEN` | unset | Protects every endpoint except `/healthz`; an unset value closes the event API |
-| `TARDIGRADE_ALARM_DELAY_MILLIS` | `120000` | Sets the recovery wake delay for an interrupted actor drive |
-| `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` | Selects the public model catalog source |
-| `TARDIGRADE_MODEL_CATALOG_LOAD_POLICY` | `refresh` | Uses `refresh` to fetch once per isolate or `cache-first` to prefer the D1 catalog |
-| `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000` | Bounds a catalog refresh request |
-| `TARDIGRADE_SANDBOX_LOG_CAP_BYTES` | `8192` | Limits the captured console output returned to code mode |
-| `TARDIGRADE_SANDBOX_CPU_MILLIS` | Cloudflare default | Sets the Dynamic Worker CPU limit |
-| `TARDIGRADE_SANDBOX_SUBREQUESTS` | Cloudflare default | Sets the Dynamic Worker subrequest limit |
-| `TARDIGRADE_CONFIG` | `{}` | Supplies provider connections and the default model reference as visible JSON configuration in `wrangler.jsonc` |
-| `TARDIGRADE_SANDBOX_TRANSPORT` | `capability` | Selects direct capability calls or deterministic JSON `replay` for loaded Workers |
-
-`wrangler.jsonc` also makes the catalog D1 binding, Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_WORKER_LOADER_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, outbound policy, and transport. `layerWorkerLoaderSandbox` accepts overrides for each value.

@@ -1293,8 +1293,8 @@ test("rejects remounting without replacing the actor", () => {
   expect(original).toBeDefined()
   for (const name of ["echo", "other"]) {
     const definition = actor({ name, methods: {}, components: [] })
-    expect(() => createWorker(definition)).toThrow('Worker already hosts actor "echo"; call createWorker once per module')
-    expect(() => cloudflareWorker(definition)).toThrow('Worker already hosts actor "echo"; call createWorker once per module')
+    expect(() => createWorker(definition)).toThrow('Worker already hosts actor "echo"; call defineWorkerHost once per module')
+    expect(() => cloudflareWorker(definition)).toThrow('Worker already hosts actor "echo"; call defineWorkerHost once per module')
     expect(mountedActor).toBe(original)
   }
 })

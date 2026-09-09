@@ -1,37 +1,18 @@
 import { join } from "node:path"
-import { Effect, Layer } from "effect"
-import { BunFileSystem, BunPath } from "@effect/platform-bun"
-import { FetchHttpClient } from "effect/unstable/http"
-import { createHost, serve } from "tardie/bun"
-import { modelLayer } from "tardie/model/host"
+import { createBunHost, serve } from "tardie/bun"
+import { bunModelServices } from "tardie/server/model-services"
 import { modelAdapters } from "tardie/model/adapter"
 import { openAICompatibleAdapter } from "tardie/model/openai"
-import { catalogDiscoveryOf } from "tardie/http/models"
-import { ModelCatalogStore, layerModelCatalog } from "tardie/server/catalog"
-import { layerFileModelCatalogRepository } from "tardie/server/catalog-repository"
-import { layerConfig, projectConfigOf, readConfig } from "tardie/server/config"
-import { makeInferenceStream } from "tardie/http/inference-stream"
-
 import definition from "./actor"
 
-const projectFile = Bun.file(new URL("wrangler.jsonc", import.meta.url))
-const project = projectConfigOf(Bun.JSONC.parse(await projectFile.text()))
-const config = readConfig(process.env, project)
-const configLayer = layerConfig(config)
-const catalogRepository = layerFileModelCatalogRepository(config.catalog.cachePath).pipe(
-  Layer.provide(BunFileSystem.layer)
-)
-const catalog = Layer.provide(layerModelCatalog(), [configLayer, catalogRepository])
-const snapshot = await Effect.runPromise(ModelCatalogStore.pipe(Effect.provide(catalog)))
-const inference = makeInferenceStream()
-const layers = Layer.mergeAll(
-  modelLayer(config, snapshot, modelAdapters(openAICompatibleAdapter), inference.observer),
-  BunFileSystem.layer,
-  BunPath.layer,
-  FetchHttpClient.layer
-)
+const { config, layers, api } = await bunModelServices({
+  configFile: new URL("wrangler.jsonc", import.meta.url),
+  env: process.env,
+  adapters: modelAdapters(openAICompatibleAdapter)
+})
+
 const storage = config.db === ":memory:" ? ":memory:" : `${config.db}.actors`
-const host = await createHost({
+const host = await createBunHost({
   actor: definition,
   storage,
   storageLayout: {
@@ -49,7 +30,7 @@ const host = await createHost({
 try {
   const server = await serve(host, {
     port: config.port,
-    api: { inference, catalog: catalogDiscoveryOf(snapshot, config.model, config.modelCredentials) },
+    api,
     ...(config.token === undefined ? {} : { token: config.token })
   })
   try {
