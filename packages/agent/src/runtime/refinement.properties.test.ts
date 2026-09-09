@@ -146,11 +146,12 @@ const completeAgent = (
   const tools = toolsComponentFrom(
     AGENT_VIEW_ALGEBRA.empty,
     serve,
-    (log, call) => offeredTools(log, call).map((tool) => tool.spec)
+    (log, call) => offeredTools(log, call).map((tool) => ({ ...tool.spec, ...(tool.concurrency === undefined ? {} : { concurrency: tool.concurrency }) })),
+    options.toolConcurrency
   ) as AgentComponent<unknown>
   const inference = inferenceFromHistory(
     { ...options, models: options.models ?? {} },
-    (log) => renderOf(components, log)
+    (log) => renderOf(components, log, options)
   )
   return {
     derive: (log) => {
@@ -171,13 +172,24 @@ const completeAgent = (
   }
 }
 
-type TurnKind = "complete" | "tool" | "failed" | "cancelled" | "compacted"
+type TurnKind = "complete" | "tool" | "batch" | "failed" | "cancelled" | "compacted"
 
 const eventsFor = (kinds: ReadonlyArray<TurnKind>): ReadonlyArray<Event> => kinds.flatMap((kind, index) => {
   const turn = `m${index}`
   const at = index * 20
   const head = { type: "MessageReceived", id: turn, text: `request ${index}`, model: MODEL, at } as Event
   const called = { type: "ModelCalled", callId: `${turn}/infer/0`, turn, model: MODEL, at: at + 1 } as Event
+  if (kind === "batch") {
+    return [
+      head, called,
+      { type: "ToolCalled", callId: "z", name: "execute", arguments: { code: "return 1" }, turn, batchId: `${turn}/infer/0`, batchIndex: 0, at: at + 2 },
+      { type: "ToolCalled", callId: "a", name: "execute", arguments: { code: "return 2" }, turn, batchId: `${turn}/infer/0`, batchIndex: 1, at: at + 2 },
+      { type: "ToolReturned", callId: "a", result: 2, turn, at: at + 3 },
+      { type: "ToolReturned", callId: "z", result: 1, turn, at: at + 4 },
+      { type: "ModelCalled", callId: `${turn}/infer/1`, turn, model: MODEL, at: at + 5 },
+      { type: "TurnCompleted", turn, output: `answer ${index}`, at: at + 6 }
+    ] as ReadonlyArray<Event>
+  }
   if (kind === "complete") {
     return [head, called, { type: "TurnCompleted", turn, output: `answer ${index}`, at: at + 2 } as Event]
   }
@@ -210,7 +222,7 @@ const eventsFor = (kinds: ReadonlyArray<TurnKind>): ReadonlyArray<Event> => kind
 })
 
 const historyArbitrary = fc.array(
-  fc.constantFrom<TurnKind>("complete", "tool", "failed", "cancelled", "compacted"),
+  fc.constantFrom<TurnKind>("complete", "tool", "batch", "failed", "cancelled", "compacted"),
   { maxLength: 5 }
 ).map(eventsFor)
 

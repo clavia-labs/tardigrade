@@ -104,7 +104,7 @@ export {
 } from "./component/repair"
 export { nativeOutput } from "./component/native-output"
 export { DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./component/budget"
-export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./runtime/tools"
+export { toolsReactorFrom, DEFAULT_TOOL_CONCURRENCY, type ToolConcurrency, type Answer, type PendingCall, type Serve } from "./runtime/tools"
 export {
   compactionReactor,
   contextPolicyOf,
@@ -160,6 +160,7 @@ export {
   CODE_SYSTEM,
   codeSystemFor,
   DEFAULT_CODE_SUMMARY_MAX_LENGTH,
+  DEFAULT_CODE_TOOL_CONCURRENCY,
   type CodeModeOptions
 } from "./component/code"
 export { system, type SystemProjection, type SystemText } from "./component/system"

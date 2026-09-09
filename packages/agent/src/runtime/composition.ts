@@ -10,7 +10,7 @@ import { agentKeys } from "../log/events"
 import type { InferPolicy } from "../inference/contract"
 import { inferenceMachine } from "../inference/machine"
 import { modelPolicyOverrideOf, type ModelPolicyOverride } from "../inference/access"
-import { incrementalToolsComponentFrom, type Answer, type PendingCall } from "./tools"
+import { incrementalToolsComponentFrom, toolConcurrencyOf, toolConcurrencyInstruction, DEFAULT_TOOL_CONCURRENCY, type ToolConcurrency, type Answer, type PendingCall } from "./tools"
 import type { ContextPolicy } from "../component/compaction"
 import type { AgentR } from "./turn"
 import { agentMessageMethod } from "../actor/message"
@@ -18,6 +18,7 @@ import { agentMessageMethod } from "../actor/message"
 // AgentTool pairs one model-visible tool specification with the handler for calls to that tool.
 // A derived tool is therefore advertised and routable from the same value.
 export interface AgentTool<R = never> {
+  readonly concurrency?: ToolConcurrency
   readonly spec: ToolSpec
   readonly serve: (
     call: PendingCall,
@@ -134,6 +135,7 @@ const contextOf = (fragments: ReadonlyArray<ContextFragment>): Partial<ContextPo
 const checkedTools = (tools: ReadonlyArray<AgentTool<unknown>>): ReadonlyArray<AgentTool<unknown>> => {
   const names = new Set<string>()
   for (const tool of tools) {
+    toolConcurrencyOf(tool.concurrency)
     if (names.has(tool.spec.name)) throw new Error(`tool "${tool.spec.name}" declared more than once`)
     names.add(tool.spec.name)
   }
@@ -156,11 +158,14 @@ export interface Rendered {
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
-const renderView = (view: AgentView): Rendered => {
+const renderView = (view: AgentView, concurrency: ToolConcurrency = DEFAULT_TOOL_CONCURRENCY): Rendered => {
   const fragment = outputFrom(view.output)
   return {
-    system: view.system.filter((piece) => piece !== "").join("\n"),
-    tools: checkedTools(view.tools).map((tool) => tool.spec),
+    system: [...view.system, toolConcurrencyInstruction(toolConcurrencyOf(concurrency))].filter((piece) => piece !== "").join("\n"),
+    tools: checkedTools(view.tools).map((tool) => {
+      const instruction = toolConcurrencyInstruction(toolConcurrencyOf(tool.concurrency))
+      return instruction === "" ? tool.spec : { ...tool.spec, description: `${tool.spec.description}\n${instruction}` }
+    }),
     context: contextOf(view.context),
     ...(fragment.kind === "native"
       ? {}
@@ -176,9 +181,10 @@ const renderView = (view: AgentView): Rendered => {
 // renderOf derives the model request from the same component view that routing reads.
 export const renderOf = <const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>>(
   components: Cs,
-  log: ReadonlyArray<Event>
+  log: ReadonlyArray<Event>,
+  options: Pick<InferOptions, "toolConcurrency"> = {}
 ): Rendered =>
-  renderView(viewFrom(components, log))
+  renderView(viewFrom(components, log), options.toolConcurrency)
 
 const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
   const fragments = [messageKeys, agentKeys, ...(children === undefined ? [] : [children])]
@@ -188,9 +194,10 @@ const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
   }
 }
 
-// InferOptions declares model authority and retry policy for an infer root.
+// InferOptions declares model authority, retry policy, and tool admission for an infer root.
 export interface InferOptions extends Partial<Omit<InferPolicy, "models">> {
   readonly models?: ModelPolicyOverride
+  readonly toolConcurrency?: ToolConcurrency
 }
 
 // infer composes an agent's child components and adds the model loop over their final view.
@@ -206,19 +213,20 @@ export const infer = <
   type R = AgentR | ComponentR
   const combined = composeComponents("infer.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<ComponentR>
   const childMachine = combined.machine
-  renderView(childMachine.output(childMachine.initial()).view)
-  const { models: rawModels, ...policy } = options
+  const { models: rawModels, toolConcurrency, ...policy } = options
+  renderView(childMachine.output(childMachine.initial()).view, toolConcurrency)
   const models = modelPolicyOverrideOf(rawModels)
   const inferPolicy = { ...policy, models }
   const incrementalInference = inferenceMachine(inferPolicy, {
     initial: childMachine.initial,
     step: childMachine.step,
-    output: (state) => renderView(childMachine.output(state).view)
+    output: (state) => renderView(childMachine.output(state).view, toolConcurrency)
   }) as TransitionProjection<unknown, R>
   const incrementalTools = incrementalToolsComponentFrom(
     AGENT_VIEW_ALGEBRA.empty,
     childMachine,
-    (view) => checkedTools(view.tools) as ReadonlyArray<AgentTool<R>>
+    (view) => checkedTools(view.tools) as ReadonlyArray<AgentTool<R>>,
+    toolConcurrency
   )
   const toolsMachine = incrementalTools.machine
   const root = component({

@@ -128,8 +128,7 @@ const toTool = (t: ToolSpec): Tool => ({
 export const actionOf = (result: ProcessorResult): Action => {
   const calls = result.toolCalls ?? []
   const text = (result.content ?? "").trim()
-  const call = calls.find((c) => c.function.name === "execute") ?? calls[0]
-  if (call !== undefined) {
+  const decoded = calls.map((call) => {
     let args: unknown
     try {
       args = JSON.parse(call.function.arguments)
@@ -137,12 +136,17 @@ export const actionOf = (result: ProcessorResult): Action => {
       args = { code: call.function.arguments }
     }
     return {
-      kind: "call",
       callId: call.id,
       name: call.function.name,
-      arguments: args,
-      ...(text === "" ? {} : { text })
+      arguments: args
     }
+  })
+  const first = decoded[0]
+  if (first !== undefined) {
+    const prose = text === "" ? {} : { text }
+    return decoded.length === 1
+      ? { kind: "call", ...first, ...prose }
+      : { kind: "calls", calls: [first, ...decoded.slice(1)], ...prose }
   }
   if (text !== "") return { kind: "complete", output: text }
   // A provider that declined leaves neither: content_filter is the finish reason that says so,

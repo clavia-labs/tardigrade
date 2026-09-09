@@ -49,6 +49,8 @@ export const ToolCalled = Schema.Struct({
   callId: Schema.String,
   name: Schema.String,
   arguments: Schema.Unknown,
+  batchId: Schema.optional(Schema.String),
+  batchIndex: Schema.optional(Schema.Finite),
   // The spend of the attempt this call answered (packages/agent/src/inference/usage.ts). An empty object
   // is an attempt with unreported spend; an absent field is an event no attempt produced.
   usage: Schema.optional(Schema.Unknown),
@@ -380,8 +382,16 @@ type Served = {
   readonly mode?: import("../output/contract").OutputMode
 }
 
+// ToolCall identifies one requested tool operation within a model response.
+export interface ToolCall {
+  readonly callId: string
+  readonly name: string
+  readonly arguments: unknown
+}
+
 export type Action =
   | ({ readonly kind: "call"; readonly callId: string; readonly name: string; readonly arguments: unknown; readonly text?: string } & Served)
+  | ({ readonly kind: "calls"; readonly calls: readonly [ToolCall, ...ToolCall[]]; readonly text?: string } & Served)
   | ({ readonly kind: "complete"; readonly output: string } & Served)
   | ({
       readonly kind: "fail"
