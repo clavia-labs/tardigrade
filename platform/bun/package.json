@@ -41,5 +41,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"
+  },
+  "devDependencies": {
+    "fast-check": "^4.9.0"
   }
 }

@@ -227,6 +227,15 @@ const granted = (amount: number): Event => ({ type: "BudgetGranted", amount, tur
 const denied: Event = { type: "BudgetDenied", reason: "no", turn: "m1", at: 101 }
 
 describe("the escalation lifecycle", () => {
+  test("an initial grant replaces the implicit allowance and has a turn key", () => {
+    const head: Event = { type: "MessageReceived", id: "m1", text: "work", budget: 99, at: 0 }
+    const grant: Event = { type: "BudgetGranted", turn: "m1", initial: true, amount: 2, at: 1 }
+    expect(budgetOf([head, grant, granted(3)], { limit: 100 })).toBe(5)
+    expect(agentKeys.keyOf(grant)).toBe("bi:m1")
+    expect(agentKeys.keyOf({ ...grant, amount: 100, at: 2 })).toBe("bi:m1")
+    expect(agentKeys.keyOf({ ...grant, turn: "m2" })).toBe("bi:m2")
+  })
+
   test("a grant and denial for one request share a decision key", () => {
     const grant: Event = { type: "BudgetGranted", amount: 2, callId: "request-1", turn: "m1", at: 1 }
     const denial: Event = { type: "BudgetDenied", reason: "no", callId: "request-1", turn: "m1", at: 2 }

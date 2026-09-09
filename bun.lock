@@ -286,6 +286,9 @@
         "@effect/sql-sqlite-bun": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
       },
+      "devDependencies": {
+        "fast-check": "^4.9.0",
+      },
     },
     "platform/cloudflare": {
       "name": "@clavia/tardigrade-cloudflare",

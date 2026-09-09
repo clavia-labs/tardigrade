@@ -81,7 +81,7 @@ describe("actionOf", () => {
       content: "let me check",
       toolCalls: [{ id: "call_9", type: "function", function: { name: "execute", arguments: '{"code":"return 2"}' } }]
     } as never)
-    expect(action).toMatchObject({ kind: "call", callId: "call_9", name: "execute", arguments: { code: "return 2" }, text: "let me check" })
+    expect(action).toMatchObject({ kind: "calls", calls: [{ callId: "call_9", name: "execute", arguments: { code: "return 2" } }], text: "let me check" })
   })
 
   test("plain text completes; nothing throws", () => {
@@ -335,7 +335,7 @@ describe("infer end to end", () => {
         model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "compute", at: 1 }]))
       ).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )
-    expect(action).toMatchObject({ kind: "call", callId: "call_7", name: "execute", arguments: { code: "return 42" }, text: "on it" })
+    expect(action).toMatchObject({ kind: "calls", calls: [{ callId: "call_7", name: "execute", arguments: { code: "return 42" } }], text: "on it" })
     const body = requested!.body as { messages: ReadonlyArray<{ role: string }>; tools: ReadonlyArray<unknown> }
     expect(requested!.url).toContain("model.test")
     expect(body.messages.some((m) => m.role === "system")).toBe(true)
