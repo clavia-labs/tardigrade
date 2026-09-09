@@ -1453,12 +1453,25 @@ describe("declared limits", () => {
 })
 
 describe("stream bounds", () => {
-  for (const protocol of ["openai-chat-completions", "openai-responses"] as const) {
+  for (const protocol of ["openai-chat-completions", "openai-responses", "anthropic-messages"] as const) {
     test.each([undefined, 120_000, 900_000])(`${protocol} applies the total bound to SDK timers (%s)`, async (totalMs) => {
       const timer = spyOn(globalThis, "setTimeout")
       const sdkDelays: Array<number | undefined> = []
       const fetchImpl = async () => {
         sdkDelays.push(timer.mock.calls.at(-1)?.[1])
+        if (protocol === "anthropic-messages") {
+          const events = [
+            { type: "message_start", message: { id: "r1", type: "message", role: "assistant", model: "m", content: [], usage: { input_tokens: 1, output_tokens: 0 } } },
+            { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+            { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } },
+            { type: "content_block_stop", index: 0 },
+            { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } },
+            { type: "message_stop" }
+          ]
+          return new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), {
+            headers: { "content-type": "text/event-stream" }
+          })
+        }
         return sse(protocol === "openai-chat-completions" ? [
           { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
           { id: "r1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
