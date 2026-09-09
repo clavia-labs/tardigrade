@@ -1,4 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
+import fc from "fast-check"
 import { Database } from "bun:sqlite"
 import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -595,6 +596,45 @@ describe("the bun host", () => {
     actor.close()
     thread.close()
   })
+
+  test("response append rollback preserves history at every generated failure position", async () => {
+    await fc.assert(fc.asyncProperty(
+      fc.integer({ min: 1, max: 8 }), fc.integer({ min: 0, max: 5 }), fc.nat(),
+      async (callCount, priorCount, failureSeed) => {
+        const path = freshPath()
+        const eventKey = (event: Event) => event.type === "ThreadCreated" ? undefined : `${event.type}:${String(event.callId ?? event.id)}`
+        const settings = { ...options(path), keyOf: eventKey, actorFor: () => ({ projections: [], keyOf: eventKey }) }
+        let host = await createBunHost(settings)
+        const previous = [created("echo"), ...Array.from({ length: priorCount }, (_, id) => ({ type: "Done", id, at: id + 1 }))]
+        const response: Event[] = [
+          { type: "ModelReturned", callId: "response", ordinal: 0, turn: "turn", outcome: "returned", usage: {}, at: 10 },
+          ...Array.from({ length: callCount }, (_, index) => ({ type: "ToolCalled", callId: `call-${index}`, responseId: "response", name: "read", arguments: {}, turn: "turn", at: 10 }))
+        ]
+        try {
+          await host.seed("echo", previous)
+          const saved = await host.read("echo")
+          const db = new Database(bunThreadDatabasePath(path, "echo"))
+          const failurePosition = failureSeed % response.length
+          db.exec(`CREATE TRIGGER fail_response BEFORE INSERT ON events WHEN NEW.seq = ${saved.length + failurePosition + 1} BEGIN SELECT RAISE(ABORT, 'injected response failure'); END`)
+          db.close()
+          await expect(host.seed("echo", response)).rejects.toThrow()
+          await host.close()
+          host = await createBunHost(settings)
+          expect(await host.read("echo")).toEqual(saved)
+          const repaired = new Database(bunThreadDatabasePath(path, "echo"))
+          repaired.exec("DROP TRIGGER fail_response")
+          repaired.close()
+          await host.seed("echo", response)
+          await host.seed("echo", response)
+          await host.close()
+          host = await createBunHost(settings)
+          expect(await host.read("echo")).toEqual([...saved, ...response])
+        } finally {
+          await host.close()
+        }
+      }
+    ), { numRuns: 25 })
+  }, 30_000)
 
   test("a batch appends atomically: a mid-batch key collision absorbs that row only", async () => {
     const h = await createBunHost(options(freshPath()))

@@ -317,7 +317,7 @@ describe("infer component", () => {
         return Effect.succeed(
           returned
             ? { kind: "complete" as const, output: "done" }
-            : { kind: "call" as const, callId: "c1", name: "echo", arguments: { hi: 1 } }
+            : { kind: "calls" as const, calls: [{ callId: "c1", name: "echo", arguments: { hi: 1 } }] as const }
         )
       }
     })
@@ -343,7 +343,7 @@ describe("infer component", () => {
         const returned = request.trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
         return Effect.succeed(
           returned === undefined
-            ? { kind: "call" as const, callId: "c9", name: "ghost", arguments: {} }
+            ? { kind: "calls" as const, calls: [{ callId: "c9", name: "ghost", arguments: {} }] as const }
             : { kind: "complete" as const, output: JSON.stringify(returned.result) }
         )
       }
@@ -367,7 +367,7 @@ describe("infer component", () => {
         const returned = request.trajectory.find((event) => event.type === "ToolReturned") as { result?: unknown } | undefined
         return Effect.succeed(
           returned === undefined
-            ? { kind: "call" as const, callId: "c10", name: "fetch.get", arguments: { url: "https://example.com" } }
+            ? { kind: "calls" as const, calls: [{ callId: "c10", name: "fetch.get", arguments: { url: "https://example.com" } }] as const }
             : { kind: "complete" as const, output: JSON.stringify(returned.result) }
         )
       }
@@ -429,7 +429,7 @@ describe("infer component", () => {
       react: (request: InferRequest) => Effect.succeed(
         request.trajectory.some((event) => event.type === "ToolReturned")
           ? { kind: "complete" as const, output: "done" }
-          : { kind: "call" as const, callId: "once-1", name: "once", arguments: {} }
+          : { kind: "calls" as const, calls: [{ callId: "once-1", name: "once", arguments: {} }] as const }
       )
     })
     const events = await run(

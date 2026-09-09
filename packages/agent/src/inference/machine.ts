@@ -1,3 +1,4 @@
+import { responsesOf } from "../log/response"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 import { Cause, Clock, Effect } from "effect"
@@ -5,7 +6,8 @@ import { EventLog } from "@clavia/tardigrade-core/log"
 import { HashMap, Option } from "effect"
 import { Self } from "@clavia/tardigrade-core/runtime"
 import { transitionProjection, type CompleteTransitionDerivation, type TransitionProjection } from "@clavia/tardigrade-core/transition"
-import { modelCalled, outputRejected, outputRepaired, textReturned, turnFailed } from "../log/events"
+import { normalizeAction } from "./action-compat"
+import { modelCalled, modelReturned, outputRejected, outputRepaired, textReturned, turnFailed } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Machine } from "@clavia/tardigrade-core/machine"
 import type { Action } from "../log/events"
@@ -100,12 +102,11 @@ const stampOf = (action: Action): { readonly endpoint?: unknown } =>
 // strict binding is checked rather than trusted (../turn.test.ts, "a turn that declares an output
 // contract"). What a mismatch means belongs to the implementation: a terminal under native or
 // local, and a recorded rejection under the two that carry on (src/output/contract.ts, mismatchCauseOf).
-const completionOf = (action: Action & { readonly kind: "complete" }, usage: unknown, ctx: Consequence): Event => {
+const completionOf = (action: Action & { readonly kind: "complete" }, ctx: Consequence): Event => {
   const mode = action.mode
   const completed = {
     type: "TurnCompleted",
     output: action.output,
-    usage,
     attemptKey: ctx.attempt,
     ...(mode === undefined ? {} : { mode }),
     ...stampOf(action),
@@ -122,7 +123,6 @@ const completionOf = (action: Action & { readonly kind: "complete" }, usage: unk
     return {
       type: "TurnFailed",
       error: `the model binding answered a turn declaring "${ctx.contract.name}" without stating the output mode it ran in`,
-      usage,
       turn: ctx.turn,
       ...epochStamp(ctx.epoch),
       cause: "inference_error",
@@ -142,7 +142,6 @@ const completionOf = (action: Action & { readonly kind: "complete" }, usage: unk
       text: action.output,
       errors: decoded.errors,
       mode,
-      usage,
       ...stampOf(action),
       turn: ctx.turn,
       ...epochStamp(ctx.epoch),
@@ -155,7 +154,6 @@ const completionOf = (action: Action & { readonly kind: "complete" }, usage: unk
     error:
       `the response missed the declared output contract "${ctx.contract.name}" in ${mode.name} mode:\n` +
       decoded.errors.map((e) => `- ${e}`).join("\n"),
-    usage,
     turn: ctx.turn,
     ...epochStamp(ctx.epoch),
     cause,
@@ -167,74 +165,33 @@ const completionOf = (action: Action & { readonly kind: "complete" }, usage: unk
   } as Event
 }
 
-// consequenceOf returns the action's recorded answer: the model responds by acting. Every
-// consequence carries the turn it serves, the attempt's spend, and who served it: `usage` is
-// always stamped, and an attempt whose binding reported nothing stamps an empty object, so
-// usageIn reads the spend as unknown rather than absent (usage.test.ts, "unknown is sticky").
-// `endpoint` is separate from spend on purpose: an endpoint that reports no tokens still has to
-// be named in the log (events.ts, Endpoint).
-const consequenceOf = (action: Exclude<Action, { readonly kind: "calls" }>, ctx: Consequence): Event => {
-  const usage = action.usage ?? {}
-  if (action.kind === "call" && ctx.contract !== undefined && action.mode === undefined) {
-    return {
-      type: "TurnFailed",
-      error: `the model binding answered a turn declaring "${ctx.contract.name}" with a tool call but did not state the output mode it ran in`,
-      usage,
-      turn: ctx.turn,
-      ...epochStamp(ctx.epoch),
-      cause: "inference_error",
-      attempts: 1,
-      attemptKey: ctx.attempt,
-      ...stampOf(action),
-      at: ctx.at
-    } as Event
-  }
-  return action.kind === "call"
-    ? ({
-        type: "ToolCalled",
-        callId: action.callId,
-        name: action.name,
-        arguments: action.arguments,
-        usage,
-        ...(action.mode === undefined ? {} : { mode: action.mode }),
-        ...stampOf(action),
-        turn: ctx.turn,
-        ...epochStamp(ctx.epoch),
-        at: ctx.at
-      } as Event)
-    : action.kind === "complete"
-      ? completionOf(action, usage, ctx)
-      : ({
-          type: "TurnFailed",
-          error: action.error,
-          usage,
-          turn: ctx.turn,
-          ...epochStamp(ctx.epoch),
-          cause: action.failure?.cause ?? "model",
-          ...(action.mode === undefined ? {} : { mode: action.mode }),
-          ...(action.failure === undefined
-            ? {}
-            : {
-                attempts: action.failure.attempts,
-                attemptKey: ctx.attempt,
-                ...(action.failure.policy === undefined ? {} : { policy: action.failure.policy })
-              }),
-          ...stampOf(action),
-          at: ctx.at
-        } as Event)
-}
-
-// consequencesOf records a batch in provider order with one usage entry (runtime/batches.test.ts).
+// consequencesOf records each tool request separately under its model response (runtime/batches.test.ts).
 const consequencesOf = (action: Action, ctx: Consequence): ReadonlyArray<Event> => {
-  if (action.kind !== "calls") return [consequenceOf(action, ctx)]
-  if (ctx.contract !== undefined && action.mode === undefined) {
-    return [consequenceOf({ ...action, ...action.calls[0], kind: "call" }, ctx)]
+  if (action.kind === "complete") return [completionOf(action, ctx)]
+  const stamp = {
+    turn: ctx.turn,
+    ...epochStamp(ctx.epoch),
+    ...(action.mode === undefined ? {} : { mode: action.mode }),
+    ...stampOf(action),
+    at: ctx.at
   }
-  return action.calls.map((call, index) => {
-    const event = consequenceOf({ ...action, ...call, kind: "call" }, ctx)
-    const { usage, ...rest } = event
-    return { ...rest, batchId: ctx.attempt, batchIndex: index, ...(index === 0 ? { usage } : {}) } as Event
-  })
+  if (action.kind === "fail") return [{
+    ...stamp,
+    type: "TurnFailed",
+    error: action.error,
+    cause: action.failure?.cause ?? "model",
+    attemptKey: ctx.attempt,
+    ...(action.failure === undefined ? {} : { attempts: action.failure.attempts, policy: action.failure.policy })
+  }]
+  if (ctx.contract !== undefined && action.mode === undefined) return [{
+    ...stamp,
+    type: "TurnFailed",
+    error: `the model binding answered a turn declaring "${ctx.contract.name}" with a tool call but did not state the output mode it ran in`,
+    cause: "inference_error",
+    attempts: 1,
+    attemptKey: ctx.attempt
+  }]
+  return action.calls.map((call) => ({ type: "ToolCalled", ...call, ...stamp, responseId: ctx.attempt }))
 }
 
 const failureMessage = (cause: Cause.Cause<never>): string => {
@@ -320,8 +277,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
   const modelFailures = derived.modelFailures
   // A rejected response is a spent logical attempt: the next ask must not reuse the idempotency
   // key, or a deduping provider answers the correction with the response it just refused.
-  const rejected = rejectionsIn(slice).length
-  const logicalAttempt = slice.filter((e) => e.type === "ToolCalled" && (e.batchIndex === undefined || e.batchIndex === 0)).length + modelFailures + rejected
+  const logicalAttempt = responsesOf(slice).returnedAttempts + modelFailures
   const attempt = `${turn}/infer/${logicalAttempt}`
   const rendered = derived.rendered
   const fallback = rendered.output?.fallback
@@ -393,7 +349,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
     }
   }
   // The attempt's identity, the same string its ModelCalled mark carries. A died attempt leaves
-  // its mark. The completed tool calls count logical attempts, so an operator resume keeps the
+  // its mark. Recorded responses count logical attempts, so an operator resume keeps the
   // failed inference's provider idempotency key. The mark ordinal remains unique per physical run.
   return [
     context.effect("infer", {
@@ -480,7 +436,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               Effect.asVoid
             )
           }
-          const action = yield* binding
+          const action = normalizeAction(yield* binding
             .react(
               {
                 trajectory,
@@ -513,9 +469,9 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               Effect.ensuring(
                 Effect.suspend(() => signal?.aborted === true ? persistPartialOutput() : Effect.void)
               )
-            )
+            ))
           const after = yield* Clock.currentTimeMillis
-          const calls = action.kind === "calls" ? action.calls : action.kind === "call" ? [action] : []
+          const calls = action.kind === "calls" ? action.calls : []
           const seen = new Set(trajectory.filter((event) => event.type === "ToolCalled" && event.turn === input.turn).map((event) => String(event.callId)))
           const duplicate = calls.find((call) => {
             if (seen.has(call.callId)) return true
@@ -548,7 +504,13 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               })
             : []
           return [
-            ...((action.kind === "call" || action.kind === "calls") && action.text !== undefined && action.text !== ""
+            modelReturned({
+              callId: input.attempt, ordinal: input.ordinal, turn: input.turn, ...epochStamp(input.epoch),
+              outcome: action.kind === "fail" ? "failed" : "returned",
+              usage: action.usage ?? {}, ...stampOf(action),
+              ...(action.kind === "fail" ? { error: action.error } : {}), at: after
+            }),
+            ...(action.kind === "calls" && action.text !== undefined && action.text !== ""
               ? [textReturned({ text: action.text, turn: input.turn, at: after })]
               : []),
             ...repaired.map((event) => outputRepaired({

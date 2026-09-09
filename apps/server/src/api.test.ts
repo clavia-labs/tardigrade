@@ -57,12 +57,7 @@ const scripted = ({ trajectory }: InferRequest): Action => {
     | { result?: { result?: unknown } }
     | undefined
   if (returned !== undefined) return { kind: "complete", output: JSON.stringify(returned.result?.result ?? null) }
-  return {
-    kind: "call",
-    callId: brief.slice("spawn ".length),
-    name: "execute",
-    arguments: { code: `const a = await agents.run({ text: "hello child" }); return a.output;` }
-  }
+  return { kind: "calls", calls: [{ callId: brief.slice("spawn ".length), name: "execute", arguments: { code: `const a = await agents.run({ text: "hello child" }); return a.output;` } }] }
 }
 
 const testModel = { provider: "openai", model_id: "gpt-mini" } as const

@@ -116,9 +116,7 @@ test.each([false, true])("Mortys inherit Rick's depth ceiling with background=%s
         readonly result?: { readonly result?: unknown }
       } | undefined
       if (returned !== undefined) return { kind: "complete", output: JSON.stringify(returned.result?.result) }
-      return {
-        kind: "call", callId: `${turn}-replicate`, name: "execute",
-        arguments: {
+      return { kind: "calls", calls: [{ callId: `${turn}-replicate`, name: "execute", arguments: {
           code: `return await Promise.all(Array.from({ length: ${siblings} }, async (_, index) => {
             const name = ${JSON.stringify(path)} + "-" + index;
             const answer = await agents.run({ text: ${JSON.stringify(String(generation + 1) + ":")} + name, background: ${background}, ...(${named} ? { name } : {}) });
@@ -126,8 +124,7 @@ test.each([false, true])("Mortys inherit Rick's depth ceiling with background=%s
             const terminal = ${background} ? await agents.result({ handle: answer.handle }) : answer;
             return JSON.parse(terminal.output);
           }));`
-        }
-      }
+        } }] }
     }
     let pick = 0
     const scenario = actorScenario(rootActor, mind, {
@@ -228,11 +225,7 @@ const mindFor = (missions: ReadonlyMap<string, Mission>, jitter: ReadonlyArray<n
         key: mission.key,
         background: mission.background
       })))
-      return {
-        kind: "call",
-        callId: `${turn}-rick-plan`,
-        name: "execute",
-        arguments: {
+      return { kind: "calls", calls: [{ callId: `${turn}-rick-plan`, name: "execute", arguments: {
           code: `const missions = ${manifest};
             const launched = await Promise.all(missions.map(async (mission) => {
               const answer = await agents.run({
@@ -249,8 +242,7 @@ const mindFor = (missions: ReadonlyMap<string, Mission>, jitter: ReadonlyArray<n
                 : answer;
               return JSON.parse(terminal.output);
             }));`
-        }
-      }
+        } }] }
     }
 
     const missionKey = brief.slice("Morty mission ".length)
@@ -268,7 +260,7 @@ const mindFor = (missions: ReadonlyMap<string, Mission>, jitter: ReadonlyArray<n
     )
 
     if (!called(first)) {
-      return action({ kind: "call", callId: first, name: "execute", arguments: { code: portalCode(mission.key, 1) } })
+      return action({ kind: "calls", calls: [{ callId: first, name: "execute", arguments: { code: portalCode(mission.key, 1) } }] })
     }
     const firstResponse = responseFor(trajectory, turn, first)
     if (firstResponse !== undefined && outcomeOf(firstResponse) !== "grant") {
@@ -278,24 +270,19 @@ const mindFor = (missions: ReadonlyMap<string, Mission>, jitter: ReadonlyArray<n
       return action({ kind: "fail", error: `Morty ${mission.key} resumed before the first portal settled` })
     }
     if (!called(wall)) {
-      return action({ kind: "call", callId: wall, name: "execute", arguments: { code: `return "budget-wall:${mission.key}";` } })
+      return action({ kind: "calls", calls: [{ callId: wall, name: "execute", arguments: { code: `return "budget-wall:${mission.key}";` } }] })
     }
     if (slice.some((event) => event.type === "BudgetDenied")) {
       return action({ kind: "complete", output: JSON.stringify({ key: mission.key, status: `budget-${mission.budget}` }) })
     }
-    if (!slice.some((event) => event.type === "BudgetGranted")) {
+    if (!slice.some((event) => event.type === "BudgetGranted" && event.initial !== true)) {
       if (!called(budgetCall)) {
-        return action({
-          kind: "call",
-          callId: budgetCall,
-          name: "request_budget",
-          arguments: { reason: `budget:${mission.key}`, amount: 2 }
-        })
+        return action({ kind: "calls", calls: [{ callId: budgetCall, name: "request_budget", arguments: { reason: `budget:${mission.key}`, amount: 2 } }] })
       }
       return action({ kind: "fail", error: `Morty ${mission.key} resumed before the budget authority answered` })
     }
     if (!called(second)) {
-      return action({ kind: "call", callId: second, name: "execute", arguments: { code: portalCode(mission.key, 2) } })
+      return action({ kind: "calls", calls: [{ callId: second, name: "execute", arguments: { code: portalCode(mission.key, 2) } }] })
     }
     const secondResponse = responseFor(trajectory, turn, second)
     if (secondResponse !== undefined && outcomeOf(secondResponse) !== "grant") {
@@ -543,16 +530,11 @@ const cancelForegroundMortys = async ({ children, headroom, schedule }: {
       if (brief === "cancel every Morty") {
         const returned = trajectory.some((event) => event.type === "ToolReturned")
         if (returned) return { kind: "complete", output: "too late" }
-        return {
-          kind: "call",
-          callId: "cancel-fanout",
-          name: "execute",
-          arguments: {
+        return { kind: "calls", calls: [{ callId: "cancel-fanout", name: "execute", arguments: {
             code: `return await Promise.all(Array.from({ length: ${children} }, (_, morty) =>
               agents.run({ text: "held Morty " + morty })
             ));`
-          }
-        }
+          } }] }
       }
       if (!observedChild) {
         observedChild = true
@@ -676,14 +658,9 @@ test("Rick settles when a foreground Morty is cancelled", async () => {
       if (returned !== undefined) {
         return { kind: "complete", output: JSON.stringify(returned.result?.result) }
       }
-      return {
-        kind: "call",
-        callId: "wait-for-morty",
-        name: "execute",
-        arguments: {
+      return { kind: "calls", calls: [{ callId: "wait-for-morty", name: "execute", arguments: {
           code: `return await agents.run({ text: "held Morty" });`
-        }
-      }
+        } }] }
     }
     startedChild()
     await childReleased

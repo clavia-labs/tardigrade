@@ -1,3 +1,4 @@
+import { startingBudget, needsInitialBudget } from "../log/budget"
 import { bindTransitionContext, type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { Self, type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
 import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
@@ -62,14 +63,9 @@ export const budgetPolicyOf = (policy: Partial<BudgetPolicy> = {}): BudgetPolicy
   })()
 })
 
-// budgetOf returns the turn's declared or default budget plus every recorded grant
-// (budget.test.ts, "a grant raises the ceiling, so budgetOf grows and the machine reopens").
+// budgetOf sums recorded grants, including the initial allowance, with a fallback for historical turns (budget.test.ts).
 export const budgetOf = (view: ReadonlyArray<Event>, policy: Partial<BudgetPolicy> = {}): number => {
-  const head = turnHead(view) as { budget?: unknown } | undefined
-  const base =
-    typeof head?.budget === "number" && head.budget > 0
-      ? Math.floor(head.budget)
-      : budgetPolicyOf(policy).limit
+  const base = startingBudget(view, budgetPolicyOf(policy).limit)
   const granted = view.reduce((n, e) => (e.type === "BudgetGranted" ? n + Number((e as { amount?: unknown }).amount ?? 0) : n), 0)
   return base + granted
 }
@@ -260,10 +256,22 @@ const budgetCommunication = (
       }), { invocation })]
 }
 
-const usedBy = (trajectory: ReadonlyArray<Event>, toolNames: ReadonlySet<string>): number =>
-  trajectory.filter(
-    (event) => event.type === "ToolCalled" && toolNames.has(String((event as { name?: unknown }).name))
-  ).length
+// admissionOf fixes each call's budget decision from preceding grants and calls (runtime/batches.test.ts).
+const admissionOf = (trajectory: ReadonlyArray<Event>, toolNames: ReadonlySet<string>, policy: BudgetPolicy, callId: string) => {
+  let remaining = startingBudget(trajectory, policy.limit)
+  let used = 0
+  for (const event of trajectory) {
+    if (event.type === "BudgetGranted") remaining += Number(event.amount ?? 0)
+    if (event.type !== "ToolCalled" || !toolNames.has(String(event.name))) continue
+    const admitted = remaining > 0
+    if (admitted) {
+      remaining -= 1
+      used += 1
+    }
+    if (event.callId === callId) return { admitted, used: admitted ? used : used + 1 }
+  }
+  return { admitted: false, used: used + 1 }
+}
 
 const guardedTool = <R>(
   tool: AgentTool<R>,
@@ -273,19 +281,13 @@ const guardedTool = <R>(
   ...tool,
   serve: (call, log, answer): ReadonlyArray<Transition<never, R>> => {
     const trajectory = turnView(log)
-    const callIndex = trajectory.findIndex((event) => event.type === "ToolCalled" && event.callId === call.callId)
-    const admitted = callIndex === -1 ? trajectory : trajectory.slice(0, callIndex + 1)
-    const used = usedBy(admitted, toolNames)
-    const admittedBatchCall = callIndex !== -1 && trajectory[callIndex]!.batchId !== undefined &&
-      !budgetSpent(admitted) && used <= budgetOf(trajectory, policy)
-    if (budgetSpent(trajectory) && !admittedBatchCall) {
-      return [answer({
-        error: "Tool budget reached. Do not call this tool again. Answer now with your best result from what you have already gathered."
-      })] as ReadonlyArray<Transition<never, R>>
-    }
-    const wall = wallFor(trajectory, policy, used, call.context)
-    if (wall !== undefined) return [wall]
-    return tool.serve(call, log, answer)
+    const admission = admissionOf(trajectory, toolNames, policy, call.callId)
+    if (admission.admitted) return tool.serve(call, log, answer)
+    const wall = wallFor(trajectory, policy, admission.used, call.context)
+    return [
+      ...(wall === undefined ? [] : [wall]),
+      answer({ error: "Tool budget reached. Do not call this tool again. Answer now with your best result from what you have already gathered." })
+    ] as ReadonlyArray<Transition<never, R>>
   }
 })
 
@@ -307,8 +309,14 @@ export const budget = <
     children: [combined]
   }
   const derived = (children: ReturnType<typeof childMachine.output>, trajectory: ReadonlyArray<Event>, log: ReadonlyArray<Event>) => {
+    const head = turnHead(trajectory)
+    const initial = head !== undefined && needsInitialBudget(trajectory)
+      ? [bindTransitionContext(head, "budget").intent("budget.initial", (at) => budgetGranted({
+          amount: startingBudget(trajectory, resolved.limit), initial: true, turn: String(head.id), at
+        }))]
+      : []
     const spent = budgetSpent(trajectory)
-    const turn = String((turnHead(trajectory) as { readonly id?: unknown } | undefined)?.id ?? "")
+    const turn = String(head?.id ?? "")
     const canRequest = canRequestBudget(trajectory) && authorityFor(log, turn, options.authority) !== undefined
     const toolNames = new Set(children.view.tools.map((tool) => tool.spec.name))
     return {
@@ -322,7 +330,7 @@ export const budget = <
         context: children.view.context,
         output: children.view.output
       },
-      transitions: [...budgetCommunication(log, options.authority), ...children.transitions] as ReadonlyArray<Transition<never, R | Router | Self>>
+      transitions: [...initial, ...budgetCommunication(log, options.authority), ...children.transitions] as ReadonlyArray<Transition<never, R | Router | Self>>
     }
   }
   const communicationEvent = (event: Event): boolean =>

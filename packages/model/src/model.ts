@@ -144,9 +144,7 @@ export const actionOf = (result: ProcessorResult): Action => {
   const first = decoded[0]
   if (first !== undefined) {
     const prose = text === "" ? {} : { text }
-    return decoded.length === 1
-      ? { kind: "call", ...first, ...prose }
-      : { kind: "calls", calls: [first, ...decoded.slice(1)], ...prose }
+    return { kind: "calls", calls: [first, ...decoded.slice(1)], ...prose }
   }
   if (text !== "") return { kind: "complete", output: text }
   // A provider that declined leaves neither: content_filter is the finish reason that says so,

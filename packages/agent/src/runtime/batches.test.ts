@@ -1,8 +1,10 @@
+import fc from "fast-check"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { actor } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { EventLog } from "@clavia/tardigrade-core/log"
 import { createHost } from "@clavia/tardigrade-host/host"
 import { agentMethods, budget, codeMode, infer, nativeOutput, tool } from "../index"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
@@ -54,6 +56,85 @@ const setup = (
 const complete = (): Action => ({ kind: "complete", output: "done", usage: { promptTokens: 50, completionTokens: 5, costUsd: 0.005 } })
 
 describe("tool batches", () => {
+  test("generated starting allowances are recorded once before inference and survive restart", async () => {
+    await fc.assert(fc.asyncProperty(fc.integer({ min: 1, max: 20 }), fc.integer({ min: 1, max: 20 }), async (limit, replacement) => {
+      const components = (amount: number) => [budget([tool({ spec, run: () => Effect.void })], { limit: amount })]
+      const original = setup(components(limit), (request) => {
+        expect(request.trajectory.filter((event) => event.type === "BudgetGranted")).toMatchObject([{ initial: true, amount: limit }])
+        return complete()
+      })
+      await original.start()
+      const grantIndex = original.read().findIndex((event) => event.type === "BudgetGranted")
+      expect(grantIndex).toBeLessThan(original.read().findIndex((event) => event.type === "ModelCalled"))
+      const pending = original.read().slice(0, grantIndex + 1)
+      const resumed = setup(components(replacement), complete, {}, pending)
+      await resumed.host.wake(ROOT)
+      await resumed.host.drive()
+      expect(resumed.read().filter((event) => event.type === "BudgetGranted")).toMatchObject([{ initial: true, amount: limit }])
+      expect(resumed.read().filter((event) => event.type === "BudgetGranted")).toHaveLength(1)
+      expect(boundaryOf(resumed.read(), TURN)?.kind).toBe("completed")
+    }), { numRuns: 20 })
+  })
+
+  test("generated grants preserve admission and bounded progress across replay", async () => {
+    await fc.assert(fc.asyncProperty(
+      fc.integer({ min: 1, max: 5 }),
+      fc.array(fc.oneof(fc.constant("call" as const), fc.integer({ min: 1, max: 3 })), { minLength: 1, maxLength: 12 }),
+      fc.integer({ min: 1, max: 4 }), fc.nat(),
+      async (initial, operations, concurrency, restartSeed) => {
+        const tokens = Array.from({ length: initial }, () => true)
+        const admitted: string[] = []
+        const requested: string[] = []
+        const history: Event[] = [
+          { type: "MessageReceived", id: TURN, text: "work", at: 0 },
+          { type: "BudgetGranted", initial: true, amount: initial, turn: TURN, at: 1 },
+          { type: "ModelCalled", callId: "m1/infer/0", ordinal: 0, turn: TURN, at: 2 },
+          { type: "ModelReturned", callId: "m1/infer/0", ordinal: 0, turn: TURN, outcome: "returned", usage: {}, at: 3 }
+        ]
+        for (const operation of [...operations, "call"] as const) {
+          if (typeof operation === "number") {
+            tokens.push(...Array.from({ length: operation }, () => true))
+            history.push({ type: "BudgetGranted", amount: operation, turn: TURN, at: history.length })
+          } else {
+            const callId = `call-${requested.length}`
+            requested.push(callId)
+            if (tokens.shift() !== undefined) admitted.push(callId)
+            history.push({ type: "ToolCalled", ...call(callId), responseId: "m1/infer/0", turn: TURN, at: history.length })
+          }
+        }
+        const runFrom = async (saved: ReadonlyArray<Event>, limit: number) => {
+          const executions: string[] = []
+          const recovered = setup([budget([tool({ spec, run: (_input, context) => Effect.gen(function* () {
+            for (let step = 0; step < (Number(context.callId.split("-")[1]) + restartSeed) % 4; step++) yield* Effect.yieldNow
+            executions.push(context.callId)
+            return context.callId
+          }) })], { limit })], (request) => {
+            expect(request.trajectory.filter((event) => event.type === "ToolReturned")).toHaveLength(requested.length)
+            return complete()
+          }, { toolConcurrency: concurrency }, saved)
+          await recovered.host.wake(ROOT)
+          await recovered.host.drive()
+          expect(boundaryOf(recovered.read(), TURN)?.kind).toBe("completed")
+          const results = recovered.read().filter((event) => event.type === "ToolReturned")
+          expect(results).toHaveLength(requested.length)
+          expect(new Set(results.map((event) => event.callId)).size).toBe(requested.length)
+          for (const event of results) {
+            expect(event.result).toEqual(admitted.includes(String(event.callId)) ? event.callId : { error: expect.stringContaining("Tool budget reached") })
+          }
+          expect(recovered.read().filter((event) => event.type === "BudgetGranted" && event.initial === true)).toHaveLength(1)
+          return { events: recovered.read(), executions }
+        }
+        const first = await runFrom(history, 1)
+        expect([...first.executions].sort()).toEqual([...admitted].sort())
+        const cut = history.length + restartSeed % (first.events.length - history.length + 1)
+        const saved = first.events.slice(0, cut)
+        const done = new Set(saved.filter((event) => event.type === "ToolReturned").map((event) => event.callId))
+        const replay = await runFrom(saved, initial + 10)
+        expect([...replay.executions].sort()).toEqual(admitted.filter((id) => !done.has(id)).sort())
+      }
+    ), { numRuns: 60 })
+  }, 30_000)
+
   test("default dispatch overlaps calls and waits for every result before inference", async () => {
     const first = Promise.withResolvers<void>()
     const second = Promise.withResolvers<void>()
@@ -85,6 +166,14 @@ describe("tool batches", () => {
       await driving
     }
     expect(keys).toEqual(["m1/infer/0", "m1/infer/1"])
+    const responses = run.read().filter((event) => event.type === "ModelReturned")
+    expect(responses.map((event) => [event.callId, event.ordinal, event.outcome])).toEqual([
+      ["m1/infer/0", 0, "returned"], ["m1/infer/1", 1, "returned"]
+    ])
+    const requests = run.read().filter((event) => event.type === "ToolCalled")
+    expect(requests.map((event) => event.responseId)).toEqual(["m1/infer/0", "m1/infer/0"])
+    expect(requests.every((event) => event.usage === undefined && event.batchIndex === undefined)).toBe(true)
+    expect(run.read().find((event) => event.type === "TurnCompleted")?.usage).toBeUndefined()
     expect(usageIn(run.read(), TURN)).toMatchObject({ promptTokens: 150, completionTokens: 25, costUsd: 0.015 })
     expect(renderMessages(run.read()).filter((message) => message.role !== "user")).toEqual([
       { role: "assistant", content: "Reading both files.", toolCalls: [
@@ -158,6 +247,27 @@ describe("tool batches", () => {
     }
   })
 
+  test.each([undefined, 1])("historical resume with a changed default and recorded budget %s", async (recordedBudget) => {
+    const saved: Event[] = [
+      { type: "MessageReceived", id: TURN, text: "work", ...(recordedBudget === undefined ? {} : { budget: recordedBudget }), at: 0 },
+      { type: "ModelCalled", turn: TURN, callId: "m1/infer/0", ordinal: 0, at: 1 },
+      { type: "ModelReturned", turn: TURN, callId: "m1/infer/0", ordinal: 0, outcome: "returned", usage: {}, at: 2 },
+      ...["a", "b"].map((callId) => ({ type: "ToolCalled", turn: TURN, callId, name: "read", arguments: {}, responseId: "m1/infer/0", at: 2 }))
+    ]
+    const executions: string[][] = []
+    for (const limit of [1, 2]) {
+      const ran: string[] = []
+      const recovered = setup([budget([tool({ spec, run: (_input, context) => Effect.sync(() => {
+        ran.push(context.callId)
+        return context.callId
+      }) })], { limit })], complete, {}, saved)
+      await recovered.host.wake(ROOT)
+      await recovered.host.drive()
+      executions.push(ran)
+    }
+    expect(executions).toEqual(recordedBudget === undefined ? [["a"], ["a", "b"]] : [["a"], ["a"]])
+  })
+
   test("duplicate IDs reject the whole response before dispatch", async () => {
     let ran = 0
     const run = setup([tool({ spec, run: () => Effect.sync(() => ++ran) })], () => batch(call("same"), call("same")))
@@ -221,6 +331,25 @@ describe("tool batches", () => {
     expect(run.read().filter((event) => event.type === "BudgetExhausted")).toHaveLength(1)
   })
 
+  test.each([1, "unbounded"] as const)("a later grant cannot admit an earlier refused call at concurrency %s", async (toolConcurrency) => {
+    const ran: string[] = []
+    const run = setup([budget([tool({ spec, run: (_input, context) => Effect.gen(function*() {
+      ran.push(context.callId)
+      if (context.callId === "a") yield* (yield* EventLog).append([
+        { type: "BudgetGranted", turn: TURN, callId: "grant", amount: 1, at: 2 }
+      ])
+      return context.callId
+    }) })], { limit: 1 })], (request) => {
+      const results = request.trajectory.filter((event) => event.type === "ToolReturned")
+      if (results.length === 0) return batch(call("a"), call("b"))
+      if (results.length === 2) return batch(call("c"))
+      return complete()
+    }, { toolConcurrency })
+    await run.start()
+    expect(ran).toEqual(["a", "c"])
+    expect(run.read().find((event) => event.type === "ToolReturned" && event.callId === "b")?.result).toMatchObject({ error: expect.stringContaining("Tool budget reached") })
+  })
+
   test("code mode retains and settles every execute call", async () => {
     const run = setup([codeMode()], (request) => request.trajectory.some((event) => event.type === "ToolCalled") ? complete() : batch(
       { callId: "code-1", name: "execute", arguments: { code: "return 1" } },
@@ -240,11 +369,11 @@ describe("tool batches", () => {
     expect(run.read().filter((event) => event.type === "ToolReturned")).toHaveLength(2)
   })
 
-  test("compaction keeps a complete batch even when a checkpoint names a later call", () => {
+  test.each(["current", "legacy"])("compaction keeps a complete %s batch when a checkpoint names a later call", (format) => {
     const history: Event[] = [
       { type: "MessageReceived", id: TURN, text: "work", at: 0 },
-      { type: "ToolCalled", turn: TURN, callId: "a", name: "read", arguments: {}, batchId: "m1/infer/0", batchIndex: 0, at: 1 },
-      { type: "ToolCalled", turn: TURN, callId: "b", name: "read", arguments: {}, batchId: "m1/infer/0", batchIndex: 1, at: 1 },
+      { type: "ToolCalled", turn: TURN, callId: "a", name: "read", arguments: {}, ...(format === "current" ? { responseId: "m1/infer/0" } : { batchId: "m1/infer/0", batchIndex: 0 }), at: 1 },
+      { type: "ToolCalled", turn: TURN, callId: "b", name: "read", arguments: {}, ...(format === "current" ? { responseId: "m1/infer/0" } : { batchId: "m1/infer/0", batchIndex: 1 }), at: 1 },
       { type: "ToolReturned", turn: TURN, callId: "b", result: "x".repeat(500), at: 2 }
     ]
     const reactor = compactionReactor({ contextWindowTokens: 100, fireRatio: 0.5, keepRatio: 0.1 })
