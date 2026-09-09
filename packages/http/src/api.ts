@@ -62,6 +62,7 @@ export interface ApiOptions {
   readonly heartbeat?: Duration.Input
   readonly inference?: InferenceStream
   readonly inferenceBufferCapacity?: number
+  readonly streamShutdownSignal?: AbortSignal
 }
 
 const paramOf = (params: Readonly<Record<string, string | undefined>>, name: string): string =>
@@ -209,10 +210,20 @@ const streamCursor = Effect.gen(function*() {
   return { from: lastEventId ?? after } as const
 })
 
-const streamResponseOf = (body: Stream.Stream<Uint8Array>) => Effect.succeed(HttpServerResponse.stream(body, {
-  contentType: "text/event-stream",
-  headers: { "cache-control": "no-cache" }
-}))
+const streamResponseOf = (body: Stream.Stream<Uint8Array>, signal?: AbortSignal) => {
+  const stream = signal === undefined ? body : body.pipe(
+    Stream.interruptWhen(Effect.callback<void>((resume) => {
+      const stop = () => resume(Effect.void)
+      if (signal.aborted) stop()
+      else signal.addEventListener("abort", stop, { once: true })
+      return Effect.sync(() => signal.removeEventListener("abort", stop))
+    }))
+  )
+  return Effect.succeed(HttpServerResponse.stream(stream, {
+    contentType: "text/event-stream",
+    headers: { "cache-control": "no-cache" }
+  }))
+}
 
 // tail streams one thread with its durable sequence as both the page cursor and SSE id.
 const tail = (
@@ -275,23 +286,25 @@ const streamResponse = (
   threads: ActorThreads,
   id: string,
   limit: number,
-  heartbeat: Duration.Input
+  heartbeat: Duration.Input,
+  signal?: AbortSignal
 ) => Effect.gen(function*() {
   const first = yield* threads.eventsPage(id, 0, 1)
   if (first.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
   const cursor = yield* streamCursor
-  if ("problem" in cursor) return cursor.problem
-  return yield* streamResponseOf(tail(threads.eventsPage, threads.awaitHead, id, cursor.from ?? 0, limit, heartbeat))
+  if (cursor.problem !== undefined) return cursor.problem
+  return yield* streamResponseOf(tail(threads.eventsPage, threads.awaitHead, id, cursor.from ?? 0, limit, heartbeat), signal)
 })
 
 const actorThreadsStreamResponse = (
   threads: ActorThreads,
   limit: number,
-  heartbeat: Duration.Input
+  heartbeat: Duration.Input,
+  signal?: AbortSignal
 ) => Effect.gen(function*() {
   const cursor = yield* streamCursor
-  if ("problem" in cursor) return cursor.problem
-  return yield* streamResponseOf(actorThreadsTail(threads, cursor.from, limit, heartbeat))
+  if (cursor.problem !== undefined) return cursor.problem
+  return yield* streamResponseOf(actorThreadsTail(threads, cursor.from, limit, heartbeat), signal)
 })
 
 const inferenceStreamResponse = (
@@ -299,13 +312,23 @@ const inferenceStreamResponse = (
   actor: string,
   thread: string,
   heartbeat: Duration.Input,
-  bufferCapacity: number
+  bufferCapacity: number,
+  signal?: AbortSignal
 ) => Effect.sync(() => {
   const encoder = new TextEncoder()
   let unsubscribe: (() => void) | undefined
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+  let stop: (() => void) | undefined
+  const cleanup = () => {
+    unsubscribe?.()
+    if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer)
+    if (stop !== undefined) signal?.removeEventListener("abort", stop)
+  }
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
+      stop = () => { cleanup(); controller.close() }
+      if (signal?.aborted) { stop(); return }
+      signal?.addEventListener("abort", stop, { once: true })
       unsubscribe = inference.subscribe((delta) => {
         if (delta.instance !== actor || delta.thread !== thread) return
         if ((controller.desiredSize ?? 1) <= 0) return
@@ -315,10 +338,7 @@ const inferenceStreamResponse = (
         if ((controller.desiredSize ?? 1) > 0) controller.enqueue(encoder.encode(HEARTBEAT))
       }, Duration.toMillis(heartbeat))
     },
-    cancel() {
-      unsubscribe?.()
-      if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer)
-    }
+    cancel: cleanup
   }, { highWaterMark: bufferCapacity })
   return HttpServerResponse.raw(body, {
     contentType: "text/event-stream",
@@ -341,7 +361,7 @@ export const layerStream = (options: ApiOptions = {}) => {
         const params = yield* HttpRouter.params
         const service = yield* Threads
         const threads = yield* actorOf(service, paramOf(params, "id"))
-        return yield* streamResponse(threads, paramOf(params, "thread"), limit, heartbeat)
+        return yield* streamResponse(threads, paramOf(params, "thread"), limit, heartbeat, options.streamShutdownSignal)
       })
     ),
     HttpRouter.add(
@@ -350,7 +370,7 @@ export const layerStream = (options: ApiOptions = {}) => {
       Effect.gen(function*() {
         const params = yield* HttpRouter.params
         const threads = yield* (yield* Threads).ensure(paramOf(params, "id"))
-        return yield* actorThreadsStreamResponse(threads, limit, heartbeat)
+        return yield* actorThreadsStreamResponse(threads, limit, heartbeat, options.streamShutdownSignal)
       })
     ),
     ...(options.inference === undefined ? [] : [HttpRouter.add(
@@ -365,7 +385,8 @@ export const layerStream = (options: ApiOptions = {}) => {
           paramOf(params, "id"),
           thread,
           heartbeat,
-          bufferCapacity
+          bufferCapacity,
+          options.streamShutdownSignal
         )
       })
     )])

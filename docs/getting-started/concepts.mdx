@@ -61,7 +61,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
     ```ts
     interface ComponentOutput<View, Requirements> {
       view: View
-      transitions: ReadonlyArray<Transition>
+      transitions: ReadonlyArray<Transition<never, Requirements>>
     }
 
     interface Component<View, Requirements> {
@@ -72,11 +72,13 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
     ```
   </ConceptInterface>
 
-  <p className="concept-bridge-copy">Component authors keep their state type through `incrementalComponent`. Tardigrade erases that private type only when it composes different component machines.</p>
+  <p className="concept-bridge-copy">Component authors keep their state type through `component`. Tardigrade erases that private type only when it composes different component machines.</p>
 
   <ConceptInterface>
     ```ts
-    incrementalComponent({
+    import { component } from "tardie/core"
+
+    const counter = component({
       name: "counter",
       initial: () => 0,
       step: (count, event) =>
@@ -91,7 +93,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <div className="compaction-example-copy">
     <h3>Example: compaction</h3>
-    <p>The compaction component tracks the model context as events arrive. At 104k tokens, it crosses the 80% threshold of a 128k window and enables an effect that summarizes the older span. The effect appends `CompactionCompleted`. Later model requests use its summary with a 64k-token tail, while the full event log remains available.</p>
+    <p>The compaction component tracks the model context as events arrive. With a 128k window and the default `fireRatio: 0.8`, 104k tokens crosses the threshold and enables an effect that summarizes the older span. The effect appends `CompactionCompleted`. Later model requests use its summary with a 64k-token tail, while the full event log remains available. Set `fireRatio` and `keepRatio` on `compaction()` to change these thresholds.</p>
   </div>
 
   <div className="component-diagram-frame">
@@ -120,30 +122,45 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
   <div className="concept-copy">
     <h2>Transitions</h2>
     <p>A transition describes one unit of work enabled by projected state. An intent proposes events without contacting the outside world. An effect performs external work and returns events that record its outcome.</p>
-    <p>Every transition has a durable key. The runtime compares that key with recorded event keys, executes work that is still owed, commits its events, and advances the projections. The actor is settled when no transition remains enabled.</p>
+    <p>Components declare work through the context supplied to `step(state, event, context)`. A local tag, the component name, and the owning event position identify each transition. The runtime attaches that reference to the final event in its result batch and uses recorded completions to avoid repeating finished work. The actor is settled when no transition remains enabled.</p>
   </div>
 
   <ConceptInterface>
     ```ts
-    type Transition = Intent | ExternalEffect
+    import { component } from "tardie/core"
+    import type { TransitionContext } from "tardie/core/component"
+    import type { Transition } from "tardie/core/transition"
 
-    interface Intent {
-      kind: "intent"
-      key: string
-      events(input, at): ReadonlyArray<Event>
+    type Pending = {
+      context: TransitionContext
+      work: Transition<never>
     }
 
-    interface ExternalEffect {
-      kind: "effect"
-      key: string
-      act(input, signal): Effect<ReadonlyArray<Event>>
-    }
+    const acknowledge = component<Pending | undefined, undefined>({
+      name: "acknowledge",
+      initial: () => undefined,
+      step: (pending, event, context) => {
+        if (event.type === "Requested") {
+          return {
+            context,
+            work: context.intent("ack", { type: "Acknowledged" })
+          }
+        }
+        return pending?.context.matches("ack", event) ? undefined : pending
+      },
+      output: (pending) => ({
+        view: undefined,
+        transitions: pending === undefined ? [] : [pending.work]
+      })
+    })
     ```
   </ConceptInterface>
 
+  <p className="concept-bridge-copy">This component acknowledges the latest request. It retains the owning context until its completion arrives. `context.effect(tag, { input, act })` declares external work; `act(input, { signal })` returns an Effect containing the result events. Reuse a tag for retries of the same operation. A new operation needs a different tag or owning event.</p>
+
   <div className="transition-example-copy">
     <h3>Example: a tool-calling agent</h3>
-    <p>A message enables inference. A model tool call enables service work. Its result enables inference again. A final response completes the method call.</p>
+    <p>A message enables inference. `ModelReturned` records the response and its usage; each requested tool also gets a `ToolCalled` event linked by `responseId`. A model tool call enables service work. Its result enables inference again. A final response completes the method call.</p>
   </div>
 
   <div className="transition-loop-frame">
@@ -160,10 +177,13 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <ConceptInterface>
     ```ts
-    actor({
-      name: string,
-      methods: ActorMethods,
-      components: Component[]
+    import { actor } from "tardie/core"
+    import { agentMessageMethod, infer, outputValidateOnce } from "tardie/agent"
+
+    const assistant = actor({
+      name: "assistant",
+      methods: { message: agentMessageMethod },
+      components: [infer([outputValidateOnce])]
     })
     ```
   </ConceptInterface>
@@ -175,19 +195,24 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
   <div className="concept-copy">
     <h2>Methods</h2>
     <p>Methods define the actor's typed callable surface. Each method validates its input, turns a valid call into an event, and projects the call's pending, completed, failed, or cancelled state.</p>
-    <p>A caller supplies a call identifier. Repeating that call is absorbed by the log, and the caller can read the same durable result after a retry or process restart.</p>
+    <p>A caller supplies a call identifier. Repeating that call is absorbed by the log, and the caller can read the same durable result after a retry or process restart. The method projection tracks history and exposes `currentEpoch(id)` and `invocationState(invocation)` queries.</p>
   </div>
 
   <ConceptInterface>
     ```ts
-    actorMethod({
+    import { actorMethod } from "tardie/core"
+    import { input, output, event, projection } from "./message-contract"
+
+    const message = actorMethod({
       input,
       output,
-      event(call): Event,
-      state(log, invocation): MethodState
+      event,
+      projection
     })
     ```
   </ConceptInterface>
+
+  <p className="concept-bridge-copy">The application supplies the input and output schemas, event builder, and projection. The projection has `initial`, `step`, and `output`; its output exposes the lifecycle queries. An optional `cancellation` declaration provides the cancellation event builder.</p>
 
   <div className="method-diagram-frame">
     <MethodDiagram />

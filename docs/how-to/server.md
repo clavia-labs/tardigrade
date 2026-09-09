@@ -12,7 +12,7 @@ Bun 1.4 or later. `GET /healthz` answers once it is up.
 
 ## Endpoints
 
-Base path `/v1`. Runtime routes address the actor mounted at the server origin. Control routes manage the actors available to a host.
+Base path `/v1`. Runtime routes address instances of the actor mounted at the server origin. In paths below, `{instance}` identifies an actor instance. Control routes manage actor definitions available to a host.
 
 | | |
 | --- | --- |
@@ -20,34 +20,40 @@ Base path `/v1`. Runtime routes address the actor mounted at the server origin. 
 | `GET /v1/models` | Search and page public model metadata. The page reports the host model policy and default. `availability`, `provider`, `search`, `sort`, `order`, `unpriced`, `cursor`, `limit` |
 | `GET /v1/metadata` | Read the mounted actor name and storage metadata |
 | `GET /v1/methods` | List methods with standalone input and output schemas |
-| `GET /v1/threads` | List threads. `root`, `maxDepth`, `maxNodes` bound what the listing builds |
-| `PUT /v1/threads/{id}/methods/{method}/calls/{call}` | Call a method with its input as the body |
-| `GET /v1/threads/{id}/methods/{method}/calls/{call}` | Read a method call's derived state |
-| `POST /v1/threads/{id}/events` | Append an event, creating the thread if new |
-| `GET /v1/threads/{id}/events` | Read the log. `after`, `limit`, `types` |
-| `GET /v1/threads/{id}/events/stream` | Follow the log. Server-sent events resume from `Last-Event-ID` |
-| `GET /v1/actors/{actor}/threads/{id}/inference/stream` | Follow transient model text produced after the connection opens |
-| `GET /v1/threads/{id}/projections/{projection}` | Read a projection the mounted actor declares |
-| `GET /v1/threads/{id}/tree` | Read the spawn family. `maxDepth`, `maxNodes` bound what the tree builds |
-| `GET /v1/actors` | List actors available to the host |
-| `PUT /v1/actors` | Push an actor artifact to the host |
+| `GET /v1/actors/{instance}/threads` | List threads. `root`, `maxDepth`, `maxNodes` bound what the listing builds |
+| `PUT /v1/actors/{instance}/threads/{thread}/methods/{method}/calls/{call}` | Call a method with its input as the body |
+| `GET /v1/actors/{instance}/threads/{thread}/methods/{method}/calls/{call}` | Read a method call's derived state |
+| `POST /v1/actors/{instance}/threads` | Allocate a root thread with an optional `name` or retry `key` |
+| `POST /v1/actors/{instance}/threads/{thread}/events` | Append an event to an allocated thread |
+| `GET /v1/actors/{instance}/threads/{thread}/events` | Read the log. `after`, `limit`, `types` |
+| `GET /v1/actors/{instance}/threads/{thread}/events/stream` | Follow the log. Server-sent events resume from `Last-Event-ID` |
+| `GET /v1/actors/{instance}/threads/{thread}/inference/stream` | Follow transient model text produced after the connection opens |
+| `GET /v1/actors/{instance}/threads/{thread}/projections/{projection}` | Read a projection the mounted actor declares |
+| `GET /v1/actors/{instance}/threads/{thread}/tree` | Read the spawn family. `maxDepth`, `maxNodes` bound what the tree builds |
+| `GET /v1/actors` | List actor instances |
+| `GET /v1/definitions` | List actor definitions available to the host |
+| `PUT /v1/definitions` | Push an actor artifact to a host with a writable definition registry |
 | `GET /healthz` `GET /openapi.json` `GET /docs` | Unversioned |
 
 ```bash
-curl -X PUT localhost:4242/v1/threads/inv-81/methods/message/calls/m1 \
+curl -X POST localhost:4242/v1/actors/main/threads \
+  -H 'content-type: application/json' \
+  -d '{"name":"inv-81"}'
+
+curl -X PUT localhost:4242/v1/actors/main/threads/inv-81/methods/message/calls/m1 \
   -H 'content-type: application/json' \
   -d '{"text":"audit the deploy"}'
-# {"thread":"inv-81","method":"message","call":"m1"}
+# 202 Accepted; Location points to the call state
 
-curl localhost:4242/v1/threads/inv-81/methods/message/calls/m1
+curl localhost:4242/v1/actors/main/threads/inv-81/methods/message/calls/m1
 # {"status":"completed","output":"…"}
 ```
 
-Calling a method is the application ingress. The caller chooses the thread and call ids, and the method schema validates the body. Repeating the same call URL is absorbed by the log.
+Calling a method is the application ingress. Allocate a thread first, then use its assigned ID and a stable call ID. The method schema validates the body. Repeating the same call URL is absorbed by the log. A successful submission returns `202 Accepted`; poll its `Location` until the state is `completed`, `failed`, or `cancelled`.
 
-Appending is the lower-level ingress for channels and interventions. The host atomically records `ThreadCreated` before the first delivered event. A spawned child records its parent address and depth in that creation event, so the tree survives changes to thread naming.
+Appending is the lower-level ingress for channels and interventions on an existing thread. Allocation records `ThreadCreated` before application events. A spawned child records its parent address and depth in that creation event, so the tree survives changes to thread naming.
 
-Reads are projections of the log, so `?at=<seq>` answers as of that point in history.
+The events endpoint pages through the log with `after`, `limit`, and `types`. Custom projection endpoints accept the query fields declared by their projection schemas.
 
 ## Errors
 
@@ -66,7 +72,7 @@ Declared request failures are `application/problem+json`.
 | | |
 | --- | --- |
 | `PORT` | `4242` |
-| `TARDIGRADE_DB` | `.tardigrade/actor.sqlite` |
+| `TARDIGRADE_ACTOR_DATA` | `.tardigrade/data`. Instance storage directory used by generated Bun servers |
 | `TARDIGRADE_MAX_CONCURRENT_THREADS` | Maximum actor threads settled at once. Defaults to `4` |
 | `TARDIGRADE_TOKEN` | Unset. When set, runtime and control routes need `Authorization: Bearer`. `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
 | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc`. Project and platform configuration for a directly hosted server |
@@ -109,21 +115,21 @@ Catalog responses use cursor pagination. They include `revision`, `status`, `ref
 
 ## Live inference output
 
-The server publishes normalized model text at `GET /v1/actors/{actor}/threads/{thread}/inference/stream`. The SSE connection carries output produced after it opens and does not replay. Each delta names the actor, instance, thread, turn, logical attempt, physical provider request, model, text block, and sequence. `makeActorClient().followInference(...)` opens the stream for a public thread ID.
+The server publishes normalized model text at `GET /v1/actors/{instance}/threads/{thread}/inference/stream`. The SSE connection carries output produced after it opens and does not replay. Each delta names the actor, instance, thread, turn, logical attempt, physical provider request, model, text block, and sequence. `makeActorClient().followInference(...)` opens the stream for a public thread ID.
 
-An embedded Bun host can pass `inferenceObserver` to `layerThreads` for another WebSocket, Redis, pub/sub, or telemetry transport.
+For another WebSocket, Redis, pub/sub, or telemetry transport, supply an observer as the fourth argument to `modelLayer(config, snapshot, adapters, observer)` when composing model services:
 
 ```ts
 import { Effect } from "effect"
-import { layerThreads } from "tardie/server/host"
+import type { InferenceObserver } from "tardie/agent"
 
-const threads = layerThreads({
-  inferenceObserver: {
-    policy: { bufferCapacity: 128, deliveryTimeoutMs: 250 },
-    onDelta: (delta) => Effect.promise(() => liveOutput.publish(delta))
-  }
-})
+const observer: InferenceObserver = {
+  policy: { bufferCapacity: 128, deliveryTimeoutMs: 250 },
+  onDelta: (delta) => Effect.sync(() => console.log(delta))
+}
 ```
+
+Replace the logging handler with your transport. `makeInferenceStream(observer)` from `tardie/http/inference-stream` combines this observer with an HTTP stream; pass its `observer` to `modelLayer` and the stream as `api.inference` to `serve`. The `bunModelServices` helper supplies the HTTP stream for the standard setup.
 
 The observer queue drops new deltas when it is full. Each accepted delivery has the configured timeout. Each SSE connection also drops unread frames past `inferenceBufferCapacity`, which defaults to the exported `DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY`. Observer failure, timeout, and dropped deltas leave inference and the durable event log unchanged. A completed or failed turn remains authoritative. Replaying settled history emits no deltas. A recovery call that opens a new provider stream uses a fresh `physicalAttempt` under the same durable `logicalAttempt`. `DEFAULT_INFERENCE_OBSERVER_POLICY` exports the observer queue and timeout defaults.
 
@@ -136,14 +142,15 @@ import { agentMethods } from "tardie/agent"
 import { makeActorClient } from "tardie/client"
 
 const client = makeActorClient({ baseUrl: "http://localhost:4242", methods: agentMethods })
-const invocation = await client.call("main", "inv-81", "message", {
+const thread = await client.allocateRoot("main", "inv-81")
+const invocation = await client.call(thread.instance, thread.thread, "message", {
   id: "m1",
   input: { text: "audit the deploy" },
   timeoutMs: 30_000
 })
 
-await client.cancel(invocation, { id: "stop-m1", reason: "the deploy finished" })
+await client.cancel(invocation, { reason: "the deploy finished" })
 const state = await client.state(invocation)
 ```
 
-`invoke` returns the actor, thread, method, call ID, and absolute deadline as one durable handle. `state` and `cancel` accept that handle. Execution epochs remain an internal fence, and each operation resolves the active epoch for the logical call. `methods` reports whether each method is cancellable and the maximum timeout it declares.
+`call` returns the actor, thread, method, call ID, and absolute deadline as one durable handle. `state` and `cancel` accept that handle. Execution epochs remain an internal fence, and each operation resolves the active epoch for the logical call. `methods` reports whether each method is cancellable and the maximum timeout it declares.

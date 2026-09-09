@@ -31,7 +31,7 @@ interface Actor {
 }
 ```
 
-For example, an actor named `meeseeks` exposes a message method and uses components for inference and code execution with an MCP package.
+For example, an actor named `meeseeks` exposes a message method and uses components for inference and code execution with an MCP package. The `./components`, `./methods`, `./packages`, and `./layers` modules in this guide belong to your application. For a runnable project with these services already assembled, start with the [Quickstart](/docs/quickstart).
 
 ```ts
 import { defineActor } from "tardie/core"
@@ -52,7 +52,7 @@ A host runs the actor and owns its storage, threads, and message delivery. The B
 
 ```ts
 import { defineActor } from "tardie/core"
-import { createHost } from "tardie/bun"
+import { createBunHost } from "tardie/bun"
 import { layersFor } from "./layers"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"
@@ -64,7 +64,7 @@ const meeseeks = defineActor(
   [infer, codeMode(mcpPackage)],
 )
 
-const host = await createHost({
+const host = await createBunHost({
   actor: meeseeks,
   storage: "./data",
   layersFor,
@@ -75,7 +75,7 @@ Use `host` to allocate threads and call methods from the surrounding application
 
 ### Supply component requirements
 
-`layersFor(thread)` returns an Effect layer supplying services your components need, such as `Infer` for model calls. Bun supplies the log, routing, thread identity, allocation, and workspace storage. TypeScript requires `layersFor` only when additional services are needed.
+`layersFor(thread, instance)` returns an Effect layer supplying services your components need, such as `Infer` for model calls. Bun supplies the log, routing, thread identity, allocation, and workspace storage. TypeScript requires `layersFor` only when additional services are needed.
 
 ```ts
 import { modelLayer } from "./model"
@@ -180,7 +180,7 @@ curl -X POST 'http://localhost:4242/v1/actors/rick/threads/main/methods/message'
   -d '{"text":"What is the portal code?"}'
 ```
 
-The `Idempotency-Key` header makes retries reuse the same call. The server returns `202 Accepted` with a receipt and a `Location` header. Send a `GET` request to that location to read the result.
+The `Idempotency-Key` header makes retries reuse the same call. The server returns `202 Accepted` with a receipt and a `Location` header. Poll that location with `GET` until the state is `completed`, `failed`, or `cancelled`; the first read may still be `pending`.
 
 Remote applications connect through the Client SDK. A local script can use `host` directly. Stop the HTTP server with `await server.close()` before closing its host.
 
@@ -190,7 +190,7 @@ This script defines an actor, creates its host, invokes two threads, and closes 
 
 ```ts expanded
 import { defineActor } from "tardie/core"
-import { createHost } from "tardie/bun"
+import { createBunHost } from "tardie/bun"
 import { layersFor } from "./layers"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"
@@ -202,7 +202,7 @@ const meeseeks = defineActor(
   [infer, codeMode(mcpPackage)],
 )
 
-const host = await createHost({
+const host = await createBunHost({
   actor: meeseeks,
   storage: "./data",
   layersFor,
@@ -277,13 +277,14 @@ Durable Object namespaces
     └── ["meeseeks","rick","lab"]    # lab
 ```
 
-The Bun host stores each thread beside its actor instance's database. It encodes the thread ID as a base64url filename:
+The Bun host encodes the JSON pair `[actor, instance]` as the instance database filename. It stores each thread beside that database, using the thread ID as a base64url filename:
 
 ```ts
 import { Buffer } from "node:buffer"
 import { join } from "node:path"
 
-const actorDatabase = "/data/meeseeks-rick.sqlite"
+const instanceFile = Buffer.from(JSON.stringify(["meeseeks", "rick"])).toString("base64url")
+const actorDatabase = join("/data", `${instanceFile}.sqlite`)
 const thread = "main"
 const filename = Buffer.from(thread, "utf8").toString("base64url")
 const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
@@ -291,8 +292,8 @@ const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
 
 ```text
 /data/
-├── meeseeks-rick.sqlite          # Rick's instance database
-└── meeseeks-rick.sqlite.threads/
+├── WyJtZWVzZWVrcyIsInJpY2siXQ.sqlite          # Rick's instance database
+└── WyJtZWVzZWVrcyIsInJpY2siXQ.sqlite.threads/
     ├── bWFpbg.sqlite          # main
     └── bGFi.sqlite            # lab
 ```

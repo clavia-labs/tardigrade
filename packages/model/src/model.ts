@@ -311,7 +311,7 @@ const concatBytes = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
 }
 
 type BodyReader = {
-  read: () => Promise<{ done: boolean; value?: Uint8Array }>
+  read: () => Promise<{ done: boolean; value?: Uint8Array | undefined }>
   cancel: () => Promise<unknown>
 }
 

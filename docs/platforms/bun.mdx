@@ -27,31 +27,40 @@ bun run dev:cloudflare
 
 ## Provide application services
 
-An actor that requires an application Effect service can define a Layer factory and pass it to `layerActorThreads` in `server.ts`:
+An actor that requires an application Effect service can merge its layer with the model services in `server.ts`:
 
 ```ts title="server.ts"
 import { Layer } from "effect"
-import { layerActorThreads, type ActorThreadLayersFor } from "tardie/server/host"
+import { createBunHost } from "tardie/bun"
+import { bunModelServices } from "tardie/server/model-services"
+import { modelAdapters } from "tardie/model/adapter"
+import { openAICompatibleAdapter } from "tardie/model/openai"
 import { AppConfig } from "./application"
 import definition from "./actor"
 
-const layersFor = (({ thread }) =>
-  Layer.succeed(AppConfig, { thread })) satisfies ActorThreadLayersFor<typeof definition>
-
-const threads = Layer.provide(
-  layerActorThreads(definition, { inferenceObserver: inference.observer, layersFor }),
-  [configLayer, catalog]
-)
+const { config, layers, api } = await bunModelServices({
+  env: process.env,
+  adapters: modelAdapters(openAICompatibleAdapter)
+})
+const host = await createBunHost({
+  actor: definition,
+  storage: config.actorData,
+  driver: { maxConcurrentThreads: config.maxConcurrentThreads },
+  layersFor: (thread, instance) => Layer.mergeAll(
+    layers,
+    Layer.succeed(AppConfig, { thread, instance })
+  )
+})
 ```
 
-The factory receives `actorInstance` and the internal thread address, such as `ag.root`. A Layer factory is optional when the actor has no application service requirements.
+The factory receives the thread ID and actor instance ID as separate arguments. `AppConfig` is an application-owned Effect service with `thread` and `instance` fields. Register the adapter for your configured provider protocol. Pass `api` to `serve(host, { port: config.port, api })` to expose model discovery and live inference output. Close the HTTP server before the host during shutdown. See the [Actors guide](/docs/actors#serve-over-http) for the HTTP lifecycle.
 
 ## Storage
 
-The default actor database is `.tardigrade/actor.sqlite`. Thread databases live beside it under `.tardigrade/actor.sqlite.threads/`. The host persists events before running the work they enable, so it can resume unfinished work after the process restarts.
+Generated servers store actor instances under `.tardigrade/data/`. Each instance database filename is the base64url encoding of `[actor, instance]` as JSON, followed by `.sqlite`. Thread databases live in a sibling `<instance-database>.threads/` directory, with base64url-encoded thread IDs as filenames. The host persists events before running the work they enable, so it can resume unfinished work after the process restarts.
 
 ## Configure
 
 `tdg setup` writes model configuration to `wrangler.jsonc` and local credentials to `.dev.vars`. The generated development script loads `.dev.vars`. A hosted process can provide the same credential names through its environment.
 
-Set `PORT` to change the HTTP port and `TARDIGRADE_DB` to change the SQLite database path.
+Set `PORT` to change the HTTP port and `TARDIGRADE_ACTOR_DATA` to change the storage directory used by the generated server.

@@ -292,7 +292,7 @@ export const mountActor = <R, const Methods extends ActorMethods, WorkerEnv exte
   ...[options]: CloudflareWorkerArguments<R, WorkerEnv>
 ): void => {
   if (mountedActor !== undefined) {
-    throw new Error(`Worker already hosts actor ${JSON.stringify(mountedActor.actor.name)}; call createWorker once per module`)
+    throw new Error(`Worker already hosts actor ${JSON.stringify(mountedActor.actor.name)}; call defineWorkerHost once per module`)
   }
   const defaultChildPlacement = options?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT
   if (!CLOUDFLARE_CHILD_PLACEMENTS.includes(defaultChildPlacement as "independent")) {

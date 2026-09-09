@@ -173,7 +173,7 @@ const releaseAnalyst = actor({
 })
 ```
 
-- `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless the actor narrows it with `models`.
+- `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless its `infer` options narrow it with `models`.
 
 - `compaction()` uses the selected model's catalog window. It summarizes at 80 percent and retains a 50 percent tail. Pass `fireRatio` and `keepRatio` to change those values. Each checkpoint records the policy it applied.
 
@@ -196,53 +196,38 @@ Each action and result becomes an event that every component can interpret.
 <details>
 <summary>Bind a model and durable SQLite host</summary>
 
-The three code blocks form one program.
+The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment. This example registers the adapter for OpenAI Responses and compatible chat completions; use the adapter for your configured protocol.
 
 ```ts
-import { Layer } from "effect"
-import { BunFileSystem, BunPath } from "@effect/platform-bun"
-import { FetchHttpClient } from "effect/unstable/http"
-import { infer } from "tardie/model"
-import { createBunHost } from "tardie/bun/host"
+import { createBunHost } from "tardie/bun"
+import { modelAdapters } from "tardie/model/adapter"
+import { openAICompatibleAdapter } from "tardie/model/openai"
+import { bunModelServices } from "tardie/server/model-services"
 
-const model = infer({
-  baseUrl: "https://api.openai.com/v1",
-  apiKey: process.env.OPENAI_API_KEY!,
-  provider: "openai",
-  model: "gpt-5.2",
-  protocol: "openai-responses",
-  contextWindowTokens: 400_000
+const { layers } = await bunModelServices({
+  env: process.env,
+  adapters: modelAdapters(openAICompatibleAdapter)
 })
-
-const platform = Layer.mergeAll(
-  model,
-  BunFileSystem.layer,
-  BunPath.layer,
-  FetchHttpClient.layer
-)
 
 const host = await createBunHost({
-  log: "agents.sqlite",
-  actorFor: () => releaseAnalyst.actor,
-  layersFor: () => platform
+  actor: releaseAnalyst,
+  storage: ".tardigrade",
+  layersFor: () => layers
 })
 
-await host.commitRoot("bun:main", {
-  type: "MessageReceived",
-  id: "m1",
-  text: "What changed in the deploy?",
-  at: Date.now()
-})
-await host.drive()
-
-const completed = (await host.read("main")).findLast(
-  (event) => event.type === "TurnCompleted"
-)
-console.log(completed)
-await host.close()
+try {
+  const thread = await host.allocateRootThread({ instance: "analyst", name: "main" })
+  const result = await thread.methods.message(
+    { text: "What changed in the deploy?" },
+    { key: "deploy-review" }
+  )
+  console.log(result)
+} finally {
+  await host.close()
+}
 ```
 
-The actor provider and default model must match the binding. The binding states its protocol and context window, so selection is checked before a request spends tokens.
+`bunModelServices` reads the model policy from `wrangler.jsonc` and binds inference and platform services. `createBunHost` stores actor instances under `storage`. The method call returns the completed result; retries with the same key return the same invocation. Use a new key for each new request.
 
 </details>
 

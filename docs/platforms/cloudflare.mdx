@@ -9,9 +9,72 @@ order: 2
 
 Tardigrade runs each actor thread in a SQLite-backed Cloudflare Durable Object. The generated Worker routes requests to actors and threads, stores their event logs, and resumes unfinished work through Durable Object alarms.
 
+```ts title="worker.ts"
+import definition from "./actor"
+import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
+import { modelAdapters } from "tardie/model/adapter"
+import { openAICompatibleAdapter } from "tardie/model/openai"
+import modelLock from "./models.lock.json"
+
+const services = workerModelServices({
+  adapters: modelAdapters(openAICompatibleAdapter),
+  scope: modelScopeFrom(modelLock)
+})
+
+const host = defineWorkerHost(definition, { services })
+const http = workerHttp(host)
+
+// host exposes the Durable Object classes (platform/cloudflare/test/actor.workers.ts).
+// HTTP request -> Worker handler
+//                  +-- ActorDO: allocates and tracks threads
+//                  +-- ThreadDO: stores events and executes a thread
+export const { ActorDO, ThreadDO } = host
+
+export default {
+  fetch: http.fetch
+}
+```
+
+## Verify locally
+
+Start with a project from the [Quickstart](/docs/quickstart), then install Wrangler in that project. Use a release that supports the `compatibility_date` in `wrangler.jsonc`; [updating Wrangler](https://developers.cloudflare.com/workers/wrangler/install-and-update/) also updates its local runtime:
+
+```bash
+bun add --dev wrangler@latest
+```
+
+Add `TARDIGRADE_TOKEN` and each configured provider credential to `.dev.vars`. Interactive `tdg setup` saves credentials there; credentials supplied only through the environment must also be available to Wrangler. Choose a local token and use the same value with the CLI's `--token` option. The Worker requires a token for protected routes, including local requests.
+
+Apply the local catalog migration, then start the Worker:
+
+```bash
+bunx wrangler d1 migrations apply CATALOG_DB --local
+bun run dev:cloudflare
+```
+
+Set `TARDIGRADE_TOKEN` in the calling shell to the value saved in `.dev.vars`. Wrangler reads that file for the Worker; it does not export its values to another shell. Use the URL printed by Wrangler when allocating and calling a thread. `/healthz` is public; the remaining commands require the token from `.dev.vars`:
+
+```bash
+curl http://localhost:8787/healthz
+tdg thread create --name quickstart --url http://localhost:8787 --token "$TARDIGRADE_TOKEN"
+tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickstart --url http://localhost:8787 --token "$TARDIGRADE_TOKEN"
+```
+
 ## Configure
 
 `tdg init` creates `wrangler.jsonc` and the Worker entry for your actor. Run `tdg setup` to select a model and write its visible configuration to the project.
+
+Before the first deployment, create the D1 database named by `database_name` in `wrangler.jsonc`. For a project named `tardie-agent`:
+
+```bash
+bunx wrangler d1 create tardie-agent-catalog
+```
+
+Copy the returned `database_id` into the existing `CATALOG_DB` entry under `d1_databases`; keep its binding name and migrations directory. See [Cloudflare's D1 setup](https://developers.cloudflare.com/d1/get-started/) for database creation and binding details. Apply the schema to the remote database:
+
+```bash
+bunx wrangler d1 migrations apply CATALOG_DB --remote
+```
 
 Store the Tardigrade token and each model provider credential as Wrangler secrets:
 

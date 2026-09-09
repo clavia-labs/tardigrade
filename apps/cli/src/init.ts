@@ -94,59 +94,40 @@ const adapterFor = (protocol: ModelProtocol): { readonly name: string; readonly 
 const workerTemplate = (protocol: ModelProtocol): string => {
   const adapter = adapterFor(protocol)
   return `import definition from "./actor"
-import { createWorker, modelScopeFrom } from "tardie/worker"
+import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
 import { modelAdapters } from "tardie/model/adapter"
 import { ${adapter.name} } from "${adapter.source}"
 import modelLock from "./models.lock.json"
 
-const { worker, ActorDO, ThreadDO } = createWorker(definition, {
-  modelAdapters: modelAdapters(${adapter.name}),
-  modelScope: modelScopeFrom(modelLock)
+const services = workerModelServices({
+  adapters: modelAdapters(${adapter.name}),
+  scope: modelScopeFrom(modelLock)
 })
 
-export { ActorDO, ThreadDO }
-export default worker
+const host = defineWorkerHost(definition, { services })
+const http = workerHttp(host)
+
+export const { ActorDO, ThreadDO } = host
+
+export default {
+  fetch: http.fetch
+}
 `
 }
 
 const serverTemplate = (protocol: ModelProtocol): string => {
   const adapter = adapterFor(protocol)
-  return `import { Effect, Layer } from "effect"
-import { BunFileSystem, BunPath } from "@effect/platform-bun"
-import { FetchHttpClient } from "effect/unstable/http"
-import { createHost, serve } from "tardie/bun"
-import { modelLayer } from "tardie/model/host"
-import { makeInferenceStream } from "tardie/http/inference-stream"
-import { catalogDiscoveryOf } from "tardie/http/models"
+  return `import { createBunHost, serve } from "tardie/bun"
+import { bunModelServices } from "tardie/server/model-services"
 import { modelAdapters } from "tardie/model/adapter"
 import { ${adapter.name} } from "${adapter.source}"
-import { ModelCatalogStore, layerModelCatalog } from "tardie/server/catalog"
-import { layerFileModelCatalogRepository } from "tardie/server/catalog-repository"
-import { layerConfig, projectConfigOf, projectConfigPathOf, readConfig } from "tardie/server/config"
 import definition from "./actor"
 
-const projectPath = projectConfigPathOf(process.env)
-const projectFile = Bun.file(projectPath)
-const projectExists = await projectFile.exists()
-if (!projectExists && process.env.TARDIGRADE_CONFIG_PATH?.trim().length) {
-  throw new Error(\`TARDIGRADE_CONFIG_PATH names \${JSON.stringify(projectPath)}, but that file does not exist\`)
-}
-const project = projectExists ? projectConfigOf(Bun.JSONC.parse(await projectFile.text())) : projectConfigOf({})
-const config = readConfig(process.env, project)
-const configLayer = layerConfig(config)
-const catalogRepository = layerFileModelCatalogRepository(config.catalog.cachePath).pipe(
-  Layer.provide(BunFileSystem.layer)
-)
-const catalog = Layer.provide(layerModelCatalog(), [configLayer, catalogRepository])
-const snapshot = await Effect.runPromise(ModelCatalogStore.pipe(Effect.provide(catalog)))
-const inference = makeInferenceStream()
-const layers = Layer.mergeAll(
-  modelLayer(config, snapshot, modelAdapters(${adapter.name}), inference.observer),
-  BunFileSystem.layer,
-  BunPath.layer,
-  FetchHttpClient.layer
-)
-const host = await createHost({
+const { config, layers, api } = await bunModelServices({
+  env: process.env,
+  adapters: modelAdapters(${adapter.name})
+})
+const host = await createBunHost({
   actor: definition,
   storage: config.actorData,
   driver: { maxConcurrentThreads: config.maxConcurrentThreads },
@@ -154,7 +135,7 @@ const host = await createHost({
 })
 
 try {
-  const server = await serve(host, { port: config.port, api: { inference, catalog: catalogDiscoveryOf(snapshot, config.model, config.modelCredentials) }, ...(config.token === undefined ? {} : { token: config.token }) })
+  const server = await serve(host, { port: config.port, token: config.token, api })
   try {
     await new Promise<void>((resolve) => {
       const stop = () => { process.off("SIGINT", stop); process.off("SIGTERM", stop); resolve() }

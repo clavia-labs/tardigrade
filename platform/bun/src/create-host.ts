@@ -19,7 +19,7 @@ import { threadCreated, threadCreatedOf, childLineageOf } from "@clavia/tardigra
 import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { existingInvocation, prepareMethodInvocation } from "@clavia/tardigrade-host/invocation"
 import { bunInstances } from "./instances"
-import { createBunHost, type BunHost, type BunHostOptions } from "./host"
+import { createBunHost as createBunInstance, type BunHost, type BunHostOptions } from "./host"
 
 export type HostOptions<R, Methods extends ActorMethods> = Omit<BunHostOptions<R>, "database" | "actorName" | "actorInstance" | "actorFor" | "initializeRoot" | "layersFor" | "signal"> & {
   readonly actor: Actor<R, Methods>
@@ -61,8 +61,8 @@ export const hostBackend = (host: object): HostBackend => {
   return backend
 }
 
-// createHost owns the Bun runtimes and SQLite files for an actor's instances.
-export const createHost = async <R, const Methods extends ActorMethods>(options: HostOptions<R, Methods>): Promise<Host<Methods>> => {
+// createBunHost owns the Bun runtimes and SQLite files for an actor's instances.
+export const createBunHost = async <R, const Methods extends ActorMethods>(options: HostOptions<R, Methods>): Promise<Host<Methods>> => {
   if (!options.storage) throw new Error("storage must be a directory or :memory:")
   const actorOf = (name: string): Actor<R, Methods> => {
     if (name !== options.actor.name) throw new Error("target actor does not match this host")
@@ -70,7 +70,7 @@ export const createHost = async <R, const Methods extends ActorMethods>(options:
   }
   const pool = bunInstances<BunHost>({
     recover: (host: BunHost) => host.recover(),
-    open: (instance, signal) => createBunHost<R>({
+    open: (instance, signal) => createBunInstance<R>({
       ...options, signal,
       keyOf: options.keyOf ?? actorRuntimeOf(options.actor).keyOf,
       layersFor: options.layersFor === undefined ? undefined : (thread: string) => options.layersFor!(thread, instance),
@@ -193,3 +193,6 @@ export const createHost = async <R, const Methods extends ActorMethods>(options:
   backends.set(host, backend)
   return host
 }
+
+// createHost preserves the original Bun host factory name.
+export const createHost: typeof createBunHost = (options) => createBunHost(options)

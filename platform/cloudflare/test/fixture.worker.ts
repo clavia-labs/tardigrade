@@ -4,9 +4,8 @@ import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 import { allocateRootThread } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import {
-  ActorDO,
-  ThreadDO,
-  createWorker,
+  defineWorkerHost,
+  workerHttp,
   type CloudflareWorkerLayerContext,
   type Env
 } from "../src/worker"
@@ -149,7 +148,7 @@ const echo = actorMethod({
   }
 })
 
-const { worker } = createWorker(actor({
+const host = defineWorkerHost(actor({
   name: "echo",
   methods: { echo },
   components: [{ ...component({
@@ -188,5 +187,10 @@ const { worker } = createWorker(actor({
     : { codec: plaintextEventCodec, indexKey: plaintextEventKeyIndex }
 })
 
-export { ActorDO, ThreadDO }
-export default worker
+const http = workerHttp(host)
+
+export const { ActorDO, ThreadDO } = host
+
+export default {
+  fetch: http.fetch
+}

@@ -9,15 +9,47 @@ order: 3
 
 Celld runs Wrangler Worker bundles and SQLite Durable Objects on a self-hosted fleet. Tardigrade uses the same actor definition, lifecycle, alarms, and HTTP routes on Celld and Cloudflare.
 
+```ts title="worker.ts"
+import definition from "./actor"
+import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
+import { modelAdapters } from "tardie/model/adapter"
+import { openAICompatibleAdapter } from "tardie/model/openai"
+import modelLock from "./models.lock.json"
+
+const services = workerModelServices({
+  adapters: modelAdapters(openAICompatibleAdapter),
+  scope: modelScopeFrom(modelLock)
+})
+
+const host = defineWorkerHost(definition, { services })
+const http = workerHttp(host)
+
+// host exposes the Durable Object classes (platform/cloudflare/test/actor.workers.ts).
+// HTTP request -> Worker handler
+//                  +-- ActorDO: allocates and tracks threads
+//                  +-- ThreadDO: stores events and executes a thread
+export const { ActorDO, ThreadDO } = host
+
+export default {
+  fetch: http.fetch
+}
+```
+
 ## Deploy
+
+Install the [Celld CLI](https://github.com/denoland/celld#install) and make `esbuild` available on `PATH`. For a Bun project, install the bundler locally:
+
+```bash
+bun add --dev esbuild
+```
 
 `tdg init` creates `celld.jsonc`, and `tdg setup` updates its model connections without changing other Celld settings. Celld accepts string Worker variables, so the manifest stores `TARDIGRADE_CONFIG` as encoded JSON.
 
 Set the fleet bucket with `--bucket` or `CELLD_BUCKET`. Use `--endpoint` and `--region` when needed for S3-compatible storage. Celld also supports `gs://` buckets with Google Application Default Credentials and `az://` containers with Azure credentials.
 
 ```bash variant="single"
-celld deploy --config celld.jsonc --bucket s3://actors --dry-run
-celld deploy --config celld.jsonc --bucket s3://actors
+bun run deploy:celld --bucket s3://actors --dry-run
+bun run deploy:celld --bucket s3://actors
 ```
 
 The first command validates the deployment. The second publishes it.
@@ -37,7 +69,7 @@ celld \
   --advertise 10.0.0.12:8081
 ```
 
-Keep the internal listener on a trusted private network. A deployment is loaded when a node starts, so restart nodes through the fleet rollout procedure after publishing a new version.
+Keep the internal listener on a trusted private network. Running nodes poll for deployment changes and adopt the new version in place. See the [operations guide](https://github.com/denoland/celld/blob/main/docs/README.md#deploy-an-application) for rollout controls.
 
 ## Execution model
 

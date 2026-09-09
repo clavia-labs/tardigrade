@@ -47,17 +47,19 @@ describe("initActor", () => {
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain("infer([")
     expect(server).toContain('import definition from "./actor"')
-    expect(server).toContain("const host = await createHost({")
+    expect(server).toContain("const host = await createBunHost({")
     expect(server).toContain("layersFor: () => layers")
     expect(server).toContain("await host.close()")
-    expect(worker).toContain("createWorker(definition")
+    expect(worker).toContain("defineWorkerHost(definition")
+    expect(worker).toContain("const http = workerHttp(host)")
+    expect(worker).toContain("fetch: http.fetch")
     expect(worker).toContain('import definition from "./actor"')
     expect(worker).toContain('from "tardie/worker"')
     expect(worker).toContain('import { modelAdapters } from "tardie/model/adapter"')
     expect(worker).toContain('import { openAICompatibleAdapter } from "tardie/model/openai"')
-    expect(worker).toContain("modelAdapters: modelAdapters(openAICompatibleAdapter)")
+    expect(worker).toContain("adapters: modelAdapters(openAICompatibleAdapter)")
     expect(worker).toContain('import modelLock from "./models.lock.json"')
-    expect(worker).toContain("modelScope: modelScopeFrom(modelLock)")
+    expect(worker).toContain("scope: modelScopeFrom(modelLock)")
     expect(manifest).toMatchObject({
       name: "reviewer",
       main: "worker.ts",

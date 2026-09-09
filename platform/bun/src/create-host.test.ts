@@ -7,8 +7,9 @@ import { defineActor, legacyComponent } from "@clavia/tardigrade-core/actor"
 import { legacyActorMethod } from "@clavia/tardigrade-core/actor/method-compat"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { allocateRootThread } from "@clavia/tardigrade-core/actor/allocation"
-import { createHost } from "./create-host"
+import { createBunHost, createHost } from "./create-host"
 import { serve } from "./serve"
+import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 import { connect } from "../../../packages/client/src/connect"
 
 const message = legacyActorMethod({
@@ -38,7 +39,7 @@ const actor = defineActor("tardie", { message }, [responder])
 
 test("local and HTTP references preserve allocations and results across restart", async () => {
   const storage = await mkdtemp(join(tmpdir(), "tardie-sdk-"))
-  let host = await createHost({ actor, storage })
+  let host = await createBunHost({ actor, storage })
   let server: Awaited<ReturnType<typeof serve>> | undefined
   try {
     const rick = await host.allocateRootThread({ instance: "rick", name: "main" })
@@ -136,5 +137,32 @@ test("a host reopens an existing server instance database without moving it", as
   } finally {
     await host.close()
     await rm(storage, { recursive: true, force: true })
+  }
+})
+
+
+test("HTTP shutdown finishes open event and inference streams before closing the host", async () => {
+  const host = await createHost({ actor, storage: ":memory:" })
+  await host.allocateRootThread({ instance: "rick", name: "main" })
+  const server = await serve(host, { port: 0, api: { inference: makeInferenceStream(), heartbeat: 10 } })
+  const readers: Pick<ReadableStreamDefaultReader<Uint8Array>, "read" | "cancel">[] = []
+  try {
+    for (const path of ["threads/stream", "threads/main/events/stream", "threads/main/inference/stream"]) {
+      const response = await fetch(new URL(`v1/actors/rick/${path}`, server.url))
+      expect(response.status).toBe(200)
+      const reader = response.body!.getReader()
+      readers.push(reader)
+      expect((await reader.read()).done).toBe(false)
+    }
+    const ended = readers.map(async (reader) => {
+      while (!(await reader.read()).done) {}
+    })
+    await server.close()
+    await Promise.all(ended)
+    expect((await host.allocateRootThread({ instance: "rick", name: "after-close" })).coordinate.thread).toBe("after-close")
+  } finally {
+    await Promise.all(readers.map((reader) => reader.cancel()))
+    await server.close()
+    await host.close()
   }
 })

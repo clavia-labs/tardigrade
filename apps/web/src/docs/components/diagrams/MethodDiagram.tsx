@@ -52,7 +52,7 @@ export const MethodDiagram = (): ReactElement => (
     <g className="method-diagram-node method-diagram-method" transform="translate(180 578)">
       <rect width="360" height="78" />
       <text className="method-diagram-kind" x="18" y="23">method · message</text>
-      <text className="method-diagram-function" x="18" y="50">state(log, "audit-42")</text>
+      <text className="method-diagram-function" x="18" y="50">invocationState(invocation)</text>
     </g>
 
     <g className="method-diagram-node method-diagram-endpoint" transform="translate(180 696)">
