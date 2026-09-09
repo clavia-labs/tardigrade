@@ -289,7 +289,7 @@ const streamResponse = (
   const first = yield* threads.eventsPage(id, 0, 1)
   if (first.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
   const cursor = yield* streamCursor
-  if ("problem" in cursor) return cursor.problem
+  if (cursor.problem !== undefined) return cursor.problem
   return yield* streamResponseOf(tail(threads.eventsPage, threads.awaitHead, id, cursor.from ?? 0, limit, heartbeat), signal)
 })
 
@@ -300,7 +300,7 @@ const actorThreadsStreamResponse = (
   signal?: AbortSignal
 ) => Effect.gen(function*() {
   const cursor = yield* streamCursor
-  if ("problem" in cursor) return cursor.problem
+  if (cursor.problem !== undefined) return cursor.problem
   return yield* streamResponseOf(actorThreadsTail(threads, cursor.from, limit, heartbeat), signal)
 })
 
