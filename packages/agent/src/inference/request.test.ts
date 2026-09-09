@@ -67,6 +67,7 @@ describe("renderMessages", () => {
       { type: "TextReturned", text: "late stopped text", turn: "stopped", at: 4 },
       { type: "ToolCalled", callId: "next-tool", name: "execute", arguments: {}, turn: "next", at: 5 }
     ])
+    expect(messages[1]).toEqual({ role: "assistant", content: "late stopped text" })
     expect(messages.at(-1)).toEqual({
       role: "assistant",
       content: null,
