@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { Clock, Effect, Random } from "effect"
 import { StopReason } from "@aws-sdk/client-bedrock-runtime"
 import {
@@ -1453,6 +1453,78 @@ describe("declared limits", () => {
 })
 
 describe("stream bounds", () => {
+  for (const protocol of ["openai-chat-completions", "openai-responses", "anthropic-messages"] as const) {
+    test.each([undefined, 120_000, 900_000])(`${protocol} applies the total bound to SDK timers (%s)`, async (totalMs) => {
+      const timer = spyOn(globalThis, "setTimeout")
+      const sdkDelays: Array<number | undefined> = []
+      const fetchImpl = async () => {
+        sdkDelays.push(timer.mock.calls.at(-1)?.[1])
+        if (protocol === "anthropic-messages") {
+          const events = [
+            { type: "message_start", message: { id: "r1", type: "message", role: "assistant", model: "m", content: [], usage: { input_tokens: 1, output_tokens: 0 } } },
+            { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+            { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } },
+            { type: "content_block_stop", index: 0 },
+            { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } },
+            { type: "message_stop" }
+          ]
+          return new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), {
+            headers: { "content-type": "text/event-stream" }
+          })
+        }
+        return sse(protocol === "openai-chat-completions" ? [
+          { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
+          { id: "r1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+        ] : [
+          { type: "response.created", response: { id: "r1", model: "m" } },
+          { type: "response.output_text.delta", item_id: "msg1", output_index: 0, content_index: 0, delta: "ok" },
+          { type: "response.completed", response: { id: "r1", model: "m", status: "completed", output: [] } }
+        ])
+      }
+      try {
+        const layer = testInfer({
+          protocol,
+          baseUrl: "https://model.test/v1",
+          apiKey: "k",
+          model: "m",
+          ...(totalMs === undefined ? {} : { stream: { totalMs } }),
+          throttleRetryDelaysMs: [],
+          fetch: fetchImpl
+        })
+        const action = await Effect.runPromise(
+          Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(Effect.provide(layer))
+        )
+        expect(action).toMatchObject({ kind: "complete", output: "ok" })
+        expect(sdkDelays).toEqual([totalMs ?? DEFAULT_STREAM_BOUNDS.totalMs])
+      } finally {
+        timer.mockRestore()
+      }
+    })
+
+    test(`${protocol} honors caller cancellation while fetch is pending`, async () => {
+      const caller = new AbortController()
+      let requestSignal: AbortSignal | undefined
+      const layer = testInfer({
+        protocol,
+        baseUrl: "https://model.test/v1",
+        apiKey: "k",
+        model: "m",
+        stream: { firstChunkMs: 900_000, idleMs: 900_000, totalMs: 900_000 },
+        throttleRetryDelaysMs: [],
+        fetch: (_input, init) => new Promise<Response>((_resolve, reject) => {
+          requestSignal = init?.signal ?? undefined
+          requestSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true })
+          caller.abort()
+        })
+      })
+      const action = await Effect.runPromise(
+        Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]), undefined, caller.signal)).pipe(Effect.provide(layer))
+      )
+      expect(action.kind).toBe("fail")
+      expect(requestSignal?.aborted).toBe(true)
+    })
+  }
+
   test("an expired bound aborts the underlying request", async () => {
     let requestSignal: AbortSignal | undefined
     const fetchImpl = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
