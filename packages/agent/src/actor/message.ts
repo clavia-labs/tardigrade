@@ -17,6 +17,7 @@ import { turnCancelled, turnFailed } from "../log/events"
 
 export const AgentMessageInput = Schema.Struct({
   text: Schema.String,
+  images: MessageReceived.fields.images,
   input: Schema.optionalKey(Schema.Unknown),
   model: Schema.optionalKey(ModelRef)
 }).annotate({ identifier: "AgentMessageInput" })
@@ -88,6 +89,7 @@ export const agentMessageMethod = actorMethod({
   event: ({ invocation, input, at }) => messageReceived({
     id: invocation.id,
     text: input.text,
+    ...(input.images === undefined ? {} : { images: input.images }),
     ...(invocation.epoch === 0 ? {} : { epoch: invocation.epoch }),
     ...(input.input === undefined ? {} : { input: input.input }),
     ...(input.model === undefined ? {} : { model: input.model }),

@@ -39,6 +39,7 @@ import {
   tool
 } from "../index"
 import { agentMethods } from "../actor/methods"
+import { renderMessages, type AgentMessage } from "../projection/messages"
 
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
@@ -134,6 +135,29 @@ const codeThenComplete = (count: { calls: number }) =>
       )
     }
   })
+
+test("public receive retains image-only input after fresh log replay and a later turn", async () => {
+  const images = [{ mimeType: "image/png", data: "cGl4ZWxz" }]
+  const observed: unknown[] = []
+  const inference = Layer.succeed(Infer, {
+    react: ({ trajectory }) => {
+      observed.push(renderMessages(trajectory))
+      return Effect.succeed({ kind: "complete" as const, output: "done" })
+    }
+  })
+  const actor = assembled(infer([nativeOutput], TEST_MODEL))
+  const first = await run(Effect.gen(function* () {
+    yield* receive(actor, { id: "picture", text: "", images })
+    return yield* readLog
+  }), Layer.mergeAll(memoryLog(), inference, noRouter, KeyValueStore.layerMemory))
+  const replayed: Event[] = JSON.parse(JSON.stringify(first))
+  await run(receive(actor, { id: "later", text: "look again" }), Layer.mergeAll(
+    memoryLog(replayed), inference, noRouter, KeyValueStore.layerMemory
+  ))
+  const expected = { role: "user", content: [{ type: "image", source: { type: "data", value: images[0]!.data, mimeType: "image/png" } }] }
+  expect(observed[0]).toEqual([expected])
+  expect(observed[1]).toEqual([expected, { role: "assistant", content: "done" }, { role: "user", content: "look again" }])
+})
 
 test("a model response and its consequences share one append", async () => {
   const history: Event[] = []
@@ -681,7 +705,7 @@ describe("the repair implementation", () => {
   })
 
   test("the correction is a rendered exchange, and a later turn reads the corrected value alone", async () => {
-    const rendered: Array<ReadonlyArray<{ readonly role: string; readonly content: string | null }>> = []
+    const rendered: Array<ReadonlyArray<AgentMessage>> = []
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
@@ -1108,7 +1132,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => legac
 
 describe("a domain-specific implementation", () => {
   test("the core records the rejection and waits; the component decides the feedback", async () => {
-    const prompts: Array<ReadonlyArray<{ readonly role: string; readonly content: string | null }>> = []
+    const prompts: Array<ReadonlyArray<AgentMessage>> = []
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,

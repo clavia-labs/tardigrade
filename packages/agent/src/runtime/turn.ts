@@ -1,5 +1,6 @@
 import { Clock, Effect } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
+import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { send, type ActorSource as Actor } from "@clavia/tardigrade-core/runtime"
 import type { Router } from "@clavia/tardigrade-core/transport/router"
@@ -44,6 +45,7 @@ export const receive = <R, T = unknown>(
   message: {
     readonly id: string
     readonly text: string
+    readonly images?: MessageReceived["images"]
     readonly input?: unknown
     readonly model?: ModelRef
     readonly output?: OutputContract<T>
@@ -59,6 +61,7 @@ export const receive = <R, T = unknown>(
       type: "MessageReceived",
       id: message.id,
       text: message.text,
+      ...(message.images === undefined ? {} : { images: message.images }),
       ...(message.input === undefined ? {} : { input: message.input }),
       ...(message.model === undefined ? {} : { model: message.model }),
       ...(message.output === undefined ? {} : { output: { name: message.output.name, schema: message.output.schema } }),

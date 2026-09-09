@@ -45,6 +45,26 @@ const openTurn = (rounds: number): Event[] => {
 }
 
 describe("the compaction measure and guard", () => {
+  test("images use configured weight independently of bytes in both guard paths", () => {
+    const image = { mimeType: "image/png", data: "eA==" }
+    const policy = { contextWindowTokens: 1_000, imageTokens: 900 }
+    const events: Event[] = [
+      { ...head, text: "", images: [image] },
+      { type: "ToolCalled", callId: "c1", name: "read", arguments: {}, turn: "m0", at: 1 },
+      { type: "ToolReturned", callId: "c1", result: "ok", turn: "m0", at: 2 }
+    ]
+    expect(estimateTokens([events[0]!], policy)).toBe(900)
+    expect(estimateTokens([{ ...events[0]!, images: [{ ...image, data: image.data.repeat(10_000) }] }], policy)).toBe(900)
+    expect(compactionReactor(policy)(events)).toHaveLength(1)
+    expect(compactionReactor({ ...policy, imageTokens: 1 })(events)).toHaveLength(0)
+    const projection = compaction(policy).machine
+    let state = projection.initial()
+    for (let i = 0; i < events.length; i++) state = projection.step(state, eventAt(events[i]!, i + 1))
+    expect(projection.output(state).transitions.map((transition) => transition.key))
+      .toEqual(compactionReactor(policy)(events).map((transition) => transition.key))
+    expect(() => contextPolicyOf({ imageTokens: 0 })).toThrow("imageTokens")
+  })
+
   test("the incremental quotient agrees with complete replay at every prefix", () => {
     const component = compaction(TEST_POLICY)
     const projection = component.machine
@@ -149,6 +169,15 @@ describe("the compaction pass", () => {
     )
     return { log: await Effect.runPromise(Ref.get(ref)), briefed: () => briefed, model: () => model }
   }
+
+  test("summary briefs retain image counts without image bytes", async () => {
+    const data = "cHJpdmF0ZS1waXhlbHM="
+    const { briefed } = await run([{ ...head, images: [{ mimeType: "image/png", data }] }, ...openTurn(16).slice(1)])
+    expect(briefed()).toContain("[1 images omitted from summary]")
+    expect(briefed()).toContain("extract the covenants")
+    expect(briefed()).not.toContain(data)
+    expect(briefed()).not.toContain("data:image/")
+  })
 
   test("a fire summarizes and checkpoints down to a KEEP-token tail, mid-turn", async () => {
     const { log, briefed } = await run(openTurn(16))

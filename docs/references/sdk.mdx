@@ -41,3 +41,20 @@ import type { Machine } from "tardie/core/machine"
 import type { Projection } from "tardie/core/projection"
 import type { ComponentOutput } from "tardie/core/component"
 ```
+
+## Agent prompt images
+
+The `message` method in `agentMethods` and the public `receive` helper accept an optional ordered `images` array. Each image has a `mimeType` and base64 `data`. Pass an empty `text` string for an image-only prompt:
+
+```ts
+const input = {
+  text: "",
+  images: [
+    { mimeType: "image/png", data: pngBase64 },
+  ],
+}
+```
+
+Images are stored on `MessageReceived` and retained in model history through replay and later turns. Text-only messages keep string content. Images inside application-owned `input` are not model content, and child-agent dispatch does not inherit a parent's images. Use a model that supports images and observe its format and request-size limits.
+
+`compaction({ imageTokens: 4_784 })` sets the estimated token weight per image. The default is 4,784; it is an approximate heuristic and some providers can use more. Base64 length does not contribute to the text estimate. Summary briefs contain image counts and text, without image bytes. Completed prompts before a checkpoint leave model history, while an active turn retains its original prompt images. The durable log remains available.

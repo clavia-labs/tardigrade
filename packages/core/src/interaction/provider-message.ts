@@ -7,6 +7,11 @@ export const MessageReceived = Schema.Struct({
   type: Schema.Literal("MessageReceived"),
   id: Schema.String,
   text: Schema.String,
+  // images carries ordered message content separately from inheritable input.
+  images: Schema.optional(Schema.Array(Schema.Struct({
+    mimeType: Schema.String,
+    data: Schema.String
+  }))),
   source: Schema.optional(Schema.String),
   chat: Schema.optional(Schema.String),
   sender: Schema.optional(Schema.String),
