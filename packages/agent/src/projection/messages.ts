@@ -74,13 +74,23 @@ const messagesFrom = (
   if (openHead !== -1 && openHead < from) messages.push(userMessageOf(projected[openHead]!, resolved))
   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
   const responses = responsesOf(projected)
+  const attemptKey = (event: Event): string | undefined => typeof event.turn === "string"
+    ? JSON.stringify([event.turn, event.epoch ?? 0])
+    : undefined
   const batches = new Map<string, AgentToolCall[]>()
   const callOf = (event: Event): AgentToolCall => ({
     id: String(event.callId),
     name: String(event.name),
     arguments: JSON.stringify(event.arguments ?? {})
   })
+  const unconsumedText = new Map<string, string>()
   for (const event of projected.slice(from)) {
+    const attempt = attemptKey(event)
+    if (event.type === "TextReturned" && attempt !== undefined) {
+      unconsumedText.set(attempt, String(event.text ?? ""))
+    } else if (event.type === "ToolCalled" && attempt !== undefined) {
+      unconsumedText.delete(attempt)
+    }
     const key = responses.keys.get(event)
     if (event.type !== "ToolCalled" || key === undefined) continue
     const calls = batches.get(key) ?? []
@@ -146,9 +156,11 @@ const messagesFrom = (
       case "TurnCancelled": {
         pendingText = null
         const reason = String(value.reason ?? "")
+        const partial = attemptKey(event)
+        const cancellation = reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}`
         messages.push({
           role: "assistant",
-          content: reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}`
+          content: partial === undefined ? cancellation : (unconsumedText.get(partial) ?? cancellation)
         })
         break
       }
