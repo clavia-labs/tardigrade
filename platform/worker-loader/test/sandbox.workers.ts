@@ -148,6 +148,19 @@ describe("worker loader sandbox", () => {
     expect(result).toEqual({ result: { global: "undefined", globalFetch: "undefined" } })
   })
 
+  // The harness wraps the body in a nested block of the parameter-scoped function, so a body
+  // that declares a scoped name itself stays parseable and reaches its own binding, while the
+  // names it leaves alone keep the shadowed values (sandbox.ts, bodySource).
+  test("a local declaration of a scoped name stays valid", async () => {
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor)
+    const result = await Effect.runPromise(sandbox.run(
+      `const fetch = () => "local"
+      return { fetch: fetch(), require: typeof require, global: typeof global }`,
+      {}
+    ))
+    expect(result).toEqual({ result: { fetch: "local", require: "undefined", global: "undefined" } })
+  })
+
   test("a host binding keeps its own name", async () => {
     const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, () => {
       throw new Error("replay transport must not open a capability")

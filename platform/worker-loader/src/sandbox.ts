@@ -287,9 +287,12 @@ const scopeNames = (bindings: Bindings, ambient: Ambient | undefined): ReadonlyA
 
 // bodySource wraps one body as a module whose parameter list is the scope: every scope name,
 // the restricted ones included, shadows the isolate's own global with the value the harness
-// passes for it.
+// passes for it. The body sits in a nested block of its own, so a const, let, or class
+// declaration of a scoped name in the body stays valid instead of colliding with its own
+// parameter at parse time (sandbox.workers.ts, "a local declaration of a scoped name stays
+// valid").
 const bodySource = (names: ReadonlyArray<string>, code: string): string =>
-  `export default async function(${names.join(",")}) {\n${code}\n}`
+  `export default async function(${names.join(",")}) {\n{\n${code}\n}\n}`
 
 const sandboxInput = (bindings: Bindings, ambient: Ambient | undefined, policy: WorkerLoaderSandboxPolicy) => {
   const names = scopeNames(bindings, ambient)
