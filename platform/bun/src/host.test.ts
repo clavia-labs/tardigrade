@@ -1,9 +1,9 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import fc from "fast-check"
 import { Database } from "bun:sqlite"
-import { existsSync, mkdtempSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { Effect, Layer, Schema, Tracer } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -420,6 +420,51 @@ describe("the bun host", () => {
       { seq: 2, event: { type: "MessageReceived", id: "m1", text: "go", at: 1 } },
       { seq: 4, event: { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 } },
       { seq: 5, event: { type: "Done", id: "same", fact: "accepted", at: 4 } }
+    ])
+    await h.close()
+  })
+
+  test("a pre-existing thread answers indexed facts after upgrade", async () => {
+    const path = freshPath()
+    // A thread database from before the subject table: the old schema, its migrations recorded,
+    // and a log the index has never seen.
+    const threadPath = bunThreadDatabasePath(path, "legacy")
+    mkdirSync(dirname(threadPath), { recursive: true })
+    const old = new Database(threadPath)
+    try {
+      old.exec(`CREATE TABLE thread_identity (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        actor TEXT NOT NULL,
+        instance TEXT NOT NULL,
+        thread TEXT NOT NULL
+      )`)
+      old.run("INSERT INTO thread_identity (singleton, actor, instance, thread) VALUES (1, 'bun', 'default', 'legacy')")
+      old.exec(`CREATE TABLE events (
+        seq INTEGER NOT NULL PRIMARY KEY,
+        key TEXT,
+        event TEXT NOT NULL
+      ) WITHOUT ROWID`)
+      old.exec(`CREATE TABLE effect_sql_migrations (
+        migration_id integer PRIMARY KEY NOT NULL,
+        created_at datetime NOT NULL DEFAULT current_timestamp,
+        name VARCHAR(255) NOT NULL
+      )`)
+      old.run("INSERT INTO effect_sql_migrations (migration_id, name) VALUES (1, 'thread_identity')")
+      old.run("INSERT INTO effect_sql_migrations (migration_id, name) VALUES (2, 'thread_events')")
+      old.run("INSERT INTO events (seq, key, event) VALUES (1, 'thread:created', ?)", [JSON.stringify(created("legacy"))])
+      old.run("INSERT INTO events (seq, key, event) VALUES (2, NULL, ?)", [JSON.stringify({ type: "MessageReceived", id: "brief", text: "go", at: 1 })])
+      old.run("INSERT INTO events (seq, key, event) VALUES (3, NULL, ?)", [JSON.stringify({ type: "MessageReceived", id: "out.reply", text: "first", at: 2 })])
+      old.run("INSERT INTO events (seq, key, event) VALUES (4, NULL, ?)", [JSON.stringify({ type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 })])
+    } finally {
+      old.close()
+    }
+    const h = await createBunHost(options(path))
+    expect(await h.readSubjects("legacy", ["msg:brief", "reply:out"])).toEqual([
+      { seq: 2, event: { type: "MessageReceived", id: "brief", text: "go", at: 1 } },
+      { seq: 4, event: { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 } }
+    ])
+    expect((await h.read("legacy")).map((event) => event.type)).toEqual([
+      "ThreadCreated", "MessageReceived", "MessageReceived", "MessageReceived"
     ])
     await h.close()
   })

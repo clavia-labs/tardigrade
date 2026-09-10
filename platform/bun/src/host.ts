@@ -210,6 +210,8 @@ const threadMigrations = SqliteMigrator.fromRecord({
     ) WITHOUT ROWID`
     yield* sql`CREATE UNIQUE INDEX events_key ON events (key) WHERE key IS NOT NULL`
   }),
+  // The read-side index beside the log: one row per subject holding the latest event that names
+  // it, and one capture row recording the log head the index holds.
   "0003_thread_subjects": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE event_subjects (
@@ -217,6 +219,11 @@ const threadMigrations = SqliteMigrator.fromRecord({
       seq INTEGER NOT NULL,
       event TEXT NOT NULL
     ) WITHOUT ROWID`
+    yield* sql`CREATE TABLE event_subjects_capture (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      head INTEGER NOT NULL
+    )`
+    yield* sql`INSERT INTO event_subjects_capture (singleton, head) VALUES (1, 0)`
   })
 })
 
@@ -391,6 +398,28 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         INSERT OR IGNORE INTO thread_identity (singleton, actor, instance, thread)
         VALUES (1, ${actorName}, ${actorInstance}, ${thread})
       `.pipe(Effect.orDie))
+      // The subject index starts caught up to the durable head, so a database that predates the
+      // table answers indexed reads exactly like one created after it: the capture row names the
+      // head through which every event is indexed, and this pass closes whatever gap remains,
+      // latest occurrence winning per subject (host.test.ts, "a pre-existing thread answers
+      // indexed facts after upgrade").
+      await runtime.runPromise(sql.withTransaction(Effect.gen(function* () {
+        const captured = yield* sql<{ head: number }>`SELECT head FROM event_subjects_capture WHERE singleton = 1`
+        const heads = yield* sql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM events`
+        const from = Number(captured[0]?.head ?? 0)
+        const to = Number(heads[0]?.head ?? 0)
+        if (from >= to) return
+        const rows = yield* sql<{ seq: number; event: string }>`
+          SELECT seq, event FROM events WHERE seq > ${from} AND seq <= ${to} ORDER BY seq
+        `
+        for (const row of rows) {
+          for (const subject of storeSubjectsOf(JSON.parse(row.event) as Event)) {
+            yield* sql`INSERT INTO event_subjects (subject, seq, event) VALUES (${subject}, ${Number(row.seq)}, ${row.event})
+              ON CONFLICT(subject) DO UPDATE SET seq = excluded.seq, event = excluded.event`
+          }
+        }
+        yield* sql`UPDATE event_subjects_capture SET head = ${to} WHERE singleton = 1`
+      })).pipe(Effect.orDie))
       const identities = await runtime.runPromise(sql<{ actor: string; instance: string; thread: string }>`
         SELECT actor, instance, thread FROM thread_identity WHERE singleton = 1
       `.pipe(Effect.orDie))
@@ -471,6 +500,11 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           }
           seq += 1
           appended += 1
+        }
+        // The capture row moves only when it already held the head this append extends; a log
+        // still waiting for its capture pass keeps its gap, and the pass closes it.
+        if (appended > 0) {
+          yield* sql`UPDATE event_subjects_capture SET head = ${seq - 1} WHERE singleton = 1 AND head >= ${currentHead}`
         }
         return { appended, head: seq - 1 }
       })).pipe(
