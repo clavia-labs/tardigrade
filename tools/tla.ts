@@ -40,6 +40,13 @@ const counterexample = (
 ): CounterexampleCheck => ({ directory, module, config, outcome: "counterexample", evidence })
 
 export const checks: ReadonlyArray<Check> = [
+  pass("interaction", "ExternalReply", "ExternalReply.cfg"),
+  counterexample("interaction", "ExternalReply", "ExternalReplyCollapse.cfg", "Invariant DistinctRepliesPreserved is violated"),
+  counterexample("interaction", "ExternalReply", "ExternalReplyDuplicateHead.cfg", "Invariant DuplicateIdKeepsHead is violated"),
+  counterexample("interaction", "ExternalReply", "ExternalReplyWakeAny.cfg", "Invariant WakesOnlyMatchingWait is violated"),
+  counterexample("interaction", "ExternalReply", "ExternalReplyNewTurn.cfg", "Invariant SilentReply is violated"),
+  counterexample("interaction", "ExternalReply", "ExternalReplyMethodTerminal.cfg", "Invariant SilentReply is violated"),
+  counterexample("interaction", "ExternalReply", "ExternalReplyNewPackage.cfg", "Invariant StablePackageIdentity is violated"),
   pass("runtime", "OperationOwnership", "OperationOwnership.cfg"),
   pass("runtime", "OperationOwnership", "OperationOwnershipLive.cfg"),
   counterexample("runtime", "OperationOwnership", "OperationOwnershipBareIds.cfg", "Invariant ExactResolution is violated"),
