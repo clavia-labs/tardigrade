@@ -181,9 +181,9 @@ export const modelLayer = (
   observer?: InferenceObserver
 ) => Layer.effect(Infer, Effect.map(Infer, (binding) => ({
   ...binding,
-  react: (request, key, signal) => models !== undefined && request.model === undefined
+  react: (request, key, signal, onDelta) => models !== undefined && request.model === undefined
     ? Effect.succeed({ kind: "fail" as const, error: "the actor selected no model", failure: { cause: "inference_error" as const, attempts: 0 } })
-    : binding.react(request, key, signal)
+    : binding.react(request, key, signal, onDelta)
 }))).pipe(Layer.provide(hostModelLayer(hostModelConfig(models), { snapshot: scope }, adapters, observer)))
 
 const positiveInteger = (raw: string | undefined, fallback: number, name: string): number => {

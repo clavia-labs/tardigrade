@@ -171,7 +171,7 @@ export const modelLayer = (
         catalogRevision: selected.catalogRevision
       }
     },
-    react: (request, key, signal) => Effect.suspend(() => {
+    react: (request, key, signal, onDelta) => Effect.suspend(() => {
       let selected: SelectedModel
       try {
         selected = selectedModelFrom(config.model, config.modelCredentials, catalog, request.model)
@@ -193,7 +193,7 @@ export const modelLayer = (
         ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
         ...(selected.pricing === undefined ? {} : { pricing: selected.pricing })
       }, adapters, observer === undefined ? {} : { observer })
-      return Effect.flatMap(Infer, (model) => model.react(request, key, signal)).pipe(Effect.provide(binding))
+      return Effect.flatMap(Infer, (model) => model.react(request, key, signal, onDelta)).pipe(Effect.provide(binding))
     })
   })
 }

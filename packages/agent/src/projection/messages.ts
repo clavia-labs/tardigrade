@@ -74,13 +74,40 @@ const messagesFrom = (
   if (openHead !== -1 && openHead < from) messages.push(userMessageOf(projected[openHead]!, resolved))
   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
   const responses = responsesOf(projected)
+  // Histories written before text carried the epoch stamp leave the field absent while the rest
+  // of the response records it. The projection upcasts the missing stamp from the same turn's
+  // most recent epoch bearing event, so replay keeps pairing legacy text with the calls it
+  // preceded and the cancellations that cut it (request.test.ts, "resumed text written without
+  // an epoch still pairs with its resumed response").
+  const textEpochs = new Map<Event, number>()
+  const latestEpoch = new Map<string, number>()
+  for (const event of projected) {
+    if (typeof event.turn === "string" && event.epoch !== undefined) latestEpoch.set(event.turn, Number(event.epoch))
+    if (event.type === "TextReturned" && event.epoch === undefined && typeof event.turn === "string") {
+      const inherited = latestEpoch.get(event.turn)
+      if (inherited !== undefined) textEpochs.set(event, inherited)
+    }
+  }
+  const epochOf = (event: Event): number => event.type === "TextReturned" && event.epoch === undefined
+    ? textEpochs.get(event) ?? 0
+    : Number(event.epoch ?? 0)
+  const attemptKey = (event: Event): string | undefined => typeof event.turn === "string"
+    ? JSON.stringify([event.turn, epochOf(event)])
+    : undefined
   const batches = new Map<string, AgentToolCall[]>()
   const callOf = (event: Event): AgentToolCall => ({
     id: String(event.callId),
     name: String(event.name),
     arguments: JSON.stringify(event.arguments ?? {})
   })
+  const unconsumedText = new Map<string, string>()
   for (const event of projected.slice(from)) {
+    const attempt = attemptKey(event)
+    if (event.type === "TextReturned" && attempt !== undefined) {
+      unconsumedText.set(attempt, String(event.text ?? ""))
+    } else if (event.type === "ToolCalled" && attempt !== undefined) {
+      unconsumedText.delete(attempt)
+    }
     const key = responses.keys.get(event)
     if (event.type !== "ToolCalled" || key === undefined) continue
     const calls = batches.get(key) ?? []
@@ -88,23 +115,31 @@ const messagesFrom = (
     batches.set(key, calls)
   }
   const emitted = new Set<string>()
-  let pendingText: string | null = null
+  let pendingText: { readonly text: string; readonly turn: string; readonly epoch: number } | null = null
   for (const event of projected.slice(from)) {
     const value = event as Record<string, unknown>
     switch (event.type) {
       case "MessageReceived":
+        pendingText = null
         messages.push(userMessageOf(event, resolved))
         break
       case "TextReturned":
-        pendingText = String(value.text ?? "")
+        pendingText = {
+          text: String(value.text ?? ""),
+          turn: String(value.turn ?? ""),
+          epoch: epochOf(event)
+        }
         break
       case "ToolCalled": {
         const key = responses.keys.get(event)
         if (key !== undefined && emitted.has(key)) break
         if (key !== undefined) emitted.add(key)
+        const matchesPendingText = pendingText !== null &&
+          pendingText.turn === String(value.turn ?? "") &&
+          pendingText.epoch === epochOf(event)
         messages.push({
           role: "assistant",
-          content: pendingText,
+          content: pendingText !== null && matchesPendingText ? pendingText.text : null,
           toolCalls: key === undefined ? [callOf(event)] : batches.get(key)!
         })
         pendingText = null
@@ -128,16 +163,21 @@ const messagesFrom = (
         break
       }
       case "TurnCompleted":
+        pendingText = null
         messages.push({ role: "assistant", content: String(value.output ?? "") })
         break
       case "TurnFailed":
+        pendingText = null
         messages.push({ role: "assistant", content: `the turn failed: ${String(value.error ?? "")}` })
         break
       case "TurnCancelled": {
+        pendingText = null
         const reason = String(value.reason ?? "")
+        const partial = attemptKey(event)
+        const cancellation = reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}`
         messages.push({
           role: "assistant",
-          content: reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}`
+          content: partial === undefined ? cancellation : (unconsumedText.get(partial) ?? cancellation)
         })
         break
       }

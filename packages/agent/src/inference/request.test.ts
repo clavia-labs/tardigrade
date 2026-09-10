@@ -59,6 +59,52 @@ describe("renderMessages", () => {
     expect(messages[2]).toMatchObject({ toolCallId: "call_1", content: '{"result":1}' })
   })
 
+  test("late text from a cancelled turn never becomes the next turn's tool preamble", () => {
+    const messages = renderMessages([
+      { type: "MessageReceived", id: "stopped", text: "start", at: 1 },
+      { type: "TurnCancelled", turn: "stopped", cause: "requested", at: 2 },
+      { type: "MessageReceived", id: "next", text: "continue", at: 3 },
+      { type: "TextReturned", text: "late stopped text", turn: "stopped", at: 4 },
+      { type: "ToolCalled", callId: "next-tool", name: "execute", arguments: {}, turn: "next", at: 5 }
+    ])
+    expect(messages[1]).toEqual({ role: "assistant", content: "late stopped text" })
+    expect(messages.at(-1)).toEqual({
+      role: "assistant",
+      content: null,
+      toolCalls: [{ id: "next-tool", name: "execute", arguments: "{}" }]
+    })
+  })
+
+  test("resumed text written without an epoch still pairs with its resumed response", () => {
+    // Durable histories from before the epoch stamp on text record the epoch on the model mark
+    // and calls of the resumed response, but not on its text.
+    const messages = renderMessages([
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      { type: "ModelCalled", callId: "m1/infer/0", ordinal: 1, turn: "m1", at: 1 },
+      { type: "ToolCalled", callId: "c1", name: "read", arguments: {}, turn: "m1", at: 2 },
+      { type: "ToolReturned", callId: "c1", result: "contents", turn: "m1", at: 3 },
+      { type: "TurnFailed", error: "retry me", attemptKey: "m1/infer/0", attempts: 1, turn: "m1", at: 4 },
+      { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at: 5 },
+      { type: "ModelReturned", callId: "m1/infer/1", ordinal: 2, turn: "m1", epoch: 1, outcome: "returned", usage: {}, at: 6 },
+      { type: "TextReturned", text: "resumed preamble", turn: "m1", at: 6 },
+      { type: "ToolCalled", callId: "c2", name: "read", arguments: {}, turn: "m1", epoch: 1, at: 6 },
+      { type: "ToolReturned", callId: "c2", result: "more", turn: "m1", at: 7 },
+      { type: "TurnCompleted", output: "done", turn: "m1", at: 8 }
+    ])
+    expect(messages[4]).toMatchObject({ role: "assistant", content: "resumed preamble" })
+    expect(messages[4]!.toolCalls).toEqual([{ id: "c2", name: "read", arguments: "{}" }])
+  })
+
+  test("resumed text written without an epoch still renders when its epoch is cancelled", () => {
+    const messages = renderMessages([
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      { type: "ModelCalled", callId: "m1/infer/1", ordinal: 1, turn: "m1", epoch: 1, at: 1 },
+      { type: "TextReturned", text: "partial preamble", turn: "m1", at: 2 },
+      { type: "TurnCancelled", request: "stop", turn: "m1", cause: "requested", epoch: 1, at: 3 }
+    ])
+    expect(messages.at(-1)).toEqual({ role: "assistant", content: "partial preamble" })
+  })
+
   test("a checkpoint survives the projection: identity anchors the same event in log and render", () => {
     // A queued mid-turn message shifts every raw index by one once the projection excludes it. An
     // index checkpoint would slice the render one event late and open it with a dangling tool
