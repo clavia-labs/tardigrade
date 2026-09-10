@@ -12,6 +12,7 @@ import { effect } from "@clavia/tardigrade-core/effect"
 import { actorFromProjections, actorRuntimeOf, type Actor } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
 import { methodTimeoutKeys, methodTimeoutDerivation } from "@clavia/tardigrade-core/interaction/timeout"
+import { methodSealed, methodSealKey } from "@clavia/tardigrade-core/interaction/seal"
 import { formatThreadAddress, parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
 import { linkOf } from "@clavia/tardigrade-core/transport/link"
@@ -673,6 +674,35 @@ describe("the bun host", () => {
     const reopened = await createBunHost(options(path))
     expect((await reopened.read("child"))[0]).toMatchObject({ depth: 1, maxDepth: 2 })
     await reopened.close()
+  })
+
+  test("a real seal and a real admission race on the seal key", async () => {
+    const h = await createBunHost(options(freshPath()))
+    for (let round = 0; round < 10; round++) {
+      const thread = `seal-race-${round}`
+      const address = `bun:default:${thread}`
+      await h.commitRoot(address, { type: "MessageReceived", id: "m1", at: 1 } as Event)
+      // The seal and the admission both commit through the conditional append, which is the path
+      // the method seal routes use: whichever transaction the single store connection runs
+      // first is the order the log keeps.
+      const seal = () => h.commitRootUnlessKeyPresent(address, methodSealed({ method: "message", at: 2 }), methodSealKey("message"))
+      const admission = () => h.commitRootUnlessKeyPresent(
+        address,
+        { type: "MessageReceived", id: "admitted", at: 2 } as Event,
+        methodSealKey("message")
+      )
+      const [admitted] = round % 2 === 0
+        ? await Promise.all([admission(), seal()])
+        : await Promise.all([(async () => { await seal(); return undefined })(), admission()]).then(([, a]) => [a])
+      const log = await h.read(thread)
+      const admissionAt = log.findIndex((e) => e.type === "MessageReceived" && String((e as { readonly id?: unknown }).id) === "admitted")
+      const sealAt = log.findIndex((e) => e.type === "MethodSealed")
+      expect(sealAt).toBeGreaterThan(-1)
+      expect(admitted).toBe(admissionAt !== -1)
+      // The contract: no admission commits after the seal.
+      if (admissionAt !== -1) expect(admissionAt).toBeLessThan(sealAt)
+    }
+    await h.close()
   })
 
   test("a refused initial actor delivery leaves no partial creation", async () => {
