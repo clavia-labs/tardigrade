@@ -255,7 +255,7 @@ export class CloudflareEventStore implements ThreadEventStore {
     return this.sql.unsafe<{ readonly seq: number; readonly event: string }>(statement, [indexed]).pipe(
       Effect.flatMap((rows) => {
         const row = rows[0]
-        if (row === undefined) return Effect.void
+        if (row === undefined) return Effect.as(Effect.void, undefined)
         return this.decode([JSON.parse(row.event) as Event]).pipe(
           Effect.map((events) => ({ seq: Number(row.seq), event: events[0]! }))
         )
