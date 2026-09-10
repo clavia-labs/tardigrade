@@ -74,8 +74,25 @@ const messagesFrom = (
   if (openHead !== -1 && openHead < from) messages.push(userMessageOf(projected[openHead]!, resolved))
   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
   const responses = responsesOf(projected)
+  // Histories written before text carried the epoch stamp leave the field absent while the rest
+  // of the response records it. The projection upcasts the missing stamp from the same turn's
+  // most recent epoch bearing event, so replay keeps pairing legacy text with the calls it
+  // preceded and the cancellations that cut it (request.test.ts, "resumed text written without
+  // an epoch still pairs with its resumed response").
+  const textEpochs = new Map<Event, number>()
+  const latestEpoch = new Map<string, number>()
+  for (const event of projected) {
+    if (typeof event.turn === "string" && event.epoch !== undefined) latestEpoch.set(event.turn, Number(event.epoch))
+    if (event.type === "TextReturned" && event.epoch === undefined && typeof event.turn === "string") {
+      const inherited = latestEpoch.get(event.turn)
+      if (inherited !== undefined) textEpochs.set(event, inherited)
+    }
+  }
+  const epochOf = (event: Event): number => event.type === "TextReturned" && event.epoch === undefined
+    ? textEpochs.get(event) ?? 0
+    : Number(event.epoch ?? 0)
   const attemptKey = (event: Event): string | undefined => typeof event.turn === "string"
-    ? JSON.stringify([event.turn, event.epoch ?? 0])
+    ? JSON.stringify([event.turn, epochOf(event)])
     : undefined
   const batches = new Map<string, AgentToolCall[]>()
   const callOf = (event: Event): AgentToolCall => ({
@@ -110,7 +127,7 @@ const messagesFrom = (
         pendingText = {
           text: String(value.text ?? ""),
           turn: String(value.turn ?? ""),
-          epoch: Number(value.epoch ?? 0)
+          epoch: epochOf(event)
         }
         break
       case "ToolCalled": {
@@ -119,7 +136,7 @@ const messagesFrom = (
         if (key !== undefined) emitted.add(key)
         const matchesPendingText = pendingText !== null &&
           pendingText.turn === String(value.turn ?? "") &&
-          pendingText.epoch === Number(value.epoch ?? 0)
+          pendingText.epoch === epochOf(event)
         messages.push({
           role: "assistant",
           content: pendingText !== null && matchesPendingText ? pendingText.text : null,
