@@ -75,6 +75,7 @@ const clientOf = (
   answers: {
     readonly list?: ReadonlyArray<ThreadSummary>
     readonly events?: ReadonlyArray<EventRow>
+    readonly facts?: ReadonlyArray<EventRow>
     readonly methods?: ReadonlyArray<MethodSummary>
     readonly models?: ModelCatalogPage
     readonly providers?: ProviderCatalogPage
@@ -125,6 +126,10 @@ const clientOf = (
     events: (_actor, thread, options) => {
       recorded.asked.push({ thread, options })
       return answers.fail === undefined ? Promise.resolve(answers.events ?? []) : Promise.reject(answers.fail)
+    },
+    facts: (_actor, thread, request) => {
+      recorded.asked.push({ thread, options: request })
+      return answers.fail === undefined ? Promise.resolve(answers.facts ?? []) : Promise.reject(answers.fail)
     },
     methodState: state,
     state: (invocation) => {
