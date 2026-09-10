@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { isActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { decodeActorInvocationContext } from "@clavia/tardigrade-core/interaction/invocation"
-import { Cause, Effect, Layer, Schema } from "effect"
+import { Cause, Clock, Effect, Layer, Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self } from "@clavia/tardigrade-core/runtime"
@@ -60,6 +60,24 @@ const env = (
       read: Effect.succeed(events)
     }))
   )
+}
+
+// manualClock pins the package's clock reads so deadline and stamp assertions stay exact.
+const manualClock = (start: number): { readonly clock: Clock.Clock; readonly advance: (to: number) => void } => {
+  let now = start
+  const nanos = () => BigInt(now) * 1_000_000n
+  return {
+    advance: (to) => { now = to },
+    clock: {
+      currentTimeMillisUnsafe: () => now,
+      currentTimeMillis: Effect.sync(() => now),
+      currentTimeNanosUnsafe: nanos,
+      currentTimeNanos: Effect.sync(nanos),
+      monotonicTimeNanosUnsafe: nanos,
+      monotonicTimeNanos: Effect.sync(nanos),
+      sleep: () => Effect.void
+    }
+  }
 }
 
 const response = (
@@ -254,6 +272,15 @@ describe("agentsPackage", () => {
       invocation: decodeActorInvocationContext(sent[0]!.call).invocation
     }
     expect(initialization.invocation.id).toBe("initialize:child")
+    events.push(...appended)
+    appended.length = 0
+
+    // replay before the initializer responds redelivers the same durable invocation instead of a second one
+    expect(await Effect.runPromise(invoke().pipe(Effect.flip, Effect.orDie))).toBeInstanceOf(Park)
+    expect(sent).toHaveLength(2)
+    expect(sent[1]!.event).toMatchObject({ type: "Initialized", id: "initialize:child" })
+    expect(decodeActorInvocationContext(sent[1]!.call).invocation).toEqual(initialization.invocation)
+    expect(sent[1]!.link.target).toEqual(target)
     events.push(...appended, {
       type: "ResponseReceived",
       id: invocationResponseId(initialization),
@@ -268,8 +295,8 @@ describe("agentsPackage", () => {
     appended.length = 0
 
     await expect(Effect.runPromise(invoke())).resolves.toMatchObject({ dispatched: true })
-    expect(sent).toHaveLength(2)
-    expect(sent[1]!.event).toMatchObject({ type: "MessageReceived", id: "child", text: "investigate" })
+    expect(sent).toHaveLength(3)
+    expect(sent[2]!.event).toMatchObject({ type: "MessageReceived", id: "child", text: "investigate" })
   })
 
   test("a child initializer can define its durable invocation id", async () => {
@@ -301,6 +328,82 @@ describe("agentsPackage", () => {
     )
     expect(await Effect.runPromise(parked)).toBeInstanceOf(Park)
     expect(decodeActorInvocationContext(sent[0]!.call).invocation.id).toBe("custom:parent:child")
+  })
+
+  test("an initializer deadline is bounded by its method timeout and the parent's deadline", async () => {
+    const sent: Sent[] = []
+    const { clock } = manualClock(1_000)
+    const initialize = legacyActorMethod({
+      input: Schema.Unknown,
+      output: Schema.Boolean,
+      timeoutMs: 1000,
+      event: ({ invocation, at }) => ({ type: "Initialized", id: invocation.id, at }),
+      state: () => ({ status: "pending" })
+    })
+    const pkg = agentsPackage({ initializeChild: { methodName: "initialize", method: initialize, input: () => true } })
+    const invoke = (events: Event[]) => pkg.methods.run!({ text: "investigate", background: true }, { callId: "child" })
+      .pipe(Effect.provide(env("mem:main:ag.root", sent, { "ag.root": events }, [])), Effect.provideService(Clock.Clock, clock), Effect.flip, Effect.orDie)
+
+    const events: Event[] = [turn("parent"), called("child", "parent")]
+    await Effect.runPromise(invoke(events))
+    expect(decodeActorInvocationContext(sent[0]!.call).deadlineAt).toBe(2_000)
+
+    const bounded: Event[] = [
+      { ...turn("parent"), call: { invocation: { method: "message", id: "parent", epoch: 0 }, deadlineAt: 1_500 } },
+      called("child", "parent")
+    ]
+    await Effect.runPromise(invoke(bounded))
+    expect(decodeActorInvocationContext(sent[1]!.call).deadlineAt).toBe(1_500)
+  })
+
+  test("initializer events are stamped after its input callback settles", async () => {
+    const events: Event[] = [turn("parent"), called("child", "parent")]
+    const sent: Sent[] = []
+    const appended: Event[] = []
+    const { advance, clock } = manualClock(1_000)
+    const initialize = legacyActorMethod({
+      input: Schema.Unknown,
+      output: Schema.Boolean,
+      event: ({ invocation, at }) => ({ type: "Initialized", id: invocation.id, at }),
+      state: () => ({ status: "pending" })
+    })
+    const started = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    const pkg = agentsPackage({
+      initializeChild: {
+        methodName: "initialize",
+        method: initialize,
+        input: () => {
+          started.resolve()
+          return released.promise.then(() => true)
+        }
+      }
+    })
+    const invoke = () => pkg.methods.run!({ text: "investigate", background: true }, { callId: "child" })
+      .pipe(Effect.provide(env("mem:main:ag.root", sent, { "ag.root": events }, appended)), Effect.provideService(Clock.Clock, clock), Effect.flip, Effect.orDie)
+
+    const parked = Effect.runPromise(invoke())
+    await started.promise
+    advance(2_000)
+    released.resolve()
+    expect(await parked).toBeInstanceOf(Park)
+    expect(sent[0]!.event).toMatchObject({ at: 2_000 })
+    for (const record of appended) expect(record).toMatchObject({ at: 2_000 })
+  })
+
+  test("run docs qualify the background promise when an initializer is configured", () => {
+    const initialize = legacyActorMethod({
+      input: Schema.Unknown,
+      output: Schema.Boolean,
+      event: ({ invocation, at }) => ({ type: "Initialized", id: invocation.id, at }),
+      state: () => ({ status: "pending" })
+    })
+    const plain = codeSystemFor([agentsPackage()])
+    const gated = codeSystemFor([agentsPackage({
+      initializeChild: { methodName: "initialize", method: initialize, input: () => true }
+    })])
+    expect(plain).toContain("`background: true` returns { handle, callId } at once")
+    expect(gated).toContain("`background: true` returns { handle, callId } once this host's child initializer settles")
   })
 
   test("a foreground child records its invocation owner", async () => {
