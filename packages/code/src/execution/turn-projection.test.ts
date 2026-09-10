@@ -89,6 +89,7 @@ test("message and response event types determine whether a turn starts", () => {
   check([call, { type: "BlockedOn", callId: "same", turn: "other", awaiting: "opaque-response" },
     { type: "MessageReceived", id: "opaque-response" }], "opaque-response")
   check([call, { type: "ResponseReceived", id: "same.reply" }], undefined)
+  check([call, { type: "ExternalReplyReceived", id: "same.reply", at: 1 }], undefined)
 })
 
 test("event types preserve turn attribution regardless of waits, ID suffixes, and replay", () => {
