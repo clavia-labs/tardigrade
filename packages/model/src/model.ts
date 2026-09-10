@@ -324,6 +324,9 @@ interface Wire {
   readonly usageReports?: ReadonlyArray<unknown>
   readonly provider?: string
   readonly model?: string
+  // completed distinguishes an observed provider terminal from a synthesized adapter finish (model.test.ts, "infer end to end").
+  readonly completed?: boolean
+  readonly finishReason?: string
   // A structured-output refusal arrives as `choices[].delta.refusal` with an ordinary `stop`
   // finish reason, and the adapter's processor keeps neither. The raw body is the only place it
   // survives, so it is read here (model.test.ts, "a refusal on the wire").
@@ -352,12 +355,21 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
     }
     return undefined
   }
-  const wireOf = (parsed: { usage?: unknown; provider?: unknown; model?: unknown }): Wire => {
+  const wireOf = (parsed: { type?: unknown; usage?: unknown; provider?: unknown; model?: unknown; choices?: ReadonlyArray<{ finish_reason?: unknown }> }): Wire => {
     const refusal = refusalOf(parsed as never)
+    const rawFinish = parsed.choices?.[0]?.finish_reason
+    const finishReason = typeof rawFinish === "string" && rawFinish !== "" ? rawFinish : undefined
+    const completed = Array.isArray(parsed.choices)
+      ? finishReason !== undefined
+      : typeof parsed.type === "string" && parsed.type.startsWith("response.")
+        ? parsed.type === "response.completed"
+        : undefined
     return {
       ...(parsed.usage === undefined || parsed.usage === null ? {} : { usage: parsed.usage }),
       ...(typeof parsed.provider === "string" ? { provider: parsed.provider } : {}),
       ...(typeof parsed.model === "string" ? { model: parsed.model } : {}),
+      ...(finishReason === undefined ? {} : { finishReason }),
+      ...(completed === undefined ? {} : { completed }),
       ...(refusal === undefined ? {} : { refusal })
     }
   }
@@ -373,6 +385,7 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
       last = {
         ...last,
         ...next,
+        ...(last.completed === true ? { completed: true } : {}),
         ...(usageReports === undefined ? {} : { usageReports }),
         ...(next.refusal === undefined ? {} : { refusal: `${last.refusal ?? ""}${next.refusal}` })
       }
@@ -684,9 +697,9 @@ export const infer = <const C extends ModelConfig>(
       )
       const result = await new StreamProcessor().process(normalized)
       const { usage, endpoint, wire } = await settle()
-      stats.finish = attempt.finishReason?.() ?? result.finishReason ?? "stop"
+      stats.finish = wire?.finishReason ?? attempt.finishReason?.() ?? result.finishReason ?? "stop"
       const stopClass = attempt.stopClass?.() ?? "ok"
-      if (result.finishReason === "length" || stopClass === "truncated") throw new TruncatedError(maxTokens, usage)
+      if (stats.finish === "length" || stopClass === "truncated") throw new TruncatedError(maxTokens, usage)
       // A structured-output refusal reaches the compatible wire as a `refusal` delta under an
       // ordinary stop, and the Converse wire as its own stop reason. Neither survives the shared
       // processor, so both are read here rather than from the decoded result.
@@ -694,6 +707,9 @@ export const infer = <const C extends ModelConfig>(
       if (stopClass === "refused") throw failed(new RefusedError("the provider refused to answer this request"), usage, endpoint)
       if (stopClass === "violation") {
         throw failed(new ViolatedError("the provider could not produce output matching the schema it was given"), usage, endpoint)
+      }
+      if (wire?.completed === false) {
+        throw failed(new Error("model stream connection closed before provider completion"), usage, endpoint)
       }
       return stamped(served(withSpend(actionOf(result), usage), endpoint))
     } catch (e) {

@@ -280,6 +280,56 @@ const sse = (events: ReadonlyArray<unknown>): Response => {
 }
 
 describe("infer end to end", () => {
+  test.each([
+    { content: "partial text" },
+    { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "execute", arguments: '{"code":"partial' } }] }
+  ])("an unfinished Chat Completions stream cannot commit output: %j", async (delta) => {
+    let calls = 0
+    const layer = testInfer({
+      baseUrl: "https://model.test/v1", apiKey: "unused", model: "fixture",
+      throttleRetryDelaysMs: [0], retryAfterJitterMs: 0,
+      fetch: async () => {
+        calls += 1
+        const body = `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`
+        return new Response(body + (calls === 1 ? "" : "data: [DONE]\n\n"), { headers: { "content-type": "text/event-stream" } })
+      }
+    })
+    const action = await Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([]))).pipe(Effect.provide(layer)))
+    expect(action).toMatchObject({ kind: "fail", failure: { cause: "inference_attempts_exhausted", attempts: 2 } })
+    expect(calls).toBe(2)
+    if (action.kind === "fail") expect(action.error).toContain("before provider completion")
+  })
+
+  test("a raw length stop prevents execution of a normalized tool call", async () => {
+    const layer = testInfer({
+      baseUrl: "https://model.test/v1", apiKey: "unused", model: "fixture", maxTokensLadder: [17],
+      fetch: async () => sse([
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "execute", arguments: '{"code":"partial' } }] } }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "length" }] },
+        { choices: [], usage: { prompt_tokens: 10, completion_tokens: 17, total_tokens: 27 } }
+      ])
+    })
+    const action = await Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([]))).pipe(Effect.provide(layer)))
+    expect(action).toMatchObject({ kind: "fail", failure: { cause: "truncated", policy: { maxTokensLadder: [17] } }, usage: { totalTokens: 27 } })
+    if (action.kind === "fail") expect(action.error).toContain("17-token")
+  })
+
+  test.each([false, true])("Responses requires its provider completion event: %s", async (completed) => {
+    const response = { id: "r1", model: "fixture", output: [] }
+    const layer = testInfer({
+      baseUrl: "https://model.test/v1", apiKey: "unused", model: "fixture", protocol: "openai-responses", throttleRetryDelaysMs: [],
+      fetch: async () => sse([
+        { type: "response.created", response },
+        { type: "response.output_text.delta", item_id: "m1", output_index: 0, content_index: 0, delta: "answer" },
+        ...(completed ? [{ type: "response.completed", response }] : [])
+      ])
+    })
+    const action = await Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([]))).pipe(Effect.provide(layer)))
+    expect(action).toMatchObject(completed
+      ? { kind: "complete", output: "answer" }
+      : { kind: "fail", failure: { cause: "inference_attempts_exhausted", attempts: 1 } })
+  })
+
   test("interleaved streamed calls become one complete batch", async () => {
     const fetchImpl = (async () => sse([
       { id: "r1", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [
