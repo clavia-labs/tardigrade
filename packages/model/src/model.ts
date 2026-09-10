@@ -17,7 +17,7 @@ import {
   type InferenceObserver,
   type InferenceObserverPolicy
 } from "@clavia/tardigrade-agent"
-import type { Action, AttemptEndpoint } from "@clavia/tardigrade-agent/log/events"
+import type { Action, AttemptEndpoint, ModelErrorDetails } from "@clavia/tardigrade-agent/log/events"
 import { modelRequest, type ModelRequest, type ToolSpec } from "@clavia/tardigrade-agent/inference/request"
 import type { AgentMessage } from "@clavia/tardigrade-agent/projection/messages"
 import {
@@ -63,6 +63,40 @@ export const DEFAULT_STREAM_BOUNDS: StreamBounds = {
 // (model.test.ts, "stream bounds").
 export const MAX_TIMER_DELAY_MS = 2_147_483_647
 
+const errorRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null ? value as Record<string, unknown> : {}
+
+const errorField = (error: unknown, key: string): unknown => {
+  const outer = errorRecord(error)
+  return outer[key] ?? errorRecord(outer.error)[key] ?? errorRecord(outer.cause)[key]
+}
+
+const errorDetailsOf = (error: unknown): ModelErrorDetails => {
+  if (error instanceof ModelStreamError) return error.details
+  const status = errorField(error, "statusCode") ?? errorField(error, "status")
+  const message = errorField(error, "message")
+  const code = errorField(error, "code")
+  const isRetryable = errorField(error, "isRetryable")
+  return {
+    message: typeof message === "string" ? message : String(error),
+    ...(typeof code === "string" ? { code } : {}),
+    ...(typeof status === "number" && Number.isFinite(status) ? { statusCode: status } : {}),
+    ...(typeof isRetryable === "boolean" ? { isRetryable } : {})
+  }
+}
+
+// ModelStreamError carries a stream's structured error through retry classification and publication (model.test.ts, structured stream failures).
+class ModelStreamError extends Error {
+  readonly details: ModelErrorDetails
+  readonly headers: unknown
+  constructor(chunk: unknown) {
+    const details = errorDetailsOf(chunk)
+    super(`model stream error: ${details.message}${details.code === undefined ? "" : ` (${details.code})`}`, { cause: chunk })
+    this.details = { ...details, details: chunk }
+    this.headers = errorField(chunk, "headers") ?? errorField(chunk, "responseHeaders")
+  }
+}
+
 const bounded = (stream: AsyncIterable<StreamChunk>, bounds: StreamBounds): AsyncIterable<StreamChunk> => ({
   async *[Symbol.asyncIterator]() {
     const startedAt = Date.now()
@@ -81,11 +115,9 @@ const bounded = (stream: AsyncIterable<StreamChunk>, bounds: StreamBounds): Asyn
         first = false
         // A provider refusal arrives as a RUN_ERROR chunk the processor would silently absorb,
         // leaving an empty result that reads as "the model said nothing". Throw the real cause.
-        const chunk = next.value as { type?: unknown; message?: unknown; code?: unknown; error?: { message?: unknown } }
+        const chunk = next.value as { type?: unknown }
         if (String(chunk.type) === "RUN_ERROR") {
-          throw new Error(
-            `model stream error: ${String(chunk.message ?? chunk.error?.message ?? "unknown")}${chunk.code === undefined ? "" : ` (${String(chunk.code)})`}`
-          )
+          throw new ModelStreamError(next.value)
         }
         yield next.value
       } finally {
@@ -190,10 +222,10 @@ export const DEFAULT_RETRY_AFTER_JITTER_MS = 1_000
 // isRetryableFailure recognizes status-bearing provider failures and flattened transport errors.
 // The latter have no HTTP response metadata (model.test.ts, "infer: transient retry").
 const isRetryableFailure = (e: unknown): boolean => {
-  const err = e as { status?: unknown; statusCode?: unknown; message?: unknown }
-  const status = typeof err.status === "number" ? err.status : typeof err.statusCode === "number" ? err.statusCode : undefined
-  if (status === 429 || (status !== undefined && status >= 500)) return true
-  const message = String(err.message ?? e)
+  const details = errorDetailsOf(e)
+  if (details.isRetryable !== undefined) return details.isRetryable
+  if (details.statusCode !== undefined) return details.statusCode === 429 || details.statusCode >= 500
+  const message = [details.message, details.code].filter((part) => part !== undefined).join(" ")
   return /\b429\b|rate.?limit|too many requests|\b5\d\d\b|timeout|timed?\s*out|idle beyond bound|exceeded its total bound|no first chunk within bound|connection (?:error|failed|failure|reset|refused|closed|lost)|network.?error|network request failed|network connection (?:was )?lost|fetch failed|failed to fetch|load failed|socket (?:hang up|closed|disconnected)|dns(?: lookup)? (?:error|failed|failure)|getaddrinfo|ECONN(?:RESET|REFUSED|ABORTED)|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|UND_ERR_(?:CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|SOCKET)/i.test(
     message
   )
@@ -797,7 +829,10 @@ export const infer = <const C extends ModelConfig>(
             const usage = isTruncated(e) ? e.usage : usageOn(e)
             const endpoint = endpointOn(e) ?? endpointOf(config, undefined)
             const ends = (action: Action): Action => {
-              const billed = served(withSpend(action, spentOf(parts, missed)), endpoint)
+              const detailed = action.kind === "fail" && action.failure !== undefined
+                ? { ...action, failure: { ...action.failure, errorDetails: errorDetailsOf(e) } }
+                : action
+              const billed = served(withSpend(detailed, spentOf(parts, missed)), endpoint)
               return req.output === undefined ? billed : { ...billed, mode }
             }
             remember(usage, isTruncated(e) || usage !== undefined)

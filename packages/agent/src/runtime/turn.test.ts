@@ -424,6 +424,7 @@ describe("the agent with execute as the only tool", () => {
 
   test("provider retry exhaustion records a resumable failure with its policy", async () => {
     const retry = { throttleRetryDelaysMs: [100], stream: { firstChunkMs: 1, idleMs: 2, totalMs: 3 } }
+    const errorDetails = { message: "busy", code: "overloaded", statusCode: 503, isRetryable: true, details: { type: "RUN_ERROR", message: "busy" } }
     const layers = Layer.mergeAll(
       KeyValueStore.layerMemory,
       memoryLog(),
@@ -432,7 +433,7 @@ describe("the agent with execute as the only tool", () => {
           Effect.succeed({
             kind: "fail" as const,
             error: "model inference retries exhausted after 2 attempts: timeout",
-            failure: { cause: "inference_attempts_exhausted" as const, attempts: 2, policy: retry }
+            failure: { cause: "inference_attempts_exhausted" as const, attempts: 2, policy: retry, errorDetails }
           })
       }),
       jsSandbox,
@@ -451,7 +452,8 @@ describe("the agent with execute as the only tool", () => {
       cause: "inference_attempts_exhausted",
       attempts: 2,
       attemptKey: "m1/infer/0",
-      policy: retry
+      policy: retry,
+      errorDetails
     })
     expect(events.find((event) => event.type === "ModelReturned")).toMatchObject({ outcome: "failed", usage: {}, callId: "m1/infer/0" })
   })

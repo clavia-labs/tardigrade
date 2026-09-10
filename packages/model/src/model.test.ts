@@ -64,6 +64,61 @@ const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "
 // endpoint. No real provider is touched. Request-building (renderMessages, modelRequest) is domain
 // and tested in agent/request.test.ts.
 
+describe("structured stream failures", () => {
+  test.each([
+    { message: "busy", statusCode: 503, code: "overloaded", isRetryable: true },
+    { error: { message: "busy", statusCode: 503, code: "overloaded", isRetryable: true } },
+    { cause: Object.assign(new Error("busy"), { status: 503, code: "overloaded", isRetryable: true }) }
+  ])("retains provider metadata through bounded retries: %j", async (fields) => {
+    let calls = 0
+    const waits: number[] = []
+    const chunk = { type: "RUN_ERROR", ...fields, headers: { "retry-after": "0" } }
+    const adapter: ModelAdapter = {
+      id: "structured-error", protocols: ["openai-chat-completions"],
+      start: () => {
+        calls += 1
+        return { stream: { async *[Symbol.asyncIterator]() { yield chunk as never } } }
+      }
+    }
+    const layer = infer({
+      baseUrl: "https://unused.test", apiKey: "unused", provider: "test", model: "fixture",
+      protocol: "openai-chat-completions", contextWindowTokens: 4096,
+      throttleRetryDelaysMs: [0], retryAfterJitterMs: 0,
+      sleep: async (ms) => { waits.push(ms) }
+    }, modelAdapters(adapter))
+    const action = await Effect.runPromise(Effect.flatMap(Infer, (service) => service.react(reqOf([]))).pipe(Effect.provide(layer)))
+    expect(calls).toBe(2)
+    expect(waits).toEqual([0])
+    expect(action).toMatchObject({ kind: "fail", failure: {
+      cause: "inference_attempts_exhausted", attempts: 2,
+      errorDetails: { message: "busy", statusCode: 503, code: "overloaded", isRetryable: true, details: chunk }
+    } })
+  })
+
+  test.each([
+    { statusCode: 503, isRetryable: false },
+    { statusCode: 400 }
+  ])("nonretryable metadata overrides message heuristics: %j", async (fields) => {
+    let calls = 0
+    const chunk = { type: "RUN_ERROR", message: "rate limit 503", ...fields }
+    const adapter: ModelAdapter = {
+      id: "permanent-error", protocols: ["openai-chat-completions"],
+      start: () => {
+        calls += 1
+        return { stream: { async *[Symbol.asyncIterator]() { yield chunk as never } } }
+      }
+    }
+    const action = await Effect.runPromise(Effect.flatMap(Infer, (service) => service.react(reqOf([]))).pipe(Effect.provide(infer({
+      baseUrl: "https://unused.test", apiKey: "unused", provider: "test", model: "fixture",
+      protocol: "openai-chat-completions", contextWindowTokens: 4096, throttleRetryDelaysMs: [0]
+    }, modelAdapters(adapter)))))
+    expect(calls).toBe(1)
+    expect(action).toMatchObject({ kind: "fail", failure: {
+      cause: "inference_error", attempts: 1, errorDetails: fields
+    } })
+  })
+})
+
 describe("actionOf", () => {
   test("multiple calls preserve provider order including calls beside execute", () => {
     expect(actionOf({ content: "Reading files", toolCalls: [
