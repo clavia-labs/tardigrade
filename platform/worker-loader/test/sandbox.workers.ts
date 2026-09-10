@@ -106,6 +106,7 @@ describe("worker loader sandbox", () => {
         Function: typeof Function,
         require: typeof require,
         globalThis: typeof globalThis,
+        global: typeof global,
         globalKeys: Object.keys(globalThis).length
       }`,
       {}
@@ -124,9 +125,27 @@ describe("worker loader sandbox", () => {
         Function: "undefined",
         require: "undefined",
         globalThis: "object",
+        global: "undefined",
         globalKeys: 0
       }
     })
+  })
+
+  // nodejs_compat exposes global, Node's alias for the real global scope, so a loaded isolate
+  // under that flag must not name the ambient network through it (sandbox.ts,
+  // RESTRICTED_NAMES).
+  test("shadows the Node global alias under nodejs_compat", async () => {
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor, {
+      compatibilityFlags: ["nodejs_compat"]
+    })
+    const result = await Effect.runPromise(sandbox.run(
+      `return {
+        global: typeof global,
+        globalFetch: typeof global === "undefined" ? "undefined" : typeof global.fetch
+      }`,
+      {}
+    ))
+    expect(result).toEqual({ result: { global: "undefined", globalFetch: "undefined" } })
   })
 
   test("a host binding keeps its own name", async () => {

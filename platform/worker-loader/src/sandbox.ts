@@ -38,9 +38,11 @@ export const DEFAULT_WORKER_LOADER_SANDBOX_POLICY: WorkerLoaderSandboxPolicy = {
 // identifier inside the body is undefined (or an empty globalThis) rather than the isolate's own
 // global, whatever egress the host mapped (#427). The Bun list is carried in full for the names
 // a compatibility flag can add, and the workerd-only network globals WebSocket, WebSocketPair,
-// and caches join it. A name the host bound itself stays the binding: a mounted package keeps
-// its own name, and a body that names it reaches the package, never the global (sandbox.workers.ts,
-// "a host binding keeps its own name").
+// and caches join it, and so does global, the Node alias nodejs_compat exposes to the real
+// global scope (sandbox.workers.ts, "shadows the Node global alias under nodejs_compat").
+// A name the host bound itself stays the binding: a mounted package keeps its own name, and a
+// body that names it reaches the package, never the global (sandbox.workers.ts, "a host binding
+// keeps its own name").
 const RESTRICTED_NAMES = [
   "globalThis",
   "self",
@@ -49,6 +51,7 @@ const RESTRICTED_NAMES = [
   "WebSocket",
   "WebSocketPair",
   "caches",
+  "global",
   "process",
   "Bun",
   "Worker",
@@ -301,7 +304,8 @@ const sandboxInput = (bindings: Bindings, ambient: Ambient | undefined, policy: 
   }
   // A restricted name arrives as an undefined value the harness hands the body, so the isolate
   // cannot name its own global; globalThis is the one exception, an empty object, because the
-  // Bun sandbox blanks it that way (sandbox.workers.ts, "shadows the ambient network globals").
+  // Bun sandbox blanks it that way (sandbox.workers.ts, "shadows the ambient network globals in
+  // the body scope").
   if (!Object.hasOwn(bindings, "globalThis")) values["globalThis"] = {}
   return { names, packages, values, logCapBytes: policy.logCapBytes, ...(ambient === undefined ? {} : { ambient }) }
 }
