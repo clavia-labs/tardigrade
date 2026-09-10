@@ -3,7 +3,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { LegacyCallAction } from "./action-compat"
 import type { Action } from "../log/events"
 import type { ContextPolicy } from "../component/compaction"
-import type { OutputFallback } from "../output/contract"
+import type { DeclaredOutput, OutputFallback } from "../output/contract"
 import type { ModelRef } from "./reference"
 import { DEFAULT_MODEL_POLICY_OVERRIDE, type ModelPolicy, type ModelPolicyOverride } from "./access"
 import type { InferDelta, InferenceIdentity } from "./observer"
@@ -29,6 +29,11 @@ export interface InferRequest {
   readonly tools: ReadonlyArray<import("./request").ToolSpec>
   readonly context?: Partial<ContextPolicy>
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
+  // The turn's declared output, decided by the actor from the unfiltered turn. A trajectory filter
+  // may remove the message that declared it from what the model reads, but the turn still owes the
+  // contract it declared, so the request carries the declaration beside the trajectory rather
+  // than deriving it from what the filters left (inference/machine.ts; request.ts, modelRequest).
+  readonly declaredOutput?: DeclaredOutput
 }
 
 export interface ModelResolution {

@@ -29,7 +29,9 @@ import { permissions } from "../component/permissions"
 import { requestPermissionMethod } from "../actor/permission"
 import { receive } from "./turn"
 import { Infer, NativeOutputSupport, type InferRequest } from "../inference/contract"
-import { selectedModelOf } from "../inference/machine"
+import type { ExternalEffect } from "@clavia/tardigrade-core/effect"
+import { inferenceFromHistory, selectedModelOf } from "../inference/machine"
+import { NATIVE_MODE, output } from "../index"
 
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
@@ -478,6 +480,114 @@ describe("infer component", () => {
     expect(source).toMatchObject([{ type: "MessageReceived", id: "m1", text: "go" }])
     expect(seen[0]?.trajectory).toEqual([])
     expect(events.find((event) => event.type === "MessageReceived")).toMatchObject({ id: "m1", text: "go" })
+  })
+
+  test("a trajectory filter cannot remove the turn's declared output", async () => {
+    const contract = output({
+      name: "scout",
+      schema: {
+        type: "object",
+        properties: { a: { type: "string" } },
+        required: ["a"],
+        additionalProperties: false
+      }
+    })
+    const seen: InferRequest[] = []
+    const projected = viewComponent("projected", {
+      system: [],
+      tools: [],
+      context: [],
+      output: [],
+      trajectoryFilters: [(trajectory) => trajectory.filter((event) => event.type !== "MessageReceived")]
+    })
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: JSON.stringify({ a: "aspects" }), mode: NATIVE_MODE })
+      }
+    })
+    const agent = assembled(infer([projected, nativeOutput], TEST_MODEL))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "go", output: contract })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    // The filter removed the declaring message from what the model reads, and the request still
+    // carries the declaration, so the turn completes under the contract it declared.
+    expect(seen[0]?.trajectory).toEqual([])
+    expect(seen[0]?.declaredOutput?.kind).toBe("contract")
+    expect(seen[0]?.declaredOutput?.kind === "contract" && seen[0]?.declaredOutput.contract.name).toBe("scout")
+    expect(events.at(-1)?.type).toBe("TurnCompleted")
+  })
+
+  test("a filter that hides a tool call keeps its call ID reserved", async () => {
+    const seen: InferRequest[] = []
+    let asked = 0
+    const hiding = viewComponent("hiding", {
+      system: [],
+      tools: [],
+      context: [],
+      output: [],
+      trajectoryFilters: [(trajectory) => trajectory.filter((event) => event.type !== "ToolCalled")]
+    })
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        asked += 1
+        return Effect.succeed(asked === 1
+          ? { kind: "calls" as const, calls: [{ callId: "c1", name: "echo", arguments: { q: "first" } }] as const }
+          : { kind: "calls" as const, calls: [{ callId: "c1", name: "echo", arguments: { q: "again" } }] as const })
+      }
+    })
+    const agent = assembled(infer([echoTable, hiding, nativeOutput], TEST_MODEL))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "go" })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    // The second attempt read a trajectory with the first call hidden, yet the ID stayed
+    // reserved: the reuse fails the turn instead of dispatching a second call under one ID.
+    expect(seen[1]?.trajectory.some((event) => event.type === "ToolCalled")).toBe(false)
+    expect(events.filter((event) => event.type === "ToolCalled")).toHaveLength(1)
+    const failed = events.find((event) => event.type === "TurnFailed") as { error?: string } | undefined
+    expect(failed).toMatchObject({ cause: "inference_error" })
+    expect(failed?.error).toContain('duplicate tool call ID "c1"')
+  })
+
+  test("inferenceFromHistory applies its trajectory-filter hook after the mark", async () => {
+    const seen: InferRequest[] = []
+    const stepped: string[][] = []
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const history = [{ type: "MessageReceived", id: "m1", text: "go", at: 0 }] as ReadonlyArray<Event>
+    const layers = Layer.mergeAll(memoryLog(history), mind, noRouter, KeyValueStore.layerMemory)
+    const actOf = (transitions: ReadonlyArray<{ readonly kind: string }>): ExternalEffect =>
+      transitions.find((transition) => transition.kind === "effect") as ExternalEffect
+    const hooked = actOf(inferenceFromHistory(
+      TEST_MODEL,
+      () => ({ system: "", tools: [] }),
+      (log) => {
+        stepped.push(log.map((event) => event.type))
+        return [(trajectory) => trajectory.filter((event) => event.type !== "MessageReceived")]
+      }
+    )(history))
+    await run(hooked.act(hooked.input, new AbortController().signal), layers)
+    const bare = actOf(inferenceFromHistory(TEST_MODEL, () => ({ system: "", tools: [] }))(history))
+    await run(bare.act(bare.input, new AbortController().signal), layers)
+    // The hook read the replayed log stepped past the mark, the same after-the-mark read the
+    // incremental projection takes, and its filters shaped the replayed request. Absent the hook,
+    // the replay reads the log unfiltered.
+    expect(stepped).toEqual([["MessageReceived", "ModelCalled"]])
+    expect(seen[0]?.trajectory).toEqual([])
+    expect(seen[1]?.trajectory).toMatchObject([{ type: "MessageReceived", id: "m1" }])
   })
 
   test("a call outside the derived tools answers unknown-tool naming the composed tools", async () => {
