@@ -87,6 +87,59 @@ describe("worker loader sandbox", () => {
     expect(result).toEqual({ result: "blocked" })
   })
 
+  // Shadowing is the harness's own defense, independent of the egress mapping the test fixture
+  // states: the identifiers a body could use to name an ambient network are parameters of the
+  // body, undefined (sandbox.ts, RESTRICTED_NAMES).
+  test("shadows the ambient network globals in the body scope", async () => {
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor)
+    const result = await Effect.runPromise(sandbox.run(
+      `return {
+        fetch: typeof fetch,
+        WebSocket: typeof WebSocket,
+        WebSocketPair: typeof WebSocketPair,
+        caches: typeof caches,
+        self: typeof self,
+        postMessage: typeof postMessage,
+        process: typeof process,
+        Bun: typeof Bun,
+        Worker: typeof Worker,
+        Function: typeof Function,
+        require: typeof require,
+        globalThis: typeof globalThis,
+        globalKeys: Object.keys(globalThis).length
+      }`,
+      {}
+    ))
+    expect(result).toEqual({
+      result: {
+        fetch: "undefined",
+        WebSocket: "undefined",
+        WebSocketPair: "undefined",
+        caches: "undefined",
+        self: "undefined",
+        postMessage: "undefined",
+        process: "undefined",
+        Bun: "undefined",
+        Worker: "undefined",
+        Function: "undefined",
+        require: "undefined",
+        globalThis: "object",
+        globalKeys: 0
+      }
+    })
+  })
+
+  test("a host binding keeps its own name", async () => {
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, () => {
+      throw new Error("replay transport must not open a capability")
+    }, { transport: "replay" })
+    const result = await Effect.runPromise(sandbox.run(
+      `return typeof fetch === "object" ? await fetch.hello() : "shadowed"`,
+      { fetch: { hello: async () => sandboxReturned("bound") } }
+    ))
+    expect(result).toEqual({ result: "bound" })
+  })
+
   test("replays sequential and concurrent package calls", async () => {
     const { result, observed } = await replaySequenceWith((env as Env).LOADER)
 
