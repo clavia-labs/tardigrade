@@ -170,6 +170,7 @@ const clientOf = (
         status: "requested"
       })
     },
+    sealMethod: refuse,
     projection: refuse as ActorClient["projection"],
     tree: refuse,
     resume: refuse,
