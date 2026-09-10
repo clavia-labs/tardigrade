@@ -19,6 +19,14 @@ on:
         description: Git ref to publish. Defaults to the workflow revision
         type: string
         default: ""
+      candidate_tag:
+        description: npm tag for the release candidate
+        type: string
+        default: next
+      stable_tag:
+        description: npm tag for the stable release
+        type: string
+        default: latest
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -27,11 +35,11 @@ concurrency:
 env:
   PUBLISHED_PACKAGE: tardie
   RC_TYPE: rc
-  RC_NPM_TAG: next
+  RC_NPM_TAG: ${{ inputs.candidate_tag || 'next' }}
   RELEASE_PR_AUTHOR: github-actions[bot]
   RELEASE_PR_BRANCH_PREFIX: release-please--
   RELEASE_PR_LABEL: "autorelease: pending"
-  STABLE_NPM_TAG: latest
+  STABLE_NPM_TAG: ${{ inputs.stable_tag || 'latest' }}
 
 jobs:
   release-please:
@@ -108,7 +116,7 @@ jobs:
         id: candidate
         run: echo "version=$(jq -r .version package.json)-${RC_TYPE}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - name: Publish candidate
-        run: bun run tools/publish.ts --version ${{ steps.candidate.outputs.version }} --tag ${RC_NPM_TAG} --source-tree ${{ steps.candidate-tree.outputs.sha }}
+        run: bun run tools/publish.ts --version ${{ steps.candidate.outputs.version }} --tag "${RC_NPM_TAG}" --source-tree ${{ steps.candidate-tree.outputs.sha }}
       - name: Record release PR checks
         if: needs.release-please.outputs.candidate_head != ''
         env:
@@ -156,4 +164,4 @@ jobs:
           fi
           echo "npm ${RC_NPM_TAG} matches stable tree ${STABLE_TREE}."
       - name: Publish
-        run: bun run tools/publish.ts --tag ${STABLE_NPM_TAG} --source-tree ${{ steps.stable-tree.outputs.sha }} ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && '--dry-run' || '' }}
+        run: bun run tools/publish.ts --tag "${STABLE_NPM_TAG}" --source-tree ${{ steps.stable-tree.outputs.sha }} ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && '--dry-run' || '' }}

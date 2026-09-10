@@ -89,6 +89,8 @@ bun add tardie
 
 You can use `npm install tardie` instead. Install `tardie@next` to test a release candidate.
 
+A code package whose native operation finishes outside a Tardigrade child method can [resume from a durable external reply](docs/how-to/external-replies.md). The host appends a keyed readiness notification after it retains the operation's result.
+
 ### Create a component
 
 An agent is made of components. Each component owns a machine with `initial`, `step`, and `output`. Its state retains the information from prior events that can affect its future output. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
