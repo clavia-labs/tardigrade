@@ -84,8 +84,25 @@ const messageEntriesFrom = (
   if (openHead !== -1 && openHead < from) push(projected[openHead]!, userMessageOf(projected[openHead]!, resolved))
   if (checkpoint.summary !== "") push(projected.findLast((event) => event.type === "CompactionCompleted")!, { role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
   const responses = responsesOf(projected)
+  // Histories written before text carried the epoch stamp leave the field absent while the rest
+  // of the response records it. The projection upcasts the missing stamp from the same turn's
+  // most recent epoch bearing event, so replay keeps pairing legacy text with the calls it
+  // preceded and the cancellations that cut it (request.test.ts, "resumed text written without
+  // an epoch still pairs with its resumed response").
+  const textEpochs = new Map<Event, number>()
+  const latestEpoch = new Map<string, number>()
+  for (const event of projected) {
+    if (typeof event.turn === "string" && event.epoch !== undefined) latestEpoch.set(event.turn, Number(event.epoch))
+    if (event.type === "TextReturned" && event.epoch === undefined && typeof event.turn === "string") {
+      const inherited = latestEpoch.get(event.turn)
+      if (inherited !== undefined) textEpochs.set(event, inherited)
+    }
+  }
+  const epochOf = (event: Event): number => event.type === "TextReturned" && event.epoch === undefined
+    ? textEpochs.get(event) ?? 0
+    : Number(event.epoch ?? 0)
   const attemptKey = (event: Event): string | undefined => typeof event.turn === "string"
-    ? JSON.stringify([event.turn, event.epoch ?? 0])
+    ? JSON.stringify([event.turn, epochOf(event)])
     : undefined
   const batches = new Map<string, AgentToolCall[]>()
   const callOf = (event: Event): AgentToolCall => ({
@@ -123,7 +140,7 @@ const messageEntriesFrom = (
         push(event, userMessageOf(event, resolved))
         break
       case "TextReturned":
-        pendingText = { text: String(value.text ?? ""), turn: String(value.turn ?? ""), epoch: Number(value.epoch ?? 0) }
+        pendingText = { text: String(value.text ?? ""), turn: String(value.turn ?? ""), epoch: epochOf(event) }
         break
       case "ToolCalled": {
         const key = responses.keys.get(event)
@@ -131,7 +148,7 @@ const messageEntriesFrom = (
         if (key !== undefined) emitted.add(key)
         push(event, {
           role: "assistant",
-          content: pendingText !== null && pendingText.turn === String(value.turn ?? "") && pendingText.epoch === Number(value.epoch ?? 0) ? pendingText.text : null,
+          content: pendingText !== null && pendingText.turn === String(value.turn ?? "") && pendingText.epoch === epochOf(event) ? pendingText.text : null,
           ...continuationOf(event, value.responseId),
           toolCalls: key === undefined ? [callOf(event)] : batches.get(key)!
         })
