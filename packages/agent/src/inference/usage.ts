@@ -14,6 +14,15 @@ export interface ProviderUsageReport {
   readonly providerSpecific: unknown
 }
 
+// UsageContext supplies serving coordinates and the input accounting declared by an adapter.
+export interface UsageContext {
+  readonly provider?: string
+  readonly model?: string
+  // inputTokensIncludeCache marks raw inputTokens/input_tokens as inclusive (usage.test.ts, "an adapter declares inclusive raw input accounting").
+  // Prompt fields are inclusive; raw input fields otherwise exclude separately reported cache buckets.
+  readonly inputTokensIncludeCache?: boolean
+}
+
 export interface Usage {
   readonly promptTokens: number
   readonly completionTokens: number
@@ -99,10 +108,11 @@ interface TokenMetrics {
   readonly cacheBucketsWereExclusive?: true
 }
 
-const tokensOf = (value: unknown): TokenMetrics | undefined => {
+const tokensOf = (value: unknown, context: UsageContext | undefined): TokenMetrics | undefined => {
   const rec = asRecord(value)
   if (rec === undefined) return undefined
-  const prompt = firstNumber(rec, ["promptTokens", "prompt_tokens", "inputTokens", "input_tokens"])
+  const inclusivePrompt = firstNumber(rec, ["promptTokens", "prompt_tokens"])
+  const prompt = inclusivePrompt ?? firstNumber(rec, ["inputTokens", "input_tokens"])
   const completion = firstNumber(rec, ["completionTokens", "completion_tokens", "outputTokens", "output_tokens"])
   if (prompt === undefined && completion === undefined) return undefined
   const total = firstNumber(rec, ["totalTokens", "total_tokens"])
@@ -136,12 +146,13 @@ const tokensOf = (value: unknown): TokenMetrics | undefined => {
       ["completion_tokens_details", ["reasoningTokens", "reasoning_tokens"]],
       ["output_tokens_details", ["reasoningTokens", "reasoning_tokens"]]
     ])
-  const cacheBucketsWereExclusive = exclusiveCached !== undefined || exclusiveCacheWrite !== undefined
-  const exclusivePromptTokens = (exclusiveCached ?? 0) + (exclusiveCacheWrite ?? 0)
+  const cacheBucketsWereExclusive = inclusivePrompt === undefined && context?.inputTokensIncludeCache !== true &&
+    (exclusiveCached !== undefined || exclusiveCacheWrite !== undefined)
+  const exclusivePromptTokens = cacheBucketsWereExclusive ? (exclusiveCached ?? 0) + (exclusiveCacheWrite ?? 0) : 0
   const normalizedTotal =
     total === undefined || (total === 0 && (prompt ?? 0) + (completion ?? 0) > 0)
       ? undefined
-      : total + exclusivePromptTokens
+      : total
   return {
     promptTokens: (prompt ?? 0) + exclusivePromptTokens,
     completionTokens: completion ?? 0,
@@ -218,7 +229,7 @@ export const priced = (usage: Usage, pricing?: ModelPricing): Usage => {
 export const usageFrom = (
   reported: unknown,
   pricing?: ModelPricing,
-  stamp?: { readonly provider?: string; readonly model?: string },
+  stamp?: UsageContext,
   providerMetrics?: unknown
 ): Usage | undefined => {
   const parts = Array.isArray(reported) ? reported : [reported]
@@ -227,7 +238,7 @@ export const usageFrom = (
   let raw: unknown = providerMetrics
   for (const part of parts) {
     if (raw === undefined && part !== undefined && part !== null) raw = part
-    const next = tokensOf(part)
+    const next = tokensOf(part, stamp)
     if (next !== undefined) {
       const keepExclusiveFold =
         tokens?.cacheBucketsWereExclusive === true &&
