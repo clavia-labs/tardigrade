@@ -470,6 +470,9 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
       }
       if (event.type === "PackageReturned") returned.add(packageKeyOf(event))
       if (event.type === "MessageReceived" || event.type === "ResponseReceived") replies.add(String(value.id ?? ""))
+      if (event.type === "ExternalReplyReceived" && typeof value.id === "string" && value.id.length > 0 && typeof value.at === "number" && Number.isFinite(value.at)) {
+        replies.add(value.id)
+      }
       return {
         turns: reduceTurnProjection(state.turns, event),
         dispatches,

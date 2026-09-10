@@ -5,6 +5,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { CANCELLATION_CONTROL_METHOD, cancellationMethodFor } from "@clavia/tardigrade-core/interaction/cancellation"
 import { actor, type Actor } from "@clavia/tardigrade-core/actor"
+import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime/actor"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
 import { createHost, type Host, type ThreadEnv } from "@clavia/tardigrade-host/host"
@@ -17,7 +18,9 @@ import { agentsPackage } from "./packages/agents"
 import { threadCreated, threadCreatedOf, type ChildCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { linkOf } from "@clavia/tardigrade-core/transport/link"
 import { methodEnvelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
+import { externalReplyReceived } from "@clavia/tardigrade-core/interaction/external-reply"
 import { threadAddressOf } from "@clavia/tardigrade-core/transport/endpoint"
+import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { agentMethods, budget, codeMode, compaction, infer, nativeOutput, tool, type AgentComponent } from "./index"
 import type { AgentR } from "./runtime/turn"
 
@@ -67,6 +70,7 @@ const hosted = (
     actorName: "mem",
     actorInstance,
     actorFor: () => assembled,
+    keyOf: actorRuntimeOf(assembled).keyOf,
     layersFor
   })
   if (log.length > 0) host.seed(ROOT_THREAD, log)
@@ -686,4 +690,105 @@ test("a turn rejects reused provider IDs before dispatch, including after resume
   expect(dispatched).toBe(1)
   await mind.host.drive()
   expect(dispatched).toBe(1)
+})
+
+test("external package replies resume two identical calls without replaying inference", async () => {
+  const receipts = new Set<string>()
+  const physical: Array<{ readonly callId: string; readonly state: "pending" | "completed" }> = []
+  const recordPackage = definePackage({
+    name: "record",
+    description: "submits a value through an external adapter",
+    methods: {
+      submit: (_args, ctx) => Effect.gen(function* () {
+        const id = `record:${ctx.callId}`
+        const state = receipts.has(id) ? "completed" as const : "pending" as const
+        physical.push({ callId: ctx.callId, state })
+        if (state === "pending") return yield* new Park({ callId: ctx.callId, awaiting: id })
+        return { accepted: true }
+      })
+    }
+  })
+  const assembled = actor({
+    name: "external-reply-agent",
+    methods: agentMethods,
+    components: [infer([codeMode([recordPackage]), nativeOutput], TEST_MODEL)]
+  })
+  let inferences = 0
+  const action: Action = {
+    kind: "call",
+    callId: "submit",
+    name: "execute",
+    arguments: { code: "await record.submit({value: 'same'}); return await record.submit({value: 'same'})" }
+  }
+  expect(action).toMatchObject({ kind: "call", callId: "submit", name: "execute" })
+  const react: Mind = async ({ trajectory }) => {
+    inferences++
+    return trajectory.some((event) => event.type === "ToolReturned")
+      ? { kind: "complete", output: "done" }
+      : action
+  }
+  const restart = (events: ReadonlyArray<Event>) => hosted(
+    assembled,
+    react,
+    JSON.parse(JSON.stringify(events)) as ReadonlyArray<Event>
+  )
+  const first = hosted(assembled, react)
+  await first.run("submit twice")
+  let events = first.host.read(ROOT_THREAD)
+  expect(inferences).toBe(1)
+  expect(physical).toEqual([{ callId: expect.any(String), state: "pending" }])
+
+  let current = restart(events)
+  await current.host.drive()
+  current = restart(current.host.read(ROOT_THREAD))
+  await current.host.drive()
+  expect(inferences).toBe(1)
+  expect(physical).toHaveLength(1)
+
+  const firstCall = current.host.read(ROOT_THREAD).find((event) => event.type === "PackageCalled")!
+  const firstCallId = String(firstCall.callId)
+  const firstReply = `record:${firstCallId}`
+  receipts.add(firstReply)
+  await current.host.commitRoot(current.host.self(ROOT_THREAD), externalReplyReceived({ id: firstReply, at: 10 }))
+  await current.host.commitRoot(current.host.self(ROOT_THREAD), externalReplyReceived({ id: firstReply, at: 11 }))
+  await current.host.drive()
+  events = current.host.read(ROOT_THREAD)
+  expect(inferences).toBe(1)
+  expect(events.filter((event) => event.type === "ExternalReplyReceived" && event.id === firstReply)).toHaveLength(1)
+
+  current = restart(events)
+  await current.host.drive()
+  current = restart(current.host.read(ROOT_THREAD))
+  await current.host.drive()
+  expect(inferences).toBe(1)
+  expect(physical).toHaveLength(3)
+
+  const calls = current.host.read(ROOT_THREAD).filter((event) => event.type === "PackageCalled")
+  expect(calls).toHaveLength(2)
+  const secondCallId = String(calls[1]!.callId)
+  const secondReply = `record:${secondCallId}`
+  receipts.add(secondReply)
+  await current.host.commitRoot(current.host.self(ROOT_THREAD), externalReplyReceived({ id: secondReply, at: 12 }))
+  await current.host.commitRoot(current.host.self(ROOT_THREAD), externalReplyReceived({ id: secondReply, at: 13 }))
+  await current.host.drive()
+  events = current.host.read(ROOT_THREAD)
+
+  expect(inferences).toBe(2)
+  expect(physical).toEqual([
+    { callId: firstCallId, state: "pending" },
+    { callId: firstCallId, state: "completed" },
+    { callId: secondCallId, state: "pending" },
+    { callId: secondCallId, state: "completed" }
+  ])
+  expect(calls.map((event) => event.arguments)).toEqual([{ value: "same" }, { value: "same" }])
+  expect(new Set(calls.map((event) => event.callId)).size).toBe(2)
+  expect(events.filter((event) => event.type === "ExternalReplyReceived" && event.id === secondReply)).toHaveLength(1)
+  expect(events.filter((event) => event.type === "ModelCalled")).toHaveLength(2)
+  expect(events.filter((event) => event.type === "MessageReceived")).toHaveLength(1)
+  expect(events.filter((event) => event.type === "TurnCompleted")).toHaveLength(1)
+
+  current = restart(events)
+  await current.host.drive()
+  expect(inferences).toBe(2)
+  expect(physical).toHaveLength(4)
 })
