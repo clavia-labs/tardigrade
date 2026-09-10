@@ -2,6 +2,8 @@
 
 This binding runs the Sandbox port in a fresh Worker Loader isolate. Capability transport carries package calls through a Durable Object stub on workerd. Replay transport carries the same calls as JSON boundaries on Celld.
 
+Sandbox input travels in the guest request body. This includes fixed values, deterministic ambient state, and recorded outcomes for replay. Environment bindings carry only the capability bridge when that transport is selected. Large tool results therefore do not consume the Worker Loader environment size allowance.
+
 ## Verify
 
 ```bash

@@ -14,11 +14,11 @@ const bridgeFor: SandboxBridgeFactory = (_call) => ({
 
 const mapLoaderInput = (map: (input: unknown) => unknown): WorkerLoader => ({
   load: (worker: WorkerLoaderWorkerCode) => {
-    const workerEnv = worker.env as Readonly<Record<string, unknown>>
-    return (env as Env).LOADER.load({
-      ...worker,
-      env: { ...workerEnv, INPUT: map(workerEnv["INPUT"]) }
-    })
+    const stub = (env as Env).LOADER.load(worker)
+    return { getEntrypoint: () => ({ fetch: async (request: Request) => {
+      const input = map(await request.json())
+      return stub.getEntrypoint().fetch(new Request(request, { method: request.method, body: JSON.stringify(input) }))
+    } }) }
   }
 }) as WorkerLoader
 
@@ -126,6 +126,20 @@ describe("worker loader sandbox", () => {
     ))
 
     expect(result.error).toBe("nondeterministic body: replayed call 0 changed")
+  })
+
+  test("replays tool results above the environment binding limit", async () => {
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor, { transport: "replay" })
+    const text = "x".repeat(200_000)
+    const ordinals: number[] = []
+    const result = await Effect.runPromise(sandbox.run(
+      `let characters = 0; for (let index = 0; index < 12; index++) {
+        const text = await tools.read({ index }); characters += text.length;
+      } return characters`,
+      { tools: { read: async (_input, ordinal) => { ordinals.push(ordinal); return sandboxReturned(text) } } }
+    ))
+    expect(result).toEqual({ result: 2_400_000 })
+    expect(ordinals).toEqual(Array.from({ length: 12 }, (_, index) => index))
   })
 
 })
