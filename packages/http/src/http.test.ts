@@ -25,7 +25,7 @@ const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
   storage: { kind: "memory" },
   instances: Effect.succeed([]),
-  ensure: () => Effect.succeed({ allocateRoot: () => Effect.die(new Error("unexpected allocation")), methods: {}, statusOf: () => "settled", storage: { kind: "memory" }, append: () => Effect.void, events: () => Effect.succeed([]), eventsPage: () => Effect.succeed([]), awaitHead: () => Effect.never, actorEventsPage: () => Effect.succeed([]), actorThreads: Effect.succeed({ cursor: 0, threads: [] }), actorThread: () => Effect.never, awaitActorHead: () => Effect.never, list: Effect.succeed([]), settled: Effect.void }),
+  ensure: () => Effect.succeed({ allocateRoot: () => Effect.die(new Error("unexpected allocation")), forkThread: () => Effect.die(new Error("unexpected fork")), methods: {}, statusOf: () => "settled", storage: { kind: "memory" }, append: () => Effect.void, events: () => Effect.succeed([]), eventsPage: () => Effect.succeed([]), awaitHead: () => Effect.never, actorEventsPage: () => Effect.succeed([]), actorThreads: Effect.succeed({ cursor: 0, threads: [] }), actorThread: () => Effect.never, awaitActorHead: () => Effect.never, list: Effect.succeed([]), settled: Effect.void }),
   instance: () => Effect.succeed(undefined as ActorThreads | undefined),
   append: () => Effect.void,
   events: () => Effect.succeed([]),

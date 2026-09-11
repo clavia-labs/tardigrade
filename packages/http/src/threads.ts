@@ -15,6 +15,8 @@ import type { ThreadStatusOf } from "./projections"
 
 export interface ActorThreads {
   readonly allocateRoot: (name?: string, options?: { readonly key?: string; readonly parent?: string }) => Effect.Effect<ThreadCoordinate>
+  // forkThread copies a source prefix through until onto a new root (packages/core/src/log/fork.ts).
+  readonly forkThread: (source: string, until: number | string, name?: string) => Effect.Effect<ThreadCoordinate>
   readonly methods: ActorMethods
   readonly storage: ActorMetadata["storage"]
   readonly statusOf: ThreadStatusOf

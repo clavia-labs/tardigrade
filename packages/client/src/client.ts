@@ -198,6 +198,8 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   // platform requires nothing but `type` (contract.ts, Append).
   readonly append: (actor: string, thread: string, event: Append) => Promise<Accepted>
   readonly allocateRoot: (actor: string, name?: string) => Promise<ThreadCoordinate>
+  // fork copies a source prefix through until onto a new root (packages/core/src/log/fork.ts).
+  readonly fork: (actor: string, thread: string, until: number | string, name?: string) => Promise<ThreadCoordinate>
   // methods lists the mounted actor's callable interface and JSON Schema documents.
   readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
   // call commits one declared method call and returns its durable handle.
@@ -403,6 +405,10 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
       run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,
     allocateRoot: (actor, name) => run(api.threads.allocateRoot({ query: {}, params: { id: actor }, payload: name === undefined ? {} : { name } })),
+    fork: (actor, thread, until, name) => run(api.threads.forkThread({
+      params: { id: actor, thread },
+      payload: name === undefined ? { until } : { until, name }
+    })),
     methods: () => run(api.methods.methods({})),
     call: async (actor, thread, name, call) => {
       const accepted = await run(api.methods.invokeMethod({

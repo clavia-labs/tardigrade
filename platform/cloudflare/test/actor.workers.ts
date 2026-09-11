@@ -895,6 +895,49 @@ describe("cloudflare actor", () => {
       .toEqual(["first-secret", "second-secret"])
   })
 
+  test("HTTP forks a prefix through the event codec onto a quiet dest", async () => {
+    const secret = "classified-fork-secret"
+    await createThread("fork-src")
+    const appended = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/events", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ type: "MessageReceived", id: "m1", text: secret })
+    })
+    expect(appended.status).toBe(202)
+    const forked = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ until: "m1", name: "fork-dst" })
+    })
+    expect(forked.status).toBe(200)
+    expect(await forked.json()).toEqual({ actor: "echo", instance: "main", thread: "fork-dst" })
+    const visible = await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })
+    const rows = await visible.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly id?: string; readonly text?: string; readonly sourceThread?: string } }>
+    expect(rows.map((row) => row.event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
+    expect(rows[1]?.event).toMatchObject({ type: "MessageReceived", id: "m1", text: secret })
+    expect(rows[2]?.event).toMatchObject({ type: "ThreadForked", sourceThread: "fork-src", until: "m1" })
+    const raw = await runInDurableObject(threadStub("fork-dst"), (_instance, state) =>
+      state.storage.sql.exec<{ readonly event: string }>("SELECT event FROM events ORDER BY seq").toArray()
+    )
+    expect(raw.every((row) => !row.event.includes(secret))).toBe(true)
+    expect(raw.every((row) => {
+      const encrypted = JSON.parse(row.event) as { readonly iv?: unknown; readonly ciphertext?: unknown }
+      return typeof encrypted.iv === "string" && typeof encrypted.ciphertext === "string"
+    })).toBe(true)
+    const unknown = await SELF.fetch("http://test/v1/actors/main/threads/ghost/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ until: 1 })
+    })
+    expect(unknown.status).toBe(404)
+    const missing = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ until: 99, name: "missing" })
+    })
+    expect(missing.status).toBe(400)
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
   test("opaque child addresses execute and round-trip through the public API", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")

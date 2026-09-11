@@ -42,6 +42,7 @@ test("the adapter translates public operations while preserving raw directory re
   const capture = (thread: string) => Effect.sync(() => { received.push(thread) })
   const raw: ActorThreads = {
     allocateRoot: () => Effect.die(new Error("unexpected allocation")),
+    forkThread: (thread) => capture(thread).pipe(Effect.as({ actor: "agent", instance: "main", thread: "experiment" })),
     methods: {}, statusOf: () => "settled", storage: { kind: "memory" },
     append: (thread) => capture(thread),
     events: (thread) => capture(thread).pipe(Effect.as([])),
@@ -56,10 +57,11 @@ test("the adapter translates public operations while preserving raw directory re
   }
   const api = withLegacyThreadIds(raw)
   await Effect.runPromise(api.append("root", { type: "MessageReceived" }))
+  await Effect.runPromise(api.forkThread("root", 2, "experiment"))
   await Effect.runPromise(api.events("thread_child"))
   await Effect.runPromise(api.eventsPage("root", 0, 10))
   await Effect.runPromise(api.awaitHead("thread_child", 0))
-  expect(received).toEqual(["ag.root", "thread_child", "ag.root", "thread_child"])
+  expect(received).toEqual(["ag.root", "ag.root", "thread_child", "ag.root", "thread_child"])
   expect((await Effect.runPromise(api.list)).map((entry) => entry.id)).toEqual(["root", "thread_child"])
   expect(await Effect.runPromise(api.actorThreads)).toEqual({ cursor: 2, threads: records })
   await expect(Effect.runPromise(withLegacyThreadIds({

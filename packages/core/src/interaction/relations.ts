@@ -155,6 +155,7 @@ export const threadKeys: KeyFragment = {
   prefixes: ["thread:"],
   keyOf: (event) => {
     if (event.type === "ThreadCreated") return "thread:created"
+    if (event.type === "ThreadForked") return "thread:forked"
     if (event.type !== "ChildCreated") return undefined
     const callId = typeof event.callId === "string" ? event.callId : undefined
     if (callId === undefined) return undefined

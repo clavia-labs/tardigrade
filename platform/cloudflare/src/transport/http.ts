@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
+import { ForkUntil } from "@clavia/tardigrade-core/log"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ModelPolicy } from "@clavia/tardigrade-agent"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
@@ -122,6 +123,33 @@ export const cloudflareHttp = ({
         if (directory === undefined) return json({ error: "unknown actor" }, 404)
         const coordinate = yield* Effect.promise(() => directory.createThread(payload.name, payload))
         return json(coordinate)
+      })
+    )),
+    HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/fork", workerRoute((request, env) =>
+      Effect.gen(function* () {
+        const params = yield* HttpRouter.params
+        const instance = params.id ?? ""
+        const thread = params.thread ?? ""
+        if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+        const payload = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
+        if (!Schema.is(Schema.Struct({
+          until: ForkUntil,
+          name: Schema.optionalKey(Schema.NonEmptyString)
+        }))(payload)) {
+          return json({ error: "until must be a positive sequence or a nonempty event id" }, 400)
+        }
+        const directory = yield* Effect.promise(() => actorStub(env, actorName(), instance, false))
+        if (directory === undefined) return json({ error: "unknown actor" }, 404)
+        return yield* Effect.tryPromise({
+          try: () => directory.forkThread(thread, payload.until, payload.name),
+          catch: (cause) => cause instanceof Error ? cause.message : String(cause)
+        }).pipe(Effect.match({
+          onFailure: (error) => json(
+            { error },
+            error.includes("has ever existed") ? 404 : 400
+          ),
+          onSuccess: (coordinate) => json(coordinate)
+        }))
       })
     )),
     HttpRouter.route("GET", "/v1/actors/:id/threads", workerRoute((request, env) =>

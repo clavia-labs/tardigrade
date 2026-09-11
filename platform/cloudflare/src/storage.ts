@@ -228,6 +228,11 @@ export class CloudflareEventStore implements ThreadEventStore {
       )
     }).pipe(Effect.orDie)
   }
+
+  // copyPrefix is the store append path so keys, codecs, and indexes cannot diverge (packages/core/src/log/fork.ts).
+  copyPrefix(events: ReadonlyArray<Event>): Effect.Effect<AppendResult> {
+    return this.append(events)
+  }
 }
 
 // layerWorkspace binds Effect's workspace store to the actor database through Effect SQL.

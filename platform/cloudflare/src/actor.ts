@@ -1,5 +1,6 @@
 import type { TreeBounds } from "@clavia/tardigrade-client/contract"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { forkCopyPlan } from "@clavia/tardigrade-host/fork"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadObjectNameOf } from "./transport/directory"
 import { DurableObject } from "cloudflare:workers"
@@ -241,6 +242,27 @@ export class ActorDO extends DurableObject<Env> {
     const target = await this.allocateThread({ kind: "root", coordinate: { ...identity, thread: name ?? "" }, ...key })
     await this.initializeRootThread(target.thread)
     return target
+  }
+
+  // forkThread copies a source prefix through until onto a new root without kicking the dest (packages/core/src/log/fork.ts).
+  async forkThread(source: string, until: number | string, name?: string): Promise<ThreadAddress> {
+    const identity = this.identity()
+    const sourceEntry = (await this.threads()).find((entry) => entry.thread === source && entry.state === "registered")
+    if (sourceEntry === undefined) throw new Error(`No thread named ${JSON.stringify(source)} has ever existed.`)
+    const sourceStub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, source))
+    const sourceEvents = await sourceStub.events(source)
+    const dest = await this.createThread(name)
+    const destStub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, dest.thread))
+    const destEvents = await destStub.events(dest.thread)
+    const plan = forkCopyPlan(sourceEvents, destEvents, {
+      source,
+      until,
+      dest: dest.thread,
+      forkedAt: Date.now()
+    })
+    if ("existing" in plan) return dest
+    await destStub.copyPrefix(plan.events)
+    return dest
   }
 
   async allocateThread(request: ThreadAllocation): Promise<ThreadAddress> {

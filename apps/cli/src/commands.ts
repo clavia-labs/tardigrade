@@ -791,6 +791,28 @@ export const threadCommand = Command.make("thread").pipe(
   Command.withSubcommands([threadCreateCommand])
 )
 
+export const forkCommand = Command.make("fork", {
+  thread: Argument.string("thread").pipe(Argument.withDescription("The source thread whose prefix to copy")),
+  until: Flag.string("until").pipe(
+    Flag.withDescription("The source checkpoint: a 1-based sequence or an event id.")
+  ),
+  name: Flag.string("name").pipe(
+    Flag.withDescription("The destination root name. Omit to generate an assigned identity."),
+    Flag.optional
+  ),
+  ...remote
+}, (flags) => Effect.gen(function*() {
+  const client = yield* clientOf(flags)
+  const coordinate = yield* call(() => client.fork(flags.actor, flags.thread, flags.until, stated(flags.name)))
+  yield* Console.log(flags.json ? jsonOf(coordinate) : coordinate.thread)
+})).pipe(
+  Command.withDescription("Copy a thread prefix through a checkpoint onto a new root."),
+  Command.withExamples([
+    { command: "tdg fork root --until m1 --name experiment", description: "Fork root through event m1 onto experiment" },
+    { command: "tdg fork root --until 2 --json", description: "Fork root through sequence 2 and print the coordinate" }
+  ])
+)
+
 export const callCommand = Command.make("call", {
   method: Argument.string("method").pipe(Argument.withDescription("The declared method to call")),
   input: Argument.string("input").pipe(Argument.withDescription("The method input as JSON")),
@@ -987,7 +1009,7 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription("Build, run, and inspect durable actors."),
   Command.withSubcommands([
     { group: "CREATE", commands: [initCommand, setupCommand, lintCommand, buildCommand] },
-    { group: "RUN", commands: [devCommand, threadCommand, callCommand] },
+    { group: "RUN", commands: [devCommand, threadCommand, forkCommand, callCommand] },
     { group: "CATALOG", commands: [providersCommand, modelsCommand, methodsCommand] },
     { group: "INSPECT", commands: [lsCommand, eventsCommand] }
   ])

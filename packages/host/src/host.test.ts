@@ -10,6 +10,7 @@ import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/transport/link"
 import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { isThreadForked } from "@clavia/tardigrade-core/log"
 import { allocateChildCoordinate as allocateChildThread, ThreadAllocator, type ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 
@@ -332,5 +333,38 @@ describe("the router membrane", () => {
     )
     await host.commitRoot("mem:main:thread", { type: "Keyed", id: "k1", at: 1 } as never)
     expect(host.read("thread").map((event) => event.type)).toEqual(["ThreadCreated", "Keyed"])
+  })
+
+  test("forkThread copies a prefix onto a new root and records ThreadForked", async () => {
+    const host = createHost({ actorFor: () => undefined })
+    await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
+    await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m2", at: 2 })
+    const dest = await host.forkThread({ source: "root", until: "m1", name: "experiment" })
+    expect(dest.thread).toBe("experiment")
+    const log = host.read("experiment")
+    expect(log.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
+    expect(log[1]).toMatchObject({ type: "MessageReceived", id: "m1" })
+    expect(isThreadForked(log[2])).toBe(true)
+    expect(log[2]).toMatchObject({ sourceThread: "root", until: "m1" })
+    expect(host.read("root").map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "MessageReceived"])
+    const again = await host.forkThread({ source: "root", until: "m1", name: "experiment" })
+    expect(again).toEqual(dest)
+    expect(host.read("experiment")).toHaveLength(3)
+    await host.commitRoot(host.self("experiment"), { type: "MessageReceived", id: "alt", at: 3 })
+    expect(host.read("experiment").map((event) => event.id ?? event.type)).toEqual([
+      "ThreadCreated",
+      "m1",
+      "ThreadForked",
+      "alt"
+    ])
+    expect(host.read("root").some((event) => event.id === "alt")).toBe(false)
+  })
+
+  test("forkThread refuses an unknown source and a missing checkpoint", async () => {
+    const host = createHost({ actorFor: () => undefined })
+    await expect(host.forkThread({ source: "ghost", until: 1 })).rejects.toThrow("has ever existed")
+    await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
+    await expect(host.forkThread({ source: "root", until: 9 })).rejects.toThrow("past the log head")
+    await expect(host.forkThread({ source: "root", until: 1, name: "root" })).rejects.toThrow("cannot target its source")
   })
 })

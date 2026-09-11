@@ -22,6 +22,7 @@ import { jsSandboxService, Sandbox } from "@clavia/tardigrade-code/sandbox/servi
 import { workspaceFor, WORKSPACE_SQL_DESCRIPTION } from "@clavia/tardigrade-code/package/workspace"
 
 import { bunThreadDatabasePath, createBunHost, type BunHost, type BunHostOptions } from "./host"
+import { isThreadForked } from "@clavia/tardigrade-core/log"
 import type { BunAlarmHandle, BunAlarmScheduler } from "./alarm"
 import { fileTelemetry } from "./file"
 import {
@@ -421,6 +422,30 @@ describe("the bun host", () => {
     expect(await second.threads()).toEqual(["echo"])
     expect(await second.resting()).toBe(true)
     await second.close()
+  })
+
+  test("forkThread copies a prefix through sqlite append and survives reopen", async () => {
+    const path = freshPath()
+    const first = await createBunHost({ database: path, actorFor: () => undefined })
+    await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "m1", at: 1 } as Event)
+    await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "m2", at: 2 } as Event)
+    const dest = await first.forkThread({ source: "root", until: "m1", name: "experiment" })
+    expect(dest.thread).toBe("experiment")
+    const log = await first.read("experiment")
+    expect(log.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
+    expect(isThreadForked(log[2])).toBe(true)
+    expect(log[2]).toMatchObject({ sourceThread: "root", until: "m1" })
+    await first.close()
+    const reopened = await createBunHost({ database: path, actorFor: () => undefined })
+    expect((await reopened.read("experiment")).map((event) => event.type)).toEqual([
+      "ThreadCreated",
+      "MessageReceived",
+      "ThreadForked"
+    ])
+    await reopened.commitRoot(reopened.self("experiment"), { type: "MessageReceived", id: "alt", at: 3 } as Event)
+    expect((await reopened.read("root")).some((event) => event.id === "alt")).toBe(false)
+    await expect(reopened.forkThread({ source: "ghost", until: 1 })).rejects.toThrow("has ever existed")
+    await reopened.close()
   })
 
   test("recover() settles work a death interrupted", async () => {
