@@ -8,6 +8,7 @@ export { AgentMessageInput, agentMessageMethod } from "./actor/message"
 export { agentMethods } from "./actor/methods"
 export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
 export { PermissionRequestInput, PermissionDecision, requestPermissionMethod } from "./actor/permission"
+export { AskRequestInput, AskDecision, requestAskMethod } from "./actor/ask"
 export {
   Infer,
   NativeOutputSupport,
@@ -129,7 +130,7 @@ export {
   type CostSource,
   type ModelPricing
 } from "./inference/usage"
-export { boundaryOf, outputOf, type Boundary } from "./output/boundary"
+export { boundaryOf, outputOf, parkedBoundary, turnsOf, turnViewOf, type Boundary, type BudgetAsk, type SchemaAsk, type TurnAsk, type TurnSnapshot, type TurnStatus } from "./output/boundary"
 export {
   agentsPackage,
   INLINE_OUTPUT_NAME,
@@ -195,4 +196,21 @@ export {
   type PermissionAuthorityOptions,
   type PermissionRequest
 } from "./component/permission-authority"
+export {
+  ask,
+  askCaller,
+  ASK_SCHEMA_NAME,
+  ASK_TOOL_NAME,
+  type AskAuthority,
+  type AskAuthorityMethods,
+  type AskOptions,
+  type CallerAskAuthority
+} from "./component/ask"
+export {
+  askAuthority,
+  askAuthorityKeys,
+  type AskAuthorityOptions,
+  type AskRequest,
+  type DecideAsk
+} from "./component/ask-authority"
 export { compaction } from "./component/compaction"

@@ -449,7 +449,8 @@ describe("resuming a turn", () => {
     ["pending", []],
     ["pending", [failed, { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1 }]],
     ["cancelled", [{ type: "TurnCancelled", turn: "m1", cause: "requested" }]],
-    ["parked", [{ type: "BudgetRequested", turn: "m1", callId: "budget", amount: 1 }]]
+    ["parked", [{ type: "BudgetRequested", turn: "m1", callId: "budget", amount: 1 }]],
+    ["parked", [{ type: "AskRequested", turn: "m1", callId: "ask", prompt: "Approve?", schema: { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"], additionalProperties: false } }]]
   ] as const)("refuses a %s active epoch", async (status, events) => {
     answer = accepting([message, ...events])
     const failure = await client().resume("main", "root", "m1").catch((error: unknown) => error)
@@ -475,5 +476,26 @@ describe("resuming a turn", () => {
     expect(failure).toBeInstanceOf(ProblemError)
     expect((failure as ProblemError).detail).toContain('No turn named "m9"')
     expect(calls).toHaveLength(1)
+  })
+})
+
+describe("turnViewOf", () => {
+  test("a schema ask is parked with the prompt and schema", async () => {
+    const { turnViewOf } = await import("./turns")
+    const schema = {
+      type: "object",
+      properties: { approved: { type: "boolean" } },
+      required: ["approved"],
+      additionalProperties: false
+    }
+    expect(turnViewOf([
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      { type: "AskRequested", callId: "a1", prompt: "Approve?", schema, turn: "m1", at: 1 }
+    ], "m1")).toEqual({
+      turn: "m1",
+      status: "parked",
+      epoch: 0,
+      ask: { kind: "schema", callId: "a1", prompt: "Approve?", schema }
+    })
   })
 })

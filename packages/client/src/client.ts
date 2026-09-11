@@ -1,5 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { boundaryOf } from "@clavia/tardigrade-agent/output/boundary"
+import { boundaryOf, parkedBoundary } from "@clavia/tardigrade-agent/output/boundary"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import { Effect, type Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
@@ -454,7 +454,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
         })
       }
       const boundary = boundaryOf(log, turn)
-      const status = boundary?.kind === "requesting" ? "parked" : boundary?.kind ?? "pending"
+      const status = parkedBoundary(boundary) ? "parked" : boundary?.kind ?? "pending"
       if (status !== "failed") {
         throw new ProblemError({
           ...ResumeRefused.of(

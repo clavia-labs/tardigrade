@@ -83,7 +83,7 @@ const hosted = (
     if (boundary === undefined) return { turn, error: "the root never settled" }
     if (boundary.kind === "completed") return { turn, output: boundary.output }
     if (boundary.kind === "failed") return { turn, error: boundary.error }
-    return { turn, error: "the root parked on a budget ask with nobody to answer" }
+    return { turn, error: "the root parked on an ask with nobody to answer" }
   }
   const run = async (brief: string): Promise<Settled> => {
     const id = `run-${n++}`

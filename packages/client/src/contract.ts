@@ -168,6 +168,29 @@ export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "ca
 
 export type TurnStatus = typeof TurnStatus.Type
 
+export const BudgetAskView = Schema.Struct({
+  kind: Schema.Literal("budget"),
+  callId: Schema.String,
+  reason: Schema.String,
+  amount: Schema.Finite
+}).annotate({ identifier: "BudgetAskView" })
+
+export type BudgetAskView = typeof BudgetAskView.Type
+
+export const SchemaAskView = Schema.Struct({
+  kind: Schema.Literal("schema"),
+  callId: Schema.String,
+  prompt: Schema.String,
+  schema: Schema.Unknown
+}).annotate({ identifier: "SchemaAskView" })
+
+export type SchemaAskView = typeof SchemaAskView.Type
+
+// AskView is the parked question a TurnView exposes so a client can render or answer it (packages/agent/src/output/boundary.ts, turnViewOf).
+export const AskView = Schema.Union([BudgetAskView, SchemaAskView]).annotate({ identifier: "AskView" })
+
+export type AskView = typeof AskView.Type
+
 // TurnView describes a turn and its current execution epoch.
 export const TurnView = Schema.Struct({
   turn: Schema.String,
@@ -175,7 +198,8 @@ export const TurnView = Schema.Struct({
   epoch: Schema.Finite,
   output: Schema.optionalKey(Schema.String),
   error: Schema.optionalKey(Schema.String),
-  reason: Schema.optionalKey(Schema.String)
+  reason: Schema.optionalKey(Schema.String),
+  ask: Schema.optionalKey(AskView)
 }).annotate({ identifier: "TurnView" })
 
 export type TurnView = typeof TurnView.Type
