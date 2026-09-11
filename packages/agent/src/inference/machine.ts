@@ -10,9 +10,9 @@ import { BindingSettings, ModelSelection } from "../binding/settings"
 import { Cause, Clock, Effect, Random, Schema } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { HashMap, Option } from "effect"
-import { Self } from "@clavia/tardigrade-core/runtime"
+import { InvocationSuspended, Self } from "@clavia/tardigrade-core/runtime"
 import { transitionProjection, type CompleteTransitionDerivation, type TransitionProjection } from "@clavia/tardigrade-core/transition"
-import { modelCalled, modelReturned, outputRejected, outputRepaired, textReturned, turnFailed } from "../log/events"
+import { modelCalled, modelCallSuspended, modelReturned, outputRejected, outputRepaired, textReturned, turnFailed } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Machine } from "@clavia/tardigrade-core/machine"
 import type { Action } from "../log/events"
@@ -211,6 +211,50 @@ const diedAttempts = (turn: ReadonlyArray<Event>, epoch: number): number => {
   return n
 }
 
+const attemptIdentity = (event: Event): { readonly callId: string; readonly ordinal: number } | undefined => {
+  return typeof event.callId === "string" && typeof event.ordinal === "number"
+    ? { callId: event.callId, ordinal: event.ordinal }
+    : undefined
+}
+
+const answersAttempt = (event: Event, callId: string): boolean => {
+  return event.type === "ModelReturned"
+    ? event.callId === callId
+    : event.responseId === callId || event.attemptKey === callId
+}
+
+const suspendedAttempt = (
+  slice: ReadonlyArray<Event>,
+  epoch: number
+): { readonly callId: string; readonly ordinal: number; readonly awaiting: string } | undefined => {
+  const mark = slice.findLast(
+    (event) => event.type === "ModelCalled" && Number(event.epoch ?? 0) === epoch
+  )
+  const attempt = mark === undefined ? undefined : attemptIdentity(mark)
+  if (attempt === undefined) return undefined
+  const suspension = slice.findLast((event) => {
+    if (event.type !== "ModelCallSuspended") return false
+    const other = attemptIdentity(event)
+    return other?.callId === attempt.callId && other.ordinal === attempt.ordinal
+  })
+  return suspension !== undefined && typeof suspension.awaiting === "string" &&
+      !slice.some((event) => answersAttempt(event, attempt.callId))
+    ? { ...attempt, awaiting: suspension.awaiting }
+    : undefined
+}
+
+const suspendedOn = (cause: Cause.Cause<never>): string | undefined => {
+  if (cause.reasons.length === 0) return undefined
+  const reasons = cause.reasons.filter(Cause.isDieReason)
+  if (reasons.length !== cause.reasons.length || !reasons.every((reason) => reason.defect instanceof InvocationSuspended)) {
+    return undefined
+  }
+  const awaiting = reasons.map((reason) =>
+    reason.defect instanceof InvocationSuspended ? reason.defect.awaiting : undefined
+  )
+  return awaiting.every((key) => key === awaiting[0]) ? awaiting[0] : undefined
+}
+
 const terminated = (slice: ReadonlyArray<Event>): boolean =>
   slice.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed" || e.type === "TurnCancelled")
 
@@ -263,7 +307,8 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
   const latestResponse = slice.findLast((event) => event.type === "ModelReturned" && Number(event.epoch ?? 0) === epoch)
   const pendingRetry = latestResponse !== undefined && Schema.is(RetrySchedule)(latestResponse.retry) ? latestResponse.retry : undefined
   const lastMark = slice.findLast((event) => event.type === "ModelCalled" && Number(event.epoch ?? 0) === epoch)
-  const model = ((died > 0 || pendingRetry !== undefined) ? modelRefOf(lastMark?.model) : undefined) ?? selectedModelOf(head, models.default)
+  const parked = suspendedAttempt(slice, epoch)
+  const model = ((died > 0 || pendingRetry !== undefined || parked !== undefined) ? modelRefOf(lastMark?.model) : undefined) ?? selectedModelOf(head, models.default)
   const marks = slice.filter((e) => e.type === "ModelCalled").length
   const modelFailures = derived.modelFailures
   // A rejected response is a spent logical attempt: the next ask must not reuse the idempotency
@@ -350,7 +395,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
         turn,
         epoch,
         attempt,
-        ordinal: marks,
+        ordinal: parked?.ordinal ?? marks,
         retryIndex: pendingRetry?.index ?? (died > 0 ? Number(lastMark?.retryIndex ?? 0) : 0),
         dueAt: pendingRetry?.dueAt,
         trajectory: derived.trajectory,
@@ -453,15 +498,28 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             )
             .pipe(
               Effect.provideService(BindingSettings, settings),
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
+              Effect.catchCause((cause) => {
+                const awaiting = suspendedOn(cause)
+                return Cause.hasInterruptsOnly(cause)
                   ? Effect.failCause(cause)
+                  : awaiting !== undefined
+                  ? Clock.currentTimeMillis.pipe(
+                      Effect.flatMap((parkedAt) => events.append([modelCallSuspended({
+                        callId: input.attempt,
+                        ordinal: input.ordinal,
+                        awaiting,
+                        turn: input.turn,
+                        ...epochStamp(input.epoch),
+                        at: parkedAt
+                      })])),
+                      Effect.flatMap((): Effect.Effect<Action> => Effect.failCause(cause))
+                    )
                   : Effect.succeed<Action>({
                       kind: "fail",
                       error: unknownModelError(Cause.squash(cause)),
                       failure: { cause: "inference_error", attempts: 1 }
                     })
-              ),
+              }),
               Effect.onInterrupt(persistPartialOutput),
               // Abort can settle the provider before interruption; both paths share the persistence guard (index.test.ts).
               Effect.ensuring(

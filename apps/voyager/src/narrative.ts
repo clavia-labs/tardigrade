@@ -27,6 +27,7 @@ const STAMPS: Readonly<Record<string, Stamp>> = {
   MessageReceived: NEUTRAL,
   ResponseReceived: NEUTRAL,
   ModelCalled: NEUTRAL,
+  ModelCallSuspended: AWAIT,
   TextReturned: NEUTRAL,
   CompactionCompleted: NEUTRAL,
   ResponseDelivered: NEUTRAL,
@@ -135,6 +136,8 @@ export const summaryOf = (
       return line(["response", `status: ${str(event.status) ?? ""}`, str(event.from)], chars)
     case "ModelCalled":
       return line([`attempt ${(num(event.ordinal) ?? 0) + 1}`, str(event.turn)], chars)
+    case "ModelCallSuspended":
+      return line([`attempt ${(num(event.ordinal) ?? 0) + 1} awaits its answer`, str(event.turn)], chars)
     case "TextReturned":
       return line([str(event.text) ?? ""], chars)
     case "ToolCalled":
@@ -222,6 +225,7 @@ const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   MessageReceived: ["id", "from", "outcome", "source", "chat", "sender", ...STAMP, "text", "input", "output", "data"],
   ResponseReceived: ["id", "method", "call", "status", "from", ...STAMP, "output", "error", "reason", "data"],
   ModelCalled: ["callId", "ordinal", "epoch", "output", ...STAMP],
+  ModelCallSuspended: ["callId", "ordinal", "awaiting", "epoch", ...STAMP],
   TextReturned: [...STAMP, "text"],
   ToolCalled: ["callId", "name", "mode", ...STAMP, "arguments", "usage", "endpoint"],
   ToolReturned: ["callId", ...STAMP, "result"],
