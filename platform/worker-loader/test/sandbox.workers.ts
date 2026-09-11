@@ -87,6 +87,91 @@ describe("worker loader sandbox", () => {
     expect(result).toEqual({ result: "blocked" })
   })
 
+  // Shadowing is the harness's own defense, independent of the egress mapping the test fixture
+  // states: the identifiers a body could use to name an ambient network are parameters of the
+  // body, undefined (sandbox.ts, RESTRICTED_NAMES).
+  test("shadows the ambient network globals in the body scope", async () => {
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor)
+    const result = await Effect.runPromise(sandbox.run(
+      `return {
+        fetch: typeof fetch,
+        WebSocket: typeof WebSocket,
+        WebSocketPair: typeof WebSocketPair,
+        caches: typeof caches,
+        self: typeof self,
+        postMessage: typeof postMessage,
+        process: typeof process,
+        Bun: typeof Bun,
+        Worker: typeof Worker,
+        Function: typeof Function,
+        require: typeof require,
+        globalThis: typeof globalThis,
+        global: typeof global,
+        globalKeys: Object.keys(globalThis).length
+      }`,
+      {}
+    ))
+    expect(result).toEqual({
+      result: {
+        fetch: "undefined",
+        WebSocket: "undefined",
+        WebSocketPair: "undefined",
+        caches: "undefined",
+        self: "undefined",
+        postMessage: "undefined",
+        process: "undefined",
+        Bun: "undefined",
+        Worker: "undefined",
+        Function: "undefined",
+        require: "undefined",
+        globalThis: "object",
+        global: "undefined",
+        globalKeys: 0
+      }
+    })
+  })
+
+  // nodejs_compat exposes global, Node's alias for the real global scope, so a loaded isolate
+  // under that flag must not name the ambient network through it (sandbox.ts,
+  // RESTRICTED_NAMES).
+  test("shadows the Node global alias under nodejs_compat", async () => {
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor, {
+      compatibilityFlags: ["nodejs_compat"]
+    })
+    const result = await Effect.runPromise(sandbox.run(
+      `return {
+        global: typeof global,
+        globalFetch: typeof global === "undefined" ? "undefined" : typeof global.fetch
+      }`,
+      {}
+    ))
+    expect(result).toEqual({ result: { global: "undefined", globalFetch: "undefined" } })
+  })
+
+  // The harness wraps the body in a nested block of the parameter-scoped function, so a body
+  // that declares a scoped name itself stays parseable and reaches its own binding, while the
+  // names it leaves alone keep the shadowed values (sandbox.ts, bodySource).
+  test("a local declaration of a scoped name stays valid", async () => {
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor)
+    const result = await Effect.runPromise(sandbox.run(
+      `const fetch = () => "local"
+      return { fetch: fetch(), require: typeof require, global: typeof global }`,
+      {}
+    ))
+    expect(result).toEqual({ result: { fetch: "local", require: "undefined", global: "undefined" } })
+  })
+
+  test("a host binding keeps its own name", async () => {
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, () => {
+      throw new Error("replay transport must not open a capability")
+    }, { transport: "replay" })
+    const result = await Effect.runPromise(sandbox.run(
+      `return typeof fetch === "object" ? await fetch.hello() : "shadowed"`,
+      { fetch: { hello: async () => sandboxReturned("bound") } }
+    ))
+    expect(result).toEqual({ result: "bound" })
+  })
+
   test("replays sequential and concurrent package calls", async () => {
     const { result, observed } = await replaySequenceWith((env as Env).LOADER)
 

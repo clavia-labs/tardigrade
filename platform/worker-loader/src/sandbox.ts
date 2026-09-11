@@ -33,6 +33,32 @@ export const DEFAULT_WORKER_LOADER_SANDBOX_POLICY: WorkerLoaderSandboxPolicy = {
   transport: "capability"
 }
 
+// RESTRICTED_NAMES are shadowed in the loaded isolate the same way the Bun sandbox shadows its
+// own (platform/bun/src/sandbox.ts): each name arrives as a parameter of the body, so the
+// identifier inside the body is undefined (or an empty globalThis) rather than the isolate's own
+// global, whatever egress the host mapped (#427). The Bun list is carried in full for the names
+// a compatibility flag can add, and the workerd-only network globals WebSocket, WebSocketPair,
+// and caches join it, and so does global, the Node alias nodejs_compat exposes to the real
+// global scope (sandbox.workers.ts, "shadows the Node global alias under nodejs_compat").
+// A name the host bound itself stays the binding: a mounted package keeps its own name, and a
+// body that names it reaches the package, never the global (sandbox.workers.ts, "a host binding
+// keeps its own name").
+const RESTRICTED_NAMES = [
+  "globalThis",
+  "self",
+  "postMessage",
+  "fetch",
+  "WebSocket",
+  "WebSocketPair",
+  "caches",
+  "global",
+  "process",
+  "Bun",
+  "Worker",
+  "Function",
+  "require"
+] as const
+
 export interface SandboxBridgeBinding {
   readonly sandboxCallBatch: (
     execution: string,
@@ -254,11 +280,19 @@ const packageMethods = (binding: Bindings[string]): ReadonlyArray<string> | unde
   return entries.map(([method]) => method)
 }
 
-const bodySource = (names: ReadonlyArray<string>, code: string): string =>
-  `export default async function(${names.join(",")}) {\n${code}\n}`
+const scopeNames = (bindings: Bindings, ambient: Ambient | undefined): ReadonlyArray<string> => [
+  ...Object.keys({ ...bindings, console: undefined, ...(ambient === undefined ? {} : { Date: undefined, Math: undefined }) }),
+  ...RESTRICTED_NAMES.filter((name) => !Object.hasOwn(bindings, name))
+]
 
-const scopeNames = (bindings: Bindings, ambient: Ambient | undefined): ReadonlyArray<string> =>
-  Object.keys({ ...bindings, console: undefined, ...(ambient === undefined ? {} : { Date: undefined, Math: undefined }) })
+// bodySource wraps one body as a module whose parameter list is the scope: every scope name,
+// the restricted ones included, shadows the isolate's own global with the value the harness
+// passes for it. The body sits in a nested block of its own, so a const, let, or class
+// declaration of a scoped name in the body stays valid instead of colliding with its own
+// parameter at parse time (sandbox.workers.ts, "a local declaration of a scoped name stays
+// valid").
+const bodySource = (names: ReadonlyArray<string>, code: string): string =>
+  `export default async function(${names.join(",")}) {\n{\n${code}\n}\n}`
 
 const sandboxInput = (bindings: Bindings, ambient: Ambient | undefined, policy: WorkerLoaderSandboxPolicy) => {
   const names = scopeNames(bindings, ambient)
@@ -266,10 +300,16 @@ const sandboxInput = (bindings: Bindings, ambient: Ambient | undefined, policy: 
   const values: Record<string, unknown> = {}
   for (const name of names) {
     if (name === "console" || (ambient !== undefined && (name === "Date" || name === "Math"))) continue
-    const methods = packageMethods(bindings[name])
-    if (methods === undefined) values[name] = bindings[name]
+    const binding = bindings[name]
+    const methods = packageMethods(binding)
+    if (methods === undefined) values[name] = binding
     else packages[name] = methods
   }
+  // A restricted name arrives as an undefined value the harness hands the body, so the isolate
+  // cannot name its own global; globalThis is the one exception, an empty object, because the
+  // Bun sandbox blanks it that way (sandbox.workers.ts, "shadows the ambient network globals in
+  // the body scope").
+  if (!Object.hasOwn(bindings, "globalThis")) values["globalThis"] = {}
   return { names, packages, values, logCapBytes: policy.logCapBytes, ...(ambient === undefined ? {} : { ambient }) }
 }
 

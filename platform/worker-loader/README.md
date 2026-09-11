@@ -2,6 +2,8 @@
 
 This binding runs the Sandbox port in a fresh Worker Loader isolate. Capability transport carries package calls through a Durable Object stub on workerd. Replay transport carries the same calls as JSON boundaries on Celld.
 
+The harness shadows the ambient identifiers the Bun sandbox blanks as well: `fetch`, `WebSocket`, `WebSocketPair`, `caches`, `global`, and the rest of the Bun sandbox's restricted list arrive in the body as `undefined` parameters and `globalThis` as an empty object, so an isolate meant to have no ambient network cannot name one, independent of the outbound policy. `global` joins the list because `nodejs_compat` exposes it as an alias of the real global scope. A host binding keeps its own name: a mounted package shadows the global for that name.
+
 ## Verify
 
 ```bash
