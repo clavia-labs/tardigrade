@@ -36,6 +36,7 @@ const workerGroup = HttpApiGroup.make("worker").add(
   workerEndpoint(actorsGroup.endpoints.ensureActor, [400], [WorkerActor]),
   workerEndpoint(actorsGroup.endpoints.actor, [400, 404], [WorkerActor]),
   workerEndpoint(threadsGroup.endpoints.allocateRoot, [400, 404]),
+  workerEndpoint(threadsGroup.endpoints.forkThread, [400, 404]),
   workerEndpoint(threadsGroup.endpoints.list, [400, 404], [Schema.Array(ThreadTree)]),
   workerEndpoint(threadsGroup.endpoints.append, [400, 404]),
   workerEndpoint(threadsGroup.endpoints.events, [400, 404, 500])

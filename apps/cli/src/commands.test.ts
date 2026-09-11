@@ -57,6 +57,7 @@ const catalogFetch = (): typeof fetch =>
 
 interface Recorded {
   readonly allocated: Array<{ instance: string; name: string | undefined }>
+  readonly forked: Array<{ instance: string; thread: string; until: number | string; name: string | undefined }>
   readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
   readonly stateRefs: Array<ActorCallRef>
   readonly cancelled: Array<{ invocation: ActorCallRef; reason?: string }>
@@ -155,6 +156,12 @@ const clientOf = (
       recorded.allocated.push({ instance, name })
       return Promise.resolve({ actor: "agent", instance, thread: name ?? "generated" })
     },
+    fork: (instance, thread, until, name) => {
+      recorded.forked.push({ instance, thread, until, name })
+      return answers.fail === undefined
+        ? Promise.resolve({ actor: "agent", instance, thread: name ?? "generated" })
+        : Promise.reject(answers.fail)
+    },
     cancel: (invocation, cancellation = {}) => {
       if ("target" in invocation) throw new Error("CLI fixture expects a legacy handle")
       recorded.cancelled.push({
@@ -204,6 +211,7 @@ const drive = async (
   const lines: Array<string> = []
   const recorded: Recorded = {
     allocated: [],
+    forked: [],
     invoked: [],
     stateRefs: [],
     cancelled: [],
@@ -283,7 +291,7 @@ describe("parsing", () => {
     for (const group of ["CREATE:", "RUN:", "CATALOG:", "INSPECT:"]) {
       expect(root).toContain(group)
     }
-    for (const command of ["setup", "init", "lint", "build", "providers", "models", "methods", "call"]) {
+    for (const command of ["setup", "init", "lint", "build", "providers", "models", "methods", "call", "fork"]) {
       expect(root).toContain(command)
     }
     expect(root).not.toContain("push")
@@ -670,6 +678,22 @@ describe("thread allocation", () => {
     expect(created.failed).toBe(false)
     expect(created.recorded.allocated).toEqual([{ instance: "main", name: undefined }])
     expect(JSON.parse(created.lines[0]!)).toEqual({ actor: "agent", instance: "main", thread: "generated" })
+  })
+})
+
+describe("fork", () => {
+  test("copies a source prefix onto a named destination", async () => {
+    const ran = await drive(["fork", "root", "--until", "m1", "--name", "experiment", "--actor", "rick"])
+    expect(ran.failed).toBe(false)
+    expect(ran.recorded.forked).toEqual([{ instance: "rick", thread: "root", until: "m1", name: "experiment" }])
+    expect(ran.lines[0]).toBe("experiment")
+  })
+
+  test("unnamed fork returns the host identity as JSON", async () => {
+    const ran = await drive(["fork", "root", "--until", "2", "--json"])
+    expect(ran.failed).toBe(false)
+    expect(ran.recorded.forked).toEqual([{ instance: "main", thread: "root", until: "2", name: undefined }])
+    expect(JSON.parse(ran.lines[0]!)).toEqual({ actor: "agent", instance: "main", thread: "generated" })
   })
 })
 

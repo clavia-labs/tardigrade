@@ -60,6 +60,7 @@ export interface CloudflareThreadHost {
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly commitRoot: (event: Event) => Promise<void>
   readonly initializeRoot: (at: number) => Promise<void>
+  readonly copyPrefix: (events: ReadonlyArray<Event>) => Promise<{ readonly appended: number; readonly head: number }>
   readonly stageRoot: (event: Event) => Promise<void>
   readonly publishStaged: () => void
   readonly drive: () => Promise<void>
@@ -163,11 +164,13 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   ]
   const router = Layer.succeed(Router, { send: (envelope) => sendThrough(routes, envelope) })
   const self = formatThreadAddress(identity)
+  const wrappedAppend = (batch: ReadonlyArray<Event>) => events.append(batch).pipe(
+    Effect.tap((result) => result.appended > 0 ? Effect.sync(() => interruptions.interrupt(batch)) : Effect.void),
+    Effect.tap(syncCommit)
+  )
   const store = {
-    append: (batch: ReadonlyArray<Event>) => events.append(batch).pipe(
-      Effect.tap((result) => result.appended > 0 ? Effect.sync(() => interruptions.interrupt(batch)) : Effect.void),
-      Effect.tap(syncCommit)
-    ),
+    append: wrappedAppend,
+    copyPrefix: wrappedAppend,
     read: events.read,
     head: events.head,
     readFrom: (mark: number) => events.readFrom(mark),
@@ -232,6 +235,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),
     commitRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined)),
     initializeRoot: (at) => Effect.runPromise(commitEffect(identity, threadCreated(identity, undefined, at), undefined, undefined, undefined, true, true)),
+    copyPrefix: (events) => Effect.runPromise(store.copyPrefix(events)),
     stageRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined, undefined, undefined, false)),
     publishStaged: () => {
       if (stagedHead === 0) return

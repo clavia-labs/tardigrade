@@ -80,6 +80,10 @@ describe("thread creation", () => {
     expect(threadCreatedOf(events)).toBeUndefined()
   })
 
+  test("a fork fact keys once per destination log", () => {
+    expect(threadKeys.keyOf({ type: "ThreadForked", sourceThread: "root", until: 2, forkedAt: 40 })).toBe("thread:forked")
+  })
+
   test("invalid depth and time are refused", () => {
     expect(isThreadCreated({ type: "ThreadCreated", address: { actor: "agent", instance: "main", thread: "x" }, depth: -1, at: 1 } as Event)).toBe(false)
     expect(isThreadCreated({ type: "ThreadCreated", address: { actor: "agent", instance: "main", thread: "x" }, depth: 0, at: Number.NaN } as Event)).toBe(false)

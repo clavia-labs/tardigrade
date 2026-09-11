@@ -24,6 +24,7 @@ Base path `/v1`. Runtime routes address instances of the actor mounted at the se
 | `PUT /v1/actors/{instance}/threads/{thread}/methods/{method}/calls/{call}` | Call a method with its input as the body |
 | `GET /v1/actors/{instance}/threads/{thread}/methods/{method}/calls/{call}` | Read a method call's derived state |
 | `POST /v1/actors/{instance}/threads` | Allocate a root thread with an optional `name` or retry `key` |
+| `POST /v1/actors/{instance}/threads/{thread}/fork` | Copy a source prefix through `until` onto a new root. Optional `name` |
 | `POST /v1/actors/{instance}/threads/{thread}/events` | Append an event to an allocated thread |
 | `GET /v1/actors/{instance}/threads/{thread}/events` | Read the log. `after`, `limit`, `types` |
 | `GET /v1/actors/{instance}/threads/{thread}/events/stream` | Follow the log. Server-sent events resume from `Last-Event-ID` |
