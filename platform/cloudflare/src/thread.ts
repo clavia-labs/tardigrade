@@ -292,6 +292,13 @@ export class ThreadDO extends DurableObject<Env> {
     return true
   }
 
+  // copyPrefix appends a source prefix through the store append path without kicking drive (packages/core/src/log/fork.ts).
+  async copyPrefix(events: ReadonlyArray<Event>): Promise<void> {
+    if (!this.initialized()) throw new Error("Thread DO has not been initialized")
+    const host = await this.host()
+    await host.copyPrefix(events)
+  }
+
   private validateDelivery(envelope: ActorEnvelope): void {
     if (envelope.link.target.actor !== this.name()) throw new Error("delivery target does not match actor definition")
     if (envelope.link.target.instance !== this.instance()) throw new Error("delivery target does not match actor instance")

@@ -4,6 +4,7 @@ import { Event } from "@clavia/tardigrade-core/log/event"
 import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
 import { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
+import { ForkUntil } from "@clavia/tardigrade-core/log"
 
 // V1_PREFIX prefixes every versioned route.
 export const V1_PREFIX = "/v1"
@@ -484,6 +485,15 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
     payload: Schema.Struct({ name: Schema.optionalKey(Schema.NonEmptyString), key: Schema.optionalKey(Schema.NonEmptyString), parent: Schema.optionalKey(Schema.NonEmptyString) }),
     success: ThreadCoordinate,
     error: [InvalidRequest.schema]
+  }),
+  HttpApiEndpoint.post("forkThread", "/v1/actors/:id/threads/:thread/fork", {
+    params: RuntimeThreadParams,
+    payload: Schema.Struct({
+      until: ForkUntil,
+      name: Schema.optionalKey(Schema.NonEmptyString)
+    }),
+    success: ThreadCoordinate,
+    error: [InvalidRequest.schema, UnknownActor.schema, UnknownThread.schema]
   }),
   HttpApiEndpoint.post("append", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,

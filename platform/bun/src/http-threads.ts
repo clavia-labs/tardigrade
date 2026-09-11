@@ -32,6 +32,11 @@ export const bunHttpThreads = (host: BunHost, options: {
       : { kind: "child", parent: { ...scope, thread: request.parent }, child: childKeyOf(name ?? "unnamed"), ...key }
     return options.allocate(allocation)
   }),
+  forkThread: (source, until, name) => Effect.promise(() => host.forkThread({
+    source,
+    until,
+    ...(name === undefined ? {} : { name })
+  })),
   append: (thread, event) => Effect.flatMap(Clock.currentTimeMillis, (at) => Effect.promise(async () => {
     await host.commitRoot(host.self(thread), event.at === undefined ? { ...event, at } : event)
     host.schedule()

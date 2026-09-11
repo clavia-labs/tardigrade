@@ -14,6 +14,7 @@ import type { InvocationCoordinate } from "@clavia/tardigrade-core/interaction/i
 import type { ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
 import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
+import type { ForkThreadRequest } from "@clavia/tardigrade-host/fork"
 import { isActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { threadCreated, threadCreatedOf, childLineageOf } from "@clavia/tardigrade-core/interaction/relations"
 import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
@@ -37,6 +38,7 @@ export interface HostStorageLayout {
 
 export interface Host<Methods extends ActorMethods> extends ActorClient<Methods> {
   readonly actor: string
+  readonly forkThread: (request: ForkThreadRequest & { readonly instance?: string }) => Promise<ThreadCoordinate>
   readonly close: () => Promise<void>
 }
 
@@ -49,6 +51,7 @@ export interface HostBackend {
   readonly ensure: (instance: string) => Promise<BunHost>
   readonly resolve: Directory<ThreadCoordinate, IngressActor>["resolve"]
   readonly allocate: (request: ThreadAllocation) => Promise<ThreadCoordinate>
+  readonly forkThread: (instance: string, request: ForkThreadRequest) => Promise<ThreadCoordinate>
   readonly submit: (coordinate: ThreadCoordinate, name: string, input: unknown, call: CallOptions) => Promise<ReturnType<typeof prepareMethodInvocation>["accepted"]>
   readonly state: (reference: InvocationCoordinate) => Promise<ActorMethodState<unknown> | undefined>
 }
@@ -128,6 +131,10 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
     ensure: (instance) => instanceOf(options.actor.name, instance),
     resolve,
     allocate,
+    forkThread: async (instance, request) => {
+      active()
+      return (await instanceOf(options.actor.name, instance)).forkThread(request)
+    },
     submit: async (coordinate, name, input, call) => {
       active()
       call.signal?.throwIfAborted()
@@ -182,6 +189,7 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
   })
   const host: Host<Methods> = {
     ...client, actor: options.actor.name,
+    forkThread: (request) => backend.forkThread(request.instance ?? "main", request),
     close: pool.close
   }
   if (options.storage !== ":memory:") await pool.restore(options.storage, options.storageLayout?.instanceFromFile ?? ((file) => {

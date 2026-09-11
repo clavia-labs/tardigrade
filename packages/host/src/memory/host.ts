@@ -29,6 +29,7 @@ import { deadlocks, victimOf, type EdgesOf } from "../deadlock"
 import { providerTransportFrom, type Provider } from "../transport/provider"
 import { hostDrive, createThreadDriver, type DriverPolicy } from "../driver"
 import { threadCreated, threadCreatedForDelivery, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
+import { forkCopyPlan, forkRootAllocation, type ForkThreadRequest } from "../fork"
 
 // A host runs the emergent graph: many threads, one router, one driver.
 // This is the default binding: in-process and volatile, semantics only.
@@ -76,6 +77,7 @@ export type HostOptions<R> = {
 export interface Host {
   readonly allocate: (request: ThreadAllocation) => Promise<ThreadAddress>
   readonly assignThread: (request: ThreadAllocation) => Promise<ThreadAddress>
+  readonly forkThread: (request: ForkThreadRequest) => Promise<ThreadAddress>
   readonly initializeRoot: (target: ThreadAddress, at: number) => Promise<void>
   // seed appends without waking the thread: test and bootstrap ingress.
   readonly seed: (thread: string, events: ReadonlyArray<Event>) => void
@@ -289,7 +291,24 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return drive()
   }
 
+  const forkThread = async (request: ForkThreadRequest): Promise<ThreadAddress> => {
+    const sourceEvents = read(request.source)
+    const dest = await Effect.runPromise(initializedAllocator.allocate(
+      forkRootAllocation({ actor: actorName, instance: actorInstance }, request.name)
+    ))
+    const plan = forkCopyPlan(sourceEvents, read(dest.thread), {
+      source: request.source,
+      until: request.until,
+      dest: dest.thread,
+      forkedAt: Date.now()
+    })
+    if ("existing" in plan) return dest
+    append(dest.thread, plan.events)
+    return dest
+  }
+
   return { seed, read, commit, commitRoot, initializeRoot, drive, wake, resting, router, self,
     allocate: (request) => Effect.runPromise(initializedAllocator.allocate(request)),
-    assignThread: (request) => Effect.runPromise(localAllocator.allocate(request)) }
+    assignThread: (request) => Effect.runPromise(localAllocator.allocate(request)),
+    forkThread }
 }

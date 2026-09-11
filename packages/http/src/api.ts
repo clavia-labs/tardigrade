@@ -1,4 +1,4 @@
-import { Context, Duration, Effect, Layer, Stream, type Schema } from "effect"
+import { Cause, Context, Duration, Effect, Layer, Stream, type Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -101,6 +101,8 @@ const flatten = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary>
 
 const logsOf = (entries: ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>) =>
   new Map(entries.map((entry) => [entry.id, entry.events] as const))
+
+const failureMessage = (failure: unknown): string => failure instanceof Error ? failure.message : String(failure)
 
 const frameOf = (seq: number, event: unknown): string => `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`
 
@@ -406,6 +408,15 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
         if (query.actor !== undefined && query.actor !== (service.actorName ?? RESERVED_ACTOR)) return yield* Effect.fail(InvalidRequest.of("Allocation target actor does not match this deployment."))
         const threads = yield* service.ensure(params.id)
         return yield* threads.allocateRoot(payload.name, payload)
+      }))
+      .handle("forkThread", ({ params, payload }) => Effect.gen(function* () {
+        const threads = yield* actorOf(yield* Threads, params.id)
+        yield* logOf(threads.events, params.thread)
+        return yield* threads.forkThread(params.thread, payload.until, payload.name).pipe(
+          Effect.catchCause((cause) =>
+            Effect.fail(InvalidRequest.of(failureMessage(Cause.squash(cause))))
+          )
+        )
       }))
       // The body is the declared payload, decoded before this runs: a body that is not one is
       // refused by the declaration and rendered as a problem document (contract.ts,
