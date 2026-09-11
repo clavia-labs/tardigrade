@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.25.0](https://github.com/clavia-labs/tardigrade/compare/v0.24.0...v0.25.0) (2026-09-11)
+
+
+### Features
+
+* **host:** expose platform composition ([#410](https://github.com/clavia-labs/tardigrade/issues/410)) ([425848c](https://github.com/clavia-labs/tardigrade/commit/425848c90e59bf9a9b52ee4ccff7dfc09602079f))
+
+
+### Bug Fixes
+
+* **agent:** preserve response decisions ([#415](https://github.com/clavia-labs/tardigrade/issues/415)) ([513d700](https://github.com/clavia-labs/tardigrade/commit/513d7004c8ef49694b535d7507a91f91c8689432))
+* **code:** wake external replies ([#432](https://github.com/clavia-labs/tardigrade/issues/432)) ([c0bcdf4](https://github.com/clavia-labs/tardigrade/commit/c0bcdf470c2eea864e06631d79cc8cd618981ef9))
+* **model:** honor SDK timeout bounds ([#421](https://github.com/clavia-labs/tardigrade/issues/421)) ([d8321f2](https://github.com/clavia-labs/tardigrade/commit/d8321f2ff74b7d87f066aaf3b024ffed185e90da))
+
+
+### Reverts
+
+* undo external reply changes ([#436](https://github.com/clavia-labs/tardigrade/issues/436)) ([4fca5f7](https://github.com/clavia-labs/tardigrade/commit/4fca5f74e7b5e4bad08b0cd9961617a9ef047fc2))
+
 ## [0.24.0](https://github.com/clavia-labs/tardigrade/compare/v0.23.0...v0.24.0) (2026-09-08)
 
 
