@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Console, Effect, Exit, Layer } from "effect"
+import * as NetAddress from "effect/unstable/net/NetAddress"
 import { HttpServer } from "effect/unstable/http"
 import { Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
@@ -85,8 +86,8 @@ const booted = <A, R = ServerR>(
   const running = Effect.gen(function*() {
     const server = yield* HttpServer.HttpServer
     const address = server.address
-    const port = address._tag === "TcpAddress" ? address.port : 0
-    const hostname = address._tag === "TcpAddress" ? address.hostname : ""
+    const port = address._tag !== "UnixPathAddress" ? address.port : 0
+    const hostname = address._tag !== "UnixPathAddress" ? NetAddress.formatIp(address.address) : ""
     return yield* Effect.promise(() => body(`http://${hostname}:${port}`, hostname, actors))
   }).pipe(
     Effect.provide(

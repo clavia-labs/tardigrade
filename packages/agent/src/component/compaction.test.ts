@@ -1,3 +1,4 @@
+import { renderMessages } from "../projection/messages"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
@@ -60,7 +61,7 @@ describe("the compaction measure and guard", () => {
 
   test("the measure counts what a render sends: capped results, skipped threads", () => {
     const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big])).toBe(Math.ceil(TEST_CONTEXT.resultRenderCap / 4))
+    expect(estimateTokens([big])).toBe(Math.ceil(renderMessages([big])[0]!.content!.length / 4))
     const thread: Event = { type: "CodeSettled", execId: "c", result: 1, at: 2 } as Event
     expect(estimateTokens([thread])).toBe(0)
   })
@@ -84,7 +85,7 @@ describe("the compaction measure and guard", () => {
     expect(compactionReactor({ contextWindowTokens: 125 })(openTurn(2))).toHaveLength(1)
     // The measure moves with the render cap, because one policy states both.
     const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(10)
+    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(Math.ceil(renderMessages([big], { resultRenderCap: 40 })[0]!.content!.length / 4))
   })
 
   test("the selected model resolves both hysteresis lines from one window", () => {

@@ -206,7 +206,7 @@ try {
     ...packages.map(async (source) => {
       await cp(join(root, source.dir, "src"), join(stage, "src", source.namespace), {
         recursive: true,
-        filter: (path) => !path.endsWith(".test.ts")
+        filter: (path) => !path.endsWith(".test.ts") && path !== join(root, "packages/model/src/testing")
       })
     })
   ])
@@ -296,7 +296,16 @@ try {
       "./http/*": "./src/http/*.ts",
       "./server/*": "./src/server/*.ts",
       "./cli/*": "./src/cli/*.ts",
-      "./model": "./src/model/model.ts",
+      "./model": "./src/model/index.ts",
+      "./model/catalog": "./src/model/catalog/index.ts",
+      "./model/catalog-store": "./src/model/catalog/repository.ts",
+      "./model/catalog-page": "./src/model/catalog/page.ts",
+      "./model/catalog-availability": "./src/model/catalog/availability.ts",
+      "./model/metadata": "./src/model/catalog/metadata.ts",
+      "./model/directory": "./src/model/providers/directory.ts",
+      "./model/reasoning": "./src/model/providers/options.ts",
+      "./model/request-policy": "./src/model/inference/policy.ts",
+      "./model/output": "./src/model/inference/output.ts",
       "./model/*": "./src/model/*.ts"
     },
     dependencies: dependencyUnion(packages.map((source) => source.pkg)),

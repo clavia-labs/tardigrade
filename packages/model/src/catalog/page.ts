@@ -7,12 +7,12 @@ import type {
   ModelCatalogUnpricedOrder,
   ProviderCatalogPage
 } from "@clavia/tardigrade-client/contract"
-import { MODEL_PROVIDER_CONNECTIONS } from "./directory"
+import { MODEL_PROVIDER_CONNECTIONS } from "../providers/directory"
 import { DEFAULT_MODEL_POLICY, modelAllowedBy, modelPolicyScopeOf, type ModelPolicy } from "@clavia/tardigrade-agent/inference/access"
 import {
   providerAvailabilityOf,
   type ProviderAvailabilities
-} from "./catalog-availability"
+} from "./availability"
 
 // DEFAULT_CATALOG_PAGE_LIMIT is the item count used when a catalog request states no limit.
 export const DEFAULT_CATALOG_PAGE_LIMIT = 50

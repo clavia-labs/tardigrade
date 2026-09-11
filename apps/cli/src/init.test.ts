@@ -55,9 +55,6 @@ describe("initActor", () => {
     expect(worker).toContain("fetch: http.fetch")
     expect(worker).toContain('import definition from "./actor"')
     expect(worker).toContain('from "tardie/worker"')
-    expect(worker).toContain('import { modelAdapters } from "tardie/model/adapter"')
-    expect(worker).toContain('import { openAICompatibleAdapter } from "tardie/model/openai"')
-    expect(worker).toContain("adapters: modelAdapters(openAICompatibleAdapter)")
     expect(worker).toContain('import modelLock from "./models.lock.json"')
     expect(worker).toContain("scope: modelScopeFrom(modelLock)")
     expect(manifest).toMatchObject({

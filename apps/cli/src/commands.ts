@@ -111,49 +111,49 @@ const removeIncompleteProject = (
 
 // The flags a command that talks to a server takes. They are values rather than a shape repeated
 // per command, so `--url` means the same thing everywhere it appears.
-const url = Flag.string("url").pipe(
+const url = Flag.String("url").pipe(
   Flag.withDescription("The server to call. Defaults to the client's own default base URL."),
   Flag.optional
 )
 
-const token = Flag.string("token").pipe(
+const token = Flag.String("token").pipe(
   Flag.withDescription("The bearer token to present. Defaults to TARDIGRADE_TOKEN."),
   Flag.optional
 )
 
-const json = Flag.boolean("json").pipe(
+const json = Flag.Boolean("json").pipe(
   Flag.withDescription("Print the client's value verbatim as JSON instead of a table."),
   Flag.withDefault(false)
 )
 
-const setupProvider = Flag.string("provider").pipe(
+const setupProvider = Flag.String("provider").pipe(
   Flag.withDescription("The provider name used by actor model references."),
   Flag.optional
 )
 
-const setupProviderConfig = Flag.string("provider-config").pipe(
+const setupProviderConfig = Flag.String("provider-config").pipe(
   Flag.withDescription("The provider connection as JSON. Secret values stay in environment variables."),
   Flag.optional
 )
 
-const setupDefaultModel = Flag.string("default-model").pipe(
+const setupDefaultModel = Flag.String("default-model").pipe(
   Flag.withDescription("The provider model ID used as the host default."),
   Flag.optional
 )
 
-const setupModel = Flag.string("model").pipe(
+const setupModel = Flag.String("model").pipe(
   Flag.withDescription("The provider model ID used as the host default."),
   Flag.optional
 )
 
-const callId = Flag.string("id").pipe(
+const callId = Flag.String("id").pipe(
   Flag.withDescription(
     "The call id. A fresh id is minted unless stated; reuse it for an idempotent retry."
   ),
   Flag.optional
 )
 
-const actorInstance = Flag.string("actor").pipe(
+const actorInstance = Flag.String("actor").pipe(
   Flag.withDescription("The actor instance id."),
   Flag.withDefault("main")
 )
@@ -161,22 +161,22 @@ const actorInstance = Flag.string("actor").pipe(
 const remote = { url, token, json, actor: actorInstance }
 const catalogRemote = { url, token, json }
 
-const catalogSearch = Flag.string("search").pipe(
+const catalogSearch = Flag.String("search").pipe(
   Flag.withDescription("Keep entries whose ID or name contains this text."),
   Flag.optional
 )
 
-const catalogCursor = Flag.string("cursor").pipe(
+const catalogCursor = Flag.String("cursor").pipe(
   Flag.withDescription("Continue from a cursor returned by the same catalog query."),
   Flag.optional
 )
 
-const catalogLimit = Flag.integer("limit").pipe(
+const catalogLimit = Flag.Int("limit").pipe(
   Flag.withDescription("The page size. Defaults to the server's catalog page size."),
   Flag.optional
 )
 
-const catalogAvailability = Flag.choice("availability", CATALOG_AVAILABILITY_FILTERS).pipe(
+const catalogAvailability = Flag.Literals("availability", CATALOG_AVAILABILITY_FILTERS).pipe(
   Flag.withDescription("Include every catalog provider or only providers this host can use."),
   Flag.optional
 )
@@ -309,11 +309,11 @@ const setupOutput = (asJson: boolean, value: object, summary: string, modelLock:
   asJson ? jsonOf({ ...value, modelLock }) : `${summary}\nwrote ${modelLock}`
 
 export const setupProviderCommand = Command.make("provider", {
-  provider: Argument.string("provider").pipe(
+  provider: Argument.String("provider").pipe(
     Argument.withDescription("The provider name used by actor model references."),
     Argument.optional
   ),
-  config: Argument.string("config").pipe(
+  config: Argument.String("config").pipe(
     Argument.withDescription("The provider connection as JSON. Secret values stay in environment variables."),
     Argument.optional
   ),
@@ -446,15 +446,15 @@ export const setupCommand = Command.make("setup", {
 )
 
 export const initCommand = Command.make("init", {
-  name: Argument.string("name").pipe(
+  name: Argument.String("name").pipe(
     Argument.withDescription("The actor name. Prompted when omitted from an interactive terminal."),
     Argument.optional
   ),
-  dir: Flag.string("dir").pipe(
+  dir: Flag.String("dir").pipe(
     Flag.withDescription("The directory to create. Defaults to a directory named after the actor."),
     Flag.optional
   ),
-  template: Flag.choice("template", INIT_TEMPLATES).pipe(
+  template: Flag.Literals("template", INIT_TEMPLATES).pipe(
     Flag.withDescription(`The actor template. Defaults to ${DEFAULT_INIT_TEMPLATE}.`),
     Flag.withDefault(DEFAULT_INIT_TEMPLATE)
   ),
@@ -467,7 +467,7 @@ export const initCommand = Command.make("init", {
     const cli = yield* Cli
     const declaredName = stated(flags.name)
     const name = declaredName ?? (canAsk()
-      ? yield* Prompt.text({
+      ? yield* Prompt.String({
         message: "Actor name",
         default: DEFAULT_INIT_ACTOR_NAME,
         validate: (value) => {
@@ -536,8 +536,8 @@ export const initCommand = Command.make("init", {
   )
 
 export const buildCommand = Command.make("build", {
-  entry: Argument.string("entry").pipe(Argument.withDescription("The actor source file to bundle")),
-  out: Flag.string("out").pipe(
+  entry: Argument.String("entry").pipe(Argument.withDescription("The actor source file to bundle")),
+  out: Flag.String("out").pipe(
     Flag.withDescription(`The artifact root. Defaults to ${DEFAULT_BUILD_DIRECTORY}.`),
     Flag.optional
   ),
@@ -558,7 +558,7 @@ export const buildCommand = Command.make("build", {
   )
 
 export const lintCommand = Command.make("lint", {
-  entry: Argument.string("entry").pipe(Argument.withDescription("The actor source file to validate")),
+  entry: Argument.String("entry").pipe(Argument.withDescription("The actor source file to validate")),
   json
 }, (flags) =>
   Effect.gen(function*() {
@@ -576,27 +576,27 @@ export const lintCommand = Command.make("lint", {
   )
 
 export const devCommand = Command.make("dev", {
-  port: Flag.integer("port").pipe(
+  port: Flag.Int("port").pipe(
     Flag.withDescription("The port to listen on. Defaults to PORT, then the server's own default."),
     Flag.optional
   ),
-  minPort: Flag.integer("min-port").pipe(
+  minPort: Flag.Int("min-port").pipe(
     Flag.withDescription("The lowest automatic fallback when the implicit default port is occupied."),
     Flag.withDefault(DEFAULT_MIN_PORT)
   ),
-  db: Flag.string("db").pipe(
+  db: Flag.String("db").pipe(
     Flag.withDescription("The SQLite file that holds every log. Defaults to TARDIGRADE_DB."),
     Flag.optional
   ),
-  maxConcurrentThreads: Flag.integer("max-concurrent-threads").pipe(
+  maxConcurrentThreads: Flag.Int("max-concurrent-threads").pipe(
     Flag.withDescription("The maximum actor threads settled at once. Defaults to TARDIGRADE_MAX_CONCURRENT_THREADS."),
     Flag.optional
   ),
-  ui: Flag.string("ui").pipe(
+  ui: Flag.String("ui").pipe(
     Flag.withDescription("The directory holding the built UI. Defaults to the build shipped beside this command."),
     Flag.optional
   ),
-  open: Flag.boolean("open").pipe(
+  open: Flag.Boolean("open").pipe(
     Flag.withDescription("Open the UI in the default browser after the server starts. Use --no-open to keep it closed."),
     Flag.withDefault(DEFAULT_OPEN_BROWSER)
   )
@@ -704,7 +704,7 @@ export const methodsCommand = Command.make("methods", remote, (flags) =>
     ])
   )
 
-const invocationThread = Flag.string("thread").pipe(
+const invocationThread = Flag.String("thread").pipe(
   Flag.withDescription("The thread that owns the invocation.")
 )
 
@@ -721,8 +721,8 @@ const invocationRefOf = (flags: {
 })
 
 export const callStateCommand = Command.make("state", {
-  method: Argument.string("method").pipe(Argument.withDescription("The invoked method")),
-  invocation: Argument.string("invocation").pipe(Argument.withDescription("The invocation id")),
+  method: Argument.String("method").pipe(Argument.withDescription("The invoked method")),
+  invocation: Argument.String("invocation").pipe(Argument.withDescription("The invocation id")),
   thread: invocationThread,
   ...remote
 }, (flags) =>
@@ -744,10 +744,10 @@ export const callStateCommand = Command.make("state", {
   )
 
 export const callCancelCommand = Command.make("cancel", {
-  method: Argument.string("method").pipe(Argument.withDescription("The invoked method")),
-  invocation: Argument.string("invocation").pipe(Argument.withDescription("The invocation id")),
+  method: Argument.String("method").pipe(Argument.withDescription("The invoked method")),
+  invocation: Argument.String("invocation").pipe(Argument.withDescription("The invocation id")),
   thread: invocationThread,
-  reason: Flag.string("reason").pipe(
+  reason: Flag.String("reason").pipe(
     Flag.withDescription("Why the invocation should stop."),
     Flag.optional
   ),
@@ -775,7 +775,7 @@ export const callCancelCommand = Command.make("cancel", {
   )
 
 export const threadCreateCommand = Command.make("create", {
-  name: Flag.string("name").pipe(
+  name: Flag.String("name").pipe(
     Flag.withDescription("An instance-scoped root name. Omit to generate a friendly name."),
     Flag.optional
   ),
@@ -792,22 +792,22 @@ export const threadCommand = Command.make("thread").pipe(
 )
 
 export const callCommand = Command.make("call", {
-  method: Argument.string("method").pipe(Argument.withDescription("The declared method to call")),
-  input: Argument.string("input").pipe(Argument.withDescription("The method input as JSON")),
-  thread: Flag.string("thread").pipe(
+  method: Argument.String("method").pipe(Argument.withDescription("The declared method to call")),
+  input: Argument.String("input").pipe(Argument.withDescription("The method input as JSON")),
+  thread: Flag.String("thread").pipe(
     Flag.withDescription("An existing thread id. Omit to allocate a new root."),
     Flag.optional
   ),
   id: callId,
-  wait: Flag.boolean("wait").pipe(
+  wait: Flag.Boolean("wait").pipe(
     Flag.withDescription("Wait for the method call to leave pending."),
     Flag.withDefault(true)
   ),
-  poll: Flag.integer("poll").pipe(
+  poll: Flag.Int("poll").pipe(
     Flag.withDescription("Milliseconds between method state reads while waiting."),
     Flag.withDefault(DEFAULT_POLL_MILLIS)
   ),
-  timeout: Flag.integer("timeout").pipe(
+  timeout: Flag.Int("timeout").pipe(
     Flag.withDescription("Milliseconds to wait for the method call to leave pending."),
     Flag.withDefault(DEFAULT_TIMEOUT_MILLIS)
   ),
@@ -901,21 +901,21 @@ export const modelLockCommand = Command.make("lock", { json }, (flags) =>
   )
 
 export const modelsCommand = Command.make("models", {
-  provider: Flag.string("provider").pipe(
+  provider: Flag.String("provider").pipe(
     Flag.withDescription("Keep models from this provider."),
     Flag.optional
   ),
   search: catalogSearch,
   availability: catalogAvailability,
-  sort: Flag.choice("sort", MODEL_CATALOG_PRICE_SORTS).pipe(
+  sort: Flag.Literals("sort", MODEL_CATALOG_PRICE_SORTS).pipe(
     Flag.withDescription("Order models by this token price."),
     Flag.optional
   ),
-  order: Flag.choice("order", MODEL_CATALOG_SORT_ORDERS).pipe(
+  order: Flag.Literals("order", MODEL_CATALOG_SORT_ORDERS).pipe(
     Flag.withDescription("Order selected prices from low to high or high to low."),
     Flag.optional
   ),
-  unpriced: Flag.choice("unpriced", MODEL_CATALOG_UNPRICED_ORDERS).pipe(
+  unpriced: Flag.Literals("unpriced", MODEL_CATALOG_UNPRICED_ORDERS).pipe(
     Flag.withDescription("Place models without the selected price first or last."),
     Flag.optional
   ),
@@ -947,20 +947,20 @@ export const modelsCommand = Command.make("models", {
   )
 
 export const eventsCommand = Command.make("events", {
-  thread: Argument.string("thread").pipe(Argument.withDescription("The thread whose log to read")),
-  after: Flag.integer("after").pipe(
+  thread: Argument.String("thread").pipe(Argument.withDescription("The thread whose log to read")),
+  after: Flag.Int("after").pipe(
     Flag.withDescription("Start past this sequence number. The server numbers events from 1."),
     Flag.optional
   ),
-  limit: Flag.integer("limit").pipe(
+  limit: Flag.Int("limit").pipe(
     Flag.withDescription("Cap the rows read. Defaults to the server's own page size."),
     Flag.optional
   ),
-  types: Flag.string("types").pipe(
+  types: Flag.String("types").pipe(
     Flag.withDescription("Keep only these event types, as a comma list."),
     Flag.optional
   ),
-  width: Flag.integer("width").pipe(
+  width: Flag.Int("width").pipe(
     Flag.withDescription("How wide the detail column may run before it is cut."),
     Flag.withDefault(DEFAULT_DETAIL_WIDTH)
   ),

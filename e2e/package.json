@@ -6,12 +6,13 @@
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
-    "effect": "4.0.0-rc.110",
+    "effect": "npm:@tardie/effect@4.0.0-rc.113",
     "fast-check": "^4.9.0",
     "tardie": "workspace:*"
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:live:reasoning": "TARDIE_LIVE_REASONING=1 bun test ./inference/reasoning.live.test.ts"
   }
 }

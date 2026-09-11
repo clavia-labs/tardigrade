@@ -7,7 +7,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog-store"
+import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog/repository"
 import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
 import {
@@ -21,7 +21,6 @@ import {
   type ActorThreadNode,
   type Env
 } from "../src/worker"
-import { modelAdapters } from "@clavia/tardigrade-model/adapter"
 import { modelLayer, modelsFrom, mountedActor } from "../src/assembly"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
@@ -159,7 +158,7 @@ describe("cloudflare actor", () => {
     expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
     const binding = await Effect.runPromise(Infer.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, config), scope.catalog, modelAdapters())
+      modelLayer(modelsFrom(env as Env, config), scope.catalog)
     )))
     expect(binding.resolve()).toMatchObject({
       model: config.default,
@@ -170,7 +169,7 @@ describe("cloudflare actor", () => {
     })
     expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
     const restricted = await Effect.runPromise(Infer.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog, modelAdapters())
+      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog)
     )))
     expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
   })

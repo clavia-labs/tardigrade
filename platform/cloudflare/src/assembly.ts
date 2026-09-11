@@ -4,11 +4,10 @@ import { HttpClient } from "effect/unstable/http"
 import { Infer, type InferenceObserver, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { modelLayer as hostModelLayer } from "@clavia/tardigrade-model/host"
-import { modelAdapters, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
-import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
+import { modelLayer as configuredModelLayer } from "@clavia/tardigrade-model/host"
+import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/catalog/metadata"
 import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
-import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog-availability"
+import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
 import { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-model/config"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
@@ -49,7 +48,6 @@ export const retainBackgroundTask = (
 
 type MountedActor = CloudflareWorkerOptions<never> & {
   readonly actor: Actor<never>
-  readonly modelAdapters: ModelAdapterRegistry
   readonly defaultChildPlacement: ChildPlacement
   readonly backgroundTaskOwner: BackgroundTaskOwner
 }
@@ -110,7 +108,7 @@ export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolic
 export const deployed = (name: string): boolean => mountedActor?.actor.name === name
 export const directory = cloudflareDirectory(deployed)
 
-interface CloudflareProvider extends ModelProviderConfig {
+type CloudflareProvider = ModelProviderConfig & {
   readonly apiKey: string
 }
 
@@ -177,14 +175,13 @@ const hostModelConfig = (models: CloudflareModels | undefined) => ({
 export const modelLayer = (
   models: CloudflareModels | undefined,
   scope: ModelCatalog,
-  adapters: ModelAdapterRegistry,
   observer?: InferenceObserver
 ) => Layer.effect(Infer, Effect.map(Infer, (binding) => ({
   ...binding,
   react: (request, key, signal) => models !== undefined && request.model === undefined
     ? Effect.succeed({ kind: "fail" as const, error: "the actor selected no model", failure: { cause: "inference_error" as const, attempts: 0 } })
     : binding.react(request, key, signal)
-}))).pipe(Layer.provide(hostModelLayer(hostModelConfig(models), { snapshot: scope }, adapters, observer)))
+}))).pipe(Layer.provide(configuredModelLayer(hostModelConfig(models), { snapshot: scope }, observer === undefined ? {} : { observer })))
 
 const positiveInteger = (raw: string | undefined, fallback: number, name: string): number => {
   if (raw === undefined) return fallback
@@ -266,7 +263,6 @@ export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
 interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly allocation?: ThreadAllocationPolicy
-  readonly modelAdapters?: ModelAdapterRegistry
   readonly modelScope?: DeploymentModelScope
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
   readonly commitObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => CommitObserver
@@ -301,7 +297,6 @@ export const mountActor = <R, const Methods extends ActorMethods, WorkerEnv exte
   mountedActor = {
     ...options,
     actor: definition,
-    modelAdapters: options?.modelAdapters ?? modelAdapters(),
     defaultChildPlacement,
     backgroundTaskOwner: options?.backgroundTaskOwner ?? DEFAULT_BACKGROUND_TASK_OWNER
   } as unknown as MountedActor

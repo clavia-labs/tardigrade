@@ -601,9 +601,9 @@ describe("a turn that declares an output contract", () => {
     )
     expect(asked).toBe(1)
     expect(events.some((e) => e.type === "OutputRejected")).toBe(false)
-    const failed = events.find((e) => e.type === "TurnFailed") as { error?: string; cause?: string; policy?: unknown }
+    const failed = events.find((e) => e.type === "TurnFailed") as { error?: { message: string }; cause?: string; policy?: unknown }
     expect(failed.cause).toBe("output_contract_violation")
-    expect(failed.error).toContain("aspects")
+    expect(failed.error?.message).toContain("aspects")
     expect(failed.policy).toMatchObject({ kind: "native", name: "native" })
   })
 
@@ -623,7 +623,7 @@ describe("a turn that declares an output contract", () => {
       layers
     )
     expect(events.find((e) => e.type === "TurnFailed")).toMatchObject({ cause: "output_contract_violation" })
-    expect((events.find((e) => e.type === "TurnFailed") as { error?: string }).error).toContain("not JSON")
+    expect((events.find((e) => e.type === "TurnFailed") as { error?: { message: string } }).error?.message).toContain("not JSON")
   })
 })
 
@@ -768,9 +768,9 @@ describe("the repair implementation", () => {
       }),
       layers
     )
-    const failed = events.find((e) => e.type === "TurnFailed") as { error?: string; cause?: string; policy?: { attempts?: number } }
+    const failed = events.find((e) => e.type === "TurnFailed") as { error?: { message: string }; cause?: string; policy?: { attempts?: number } }
     expect(failed.cause).toBe("output_repairs_exhausted")
-    expect(failed.error).toContain("after 2 corrections")
+    expect(failed.error?.message).toContain("after 2 corrections")
     expect(failed.policy?.attempts).toBe(2)
     // Bounded by the mounted policy: the corrections are spent, not repeated forever.
     expect(asked).toBe(3)
@@ -1017,11 +1017,11 @@ describe("the validate-once implementation", () => {
     )
     expect(asked).toBe(1)
     expect(events.some((e) => e.type === "OutputRejected")).toBe(false)
-    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: string }
+    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: { message: string } }
     // Its own class: a local decision to stop, told apart from a provider breaking a promise it
     // made and from a correction loop spending its bound (src/events.ts, TURN_FAILURE_CAUSES).
     expect(failed.cause).toBe("output_validation_failed")
-    expect(failed.error).toContain("aspects")
+    expect(failed.error?.message).toContain("aspects")
   })
 
   test("a conforming response completes the turn like any other", async () => {
@@ -1201,8 +1201,8 @@ describe("a domain-specific implementation", () => {
       }),
       layers
     )
-    const failed = events.find((e) => e.type === "TurnFailed") as { error?: string; cause?: string }
-    expect(failed.error).toBe("the house style was not met")
+    const failed = events.find((e) => e.type === "TurnFailed") as { error?: { message: string }; cause?: string }
+    expect(failed.error?.message).toBe("the house style was not met")
     expect(failed.cause).toBe("output_validation_failed")
     expect(events.filter((e) => e.type === "OutputRejected")).toHaveLength(2)
   })
@@ -1242,8 +1242,8 @@ describe("a declaration nobody can serve", () => {
       layers
     )
     expect(asked).toBe(0)
-    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: string }
+    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: { message: string } }
     expect(failed.cause).toBe("output_unsupported")
-    expect(failed.error).toContain("required must list every property")
+    expect(failed.error?.message).toContain("required must list every property")
   })
 })

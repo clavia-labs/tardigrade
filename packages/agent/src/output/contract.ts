@@ -1,7 +1,7 @@
 import { Validator } from "@cfworker/json-schema"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
-// OutputContract defines the schema and decoded TypeScript value for a turn's result. Native mode sends the schema through the provider's response-format surface (packages/model/src/output/contract.ts, outputSchemaFor).
+// OutputContract defines the schema and decoded TypeScript value for a turn's result. Native mode sends the schema through the provider's response-format surface (packages/model/src/inference/output.ts, outputSchemaFor).
 
 // OUTPUT_NAME_PATTERN accepts names supported by the OpenAI-compatible and Converse output fields.
 export const OUTPUT_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/
@@ -451,7 +451,7 @@ export const declarationForTurn = (log: ReadonlyArray<Event>, turn: string): Dec
   return declarationOf((head as { output?: unknown }).output, turn)
 }
 
-// OutputFallback defines behavior when native structured output is unavailable for a call. Mounting a fallback leaves native mode preferred (packages/model/src/output/contract.ts, outputModeOf).
+// OutputFallback defines behavior when native structured output is unavailable for a call. Mounting a fallback leaves native mode preferred (packages/model/src/inference/output.ts, outputModeOf).
 type NoCorrections = { readonly attempts?: never }
 type NoHistory = { readonly projectHistory?: never }
 

@@ -5,6 +5,7 @@ import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
 import type { Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
+import { ProviderContinuation } from "../inference/continuation"
 
 // The agent's domain events compose with core actor input and control events. The model responds
 // by acting: its recorded decision is the consequence event it emits, and the prose it emits
@@ -21,11 +22,7 @@ export { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-me
 export { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
 export { cancellationRequested } from "@clavia/tardigrade-core/interaction/cancellation"
 
-// Endpoint is who served one attempt, recorded whether or not the endpoint reported any spend.
-// `provider` and `model` are the configuration's own effective coordinates, so a replay reads
-// which model supplied a native guarantee even when no usage came back; `routedProvider` and
-// `routedModel` are the ones a router named on the wire, which supersede the configured pair as
-// the observed truth (packages/model/src/model.ts, endpointOf).
+// Endpoint records configured model identity and optional routing evidence (inference/usage.test.ts).
 export const Endpoint = Schema.Struct({
   provider: Schema.optional(Schema.String),
   model: Schema.String,
@@ -69,6 +66,7 @@ export const ToolReturned = Schema.Struct({
   type: Schema.Literal("ToolReturned"),
   callId: Schema.String,
   result: Schema.Unknown,
+  isFailure: Schema.optional(Schema.Boolean),
   at: Schema.Finite
 })
 
@@ -89,15 +87,36 @@ export const ModelCalled = Schema.Struct({
   at: Schema.Finite
 })
 
+export const TurnError = Schema.Struct({
+  message: Schema.String,
+  code: Schema.optional(Schema.String),
+  statusCode: Schema.optional(Schema.Finite),
+  isRetryable: Schema.optional(Schema.Boolean),
+  details: Schema.optional(Schema.Json)
+})
+export type TurnError = typeof TurnError.Type
+
+export const ModelResponse = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+  finishReason: Schema.optional(Schema.String),
+  rawFinishReason: Schema.optional(Schema.String)
+})
+export type ModelResponse = typeof ModelResponse.Type
+
 // ModelReturned settles a model attempt and owns its response usage (runtime/batches.test.ts).
 export const ModelReturned = Schema.Struct({
   type: Schema.Literal("ModelReturned"),
   callId: Schema.String,
   ordinal: Schema.Finite,
   outcome: Schema.Literals(["returned", "failed"]),
+  reasoning: Schema.optional(Schema.String),
+  continuation: Schema.optional(ProviderContinuation),
   usage: Schema.Unknown,
   endpoint: Schema.optional(Endpoint),
-  error: Schema.optional(Schema.String),
+  text: Schema.optional(Schema.String),
+  response: Schema.optional(ModelResponse),
+  error: Schema.optional(TurnError),
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.String,
   at: Schema.Finite
@@ -146,6 +165,7 @@ export const TURN_FAILURE_CAUSES = [
   "inference_attempts_exhausted",
   "refused",
   "truncated",
+  "output_limit",
   "output_unsupported",
   "output_contract_violation",
   "output_validation_failed",
@@ -211,7 +231,7 @@ export const OutputRepaired = Schema.Struct({
 // TurnFailed is the failure terminal for one execution epoch.
 export const TurnFailed = Schema.Struct({
   type: Schema.Literal("TurnFailed"),
-  error: Schema.String,
+  error: TurnError,
   // Present only on the fail a live attempt answered; the give-up terminal carries none.
   usage: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Finite),
@@ -390,6 +410,9 @@ export interface AttemptEndpoint {
 // declared one must state it: the reactor records it and reads it back on replay, and it refuses
 // to invent one (inference/machine.ts, completionOf).
 type Served = {
+  readonly response?: ModelResponse
+  readonly reasoning?: string
+  readonly continuation?: import("../inference/continuation").ProviderContinuation
   readonly usage?: Usage
   readonly endpoint?: AttemptEndpoint
   readonly mode?: import("../output/contract").OutputMode
@@ -397,6 +420,7 @@ type Served = {
 
 // ToolCall identifies one requested tool operation within a model response.
 export interface ToolCall {
+  readonly validationError?: string
   readonly callId: string
   readonly name: string
   readonly arguments: unknown
@@ -407,7 +431,8 @@ export type Action =
   | ({ readonly kind: "complete"; readonly output: string } & Served)
   | ({
       readonly kind: "fail"
-      readonly error: string
+      readonly text?: string
+      readonly error: TurnError | string
       readonly failure?: {
         readonly cause: TurnFailureCause
         readonly attempts: number
@@ -486,7 +511,7 @@ export const toolCalled = (
   } & EpochStamp
 ): Event => ({ type: "ToolCalled", ...fields }) as Event
 
-export const toolReturned = (fields: { readonly callId: string; readonly result: unknown } & Stamp): Event =>
+export const toolReturned = (fields: { readonly callId: string; readonly result: unknown; readonly isFailure?: boolean } & Stamp): Event =>
   ({ type: "ToolReturned", ...fields }) as Event
 
 export const modelCalled = (
@@ -509,7 +534,9 @@ export const modelReturned = (
     readonly outcome: "returned" | "failed"
     readonly usage: unknown
     readonly endpoint?: unknown
-    readonly error?: string
+    readonly error?: TurnError
+    readonly text?: string
+    readonly response?: ModelResponse
   } & EpochStamp
 ): Event => ({ type: "ModelReturned", ...fields }) as Event
 
@@ -561,7 +588,7 @@ export const outputRepaired = (
 
 export const turnFailed = (
   fields: {
-    readonly error: string
+    readonly error: TurnError | string
     readonly cause?: TurnFailureCause
     readonly attempts?: number
     readonly attemptKey?: string
@@ -569,7 +596,7 @@ export const turnFailed = (
     readonly endpoint?: unknown
   } & EpochStamp
 ): Event =>
-  ({ type: "TurnFailed", ...fields }) as Event
+  ({ type: "TurnFailed", ...fields, error: typeof fields.error === "string" ? { message: fields.error } : fields.error }) as Event
 
 export const turnCancelled = (
   fields: {

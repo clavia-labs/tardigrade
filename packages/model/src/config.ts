@@ -1,10 +1,14 @@
+import { protocolOptionsOf, type ModelOptionsByProtocol } from "./providers/options"
 import { modelRefOf } from "@clavia/tardigrade-agent/inference/reference"
 import { modelAllowedBy, modelPolicyOf, type ModelPolicy } from "@clavia/tardigrade-agent/inference/access"
-import { modelProtocolOf, type ModelProtocol } from "./directory"
+import { modelProtocolOf, type ModelProtocol } from "./providers/directory"
 
-export interface ModelProviderConfig {
+export type ModelProviderConfig = ProviderConnection & ({
+  [P in ModelProtocol]: { readonly protocol: P; readonly models?: Readonly<Record<string, { readonly contextWindowTokens?: number; readonly options?: ModelOptionsByProtocol[P] }>> }
+}[ModelProtocol] | { readonly protocol: ModelProtocol; readonly models?: never })
+
+interface ProviderConnection {
   readonly baseUrl: string
-  readonly protocol: ModelProtocol
   readonly env: ReadonlyArray<string>
   readonly region?: string
 }
@@ -56,7 +60,7 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     if (provider["apiKey"] !== undefined) {
       throw new Error(`provider ${JSON.stringify(name)} cannot contain apiKey; declare its secret environment variable in env`)
     }
-    const allowed = new Set(["baseUrl", "protocol", "env", "region"])
+    const allowed = new Set(["baseUrl", "protocol", "env", "region", "models"])
     const unknown = Object.keys(provider).filter((field) => !allowed.has(field))
     if (unknown.length > 0) throw new Error(`provider ${JSON.stringify(name)} contains unknown fields: ${unknown.join(", ")}`)
     const baseUrl = stringOf(provider["baseUrl"])
@@ -75,12 +79,29 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     if (selectedProtocol !== "bedrock-converse" && region !== undefined) {
       throw new Error(`provider ${JSON.stringify(name)} cannot declare region with protocol ${JSON.stringify(selectedProtocol)}`)
     }
+    let models: Record<string, { readonly contextWindowTokens?: number; readonly options?: ModelOptionsByProtocol[ModelProtocol] }> | undefined
+    if (provider["models"] !== undefined) {
+      const entries = recordOf(provider["models"])
+      if (entries === undefined || Array.isArray(entries)) throw new Error(`provider ${name} models must map model IDs to settings`)
+      models = {}
+      for (const [model, value] of Object.entries(entries)) {
+        if (model.trim().length === 0) throw new Error("model ID cannot be empty")
+        const settings = recordOf(value)
+        if (settings === undefined || Array.isArray(settings)) throw new Error(`model ${model} settings must be an object`)
+        if (Object.keys(settings).some((field) => field !== "options" && field !== "contextWindowTokens")) throw new Error(`model ${model} contains unsupported settings`)
+        const parsed = protocolOptionsOf(selectedProtocol, settings.options)
+        const contextWindowTokens = settings.contextWindowTokens
+        if (contextWindowTokens !== undefined && (typeof contextWindowTokens !== "number" || !Number.isSafeInteger(contextWindowTokens) || contextWindowTokens <= 0)) throw new Error(`model ${model} contextWindowTokens must be a positive safe integer`)
+        models[model] = { ...(parsed.options === undefined ? {} : { options: parsed.options }), ...(contextWindowTokens === undefined ? {} : { contextWindowTokens }) }
+      }
+    }
     providers[name] = {
+      ...(models === undefined ? {} : { models }),
       baseUrl,
       protocol: selectedProtocol,
       env,
       ...(region === undefined ? {} : { region })
-    }
+    } as ModelProviderConfig
   }
   const selectedValue = source["default"]
   const selected = modelRefOf(selectedValue)

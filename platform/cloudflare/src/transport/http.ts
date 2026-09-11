@@ -4,7 +4,7 @@ import { UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contra
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ModelPolicy } from "@clavia/tardigrade-agent"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
-import type { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog-availability"
+import type { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
 import { HttpApiBuilder } from "effect/unstable/httpapi"

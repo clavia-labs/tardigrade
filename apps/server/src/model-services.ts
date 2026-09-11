@@ -1,19 +1,24 @@
 import { Effect, Layer } from "effect"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { FetchHttpClient } from "effect/unstable/http"
-import { modelLayer } from "@clavia/tardigrade-model/host"
-import type { ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
+import { modelLayer, type ModelHostOptions } from "@clavia/tardigrade-model/host"
+import type { Infer, InferenceObserver } from "@clavia/tardigrade-agent"
+import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
+import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import { catalogDiscoveryOf } from "@clavia/tardigrade-http/models"
 import { ModelCatalogStore, layerModelCatalog } from "./catalog"
 import { layerFileModelCatalogRepository } from "./catalog-repository"
 import { layerConfig, projectConfigOf, projectConfigPathOf, readConfig } from "./config"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 
-export interface BunModelServicesOptions {
+type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<Infer>
+
+export type BunModelServicesOptions = {
   readonly configFile?: string | URL
   readonly env: Parameters<typeof readConfig>[0]
-  readonly adapters: ModelAdapterRegistry
   readonly catalog?: Parameters<typeof layerModelCatalog>[0]
+  readonly inference?: InferenceLayerFactory
+  readonly configure?: ModelHostOptions["configure"]
 }
 
 // bunModelServices binds configured model inference, catalog discovery, and Bun services for a host.
@@ -34,7 +39,7 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const snapshot = await Effect.runPromise(ModelCatalogStore.pipe(Effect.provide(catalog)))
   const inference = makeInferenceStream()
   const layers = Layer.mergeAll(
-    modelLayer(config, snapshot, options.adapters, inference.observer),
+    options.inference === undefined ? modelLayer(config, snapshot, { observer: inference.observer, ...(options.configure === undefined ? {} : { configure: options.configure }) }) : options.inference(config, snapshot, inference.observer),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer

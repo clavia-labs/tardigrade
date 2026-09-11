@@ -9,17 +9,18 @@ export interface InferenceIdentity {
   readonly turn: string
 }
 
-// InferDelta is ephemeral normalized text from one physical provider request. Sequence is zero-based within that request, so a consumer can detect a dropped delta (model.test.ts, "observes normalized text without changing the terminal action").
+// InferDelta is ephemeral answer or reasoning text from one physical provider request. Sequence is zero-based within that request, so a consumer can detect a dropped delta (packages/model/src/host.test.ts).
 export interface InferDelta extends InferenceIdentity {
   readonly logicalAttempt: string
   readonly physicalAttempt: string
   readonly model: ModelRef
   readonly blockIndex: number
   readonly sequence: number
+  readonly kind?: "text" | "reasoning"
   readonly text: string
 }
 
-// InferenceObserver receives ephemeral output outside the durable log. Failure and timeout discard that delivery without changing inference (model.test.ts, "observer failure and saturation leave inference unchanged").
+// InferenceObserver receives ephemeral output outside the durable log. Failure and timeout discard that delivery without changing inference (packages/model/src/inference/observer.test.ts).
 export interface InferenceObserver {
   readonly onDelta: (delta: InferDelta) => Effect.Effect<void, Error>
   readonly policy?: Partial<InferenceObserverPolicy>

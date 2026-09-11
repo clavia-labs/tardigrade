@@ -147,7 +147,7 @@ describe("boundaryViolations", () => {
 })
 
 test("generic HTTP permits model policy data but rejects transitive agent execution", () => {
-  const http = "packages/http/src/http.ts", catalog = "packages/model/src/catalog-page.ts"
+  const http = "packages/http/src/http.ts", catalog = "packages/model/src/catalog/page.ts"
   const policy = "packages/agent/src/inference/access.ts", runtime = "packages/agent/src/index.ts"
   const nodes = [node(http, "http"), node(catalog, "model"), node(policy, "agent"), node(runtime, "agent")]
   const edges = [edge(http, catalog), edge(catalog, policy)]

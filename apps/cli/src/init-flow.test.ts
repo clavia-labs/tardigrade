@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Console, Effect, Layer } from "effect"
 import { Command } from "effect/unstable/cli"
@@ -11,7 +11,7 @@ import { Cli } from "./services"
 const repository = new URL("../../../", import.meta.url).pathname
 const namespaces: Readonly<Record<string, string>> = {
   core: "packages/core/src/index.ts", agent: "packages/agent/src/index.ts", code: "packages/code/src/index.ts",
-  http: "packages/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/model.ts", server: "apps/server/src/index.ts"
+  http: "packages/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/index.ts", server: "apps/server/src/index.ts"
 }
 
 // bundleServer resolves the public package namespaces against their publish sources.
@@ -65,8 +65,8 @@ test("init, serve, discover, call, inspect, cancel, and restart a generated quic
     if (!body.messages.some((message) => message.role === "tool")) return new Response([
       { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "weather", type: "function", function: { name: "get_weather", arguments: "{}" } }] } }] },
       { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
-    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } })
-    return new Response('data: {"choices":[{"delta":{"content":"Hello from the fixture."},"index":0}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
+    ].map((event) => `data: ${JSON.stringify({ id: "chat-fixture", model: "test", created: 1, ...event })}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } })
+    return new Response('data: {"id":"chat-fixture","model":"test","created":1,"choices":[{"delta":{"content":"Hello from the fixture."},"index":0}]}\n\ndata: {"id":"chat-fixture","model":"test","created":1,"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
   } })
   const reservation = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() })
   const port = reservation.port!
@@ -176,3 +176,13 @@ test("init, serve, discover, call, inspect, cancel, and restart a generated quic
     await rm(root, { recursive: true, force: true })
   }
 }, 60_000)
+
+test("the generated server resolver supports the public model entry", async () => {
+  const directory = await mkdtemp("/tmp/tardie-model-entry-")
+  try {
+    await writeFile(join(directory, "server.ts"), 'import { modelLayer } from "tardie/model"; export { modelLayer }\n')
+    await bundleServer(directory)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

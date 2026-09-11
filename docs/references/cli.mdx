@@ -81,7 +81,7 @@ tdg setup provider private-gateway '{"baseUrl":"https://models.example.com/v1","
 
 Interactive setup stores local credentials in `.dev.vars` with mode 0600 and adds `.dev.vars*` to `.gitignore`. It never prints a stored credential. Project configuration stays in `wrangler.jsonc` and `celld.jsonc`. Every successful setup command refreshes `models.lock.json`. Use `tdg models lock` when CI or an operator needs to refresh the lock without changing provider configuration.
 
-Setup preserves unrelated platform settings, JSONC comments, local secret entries, and other provider connections. When a provider uses a new protocol, import its adapter in `server.ts` and `worker.ts` and add it to `modelAdapters(...)`. Host startup reports an unregistered protocol.
+Setup preserves unrelated platform settings, JSONC comments, local secret entries, and other provider connections. The model services select the provider implementation from the configured protocol. Configuration rejects unsupported protocols.
 
 ## Configuration precedence
 

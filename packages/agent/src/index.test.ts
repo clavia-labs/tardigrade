@@ -546,7 +546,7 @@ describe("an assembled agent", () => {
     expect(log.filter((event) => event.type === "TurnFailed")).toEqual([
       expect.objectContaining({
         turn: "run-0",
-        error: "provider connection ended",
+        error: { message: "provider connection ended" },
         cause: "inference_error",
         attempts: 1,
         attemptKey: "run-0/infer/1"

@@ -1,3 +1,4 @@
+import { upcastError } from "../log/upcast"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnTerminalOf } from "@clavia/tardigrade-code/execution/turns"
 import { canonicalOf, declarationForTurn, type OutputContract } from "./contract"
@@ -35,7 +36,7 @@ export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): Boundary | 
         ...(typeof cancelled.deadlineAt === "number" ? { deadlineAt: cancelled.deadlineAt } : {})
       }
     }
-    return { kind: "failed", error: String((terminal as { error?: unknown }).error) }
+    return { kind: "failed", error: upcastError(terminal.error).message }
   }
   let pending: Event | undefined
   for (const e of log) {

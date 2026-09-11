@@ -285,7 +285,7 @@ describe("usageIn", () => {
       { type: "TurnCompleted", output: "ok", usage: billed, turn: "m1", at: 2 },
       { type: "TurnFailed", error: "gave up", turn: "m1", at: 3 }
     ]
-    expect(usageIn(log, "m1")).toEqual({ promptTokens: 10, completionTokens: 4 })
+    expect(usageIn(log, "m1")).toEqual({})
     expect(
       usageIn(
         [{ type: "ToolCalled", callId: "m1/infer/0", name: "execute", arguments: {}, usage: billed, at: 1 }],
@@ -307,4 +307,14 @@ describe("usageIn", () => {
         .estimatedCostUsd
     ).toBeUndefined()
   })
+})
+
+
+test("unknown token counts survive replay, repricing, and aggregation", () => {
+  const partial = { promptTokens: 10 }
+  expect(usageOf(JSON.parse(JSON.stringify(partial)))).toEqual(partial)
+  expect(priced(partial, { promptUsdPerToken: 1, completionUsdPerToken: 2 }).costUsd).toBeUndefined()
+  expect(sumUsage([partial, { promptTokens: 5, completionTokens: 3 }])).toEqual({ promptTokens: 15 })
+  expect(sumUsage([{}, { promptTokens: 5, completionTokens: 3 }])).toEqual({})
+  expect(sumUsage([ZERO_USAGE, { promptTokens: 5, completionTokens: 3 }])).toEqual({ promptTokens: 5, completionTokens: 3 })
 })

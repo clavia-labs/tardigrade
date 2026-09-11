@@ -1,4 +1,5 @@
-import { responsesOf } from "../log/response"
+import { upcastError } from "../log/upcast"
+import { hasUnansweredToolCall, responsesOf } from "../log/response"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 import { Cause, Clock, Effect } from "effect"
@@ -118,11 +119,11 @@ const completionOf = (action: Action & { readonly kind: "complete" }, ctx: Conse
   // A declared contract is obtained in a mode the binding chose, and every consequence records
   // which. A binding that answers a declared turn without stating one has broken its own
   // contract, and guessing a mode here would put a fact in the log nobody established
-  // (Infer above; packages/model/src/output/contract.ts, outputModeOf).
+  // (Infer above; packages/model/src/inference/output.ts, outputModeOf).
   if (mode === undefined) {
     return {
       type: "TurnFailed",
-      error: `the model binding answered a turn declaring "${ctx.contract.name}" without stating the output mode it ran in`,
+      error: { message: `the model binding answered a turn declaring "${ctx.contract.name}" without stating the output mode it ran in` },
       turn: ctx.turn,
       ...epochStamp(ctx.epoch),
       cause: "inference_error",
@@ -151,9 +152,9 @@ const completionOf = (action: Action & { readonly kind: "complete" }, ctx: Conse
   const cause = mismatchCauseOf(mode) ?? "output_contract_violation"
   return {
     type: "TurnFailed",
-    error:
+    error: { message:
       `the response missed the declared output contract "${ctx.contract.name}" in ${mode.name} mode:\n` +
-      decoded.errors.map((e) => `- ${e}`).join("\n"),
+      decoded.errors.map((e) => `- ${e}`).join("\n") },
     turn: ctx.turn,
     ...epochStamp(ctx.epoch),
     cause,
@@ -178,7 +179,7 @@ const consequencesOf = (action: Action, ctx: Consequence): ReadonlyArray<Event> 
   if (action.kind === "fail") return [{
     ...stamp,
     type: "TurnFailed",
-    error: action.error,
+    error: upcastError(action.error),
     cause: action.failure?.cause ?? "model",
     attemptKey: ctx.attempt,
     ...(action.failure === undefined ? {} : { attempts: action.failure.attempts, policy: action.failure.policy })
@@ -186,12 +187,15 @@ const consequencesOf = (action: Action, ctx: Consequence): ReadonlyArray<Event> 
   if (ctx.contract !== undefined && action.mode === undefined) return [{
     ...stamp,
     type: "TurnFailed",
-    error: `the model binding answered a turn declaring "${ctx.contract.name}" with a tool call but did not state the output mode it ran in`,
+    error: { message: `the model binding answered a turn declaring "${ctx.contract.name}" with a tool call but did not state the output mode it ran in` },
     cause: "inference_error",
     attempts: 1,
     attemptKey: ctx.attempt
   }]
-  return action.calls.map((call) => ({ type: "ToolCalled", ...call, ...stamp, responseId: ctx.attempt }))
+  return action.calls.flatMap(({ validationError, ...call }) => [
+    { type: "ToolCalled", ...call, ...stamp, responseId: ctx.attempt },
+    ...(validationError === undefined ? [] : [{ type: "ToolReturned", callId: call.callId, result: { error: validationError }, isFailure: true, ...stamp }])
+  ])
 }
 
 const failureMessage = (cause: Cause.Cause<never>): string => {
@@ -210,14 +214,6 @@ const diedAttempts = (turn: ReadonlyArray<Event>, epoch: number): number => {
     else break
   }
   return n
-}
-
-// awaitingTool reports an unanswered tool call in the turn: the model waits on the world.
-const awaitingTool = (slice: ReadonlyArray<Event>): boolean => {
-  const answered = new Set(
-    slice.filter((e) => e.type === "ToolReturned").map((e) => String((e as { callId?: unknown }).callId))
-  )
-  return slice.some((e) => e.type === "ToolCalled" && !answered.has(String((e as { callId?: unknown }).callId)))
 }
 
 const terminated = (slice: ReadonlyArray<Event>): boolean =>
@@ -255,7 +251,7 @@ interface InferDerivation {
 const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivation): ReadonlyArray<import("@clavia/tardigrade-core/runtime").Transition<never, Infer | EventLog | Self>> => {
   const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
   const slice = derived.slice
-  if (slice.length === 0 || awaitingTool(slice) || terminated(slice)) return []
+  if (slice.length === 0 || hasUnansweredToolCall(slice) || terminated(slice)) return []
   const context = bindTransitionContext(slice[slice.length - 1]!, "infer")
   const head = slice[0] as Event & { id?: unknown }
   const turn = String(head.id)
@@ -451,7 +447,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
                   physicalAttempt = delta.physicalAttempt
                   partialOutput = ""
                 }
-                partialOutput += delta.text
+                if (delta.kind !== "reasoning") partialOutput += delta.text
               }
             )
             .pipe(
@@ -508,7 +504,10 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               callId: input.attempt, ordinal: input.ordinal, turn: input.turn, ...epochStamp(input.epoch),
               outcome: action.kind === "fail" ? "failed" : "returned",
               usage: action.usage ?? {}, ...stampOf(action),
-              ...(action.kind === "fail" ? { error: action.error } : {}), at: after
+              ...(action.reasoning === undefined ? {} : { reasoning: action.reasoning }),
+              ...(action.continuation === undefined ? {} : { continuation: action.continuation }),
+              ...(action.response === undefined ? {} : { response: action.response }),
+              ...(action.kind === "fail" ? { error: upcastError(action.error), ...(action.text === undefined ? {} : { text: action.text }) } : {}), at: after
             }),
             ...(action.kind === "calls" && action.text !== undefined && action.text !== ""
               ? [textReturned({ text: action.text, turn: input.turn, at: after })]

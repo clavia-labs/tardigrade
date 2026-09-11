@@ -1,6 +1,6 @@
 import type { ProviderAvailability } from "@clavia/tardigrade-client/contract"
 
-import type { ModelConfig, ModelCredentials } from "./config"
+import type { ModelConfig, ModelCredentials } from "../config"
 
 // ProviderAvailabilities records whether each declared provider connection has a usable credential.
 export type ProviderAvailabilities = Readonly<Record<string, ProviderAvailability>>

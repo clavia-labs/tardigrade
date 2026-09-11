@@ -196,17 +196,14 @@ Each action and result becomes an event that every component can interpret.
 <details>
 <summary>Bind a model and durable SQLite host</summary>
 
-The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment. This example registers the adapter for OpenAI Responses and compatible chat completions; use the adapter for your configured protocol.
+The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment. The model services select the provider implementation from the configured protocol.
 
 ```ts
 import { createBunHost } from "tardie/bun"
-import { modelAdapters } from "tardie/model/adapter"
-import { openAICompatibleAdapter } from "tardie/model/openai"
 import { bunModelServices } from "tardie/server/model-services"
 
 const { layers } = await bunModelServices({
-  env: process.env,
-  adapters: modelAdapters(openAICompatibleAdapter)
+  env: process.env
 })
 
 const host = await createBunHost({

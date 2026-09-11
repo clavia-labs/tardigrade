@@ -57,7 +57,6 @@ export const hydrate = (
 
 // refs reads the manifest: the refs this store holds, in the order they were spilled.
 // refs is callable because @clavia/tardigrade-code/storage/store exposes that shape to consumers.
-// @effect-diagnostics-next-line lazyEffect:off
 export const refs = (): Effect.Effect<
   ReadonlyArray<string>,
   KeyValueStore.KeyValueStoreError,

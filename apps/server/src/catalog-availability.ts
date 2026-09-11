@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-model/catalog-availability"
+export * from "@clavia/tardigrade-model/catalog/availability"

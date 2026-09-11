@@ -9,7 +9,7 @@ import {
   ModelCatalogRepository,
   modelCatalogScopeOf,
   type ModelCatalogScope
-} from "./catalog-store"
+} from "./repository"
 
 export interface ModelCatalogState {
   readonly snapshot?: ModelCatalog

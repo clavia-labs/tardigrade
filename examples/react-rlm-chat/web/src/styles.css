@@ -539,3 +539,12 @@ button svg { width: 18px; height: 18px; }
   .thread-sidebar-head strong, .thread-link span, .thread-empty { display: none; }
   .thread-link { justify-content: center; padding-inline: 0; }
 }
+
+.reasoning-content {
+  padding: 0 16px 12px;
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+
+.reasoning-content > :first-child { margin-top: 0; }
+.reasoning-content > :last-child { margin-bottom: 0; }

@@ -34,7 +34,7 @@ export interface ModelResolution {
   readonly models?: ModelPolicy
 }
 
-// Infer provides one model action per request; key identifies its ModelCalled attempt. Reused call IDs within a turn fail before dispatch (index.test.ts, "a turn rejects reused provider IDs before dispatch, including after resume"). onDelta synchronously reports normalized text for caller-owned accumulation (packages/model/src/model.test.ts).
+// Infer provides one model action per request; key identifies its ModelCalled attempt. Reused call IDs within a turn fail before dispatch (index.test.ts, "a turn rejects reused provider IDs before dispatch, including after resume"). onDelta synchronously reports normalized text for caller-owned accumulation (packages/model/src/host.test.ts).
 export class Infer extends Context.Service<
   Infer,
   {

@@ -30,3 +30,20 @@ test("upcast preserves unknown starting allowances and recognizes recorded grant
   expect(upcast([head, { type: "BudgetGranted", initial: true, amount: 3, turn: "turn", at: 1 }]).budget)
     .toEqual({ startingAllowance: 0, needsInitialGrant: false })
 })
+
+test("upcast normalizes failure strings without changing stored history", () => {
+  const event: Event = { type: "TurnFailed", error: "provider refused", at: 1 }
+  const view = upcast([event])
+  expect(view.entries[0]?.event.error).toEqual({ message: "provider refused" })
+  expect(event.error).toBe("provider refused")
+  expect(upcast(view.entries.map(({ event }) => event))).toEqual(view)
+})
+
+test("upcast preserves structured model errors and reads historical strings", () => {
+  for (const error of ["failed", { message: "failed", details: { code: "provider_error" } }]) {
+    const stored = { type: "ModelReturned", callId: "a", outcome: "failed", error, at: 1 }
+    const [entry] = upcast([stored]).entries
+    expect(entry?.event.error).toEqual(typeof error === "string" ? { message: error } : error)
+    expect(stored.error).toBe(error)
+  }
+})

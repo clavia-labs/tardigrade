@@ -2,7 +2,6 @@ import { cloudflareHttp } from "./transport/http"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import type { Env } from "./env"
 import { mountedActor, directory, providerAvailabilityFrom, modelPolicyFrom, publicCatalog, methodsOf, type CloudflareWorkerArguments, type CloudflareWorkerOptions, type DeploymentModelScope, mountActor } from "./assembly"
-import type { ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
 import { ActorDO } from "./actor"
 import { ThreadDO } from "./thread"
 export { ActorDO, type ActorThreadNode } from "./actor"
@@ -40,17 +39,14 @@ export const cloudflareWorker = <
 export default worker
 
 export interface WorkerModelServicesOptions {
-  readonly adapters: ModelAdapterRegistry
   readonly scope?: DeploymentModelScope
 }
 
-// workerModelServices configures model adapters and the deployment catalog for thread execution.
-export const workerModelServices = (options: WorkerModelServicesOptions) => ({
-  modelAdapters: options.adapters,
-  ...(options.scope === undefined ? {} : { modelScope: options.scope })
-})
+// workerModelServices configures the deployment catalog for thread execution.
+export const workerModelServices = (options: WorkerModelServicesOptions) =>
+  options.scope === undefined ? {} : { modelScope: options.scope }
 
-export type WorkerHostOptions<R, WorkerEnv extends Env = Env> = Omit<CloudflareWorkerOptions<R, WorkerEnv>, "modelAdapters" | "modelScope"> & {
+export type WorkerHostOptions<R, WorkerEnv extends Env = Env> = Omit<CloudflareWorkerOptions<R, WorkerEnv>, "modelScope"> & {
   readonly services?: ReturnType<typeof workerModelServices>
 }
 

@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 import { DEFAULT_PROJECT_CONFIG_PATH } from "@clavia/tardigrade-server/config"
 import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflare/catalog-migration"
-import type { ModelProtocol } from "@clavia/tardigrade-model/directory"
+import type { ModelProtocol } from "@clavia/tardigrade-model/providers/directory"
 
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
 import { actorTemplate, DEFAULT_INIT_TEMPLATE, type InitTemplate } from "./template"
@@ -79,28 +79,11 @@ const manifestTemplate = (name: string, now: Date): string => `${JSON.stringify(
   }
 }, undefined, 2)}\n`
 
-const adapterFor = (protocol: ModelProtocol): { readonly name: string; readonly source: string } => {
-  switch (protocol) {
-    case "anthropic-messages":
-      return { name: "anthropicAdapter", source: "tardie/model/anthropic" }
-    case "bedrock-converse":
-      return { name: "bedrockAdapter", source: "tardie/model/bedrock" }
-    case "openai-responses":
-    case "openai-chat-completions":
-      return { name: "openAICompatibleAdapter", source: "tardie/model/openai" }
-  }
-}
-
-const workerTemplate = (protocol: ModelProtocol): string => {
-  const adapter = adapterFor(protocol)
-  return `import definition from "./actor"
+const workerTemplate = (_protocol: ModelProtocol): string => `import definition from "./actor"
 import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
-import { modelAdapters } from "tardie/model/adapter"
-import { ${adapter.name} } from "${adapter.source}"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
-  adapters: modelAdapters(${adapter.name}),
   scope: modelScopeFrom(modelLock)
 })
 
@@ -113,19 +96,13 @@ export default {
   fetch: http.fetch
 }
 `
-}
 
-const serverTemplate = (protocol: ModelProtocol): string => {
-  const adapter = adapterFor(protocol)
-  return `import { createBunHost, serve } from "tardie/bun"
+const serverTemplate = (_protocol: ModelProtocol): string => `import { createBunHost, serve } from "tardie/bun"
 import { bunModelServices } from "tardie/server/model-services"
-import { modelAdapters } from "tardie/model/adapter"
-import { ${adapter.name} } from "${adapter.source}"
 import definition from "./actor"
 
 const { config, layers, api } = await bunModelServices({
-  env: process.env,
-  adapters: modelAdapters(${adapter.name})
+  env: process.env
 })
 const host = await createBunHost({
   actor: definition,
@@ -149,7 +126,6 @@ try {
   await host.close()
 }
 `
-}
 
 const packageTemplate = (
   version: string,

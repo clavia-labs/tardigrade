@@ -15,8 +15,8 @@ export interface ProviderUsageReport {
 }
 
 export interface Usage {
-  readonly promptTokens: number
-  readonly completionTokens: number
+  readonly promptTokens?: number
+  readonly completionTokens?: number
   readonly totalTokens?: number
   readonly cachedPromptTokens?: number
   readonly cacheWritePromptTokens?: number
@@ -155,12 +155,12 @@ const tokensOf = (value: unknown): TokenMetrics | undefined => {
 
 export const costOf = (
   pricing: ModelPricing | undefined,
-  promptTokens: number,
-  completionTokens: number,
+  promptTokens: number | undefined,
+  completionTokens: number | undefined,
   cachedPromptTokens: number = 0,
   cacheWritePromptTokens: number = 0
 ): number | undefined => {
-  if (pricing === undefined) return undefined
+  if (pricing === undefined || promptTokens === undefined || completionTokens === undefined) return undefined
   if (cachedPromptTokens > 0 && pricing.cachedPromptUsdPerToken === undefined) return undefined
   if (cacheWritePromptTokens > 0 && pricing.cacheWritePromptUsdPerToken === undefined) return undefined
   const uncachedPromptTokens = promptTokens - cachedPromptTokens - cacheWritePromptTokens
@@ -213,7 +213,7 @@ export const priced = (usage: Usage, pricing?: ModelPricing): Usage => {
   }
 }
 
-// usageFrom builds spend from one provider reply. The first reported part is retained verbatim;
+// usageFrom interprets legacy provider replies for the TanStack binding. The first reported part is retained verbatim;
 // later normalized parts refine fields without replacing details that only the wire exposed.
 export const usageFrom = (
   reported: unknown,
@@ -308,14 +308,16 @@ export const usageOf = (value: unknown): Usage => {
   const model = carried?.model
   const reportedCostUsd = numberOf(carried?.reportedCostUsd)
   const estimatedCostUsd = numberOf(carried?.estimatedCostUsd)
+  const promptTokens = numberOf(carried?.promptTokens)
+  const completionTokens = numberOf(carried?.completionTokens)
   const totalTokens = numberOf(carried?.totalTokens)
   const cachedPromptTokens = numberOf(carried?.cachedPromptTokens)
   const cacheWritePromptTokens = numberOf(carried?.cacheWritePromptTokens)
   const reasoningTokens = numberOf(carried?.reasoningTokens)
   const providerReports = reportsOf(carried?.providerReports)
   return {
-    promptTokens: numberOf(carried?.promptTokens) ?? 0,
-    completionTokens: numberOf(carried?.completionTokens) ?? 0,
+    ...(promptTokens === undefined ? {} : { promptTokens }),
+    ...(completionTokens === undefined ? {} : { completionTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
     ...(cacheWritePromptTokens === undefined ? {} : { cacheWritePromptTokens }),
@@ -340,8 +342,6 @@ const same = (a: string | undefined, b: string | undefined): string | undefined 
 
 export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
   if (parts.length === 0) return ZERO_USAGE
-  let promptTokens = 0
-  let completionTokens = 0
   let costUsd = 0
   let known = true
   let source: CostSource | undefined
@@ -350,8 +350,6 @@ export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
   const providerReports: ProviderUsageReport[] = []
   let first = true
   for (const part of parts) {
-    promptTokens += part.promptTokens
-    completionTokens += part.completionTokens
     providerReports.push(...(part.providerReports ?? []))
     if (part.costUsd === undefined) known = false
     else costUsd += part.costUsd
@@ -375,6 +373,8 @@ export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
     }
     return total
   }
+  const promptTokens = sumKnown((part) => part.promptTokens)
+  const completionTokens = sumKnown((part) => part.completionTokens)
   const totalTokens = sumKnown((part) => part.totalTokens)
   const cachedPromptTokens = sumKnown((part) => part.cachedPromptTokens)
   const cacheWritePromptTokens = sumKnown((part) => part.cacheWritePromptTokens)
@@ -382,8 +382,8 @@ export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
   const reportedCostUsd = sumKnown((part) => part.reportedCostUsd)
   const estimatedCostUsd = sumKnown((part) => part.estimatedCostUsd)
   return {
-    promptTokens,
-    completionTokens,
+    ...(promptTokens === undefined ? {} : { promptTokens }),
+    ...(completionTokens === undefined ? {} : { completionTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
     ...(cacheWritePromptTokens === undefined ? {} : { cacheWritePromptTokens }),

@@ -1,3 +1,4 @@
+import { upcastError } from "@clavia/tardigrade-agent/log/upcast"
 import type { Event, EventRow } from "@clavia/tardigrade-client"
 import { DEFAULT_JSON_PARSE_DEPTH, FIELD_INLINE_CHARS, SUMMARY_CHARS } from "./policy"
 
@@ -158,7 +159,7 @@ export const summaryOf = (
     case "TurnCompleted":
       return line([preview(event.output, chars, jsonDepth)], chars)
     case "TurnFailed":
-      return line([str(event.cause) ?? "failed", str(event.error)], chars)
+      return line([str(event.cause) ?? "failed", upcastError(event.error).message], chars)
     case "TurnResumed":
       return line([str(event.turn), `epoch ${String(num(event.failedEpoch))} to ${String(num(event.epoch))}`], chars)
     case "ResponseDelivered":

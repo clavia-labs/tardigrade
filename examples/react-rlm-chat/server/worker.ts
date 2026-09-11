@@ -1,11 +1,8 @@
 import definition from "./actor"
 import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
-import { modelAdapters } from "tardie/model/adapter"
-import { openAICompatibleAdapter } from "tardie/model/openai"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
-  adapters: modelAdapters(openAICompatibleAdapter),
   scope: modelScopeFrom(modelLock)
 })
 

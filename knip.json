@@ -47,12 +47,16 @@
     },
     "platform/cloudflare": {
       "entry": [
-        "test/fixture.worker.ts"
+        "test/fixture.worker.ts",
+        "vitest.inference.config.ts",
+        "test-inference/*.workers.ts",
+        "test-inference/fixture.worker.ts"
       ],
       "project": [
         "src/**/*.ts",
         "test/**/*.ts",
-        "*.config.ts"
+        "*.config.ts",
+        "test-inference/**/*.ts"
       ]
     },
     "packages/model": {
