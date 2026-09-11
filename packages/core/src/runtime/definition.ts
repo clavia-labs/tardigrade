@@ -1,7 +1,6 @@
 import { transitionKeyOf, transitionComponentIds } from "../transition/transition"
 import type { Event } from "../event"
 import type { InvocationRef } from "../interaction/invocation"
-import { externalReplyKeys } from "../interaction/external-reply"
 import type { ActorMethodCancellationState } from "../interaction/state"
 import type { Projection } from "../projection/projection"
 import type { ErasedTransitionProjection, Transition } from "../transition"
@@ -56,10 +55,11 @@ export const actorFromProjections = <R = never>({
   transitionComponentIds(transitions)
   return {
     projections: transitions,
-    keyOf: (event) => transitionKeyOf(event) ?? externalReplyKeys.keyOf(event) ?? keyOf(event),
+    keyOf: (event) => transitionKeyOf(event) ?? keyOf(event),
     ...(legacy?.cancellationOf === undefined ? {} : { cancellationOf: legacy.cancellationOf }),
     ...(legacy?.cancellationResiduals === undefined ? {} : { cancellationResiduals: legacy.cancellationResiduals }),
     ...(guards === undefined ? {} : { guardProjections: guards }),
     ...(control === undefined ? {} : { projection: control })
   }
 }
+

@@ -37,7 +37,6 @@
     "./agent": "./src/agent.ts",
     "./core": "./src/core.ts",
     "./code": "./src/code.ts",
-    "./code/execution/errors": "./src/code/execution/errors.ts",
     "./agent/*": "./src/*.ts",
     "./bun": "./src/bun.ts"
   },

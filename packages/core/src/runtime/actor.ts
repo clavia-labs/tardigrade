@@ -13,7 +13,6 @@ import { type ActorMethods } from "../actor/method"
 import { CANCELLATION_CONTROL_METHOD, cancellationKeys, cancellationMethodFor, childCancellationTimeoutOf } from "../interaction/cancellation"
 import { actorProjection } from "./projection"
 import type { Actor as ActorDefinition } from "../actor/definition"
-import { externalReplyKeys } from "../interaction/external-reply"
 
 export type ActorSource<R> = Actor<R> | ActorDefinition<R>
 
@@ -25,7 +24,7 @@ export const actorRuntimeOf = <R>(source: ActorSource<R>): Actor<R> => {
   if (cached !== undefined) return cached as Actor<R>
   if ("projections" in source) transitionComponentIds(source.projections)
   const runtime = "projections" in source
-    ? { ...source, keyOf: (event: Event) => transitionKeyOf(event) ?? externalReplyKeys.keyOf(event) ?? source.keyOf(event) }
+    ? { ...source, keyOf: (event: Event) => transitionKeyOf(event) ?? source.keyOf(event) }
     : compileActor(source.methods, source.components, childCancellationTimeoutOf(source.cancellation?.childTimeoutMs))
   compiled.set(source, runtime)
   return runtime as Actor<R>

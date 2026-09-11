@@ -5,8 +5,8 @@ import { turnTerminalOf } from "./turns"
 // The code thread's projections: pure functions over the event SET, the TypeScript half of
 // tla/runtime/Reconcile.tla. Every answer comes from set membership, never event order (the bag law,
 // tla/projection/Projection.tla); order survives only as data an event carries. The alphabet these read
-// is eight events: CodeDispatched, PackageCalled, PackageReturned, BlockedOn, MessageReceived,
-// ResponseReceived, ExternalReplyReceived, CodeSettled. "Running" is runtime-local to the driver, never derived from the log. "Parked"
+// is six events: CodeDispatched, PackageCalled, PackageReturned, BlockedOn, MessageReceived,
+// CodeSettled. "Running" is runtime-local to the driver, never derived from the log. "Parked"
 // is never a state, only evidence: a `BlockedOn { callId, awaiting }` says one attempt observed
 // one response absent, and the derivation reads it as membership arithmetic (is the awaited id in
 // the set now?). The parking call records what it awaits, so no method table exists here.
@@ -63,11 +63,6 @@ export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> 
       case "MessageReceived":
       case "ResponseReceived":
         replies.add(str(v.id))
-        break
-      case "ExternalReplyReceived":
-        if (typeof v.id === "string" && v.id.length > 0 && typeof v.at === "number" && Number.isFinite(v.at)) {
-          replies.add(v.id)
-        }
         break
     }
   }
