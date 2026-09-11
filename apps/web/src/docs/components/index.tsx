@@ -192,13 +192,16 @@ const withFileIcons = (node: ReactNode): ReactNode => {
   if (!isValidElement<{ readonly children?: ReactNode }>(node)) return node
   if (node.type === "li") {
     const children = Children.toArray(node.props.children)
-    const fileIndex = children.findIndex((child) => isValidElement(child) && child.type === InlineCode)
+    const fileIndex = children.findIndex((child) => isValidElement(child) && (child.type === InlineCode || child.type === "code"))
     if (fileIndex === -1) return node
     const file = children[fileIndex] as ReactElement<{ readonly children?: ReactNode }>
     const name = textFrom(file.props.children)
+    const rest = children.slice(fileIndex + 1)
+    const isList = (child: ReactNode) => isValidElement(child) && child.type === "ul"
     return cloneElement(node, undefined,
       cloneElement(file, undefined, <><FileIcon kind={fileIconKindOf(name)} />{file.props.children}</>),
-      <span className="docs-filesystem-description">{children.slice(fileIndex + 1)}</span>
+      <span className="docs-filesystem-description">{rest.filter((child) => !isList(child))}</span>,
+      withFileIcons(rest.filter(isList))
     )
   }
   return cloneElement(node, undefined, withFileIcons(node.props.children))

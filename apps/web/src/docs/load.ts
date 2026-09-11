@@ -1,3 +1,5 @@
+import Server, { frontmatter as serverFrontmatter } from "@docs/getting-started/server.mdx"
+import serverMarkdown from "@docs/getting-started/server.mdx?doc-source"
 import type { ComponentType } from "react"
 
 import Cli, { frontmatter as cliFrontmatter } from "@docs/references/cli.mdx"
@@ -57,6 +59,7 @@ const modules: ReadonlyArray<DocModule> = [
   { default: Quickstart, frontmatter: quickstartFrontmatter, markdown: quickstartMarkdown, source: "getting-started/quickstart.mdx" },
   { default: Concepts, frontmatter: conceptsFrontmatter, markdown: conceptsMarkdown, source: "getting-started/concepts.mdx" },
   { default: Actors, frontmatter: actorsFrontmatter, markdown: actorsMarkdown, source: "getting-started/actors.mdx" },
+  { default: Server, frontmatter: serverFrontmatter, markdown: serverMarkdown, source: "getting-started/server.mdx" },
   { default: Bun, frontmatter: bunFrontmatter, markdown: bunMarkdown, source: "platforms/bun.mdx" },
   { default: Cloudflare, frontmatter: cloudflareFrontmatter, markdown: cloudflareMarkdown, source: "platforms/cloudflare.mdx" },
   { default: Celld, frontmatter: celldFrontmatter, markdown: celldMarkdown, source: "platforms/celld.mdx" },

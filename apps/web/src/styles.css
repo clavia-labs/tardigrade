@@ -531,9 +531,11 @@ h1 span { display: block; white-space: nowrap; }
 .docs-filesystem { width: min(100%, 720px); margin-top: 18px; padding: 18px 24px 20px; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); }
 .docs-filesystem > strong { color: var(--moss-ink); font-family: var(--mono); font-size: 16px; font-weight: 500; }
 .docs-filesystem ul { position: relative; margin: 10px 0 0; padding: 0; display: grid; list-style: none; }
-.docs-filesystem ul::before { position: absolute; top: 0; bottom: 15px; left: 4px; border-left: 1px solid rgb(85 103 132 / 70%); content: ""; }
-.docs-filesystem li { position: relative; min-height: 30px; padding-left: 32px; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr); gap: 24px; align-items: center; color: var(--faint); font-size: 13px; }
-.docs-filesystem li::before { position: absolute; top: 50%; left: 4px; width: 20px; border-top: 1px solid rgb(85 103 132 / 70%); content: ""; }
+.docs-filesystem li::after { position: absolute; top: 0; bottom: 0; left: 4px; border-left: 1px solid rgb(85 103 132 / 70%); content: ""; }
+.docs-filesystem li:last-child::after { bottom: auto; height: 15px; }
+.docs-filesystem li { position: relative; min-height: 30px; padding-left: 32px; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr); grid-template-rows: minmax(30px, auto); column-gap: 24px; row-gap: 0; align-items: center; color: var(--faint); font-size: 13px; }
+.docs-filesystem li::before { position: absolute; top: 15px; left: 4px; width: 20px; border-top: 1px solid rgb(85 103 132 / 70%); content: ""; }
+.docs-filesystem li > ul { grid-column: 1 / -1; margin-top: 0; }
 .docs-filesystem li > code { min-width: 0; display: flex; align-items: center; gap: 12px; color: var(--ink); font-family: var(--mono); font-size: 14px; }
 .docs-filesystem li > code .docs-file-icon { width: 16px; height: 16px; flex: 0 0 auto; overflow: visible; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.15; color: var(--faint); }
 .docs-filesystem li > code .docs-file-icon text { fill: currentColor; stroke: none; font-family: Arial, sans-serif; font-size: 7px; font-weight: 700; letter-spacing: -.25px; }
@@ -958,3 +960,9 @@ h1 span { display: block; white-space: nowrap; }
 .host-layer-callouts path { fill: none; stroke: var(--moss-ink); stroke-width: 1; }
 .host-layer-callouts text { fill: var(--ink-2); font: 13px var(--brand); text-anchor: start; }
 .host-layer-callouts .host-layer-code { fill: var(--moss-ink); font-family: var(--mono); }
+
+.docs-api-table { max-width: 100%; overflow-x: auto; margin: 24px 0; }
+.docs-api-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+.docs-api-table th, .docs-api-table td { padding: 12px 16px; border-bottom: 1px solid rgb(var(--accent-rgb) / 24%); vertical-align: top; }
+.docs-api-table th { color: var(--ink-2); font-weight: 500; }
+.docs-api-table code { overflow-wrap: anywhere; }
