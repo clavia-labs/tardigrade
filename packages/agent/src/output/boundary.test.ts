@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { boundaryOf, outputOf } from "./boundary"
+import { boundaryOf, outputOf, turnViewOf, turnsOf } from "./boundary"
 import { output } from "./contract"
 
 const base: Event[] = [{ type: "MessageReceived", id: "m1", text: "go", at: 0 }]
@@ -23,6 +23,12 @@ describe("boundaryOf", () => {
   test("a turn parked on an ask returns the request", () => {
     const log = [...base, { type: "BudgetRequested", callId: "rb1", reason: "need more", amount: 5, turn: "m1", at: 1 } as Event]
     expect(boundaryOf(log, "m1")).toEqual({ kind: "requesting", callId: "rb1", reason: "need more", amount: 5 })
+    expect(turnViewOf(log, "m1")).toEqual({
+      turn: "m1",
+      status: "parked",
+      epoch: 0,
+      ask: { kind: "budget", callId: "rb1", reason: "need more", amount: 5 }
+    })
   })
 
   test("a grant clears the ask; the turn is running again, not requesting", () => {
@@ -52,6 +58,68 @@ describe("boundaryOf", () => {
       { type: "BudgetRequested", callId: "rb2", reason: "second", amount: 3, turn: "m1", at: 3 } as Event
     ]
     expect(boundaryOf(log, "m1")).toEqual({ kind: "requesting", callId: "rb2", reason: "second", amount: 3 })
+  })
+
+  test("a turn parked on a schema ask returns the prompt and schema", () => {
+    const schema = {
+      type: "object",
+      properties: { approved: { type: "boolean" } },
+      required: ["approved"],
+      additionalProperties: false
+    }
+    const log = [...base, { type: "AskRequested", callId: "a1", prompt: "Approve?", schema, turn: "m1", at: 1 } as Event]
+    expect(boundaryOf(log, "m1")).toEqual({ kind: "asking", callId: "a1", prompt: "Approve?", schema })
+    expect(turnViewOf(log, "m1")).toEqual({
+      turn: "m1",
+      status: "parked",
+      epoch: 0,
+      ask: { kind: "schema", callId: "a1", prompt: "Approve?", schema }
+    })
+  })
+
+  test("AskAnswered clears the schema ask", () => {
+    const schema = { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"], additionalProperties: false }
+    const log = [
+      ...base,
+      { type: "AskRequested", callId: "a1", prompt: "Approve?", schema, turn: "m1", at: 1 } as Event,
+      { type: "AskAnswered", callId: "a1", answer: { approved: true }, turn: "m1", at: 2 } as Event
+    ]
+    expect(boundaryOf(log, "m1")).toBeUndefined()
+    expect(turnViewOf(log, "m1")).toEqual({ turn: "m1", status: "pending", epoch: 0 })
+  })
+
+  test("AskDenied clears the schema ask", () => {
+    const schema = { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"], additionalProperties: false }
+    const log = [
+      ...base,
+      { type: "AskRequested", callId: "a1", prompt: "Approve?", schema, turn: "m1", at: 1 } as Event,
+      { type: "AskDenied", callId: "a1", reason: "needs review", turn: "m1", at: 2 } as Event
+    ]
+    expect(boundaryOf(log, "m1")).toBeUndefined()
+    expect(turnViewOf(log, "m1")).toEqual({ turn: "m1", status: "pending", epoch: 0 })
+  })
+
+  test("a budget grant does not clear a later schema ask", () => {
+    const schema = { type: "object", properties: { approved: { type: "boolean" } }, required: ["approved"], additionalProperties: false }
+    const log = [
+      ...base,
+      { type: "BudgetRequested", callId: "rb1", reason: "need more", amount: 5, turn: "m1", at: 1 } as Event,
+      { type: "BudgetGranted", amount: 5, turn: "m1", at: 2 } as Event,
+      { type: "AskRequested", callId: "a1", prompt: "Approve?", schema, turn: "m1", at: 3 } as Event
+    ]
+    expect(boundaryOf(log, "m1")).toEqual({ kind: "asking", callId: "a1", prompt: "Approve?", schema })
+  })
+
+  test("turnsOf lists every message as a TurnView", () => {
+    const log = [
+      ...base,
+      { type: "TurnCompleted", output: "done", turn: "m1", at: 1 } as Event,
+      { type: "MessageReceived", id: "m2", text: "next", at: 2 } as Event
+    ]
+    expect(turnsOf(log)).toEqual([
+      { turn: "m1", status: "completed", epoch: 0, output: "done" },
+      { turn: "m2", status: "pending", epoch: 0 }
+    ])
   })
 
   test("a resume request clears the failed boundary until the next terminal", () => {

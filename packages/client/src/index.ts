@@ -73,8 +73,12 @@ export type {
   ThreadStatus,
   ThreadSummary,
   TurnStatus,
-  TurnView
+  TurnView,
+  AskView,
+  BudgetAskView,
+  SchemaAskView
 } from "./contract"
+export { turnViewOf, turnsOf, turnsProjection } from "./turns"
 export type { Event } from "@clavia/tardigrade-core/log/event"
 export type { InferDelta } from "@clavia/tardigrade-agent"
 export { connect, DEFAULT_CALL_POLL_INTERVAL_MS, type ConnectOptions, type ConnectedActor, type ClientThread, type CallOptions } from "./connect"

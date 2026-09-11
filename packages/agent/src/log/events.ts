@@ -345,6 +345,63 @@ export const BudgetDenied = Schema.Struct({
   at: Schema.Finite
 })
 
+// AskRequested parks a turn on one schema-shaped human question. `schema` is the answer contract the human must satisfy (component/ask.test.ts).
+export const AskRequested = Schema.Struct({
+  type: Schema.Literal("AskRequested"),
+  callId: Schema.String,
+  prompt: Schema.String,
+  schema: Schema.Unknown,
+  turn: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// AskAnswered is the human's typed reply to one AskRequested. The recorded `answer` is the value that passed the request's schema.
+export const AskAnswered = Schema.Struct({
+  type: Schema.Literal("AskAnswered"),
+  callId: Schema.String,
+  answer: Schema.Unknown,
+  turn: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// AskDenied closes one AskRequested without a value. The parked tool returns `{ denied: true }` so the model can finish without that fact (component/ask.test.ts).
+export const AskDenied = Schema.Struct({
+  type: Schema.Literal("AskDenied"),
+  reason: Schema.optional(Schema.String),
+  callId: Schema.String,
+  turn: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// AskRequestReceived is the durable input of the requestAsk actor method.
+export const AskRequestReceived = Schema.Struct({
+  type: Schema.Literal("AskRequestReceived"),
+  id: Schema.String,
+  request: Schema.String,
+  turn: Schema.String,
+  prompt: Schema.String,
+  schema: Schema.Unknown,
+  at: Schema.Finite
+})
+
+// AskRequestDecided is the terminal decision produced by an ask authority.
+export const AskRequestDecided = Schema.Struct({
+  type: Schema.Literal("AskRequestDecided"),
+  callId: Schema.String,
+  denied: Schema.Boolean,
+  answer: Schema.optional(Schema.Unknown),
+  reason: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// AskRequestFailed is the terminal failure produced when an ask authority cannot decide a request.
+export const AskRequestFailed = Schema.Struct({
+  type: Schema.Literal("AskRequestFailed"),
+  callId: Schema.String,
+  error: Schema.String,
+  at: Schema.Finite
+})
+
 export const AgentEvent = Schema.Union([
   MessageReceived,
   ModelCalled,
@@ -369,7 +426,13 @@ export const AgentEvent = Schema.Union([
   PermissionRequestDecided,
   PermissionRequestFailed,
   BudgetGranted,
-  BudgetDenied
+  BudgetDenied,
+  AskRequested,
+  AskAnswered,
+  AskDenied,
+  AskRequestReceived,
+  AskRequestDecided,
+  AskRequestFailed
 ])
 export type AgentEvent = typeof AgentEvent.Type
 
@@ -419,10 +482,11 @@ export type Action =
 // pair; bdec names the budget request a local decision answers, so a grant and denial for one request
 // cannot both commit. A grant is summed into the ceiling, so a redelivery must also absorb. A
 // decision that carries no callId predates the stamp and lands unkeyed; the fold tolerates it.
+// adec names the AskRequested a human answer or denial settles, so both cannot commit for one call.
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bdec:", "bi:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
+  prefixes: ["tr:", "bdec:", "bi:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:", "ar:", "adec:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -453,6 +517,11 @@ export const agentKeys: KeyFragment = {
         return `bw:${String(v.turn)}/${String(v.budget)}`
       case "BudgetRequested":
         return `br:${String(v.callId)}`
+      case "AskRequested":
+        return `ar:${String(v.callId)}`
+      case "AskAnswered":
+      case "AskDenied":
+        return v.callId === undefined ? undefined : `adec:${String(v.callId)}`
       case "OutputRejected":
         // One rejection per logical attempt: a crashed attempt retried under the same key
         // records the same rejection, and the committed one binds.
@@ -622,6 +691,30 @@ export const budgetGranted = (
 export const budgetDenied = (
   fields: { readonly reason?: string; readonly callId?: string } & Stamp
 ): Event => ({ type: "BudgetDenied", ...fields }) as Event
+
+export const askRequested = (
+  fields: { readonly callId: string; readonly prompt: string; readonly schema: unknown } & Stamp
+): Event => ({ type: "AskRequested", ...fields }) as Event
+
+export const askAnswered = (
+  fields: { readonly callId: string; readonly answer: unknown } & Stamp
+): Event => ({ type: "AskAnswered", ...fields }) as Event
+
+export const askDenied = (
+  fields: { readonly reason?: string; readonly callId: string } & Stamp
+): Event => ({ type: "AskDenied", ...fields }) as Event
+
+export const askRequestReceived = (
+  fields: { readonly id: string; readonly request: string; readonly turn: string; readonly prompt: string; readonly schema: unknown; readonly at: number }
+): Event => ({ type: "AskRequestReceived", ...fields }) as Event
+
+export const askRequestDecided = (
+  fields: { readonly callId: string; readonly denied: boolean; readonly answer?: unknown; readonly reason?: string; readonly at: number }
+): Event => ({ type: "AskRequestDecided", ...fields }) as Event
+
+export const askRequestFailed = (
+  fields: { readonly callId: string; readonly error: string; readonly at: number }
+): Event => ({ type: "AskRequestFailed", ...fields }) as Event
 
 export const compactionCompleted = (
   fields: {
