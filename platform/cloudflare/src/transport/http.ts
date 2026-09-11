@@ -142,11 +142,11 @@ export const cloudflareHttp = ({
         if (directory === undefined) return json({ error: "unknown actor" }, 404)
         return yield* Effect.tryPromise({
           try: () => directory.forkThread(thread, payload.until, payload.name),
-          catch: (cause) => cause instanceof Error ? cause : new Error(String(cause))
+          catch: (cause) => cause instanceof Error ? cause.message : String(cause)
         }).pipe(Effect.match({
           onFailure: (error) => json(
-            { error: error.message },
-            error.message.includes("has ever existed") ? 404 : 400
+            { error },
+            error.includes("has ever existed") ? 404 : 400
           ),
           onSuccess: (coordinate) => json(coordinate)
         }))
