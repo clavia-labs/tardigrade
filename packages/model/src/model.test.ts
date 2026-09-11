@@ -64,6 +64,33 @@ const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "
 // endpoint. No real provider is touched. Request-building (renderMessages, modelRequest) is domain
 // and tested in agent/request.test.ts.
 
+test("native images reach each provider serializer after replay", async () => {
+  const images = [{ mimeType: "image/png", data: "cG5n" }, { mimeType: "image/jpeg", data: "anBlZw==" }]
+  const trajectory: Event[] = JSON.parse(JSON.stringify([
+    { type: "MessageReceived", id: "m1", text: "", images, at: 1 }
+  ]))
+  for (const protocol of ["anthropic-messages", "openai-responses", "openai-chat-completions"] as const) {
+    let requested: Record<string, unknown> = {}
+    const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      requested = JSON.parse(await request.text())
+      return new Response(JSON.stringify({ error: { message: "local capture complete", type: "invalid_request_error" } }), {
+        status: 400, headers: { "content-type": "application/json" }
+      })
+    }) as typeof globalThis.fetch
+    await Effect.runPromise(Effect.exit(Effect.flatMap(Infer, (model) => model.react(reqOf(trajectory))).pipe(
+      Effect.provide(testInfer({ protocol, baseUrl: "https://model.test/v1", apiKey: "local-test-key", model: "test-model", fetch: fetchImpl }))
+    )))
+    const messages = (protocol === "openai-responses" ? requested.input : requested.messages) as Array<{ role: string; content: unknown }>
+    const content = messages.find((message) => message.role === "user")?.content
+    expect(content).toEqual(images.map((image) => protocol === "anthropic-messages"
+      ? { type: "image", source: { type: "base64", data: image.data, media_type: image.mimeType } }
+      : protocol === "openai-responses"
+        ? { type: "input_image", image_url: `data:${image.mimeType};base64,${image.data}`, detail: "auto" }
+        : { type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}`, detail: "auto" } }))
+  }
+})
+
 describe("actionOf", () => {
   test("multiple calls preserve provider order including calls beside execute", () => {
     expect(actionOf({ content: "Reading files", toolCalls: [

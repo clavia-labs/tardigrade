@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/execution/turns"
 import { modelRequest } from "./request"
 import { messagesProjection, renderMessages } from "../projection/messages"
 import { budget, canonicalOf, codeMode, nativeOutput, output, outputRepairFor, renderOf, tool } from "../index"
+import { AgentMessageInput, agentMessageMethod } from "../actor/message"
+import { AgentEvent } from "../log/events"
 
 // One declared contract, used wherever a turn needs one.
 const SCOUT = output({
@@ -24,6 +26,39 @@ const budgetedCode = (log: ReadonlyArray<Event>) => renderOf([budget([codeMode()
 // prompt policy. Both live in the domain, so they test without a provider.
 
 describe("renderMessages", () => {
+  test("native image input survives durable replay in order without mining consumer input", () => {
+    const images = [{ mimeType: "image/png", data: "cG5n" }, { mimeType: "image/jpeg", data: "anBlZw==" }]
+    const event = agentMessageMethod.event({
+      invocation: { method: "message", id: "pictures", epoch: 0 },
+      input: Schema.decodeSync(AgentMessageInput)({ text: "compare", images }),
+      at: 0
+    })
+    const replayed = Schema.decodeUnknownSync(AgentEvent)(JSON.parse(JSON.stringify(event)))
+    const parts = images.map((image) => ({ type: "image" as const, source: { type: "data" as const, value: image.data, mimeType: image.mimeType } }))
+    expect(renderMessages([replayed])[0]?.content).toEqual([{ type: "text", content: "compare" }, ...parts])
+    expect(renderMessages([{ ...replayed, text: "" }])[0]?.content).toEqual(parts)
+    expect(renderMessages([{ ...replayed, images: [] }])[0]?.content).toBe("compare")
+    expect(renderMessages([{ type: "MessageReceived", id: "child", text: "brief", input: { images }, at: 1 }])[0]?.content).toBe("brief")
+    expect(() => renderMessages([{ ...replayed, images: [{ mimeType: "image/png" }] }])).toThrow("invalid MessageReceived.images")
+  })
+
+  test("image bytes survive text caps and active-head checkpoints only while retained", () => {
+    const image = { mimeType: "image/png", data: "eA==".repeat(50) }
+    const head: Event = { type: "MessageReceived", id: "picture", text: "inspect this image", images: [image], at: 0 }
+    const round: Event[] = [
+      { type: "ToolCalled", callId: "c1", name: "read", arguments: {}, turn: "picture", at: 1 },
+      { type: "ToolReturned", callId: "c1", result: "read", turn: "picture", at: 2 },
+      { type: "CompactionCompleted", keepFrom: 'c:["picture","c1"]', summary: "earlier work", at: 3 }
+    ]
+    const messages = renderMessages([head, ...round], { messageRenderCap: 4 })
+    expect(messages[0]?.content).toEqual([
+      { type: "text", content: expect.stringContaining("truncated at 4 of 18 chars") },
+      { type: "image", source: { type: "data", value: image.data, mimeType: image.mimeType } }
+    ])
+    const completed = renderMessages([head, ...round, { type: "TurnCompleted", turn: "picture", output: "done", at: 4 }])
+    expect(JSON.stringify(completed)).not.toContain(image.data)
+  })
+
   test("the projection matches complete replay at every prefix", () => {
     const events: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "inspect it", at: 0 },

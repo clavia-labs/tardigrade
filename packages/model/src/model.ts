@@ -110,7 +110,7 @@ const toMessage = (m: AgentMessage): ModelMessage =>
           )
         }),
     ...(m.toolCallId === undefined ? {} : { toolCallId: m.toolCallId })
-  }) as ModelMessage
+  })
 
 const toTool = (t: ToolSpec): Tool => ({
   name: t.name,

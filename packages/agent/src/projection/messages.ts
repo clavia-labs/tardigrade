@@ -1,7 +1,8 @@
+import { Schema } from "effect"
 import { responsesOf } from "../log/response"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replayProjection, type Projection } from "@clavia/tardigrade-core/projection"
-import { terminalReportOutcomeOf } from "@clavia/tardigrade-core/interaction/provider-message"
+import { MessageReceived, terminalReportOutcomeOf } from "@clavia/tardigrade-core/interaction/provider-message"
 import { checkpointOf, keepFromIndex, resolvedContextPolicyOf, type ContextPolicy } from "../component/compaction"
 import {
   correctionText,
@@ -17,7 +18,10 @@ export interface AgentToolCall {
 
 export interface AgentMessage {
   readonly role: "user" | "assistant" | "tool"
-  readonly content: string | null
+  readonly content: string | null | Array<
+    | { readonly type: "text"; readonly content: string }
+    | { readonly type: "image"; readonly source: { readonly type: "data"; readonly value: string; readonly mimeType: string } }
+  >
   readonly toolCalls?: ReadonlyArray<AgentToolCall>
   readonly toolCallId?: string
 }
@@ -33,6 +37,8 @@ const feedbackFor = (
   return correctionText((rejection["errors"] ?? []) as ReadonlyArray<string>)
 }
 
+const isMessageImages = Schema.is(MessageReceived.fields.images)
+
 const userMessageOf = (event: Event, policy: ContextPolicy): AgentMessage => {
   const value = event as Record<string, unknown>
   const text = String(value.text ?? "")
@@ -40,12 +46,18 @@ const userMessageOf = (event: Event, policy: ContextPolicy): AgentMessage => {
     ? `${text.slice(0, policy.messageRenderCap)}…[truncated at ${policy.messageRenderCap} of ${text.length} chars; read the full message with logs.events on this facet, id ${String(value.id)}]`
     : text
   const report = terminalReportOutcomeOf(value)
-  return {
-    role: "user",
-    content: report === undefined
-      ? rendered
-      : `[Terminal report: ${report}. Your answer to this report stays in this thread and is not sent back to its sender.]\n${rendered}`
+  const body = report === undefined
+    ? rendered
+    : `[Terminal report: ${report}. Your answer to this report stays in this thread and is not sent back to its sender.]\n${rendered}`
+  const images = value.images
+  if (!isMessageImages(images)) throw new Error("invalid MessageReceived.images")
+  if (images === undefined || images.length === 0) return { role: "user", content: body }
+  const content: Exclude<AgentMessage["content"], string | null> = []
+  if (body !== "") content.push({ type: "text", content: body })
+  for (const image of images) {
+    content.push({ type: "image", source: { type: "data", value: image.data, mimeType: image.mimeType } })
   }
+  return { role: "user", content }
 }
 
 const messagesFrom = (

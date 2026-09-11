@@ -53,6 +53,8 @@ export interface ContextPolicy {
   readonly messageRenderCap: number
   // Chars of one tool result the render sends; past it the result truncates.
   readonly resultRenderCap: number
+  // imageTokens estimates each image's compaction weight independently of binary size.
+  readonly imageTokens: number
   // Selected model context window used to derive the hysteresis lines.
   readonly contextWindowTokens: number
   // Fraction of the selected model window that fires compaction.
@@ -73,6 +75,7 @@ export type ContextWindowTokens = number | ((model: ModelRef | undefined) => num
 export interface CompactionPolicy {
   readonly messageRenderCap: number
   readonly resultRenderCap: number
+  readonly imageTokens: number
   readonly contextWindowTokens: ContextWindowTokens
   readonly fireRatio: number
   readonly keepRatio: number
@@ -83,6 +86,8 @@ export interface CompactionPolicy {
 export const DEFAULT_COMPACTION_POLICY: CompactionPolicy = {
   messageRenderCap: 12_000,
   resultRenderCap: 6_000,
+  // imageTokens uses Claude's high-resolution estimate; other providers can exceed it.
+  imageTokens: 4_784,
   contextWindowTokens: 128_000,
   fireRatio: 0.8,
   keepRatio: 0.5,
@@ -131,6 +136,10 @@ export const contextPolicyOf = (
       policy.resultRenderCap ?? DEFAULT_COMPACTION_POLICY.resultRenderCap,
       "resultRenderCap"
     ),
+    imageTokens: positive(
+      policy.imageTokens ?? DEFAULT_COMPACTION_POLICY.imageTokens,
+      "imageTokens"
+    ),
     contextWindowTokens,
     fireRatio,
     keepRatio,
@@ -155,6 +164,7 @@ export const resolvedContextPolicyOf = (policy: Partial<ContextPolicy> = {}): Co
   return {
     messageRenderCap: policy.messageRenderCap ?? defaults.messageRenderCap,
     resultRenderCap: policy.resultRenderCap ?? defaults.resultRenderCap,
+    imageTokens: policy.imageTokens ?? defaults.imageTokens,
     contextWindowTokens: policy.contextWindowTokens ?? defaults.contextWindowTokens,
     fireRatio: policy.fireRatio ?? defaults.fireRatio,
     keepRatio: policy.keepRatio ?? defaults.keepRatio,
@@ -164,15 +174,15 @@ export const resolvedContextPolicyOf = (policy: Partial<ContextPolicy> = {}): Co
   }
 }
 
-// renderedChars counts the characters a render sends for one event: capped where the render
-// caps, zero for an event the render skips. The guard must measure the request the model sees;
-// a measure over raw event JSON counts tool results the render truncates and threads the render
-// never shows, and fires against a size no request ever reaches.
+const imageCount = (event: Event): number =>
+  event.type === "MessageReceived" && Array.isArray(event.images) ? event.images.length : 0
+
+// renderedChars shares character-equivalent text and image weights across replay and incremental projection.
 const renderedChars = (e: Event, policy: ContextPolicy): number => {
   const v = e as Record<string, unknown>
   switch (e.type) {
     case "MessageReceived":
-      return Math.min(String(v.text ?? "").length, policy.messageRenderCap)
+      return Math.min(String(v.text ?? "").length, policy.messageRenderCap) + imageCount(e) * policy.imageTokens * 4
     case "TextReturned":
       return String(v.text ?? "").length
     case "ToolCalled":
@@ -197,9 +207,7 @@ const renderedChars = (e: Event, policy: ContextPolicy): number => {
   }
 }
 
-// estimateTokens estimates the span's rendered tokens as chars over four. A real tokenizer would
-// be a dependency and an impure path, and every budget decision must fold the same on replay, so
-// the estimate is a pure function of the recorded events (compaction.test.ts, "the measure").
+// estimateTokens combines chars over four with the configured image weight, deterministically on replay (compaction.test.ts, "the measure").
 export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}): number => {
   const resolved = resolvedContextPolicyOf(policy)
   return Math.ceil(projectedOutput(events).reduce((n, e) => n + renderedChars(e, resolved), 0) / 4)
@@ -309,7 +317,7 @@ const lineOf = (e: Event, policy: ContextPolicy): string | null => {
   const v = e as Record<string, unknown>
   switch (e.type) {
     case "MessageReceived":
-      return `user: ${String(v.text ?? "")}`
+      return `user: ${imageCount(e) === 0 ? "" : `[${imageCount(e)} images omitted from summary] `}${String(v.text ?? "")}`
     case "TextReturned":
       return `agent (working): ${String(v.text ?? "")}`
     case "ToolCalled":
