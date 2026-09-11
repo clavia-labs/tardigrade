@@ -13,6 +13,7 @@ export interface AgentToolCall {
   readonly id: string
   readonly name: string
   readonly arguments: string
+  readonly providerMetadata?: unknown
 }
 
 export interface AgentMessage {
@@ -78,7 +79,8 @@ const messagesFrom = (
   const callOf = (event: Event): AgentToolCall => ({
     id: String(event.callId),
     name: String(event.name),
-    arguments: JSON.stringify(event.arguments ?? {})
+    arguments: JSON.stringify(event.arguments ?? {}),
+    ...(event.providerMetadata === undefined ? {} : { providerMetadata: event.providerMetadata })
   })
   for (const event of projected.slice(from)) {
     const key = responses.keys.get(event)

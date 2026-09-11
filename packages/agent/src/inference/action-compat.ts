@@ -7,6 +7,15 @@ export type LegacyCallAction = Omit<Extract<Action, { readonly kind: "calls" }>,
 // TODO: Remove legacy call support in the next breaking release.
 export const normalizeAction = (action: Action | LegacyCallAction): Action => {
   if (action.kind !== "call") return action
-  const { callId, name, arguments: args, kind: _kind, ...response } = action
-  return { ...response, kind: "calls", calls: [{ callId, name, arguments: args }] }
+  const { callId, name, arguments: args, providerMetadata, kind: _kind, ...response } = action
+  return {
+    ...response,
+    kind: "calls",
+    calls: [{
+      callId,
+      name,
+      arguments: args,
+      ...(providerMetadata === undefined ? {} : { providerMetadata })
+    }]
+  }
 }

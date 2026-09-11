@@ -1,5 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import { Clock, Effect, Random } from "effect"
+import { withWatermark } from "@clavia/tardigrade-core/log"
+import { inferenceReceiptsFrom } from "@clavia/tardigrade-agent/inference/durable"
 import { StopReason } from "@aws-sdk/client-bedrock-runtime"
 import {
   codeMode,
@@ -82,6 +84,27 @@ describe("actionOf", () => {
       toolCalls: [{ id: "call_9", type: "function", function: { name: "execute", arguments: '{"code":"return 2"}' } }]
     } as never)
     expect(action).toMatchObject({ kind: "calls", calls: [{ callId: "call_9", name: "execute", arguments: { code: "return 2" } }], text: "let me check" })
+  })
+
+  test("tool calls preserve opaque provider metadata", () => {
+    const signature = "sig-λ-\ud83e\uddea-\u0000-tail"
+    expect(actionOf({
+      content: "",
+      toolCalls: [{
+        id: "call_metadata",
+        type: "function",
+        function: { name: "lookup", arguments: '{"term":"lease"}' },
+        metadata: { extra_content: { google: { thought_signature: signature } }, future: [1, true, null] }
+      }]
+    } as never)).toEqual({
+      kind: "calls",
+      calls: [{
+        callId: "call_metadata",
+        name: "lookup",
+        arguments: { term: "lease" },
+        providerMetadata: { extra_content: { google: { thought_signature: signature } }, future: [1, true, null] }
+      }]
+    })
   })
 
   test("plain text completes; nothing throws", () => {
@@ -280,6 +303,286 @@ const sse = (events: ReadonlyArray<unknown>): Response => {
 }
 
 describe("infer end to end", () => {
+  test("native durability replays a retained action without another provider request", async () => {
+    const events: Event[] = []
+    const receipts = inferenceReceiptsFrom(withWatermark({
+      append: (batch) => Effect.sync(() => { events.push(...batch) }),
+      read: Effect.sync(() => [...events])
+    }))
+    const requests: Array<{ readonly key: string | null; readonly body: string }> = []
+    const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const providerRequest = input instanceof Request ? input : new Request(String(input), init)
+      requests.push({ key: providerRequest.headers.get("idempotency-key"), body: await providerRequest.text() })
+      return sse([
+        { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "retained answer" } }] },
+        { id: "r1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+      ])
+    }) as typeof globalThis.fetch
+    const options = { durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts } }
+    const layer = testInfer({ baseUrl: "https://model.test/v1?route=A", apiKey: "k", model: "test-model", fetch: fetchImpl }, options)
+    const invoke = Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]), "m1/infer/0")).pipe(Effect.provide(layer))
+    const first = await Effect.runPromise(invoke)
+    const second = await Effect.runPromise(invoke)
+    expect(second).toEqual(first)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]!.key).toMatch(/^tdg_[A-Za-z0-9_-]{43}$/)
+    expect(events.filter((event) => event.type === "InferenceRequested")).toHaveLength(1)
+    expect(events.filter((event) => event.type === "InferenceResultRetained")).toHaveLength(1)
+
+    await expect(Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "changed body", at: 1 }]), "m1/infer/0")).pipe(Effect.provide(layer)))).rejects.toThrow("drifted before replay")
+    expect(requests).toHaveLength(1)
+
+    const driftFetch = spyOn(globalThis, "fetch")
+    const drifted = testInfer({ baseUrl: "https://model.test/v1?route=B", apiKey: "k", model: "test-model" }, options)
+    try {
+      await expect(Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]), "m1/infer/0")).pipe(Effect.provide(drifted)))).rejects.toThrow("drifted before replay")
+      expect(driftFetch).not.toHaveBeenCalled()
+    } finally {
+      driftFetch.mockRestore()
+    }
+  })
+
+  test("default durable policy stops an uncertain provider request without resubmission", async () => {
+    const events: Event[] = []
+    const receipts = inferenceReceiptsFrom(withWatermark({
+      append: (batch) => Effect.sync(() => { events.push(...batch) }),
+      read: Effect.sync(() => [...events])
+    }))
+    let requests = 0
+    const fetchImpl = (async () => { requests += 1; throw new Error("network connection lost") }) as unknown as typeof globalThis.fetch
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl }, {
+      durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts }
+    })
+    const action = await Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]), "m1/infer/0")).pipe(Effect.provide(layer)))
+    expect(action).toMatchObject({ kind: "fail", failure: { cause: "inference_error", policy: { externalOutcome: "unknown", ambiguity: { decision: "stop" } } } })
+    expect(requests).toBe(1)
+    expect(events.find((event) => event.type === "InferenceAttemptDecided")).toMatchObject({ decision: { outcome: "unknown", decision: "stop" } })
+  })
+
+  test("explicit ambiguity retry preserves its physical position across recreation", async () => {
+    const events: Event[] = []
+    const log = withWatermark({
+      append: (batch: ReadonlyArray<Event>) => Effect.sync(() => { events.push(...batch) }),
+      read: Effect.sync(() => [...events])
+    })
+    const receipts = inferenceReceiptsFrom(log)
+    let requests = 0
+    const fetchImpl = (async () => {
+      requests += 1
+      if (requests === 1) throw new Error("network connection lost")
+      return sse([
+        { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "retried" } }] },
+        { id: "r1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+      ])
+    }) as unknown as typeof globalThis.fetch
+    const config = { baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl, ambiguity: { decision: "retry" as const }, throttleRetryDelaysMs: [0], retryAfterJitterMs: 0 }
+    const invoke = (activeReceipts: ReturnType<typeof inferenceReceiptsFrom>) => Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]), "m1/infer/0")).pipe(Effect.provide(testInfer(config, {
+      durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts: activeReceipts }
+    }))))
+    await expect(invoke(receipts)).resolves.toMatchObject({ kind: "complete", output: "retried" })
+    expect(requests).toBe(2)
+    expect(events.filter((event) => event.type === "InferenceRequested").map((event) => (event as { position?: unknown }).position)).toEqual([
+      { attempt: 0, rung: 0, retry: 0 }, { attempt: 1, rung: 0, retry: 1 }
+    ])
+    await expect(invoke(inferenceReceiptsFrom(log))).resolves.toMatchObject({ kind: "complete", output: "retried" })
+    expect(requests).toBe(2)
+  })
+
+  test("a recreated pending request retains its configured retry delay", async () => {
+    const events: Event[] = []
+    let loseRequest = true
+    const log = withWatermark({
+      append: (batch: ReadonlyArray<Event>) => Effect.suspend(() => {
+        events.push(...batch)
+        if (loseRequest && batch.some((event) => event.type === "InferenceRequested")) {
+          loseRequest = false
+          return Effect.die("lost request acknowledgment")
+        }
+        return Effect.void
+      }),
+      read: Effect.sync(() => [...events])
+    })
+    const slept: Array<number> = []
+    let requests = 0
+    const fetchImpl = (async () => {
+      requests += 1
+      return sse([
+        { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "retried" } }] },
+        { id: "r1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+      ])
+    }) as unknown as typeof globalThis.fetch
+    const seed = "pending request retry"
+    const expectedDelay = Effect.runSync(Random.next.pipe(Random.withSeed(seed))) * 2_000
+    const config = { baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl, ambiguity: { decision: "retry" as const }, throttleRetryDelaysMs: [2_000], retryAfterJitterMs: 0, sleep: async (ms: number) => { slept.push(ms) } }
+    const invoke = (receipts: ReturnType<typeof inferenceReceiptsFrom>) => Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]), "m1/infer/0")).pipe(
+      Effect.provide(testInfer(config, { durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts } })),
+      Random.withSeed(seed)
+    ))
+    await expect(invoke(inferenceReceiptsFrom(log))).rejects.toMatchObject({ _tag: "InferenceReceiptError" })
+    expect(requests).toBe(0)
+    await expect(invoke(inferenceReceiptsFrom(log))).resolves.toMatchObject({ kind: "complete", output: "retried" })
+    expect(requests).toBe(1)
+    expect(slept).toEqual([expectedDelay])
+    expect(events.find((event) => event.type === "InferenceAttemptDecided")).toMatchObject({ decision: { evidence: { delayMs: expectedDelay } } })
+  })
+
+  test("an EOF without a provider completion marker is retained as unknown", async () => {
+    const events: Event[] = []
+    const receipts = inferenceReceiptsFrom(withWatermark({
+      append: (batch) => Effect.sync(() => { events.push(...batch) }),
+      read: Effect.sync(() => [...events])
+    }))
+    const fetchImpl = (async () => sse([
+      { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "partial" } }] }
+    ])) as unknown as typeof globalThis.fetch
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl }, {
+      durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts }
+    })
+    const action = await Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]), "m1/infer/0")).pipe(Effect.provide(layer)))
+    expect(action).toMatchObject({ kind: "fail", failure: { policy: { externalOutcome: "unknown" } } })
+    expect(events.find((event) => event.type === "InferenceAttemptDecided")).toMatchObject({ decision: { outcome: "unknown", decision: "stop", error: expect.stringContaining("provider completion") } })
+    expect((events.find((event) => event.type === "InferenceResultRetained") as { action?: unknown }).action).not.toMatchObject({ kind: "complete", output: "partial" })
+  })
+
+  test("a lost retained-result acknowledgment recovers without another provider request", async () => {
+    const events: Event[] = []
+    let loseResult = true
+    const receipts = inferenceReceiptsFrom(withWatermark({
+      append: (batch) => Effect.suspend(() => {
+        events.push(...batch)
+        if (loseResult && batch.some((event) => event.type === "InferenceResultRetained")) {
+          loseResult = false
+          return Effect.die("lost result acknowledgment")
+        }
+        return Effect.void
+      }),
+      read: Effect.sync(() => [...events])
+    }))
+    let requests = 0
+    const fetchImpl = (async () => {
+      requests += 1
+      return sse([
+        { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "committed" } }] },
+        { id: "r1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+      ])
+    }) as unknown as typeof globalThis.fetch
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl }, {
+      durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts }
+    })
+    const invoke = Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]), "m1/infer/0")).pipe(Effect.provide(layer))
+    await expect(Effect.runPromise(invoke)).rejects.toMatchObject({ _tag: "InferenceReceiptError" })
+    await expect(Effect.runPromise(invoke)).resolves.toMatchObject({ kind: "complete", output: "committed" })
+    expect(requests).toBe(1)
+  })
+
+  test("cold unknown-stop replay preserves usage endpoint and physical attempts", async () => {
+    const events: Event[] = []
+    let refuseResult = true
+    const log = withWatermark({
+      append: (batch: ReadonlyArray<Event>) => Effect.suspend(() => {
+        if (refuseResult && batch.some((event) => event.type === "InferenceResultRetained")) {
+          refuseResult = false
+          return Effect.die("result store unavailable")
+        }
+        events.push(...batch)
+        return Effect.void
+      }),
+      read: Effect.sync(() => [...events])
+    })
+    let requests = 0
+    const fetchImpl = (async () => {
+      requests += 1
+      return sse([
+        { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "partial" }, finish_reason: null }] },
+        { id: "r1", choices: [], usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } }
+      ])
+    }) as unknown as typeof globalThis.fetch
+    const config = { baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl }
+    const invoke = (receipts: ReturnType<typeof inferenceReceiptsFrom>) => Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([]), "m1/infer/0")).pipe(Effect.provide(testInfer(config, {
+      durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts }
+    }))))
+    await expect(invoke(inferenceReceiptsFrom(log))).rejects.toMatchObject({ _tag: "InferenceReceiptError" })
+    const recovered = await invoke(inferenceReceiptsFrom(log))
+    expect(recovered).toMatchObject({
+      kind: "fail", usage: { promptTokens: 4, completionTokens: 2, totalTokens: 6 },
+      endpoint: { provider: "test", model: "test-model" }, failure: { attempts: 1, policy: { externalOutcome: "unknown" } }
+    })
+    expect(requests).toBe(1)
+  })
+
+  test("a concurrent same-key caller cannot stop live provider work", async () => {
+    const events: Event[] = []
+    const receipts = inferenceReceiptsFrom(withWatermark({
+      append: (batch) => Effect.sync(() => { events.push(...batch) }),
+      read: Effect.sync(() => [...events])
+    }))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let requests = 0
+    const fetchImpl = (async () => {
+      requests += 1
+      await gate
+      return sse([
+        { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "first" } }] },
+        { id: "r1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+      ])
+    }) as unknown as typeof globalThis.fetch
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl }, {
+      durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts }
+    })
+    const invoke = () => Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]), "m1/infer/0")).pipe(Effect.provide(layer)))
+    const first = invoke()
+    for (let i = 0; requests === 0 && i < 100; i++) await new Promise((resolve) => setTimeout(resolve, 1))
+    expect(requests).toBe(1)
+    await expect(invoke()).rejects.toMatchObject({ _tag: "InferenceReceiptError" })
+    expect(events.some((event) => event.type === "InferenceAttemptDecided")).toBe(false)
+    release()
+    await expect(first).resolves.toMatchObject({ kind: "complete", output: "first" })
+    expect(requests).toBe(1)
+  })
+
+  test("cancellation after provider admission records unknown without a result", async () => {
+    const events: Event[] = []
+    const receipts = inferenceReceiptsFrom(withWatermark({
+      append: (batch) => Effect.sync(() => { events.push(...batch) }),
+      read: Effect.sync(() => [...events])
+    }))
+    let admitted = false
+    const fetchImpl = ((_: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => new Promise<Response>((_, reject) => {
+      admitted = true
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true })
+    })) as unknown as typeof globalThis.fetch
+    const controller = new AbortController()
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl }, {
+      durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts }
+    })
+    const running = Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]), "m1/infer/0", controller.signal)).pipe(Effect.provide(layer)))
+    for (let i = 0; !admitted && i < 100; i++) await new Promise((resolve) => setTimeout(resolve, 1))
+    expect(admitted).toBe(true)
+    controller.abort()
+    await expect(running).rejects.toBeDefined()
+    expect(events.find((event) => event.type === "InferenceAttemptDecided")).toMatchObject({ decision: { outcome: "unknown", decision: "stop", error: expect.stringContaining("cancelled") } })
+    expect(events.some((event) => event.type === "InferenceResultRetained")).toBe(false)
+  })
+
+  test("cancellation before admission records no intent and sends no request", async () => {
+    const events: Event[] = []
+    const receipts = inferenceReceiptsFrom(withWatermark({
+      append: (batch) => Effect.sync(() => { events.push(...batch) }),
+      read: Effect.sync(() => [...events])
+    }))
+    let requests = 0
+    const controller = new AbortController()
+    controller.abort()
+    const layer = testInfer({
+      baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model",
+      fetch: (async () => { requests += 1; return sse([]) }) as unknown as typeof globalThis.fetch
+    }, { durability: { scope: JSON.stringify(["namespace", "physical-run"]), receipts } })
+    await expect(Effect.runPromise(Effect.flatMap(Infer, (model) => model.react(reqOf([]), "m1/infer/0", controller.signal)).pipe(Effect.provide(layer)))).rejects.toBeDefined()
+    expect(requests).toBe(0)
+    expect(events).toEqual([])
+  })
+
   test("interleaved streamed calls become one complete batch", async () => {
     const fetchImpl = (async () => sse([
       { id: "r1", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [
@@ -597,10 +900,10 @@ describe("infer end to end", () => {
     expect(action.endpoint).toEqual({ provider: "openai", model: "gpt-5.2" })
   })
 
-  test("a router that names its upstream records both the configured pair and the routed one", async () => {
+  test("a router that names its upstream and service tier records the observed route", async () => {
     const fetchImpl = (async () =>
       sse([
-        { id: "r8", provider: "Anthropic", model: "claude-sonnet-4.5", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
+        { id: "r8", provider: "Anthropic", model: "claude-sonnet-4.5", service_tier: "priority", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
         { id: "r8", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])) as unknown as typeof globalThis.fetch
     const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "auto", provider: "openrouter", fetch: fetchImpl })
@@ -613,7 +916,8 @@ describe("infer end to end", () => {
       provider: "openrouter",
       model: "auto",
       routedProvider: "Anthropic",
-      routedModel: "claude-sonnet-4.5"
+      routedModel: "claude-sonnet-4.5",
+      routedServiceTier: "priority"
     })
   })
 

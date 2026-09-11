@@ -40,6 +40,8 @@ export interface ModelConfig {
   readonly throttleRetryDelaysMs?: ReadonlyArray<number>
   // retryAfterJitterMs adds a random wait to a provider Retry-After value.
   readonly retryAfterJitterMs?: number
+  // ambiguity chooses whether a transport outcome that cannot be confirmed is retried.
+  readonly ambiguity?: { readonly decision: "stop" | "retry" }
   // fetch replaces the transport for an embedding or test.
   readonly fetch?: ModelFetch
   // sleep replaces the retry wait for an embedding or test.

@@ -11,6 +11,7 @@ import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
 import { Infer, NativeOutputSupport, type InferRequest } from "../inference/contract"
 import { usageIn } from "../inference/usage"
 import type { Action, ToolCall } from "../log/events"
+import type { LegacyCallAction } from "../inference/action-compat"
 import { renderMessages } from "../projection/messages"
 import { compactionReactor, keepFromIndex } from "../component/compaction"
 import { boundaryOf } from "../output/boundary"
@@ -56,6 +57,46 @@ const setup = (
 const complete = (): Action => ({ kind: "complete", output: "done", usage: { promptTokens: 50, completionTokens: 5, costUsd: 0.005 } })
 
 describe("tool batches", () => {
+  test("a legacy single call retains opaque provider metadata", async () => {
+    const providerMetadata = { extra_content: { vendor: { signature: "opaque-λ-🧪" } } }
+    const legacy: LegacyCallAction = {
+      kind: "call",
+      callId: "legacy",
+      name: "read",
+      arguments: { path: "legacy" },
+      providerMetadata
+    }
+    const run = setup([tool({ spec, run: () => Effect.succeed("done") })], (request) =>
+      request.trajectory.some((event) => event.type === "ToolCalled") ? complete() : legacy as unknown as Action)
+    await run.start()
+    expect(run.read().find((event) => event.type === "ToolCalled")?.providerMetadata).toEqual(providerMetadata)
+    expect(renderMessages(run.read()).find((message) => message.toolCalls)?.toolCalls?.[0]?.providerMetadata).toEqual(providerMetadata)
+  })
+
+  test("opaque provider metadata is retained on each call and replayed", async () => {
+    const signature = "sig-λ-🧪-\u0000-tail"
+    const providerMetadata = { extra_content: { google: { thought_signature: signature } } }
+    const run = setup([tool({ spec, run: (_input, context) => Effect.succeed(context.callId) })], (request) =>
+      request.trajectory.some((event) => event.type === "ToolCalled")
+        ? complete()
+        : batch(
+            { ...call("first"), providerMetadata },
+            { ...call("second"), providerMetadata: { future: ["opaque", 0, false, null] } }
+          ))
+    await run.start()
+    const calls = run.read().filter((event) => event.type === "ToolCalled")
+    expect(calls.map((event) => event.providerMetadata)).toEqual([
+      providerMetadata,
+      { future: ["opaque", 0, false, null] }
+    ])
+    expect(renderMessages(run.read()).find((message) => message.toolCalls)?.toolCalls?.map((call) => call.providerMetadata)).toEqual([
+      providerMetadata,
+      { future: ["opaque", 0, false, null] }
+    ])
+    const retained = calls[0]?.providerMetadata as typeof providerMetadata | undefined
+    expect(retained?.extra_content.google.thought_signature).toBe(signature)
+  })
+
   test("generated starting allowances are recorded once before inference and survive restart", async () => {
     await fc.assert(fc.asyncProperty(fc.integer({ min: 1, max: 20 }), fc.integer({ min: 1, max: 20 }), async (limit, replacement) => {
       const components = (amount: number) => [budget([tool({ spec, run: () => Effect.void })], { limit: amount })]

@@ -17,6 +17,7 @@ import { legacyComponent } from "@clavia/tardigrade-core/component"
 import { Infer, receive } from "./turn"
 import { modelRequest } from "../inference/request"
 import { NativeOutputSupport, type InferRequest } from "../inference/contract"
+import { InferenceReceiptError } from "../inference/durable"
 import { turnFailed } from "../log/events"
 import type { AgentComponent } from "./composition"
 import type { OutputFallback } from "../output/contract"
@@ -164,6 +165,21 @@ test("a model response and its consequences share one append", async () => {
   expect(responses[0]!.filter((event) => event.type === "ToolCalled").map((event) => event.callId)).toEqual(["a", "b"])
   expect(appends.filter((events) => events.some((event) => event.type === "ModelCalled")))
     .toHaveLength(2)
+})
+
+test("an inference receipt storage failure remains driver recovery work", async () => {
+  const history: Event[] = [{ type: "MessageReceived", id: "m1", text: "answer", at: 1 }]
+  const layers = Layer.mergeAll(
+    noRouter,
+    KeyValueStore.layerMemory,
+    Layer.succeed(EventLog, withWatermark({
+      read: Effect.sync(() => [...history]),
+      append: (events) => Effect.sync(() => { history.push(...events) })
+    })),
+    Layer.succeed(Infer, { react: () => Effect.die(new InferenceReceiptError({ message: "result append acknowledgment lost" })) })
+  )
+  await expect(run(settleActor(rlmAgent), layers)).rejects.toBeDefined()
+  expect(history.some((event) => event.type === "TurnFailed")).toBe(false)
 })
 
 describe("the agent with execute as the only tool", () => {

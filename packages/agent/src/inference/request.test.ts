@@ -59,6 +59,27 @@ describe("renderMessages", () => {
     expect(messages[2]).toMatchObject({ toolCallId: "call_1", content: '{"result":1}' })
   })
 
+  test("opaque provider metadata survives replay rendering", () => {
+    const signature = "opaque-λ-\ud83e\uddea-\u0000-tail"
+    const providerMetadata = {
+      extra_content: { google: { thought_signature: signature } },
+      future: { nested: ["verbatim", 0, false, null] }
+    }
+    const messages = renderMessages([
+      { type: "MessageReceived", id: "m1", text: "inspect", at: 0 },
+      { type: "ToolCalled", callId: "call_1", name: "lookup", arguments: { path: "lease" }, providerMetadata, turn: "m1", at: 1 },
+      { type: "ToolReturned", callId: "call_1", result: { ok: true }, turn: "m1", at: 2 }
+    ])
+    expect(messages[1]?.toolCalls).toEqual([{
+      id: "call_1",
+      name: "lookup",
+      arguments: '{"path":"lease"}',
+      providerMetadata
+    }])
+    const retained = messages[1]?.toolCalls?.[0]?.providerMetadata as typeof providerMetadata | undefined
+    expect(retained?.extra_content.google.thought_signature).toBe(signature)
+  })
+
   test("a checkpoint survives the projection: identity anchors the same event in log and render", () => {
     // A queued mid-turn message shifts every raw index by one once the projection excludes it. An
     // index checkpoint would slice the render one event late and open it with a dangling tool

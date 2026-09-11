@@ -23,14 +23,14 @@ export { cancellationRequested } from "@clavia/tardigrade-core/interaction/cance
 
 // Endpoint is who served one attempt, recorded whether or not the endpoint reported any spend.
 // `provider` and `model` are the configuration's own effective coordinates, so a replay reads
-// which model supplied a native guarantee even when no usage came back; `routedProvider` and
-// `routedModel` are the ones a router named on the wire, which supersede the configured pair as
-// the observed truth (packages/model/src/model.ts, endpointOf).
+// which model supplied a native guarantee even when no usage came back. The routed fields are
+// observations named on the wire (packages/model/src/model.ts, endpointOf).
 export const Endpoint = Schema.Struct({
   provider: Schema.optional(Schema.String),
   model: Schema.String,
   routedProvider: Schema.optional(Schema.String),
-  routedModel: Schema.optional(Schema.String)
+  routedModel: Schema.optional(Schema.String),
+  routedServiceTier: Schema.optional(Schema.String)
 })
 
 // OutputPolicy is what one ask declared: the contract's identity and fingerprint, and the
@@ -43,12 +43,15 @@ export const OutputPolicy = Schema.Struct({
   fallback: Schema.optional(Schema.Unknown)
 })
 
-// ToolCalled is the ask: the turn calls a tool. `callId` correlates the return to this call.
+// ToolCalled is the ask: the turn calls a tool. `callId` correlates the return to this call, and
+// providerMetadata preserves opaque fields that the serving protocol requires on the next turn
+// (runtime/batches.test.ts, "opaque provider metadata is retained on each call and replayed").
 export const ToolCalled = Schema.Struct({
   type: Schema.Literal("ToolCalled"),
   callId: Schema.String,
   name: Schema.String,
   arguments: Schema.Unknown,
+  providerMetadata: Schema.optional(Schema.Unknown),
   responseId: Schema.optional(Schema.String),
   batchId: Schema.optional(Schema.String),
   batchIndex: Schema.optional(Schema.Finite),
@@ -99,6 +102,41 @@ export const ModelReturned = Schema.Struct({
   endpoint: Schema.optional(Endpoint),
   error: Schema.optional(Schema.String),
   epoch: Schema.optional(Schema.Finite),
+  turn: Schema.String,
+  at: Schema.Finite
+})
+
+// InferenceRequested records one physical provider request before its transport starts.
+export const InferenceRequested = Schema.Struct({
+  type: Schema.Literal("InferenceRequested"),
+  requestId: Schema.String,
+  callId: Schema.String,
+  token: Schema.String,
+  fingerprint: Schema.String,
+  route: Schema.Unknown,
+  policy: Schema.Struct({ decision: Schema.Literals(["stop", "retry"]) }),
+  position: Schema.Struct({ attempt: Schema.Finite, rung: Schema.Finite, retry: Schema.Finite }),
+  turn: Schema.String,
+  at: Schema.Finite
+})
+
+// InferenceAttemptDecided records how a completed or uncertain physical request advances.
+export const InferenceAttemptDecided = Schema.Struct({
+  type: Schema.Literal("InferenceAttemptDecided"),
+  requestId: Schema.String,
+  fingerprint: Schema.String,
+  position: Schema.Struct({ attempt: Schema.Finite, rung: Schema.Finite, retry: Schema.Finite }),
+  decision: Schema.Unknown,
+  turn: Schema.String,
+  at: Schema.Finite
+})
+
+// InferenceResultRetained stores the normalized model action before downstream consequences.
+export const InferenceResultRetained = Schema.Struct({
+  type: Schema.Literal("InferenceResultRetained"),
+  requestId: Schema.String,
+  fingerprint: Schema.String,
+  action: Schema.Unknown,
   turn: Schema.String,
   at: Schema.Finite
 })
@@ -349,6 +387,9 @@ export const AgentEvent = Schema.Union([
   MessageReceived,
   ModelCalled,
   ModelReturned,
+  InferenceRequested,
+  InferenceAttemptDecided,
+  InferenceResultRetained,
   TextReturned,
   ToolCalled,
   ToolReturned,
@@ -384,6 +425,7 @@ export interface AttemptEndpoint {
   readonly model: string
   readonly routedProvider?: string
   readonly routedModel?: string
+  readonly routedServiceTier?: string
 }
 
 // `mode` is how an attempt obtained a declared output contract. A binding answering a turn that
@@ -400,6 +442,7 @@ export interface ToolCall {
   readonly callId: string
   readonly name: string
   readonly arguments: unknown
+  readonly providerMetadata?: unknown
 }
 
 export type Action =
@@ -422,7 +465,7 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bdec:", "bi:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
+  prefixes: ["tr:", "bdec:", "bi:", "tn:", "rs:", "mr:", "mc:", "ir:", "id:", "ix:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -447,6 +490,12 @@ export const agentKeys: KeyFragment = {
         return v.ordinal === undefined ? undefined : `mc:${String(v.turn)}/${String(v.ordinal)}`
       case "ModelReturned":
         return `mr:${String(v.turn)}/${String(v.ordinal)}`
+      case "InferenceRequested":
+        return `ir:${String(v.requestId)}/${String((v.position as { attempt?: unknown } | undefined)?.attempt)}`
+      case "InferenceAttemptDecided":
+        return `id:${String(v.requestId)}/${String((v.position as { attempt?: unknown } | undefined)?.attempt)}`
+      case "InferenceResultRetained":
+        return `ix:${String(v.requestId)}`
       case "BudgetExhausted":
         // The wall's occurrence is the ceiling it fired at: a grant raises it, so a second
         // crossing keys anew.

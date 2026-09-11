@@ -17,6 +17,14 @@ import {
   type InferenceObserver,
   type InferenceObserverPolicy
 } from "@clavia/tardigrade-agent"
+import {
+  DEFAULT_INFERENCE_AMBIGUITY_POLICY,
+  inferenceFingerprint,
+  inferenceProviderKey,
+  inferenceRequestIdentity,
+  InferenceReceiptError,
+  type InferenceReceipts
+} from "@clavia/tardigrade-agent/inference/durable"
 import type { Action, AttemptEndpoint } from "@clavia/tardigrade-agent/log/events"
 import { modelRequest, type ModelRequest, type ToolSpec } from "@clavia/tardigrade-agent/inference/request"
 import type { AgentMessage } from "@clavia/tardigrade-agent/projection/messages"
@@ -40,6 +48,7 @@ export type { ModelConfig, StreamBounds } from "./adapter"
 export interface ModelInferOptions {
   readonly observer?: InferenceObserver
   readonly physicalAttemptId?: (logicalAttempt: string) => string
+  readonly durability?: { readonly scope: string; readonly receipts: InferenceReceipts }
 }
 
 const randomPhysicalAttemptId = (logicalAttempt: string): string =>
@@ -106,7 +115,12 @@ const toMessage = (m: AgentMessage): ModelMessage =>
       ? {}
       : {
           toolCalls: m.toolCalls.map(
-            (c): ToolCall => ({ id: c.id, type: "function", function: { name: c.name.replace(/[^a-zA-Z0-9_-]/g, "_"), arguments: c.arguments } })
+            (c): ToolCall => ({
+              id: c.id,
+              type: "function",
+              function: { name: c.name.replace(/[^a-zA-Z0-9_-]/g, "_"), arguments: c.arguments },
+              ...(c.providerMetadata === undefined ? {} : { metadata: c.providerMetadata })
+            })
           )
         }),
     ...(m.toolCallId === undefined ? {} : { toolCallId: m.toolCallId })
@@ -138,7 +152,8 @@ export const actionOf = (result: ProcessorResult): Action => {
     return {
       callId: call.id,
       name: call.function.name,
-      arguments: args
+      arguments: args,
+      ...(call.metadata === undefined ? {} : { providerMetadata: call.metadata })
     }
   })
   const first = decoded[0]
@@ -197,6 +212,11 @@ const isRetryableFailure = (e: unknown): boolean => {
   return /\b429\b|rate.?limit|too many requests|\b5\d\d\b|timeout|timed?\s*out|idle beyond bound|exceeded its total bound|no first chunk within bound|connection (?:error|failed|failure|reset|refused|closed|lost)|network.?error|network request failed|network connection (?:was )?lost|fetch failed|failed to fetch|load failed|socket (?:hang up|closed|disconnected)|dns(?: lookup)? (?:error|failed|failure)|getaddrinfo|ECONN(?:RESET|REFUSED|ABORTED)|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|UND_ERR_(?:CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|SOCKET)/i.test(
     message
   )
+}
+
+const responseStatusOf = (e: unknown): number | undefined => {
+  const error = e as { readonly status?: unknown; readonly statusCode?: unknown }
+  return typeof error.status === "number" ? error.status : typeof error.statusCode === "number" ? error.statusCode : undefined
 }
 
 // Full jitter (AWS's term for it): a uniform draw between 0 and the base, so many attempts
@@ -316,14 +336,16 @@ type BodyReader = {
 }
 
 // Wire is what the raw body said about the attempt beyond the adapter's view: the last `usage`
-// object, and the serving provider and resolved model when the gateway names them (OpenRouter
-// stamps `provider` on each chunk; `model` is standard). Wire-reported provenance beats the
-// configured stamp: it is observed, never declared.
+// object, and the serving provider, resolved model, and service tier when the gateway names them.
+// Wire-reported provenance beats the configured stamp: it is observed, never declared.
 interface Wire {
   readonly usage?: unknown
   readonly usageReports?: ReadonlyArray<unknown>
   readonly provider?: string
   readonly model?: string
+  readonly serviceTier?: string
+  readonly completed?: boolean
+  readonly finishReason?: string
   // A structured-output refusal arrives as `choices[].delta.refusal` with an ordinary `stop`
   // finish reason, and the adapter's processor keeps neither. The raw body is the only place it
   // survives, so it is read here (model.test.ts, "a refusal on the wire").
@@ -352,12 +374,22 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
     }
     return undefined
   }
-  const wireOf = (parsed: { usage?: unknown; provider?: unknown; model?: unknown }): Wire => {
+  const wireOf = (parsed: { type?: unknown; usage?: unknown; provider?: unknown; model?: unknown; service_tier?: unknown; choices?: ReadonlyArray<{ finish_reason?: unknown }> }): Wire => {
     const refusal = refusalOf(parsed as never)
+    const rawFinish = parsed.choices?.[0]?.finish_reason
+    const finishReason = typeof rawFinish === "string" && rawFinish !== "" ? rawFinish : undefined
+    const completed = Array.isArray(parsed.choices)
+      ? finishReason !== undefined
+      : typeof parsed.type === "string" && parsed.type.startsWith("response.")
+        ? parsed.type === "response.completed"
+        : undefined
     return {
       ...(parsed.usage === undefined || parsed.usage === null ? {} : { usage: parsed.usage }),
       ...(typeof parsed.provider === "string" ? { provider: parsed.provider } : {}),
       ...(typeof parsed.model === "string" ? { model: parsed.model } : {}),
+      ...(typeof parsed.service_tier === "string" ? { serviceTier: parsed.service_tier } : {}),
+      ...(finishReason === undefined ? {} : { finishReason }),
+      ...(completed === undefined ? {} : { completed }),
       ...(refusal === undefined ? {} : { refusal })
     }
   }
@@ -373,6 +405,7 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
       last = {
         ...last,
         ...next,
+        ...(last.completed === true ? { completed: true } : {}),
         ...(usageReports === undefined ? {} : { usageReports }),
         ...(next.refusal === undefined ? {} : { refusal: `${last.refusal ?? ""}${next.refusal}` })
       }
@@ -528,11 +561,12 @@ const stampOf = (config: ModelConfig) => ({
 // endpointOf is who served an attempt, recorded whether or not the endpoint reported a single
 // token. The configured pair is always present, so a replay can say which model supplied a
 // native guarantee even for an endpoint that bills nothing; a router that names the upstream it
-// served from adds the observed pair beside it (tardie, src/events.ts, Endpoint).
+// served from adds the observed route beside it (tardie, src/events.ts, Endpoint).
 const endpointOf = (config: ModelConfig, wire: Wire | undefined): AttemptEndpoint => ({
   ...stampOf(config),
   ...(wire?.provider === undefined ? {} : { routedProvider: wire.provider }),
-  ...(wire?.model === undefined ? {} : { routedModel: wire.model })
+  ...(wire?.model === undefined ? {} : { routedModel: wire.model }),
+  ...(wire?.serviceTier === undefined ? {} : { routedServiceTier: wire.serviceTier })
 })
 
 const served = (action: Action, endpoint: AttemptEndpoint): Action => ({ ...action, endpoint })
@@ -578,6 +612,8 @@ export const infer = <const C extends ModelConfig>(
   if (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens <= 0) {
     throw new Error(`contextWindowTokens must be a positive integer, got ${config.contextWindowTokens}`)
   }
+  const configuredUrl = new URL(config.baseUrl)
+  if (configuredUrl.username !== "" || configuredUrl.password !== "") throw new Error("model baseUrl must not contain credentials")
   const selectedAdapter = adapters.resolve(config.protocol)
   const observerPolicy = options.observer === undefined ? undefined : observerPolicyOf(options.observer)
   const sleep = config.sleep ?? realSleep
@@ -595,7 +631,8 @@ export const infer = <const C extends ModelConfig>(
   }
   const throttleDelays = config.throttleRetryDelaysMs ?? DEFAULT_THROTTLE_RETRY_DELAYS_MS
   const retryAfterJitterMs = config.retryAfterJitterMs ?? DEFAULT_RETRY_AFTER_JITTER_MS
-  const failurePolicy = { throttleRetryDelaysMs: throttleDelays, retryAfterJitterMs, stream: bounds }
+  const ambiguity = config.ambiguity ?? (options.durability === undefined ? { decision: "retry" as const } : DEFAULT_INFERENCE_AMBIGUITY_POLICY)
+  const failurePolicy = { throttleRetryDelaysMs: throttleDelays, retryAfterJitterMs, stream: bounds, ambiguity }
   const attemptOnce = async (
     req: ModelRequest,
     mode: OutputMode,
@@ -684,9 +721,10 @@ export const infer = <const C extends ModelConfig>(
       )
       const result = await new StreamProcessor().process(normalized)
       const { usage, endpoint, wire } = await settle()
-      stats.finish = attempt.finishReason?.() ?? result.finishReason ?? "stop"
+      const observedFinish = wire?.finishReason ?? attempt.finishReason?.() ?? result.finishReason
+      stats.finish = observedFinish ?? "unknown"
       const stopClass = attempt.stopClass?.() ?? "ok"
-      if (result.finishReason === "length" || stopClass === "truncated") throw new TruncatedError(maxTokens, usage)
+      if (stats.finish === "length" || stopClass === "truncated") throw new TruncatedError(maxTokens, usage)
       // A structured-output refusal reaches the compatible wire as a `refusal` delta under an
       // ordinary stop, and the Converse wire as its own stop reason. Neither survives the shared
       // processor, so both are read here rather than from the decoded result.
@@ -695,6 +733,7 @@ export const infer = <const C extends ModelConfig>(
       if (stopClass === "violation") {
         throw failed(new ViolatedError("the provider could not produce output matching the schema it was given"), usage, endpoint)
       }
+      if (wire?.completed === false) throw failed(new Error("model stream connection closed before provider completion"), usage, endpoint)
       return stamped(served(withSpend(actionOf(result), usage), endpoint))
     } catch (e) {
       attemptController.abort()
@@ -774,15 +813,99 @@ export const infer = <const C extends ModelConfig>(
       const delivery = options.observer === undefined || observerPolicy === undefined
         ? undefined
         : yield* deltaDelivery(options.observer, observerPolicy)
+      const durable = options.durability
+      const callId = key ?? request.identity.turn
+      const requestId = durable === undefined ? undefined : inferenceRequestIdentity(durable.scope, request, callId)
+      const providerKey = requestId === undefined ? key : yield* inferenceProviderKey(requestId)
+      const cleanBaseUrl = (() => {
+        const url = new URL(configuredUrl)
+        url.username = ""
+        url.password = ""
+        url.search = ""
+        url.hash = ""
+        return url.toString()
+      })()
+      const fingerprintBaseUrl = (() => {
+        const url = new URL(configuredUrl)
+        url.hash = ""
+        return url.toString()
+      })()
+      const preparedAt = (rung: number) => Effect.gen(function* () {
+        const maxTokens = ladderOf(config.maxOutputTokens, config.maxTokensLadder)[rung]!
+        const fallbackSystem = fallbackSystemFor(req.output, mode)
+        const semantic = {
+          adapter: selectedAdapter.id,
+          route: { protocol: config.protocol, baseUrl: fingerprintBaseUrl, provider: config.provider, model: config.model },
+          request: req,
+          mode,
+          maxTokens,
+          bounds,
+          messages: req.messages.map(toMessage),
+          tools: req.tools.map(toTool),
+          systemPrompts: fallbackSystem === undefined ? [req.system] : [req.system, fallbackSystem],
+          output: config.output ?? null
+        }
+        return {
+          fingerprint: yield* inferenceFingerprint(semantic),
+          route: { adapter: selectedAdapter.id, protocol: config.protocol, baseUrl: cleanBaseUrl, provider: config.provider, model: config.model, maxTokens }
+        }
+      })
+      const context = yield* Effect.context()
+      const runPromise = Effect.runPromiseWith(context)
       const action = yield* Effect.promise<Action>(async () => {
+        const receipt = async <A>(effect: Effect.Effect<A>): Promise<A> => {
+          try { return await runPromise(effect) } catch (error) {
+            if (error instanceof InferenceReceiptError) throw error
+            throw new InferenceReceiptError({ message: error instanceof Error ? error.message : String(error) })
+          }
+        }
         let rung = 0
+        let retry = 0
+        let physical = 0
         const parts: Usage[] = []
         let missed = false
         const remember = (usage: Usage | undefined, billed: boolean) => {
           if (usage !== undefined) parts.push(usage)
           else if (billed) missed = true
         }
-        for (let attempt = 0; ; attempt++) {
+        for (;;) {
+          signal?.throwIfAborted()
+          const position = { attempt: physical, rung, retry }
+          const prepared = durable === undefined ? undefined : await runPromise(preparedAt(rung))
+          if (durable !== undefined && requestId !== undefined && prepared !== undefined) {
+            const state = await receipt(durable.receipts.begin({ requestId, callId, turn: request.identity.turn, prepared, policy: ambiguity, position }))
+            if (state.status === "retained") return state.action
+            if (state.status === "inFlight") throw new InferenceReceiptError({ message: `durable inference request ${requestId} is already in flight` })
+            if (state.status === "decided") {
+              const evidence = state.decision.evidence as { readonly usage?: Usage; readonly endpoint?: AttemptEndpoint; readonly billed?: boolean; readonly delayMs?: number } | undefined
+              remember(evidence?.usage, evidence?.billed === true)
+              stats.attempts = Math.max(stats.attempts, position.attempt + 1)
+              stats.rung = position.rung
+              if (state.decision.next === undefined) {
+                signal?.throwIfAborted()
+                const failed: Action = { kind: "fail", error: state.decision.error, failure: { cause: "inference_error", attempts: stats.attempts, policy: { ...failurePolicy, externalOutcome: "unknown", requestId } } }
+                const withEvidence = served(withSpend(failed, spentOf(parts, missed)), evidence?.endpoint ?? endpointOf(config, undefined))
+                const terminal: Action = req.output === undefined ? withEvidence : { ...withEvidence, mode }
+                await receipt(durable.receipts.retain({ requestId, turn: request.identity.turn, fingerprint: prepared.fingerprint, action: terminal }))
+                return terminal
+              }
+              if (evidence?.delayMs !== undefined) await sleep(evidence.delayMs)
+              physical = state.decision.next.attempt
+              rung = state.decision.next.rung
+              retry = state.decision.next.retry
+              continue
+            }
+            if (state.status === "pending") {
+              const delay = throttleDelayMs({}, retry, clock.currentTimeMillisUnsafe(), () => random.nextDoubleUnsafe(), throttleDelays, retryAfterJitterMs)
+              const canRetry = ambiguity.decision === "retry" && delay !== undefined
+              const next = canRetry ? { attempt: physical + 1, rung, retry: retry + 1 } : undefined
+              const decision = { outcome: "unknown" as const, decision: canRetry ? "retry" as const : "stop" as const, ...(next === undefined ? {} : { next }), error: "the provider request has an unknown external outcome", ...(!canRetry || delay === undefined ? {} : { evidence: { delayMs: delay } }) }
+              await receipt(durable.receipts.decide({ requestId, turn: request.identity.turn, fingerprint: prepared.fingerprint, position, decision }))
+              continue
+            }
+          }
+          let returned: Action | undefined
+          let providerReturned = false
           try {
             stats.rung = rung
             stats.attempts += 1
@@ -790,12 +913,18 @@ export const infer = <const C extends ModelConfig>(
             const physicalAttempt = delivery === undefined && onDelta === undefined
               ? ""
               : options.physicalAttemptId?.(logicalAttempt) ?? randomPhysicalAttemptId(logicalAttempt)
-            const action = await attemptOnce(req, mode, key, ladder[rung]!, rung, stats, delivery, onDelta, request.identity, physicalAttempt, signal)
-            remember(action.usage, true)
-            return served(withSpend(action, spentOf(parts, missed)), action.endpoint ?? endpointOf(config, undefined))
+            returned = await attemptOnce(req, mode, providerKey, ladder[rung]!, rung, stats, delivery, onDelta, request.identity, physicalAttempt, signal)
+            providerReturned = true
           } catch (e) {
             const usage = isTruncated(e) ? e.usage : usageOn(e)
             const endpoint = endpointOn(e) ?? endpointOf(config, undefined)
+            if (signal?.aborted === true && durable !== undefined && requestId !== undefined && prepared !== undefined) {
+              await receipt(durable.receipts.decide({
+                requestId, turn: request.identity.turn, fingerprint: prepared.fingerprint, position,
+                decision: { outcome: "unknown", decision: "stop", error: "model inference was cancelled after provider admission", evidence: { ...(usage === undefined ? {} : { usage }), endpoint, billed: usage !== undefined } }
+              }))
+              throw e
+            }
             const ends = (action: Action): Action => {
               const billed = served(withSpend(action, spentOf(parts, missed)), endpoint)
               return req.output === undefined ? billed : { ...billed, mode }
@@ -803,54 +932,87 @@ export const infer = <const C extends ModelConfig>(
             remember(usage, isTruncated(e) || usage !== undefined)
             if (isTruncated(e)) {
               if (rung + 1 < ladder.length) {
-                rung += 1
+                const next = { attempt: physical + 1, rung: rung + 1, retry }
+                if (durable !== undefined && requestId !== undefined && prepared !== undefined) await receipt(durable.receipts.decide({ requestId, turn: request.identity.turn, fingerprint: prepared.fingerprint, position, decision: { outcome: "truncated", next, error: e.message, evidence: { ...(usage === undefined ? {} : { usage }), billed: true } } }))
+                physical = next.attempt
+                rung = next.rung
                 continue
               }
               // The top rung still truncates: the turn fails loudly instead of shipping half an
               // answer, and the error names the remedy.
-              return ends({
+              returned = ends({
                 kind: "fail",
                 error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once`,
                 failure: { cause: "truncated", attempts: stats.attempts, policy: { maxTokensLadder: ladder } }
               })
-            }
+            } else if (isRefused(e)) {
             // A refusal is the provider declining this request. The same request retried earns
             // the same refusal, so the ladder stops here and the turn records why.
-            if (isRefused(e)) {
-              return ends({
+              returned = ends({
                 kind: "fail",
                 error: e instanceof Error ? e.message : String(e),
                 failure: { cause: "refused", attempts: stats.attempts }
               })
-            }
+            } else if (isViolation(e)) {
             // The endpoint said outright that it could not produce the output it was constrained
             // to. Retrying asks the same endpoint for the same broken promise.
-            if (isViolation(e)) {
-              return ends({
+              returned = ends({
                 kind: "fail",
                 error: e instanceof Error ? e.message : String(e),
                 failure: { cause: "output_contract_violation", attempts: stats.attempts }
               })
-            }
-            if (!isRetryableFailure(e)) {
+            } else if (!isRetryableFailure(e)) {
               const message = e instanceof Error ? e.message : String(e)
-              return ends({
+              returned = ends({
                 kind: "fail",
                 error: `model inference failed after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
                 failure: { cause: "inference_error", attempts: stats.attempts, policy: failurePolicy }
               })
-            }
+            } else {
             const delay = throttleDelayMs(
               e,
-              attempt,
+              retry,
               clock.currentTimeMillisUnsafe(),
               () => random.nextDoubleUnsafe(),
               throttleDelays,
               retryAfterJitterMs
             )
-            if (delay === undefined) {
+            const uncertain = responseStatusOf(e) === undefined
+            if (durable !== undefined && requestId !== undefined && prepared !== undefined && uncertain) {
+              const canRetry = ambiguity.decision === "retry" && delay !== undefined
+              const next = canRetry ? { attempt: physical + 1, rung, retry: retry + 1 } : undefined
+              const decision = {
+                outcome: "unknown" as const,
+                decision: canRetry ? "retry" as const : "stop" as const,
+                ...(next === undefined ? {} : { next }),
+                error: `model inference has an unknown external outcome: ${e instanceof Error ? e.message : String(e)}`,
+                evidence: { ...(usage === undefined ? {} : { usage }), endpoint, billed: usage !== undefined, ...(!canRetry || delay === undefined ? {} : { delayMs: delay }) }
+              }
+              await receipt(durable.receipts.decide({ requestId, turn: request.identity.turn, fingerprint: prepared.fingerprint, position, decision }))
+              if (next !== undefined) {
+                if (delay !== undefined) await sleep(delay)
+                physical = next.attempt
+                retry = next.retry
+                continue
+              }
+              const terminal = ends({
+                kind: "fail",
+                error: decision.error,
+                failure: { cause: "inference_error", attempts: stats.attempts, policy: { ...failurePolicy, externalOutcome: "unknown", requestId } }
+              })
+              await receipt(durable.receipts.retain({ requestId, turn: request.identity.turn, fingerprint: prepared.fingerprint, action: terminal }))
+              return terminal
+            }
+            if (durable === undefined && uncertain && ambiguity.decision === "stop") {
+              returned = ends({
+                kind: "fail",
+                error: `model inference has an unknown external outcome: ${e instanceof Error ? e.message : String(e)}`,
+                failure: { cause: "inference_error", attempts: stats.attempts, policy: { ...failurePolicy, externalOutcome: "unknown" } }
+              })
+            }
+            if (returned === undefined && delay === undefined) {
               const message = e instanceof Error ? e.message : String(e)
-              return ends({
+              returned = ends({
                 kind: "fail",
                 error: `model inference retries exhausted after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
                 failure: {
@@ -859,10 +1021,29 @@ export const infer = <const C extends ModelConfig>(
                   policy: failurePolicy
                 }
               })
+            } else if (returned === undefined && delay !== undefined) {
+              stats.waits += 1
+              const next = { attempt: physical + 1, rung, retry: retry + 1 }
+              if (durable !== undefined && requestId !== undefined && prepared !== undefined) {
+                await receipt(durable.receipts.decide({
+                  requestId, turn: request.identity.turn, fingerprint: prepared.fingerprint, position,
+                  decision: { outcome: "retryable", next, error: e instanceof Error ? e.message : String(e), evidence: { ...(usage === undefined ? {} : { usage }), endpoint, billed: usage !== undefined, delayMs: delay } }
+                }))
+              }
+              await sleep(delay)
+              physical = next.attempt
+              retry = next.retry
+              continue
             }
-            stats.waits += 1
-            await sleep(delay)
+            }
           }
+          if (returned === undefined) throw new Error("model inference ended without an action")
+          if (providerReturned) remember(returned.usage, true)
+          const completed = providerReturned
+            ? served(withSpend(returned, spentOf(parts, missed)), returned.endpoint ?? endpointOf(config, undefined))
+            : returned
+          if (durable !== undefined && requestId !== undefined && prepared !== undefined) await receipt(durable.receipts.retain({ requestId, turn: request.identity.turn, fingerprint: prepared.fingerprint, action: completed }))
+          return completed
         }
       }).pipe(delivery === undefined ? (effect) => effect : Effect.ensuring(delivery.finish))
       // The wide-span discipline: everything a failure query filters by rides the one span.

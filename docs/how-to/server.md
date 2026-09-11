@@ -113,6 +113,30 @@ The server refreshes the public model catalog when it starts, validates the comp
 
 Catalog responses use cursor pagination. They include `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and optional `next_cursor`. The default limit is `50` and callers can state another positive integer. Search is a case-insensitive substring over IDs and names. `GET /v1/models` also accepts an exact provider filter. Pass `next_cursor` with the same filters to continue. A cursor records the catalog revision and query, so a changed revision or filter returns 400 and the caller starts again without a cursor.
 
+## Durable native inference
+
+A host can retain native inference receipts in the agent's authoritative `EventLog`. The log must use `agentKeys.keyOf` from the agent event package. Its `ir:`, `id:`, and `ix:` keys cover the request, decision, and retained-result events.
+
+Give each physical log a stable scope. Include the tenant and physical storage identity. Keep deployment versions outside the scope, so a changed binding reaches the request drift check.
+
+```ts
+import { inferenceReceiptsFrom } from "tardie/inference/durable"
+import { infer } from "tardie/model"
+
+const receipts = inferenceReceiptsFrom(log)
+const layer = infer(config, adapters, {
+  durability: { scope: stableScope, receipts }
+})
+```
+
+`InferenceRequested` records the physical request before transport starts. `InferenceAttemptDecided` records how an incomplete attempt advances. `InferenceResultRetained` stores the final `Action` before downstream turn events. This action retains available usage, endpoint, cost, and tool-call metadata. `ModelReturned` owns the response usage in the turn log.
+
+The default ambiguity policy is `{ decision: "stop" }`. Set `config.ambiguity.decision` to `retry` to repeat an unknown outcome. This retry uses the configured `throttleRetryDelaysMs` bounds. A replay with changed request data fails with `durable inference request ... drifted before replay`. A changed ambiguity policy also fails before provider I/O.
+
+These receipts prove the requests, decisions, and results in the agent log. A provider can execute a request more than once after an unknown outcome. Pin the Tardigrade version in each deployed bundle so recovery uses the same receipt contract.
+
+Tool calls retain opaque provider metadata through the log and the next model request. This metadata exists when the selected adapter supplies it.
+
 ## Live inference output
 
 The server publishes normalized model text at `GET /v1/actors/{instance}/threads/{thread}/inference/stream`. The SSE connection carries output produced after it opens and does not replay. Each delta names the actor, instance, thread, turn, logical attempt, physical provider request, model, text block, and sequence. `makeActorClient().followInference(...)` opens the stream for a public thread ID.

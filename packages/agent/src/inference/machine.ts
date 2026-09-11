@@ -7,6 +7,7 @@ import { HashMap, Option } from "effect"
 import { Self } from "@clavia/tardigrade-core/runtime"
 import { transitionProjection, type CompleteTransitionDerivation, type TransitionProjection } from "@clavia/tardigrade-core/transition"
 import { normalizeAction } from "./action-compat"
+import { InferenceReceiptError } from "./durable"
 import { modelCalled, modelReturned, outputRejected, outputRepaired, textReturned, turnFailed } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Machine } from "@clavia/tardigrade-core/machine"
@@ -458,6 +459,8 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
                   ? Effect.failCause(cause)
+                  : cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect instanceof InferenceReceiptError)
+                    ? Effect.failCause(cause)
                   : Effect.succeed<Action>({
                       kind: "fail",
                       error: failureMessage(cause),
