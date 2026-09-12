@@ -53,20 +53,28 @@ export const bedrockLayer = (options: { readonly client: BedrockClientOptions; r
   return yield* ProviderLanguageModel.make({ streamText, generateText: () => Effect.fail(failure("The Bedrock bridge supports streamText only")) })
 }))
 
+/*
+ * bedrockRequest preserves tool history as text when no tools are enabled.
+ * Converse requires toolConfig for native tool blocks (providers/bedrock.test.ts;
+ * e2e/inference/live/lifecycle.test.ts).
+ */
 const bedrockRequest = (request: LanguageModel.ProviderOptions, modelId: string, config: BedrockModelConfig): ConverseStreamCommandInput => {
+  const choice = request.toolChoice
+  const tools = request.tools.filter((tool) => choice !== "none" && !(typeof choice === "object" && "oneOf" in choice && !choice.oneOf.includes(tool.name)))
+  if (tools.some(Tool.isProviderDefined)) throw failure("Bedrock provider-defined tools are unsupported")
   const messages: Message[] = []
   const system: { text: string }[] = []
   for (const message of request.prompt.content) {
     if (message.role === "system") { system.push({ text: message.content }); continue }
     const role = message.role === "assistant" ? "assistant" : "user"
-    const content = message.content.map(toBedrockPart)
+    const content = message.content.map((part) => {
+      const native = toBedrockPart(part)
+      return tools.length === 0 && (native.toolUse !== undefined || native.toolResult !== undefined) ? { text: JSON.stringify(native) } : native
+    })
     const previous = messages.at(-1)
     if (previous?.role === role) previous.content!.push(...content)
     else messages.push({ role, content })
   }
-  const choice = request.toolChoice
-  const tools = request.tools.filter((tool) => choice !== "none" && !(typeof choice === "object" && "oneOf" in choice && !choice.oneOf.includes(tool.name)))
-  if (tools.some(Tool.isProviderDefined)) throw failure("Bedrock provider-defined tools are unsupported")
   return {
     ...config, modelId, messages, ...(system.length === 0 ? {} : { system }),
     ...(tools.length === 0 ? {} : { toolConfig: {

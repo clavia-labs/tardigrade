@@ -18,6 +18,7 @@
     "test:live:reasoning": "bun run test:live:recovery",
     "test:live:providers": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/providers.test.ts",
     "test:live:binding": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/binding.test.ts",
+    "test:live:lifecycle": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/lifecycle.test.ts",
     "test:live:recovery": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/recovery.test.ts"
   }
 }

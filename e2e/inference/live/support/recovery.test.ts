@@ -1,31 +1,36 @@
 import { expect, test } from "bun:test"
 import type { ConverseStreamOutput } from "@aws-sdk/client-bedrock-runtime"
 import { runProvider, runBinding } from "./translation"
-import { runTarget } from "./recovery"
+import { runTarget, runLifecycle } from "./recovery"
 import { resolveTarget, type ResolvedLiveTarget } from "./config"
 import { targetById } from "../targets"
 import { cleanup, registerCleanup } from "../../cleanup"
 
 const target: ResolvedLiveTarget = { id: "fixture", protocol: "openai-chat-completions", credential: "UNUSED", modelEnv: "UNUSED", contextWindowEnv: "UNUSED", endpoint: "https://fixture.invalid", model: "real-configured-model", contextWindowTokens: 10000, apiKey: "fixture", behaviors: ["completion", "tool-loop", "recovery"] }
 
-test("HTTP live contract sends the configured model through both inferences", async () => {
+test("HTTP live contracts preserve history through tool evolution, restart, and model handoff", async () => {
   const models: string[] = []
   const server = Bun.serve({ port: 0, fetch: async (request) => {
-    const body = await request.json() as { model: string; messages: Array<{ role: string; content: string }> }
+    const body = await request.json() as { model: string; messages: Array<{ role: string; content: string }>; tools?: Array<{ function: { name: string; parameters: { required?: string[] } } }> }
     models.push(body.model)
-    const result = body.messages.find((message) => message.role === "tool")
-    const nonce = result?.content.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0]
-    const delta = result === undefined ? { tool_calls: [{ index: 0, id: "call", type: "function", function: { name: "read_nonce", arguments: "{}" } }] } : { content: nonce }
-    return new Response(`data: ${JSON.stringify({ id: "r", model: body.model, created: 1, choices: [{ index: 0, delta, finish_reason: result === undefined ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } })
+    const userIndex = body.messages.findLastIndex((message) => message.role === "user")
+    const result = body.messages.slice(userIndex + 1).find((message) => message.role === "tool")
+    const nonce = JSON.stringify(body.messages).match(/[0-9a-f]{8}-[0-9a-f-]{27}/g)?.at(-1)
+    const selected = body.tools?.[0]?.function
+    const calls = result === undefined && selected !== undefined
+    const params = selected?.parameters.required?.[0]
+    const delta = calls ? { tool_calls: [{ index: 0, id: `call-${body.messages.length}`, type: "function", function: { name: selected.name, arguments: JSON.stringify(params === undefined ? {} : { [params]: nonce }) } }] } : { content: nonce }
+    return new Response(`data: ${JSON.stringify({ id: `r-${models.length}`, model: body.model, created: 1, choices: [{ index: 0, delta, finish_reason: calls ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } })
   } })
   try {
     const configured = { ...target, endpoint: server.url.toString() }
     await runProvider(configured)
     await runBinding(configured)
     await runTarget(configured)
+    expect(await runLifecycle([configured, { ...configured, id: "other", model: "other-model" }])).toEqual({ turns: 4, requests: 7 })
   } finally { await server.stop(true) }
-  expect(models).toEqual(Array(6).fill(target.model))
-})
+  expect(models).toEqual([...Array(10).fill(target.model), "other-model", "other-model", target.model])
+}, 15_000)
 
 test("Converse live contract runs native events through durable reasoning replay", async () => {
   const models: Array<string | undefined> = []

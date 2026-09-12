@@ -1,8 +1,8 @@
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Layer, Schema } from "effect"
+import { Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
-import { Prompt, Tool, Toolkit } from "effect/unstable/ai"
+import { LanguageModel, Prompt, Tool, Toolkit } from "effect/unstable/ai"
 import type { ConverseStreamCommandInput, ConverseStreamOutput } from "@aws-sdk/client-bedrock-runtime"
 import { collectResponse } from "./response"
 import { providerLayer } from "./layer"
@@ -25,6 +25,45 @@ const events = (truncated = false): ConverseStreamOutput[] => [
   { metadata: { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }, metrics: { latencyMs: 1 } } }
 ]
 const toolkit = Toolkit.make(Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }), failureMode: "return" }))
+
+for (const mode of ["removed", "disabled", "enabled"] as const) {
+  test(`Bedrock preserves historical tool data with tools ${mode}`, async () => {
+    const prompt = Prompt.make([
+      { role: "user", content: "Read the file" },
+      { role: "assistant", content: [
+        { type: "reasoning", text: "Check the file", options: { bedrock: { signature: "signed" } } },
+        { type: "tool-call", id: "call-1", name: "read", params: { path: "a" } }
+      ] },
+      { role: "tool", content: [{ type: "tool-result", id: "call-1", name: "read", result: { contents: "secret nonce" }, isFailure: false }] },
+      { role: "user", content: "Answer from the previous result" }
+    ])
+    const before = JSON.stringify(prompt)
+    let sent: ConverseStreamCommandInput | undefined
+    const layer = providerLayer({ provider: "bedrock", model: { model: "claude" }, client: { send: async (input) => {
+      sent = input
+      return { $metadata: {}, stream: (async function* () {
+        yield { messageStop: { stopReason: "end_turn" as const } }
+        yield { metadata: { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }, metrics: { latencyMs: 1 } } }
+      })() }
+    } } })
+    await Effect.runPromise(LanguageModel.streamText({ prompt, toolkit: mode === "removed" ? Toolkit.empty : toolkit, toolChoice: mode === "disabled" ? "none" : "auto", disableToolCallResolution: true }).pipe(Stream.runCollect, Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer)))))
+    const parts = sent?.messages?.flatMap((message) => message.content ?? []) ?? []
+    expect(parts.find((part) => part.reasoningContent)).toEqual({ reasoningContent: { reasoningText: { text: "Check the file", signature: "signed" } } })
+    const expected = [
+      { toolUse: { toolUseId: "call-1", name: "read", input: { path: "a" } } },
+      { toolResult: { toolUseId: "call-1", status: "success" as const, content: [{ text: '{"contents":"secret nonce"}' }] } }
+    ]
+    if (mode === "enabled") {
+      expect(sent?.toolConfig?.tools).toHaveLength(1)
+      expect(parts.filter((part) => part.toolUse || part.toolResult)).toEqual(expected)
+    } else {
+      expect(sent?.toolConfig).toBeUndefined()
+      expect(parts.some((part) => part.toolUse || part.toolResult)).toBe(false)
+      expect(parts.flatMap((part) => part.text?.startsWith('{"tool') ? [JSON.parse(part.text)] : [])).toEqual(expected)
+    }
+    expect(JSON.stringify(prompt)).toBe(before)
+  })
+}
 
 for (const input of [undefined, "", "{}", "{"] as const) {
   test(`Bedrock validates tool arguments when input is ${JSON.stringify(input)}`, async () => {
