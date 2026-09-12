@@ -430,7 +430,7 @@ describe("the agent with execute as the only tool", () => {
       KeyValueStore.layerMemory,
       memoryLog(),
       testInferenceLayer( {
-        policy: () => Effect.succeed({ maxOutputTokens: 100, timeout: { firstContentMs: 90_000, idleMs: 90_000 }, retry: { backoffMs: [0], maxRetryAfterMs: 30_000, retryAfterJitterMs: 0 } }),
+        policy: () => Effect.succeed({ maxOutputTokens: 100, timeout: { firstChunkMs: 90_000, idleMs: 90_000 }, retry: { backoffMs: [0], maxRetryAfterMs: 30_000, retryAfterJitterMs: 0 } }),
         react: () =>
           Effect.succeed({
             kind: "fail" as const,

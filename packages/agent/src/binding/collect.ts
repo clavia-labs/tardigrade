@@ -10,7 +10,7 @@ import { boundedStream, StreamBoundExceeded, StreamIncomplete } from "./request"
 export const collectResponse = <Tools extends Record<string, Tool.Any>>(prompt: Prompt.RawInput, toolkit: Toolkit.Toolkit<Tools>, onPart?: (part: Response.AnyPart) => void | Effect.Effect<void>, responseFormat?: LanguageModel.ProviderOptions["responseFormat"], bounds?: StreamBounds) =>
   LanguageModel.streamText({ prompt, toolkit, disableToolCallResolution: true }).pipe(
     (stream) => responseFormat === undefined ? stream : Stream.provideService(stream, ResponseFormat, responseFormat),
-    (stream) => bounds === undefined ? stream : boundedStream(stream, bounds, (part) => (part.type === "text-delta" || part.type === "reasoning-delta" || part.type === "tool-params-delta") && part.delta.length > 0),
+    (stream) => bounds === undefined ? stream : boundedStream(stream, bounds),
     Stream.tap((part) => Effect.suspend(() => onPart?.(part) ?? Effect.void)),
     Stream.runCollect,
     (effect) => bounds?.attemptMs === undefined ? effect : effect.pipe(Effect.timeoutOrElse({ duration: bounds.attemptMs, orElse: () => Effect.fail(new StreamBoundExceeded({ bound: "attemptMs" })) })),

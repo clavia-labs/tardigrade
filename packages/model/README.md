@@ -31,7 +31,7 @@ Set request options through `modelLayer`'s `configure` callback or pass them to 
 {
   maxOutputTokens: 4096,
   timeout: {
-    firstContentMs: 90_000,
+    firstChunkMs: 90_000,
     idleMs: 90_000,
     attemptMs: 180_000
   },

@@ -41,19 +41,17 @@ export class StreamIncomplete extends Data.TaggedError("StreamIncomplete") {
 export class StreamBoundExceeded extends Data.TaggedError("StreamBoundExceeded")<{ readonly bound: keyof StreamBounds }> {}
 
 // boundedStream interrupts stalled pulls without turning a timeout into successful completion (inference/request.test.ts).
-export const boundedStream = <A, E, R>(stream: Stream.Stream<A, E, R>, bounds: StreamBounds, isProgress: (value: A) => boolean = () => true) => Stream.transformPull(stream, (pull) => Clock.currentTimeMillis.pipe(Effect.map((startedAt) => {
+export const boundedStream = <A, E, R>(stream: Stream.Stream<A, E, R>, bounds: StreamBounds) => Stream.transformPull(stream, (pull) => Clock.currentTimeMillis.pipe(Effect.map((startedAt) => {
   let first = true
-  let progressAt = startedAt
+  let lastChunkAt = startedAt
   return Effect.suspend(() => Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis
-    const bound = first ? "firstContentMs" : "idleMs"
-    const remaining = bounds[bound] - (now - progressAt)
+    const bound = first ? "firstChunkMs" : "idleMs"
+    const remaining = bounds[bound] - (now - lastChunkAt)
     if (remaining <= 0) return yield* new StreamBoundExceeded({ bound })
     const values = yield* pull.pipe(Effect.timeoutOrElse({ duration: remaining, orElse: () => Effect.fail(new StreamBoundExceeded({ bound })) }))
-    if (values.some(isProgress)) {
-      first = false
-      progressAt = yield* Clock.currentTimeMillis
-    }
+    first = false
+    lastChunkAt = yield* Clock.currentTimeMillis
     return values
   }))
 })))

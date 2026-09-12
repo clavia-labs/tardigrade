@@ -10,7 +10,7 @@ import { agentMethods, infer, outputValidateOnce } from "../index"
 import { retryDelayOf, type RequestPolicy } from "./retry"
 import { usageIn } from "./usage"
 
-const policy: RequestPolicy = { maxOutputTokens: 100, timeout: { firstContentMs: 90_000, idleMs: 90_000 }, retry: { backoffMs: [0], maxRetryAfterMs: 1000, retryAfterJitterMs: 0 } }
+const policy: RequestPolicy = { maxOutputTokens: 100, timeout: { firstChunkMs: 90_000, idleMs: 90_000 }, retry: { backoffMs: [0], maxRetryAfterMs: 1000, retryAfterJitterMs: 0 } }
 const definition = actor({ name: "retry-test", methods: agentMethods, components: [infer([outputValidateOnce], { models: { default: { provider: "test", model_id: "fixture" }, allow: "*" } })] })
 const makeHost = (binding: TestInference) => createHost({ actorName: "retry-test", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, testInferenceLayer( binding)) })
 

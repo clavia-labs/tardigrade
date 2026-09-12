@@ -10,7 +10,7 @@ export type RetryPolicy = typeof RetryPolicy.Type
 export const RequestPolicy = Schema.Struct({
   maxOutputTokens: Schema.Int.check(Schema.isGreaterThan(0)),
   timeout: Schema.Struct({
-    firstContentMs: Schema.Finite.check(Schema.isGreaterThan(0)),
+    firstChunkMs: Schema.Finite.check(Schema.isGreaterThan(0)),
     idleMs: Schema.Finite.check(Schema.isGreaterThan(0)),
     attemptMs: Schema.optional(Schema.Finite.check(Schema.isGreaterThan(0)))
   }),

@@ -12,7 +12,7 @@ export const bedrockGatewayHandler = (apiKey: string, bounds: StreamBounds): Smi
           return (import(/* @vite-ignore */ moduleName) as Promise<typeof import("@smithy/node-http-handler")>).then(
             ({ NodeHttpHandler: Handler }) =>
               new Handler({
-                connectionTimeout: bounds.firstContentMs,
+                connectionTimeout: bounds.firstChunkMs,
                 socketTimeout: bounds.idleMs,
                 requestTimeout: bounds.attemptMs ?? 0,
                 throwOnRequestTimeout: true

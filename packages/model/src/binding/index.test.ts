@@ -194,7 +194,7 @@ test("request deadline aborts one physical request and reports retryability", as
     requests++
     init?.signal?.addEventListener("abort", () => { aborted++; reject(new Error("aborted")) }, { once: true })
   }), { preconnect: globalThis.fetch.preconnect })
-  const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, timeout: { firstContentMs: 10, idleMs: 100, attemptMs: 100 }, retry: { backoffMs: [0] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
+  const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, timeout: { firstChunkMs: 10, idleMs: 100, attemptMs: 100 }, retry: { backoffMs: [0] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
   const action = await Effect.runPromise(Effect.gen(function* () {
     const infer = yield* inferenceClient
     const fiber = yield* infer.react({ identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Answer", tools: [], trajectory: [] }).pipe(Effect.forkChild)
