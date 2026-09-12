@@ -144,10 +144,10 @@ describe("priced and usageFrom", () => {
       providerReports: [{ providerSpecific: raw }]
     })
 
-    const converse = { inputTokens: 10, outputTokens: 2, totalTokens: 12, cacheReadInputTokens: 4 }
+    const converse = { inputTokens: 10, outputTokens: 2, totalTokens: 16, cacheReadInputTokens: 4 }
     expect(
       usageFrom(
-        [converse, { promptTokens: 10, completionTokens: 2, totalTokens: 12 }],
+        [converse, { promptTokens: 10, completionTokens: 2, totalTokens: 16 }],
         { ...table, cachedPromptUsdPerToken: 0.0002 },
         { provider: "bedrock", model: "m" },
         converse
@@ -160,6 +160,43 @@ describe("priced and usageFrom", () => {
       estimatedCostUsd: 10 * 0.001 + 4 * 0.0002 + 2 * 0.002
     })
     expect(usageFrom({ promptTokens: 3, completionTokens: 2, totalTokens: 0 })).not.toHaveProperty("totalTokens")
+  })
+
+  test("cache-exclusive input does not increase a provider's inclusive total", () => {
+    const raw = { inputTokens: 4, cacheWriteInputTokens: 20, outputTokens: 3, totalTokens: 27 }
+    const usage = usageFrom(raw)
+    expect(usage).toMatchObject({ promptTokens: 24, completionTokens: 3, cacheWritePromptTokens: 20, totalTokens: 27 })
+    expect(usage?.providerReports?.[0]?.providerSpecific).toEqual(raw)
+    expect(sumUsage([usage!, usage!]).totalTokens).toBe(54)
+  })
+
+  test("inclusive prompt fields take precedence over cache-exclusive aliases", () => {
+    const raw = {
+      prompt_tokens: 100,
+      completion_tokens: 10,
+      total_tokens: 110,
+      cache_read_input_tokens: 40,
+      prompt_tokens_details: { cached_tokens: 40 }
+    }
+    expect(usageFrom(raw, { ...table, cachedPromptUsdPerToken: 0.0002 })).toMatchObject({
+      promptTokens: 100,
+      completionTokens: 10,
+      totalTokens: 110,
+      cachedPromptTokens: 40,
+      estimatedCostUsd: 60 * 0.001 + 40 * 0.0002 + 10 * 0.002
+    })
+  })
+
+  test("an adapter declares inclusive raw input accounting", () => {
+    const raw = { input_tokens: 100, output_tokens: 10, total_tokens: 110, cache_read_input_tokens: 40 }
+    const usage = usageFrom(raw, undefined, { provider: "gateway", inputTokensIncludeCache: true })
+    expect(usage).toMatchObject({ promptTokens: 100, completionTokens: 10, totalTokens: 110, cachedPromptTokens: 40 })
+    expect(usage?.providerReports).toEqual([{ provider: "gateway", providerSpecific: raw }])
+    expect(usageFrom({ input_tokens: 60, output_tokens: 10, cache_read_input_tokens: 40 }, undefined, {
+      inputTokensIncludeCache: false
+    })).toMatchObject({ promptTokens: 100, completionTokens: 10, cachedPromptTokens: 40 })
+    expect(usageFrom({ inputTokens: 4, outputTokens: 3, cacheWriteInputTokens: 20 })).not.toHaveProperty("totalTokens")
+    expect(usageFrom(usage)).toMatchObject({ promptTokens: 100, totalTokens: 110, cachedPromptTokens: 40 })
   })
 
   test("costNumber reads the seats a gateway actually writes", () => {
@@ -208,12 +245,12 @@ describe("sumUsage", () => {
 
   test("raw provider metrics survive normalization and aggregation", () => {
     const first = usageFrom(
-      { inputTokens: 10, outputTokens: 2, totalTokens: 12, cacheReadInputTokens: 4 },
+      { inputTokens: 10, outputTokens: 2, totalTokens: 16, cacheReadInputTokens: 4 },
       undefined,
       { provider: "bedrock", model: "m" }
     )!
     const second = usageFrom(
-      { inputTokens: 12, outputTokens: 3, totalTokens: 15, cacheReadInputTokens: 5 },
+      { inputTokens: 12, outputTokens: 3, totalTokens: 20, cacheReadInputTokens: 5 },
       undefined,
       { provider: "bedrock", model: "m" }
     )!
