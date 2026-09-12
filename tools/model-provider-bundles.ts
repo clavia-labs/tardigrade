@@ -78,7 +78,7 @@ const main = async (): Promise<void> => {
         .filter(([, metadata]) => metadata.optional === true)
         .map(([name]) => name)
       if (optionalPeers.length === 0) throw new Error("packed Tardigrade manifest declares no optional provider dependencies")
-      for (const name of optionalPeers) {
+      for (const name of new Set([...optionalPeers, "@aws-sdk/client-bedrock-runtime"])) {
         const path = join(directory, "node_modules", ...name.split("/"))
         if (await exists(path)) throw new Error(`${fixture} installed optional provider dependency ${name}`)
       }

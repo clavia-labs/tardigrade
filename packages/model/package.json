@@ -53,25 +53,26 @@
     "fast-check": "^4.9.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
     "@smithy/fetch-http-handler": "^5.6.3",
-    "@smithy/node-http-handler": "^4.11.2"
+    "@smithy/node-http-handler": "^4.11.2",
+    "@tardie/ai-bedrock": "0.0.1"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
   "peerDependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
     "@smithy/fetch-http-handler": "^5.6.3",
-    "@smithy/node-http-handler": "^4.11.2"
+    "@smithy/node-http-handler": "^4.11.2",
+    "@tardie/ai-bedrock": "0.0.1"
   },
   "peerDependenciesMeta": {
-    "@aws-sdk/client-bedrock-runtime": {
-      "optional": true
-    },
     "@smithy/fetch-http-handler": {
       "optional": true
     },
     "@smithy/node-http-handler": {
+      "optional": true
+    },
+    "@tardie/ai-bedrock": {
       "optional": true
     }
   }

@@ -1,6 +1,6 @@
 import type { ProviderLayer } from "./providers/layer"
 import { protocolOptionsOf } from "./providers/options"
-import type { BedrockModelConfig } from "./providers/bedrock"
+import type { ModelConfig as BedrockModelConfig } from "@tardie/ai-bedrock/BedrockLanguageModel"
 import { requestPolicyOf } from "./inference/request"
 import { Effect, Layer, Redacted, Stream, type Schema } from "effect"
 import { LanguageModel } from "effect/unstable/ai"

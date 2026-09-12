@@ -9,7 +9,7 @@ src/
   host.ts           Model layer assembly
   selection.ts      Model selection and access policy
   catalog/          Discovery, metadata, storage, and pagination
-  providers/        Provider wire formats and Effect response parts
+  providers/        Provider composition, options, and gateway transport
   binding/          Native model assembly and binding exports
   inference/        Request and observer exports
   testing/          Shared provider fixtures
@@ -17,11 +17,11 @@ src/
 
 Tests sit beside the modules they cover. Shared fixtures are excluded from the published package. The export map retains established flat catalog paths.
 
-The package uses `@tardie/ai` and the scoped provider packages. Hosts install upstream `effect@4.0.0-rc.115`. Dynamic tools use native encoded schemas, and the shared provider wrapper supplies deferred validation and response formats.
+The package uses `@tardie/ai` and the scoped provider packages. Bedrock hosts install the optional `@tardie/ai-bedrock` peer; Cloudflare gateway hosts also install the declared Smithy transport peers. Hosts install upstream `effect@4.0.0-rc.115`. Dynamic tools use native encoded schemas, and the shared provider wrapper supplies deferred validation and response formats.
 
 The agent package owns the shared translation in `src/binding/`. Its inference component calls binding functions that use Effect's `LanguageModel` service. Provider assembly and catalog selection stay in this package. Other libraries connect through a bridge that implements `LanguageModel`.
 
-Provider translation tests live under `providers/`. Binding and integration tests live under `binding/`. Request policy and observer tests remain under `inference/`.
+Provider integration tests live under `providers/`. Bedrock wire translation and its tests live in the Effect fork’s `@tardie/ai-bedrock` package. Binding and integration tests live under `binding/`. Request policy and observer tests remain under `inference/`.
 
 ## Request configuration
 

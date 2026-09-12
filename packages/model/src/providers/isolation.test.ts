@@ -10,7 +10,7 @@ for (const entry of ["../host.ts", "./anthropic.ts", "./openai.ts", "./openai-co
     entrypoints: [fileURLToPath(new URL(entry, import.meta.url))],
     target: "browser",
     plugins: [{ name: "reject-unselected-bedrock", setup(build) {
-      build.onResolve({ filter: /^(@aws-sdk|@smithy)\// }, ({ path }) => {
+      build.onResolve({ filter: /^(?:@tardie\/ai-bedrock(?:\/|$)|(?:@aws-sdk|@smithy)\/)/ }, ({ path }) => {
         resolved.push(path)
         throw new Error(`Unselected provider dependency: ${path}`)
       })

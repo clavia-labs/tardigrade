@@ -2,7 +2,7 @@ import { Layer, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { providerLayer, type ProviderOptions } from "../../../../packages/model/src/providers/layer"
 import { inferenceLayer } from "../../../../packages/model/src/binding/index"
-import type { BedrockSend } from "../../../../packages/model/src/providers/bedrock"
+import type { Send as BedrockSend } from "@tardie/ai-bedrock/BedrockLanguageModel"
 import { DEFAULT_LIVE_MAX_OUTPUT_TOKENS, DEFAULT_LIVE_THINKING_TOKENS, DEFAULT_LIVE_TIMEOUT_MS, positive, type ResolvedLiveTarget } from "./config"
 
 const optionsOf = (target: ResolvedLiveTarget): ProviderOptions => {

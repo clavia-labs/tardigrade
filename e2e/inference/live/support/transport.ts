@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { BedrockRuntimeClient, ConverseStreamCommand, type ConverseStreamOutput } from "@aws-sdk/client-bedrock-runtime"
-import type { BedrockSend } from "../../../../packages/model/src/providers/bedrock"
+import type { Send as BedrockSend } from "@tardie/ai-bedrock/BedrockLanguageModel"
 import { registerCleanup } from "../../cleanup"
 import type { ResolvedLiveTarget } from "./config"
 

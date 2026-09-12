@@ -106,6 +106,7 @@
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
+        "@tardie/ai-bedrock": "0.0.1",
         "effect": "4.0.0-rc.115",
         "fast-check": "^4.9.0",
         "tardie": "workspace:*",
@@ -247,17 +248,18 @@
         "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
+        "@tardie/ai-bedrock": "0.0.1",
         "fast-check": "^4.9.0",
       },
       "peerDependencies": {
-        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
+        "@tardie/ai-bedrock": "0.0.1",
       },
       "optionalPeers": [
-        "@aws-sdk/client-bedrock-runtime",
         "@smithy/fetch-http-handler",
         "@smithy/node-http-handler",
+        "@tardie/ai-bedrock",
       ],
     },
     "packages/tardie": {
@@ -906,6 +908,8 @@
     "@tardie/ai": ["@tardie/ai@0.0.2", "", { "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-/aLGpfoVmJ9c1lttMvpJC7876F2og7oA5oZ4xbDrL2LdzJRFyGaZucniqiMcbyXrAmqHduKJnROCXP3NU14xtA=="],
 
     "@tardie/ai-anthropic": ["@tardie/ai-anthropic@4.0.0-rc.113-clavia.1", "", { "dependencies": { "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-jDvZx3rxycSmdJ59wawugah/eWYH+h02ctOR5RbCI9sDy5BcWhkNQY0meLCTV7T9XW50Pg3YRGqMTZjB+aTDMw=="],
+
+    "@tardie/ai-bedrock": ["@tardie/ai-bedrock@0.0.1", "", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0", "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-92EUZ9rKYVjkMUdZo2kcENogZNeJX2KY6cemqjtgs9Ep6488hrN6TeUkYo4UxefrIS6zENA6DvoXPdUNunSLgA=="],
 
     "@tardie/ai-openai": ["@tardie/ai-openai@4.0.0-rc.113-clavia.2", "", { "dependencies": { "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-aw7BT3wLTyiRQ3J3HxxcW/aoY38YKcFrjeuPgnkNbzNDvstPtPhOqooiUP+oJmlimg6+9MDVSHsNncKkQ6d0Ew=="],
 

@@ -5,6 +5,7 @@ The workspace uses upstream Effect and published provider packages from the [Eff
 | Package | Version | Purpose |
 | --- | --- | --- |
 | `effect` | `4.0.0-rc.115` | Upstream Effect runtime |
+| `@tardie/ai-bedrock` | `0.0.1` | AWS Bedrock Converse provider |
 | `@tardie/ai` | `0.0.2` | Shared deferred tool validation and response formats |
 | `@tardie/ai-openai` | `4.0.0-rc.113-clavia.1` | OpenAI Responses provider |
 | `@tardie/ai-anthropic` | `4.0.0-rc.113-clavia.1` | Anthropic provider |

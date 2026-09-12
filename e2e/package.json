@@ -9,7 +9,8 @@
     "effect": "4.0.0-rc.115",
     "fast-check": "^4.9.0",
     "tardie": "workspace:*",
-    "@aws-sdk/client-bedrock-runtime": "^3.1079.0"
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@tardie/ai-bedrock": "0.0.1"
   },
   "scripts": {
     "test": "bun test",
