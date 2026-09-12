@@ -5,7 +5,7 @@ import { Self } from "@clavia/tardigrade-core/runtime"
 import { type ActorInvocationContext } from "@clavia/tardigrade-core/interaction/invocation"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { type ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
-import { InvocationCoordinate, invocationCoordinateOf, invocationCoordinateJsonSchema, invocationLinked, invocationCoordinateKey, invocationResponseId, invocationTerminalOf, invocationResultOf, prepareInvocation, sendInvocation } from "@clavia/tardigrade-core/interaction"
+import { InvocationCoordinate, invocationCoordinateOf, invocationCoordinateJsonSchema, invocationLinked, invocationCoordinateKey, invocationResponseId, invocationTerminalOf, invocationResultOf, invocationTimeoutOf, prepareInvocation, sendInvocation } from "@clavia/tardigrade-core/interaction"
 import { agentMessageMethod } from "../actor/message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
@@ -16,6 +16,7 @@ import { childInvocationRef } from "./agents-compat"
 import { ChildCreated, childCreated, childLineageOf, threadCreatedOf, type ThreadCreated, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { allocateChildCoordinate as allocateChildThread, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { ACTOR_METHOD_NAME_PATTERN, type ActorMethodDeclaration } from "@clavia/tardigrade-core/actor/method"
 import {
   formatThreadAddress,
   type ThreadAddress
@@ -35,6 +36,22 @@ import {
 // DEFAULT_MAX_DEPTH limits delegation to five edges from the root unless configured or inherited (agents.test.ts).
 export const DEFAULT_MAX_DEPTH = 5
 
+export interface ChildInitializationContext {
+  readonly parent: ThreadAddress
+  readonly child: InvocationCoordinate
+  readonly parentInvocation: { readonly method: string; readonly id: string; readonly epoch: number }
+  readonly callId: string
+  readonly text: string
+  readonly parentInput?: unknown
+}
+
+export interface ChildInitializer {
+  readonly methodName: string
+  readonly method: ActorMethodDeclaration
+  readonly invocationId?: (context: ChildInitializationContext) => string
+  readonly input: (context: ChildInitializationContext) => unknown | Promise<unknown>
+}
+
 // SpawnOptions configures child budgets, model access, output contracts, and inherited metadata.
 export interface SpawnOptions {
   // maxDepth sets the deepest permitted child depth, with the root at zero (e2e/actor/mortyplicity.test.ts). An inherited ceiling can only be tightened; omission uses the inherited ceiling or DEFAULT_MAX_DEPTH.
@@ -51,6 +68,8 @@ export interface SpawnOptions {
   readonly shadowOf?: () => boolean
   // worldOf supplies the world label forwarded to child briefs.
   readonly worldOf?: () => string | undefined
+  // initializeChild gates first child delivery on one durable initializer invocation; replay before the initializer responds redelivers that same invocation instead of a second one (agents.test.ts, "a child initializer settles before the first child message is delivered").
+  readonly initializeChild?: ChildInitializer
   readonly budget?: Partial<BudgetPolicy>
 }
 
@@ -226,6 +245,11 @@ const parentRunOf = (call: Event): { readonly turn: string; readonly epoch: numb
   return turn === undefined ? undefined : { turn, epoch: eventEpochOf(call) }
 }
 
+const messageInputOf = (event: Event, id: string): unknown =>
+  event.type === "MessageReceived" && "id" in event && String(event.id) === id && "input" in event
+    ? event.input
+    : undefined
+
 // childClaimOf scopes a child to its parent turn and call, preserving recorded addresses on replay (agents.test.ts).
 const childClaimOf = (
   events: ReadonlyArray<Event>,
@@ -308,6 +332,10 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
   if (maxDepth !== undefined && (!Number.isSafeInteger(maxDepth) || maxDepth < 0)) {
     throw new Error("agentsPackage maxDepth must be a non-negative safe integer")
   }
+  const initializeChild = options.initializeChild
+  if (initializeChild !== undefined && !ACTOR_METHOD_NAME_PATTERN.test(initializeChild.methodName)) {
+    throw new Error(`agentsPackage initializeChild methodName must match ${String(ACTOR_METHOD_NAME_PATTERN)}`)
+  }
   const actorNameOf = options.actorNameOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
   const shadowOf = options.shadowOf ?? (() => false)
@@ -328,6 +356,8 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
     }
   }
   const declared_ = Object.keys(outputs)
+  // backgroundWhen qualifies the run docs for a configured initializer, which a background run waits out before returning its handle.
+  const backgroundWhen = initializeChild === undefined ? "at once" : "once this host's child initializer settles"
   return definePackage({
     name: "agents",
     description: "Search known providers and available models, and run ad-hoc agents. providers() lists provider configuration requirements and availability. models() lists models from available providers with metadata and pricing; use provider to limit the search and sort to order a pricing field. run({text}) starts a fresh agent with the brief and waits for its terminal answer; add background: true for a long job, and result({handle}) awaits the reply later. An escalatable child negotiates budget with its parent's requestBudget method while run remains pending.",
@@ -362,13 +392,13 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
         output: modelPageSchema
       },
       run: {
-        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` selects one configured provider and model for this child. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { handle, callId } at once; result({handle}) awaits that exact invocation later. \`escalatable: true\` lets the child call its parent's requestBudget method at the cap while this run remains pending for one terminal answer.`,
+        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` selects one configured provider and model for this child. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { handle, callId } ${backgroundWhen}; result({handle}) awaits that exact invocation later. \`escalatable: true\` lets the child call its parent's requestBudget method at the cap while this run remains pending for one terminal answer.`,
         input: {
           type: "object",
           properties: {
             text: { type: "string", description: "the brief" },
             name: { type: "string", minLength: 1, description: "optional child thread name, unique within this actor instance; omitted names are generated by the host" },
-            background: { type: "boolean", description: "true: return { handle, callId } at once; await the invocation with result({handle})" },
+            background: { type: "boolean", description: `true: return { handle, callId } ${backgroundWhen}; await the invocation with result({handle})` },
             output: { description: "a declared contract's name, or a JSON schema for a structured answer" },
             model: {
               type: "object",
@@ -522,6 +552,71 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
               context.invocation.id === owner.id &&
               context.invocation.epoch === owner.epoch
           }) as ({ readonly call?: ActorInvocationContext } & Event) | undefined
+          if (initializeChild !== undefined) {
+            const parentInput = events.map((event) => messageInputOf(event, parentRun.turn))
+              .find((input) => input !== undefined)
+            const initializationContext: ChildInitializationContext = {
+              parent: source,
+              child: reference,
+              parentInvocation: owner,
+              callId: ctx.callId,
+              text,
+              ...(parentInput === undefined ? {} : { parentInput })
+            }
+            const initialization = invocationCoordinateOf(target, {
+              method: initializeChild.methodName,
+              id: initializeChild.invocationId?.(initializationContext) ?? `initialize:${ctx.callId}`,
+              epoch: 0
+            })
+            const terminal = invocationTerminalOf(events, initialization)
+            if (terminal === undefined) {
+              const input = yield* Effect.promise(() => Promise.resolve(initializeChild.input(initializationContext)))
+              const at = yield* Clock.currentTimeMillis
+              // the initializer deadline is bounded by its declared method timeout and any parent deadline, so a parked run cannot outlive either (agents.test.ts, "an initializer deadline is bounded by its method timeout and the parent's deadline").
+              const own = at + invocationTimeoutOf(initializeChild.method)
+              if (!Number.isSafeInteger(own)) throw new Error("initializer deadlineAt must be a safe integer")
+              const inherited = parentDeadline?.call?.deadlineAt
+              const context: ActorInvocationContext = {
+                invocation: initialization.invocation,
+                parent: owner,
+                deadlineAt: inherited === undefined ? own : Math.min(own, inherited)
+              }
+              const prepared = prepareInvocation({
+                reference: initialization,
+                method: initializeChild.method,
+                context,
+                input,
+                at
+              })
+              const records: Event[] = recordedChild === undefined
+                ? [childCreated(ctx.callId, target, lineage, at, parentRun.turn, reference.invocation)]
+                : []
+              records.push(invocationLinked({
+                parent: owner,
+                owner: operation._tag === "Some" ? operation.value : { type: "invocation", ref: owner },
+                child: context,
+                target: formatThreadAddress(target),
+                lineage,
+                at
+              }))
+              yield* log.append(records)
+              yield* sendInvocation({
+                target,
+                context,
+                lineage,
+                event: { ...prepared.event, from: self, at }
+              })
+              return yield* new Park({ callId: ctx.callId, awaiting: invocationResponseId(initialization) })
+            }
+            const state = invocationResultOf(terminal, initializeChild.method.output)
+            if (state.status === "failed") return { error: state.error.replace(/^error: /, "") }
+            if (state.status === "cancelled") {
+              return { error: state.reason === undefined ? "child initialization cancelled" : `child initialization cancelled: ${state.reason}` }
+            }
+            if (state.status !== "completed") {
+              return yield* Effect.die(new Error(`child initializer ${initializeChild.methodName} returned a pending terminal`))
+            }
+          }
           const childContext: ActorInvocationContext = {
             invocation: reference.invocation,
             ...(parent === undefined ? {} : { parent }),
