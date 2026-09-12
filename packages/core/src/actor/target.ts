@@ -14,6 +14,7 @@ type ThreadLocation = {
 }
 
 const declarations = Symbol.for("tardigrade/thread-methods")
+const creationParents = new WeakMap<object, ThreadCoordinate>()
 
 type DeclaredTarget<Methods extends ActorMethods> = ThreadLocation & { readonly methods: Methods }
 
@@ -21,6 +22,7 @@ type DeclaredTarget<Methods extends ActorMethods> = ThreadLocation & { readonly 
 export type ThreadTarget<Methods extends ActorMethods = ActorMethods> = ThreadLocation & (
   { readonly methods: Methods } | { readonly [declarations]: Methods }
 )
+
 
 // targetMethods retrieves declarations for runtime planning and contract validation (reference.test.ts).
 export const targetMethods = <Methods extends ActorMethods>(target: ThreadTarget<Methods>): Methods =>
@@ -40,15 +42,19 @@ export type CallableThread<Methods extends ActorMethods, Calls> = {
 } & MethodAliases<Calls>
 
 // callableThread groups calls under methods and keeps nonconflicting direct aliases (reference.test.ts).
-export const callableThread = <Methods extends ActorMethods, Calls extends Readonly<Record<string, unknown>>>(coordinate: ThreadCoordinate, methods: Methods, calls: Calls): CallableThread<Methods, Calls> => {
+export const callableThread = <Methods extends ActorMethods, Calls extends Readonly<Record<string, unknown>>>(coordinate: ThreadCoordinate, methods: Methods, calls: Calls, creationParent?: ThreadCoordinate): CallableThread<Methods, Calls> => {
   const reference = { coordinate, address: coordinate, methods: calls }
   Object.defineProperty(reference, declarations, { value: methods })
+  if (creationParent !== undefined) creationParents.set(reference, creationParent)
   for (const [name, call] of Object.entries(calls)) {
     if (name === "then" || Object.hasOwn(reference, name)) continue
     Object.defineProperty(reference, name, { value: call })
   }
   return reference as CallableThread<Methods, Calls>
 }
+
+export const targetCreationParent = (target: ThreadTarget): ThreadCoordinate | undefined =>
+  creationParents.get(target)
 
 // targetCoordinate resolves either spelling and rejects conflicting coordinates (reference.test.ts).
 export const targetCoordinate = (target: ThreadTarget): ThreadCoordinate => {
@@ -75,4 +81,3 @@ export const threadTarget = <Methods extends ActorMethods>(
   const coordinate = threadCoordinateOf(actorCoordinateOf(actor.name, instance), thread)
   return { coordinate, address: coordinate, methods: actor.methods }
 }
-

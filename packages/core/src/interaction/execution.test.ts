@@ -9,6 +9,7 @@ import { EventLog, withWatermark } from "../log"
 import { Router } from "../transport/router"
 import { Self } from "../runtime/context"
 import { InvocationScope, InvocationFailed, InvocationCancelled } from "./execution"
+import { actorOperations } from "./execution"
 import { ThreadAllocator } from "../actor/allocation"
 import { formatThreadAddress } from "../transport/endpoint"
 import type { Event } from "../event"
@@ -19,7 +20,7 @@ const research = legacyActorMethod({
   state: () => ({ status: "pending" })
 })
 const count = legacyActorMethod({
-  input: Schema.Struct({ items: Schema.Array(Schema.String) }), output: Schema.Int,
+  input: Schema.Struct({ items: Schema.Array(Schema.String) }), output: Schema.FiniteFromString,
   event: ({ invocation, input, at }): Event => ({ type: "CountRequested", id: invocation.id, items: input.items, at }),
   state: () => ({ status: "pending" })
 })
@@ -77,6 +78,31 @@ test("completed, failed, and cancelled replies retain their typed outcomes", asy
   expect(await run({ status: "failed", error: "no energy" })).toBeInstanceOf(InvocationFailed)
   expect(await run({ status: "cancelled", cause: "requested" })).toBeInstanceOf(InvocationCancelled)
   expect(await run({ status: "completed", output: 123 })).toBeInstanceOf(InvocationFailed)
+})
+
+test("invoke and split operations decode transformed outputs once", async () => {
+  const options = { parent, key: "count", target: reference, method: "count" as const, input: { items: ["a", "b", "c"] } }
+  const call = actorCall([], options)
+  const planning = call.transitions[0]!
+  if (planning.kind !== "intent") throw new Error("expected plan")
+  const events: Event[] = [...planning.events(planning.input, 0), {
+    type: "ResponseReceived", reference: call.reference, id: "reply", from: formatThreadAddress(reference.coordinate),
+    method: "count", call: call.id, epoch: 0, at: 1, status: "completed", output: "3"
+  }]
+  const layer = Layer.mergeAll(
+    Layer.succeed(InvocationScope, { context: { invocation: parent.invocation }, signal: new AbortController().signal }),
+    Layer.succeed(Self, parent.target),
+    Layer.succeed(EventLog, withWatermark({ read: Effect.succeed(events), append: () => Effect.die("unexpected append") })),
+    Layer.succeed(Router, { send: () => Effect.die("unexpected redispatch") })
+  )
+  const invoked = await Effect.runPromise(reference.methods.count({ items: ["a", "b", "c"] }, { key: "count" }).pipe(Effect.provide(layer)))
+  const split = await Effect.runPromise(Effect.gen(function* () {
+    const operations = actorOperations(reference, "count")
+    const handle = yield* operations.start({ input: { items: ["a", "b", "c"] }, options: { key: "count" } })
+    return yield* operations.await(handle)
+  }).pipe(Effect.provide(layer)))
+  expect(invoked).toBe(3)
+  expect(split).toBe(3)
 })
 
 test("method namespaces preserve metadata and promise assimilation", async () => {

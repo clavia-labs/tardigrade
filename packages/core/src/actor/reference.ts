@@ -26,5 +26,5 @@ export const bindThreadMethods = <Methods extends ActorMethods>(reference: Threa
     calls[name] = (input: ActorMethodInput<Methods[typeof name]>, options: InvocationOptions) =>
       invokeMethod(reference, name as Extract<keyof Methods, string>, input, options, creationParent)
   }
-  return callableThread(coordinate, methods, calls) as ThreadRef<Methods>
+  return callableThread(coordinate, methods, calls, creationParent) as ThreadRef<Methods>
 }
