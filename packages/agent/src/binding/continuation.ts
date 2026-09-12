@@ -9,7 +9,7 @@ export interface ReplayIdentity {
 }
 
 export const replayOf = (continuation: ProviderContinuation | undefined, identity: ReplayIdentity): { readonly messages?: ReadonlyArray<Prompt.Message>; readonly reasoning: ReadonlyArray<string> } => {
-  if (continuation?.format !== "effect-prompt") return { reasoning: [] }
+  if (continuation === undefined) return { reasoning: [] }
   const native = Schema.decodeSync(Prompt.Prompt)(continuation.payload).content
   if (continuation.provider === identity.provider && continuation.protocol === identity.protocol && continuation.model === identity.model) return { messages: native, reasoning: [] }
   return { reasoning: native.flatMap((entry) => entry.role === "assistant"

@@ -89,7 +89,8 @@ for (const provider of ["openai", "anthropic"] as const) {
     }
     expect(history[responseIndex]?.usage).toMatchObject({ inputTokens: { total: 10 }, outputTokens: { total: 5 } })
     expect(history.filter((event) => event.type === "ToolCalled" || event.type === "ToolReturned").every((event) => event.usage === undefined)).toBe(true)
-    expect(history[responseIndex]?.continuation).toMatchObject({ format: "effect-prompt" })
+    expect(history[responseIndex]?.continuation).toHaveProperty("payload.content")
+    expect(history[responseIndex]?.continuation).not.toHaveProperty("format")
     expect(JSON.stringify(requests[1])).toContain(provider === "openai" ? "opaque-b" : "opaque")
     expect(JSON.stringify(requests[1])).toContain("Expected string")
     if (provider === "anthropic") expect(JSON.stringify(requests[1])).toContain('"is_error":true')

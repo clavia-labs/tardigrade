@@ -81,7 +81,7 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
         ...modeEvidence,
         endpoint,
         ...evidence,
-        continuation: { format: "effect-prompt" as const, protocol, provider: providerId, model: endpoint.model, endpoint: options.endpoint, payload: response.continuation },
+        continuation: { protocol, provider: providerId, model: endpoint.model, endpoint: options.endpoint, payload: response.continuation },
       }
       return yield* actionOf(response.parts, served, 1)
     }).pipe(

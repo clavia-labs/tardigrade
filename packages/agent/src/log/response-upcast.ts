@@ -2,7 +2,6 @@ import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { ModelUsage } from "../inference/response"
 import { modelErrorOf } from "../inference/error"
-import { continuationOf } from "../inference/continuation"
 
 const record = (value: unknown): Record<string, unknown> => typeof value === "object" && value !== null ? value as Record<string, unknown> : {}
 
@@ -27,8 +26,6 @@ export const upcastUsage = (value: unknown): ModelUsage => {
 // upcastResponse retains historical accounting and metadata beside the current response view (inference/response.test.ts).
 export const upcastResponse = (event: Event): Event => {
   if (event.type !== "ModelReturned") return event
-  const continuation = continuationOf(event.continuation)
-  if (continuation !== undefined && continuation !== event.continuation) event = { ...event, continuation }
   if (event.error !== undefined && modelErrorOf(event.error) === undefined) {
     const { error, ...rest } = event
     event = { ...rest, legacyError: event.legacyError ?? error } as Event

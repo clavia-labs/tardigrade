@@ -10,7 +10,7 @@ const history = (hidden: "repaired" | "failed" | "unreferenced", size: number): 
   { type: "TurnCompleted", turn: "before", output: "Okay", at: 1 },
   { type: "MessageReceived", id: "turn", text: "Answer", at: 2 },
   { type: "ModelReturned", callId: "attempt", ordinal: 0, turn: "turn", outcome: hidden === "failed" ? "failed" : "returned", usage: {}, continuation: {
-    format: "effect-prompt", protocol: "openai-responses", provider: "fixture", model: "fixture", endpoint: "https://fixture.invalid",
+    protocol: "openai-responses", provider: "fixture", model: "fixture", endpoint: "https://fixture.invalid",
     payload: [{ role: "assistant", content: [{ type: "text", text: "x".repeat(size) }] }]
   }, at: 3 },
   ...(hidden === "repaired" ? [{ type: "OutputRejected", attempt: "attempt", turn: "turn", text: "invalid", errors: ["wrong"], mode: { kind: "repair", name: "repair", attempts: 2, projectHistory: true }, at: 4 }] : []),
