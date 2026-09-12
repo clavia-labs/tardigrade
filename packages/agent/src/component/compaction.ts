@@ -1,5 +1,6 @@
 import { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, type ContextPolicy, type CompactionPolicy } from "./context"
 export { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, suffixOf, DEFAULT_COMPACTION_POLICY, type ContextPolicy, type ContextWindowTokens, type CompactionPolicy } from "./context"
+import { replayOf } from "../binding/continuation"
 import { renderMessageEntries } from "../projection/messages"
 import { upcastError } from "../log/upcast"
 import { hasUnansweredToolCall, responsesOf } from "../log/response"
@@ -52,8 +53,9 @@ import type { AgentComponent } from "../runtime/composition"
 // selectedModelOf returns the open turn's explicit selection or the latest model actually called.
 const selectedModelOf = (log: ReadonlyArray<Event>): ModelRef | undefined => {
   const open = turnView(log)
-  if (open.length > 0) return modelRefOf((open[0] as { readonly model?: unknown }).model)
-  const called = [...log].reverse().find((event) => event.type === "ModelCalled") as { readonly model?: unknown } | undefined
+  const requested = open.length > 0 ? modelRefOf((open[0] as { readonly model?: unknown }).model) : undefined
+  if (requested !== undefined) return requested
+  const called = (open.length > 0 ? open : log).findLast((event) => event.type === "ModelCalled") as { readonly model?: unknown } | undefined
   return modelRefOf(called?.model)
 }
 
@@ -62,27 +64,29 @@ const contextPolicyFrom = (
   policy: Partial<CompactionPolicy>
 ): ContextPolicy => contextPolicyOf(policy, selectedModelOf(log))
 
-// renderedWeights measures projected messages at their owning events (compaction.properties.test.ts).
-const renderedWeights = (events: ReadonlyArray<Event>, policy: ContextPolicy): ReadonlyMap<Event, number> => {
+// renderedWeights measures projected messages at their owning events; an unresolved protocol conservatively retains native state (compaction.properties.test.ts).
+const renderedWeights = (events: ReadonlyArray<Event>, policy: ContextPolicy, model: ModelRef | undefined): ReadonlyMap<Event, number> => {
   const weights = new Map<Event, number>()
   for (const { event, message } of renderMessageEntries(events, policy)) {
-    const chars = message.continuation === undefined
-      ? (message.content?.length ?? 0) + (message.toolCalls ?? []).reduce((sum, call) => sum + call.arguments.length, 0)
-      : JSON.stringify(message.continuation.payload).length
+    const continuation = message.continuation
+    const replay = continuation === undefined ? undefined : replayOf(continuation, model === undefined ? continuation : { ...continuation, provider: model.provider, model: model.model_id })
+    const chars = replay?.messages === undefined
+      ? (message.content?.length ?? 0) + (message.toolCalls ?? []).reduce((sum, call) => sum + call.arguments.length, 0) + (replay?.reasoning ?? []).reduce((sum, text) => sum + text.length, 0)
+      : JSON.stringify(continuation!.payload).length
     weights.set(event, (weights.get(event) ?? 0) + chars)
   }
   return weights
 }
 
 // estimateTokens estimates projected context as characters over four (compaction.properties.test.ts).
-export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}): number =>
-  Math.ceil([...renderedWeights(events, resolvedContextPolicyOf(policy)).values()].reduce((sum, weight) => sum + weight, 0) / 4)
+export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}, model = selectedModelOf(events)): number =>
+  Math.ceil([...renderedWeights(events, resolvedContextPolicyOf(policy), model).values()].reduce((sum, weight) => sum + weight, 0) / 4)
 
 // overContext reports whether the suffix has passed FIRE tokens. It is pure and total over the
 // log, so the fire decision re-folds identically on replay: it reads only the log, no clock and
 // no random source.
-const overContext = (log: ReadonlyArray<Event>, policy: ContextPolicy): boolean =>
-  estimateTokens(log, policy) > policy.fireTokens
+const overContext = (log: ReadonlyArray<Event>, policy: ContextPolicy, model: ModelRef | undefined): boolean =>
+  estimateTokens(log, policy, model) > policy.fireTokens
 
 // atRoundBoundary gates the guard: a pass may land whenever the open turn awaits no tool call,
 // between turns included. A checkpoint landing mid-round would cut a call from the return the
@@ -109,13 +113,14 @@ const boundaryIdOf = (e: Event, served: ReadonlySet<string>, firstCalls: Readonl
 const cutOf = (
   log: ReadonlyArray<Event>,
   policy: ContextPolicy,
-  knownServed?: ReadonlySet<string>
+  knownServed?: ReadonlySet<string>,
+  model = selectedModelOf(log)
 ): { readonly keepFrom: string; readonly index: number; readonly priorIndex: number } | undefined => {
   const responses = responsesOf(log)
   const firstCalls = responses.firstCalls
   const priorIndex = keepFromIndex(log, checkpointOf(log).keepFrom, responses)
   const served = knownServed ?? new Set(log.map(turnOf).filter((t): t is string => t !== undefined))
-  const weights = renderedWeights(log, policy)
+  const weights = renderedWeights(log, policy, model)
   let chars = 0
   let raw = priorIndex
   for (let i = log.length - 1; i >= priorIndex; i--) {
@@ -266,8 +271,8 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Compl
   // model reads. A corrected exchange the render hides can neither trigger a paid pass nor leak
   // its rejected reply into a summary (src/projection/transcript.ts, projectedOutput).
   const view = projectedOutput(log)
-  if (!(firedUncovered(view) || (overContext(view, resolved) && atRoundBoundary(view)))) return []
-  const cut = cutOf(view, resolved)
+  if (!(firedUncovered(view) || (overContext(view, resolved, selectedModelOf(log)) && atRoundBoundary(view)))) return []
+  const cut = cutOf(view, resolved, undefined, selectedModelOf(log))
   if (cut === undefined) return []
   const prior = checkpointOf(view)
   const span = view.slice(cut.priorIndex, cut.index)
@@ -332,12 +337,12 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
       ...(model === undefined ? {} : { lastModel: model })
     }
   }
-  const transitions = (state: State, resolved: ContextPolicy, model: ModelRef | undefined) => {
+  const transitions = (state: State, resolved: ContextPolicy, model: ModelRef | undefined, selected: ModelRef | undefined) => {
     const transcriptOutput = transcript.output(state.transcript)
-    const overFireLine = estimateTokens(transcriptOutput.events, resolved) > resolved.fireTokens
+    const overFireLine = estimateTokens(transcriptOutput.events, resolved, selected) > resolved.fireTokens
     if (!(state.fires > state.passes || (overFireLine && atRoundBoundary(turnViewFrom(state.turns))))) return []
     const suffix = transcriptOutput.events
-    const cut = cutOf(suffix, resolved, new Set(state.served))
+    const cut = cutOf(suffix, resolved, new Set(state.served), selected)
     if (cut === undefined) return []
     const prior = checkpointOf(suffix)
     const span = suffix.slice(cut.priorIndex, cut.index)
@@ -349,9 +354,8 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
     step: reduce,
     output: (state) => {
       const open = turnViewFrom(state.turns)
-      const model = policy.model ?? (open.length > 0
-        ? modelRefOf((open[0] as { readonly model?: unknown }).model)
-        : state.lastModel)
+      const selected = open.length > 0 ? selectedModelOf(open) : state.lastModel
+      const model = policy.model ?? selected
       const resolved = contextPolicyOf(policy, model)
       return {
         view: {
@@ -360,7 +364,7 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
           context: [{ component: "compaction", policy: resolved }],
           output: []
         },
-        transitions: transitions(state, resolved, model)
+        transitions: transitions(state, resolved, model, selected)
       }
     }
   })

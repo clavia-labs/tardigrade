@@ -5,6 +5,7 @@ import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 import { RetrySchedule, retryDelayOf } from "./retry"
 import { LanguageModel } from "effect/unstable/ai"
 import { react } from "../binding/index"
+import { unknownModelError } from "./error"
 import { BindingSettings, ModelSelection } from "../binding/settings"
 import { Cause, Clock, Effect, Random, Schema } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
@@ -195,11 +196,6 @@ const consequencesOf = (action: Action, ctx: Consequence): ReadonlyArray<Event> 
     { type: "ToolCalled", ...call, ...stamp, responseId: ctx.attempt },
     ...(validationError === undefined ? [] : [{ type: "ToolReturned", callId: call.callId, result: { error: validationError }, isFailure: true, ...stamp }])
   ])
-}
-
-const failureMessage = (cause: Cause.Cause<never>): string => {
-  const error = Cause.squash(cause)
-  return error instanceof Error ? error.message : String(error)
 }
 
 // diedAttempts counts the `ModelCalled` marks at the end of the turn's slice, with nothing after
@@ -462,7 +458,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
                   ? Effect.failCause(cause)
                   : Effect.succeed<Action>({
                       kind: "fail",
-                      error: failureMessage(cause),
+                      error: unknownModelError(Cause.squash(cause)),
                       failure: { cause: "inference_error", attempts: 1 }
                     })
               ),

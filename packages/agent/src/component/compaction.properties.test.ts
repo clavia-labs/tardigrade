@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test"
 import * as fc from "fast-check"
+import { Schema } from "effect"
+import { Prompt } from "effect/unstable/ai"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { historyOf } from "../binding/prompt"
 import { renderMessages } from "../projection/messages"
 import { compaction, compactionReactor, estimateTokens } from "./compaction"
 
@@ -11,7 +14,7 @@ const history = (hidden: "repaired" | "failed" | "unreferenced", size: number): 
   { type: "MessageReceived", id: "turn", text: "Answer", at: 2 },
   { type: "ModelReturned", callId: "attempt", ordinal: 0, turn: "turn", outcome: hidden === "failed" ? "failed" : "returned", usage: {}, continuation: {
     protocol: "openai-responses", provider: "fixture", model: "fixture", endpoint: "https://fixture.invalid",
-    payload: [{ role: "assistant", content: [{ type: "text", text: "x".repeat(size) }] }]
+    payload: Schema.encodeSync(Prompt.Prompt)(Prompt.make([Prompt.assistantMessage({ content: [Prompt.makePart("text", { text: "x".repeat(size) })] })]))
   }, at: 3 },
   ...(hidden === "repaired" ? [{ type: "OutputRejected", attempt: "attempt", turn: "turn", text: "invalid", errors: ["wrong"], mode: { kind: "repair", name: "repair", attempts: 2, projectHistory: true }, at: 4 }] : []),
   hidden === "failed" ? { type: "TurnFailed", turn: "turn", error: { message: "failed" }, at: 5 } : { type: "TurnCompleted", turn: "turn", attemptKey: "other", output: "Okay", at: 5 }
@@ -81,4 +84,36 @@ test("KEEP rounds the cumulative rendered size", () => {
   )
   expect(estimateTokens(events.slice(keptAt))).toBeLessThanOrEqual(50)
   expect(estimateTokens(events.slice(keptAt - 1))).toBeGreaterThan(50)
+})
+
+for (const change of ["model", "provider"] as const) test(`${change} switches exclude opaque state from both the prompt and compaction`, () => {
+  fc.assert(fc.property(fc.integer({ min: 1000, max: 10000 }), fc.boolean(), (size, resolved) => {
+    const target = { provider: change === "provider" ? "other" : "fixture", model_id: change === "model" ? "other" : "fixture" }
+    const events = (length: number): Event[] => {
+      const log = history("unreferenced", 0)
+      log[3] = { ...log[3]!, continuation: {
+        protocol: "openai-responses", provider: "fixture", model: "fixture", endpoint: "https://fixture.invalid",
+        payload: Schema.encodeSync(Prompt.Prompt)(Prompt.make([Prompt.assistantMessage({ content: [
+          Prompt.makePart("reasoning", { text: "Think", options: { openai: { encryptedContent: "x".repeat(length) } } }),
+          Prompt.makePart("text", { text: "Okay" })
+        ] })]))
+      } }
+      log[log.length - 1] = { ...log.at(-1)!, attemptKey: "attempt" }
+      log.push({ type: "MessageReceived", id: "next", text: "Continue", ...(resolved ? {} : { model: target }), at: 6 })
+      if (resolved) log.push({ type: "ModelCalled", callId: "next-attempt", ordinal: 0, turn: "next", model: target, at: 7 })
+      return log
+    }
+    const small = events(0)
+    const large = events(size)
+    const identity = { provider: target.provider, model: target.model_id, protocol: "openai-responses" }
+    expect(historyOf(renderMessages(large), identity)).toEqual(historyOf(renderMessages(small), identity))
+    expect(estimateTokens(large)).toBe(estimateTokens(small))
+    const original = { provider: "fixture", model_id: "fixture" }
+    expect(estimateTokens(large, {}, original)).toBeGreaterThan(estimateTokens(small, {}, original) + 200)
+    const policy = { contextWindowTokens: 100 }
+    const machine = compaction(policy).machine
+    const keys = (log: Event[]) => machine.output(log.reduce((state, event, i) => machine.step(state, eventAt(event, i + 1)), machine.initial())).transitions.map((transition) => transition.key)
+    expect(keys(large)).toEqual(keys(small))
+    expect(keys(large)).toEqual(compactionReactor(policy)(large).map((transition) => transition.key))
+  }))
 })

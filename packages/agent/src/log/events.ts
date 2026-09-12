@@ -1,5 +1,5 @@
 import { RetrySchedule } from "../inference/retry"
-import { ModelError, encodeModelError } from "../inference/error"
+import { ModelError, encodeModelError, unknownModelError } from "../inference/error"
 import { AiError } from "effect/unstable/ai"
 import { upcastUsage } from "./response-upcast"
 import { Schema } from "effect"
@@ -553,9 +553,7 @@ export const modelReturned = (
     readonly reportedCostUsd?: number
   } & EpochStamp
 ): Event => ({ type: "ModelReturned", ...fields, usage: upcastUsage(fields.usage),
-  ...(fields.error === undefined ? {} : AiError.isAiError(fields.error)
-    ? { error: encodeModelError(fields.error) }
-    : { error: undefined, legacyError: fields.error }),
+  ...(fields.error === undefined ? {} : { error: encodeModelError(unknownModelError(fields.error)) }),
   ...(!Schema.is(ModelUsage)(fields.usage) && Object.keys(fields.usage ?? {}).length > 0 ? { legacyUsage: fields.usage } : {})
 }) as Event
 

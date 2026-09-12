@@ -13,3 +13,13 @@ test("native retry delay survives the ModelReturned JSON boundary", () => {
   expect(Duration.toMillis(decoded.retryAfter!)).toBe(2000)
   expect(stored.error).not.toHaveProperty("message")
 })
+
+test("new unclassified failures use structured error evidence", () => {
+  for (const error of ["unexpected failure", { message: "unexpected failure" }]) {
+    const stored = modelReturned({ callId: "a", ordinal: 0, turn: "t", outcome: "failed", usage: {}, error, at: 1 })
+    const event = Schema.decodeUnknownSync(ModelReturned)(JSON.parse(JSON.stringify(stored)))
+    const decoded = modelErrorOf(event.error)
+    expect(decoded?.reason).toMatchObject({ _tag: "UnknownError", description: "unexpected failure" })
+    expect(event.legacyError).toBeUndefined()
+  }
+})

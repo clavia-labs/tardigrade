@@ -1,11 +1,9 @@
-import type { ProviderLayer } from "./providers/layer"
+import { failedProviderLayer, type ProviderLayer } from "./providers/layer"
 import { protocolOptionsOf } from "./providers/options"
 import { MODEL_PROTOCOLS } from "./providers/directory"
 import type { ModelConfig as BedrockModelConfig } from "@tardie/ai-bedrock/BedrockLanguageModel"
 import { requestPolicyOf } from "./inference/request"
-import { Effect, Layer, Redacted, Stream, type Schema } from "effect"
-import { LanguageModel } from "effect/unstable/ai"
-import { unknownModelError } from "@clavia/tardigrade-agent/inference/error"
+import { Layer, Redacted, type Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { type InferenceObserver } from "@clavia/tardigrade-agent"
 import type { OpenAiLanguageModel } from "@tardie/ai-openai"
@@ -73,10 +71,7 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
       , options.providerLayer
     ).pipe(Layer.provide(FetchHttpClient.layer))
   } catch (error) {
-    return Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
-      generateText: () => Effect.fail(unknownModelError(error)),
-      streamText: () => Stream.fail(unknownModelError(error))
-    }))
+    return failedProviderLayer(error)
   }
 }, MODEL_PROTOCOLS)
 

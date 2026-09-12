@@ -520,7 +520,10 @@ describe("an assembled agent", () => {
     }, components)
 
     const failed = await mind.run("read the contract")
-    expect(failed).toMatchObject({ turn: "run-0", error: "provider connection ended" })
+    expect(failed).toMatchObject({ turn: "run-0", error: "Tardigrade.inference: provider connection ended" })
+    const stored = mind.host.read(ROOT_THREAD).find((event) => event.type === "ModelReturned" && event.outcome === "failed")
+    expect(stored).toMatchObject({ error: { reason: { _tag: "UnknownError", description: "provider connection ended" } } })
+    expect(stored?.legacyError).toBeUndefined()
 
     const completed = await mind.resume(failed.turn)
     expect(completed).toEqual({ turn: "run-0", output: "contents" })
@@ -532,7 +535,7 @@ describe("an assembled agent", () => {
     expect(log.filter((event) => event.type === "TurnFailed")).toEqual([
       expect.objectContaining({
         turn: "run-0",
-        error: { message: "provider connection ended" },
+        error: { message: "Tardigrade.inference: provider connection ended", code: "UnknownError", isRetryable: false },
         cause: "inference_error",
         attempts: 1,
         attemptKey: "run-0/infer/1"

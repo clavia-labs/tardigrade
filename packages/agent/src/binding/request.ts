@@ -23,6 +23,7 @@ export const requestPolicyOf = (options: RequestOptions): RequestPolicy => {
     }
   }
   for (const [name, value] of Object.entries(policy.timeout)) {
+    if (name === "attemptMs" && value === undefined) continue
     if (value === undefined || !Number.isFinite(value) || value <= 0 || value > MAX_TIMER_DELAY_MS) throw new Error(`timeout ${name} must be positive and no greater than ${MAX_TIMER_DELAY_MS}`)
   }
   for (const value of [...policy.retry.backoffMs, policy.retry.maxRetryAfterMs, policy.retry.retryAfterJitterMs]) {

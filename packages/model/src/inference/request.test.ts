@@ -67,3 +67,9 @@ test("active streams have no default total deadline", async () => {
   }).pipe(Effect.provide(TestClock.layer())))
   expect(result).toEqual([0, 1, 2, 3, 4, 5, 6])
 })
+
+test("an absent optional attempt deadline matches omission", () => {
+  expect(requestPolicyOf({ timeout: { firstChunkMs: 5000, idleMs: 5000, attemptMs: undefined } }))
+    .toEqual(requestPolicyOf({ timeout: { firstChunkMs: 5000, idleMs: 5000 } }))
+  for (const attemptMs of [0, -1, Infinity, NaN]) expect(() => requestPolicyOf({ timeout: { attemptMs } })).toThrow()
+})
