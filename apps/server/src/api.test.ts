@@ -717,6 +717,21 @@ describe("events", () => {
   })
 })
 
+describe("facts", () => {
+  test("native message subjects resolve without scanning and missing subjects stay missing", async () => {
+    const result = await serving(async (base) => {
+      await birth(base, "alpha", { id: "m1", text: "hello" })
+      const batch = await post(base, "/v1/actors/main/threads/alpha/facts", {
+        subjects: ["msg:missing", "msg:m1", "msg:m1"]
+      })
+      return { status: batch.status, body: await batch.json() as ReadonlyArray<EventRow> }
+    })
+    expect(result.status).toBe(200)
+    expect(result.body).toHaveLength(1)
+    expect(result.body[0]?.event).toMatchObject({ type: "MessageReceived", id: "m1" })
+  })
+})
+
 // framesOf parses an SSE byte stream into the pairs a client acts on. It is deliberately literal:
 // the assertions below are about the wire format, so nothing here normalizes it.
 const framesOf = (text: string): ReadonlyArray<{ readonly id: string; readonly data: string }> =>
@@ -751,6 +766,8 @@ describe("the event stream", () => {
         pageReads += 1
         return rows.filter((row) => row.seq > mark).slice(0, limit)
       }),
+      head: () => Effect.succeed(head),
+      readSubjects: () => Effect.succeed([]),
       awaitHead: (_id, mark) => head > mark ? Effect.succeed(head) : Effect.callback<number>((resume) => {
         const wake = (head: number) => {
           waiters.delete(wake)
@@ -775,6 +792,8 @@ describe("the event stream", () => {
       instance: (id) => Effect.succeed(id === "main" ? actorThreads : undefined),
       append: () => Effect.void,
       events: () => Effect.succeed(rows.map((row) => row.event)),
+      head: () => Effect.succeed(head),
+      readSubjects: () => Effect.succeed([]),
       list: () => Effect.succeed([]),
       settled: () => Effect.void
     })

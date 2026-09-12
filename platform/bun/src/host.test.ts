@@ -1,9 +1,9 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import fc from "fast-check"
 import { Database } from "bun:sqlite"
-import { existsSync, mkdtempSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { Effect, Layer, Schema, Tracer } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -402,6 +402,73 @@ describe("the bun host", () => {
     await h.close()
   })
 
+  test("bounded facts return the latest indexed subjects", async () => {
+    const h = await createBunHost({
+      ...options(freshPath()),
+      subjectsOf: (event) => event.type === "Done" && typeof event.fact === "string" ? [`fact:${event.fact}`, "fact:latest"] : []
+    })
+    await h.seed("facts", [
+      created("facts"),
+      { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event,
+      { type: "MessageReceived", id: "out.reply", text: "first", at: 2 } as Event,
+      { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 } as Event,
+      { type: "Done", id: "same", fact: "accepted", at: 4 } as Event,
+      { type: "Done", id: "same", fact: "absorbed", at: 5 } as Event
+    ])
+    expect(await h.head("facts")).toBe(5)
+    expect(await h.readSubjects("facts", ["reply:out", "msg:m1", "fact:latest", "reply:out"])).toEqual([
+      { seq: 2, event: { type: "MessageReceived", id: "m1", text: "go", at: 1 } },
+      { seq: 4, event: { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 } },
+      { seq: 5, event: { type: "Done", id: "same", fact: "accepted", at: 4 } }
+    ])
+    await h.close()
+  })
+
+  test("a pre-existing thread answers indexed facts after upgrade", async () => {
+    const path = freshPath()
+    // A thread database from before the subject table: the old schema, its migrations recorded,
+    // and a log the index has never seen.
+    const threadPath = bunThreadDatabasePath(path, "legacy")
+    mkdirSync(dirname(threadPath), { recursive: true })
+    const old = new Database(threadPath)
+    try {
+      old.exec(`CREATE TABLE thread_identity (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        actor TEXT NOT NULL,
+        instance TEXT NOT NULL,
+        thread TEXT NOT NULL
+      )`)
+      old.run("INSERT INTO thread_identity (singleton, actor, instance, thread) VALUES (1, 'bun', 'default', 'legacy')")
+      old.exec(`CREATE TABLE events (
+        seq INTEGER NOT NULL PRIMARY KEY,
+        key TEXT,
+        event TEXT NOT NULL
+      ) WITHOUT ROWID`)
+      old.exec(`CREATE TABLE effect_sql_migrations (
+        migration_id integer PRIMARY KEY NOT NULL,
+        created_at datetime NOT NULL DEFAULT current_timestamp,
+        name VARCHAR(255) NOT NULL
+      )`)
+      old.run("INSERT INTO effect_sql_migrations (migration_id, name) VALUES (1, 'thread_identity')")
+      old.run("INSERT INTO effect_sql_migrations (migration_id, name) VALUES (2, 'thread_events')")
+      old.run("INSERT INTO events (seq, key, event) VALUES (1, 'thread:created', ?)", [JSON.stringify(created("legacy"))])
+      old.run("INSERT INTO events (seq, key, event) VALUES (2, NULL, ?)", [JSON.stringify({ type: "MessageReceived", id: "brief", text: "go", at: 1 })])
+      old.run("INSERT INTO events (seq, key, event) VALUES (3, NULL, ?)", [JSON.stringify({ type: "MessageReceived", id: "out.reply", text: "first", at: 2 })])
+      old.run("INSERT INTO events (seq, key, event) VALUES (4, NULL, ?)", [JSON.stringify({ type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 })])
+    } finally {
+      old.close()
+    }
+    const h = await createBunHost(options(path))
+    expect(await h.readSubjects("legacy", ["msg:brief", "reply:out"])).toEqual([
+      { seq: 2, event: { type: "MessageReceived", id: "brief", text: "go", at: 1 } },
+      { seq: 4, event: { type: "MessageReceived", id: "out.reply.1", text: "latest", at: 3 } }
+    ])
+    expect((await h.read("legacy")).map((event) => event.type)).toEqual([
+      "ThreadCreated", "MessageReceived", "MessageReceived", "MessageReceived"
+    ])
+    await h.close()
+  })
+
   test("refuses an unkeyed cross-thread event, identically to the reference host", async () => {
     const h = await createBunHost(options(freshPath()))
     expect(h.commitRoot("bun:default:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-thread event")
@@ -591,7 +658,8 @@ describe("the bun host", () => {
     ])
     expect(thread.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
       { migration_id: 1, name: "thread_identity" },
-      { migration_id: 2, name: "thread_events" }
+      { migration_id: 2, name: "thread_events" },
+      { migration_id: 3, name: "thread_subjects" }
     ])
     actor.close()
     thread.close()

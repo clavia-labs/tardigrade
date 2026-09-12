@@ -38,6 +38,8 @@ export const bunHttpThreads = (host: BunHost, options: {
   })),
   events: (thread) => Effect.promise(() => host.read(thread)),
   eventsPage: (thread, mark, limit) => Effect.promise(() => host.readPage(thread, mark, limit)),
+  head: (thread) => Effect.promise(() => host.head(thread)),
+  readSubjects: (thread, subjects) => Effect.promise(() => host.readSubjects(thread, subjects)),
   awaitHead: (thread, mark) => Effect.promise((signal) => host.awaitHead(thread, mark, signal)),
   actorEventsPage: (mark, limit) => Effect.promise(() => host.readActorPage(mark, limit)),
   actorThreads: Effect.promise(() => host.actorThreads()),
@@ -66,6 +68,8 @@ export const bunHttpServices = (host: object) => {
     instance: (id) => Effect.sync(() => { const runtime = backend.instances.get(id); return runtime === undefined ? undefined : threadsFor(id, runtime) }),
     append: (instance, thread, event) => Effect.flatMap(ensure(instance), (threads) => threads.append(thread, event)),
     events: (instance, thread) => Effect.flatMap(ensure(instance), (threads) => threads.events(thread)),
+    head: (instance, thread) => Effect.flatMap(ensure(instance), (threads) => threads.head(thread)),
+    readSubjects: (instance, thread, subjects) => Effect.flatMap(ensure(instance), (threads) => threads.readSubjects(thread, subjects)),
     list: (instance) => Effect.flatMap(ensure(instance), (threads) => threads.list),
     settled: (instance) => Effect.flatMap(ensure(instance), (threads) => threads.settled)
   }).pipe(Context.add(DriverGauge, {

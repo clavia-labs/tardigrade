@@ -443,6 +443,14 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
             .filter((row) => row.seq > (after ?? 0) && (types === undefined || types.includes(row.event.type)))
             .slice(0, page ?? limit)
         }))
+      .handle("facts", ({ params, payload }) =>
+        Effect.gen(function*() {
+          const threads = yield* actorOf(yield* Threads, params.id)
+          if ((yield* threads.head(params.thread)) === 0) {
+            return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.thread)))
+          }
+          return yield* threads.readSubjects(params.thread, payload.subjects)
+        }))
       .handle("tree", ({ params, query }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(yield* Threads, params.id)

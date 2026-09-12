@@ -5,6 +5,7 @@ import { materializeProjection, type MaterializedProjectionState } from "@clavia
 import type { Transition } from "@clavia/tardigrade-core/transition"
 import type { ViewAlgebra } from "@clavia/tardigrade-core/view"
 import { composeKeys } from "../log/keys"
+import { composeSubjects } from "../log/subjects"
 import {
   type Component,
   type ComponentRequirements
@@ -83,6 +84,13 @@ export const composeComponents = <
         prefixes: fragments.flatMap((fragment) => fragment.prefixes),
         keyOf: composeKeys(...fragments)
       }
+  const subjectFragments = members.flatMap((component) => component.subjects === undefined ? [] : [component.subjects])
+  const subjects = subjectFragments.length === 0
+    ? undefined
+    : {
+        prefixes: subjectFragments.flatMap((fragment) => fragment.prefixes),
+        subjectsOf: composeSubjects(...subjectFragments)
+      }
   const machines = members.map((component) => component.machine)
   const materialized = machines.map(materializeProjection)
   const reconcile = options.reconcile
@@ -156,6 +164,7 @@ export const composeComponents = <
     [TRANSITION_COMPONENT_IDS]: componentIds,
     [COMPONENT_CONTRACT]: mergeComponentContracts(members),
     ...(keys === undefined ? {} : { keys }),
+    ...(subjects === undefined ? {} : { subjects }),
     machine: {
       initial: projection.initial,
       step: (state, event) => projection.step(state as CachedState, event),

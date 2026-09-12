@@ -8,7 +8,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
+import { EventLog, assertEventSubjects, assertSubject, assertSubjectLookup, eventLogFrom, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
@@ -20,6 +20,7 @@ import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { actorEventKeyOf, actorThreadsOf, type ActorThreadRecord, type ThreadRegistered, type ThreadRequested } from "@clavia/tardigrade-core/actor"
+import { messageSubjects } from "@clavia/tardigrade-core/interaction/provider-message"
 import { alarmFired, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
 import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
 import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
@@ -79,6 +80,7 @@ export type BunHostOptions<R> = {
   readonly alarm?: BunAlarmScheduler
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (event: Event) => string | undefined
+  readonly subjectsOf?: (event: Event) => ReadonlyArray<string>
   readonly commitObserverFor?: (context: { readonly actorInstance: string; readonly thread: string }) => CommitObserver
 } & LayersFor<R>
 
@@ -88,6 +90,8 @@ export interface BunHost {
   readonly seed: (thread: string, events: ReadonlyArray<Event>) => Promise<void>
   readonly read: (thread: string) => Promise<ReadonlyArray<Event>>
   readonly readPage: (thread: string, mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
+  readonly head: (thread: string) => Promise<number>
+  readonly readSubjects: (thread: string, subjects: ReadonlyArray<string>) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly awaitHead: (thread: string, mark: number, signal?: AbortSignal) => Promise<number>
   readonly readActorPage: (mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly actorThreads: () => Promise<{
@@ -205,8 +209,24 @@ const threadMigrations = SqliteMigrator.fromRecord({
       event TEXT NOT NULL
     ) WITHOUT ROWID`
     yield* sql`CREATE UNIQUE INDEX events_key ON events (key) WHERE key IS NOT NULL`
+  }),
+  // The read-side index beside the log: one row per subject holding the latest event that names
+  // it, and one capture row recording the log head the index holds.
+  "0003_thread_subjects": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE event_subjects (
+      subject TEXT PRIMARY KEY,
+      seq INTEGER NOT NULL,
+      event TEXT NOT NULL
+    ) WITHOUT ROWID`
+    yield* sql`CREATE TABLE event_subjects_capture (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      head INTEGER NOT NULL
+    )`
+    yield* sql`INSERT INTO event_subjects_capture (singleton, head) VALUES (1, 0)`
   })
 })
+
 
 const initializeDatabase = (loader: SqliteMigrator.Loader): Effect.Effect<void, never, SqlClient.SqlClient> =>
   SqliteMigrator.run({ loader }).pipe(Effect.asVoid, Effect.orDie)
@@ -350,6 +370,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   )
   const storeKeyOf = (event: Event): string | undefined =>
     hostEventKeyOf(event, options.keyOf)
+  const storeSubjectsOf = (event: Event): ReadonlyArray<string> =>
+    [...new Set([...messageSubjects.subjectsOf(event), ...(options.subjectsOf?.(event) ?? [])])]
   const runtimes = new Map<string, Promise<BunThreadRuntime>>()
   const executionOf = threadExecutions<R>()
 
@@ -376,6 +398,28 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         INSERT OR IGNORE INTO thread_identity (singleton, actor, instance, thread)
         VALUES (1, ${actorName}, ${actorInstance}, ${thread})
       `.pipe(Effect.orDie))
+      // The subject index starts caught up to the durable head, so a database that predates the
+      // table answers indexed reads exactly like one created after it: the capture row names the
+      // head through which every event is indexed, and this pass closes whatever gap remains,
+      // latest occurrence winning per subject (host.test.ts, "a pre-existing thread answers
+      // indexed facts after upgrade").
+      await runtime.runPromise(sql.withTransaction(Effect.gen(function* () {
+        const captured = yield* sql<{ head: number }>`SELECT head FROM event_subjects_capture WHERE singleton = 1`
+        const heads = yield* sql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM events`
+        const from = Number(captured[0]?.head ?? 0)
+        const to = Number(heads[0]?.head ?? 0)
+        if (from >= to) return
+        const rows = yield* sql<{ seq: number; event: string }>`
+          SELECT seq, event FROM events WHERE seq > ${from} AND seq <= ${to} ORDER BY seq
+        `
+        for (const row of rows) {
+          for (const subject of storeSubjectsOf(JSON.parse(row.event) as Event)) {
+            yield* sql`INSERT INTO event_subjects (subject, seq, event) VALUES (${subject}, ${Number(row.seq)}, ${row.event})
+              ON CONFLICT(subject) DO UPDATE SET seq = excluded.seq, event = excluded.event`
+          }
+        }
+        yield* sql`UPDATE event_subjects_capture SET head = ${to} WHERE singleton = 1`
+      })).pipe(Effect.orDie))
       const identities = await runtime.runPromise(sql<{ actor: string; instance: string; thread: string }>`
         SELECT actor, instance, thread FROM thread_identity WHERE singleton = 1
       `.pipe(Effect.orDie))
@@ -404,6 +448,27 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
       Effect.orDie
     )
+    const readSubject = (subject: string): Effect.Effect<ThreadEventRow | undefined> => Effect.sync(() => assertSubject(subject)).pipe(
+      Effect.flatMap(() => sql<{ seq: number; event: string }>`
+        SELECT seq, event FROM event_subjects WHERE subject = ${subject}
+      `),
+      Effect.map((rows) => {
+        const row = rows[0]
+        return row === undefined ? undefined : { seq: Number(row.seq), event: JSON.parse(row.event) as Event }
+      }),
+      Effect.orDie
+    )
+    const readSubjects: ThreadEventStore["readSubjects"] = (subjects) => Effect.sync(() => assertSubjectLookup(subjects)).pipe(
+      Effect.flatMap(() => sql.withTransaction(Effect.forEach(subjects, readSubject))),
+      Effect.map((rows) => {
+        const unique = new Map<number, ThreadEventRow>()
+        for (const row of rows) {
+          if (row !== undefined) unique.set(row.seq, row)
+        }
+        return [...unique.values()].sort((left, right) => left.seq - right.seq)
+      }),
+      Effect.orDie
+    )
     const commits = await runtime.runPromise(PubSub.sliding<number>({ capacity: 1, replay: 1 }))
     const interruptions = effectInterruptionRegistry()
     const observer = options.commitObserverFor?.({ actorInstance, thread })
@@ -425,9 +490,21 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
             const present = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events WHERE key = ${key}`
             if (Number(present[0]?.n ?? 0) > 0) continue
           }
-          yield* sql`INSERT INTO events (seq, key, event) VALUES (${seq}, ${key ?? null}, ${JSON.stringify(event)})`
+          const subjects = storeSubjectsOf(event)
+          assertEventSubjects(subjects)
+          const encoded = JSON.stringify(event)
+          yield* sql`INSERT INTO events (seq, key, event) VALUES (${seq}, ${key ?? null}, ${encoded})`
+          for (const subject of subjects) {
+            yield* sql`INSERT INTO event_subjects (subject, seq, event) VALUES (${subject}, ${seq}, ${encoded})
+              ON CONFLICT(subject) DO UPDATE SET seq = excluded.seq, event = excluded.event`
+          }
           seq += 1
           appended += 1
+        }
+        // The capture row moves only when it already held the head this append extends; a log
+        // still waiting for its capture pass keeps its gap, and the pass closes it.
+        if (appended > 0) {
+          yield* sql`UPDATE event_subjects_capture SET head = ${seq - 1} WHERE singleton = 1 AND head >= ${currentHead}`
         }
         return { appended, head: seq - 1 }
       })).pipe(
@@ -442,7 +519,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
     return {
       runtime,
-      store: { append, read, head, readFrom, readPage },
+      store: { append, read, head, readFrom, readPage, readSubjects },
       commits,
       interruptions,
       ...(commitDispatcher === undefined ? {} : { commitDispatcher }),
@@ -648,6 +725,14 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     readPage: async (thread, mark, limit) => {
       const threadRuntime = await runtimeOf(thread)
       return threadRuntime.runtime.runPromise(threadRuntime.store.readPage(mark, limit))
+    },
+    head: async (thread) => {
+      const threadRuntime = await runtimeOf(thread)
+      return threadRuntime.runtime.runPromise(threadRuntime.store.head)
+    },
+    readSubjects: async (thread, subjects) => {
+      const threadRuntime = await runtimeOf(thread)
+      return threadRuntime.runtime.runPromise(threadRuntime.store.readSubjects(subjects))
     },
     awaitHead: async (thread, mark, signal) => {
       const threadRuntime = await runtimeOf(thread)

@@ -819,7 +819,8 @@ describe("cloudflare actor", () => {
       tables: ["effect_sql_migrations"],
       entries: [
         { migration_id: 1, name: "thread_identity" },
-        { migration_id: 2, name: "thread_events" }
+        { migration_id: 2, name: "thread_events" },
+        { migration_id: 3, name: "thread_subjects" }
       ]
     })
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)

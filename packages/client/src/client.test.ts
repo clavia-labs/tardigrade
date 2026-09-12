@@ -157,6 +157,15 @@ describe("the address a call goes to", () => {
     expect(url.searchParams.has("limit")).toBe(false)
   })
 
+  test("facts use a bounded batch payload", async () => {
+    answer = emptyList
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
+    await client.facts("main", "root", { subjects: ["run:latest", "run:input"] })
+    expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/facts")
+    expect(calls.at(-1)?.method).toBe("POST")
+    expect(JSON.parse(calls.at(-1)?.body ?? "")).toEqual({ subjects: ["run:latest", "run:input"] })
+  })
+
   test("stated bounds are query params on the tree and roster reads, absent ones absent", async () => {
     const client = makeActorClient({ baseUrl: "http://localhost:4111" , fetch: stub })
     await client.list("main", { root: "inv-81", maxDepth: 2, maxNodes: 50 })

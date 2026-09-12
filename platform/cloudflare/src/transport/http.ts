@@ -1,17 +1,19 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
+import { FactsRequest, UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ModelPolicy } from "@clavia/tardigrade-agent"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import type { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog-availability"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { MAX_SUBJECT_LENGTH, MAX_SUBJECTS_PER_LOOKUP } from "@clavia/tardigrade-core/log/subjects"
 import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrade-http/methods"
 import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-http/models"
 import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
 import type { Env } from "../env"
+import type { ThreadFactsAnswer } from "../thread"
 import type { CloudflareDirectory } from "./directory"
 
 // treeBoundsOf validates optional subtree, depth, and node limits (test/actor.workers.ts).
@@ -177,6 +179,29 @@ export const cloudflareHttp = ({
         }).pipe(Effect.match({
           onFailure: (error) => json({ error }, 500),
           onSuccess: (rows) => json(rows)
+        }))
+      })
+    )),
+    HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/facts", workerRoute((request, env) =>
+      Effect.gen(function* () {
+        const params = yield* HttpRouter.params
+        const instance = params.id ?? ""
+        const thread = params.thread ?? ""
+        if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+        const stub = yield* Effect.promise(() => threadStub(env, actorName(), instance, thread))
+        if (stub === undefined) return json({ error: "unknown thread" }, 404)
+        const payload = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
+        if (!Schema.is(FactsRequest)(payload)) {
+          return json({ error: `facts require 1 to ${MAX_SUBJECTS_PER_LOOKUP} subjects of at most ${MAX_SUBJECT_LENGTH} characters each` }, 400)
+        }
+        return yield* Effect.tryPromise({
+          try: () => stub.stub.facts(stub.thread, payload.subjects) as Promise<ThreadFactsAnswer>,
+          catch: (cause) => cause instanceof Error ? cause.message : String(cause)
+        }).pipe(Effect.match({
+          onFailure: (error) => json({ error }, 500),
+          onSuccess: (resolved) => resolved.head === 0
+            ? json({ error: "unknown thread" }, 404)
+            : json(resolved.rows)
         }))
       })
     )),

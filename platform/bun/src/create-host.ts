@@ -64,6 +64,8 @@ export const hostBackend = (host: object): HostBackend => {
 // createBunHost owns the Bun runtimes and SQLite files for an actor's instances.
 export const createBunHost = async <R, const Methods extends ActorMethods>(options: HostOptions<R, Methods>): Promise<Host<Methods>> => {
   if (!options.storage) throw new Error("storage must be a directory or :memory:")
+  const runtime = actorRuntimeOf(options.actor)
+  const subjectsOf = options.subjectsOf ?? runtime.subjectsOf
   const actorOf = (name: string): Actor<R, Methods> => {
     if (name !== options.actor.name) throw new Error("target actor does not match this host")
     return options.actor
@@ -72,7 +74,8 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
     recover: (host: BunHost) => host.recover(),
     open: (instance, signal) => createBunInstance<R>({
       ...options, signal,
-      keyOf: options.keyOf ?? actorRuntimeOf(options.actor).keyOf,
+      keyOf: options.keyOf ?? runtime.keyOf,
+      ...(subjectsOf === undefined ? {} : { subjectsOf }),
       layersFor: options.layersFor === undefined ? undefined : (thread: string) => options.layersFor!(thread, instance),
       database: options.storageLayout?.databaseFor(instance) ?? (options.storage === ":memory:" ? ":memory:" : join(options.storage, Buffer.from(JSON.stringify([options.actor.name, instance])).toString("base64url") + ".sqlite")),
       actorName: options.actor.name, actorInstance: instance, actorFor: () => options.actor,

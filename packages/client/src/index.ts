@@ -33,6 +33,7 @@ export { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
 // (contract.ts).
 export {
   CATALOG_AVAILABILITY_FILTERS,
+  FactsRequest,
   MODEL_CATALOG_PRICE_SORTS,
   MODEL_CATALOG_SORT_ORDERS,
   MODEL_CATALOG_UNPRICED_ORDERS,
@@ -54,7 +55,6 @@ export type {
   CancellationResult,
   CancellationRequest,
   EventRow,
-  Health,
   MethodAccepted,
   MethodSummary,
   MethodState,
