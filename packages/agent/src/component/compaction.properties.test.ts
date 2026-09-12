@@ -110,7 +110,7 @@ for (const change of ["model", "provider"] as const) test(`${change} switches ex
     expect(estimateTokens(large)).toBe(estimateTokens(small))
     const original = { provider: "fixture", model_id: "fixture" }
     expect(estimateTokens(large, {}, original)).toBeGreaterThan(estimateTokens(small, {}, original) + 200)
-    const policy = { contextWindowTokens: 100 }
+    const policy = { model: { provider: "summary", model_id: "summary" }, contextWindowTokens: (model: { readonly model_id: string } | undefined) => model?.model_id === "summary" ? 10 : 100 }
     const machine = compaction(policy).machine
     const keys = (log: Event[]) => machine.output(log.reduce((state, event, i) => machine.step(state, eventAt(event, i + 1)), machine.initial())).transitions.map((transition) => transition.key)
     expect(keys(large)).toEqual(keys(small))

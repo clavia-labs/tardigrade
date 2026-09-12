@@ -356,7 +356,7 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
       const open = turnViewFrom(state.turns)
       const selected = open.length > 0 ? selectedModelOf(open) : state.lastModel
       const model = policy.model ?? selected
-      const resolved = contextPolicyOf(policy, model)
+      const resolved = contextPolicyOf(policy, selected)
       return {
         view: {
           system: [],

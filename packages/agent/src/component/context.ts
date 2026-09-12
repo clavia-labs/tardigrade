@@ -36,6 +36,7 @@ export interface CompactionPolicy {
   readonly fireRatio: number
   readonly keepRatio: number
   readonly summaryLineCap: number
+  // model selects the summarizer without changing the conversation context budget (compaction.properties.test.ts, compaction.test.ts).
   readonly model?: ModelRef
 }
 
