@@ -186,16 +186,8 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
   return fires > passes
 }
 
-// compactionReactor derives a pass when the suffix has crossed FIRE at a round boundary, or an
-// explicit `CompactionFired` stands uncovered. The act always advances the checkpoint (the
-// retained tail is bounded by KEEP < FIRE), so a served pass quiets the derivation instead of
-// re-firing. The checkpoint's key is the identity it keeps from: cc:<keepFrom>. Its input is the
-// span to fold, a projection, so a retried fire summarizes the same span. A crash-looping
-// summarizer re-derives the same key and its retries absorb, while a later fire reaches further
-// and keys anew.
-//
-// The policy this takes must be the one the render takes, or the guard measures a request the
-// model never sees (ContextPolicy above).
+// compactionTransition checkpoints a nonempty summary and leaves failed cuts available for recovery (compaction.test.ts).
+// The resolved policy must also govern rendering so the cut measures the visible history.
 const compactionTransition = (
   resolved: ContextPolicy,
   model: ModelRef | undefined,
@@ -250,10 +242,12 @@ const compactionTransition = (
             },
             `compact-${input.keepFrom}`
           ).pipe(Effect.provideService(BindingSettings, yield* (selection.settings?.(summaryModel) ?? BindingSettings)))
-          const summary = action.kind === "complete" ? action.output : input.summary
+          if (action.kind !== "complete" || action.output.trim() === "") {
+            return yield* Effect.die(action.kind === "fail" ? action.error : new Error("Compaction requires a nonempty summary"))
+          }
           return [compactionCompleted({
             keepFrom: input.keepFrom,
-            summary,
+            summary: action.output,
             contextWindowTokens: input.contextWindowTokens,
             fireTokens: input.fireTokens,
             keepTokens: input.keepTokens,

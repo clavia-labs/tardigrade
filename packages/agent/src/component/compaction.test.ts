@@ -5,12 +5,12 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { actorFromProjections, Self, send } from "@clavia/tardigrade-core/runtime"
+import { actorFromProjections, Self, settleActor } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection } from "@clavia/tardigrade-core/transition"
 
 import { composeKeys } from "@clavia/tardigrade-core/log"
 import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
-import { agentKeys } from "../log/events"
+import { agentKeys, type Action } from "../log/events"
 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)
 import {
@@ -121,7 +121,7 @@ describe("the compaction measure and guard", () => {
 })
 
 describe("the compaction pass", () => {
-  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> = TEST_POLICY) => {
+  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> = TEST_POLICY, outcome: Action = { kind: "complete", output: "covenants 1 through 13 extracted" }) => {
     const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
     let model: unknown
@@ -141,16 +141,36 @@ describe("the compaction pass", () => {
         react: ({ trajectory, model: selected }: { trajectory: ReadonlyArray<Event>; model?: unknown }) => {
           briefed = String((trajectory[0] as { text?: unknown }).text ?? "")
           model = selected
-          return Effect.succeed({ kind: "complete" as const, output: "covenants 1 through 13 extracted" })
+          return Effect.succeed(outcome)
         }
       }),
       Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
     )
-    await Effect.runPromise(
-      send(actor, { type: "CompactionFired", at: 999 }).pipe(Effect.provide(layers)) as Effect.Effect<void>
+    const exit = await Effect.runPromiseExit(
+      settleActor(actor).pipe(Effect.provide(layers)) as Effect.Effect<void>
     )
-    return { log: await Effect.runPromise(Ref.get(ref)), briefed: () => briefed, model: () => model }
+    return { log: await Effect.runPromise(Ref.get(ref)), exit, briefed: () => briefed, model: () => model }
   }
+
+  test.each([
+    { kind: "fail", error: "provider unavailable" },
+    { kind: "calls", calls: [{ callId: "unexpected", name: "read", arguments: {} }] },
+    { kind: "complete", output: "   " }
+  ] satisfies Action[])("an unusable summary preserves history until successful recovery: %j", async (outcome) => {
+    const initial = openTurn(16)
+    const failed = await run(initial, TEST_POLICY, outcome)
+    expect(failed.exit._tag).toBe("Failure")
+    expect(failed.log.filter((event) => event.type === "CompactionCompleted")).toEqual([])
+    expect(checkpointOf(failed.log)).toEqual(checkpointOf(initial))
+    expect(renderMessages(failed.log)).toEqual(renderMessages(initial))
+    expect(reactor(failed.log).map((transition) => transition.key)).toEqual(reactor(initial).map((transition) => transition.key))
+    const recovered = await run(failed.log)
+    expect(recovered.exit._tag).toBe("Success")
+    expect(recovered.log.filter((event) => event.type === "CompactionCompleted")).toHaveLength(1)
+    expect(keepFromIndex(recovered.log, checkpointOf(recovered.log).keepFrom)).toBeGreaterThan(0)
+    expect(recovered.briefed()).toContain("run 1")
+    expect(recovered.log.slice(0, initial.length)).toEqual(initial)
+  })
 
   test("a fire summarizes and checkpoints down to a KEEP-token tail, mid-turn", async () => {
     const { log, briefed } = await run(openTurn(16))
