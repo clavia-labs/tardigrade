@@ -531,15 +531,18 @@ h1 span { display: block; white-space: nowrap; }
 .docs-filesystem { width: min(100%, 720px); margin-top: 18px; padding: 18px 24px 20px; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); }
 .docs-filesystem > strong { color: var(--moss-ink); font-family: var(--mono); font-size: 16px; font-weight: 500; }
 .docs-filesystem ul { position: relative; margin: 10px 0 0; padding: 0; display: grid; list-style: none; }
-.docs-filesystem ul::before { position: absolute; top: 0; bottom: 15px; left: 4px; border-left: 1px solid rgb(85 103 132 / 70%); content: ""; }
-.docs-filesystem li { position: relative; min-height: 30px; padding-left: 32px; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr); gap: 24px; align-items: center; color: var(--faint); font-size: 13px; }
-.docs-filesystem li::before { position: absolute; top: 50%; left: 4px; width: 20px; border-top: 1px solid rgb(85 103 132 / 70%); content: ""; }
-.docs-filesystem li > code { min-width: 0; display: flex; align-items: center; gap: 12px; color: var(--ink); font-family: var(--mono); font-size: 14px; }
-.docs-filesystem li > code .docs-file-icon { width: 16px; height: 16px; flex: 0 0 auto; overflow: visible; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.15; color: var(--faint); }
-.docs-filesystem li > code .docs-file-icon text { fill: currentColor; stroke: none; font-family: Arial, sans-serif; font-size: 7px; font-weight: 700; letter-spacing: -.25px; }
-.docs-filesystem li > code::after { min-width: 20px; flex: 1; border-bottom: 1px dashed rgb(var(--accent-rgb) / 28%); content: ""; transform: translateY(2px); }
-.docs-filesystem-description { min-width: 0; color: var(--faint); }
+.docs-filesystem li { position: relative; min-width: 0; padding: 0 0 0 28px; color: var(--faint); font-size: 13px; }
+.docs-filesystem li::before { position: absolute; top: 0; bottom: 0; left: 4px; border-left: 1px solid rgb(85 103 132 / 70%); content: ""; }
+.docs-filesystem li:last-child::before { bottom: auto; height: 18px; }
+.docs-filesystem li::after { position: absolute; top: 18px; left: 4px; width: 16px; border-top: 1px solid rgb(85 103 132 / 70%); content: ""; }
+.docs-filesystem-row { min-width: 0; padding: 7px 0; display: flex; align-items: flex-start; gap: 10px; }
+.docs-filesystem-entry { min-width: 0; display: grid; gap: 3px; }
+.docs-filesystem-entry > code { color: var(--ink); font-family: var(--mono); font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.docs-filesystem-row > .docs-file-icon { width: 16px; height: 16px; margin-top: 3px; flex: 0 0 auto; overflow: visible; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.15; color: var(--faint); }
+.docs-filesystem-row > .docs-file-icon text { fill: currentColor; stroke: none; font-family: Arial, sans-serif; font-size: 7px; font-weight: 700; letter-spacing: -.25px; }
+.docs-filesystem-description { min-width: 0; color: var(--faint); line-height: 1.5; overflow-wrap: anywhere; }
 .docs-filesystem-description code { color: var(--ink-2); font-family: var(--mono); font-size: .92em; }
+.docs-filesystem li > ul { margin: 0; }
 .docs-event-log { width: min(100%, 720px); margin-top: 18px; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); }
 .docs-event-log ol { position: relative; margin: 0; padding: 0; list-style: none; counter-reset: event; }
 .docs-event-log li { min-height: 48px; padding: 11px 18px; display: flex; gap: 10px; align-items: center; counter-increment: event; }
