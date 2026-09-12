@@ -44,6 +44,7 @@ test("the adapter translates public operations while preserving raw directory re
     allocateRoot: () => Effect.die(new Error("unexpected allocation")),
     methods: {}, statusOf: () => "settled", storage: { kind: "memory" },
     append: (thread) => capture(thread),
+    appendUnlessKeyPresent: (thread) => capture(thread).pipe(Effect.as(true)),
     events: (thread) => capture(thread).pipe(Effect.as([])),
     eventsPage: (thread) => capture(thread).pipe(Effect.as([])),
     awaitHead: (thread) => capture(thread).pipe(Effect.as(0)),

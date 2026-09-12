@@ -188,6 +188,20 @@ export const hasUnsettledInvocationChildren = (events: ReadonlyArray<Event>, par
     !requests.some((request) => invocationTerminalOf(events, childCancellationRef(request, reference)) !== undefined))
 }
 
+// unsettledInvocationParentsOf lists the parent invocations whose linked families remain open.
+export const unsettledInvocationParentsOf = (
+  events: ReadonlyArray<Event>
+): ReadonlyArray<InvocationRef> => {
+  const parents = new Map<string, InvocationRef>()
+  for (const event of events) {
+    const link = childLinkOf(event)
+    if (link !== undefined && invocationTerminalOf(events, link.reference) === undefined) {
+      parents.set(invocationKey(link.parent), link.parent)
+    }
+  }
+  return [...parents.values()]
+}
+
 const childCancellationTransitions = <R>(
   children: ReadonlyArray<ChildCancellationLink>,
   cancellation: InvocationCancellation,

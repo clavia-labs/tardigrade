@@ -215,7 +215,20 @@ export const cloudflareHttp = ({
               if (target === undefined || !(yield* Effect.promise(() => target.stub.append(target.thread, event)))) {
                 return yield* Effect.fail(UnknownThread.of(`No thread named ${JSON.stringify(thread)} has ever existed.`))
               }
-            })
+            }),
+            appendUnlessKeyPresent: (thread, event, key) => Effect.gen(function* () {
+              const target = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
+              if (target === undefined) {
+                return yield* Effect.fail(UnknownThread.of(`No thread named ${JSON.stringify(thread)} has ever existed.`))
+              }
+              const appended = yield* Effect.promise(() =>
+                target.stub.appendUnlessKeyPresent(target.thread, event, key)
+              )
+              if (appended === undefined) {
+                return yield* Effect.fail(UnknownThread.of(`No thread named ${JSON.stringify(thread)} has ever existed.`))
+              }
+              return appended
+            }),
           }
         })
       })

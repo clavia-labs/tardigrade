@@ -60,6 +60,7 @@ export interface CloudflareThreadHost {
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly commitRoot: (event: Event) => Promise<void>
   readonly initializeRoot: (at: number) => Promise<void>
+  readonly stageRootUnlessKeyPresent: (event: Event, key: string) => Promise<boolean>
   readonly stageRoot: (event: Event) => Promise<void>
   readonly publishStaged: () => void
   readonly drive: () => Promise<void>
@@ -168,6 +169,11 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
       Effect.tap((result) => result.appended > 0 ? Effect.sync(() => interruptions.interrupt(batch)) : Effect.void),
       Effect.tap(syncCommit)
     ),
+    appendUnlessKeyPresent: (batch: ReadonlyArray<Event>, key: string) =>
+      events.appendUnlessKeyPresent(batch, key).pipe(
+        Effect.tap((result) => result.appended > 0 ? Effect.sync(() => interruptions.interrupt(batch)) : Effect.void),
+        Effect.tap(syncCommit)
+      ),
     read: events.read,
     head: events.head,
     readFrom: (mark: number) => events.readFrom(mark),
@@ -224,6 +230,24 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     if (!driver.resting()) return false
     return Effect.runPromise(execution.isResting(events.read))
   }
+  const stageRootUnlessKeyPresent = async (event: Event, key: string): Promise<boolean> => {
+    const current = await Effect.runPromise(events.read)
+    const created = threadCreatedForDelivery(current, identity, undefined, undefined)
+    const at = event.at
+    if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
+      throw new Error(`first thread event "${event.type}" must carry a finite at`)
+    }
+    const batch = created === undefined
+      ? [threadCreated(identity, undefined, at as number), event]
+      : [event]
+    const result = await Effect.runPromise(events.appendUnlessKeyPresent(batch, key))
+    if (result.appended > 0) {
+      interruptions.interrupt([event])
+      driver.mark(options.thread)
+      stagedHead = Math.max(stagedHead, result.head)
+    }
+    return !result.blocked
+  }
   return {
     identity,
     read: () => Effect.runPromise(events.read),
@@ -233,6 +257,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     commitRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined)),
     initializeRoot: (at) => Effect.runPromise(commitEffect(identity, threadCreated(identity, undefined, at), undefined, undefined, undefined, true, true)),
     stageRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined, undefined, undefined, false)),
+    stageRootUnlessKeyPresent,
     publishStaged: () => {
       if (stagedHead === 0) return
       const head = stagedHead

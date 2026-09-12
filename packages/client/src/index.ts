@@ -56,6 +56,8 @@ export type {
   EventRow,
   Health,
   MethodAccepted,
+  MethodSealRequest,
+  MethodSealResult,
   MethodSummary,
   MethodState,
   ModelCatalog,

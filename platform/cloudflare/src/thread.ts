@@ -292,6 +292,25 @@ export class ThreadDO extends DurableObject<Env> {
     return true
   }
 
+  async appendUnlessKeyPresent(
+    thread: string,
+    event: Event,
+    key: string
+  ): Promise<boolean | undefined> {
+    if (!this.initialized()) return undefined
+    const ownedThread = this.thread()
+    if (ownedThread !== thread) {
+      throw new Error("request thread does not match the Thread DO identity")
+    }
+    const stamped = event.at === undefined ? { ...event, at: Date.now() } : event
+    const host = await this.host()
+    let admitted = false
+    await this.accept(host, async () => {
+      admitted = await host.stageRootUnlessKeyPresent(stamped, key)
+    })
+    return admitted
+  }
+
   private validateDelivery(envelope: ActorEnvelope): void {
     if (envelope.link.target.actor !== this.name()) throw new Error("delivery target does not match actor definition")
     if (envelope.link.target.instance !== this.instance()) throw new Error("delivery target does not match actor instance")

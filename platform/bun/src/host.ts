@@ -8,7 +8,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
+import { EventLog, eventLogFrom, type AppendResult, type ConditionalAppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
@@ -100,6 +100,7 @@ export interface BunHost {
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly threads: () => Promise<ReadonlyArray<string>>
   readonly commitRoot: (address: string, event: Event) => Promise<void>
+  readonly commitRootUnlessKeyPresent: (address: string, event: Event, key: string) => Promise<boolean>
   readonly initializeRoot: (target: ThreadAddress, at: number) => Promise<void>
   readonly wake: (thread: string) => Promise<void>
   readonly drive: () => Promise<void>
@@ -412,24 +413,30 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const currentHead = await runtime.runPromise(head)
       await runtime.runPromise(PubSub.publish(commits, currentHead))
     }
-    const append: ThreadEventStore["append"] = (events) => {
-      if (events.length === 0) return Effect.map(head, (current) => ({ appended: 0, head: current }))
-      return sql.withTransaction(Effect.gen(function* () {
+    const appendBatch = (
+      events: ReadonlyArray<Event>,
+      blockedKey?: string
+    ): Effect.Effect<ConditionalAppendResult> =>
+      sql.withTransaction(Effect.gen(function* () {
         const rows = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
         const currentHead = Number(rows[0]?.seq ?? 0)
+        if (blockedKey !== undefined) {
+          const blockers = yield* sql<{ present: number }>`SELECT 1 AS present FROM events WHERE key = ${blockedKey} LIMIT 1`
+          if (blockers.length > 0) return { blocked: true, appended: 0, head: currentHead }
+        }
         let seq = currentHead + 1
         let appended = 0
         for (const event of events) {
           const key = storeKeyOf(event)
           if (key !== undefined) {
-            const present = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events WHERE key = ${key}`
-            if (Number(present[0]?.n ?? 0) > 0) continue
+            const present = yield* sql<{ present: number }>`SELECT 1 AS present FROM events WHERE key = ${key} LIMIT 1`
+            if (present.length > 0) continue
           }
           yield* sql`INSERT INTO events (seq, key, event) VALUES (${seq}, ${key ?? null}, ${JSON.stringify(event)})`
           seq += 1
           appended += 1
         }
-        return { appended, head: seq - 1 }
+        return { blocked: false, appended, head: seq - 1 }
       })).pipe(
         Effect.tap((result) => result.appended > 0
           ? Effect.all([
@@ -439,10 +446,13 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           : Effect.void),
         Effect.orDie
       )
-    }
+    const append: ThreadEventStore["append"] = (events) =>
+      appendBatch(events).pipe(Effect.map(({ appended, head }) => ({ appended, head })))
+    const appendUnlessKeyPresent: ThreadEventStore["appendUnlessKeyPresent"] = (events, key) =>
+      appendBatch(events, key)
     return {
       runtime,
-      store: { append, read, head, readFrom, readPage },
+      store: { append, appendUnlessKeyPresent, read, head, readFrom, readPage },
       commits,
       interruptions,
       ...(commitDispatcher === undefined ? {} : { commitDispatcher }),
@@ -492,6 +502,38 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       driver.mark(thread)
     }
   }).pipe(Effect.orDie)
+
+  const commitRootUnlessKeyPresent = async (
+    address: string,
+    event: Event,
+    key: string
+  ): Promise<boolean> => {
+    const target = parseThreadAddress(address)
+    const thread = threadOf(address)
+    const threadRuntime = await runtimeOf(thread)
+    let blocked = false
+    const result = await threadRuntime.runtime.runPromise(commitTracedDelivery({
+      target,
+      event,
+      lineage: undefined,
+      keyOf: options.keyOf
+    }, {
+      ...threadRuntime.store,
+      append: (events) => threadRuntime.store.appendUnlessKeyPresent(events, key).pipe(
+        Effect.tap((conditional) => Effect.sync(() => {
+          blocked = conditional.blocked
+        })),
+        Effect.map(({ appended, head }) => ({ appended, head }))
+      ),
+      reserveRoot: reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, rawAllocator), Effect.asVoid)
+    }))
+    if (result.appended > 0) {
+      threadRuntime.interruptions.interrupt([event])
+      if (isFirstAppend(result)) await register(thread)
+      driver.mark(thread)
+    }
+    return !blocked
+  }
 
   const colocatedTransport: Transport<ThreadAddress, ActorEnvelope> = {
     name: "colocated",
@@ -673,6 +715,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     threads,
     commitRoot: (address, event) => Effect.runPromise(commitEffect(parseThreadAddress(address), event, undefined)),
+    commitRootUnlessKeyPresent,
     assignThread: (request) => Effect.runPromise(localAllocator.allocate(request)),
     allocate: (request) => Effect.runPromise(initializingThreadAllocator(rawAllocator, options.initializeRoot ?? ((target, at) =>
       Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true))
