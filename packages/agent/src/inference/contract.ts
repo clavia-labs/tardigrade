@@ -1,12 +1,10 @@
-import { Context, Effect } from "effect"
+import { Context } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { LegacyCallAction } from "./action-compat"
-import type { Action } from "../log/events"
 import type { ContextPolicy } from "../component/compaction"
 import type { OutputFallback } from "../output/contract"
 import type { ModelRef } from "./reference"
 import { DEFAULT_MODEL_POLICY_OVERRIDE, type ModelPolicy, type ModelPolicyOverride } from "./access"
-import type { InferDelta, InferenceIdentity } from "./observer"
+import type { InferenceIdentity } from "./observer"
 
 // InferPolicy states the process-crash ceiling and model authority applied by the inference machine. Output correction bounds belong to the mounted output component (component/repair.ts, RepairPolicy).
 export interface InferPolicy {
@@ -34,21 +32,7 @@ export interface ModelResolution {
   readonly models?: ModelPolicy
 }
 
-// Infer provides one model action per request; key identifies its ModelCalled attempt. Reused call IDs within a turn fail before dispatch (index.test.ts, "a turn rejects reused provider IDs before dispatch, including after resume"). onDelta synchronously reports normalized text for caller-owned accumulation (packages/model/src/host.test.ts).
-export class Infer extends Context.Service<
-  Infer,
-  {
-    readonly react: (
-      request: InferRequest,
-      key?: string,
-      signal?: AbortSignal,
-      onDelta?: (delta: InferDelta) => void
-    ) => Effect.Effect<Action | LegacyCallAction>
-    readonly resolve?: (reference?: ModelRef) => ModelResolution
-  }
->()("agent/Infer") {}
-
-// NativeOutputSupport proves that an Infer binding supports native structured output beside tools (component/native-output.ts).
+// NativeOutputSupport declares support for native structured output beside tools (component/native-output.ts).
 export class NativeOutputSupport extends Context.Service<
   NativeOutputSupport,
   { readonly withTools: true }

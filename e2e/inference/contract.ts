@@ -11,7 +11,7 @@ export const definition = actor({ name: "inference-test", methods: agentMethods,
 
 export const modelLayer = (baseUrl: string) => configuredModelLayer({ model: { default: { provider: "test", model_id: "fixture" }, allow: "*", providers: { test: { baseUrl, protocol: "openai-chat-completions", env: ["KEY"] } } }, modelCredentials: { KEY: "fixture" } }, {
   snapshot: { source: "models.dev", revision: "r", refreshedAt: 1, status: "fresh", providers: [{ id: "test", name: "Test", env: [], models: [{ id: "fixture", metadata: { contextWindowTokens: 10000, maxOutputTokens: 1000 } }] }] }
-}, { configure: () => ({ throttleRetryDelaysMs: [], maxOutputTokens: 1000 }) })
+}, { configure: () => ({ retry: { backoffMs: [0], retryAfterJitterMs: 0 }, maxOutputTokens: 1000 }) })
 
 export const responseFor = (body: string): string => {
   const input = JSON.parse(body) as { messages: Array<{ role: string; content?: string }> }
@@ -24,7 +24,7 @@ export const responseFor = (body: string): string => {
 
 export type RuntimeFetch = (path: string, init?: RequestInit) => Promise<Response>
 
-export const runContract = async (fetch: RuntimeFetch, scenario: "complete" | "broken") => {
+export const runContract = async (fetch: RuntimeFetch, scenario: "complete" | "broken" | "retry") => {
   const send = (path: string, method: string, body?: unknown) => fetch(path, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
   assert.equal((await send("/v1/actors/main", "PUT")).status, 200)
   assert.equal((await send("/v1/actors/main/threads", "POST", { name: scenario })).status, 200)
@@ -36,12 +36,27 @@ export const runContract = async (fetch: RuntimeFetch, scenario: "complete" | "b
     if (state.status !== "pending") break
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
-  assert.equal(state.status, scenario === "complete" ? "completed" : "failed")
-  const rows = await (await fetch(`/v1/actors/main/threads/${scenario}/events`)).json() as Array<{ event: { type: string; callId?: string; isFailure?: boolean } }>
+  assert.equal(state.status, scenario !== "broken" ? "completed" : "failed")
+  const rows = await (await fetch(`/v1/actors/main/threads/${scenario}/events`)).json() as Array<{ event: { type: string; callId?: string; isFailure?: boolean; ordinal?: number; outcome?: string } }>
   const events = rows.map((r) => r.event)
+  const attempts = events.filter((event) => event.type === "ModelCalled" || event.type === "ModelReturned")
+  assert.equal(attempts.length, scenario === "retry" ? 6 : 4)
+  for (let index = 0; index < attempts.length; index += 2) {
+    const called = attempts[index]!
+    const returned = attempts[index + 1]!
+    assert.equal(called.type, "ModelCalled")
+    assert.equal(returned.type, "ModelReturned")
+    assert.equal(called.ordinal, returned.ordinal)
+    assert.equal(called.callId, returned.callId)
+  }
+  if (scenario === "retry") {
+    assert.equal(attempts[1]!.outcome, "failed")
+    assert.equal(attempts[3]!.outcome, "returned")
+    assert.notEqual(attempts[0]!.callId, attempts[2]!.callId)
+  }
   const calls = events.filter((e) => e.type === "ToolCalled")
-  assert.equal(calls.length, scenario === "complete" ? 3 : 0)
-  if (scenario === "complete") {
+  assert.equal(calls.length, scenario !== "broken" ? 3 : 0)
+  if (scenario !== "broken") {
     assert.deepEqual(events.filter((e) => e.type === "ToolReturned" && !e.isFailure).map((e) => e.callId).sort(), ["a", "c"])
     assert.equal(events.filter((e) => e.type === "ToolReturned" && e.callId === "b" && e.isFailure).length, 1)
     assert.ok(events.findIndex((e) => e.type === "ModelReturned") < events.findIndex((e) => e.type === "ToolReturned"))

@@ -1,9 +1,21 @@
+import { upcastResponse } from "./response-upcast"
 import { Schema } from "effect"
 import { TurnError } from "./events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { AiError } from "effect/unstable/ai"
+import { modelErrorOf } from "../inference/error"
 
 // upcastError reads historical string failures and current structured failures (upcast.test.ts).
-export const upcastError = (error: unknown): TurnError => Schema.is(TurnError)(error) ? error : { message: String(error ?? "") }
+export const upcastError = (error: unknown): TurnError => {
+  const native = AiError.isAiError(error) ? error : modelErrorOf(error)
+  if (native !== undefined) return {
+    message: native.message,
+    code: native.reason._tag,
+    isRetryable: native.isRetryable,
+    ...("http" in native.reason && native.reason.http?.response !== undefined ? { statusCode: native.reason.http.response.status } : {})
+  }
+  return Schema.is(TurnError)(error) ? error : { message: String(error ?? "") }
+}
 
 // responseKeyOf identifies one model response within its turn epoch (response.test.ts).
 export const responseKeyOf = (event: Event, id: unknown): string =>
@@ -30,7 +42,8 @@ export const upcast = (events: ReadonlyArray<Event>): ReadHistory => {
   const head = events.find((event) => event.type === "MessageReceived")
   const initial = events.some((event) => event.type === "BudgetGranted" && event.initial === true)
   return {
-    entries: events.map((event) => {
+    entries: events.map((stored) => {
+      const event = upcastResponse(stored)
       const response = event.type === "ToolCalled" ? event.responseId ?? event.batchId : undefined
       const advancesInference = event.type === "ModelReturned"
         ? event.outcome === "returned"
@@ -38,7 +51,7 @@ export const upcast = (events: ReadonlyArray<Event>): ReadHistory => {
           ? event.responseId === undefined && (event.batchIndex === undefined || event.batchIndex === 0)
           : event.type === "OutputRejected" && !responses.has(responseKeyOf(event, event.attempt))
       return {
-        event: (event.type === "TurnFailed" || (event.type === "ModelReturned" && event.error !== undefined)) ? { ...event, error: upcastError(event.error) } : event,
+        event: event.type === "TurnFailed" ? { ...event, error: upcastError(event.error) } : event,
         ...(response === undefined ? {} : { responseKey: responseKeyOf(event, response) }),
         advancesInference
       }

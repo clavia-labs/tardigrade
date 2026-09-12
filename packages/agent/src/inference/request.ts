@@ -20,7 +20,7 @@ export interface ToolSpec {
 
 // OutputRequest is the turn's declared final response: the contract, and the implementation that
 // must obtain it. It rides the request as itself rather than as a tool, so a binding maps it onto
-// the provider's own response-format surface (packages/model/src/inference/output.ts, outputSchemaFor).
+// the provider's own response-format surface (packages/model/src/binding/output.ts, outputSchemaFor).
 //
 // `invalid` is the turn that declared an output no contract can be built from. It is on the
 // request rather than absent from it, because a request with no output reads as a turn that
@@ -33,7 +33,7 @@ export type OutputRequest =
       // prompt that fallback needs. Absent means the assembly selected native output, so a call
       // the provider cannot serve fails before it spends. The binding decides which strategy the
       // attempt runs as, and the fallback's prompt reaches the model only then
-      // (packages/model/src/inference/output.ts, outputModeOf).
+      // (packages/model/src/binding/output.ts, outputModeOf).
       readonly fallback?: OutputFallback
       readonly fallbackSystem?: string
     }

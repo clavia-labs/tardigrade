@@ -2,7 +2,8 @@ import { Effect, Layer } from "effect"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { FetchHttpClient } from "effect/unstable/http"
 import { modelLayer, type ModelHostOptions } from "@clavia/tardigrade-model/host"
-import type { Infer, InferenceObserver } from "@clavia/tardigrade-agent"
+import type { InferenceObserver } from "@clavia/tardigrade-agent"
+import type { LanguageModel } from "effect/unstable/ai"
 import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import { catalogDiscoveryOf } from "@clavia/tardigrade-http/models"
@@ -11,7 +12,7 @@ import { layerFileModelCatalogRepository } from "./catalog-repository"
 import { layerConfig, projectConfigOf, projectConfigPathOf, readConfig } from "./config"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 
-type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<Infer>
+type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel>
 
 export type BunModelServicesOptions = {
   readonly configFile?: string | URL

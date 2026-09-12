@@ -1,6 +1,7 @@
-import { Effect, Layer } from "effect"
-import { Infer, intersectModelPolicies, modelAllowedBy, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
-import type { Action } from "@clavia/tardigrade-agent/log/events"
+import { Effect, Layer, Stream } from "effect"
+import { LanguageModel } from "effect/unstable/ai"
+import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-agent/binding/settings"
+import { intersectModelPolicies, modelAllowedBy, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import type { ModelConfig, ModelCredentials } from "./config"
 import type { ModelCatalogState } from "./catalog/index"
@@ -137,17 +138,11 @@ export const modelIsConfigured = (config: ModelHostConfig): boolean =>
 export const modelLayerWith = (
   config: ModelHostConfig,
   catalog: ModelCatalogState,
-  bindingFor: (selected: SelectedModel) => Layer.Layer<Infer>,
+  bindingFor: (selected: SelectedModel) => Layer.Layer<LanguageModel.LanguageModel>,
   protocols?: ReadonlyArray<SelectedModel["protocol"]>
-): Layer.Layer<Infer> => {
-  if (Object.keys(config.model.providers).length === 0) {
-    const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
-    return Layer.succeed(Infer)({
-      resolve: () => { throw new Error(MISSING_MODEL) },
-      react: () => Effect.succeed(failed)
-    })
-  }
+): Layer.Layer<LanguageModel.LanguageModel> => {
   const select = (reference?: ModelRef) => {
+    if (Object.keys(config.model.providers).length === 0) throw new Error(MISSING_MODEL)
     const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, reference)
     if (protocols !== undefined && !protocols.includes(selected.protocol)) throw new Error(`inference binding does not support ${selected.protocol} for ${selected.provider}/${selected.model_id}`)
     return selected
@@ -166,7 +161,7 @@ export const modelLayerWith = (
     const authority = intersectModelPolicies([config.model, configured])
     return { ...authority, ...(config.model.default === undefined ? {} : { default: config.model.default }) }
   }
-  return Layer.succeed(Infer, {
+  const selection = Layer.succeed(ModelSelection, {
     resolve: (reference) => {
       const selected = select(reference)
       return {
@@ -177,19 +172,22 @@ export const modelLayerWith = (
         catalogRevision: selected.catalogRevision
       }
     },
-    react: (request, key, signal, onDelta) => Effect.suspend(() => {
-      let selected: SelectedModel
-      try {
-        selected = select(request.model)
-      } catch (error) {
-        return Effect.succeed<Action>({
-          kind: "fail",
-          error: error instanceof Error ? error.message : String(error),
-          failure: { cause: "inference_error", attempts: 0 }
-        })
-      }
-      const binding = bindingFor(selected)
-      return Effect.flatMap(Infer, (model) => model.react(request, key, signal, onDelta)).pipe(Effect.provide(binding))
-    })
+    settings: (reference) => Effect.suspend(() => {
+      const selected = select(reference)
+      return BindingSettings.pipe(Effect.provide(bindingFor(selected)))
+    }),
   })
+  const withModel = <A, E, R>(use: (native: LanguageModel.LanguageModel) => Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.flatMap(CurrentModel, (reference) => Effect.flatMap(LanguageModel.LanguageModel, use).pipe(Effect.provide(bindingFor(select(reference)))))
+  const model = Layer.succeed(LanguageModel.LanguageModel, {
+    [LanguageModel.TypeId]: LanguageModel.TypeId,
+    // generateText forwards caller toolkit services through Effect's overloaded signature.
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
+    generateText: ((...args: Parameters<typeof LanguageModel.LanguageModel.Service.generateText>) => withModel((native) => native.generateText(...args))) as typeof LanguageModel.LanguageModel.Service.generateText,
+    // generateObject forwards caller schema services through Effect's generic signature.
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
+    generateObject: ((...args: Parameters<typeof LanguageModel.LanguageModel.Service.generateObject>) => withModel((native) => native.generateObject(...args))) as typeof LanguageModel.LanguageModel.Service.generateObject,
+    streamText: ((...args: Parameters<typeof LanguageModel.LanguageModel.Service.streamText>) => Stream.unwrap(Effect.map(CurrentModel, (reference) => Stream.unwrap(Effect.map(LanguageModel.LanguageModel, (native) => native.streamText(...args))).pipe(Stream.provide(bindingFor(select(reference))))))) as typeof LanguageModel.LanguageModel.Service.streamText
+  })
+  return Layer.merge(selection, model)
 }

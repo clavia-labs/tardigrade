@@ -18,7 +18,6 @@ import {
   applyModelPolicy,
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
-  Infer,
   actorMethodsOf,
   type ActorMethods,
   type InferenceObserver,
@@ -64,10 +63,8 @@ const layerThread = (
 export interface ThreadsOptions {
   readonly allocation?: BunHostOptions<never>["allocation"]
   readonly threadAllocator?: typeof ThreadAllocator.Service
-  // The model seam. Absent, the binding is derived from ServerConfig; present, it replaces that
-  // derivation whole, which is how a test runs a scripted mind with no credentials
-  // (host.test.ts). It is the one seam because Infer is the one place a turn leaves the process.
-  readonly infer?: Layer.Layer<Infer>
+  // infer supplies an Effect model in place of the configured provider (host.test.ts).
+  readonly infer?: Layer.Layer<import("effect/unstable/ai").LanguageModel.LanguageModel>
   // inferenceObserver receives ephemeral normalized text outside the durable event log.
   readonly inferenceObserver?: InferenceObserver
   // providers interpret replies whose durable inbound link targets an external provider instance.

@@ -1,10 +1,12 @@
+import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
+import { durableReact } from "../testing/durable-inference"
 import { expect, test } from "bun:test"
 import { Effect, Layer, Redacted } from "effect"
 import { Response as AiResponse } from "effect/unstable/ai"
 import { FetchHttpClient } from "effect/unstable/http"
-import { Infer } from "@clavia/tardigrade-agent/inference/contract"
+
 import { responseUsageOf } from "./usage"
-import { inferenceLayer } from "./binding"
+import { inferenceLayer } from "./index"
 import { providerEvents } from "../testing/fixtures"
 
 const pricing = { promptUsdPerToken: 1, completionUsdPerToken: 3, cachedPromptUsdPerToken: 0.1, cacheWritePromptUsdPerToken: 2 }
@@ -57,30 +59,23 @@ for (const outcome of ["success", "refused", "truncated", "trailing-data", "unre
       const chunks = events.map((event, sequence_number) => new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify({ sequence_number, ...event })}\n\n`))
       return new Response(new ReadableStream({ pull(controller) { const chunk = chunks.shift(); if (chunk === undefined) controller.close(); else controller.enqueue(chunk) } }), { headers: { "content-type": "text/event-stream" } })
     }, { preconnect: globalThis.fetch.preconnect })
-    const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, maxOutputTokens: 100, reportedCostUsd: (finish) => { const cost = finish.metadata.openai?.usage?.cost; return typeof cost === "number" ? cost : undefined }, pricing, throttleRetryDelaysMs: outcome === "exhausted" ? [] : [0] }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
+    const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, maxOutputTokens: 100, reportedCostUsd: (finish) => { const cost = finish.metadata.openai?.usage?.cost; return typeof cost === "number" ? cost : undefined }, pricing, retry: { backoffMs: outcome === "exhausted" ? [] : [0] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
     const action = await Effect.runPromise(Effect.gen(function* () {
-      const infer = yield* Infer
-      return yield* infer.react({ identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] })
+      const infer = yield* inferenceClient
+      return yield* durableReact(infer, { identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] })
     }).pipe(Effect.provide(binding)))
-    const copies = 1
     expect(requests).toBe(outcome === "unreported-retry" ? 2 : 1)
     expect(action.kind).toBe(["refused", "truncated", "exhausted"].includes(outcome) ? "fail" : "calls")
     if (outcome === "exhausted") {
-      expect(action.usage?.costUsd).toBeUndefined()
-      expect(action.usage?.providerReports).toBeUndefined()
+      expect(action.usage).toEqual({ inputTokens: {}, outputTokens: {} })
+      expect(action.reportedCostUsd).toBeUndefined()
       return
     }
-    expect(action.usage).toMatchObject({ ...(outcome === "unreported-retry" ? {} : { promptTokens: 10 * copies, completionTokens: 5 * copies }), providerReports: Array.from({ length: copies }, () => ({ providerSpecific: { metadata: { openai: { usage: { custom_metric: "kept" } } } } })) })
-    if (outcome === "unreported-retry") {
-      expect(action.usage?.costUsd).toBeUndefined()
-      expect(action.usage?.promptTokens).toBeUndefined()
-      expect(action.usage?.completionTokens).toBeUndefined()
-    }
-    else {
-      expect(action.usage?.reportedCostUsd).toBe(0.25 * copies)
-      expect(action.usage?.estimatedCostUsd).toBeCloseTo(24.3 * copies)
-      expect(action.usage?.costUsd).toBe(0.25 * copies)
-    }
+    expect(action.usage).toMatchObject({ inputTokens: { total: 10 }, outputTokens: { total: 5 } })
+    expect(action.finish?.metadata).toMatchObject({ openai: { usage: { custom_metric: "kept" } } })
+    expect(action.reportedCostUsd).toBe(0.25)
+    expect(action.usage).not.toHaveProperty("costUsd")
+    expect(action.usage).not.toHaveProperty("estimatedCostUsd")
   })
 }
 
@@ -94,13 +89,14 @@ test("Anthropic cache creation and reads are counted once", async () => {
   endUsage.cache_read_input_tokens = 3
   endUsage.cache_creation_input_tokens = 2
   const fetch = Object.assign(async () => new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } }), { preconnect: globalThis.fetch.preconnect })
-  const binding = inferenceLayer({ provider: "anthropic", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "claude-sonnet-4-5" }, pricing, throttleRetryDelaysMs: [] }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
+  const binding = inferenceLayer({ provider: "anthropic", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "claude-sonnet-4-5" }, pricing, retry: { backoffMs: [] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
   const action = await Effect.runPromise(Effect.gen(function* () {
-    const infer = yield* Infer
+    const infer = yield* inferenceClient
     return yield* infer.react({ identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] })
   }).pipe(Effect.provide(binding)))
   expect(action.kind).toBe("calls")
-  expect(action.usage).toMatchObject({ promptTokens: 15, completionTokens: 5, totalTokens: 20, cachedPromptTokens: 3, cacheWritePromptTokens: 2, estimatedCostUsd: 29.3, providerReports: [{ providerSpecific: { metadata: { anthropic: { usage: { cache_read_input_tokens: 3, cache_creation_input_tokens: 2 } } } } }] })
+  expect(action.usage).toMatchObject({ inputTokens: { total: 15, cacheRead: 3, cacheWrite: 2 }, outputTokens: { total: 5 } })
+  expect(action.finish?.metadata).toMatchObject({ anthropic: { usage: { cache_read_input_tokens: 3, cache_creation_input_tokens: 2 } } })
 })
 
 for (const example of [

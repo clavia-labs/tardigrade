@@ -2,18 +2,20 @@ import { protocolOptionsOf } from "./providers/options"
 import { bedrockGatewayHandler } from "./providers/bedrock-transport"
 import type { BedrockModelConfig } from "./providers/bedrock"
 import { requestPolicyOf } from "./inference/request"
-import { Effect, Layer, Redacted, type Schema } from "effect"
+import { Effect, Layer, Redacted, Stream, type Schema } from "effect"
+import { LanguageModel } from "effect/unstable/ai"
+import { unknownModelError } from "@clavia/tardigrade-agent/inference/error"
 import { FetchHttpClient } from "effect/unstable/http"
-import { Infer, type InferenceObserver } from "@clavia/tardigrade-agent"
+import { type InferenceObserver } from "@clavia/tardigrade-agent"
 import type { OpenAiLanguageModel } from "@tardie/ai-openai"
 import type { OpenAiLanguageModel as CompatLanguageModel } from "@tardie/ai-openai-compat"
 import type { AnthropicLanguageModel } from "@tardie/ai-anthropic"
 import { modelLayerWith, type ModelHostConfig, type SelectedModel } from "./selection"
 import type { ModelCatalogState } from "./catalog/index"
-import type { ReportedCostReader } from "./inference/usage"
-import type { OutputCapability } from "./inference/output"
+import type { ReportedCostReader } from "./binding/usage"
+import type { OutputCapability } from "./binding/output"
 import type { RequestOptions } from "./inference/request"
-import { inferenceLayer } from "./inference/binding"
+import { inferenceLayer } from "./binding/index"
 
 export const SUPPORTED_MODEL_PROTOCOLS = ["openai-responses", "anthropic-messages", "openai-chat-completions", "bedrock-converse"] as const
 
@@ -59,7 +61,7 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
       if (region === undefined) throw new Error("a Bedrock connection must declare its AWS region")
       const policy = requestPolicyOf(common)
       return inferenceLayer({ ...common, provider: "bedrock", model: { model: selected.model_id, ...(settings.bedrock === undefined ? {} : { config: settings.bedrock }) }, client: {
-        region, endpoint: selected.baseUrl, token: { token: "byok" }, authSchemePreference: ["httpBearerAuth"], requestHandler: bedrockGatewayHandler(selected.apiKey, policy.stream)
+        region, endpoint: selected.baseUrl, token: { token: "byok" }, authSchemePreference: ["httpBearerAuth"], requestHandler: bedrockGatewayHandler(selected.apiKey, policy.timeout)
       } }).pipe(Layer.provide(FetchHttpClient.layer))
     }
     return inferenceLayer(selected.protocol === "openai-responses"
@@ -69,7 +71,10 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
       : { ...common, provider: "anthropic", model: { model: selected.model_id, ...(settings.anthropic === undefined ? {} : { config: settings.anthropic }) } }
     ).pipe(Layer.provide(FetchHttpClient.layer))
   } catch (error) {
-    return Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "fail", error: String(error), failure: { cause: "inference_error", attempts: 0 } }) })
+    return Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+      generateText: () => Effect.fail(unknownModelError(error)),
+      streamText: () => Stream.fail(unknownModelError(error))
+    }))
   }
 }, SUPPORTED_MODEL_PROTOCOLS)
 

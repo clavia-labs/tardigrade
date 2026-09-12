@@ -43,7 +43,8 @@ test("upcast preserves structured model errors and reads historical strings", ()
   for (const error of ["failed", { message: "failed", details: { code: "provider_error" } }]) {
     const stored = { type: "ModelReturned", callId: "a", outcome: "failed", error, at: 1 }
     const [entry] = upcast([stored]).entries
-    expect(entry?.event.error).toEqual(typeof error === "string" ? { message: error } : error)
+    expect(entry?.event.error).toBeUndefined()
+    expect(entry?.event.legacyError).toEqual(error)
     expect(stored.error).toBe(error)
   }
 })

@@ -1,11 +1,17 @@
+import { RetrySchedule } from "../inference/retry"
+import { ModelError, encodeModelError } from "../inference/error"
+import { AiError } from "effect/unstable/ai"
+import { upcastUsage } from "./response-upcast"
 import { Schema } from "effect"
 import { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
-import type { Usage } from "../inference/usage"
+import { ModelPricing, type Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
 import { ProviderContinuation } from "../inference/continuation"
+import { ModelUsage, ModelResponse, ModelFinish } from "../inference/response"
+export { ModelResponse } from "../inference/response"
 
 // The agent's domain events compose with core actor input and control events. The model responds
 // by acting: its recorded decision is the consequence event it emits, and the prose it emits
@@ -73,11 +79,12 @@ export const ToolReturned = Schema.Struct({
 // ModelCalled records the attempt before inference; an interrupted attempt can remain unanswered (runtime/turn.test.ts).
 export const ModelCalled = Schema.Struct({
   type: Schema.Literal("ModelCalled"),
+  pricing: Schema.optional(ModelPricing),
+  retryIndex: Schema.optional(Schema.Int),
   callId: Schema.String,
   // model is the concrete selection for this provider effect. It remains optional for earlier logs.
   model: Schema.optional(ModelRef),
-  // The occurrence: distinct per physical attempt, the dedup key's scope. callId stays the
-  // provider idempotency key, shared across retries of one logical attempt.
+  // ordinal identifies each physical attempt; callId is reused only for unanswered crash recovery (inference/retry.test.ts).
   ordinal: Schema.optional(Schema.Finite),
   // The output policy this attempt ran under, when the turn declared a contract. Recorded on the
   // ask, so a replay reads which policy produced which response.
@@ -96,27 +103,25 @@ export const TurnError = Schema.Struct({
 })
 export type TurnError = typeof TurnError.Type
 
-export const ModelResponse = Schema.Struct({
-  id: Schema.optional(Schema.String),
-  model: Schema.optional(Schema.String),
-  finishReason: Schema.optional(Schema.String),
-  rawFinishReason: Schema.optional(Schema.String)
-})
-export type ModelResponse = typeof ModelResponse.Type
-
 // ModelReturned settles a model attempt and owns its response usage (runtime/batches.test.ts).
 export const ModelReturned = Schema.Struct({
   type: Schema.Literal("ModelReturned"),
+  retry: Schema.optional(RetrySchedule),
   callId: Schema.String,
   ordinal: Schema.Finite,
   outcome: Schema.Literals(["returned", "failed"]),
   reasoning: Schema.optional(Schema.String),
   continuation: Schema.optional(ProviderContinuation),
-  usage: Schema.Unknown,
+  usage: ModelUsage,
+  legacyUsage: Schema.optional(Schema.Unknown),
+  legacyResponse: Schema.optional(Schema.Unknown),
+  finish: Schema.optional(ModelFinish),
+  reportedCostUsd: Schema.optional(Schema.Finite),
   endpoint: Schema.optional(Endpoint),
   text: Schema.optional(Schema.String),
   response: Schema.optional(ModelResponse),
-  error: Schema.optional(TurnError),
+  error: Schema.optional(ModelError),
+  legacyError: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.String,
   at: Schema.Finite
@@ -411,9 +416,12 @@ export interface AttemptEndpoint {
 // to invent one (inference/machine.ts, completionOf).
 type Served = {
   readonly response?: ModelResponse
+  readonly finish?: ModelFinish
+  readonly reportedCostUsd?: number
   readonly reasoning?: string
   readonly continuation?: import("../inference/continuation").ProviderContinuation
-  readonly usage?: Usage
+  // usage accepts historical custom bindings; modelReturned stores ModelUsage.
+  readonly usage?: ModelUsage | Usage
   readonly endpoint?: AttemptEndpoint
   readonly mode?: import("../output/contract").OutputMode
 }
@@ -431,8 +439,10 @@ export type Action =
   | ({ readonly kind: "complete"; readonly output: string } & Served)
   | ({
       readonly kind: "fail"
+      readonly retryable?: boolean
+      readonly retryAfterMs?: number
       readonly text?: string
-      readonly error: TurnError | string
+      readonly error: AiError.AiError | TurnError | string
       readonly failure?: {
         readonly cause: TurnFailureCause
         readonly attempts: number
@@ -519,6 +529,8 @@ export const modelCalled = (
     readonly callId: string
     readonly model?: ModelRefType
     readonly ordinal?: number
+    readonly pricing?: import("../inference/usage").ModelPricing
+    readonly retryIndex?: number
     readonly output?: {
       readonly contract: string
       readonly fingerprint: string
@@ -532,13 +544,21 @@ export const modelReturned = (
     readonly ordinal: number
     readonly turn: string
     readonly outcome: "returned" | "failed"
+    readonly retry?: RetrySchedule
     readonly usage: unknown
     readonly endpoint?: unknown
-    readonly error?: TurnError
+    readonly error?: AiError.AiError | TurnError | string
     readonly text?: string
     readonly response?: ModelResponse
+    readonly finish?: ModelFinish
+    readonly reportedCostUsd?: number
   } & EpochStamp
-): Event => ({ type: "ModelReturned", ...fields }) as Event
+): Event => ({ type: "ModelReturned", ...fields, usage: upcastUsage(fields.usage),
+  ...(fields.error === undefined ? {} : AiError.isAiError(fields.error)
+    ? { error: encodeModelError(fields.error) }
+    : { error: undefined, legacyError: fields.error }),
+  ...(!Schema.is(ModelUsage)(fields.usage) && Object.keys(fields.usage ?? {}).length > 0 ? { legacyUsage: fields.usage } : {})
+}) as Event
 
 export const textReturned = (
   fields: { readonly text: string } & EpochStamp

@@ -1,12 +1,13 @@
+import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Layer, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { Prompt, Tool, Toolkit } from "effect/unstable/ai"
 import type { ConverseStreamCommandInput, ConverseStreamOutput } from "@aws-sdk/client-bedrock-runtime"
-import { collectResponse } from "../inference/response"
+import { collectResponse } from "./response"
 import { providerLayer } from "./layer"
-import { inferenceLayer } from "../inference/binding"
-import { Infer } from "@clavia/tardigrade-agent"
+import { inferenceLayer } from "../binding/index"
+
 
 const events = (truncated = false): ConverseStreamOutput[] => [
   { messageStart: { role: "assistant" } },
@@ -55,19 +56,19 @@ test(`Bedrock preserves signed and redacted reasoning beside rejected calls (int
 
 test("Bedrock truncation fails once and retains usage", async () => {
   const inputs: ConverseStreamCommandInput[] = []
-  const layer = inferenceLayer({ provider: "bedrock", endpoint: "https://bedrock.invalid", model: { model: "claude" }, maxOutputTokens: 100, throttleRetryDelaysMs: [0], client: { send: async (input) => {
+  const layer = inferenceLayer({ provider: "bedrock", endpoint: "https://bedrock.invalid", model: { model: "claude" }, maxOutputTokens: 100, retry: { backoffMs: [0] }, client: { send: async (input) => {
     inputs.push(input)
     return { $metadata: {}, stream: (async function* () { yield* events(inputs.length === 1) })() }
   } } })
   const action = await Effect.runPromise(Effect.gen(function* () {
-    const infer = yield* Infer
+    const infer = yield* inferenceClient
     return yield* infer.react({ identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] })
   }).pipe(Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer)))))
   expect(inputs.map((input) => input.inferenceConfig?.maxTokens)).toEqual([100])
-  expect(action).toMatchObject({ kind: "fail", error: { code: "output_limit" }, failure: { attempts: 1 }, usage: { promptTokens: 10, completionTokens: 5 } })
+  expect(action).toMatchObject({ kind: "fail", error: { reason: { _tag: "UnknownError" } }, failure: { cause: "output_limit", attempts: 1 }, usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } } })
   expect(action).not.toHaveProperty("calls")
   expect(action).not.toHaveProperty("continuation")
-  expect(action.usage?.providerReports).toHaveLength(1)
+  expect(action.finish?.metadata).toBeDefined()
 })
 
 test("Bedrock cancellation aborts a request after its response headers arrive", async () => {
@@ -159,9 +160,9 @@ test("Bedrock normalizes cache buckets before estimating cost", async () => {
     yield { metadata: { usage: nativeUsage, metrics: { latencyMs: 1 } } }
   })() }) } })
   const result = await Effect.runPromise(Effect.gen(function* () {
-    const infer = yield* Infer
+    const infer = yield* inferenceClient
     return yield* infer.react({ identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [] })
   }).pipe(Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer)))))
-  expect(result.usage).toMatchObject({ promptTokens: 15, completionTokens: 5, cachedPromptTokens: 3, cacheWritePromptTokens: 2, costUsd: 22.8 })
-  expect(JSON.stringify(result.usage?.providerReports)).toContain(JSON.stringify(nativeUsage))
+  expect(result.usage).toMatchObject({ inputTokens: { total: 15, cacheRead: 3, cacheWrite: 2 }, outputTokens: { total: 5 } })
+  expect(JSON.stringify(result.finish?.metadata)).toContain(JSON.stringify(nativeUsage))
 })

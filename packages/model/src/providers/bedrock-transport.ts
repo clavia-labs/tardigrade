@@ -6,15 +6,15 @@ type SmithyHandler = Pick<FetchHttpHandler, "handle" | "destroy">
 export const bedrockGatewayHandler = (apiKey: string, bounds: StreamBounds): SmithyHandler => {
   const transport: Promise<SmithyHandler> =
     (globalThis as { Bun?: unknown }).Bun === undefined
-      ? Promise.resolve(new FetchHttpHandler({ requestTimeout: bounds.totalMs ?? 0 }))
+      ? Promise.resolve(new FetchHttpHandler({ requestTimeout: bounds.attemptMs ?? 0 }))
       : (() => {
           const moduleName = "@smithy/node-http-handler"
           return (import(/* @vite-ignore */ moduleName) as Promise<typeof import("@smithy/node-http-handler")>).then(
             ({ NodeHttpHandler: Handler }) =>
               new Handler({
-                connectionTimeout: bounds.firstChunkMs,
+                connectionTimeout: bounds.firstContentMs,
                 socketTimeout: bounds.idleMs,
-                requestTimeout: bounds.totalMs ?? 0,
+                requestTimeout: bounds.attemptMs ?? 0,
                 throwOnRequestTimeout: true
               })
           )

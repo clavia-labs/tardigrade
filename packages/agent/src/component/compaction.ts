@@ -23,7 +23,9 @@ import {
   transcriptProjection,
   type TranscriptProjectionState
 } from "../projection/transcript"
-import { Infer } from "../inference/contract"
+import { LanguageModel } from "effect/unstable/ai"
+import { react } from "../binding/index"
+import { BindingSettings, ModelSelection } from "../binding/settings"
 import { modelRefOf, type ModelRef } from "../inference/reference"
 import type { AgentComponent } from "../runtime/composition"
 
@@ -201,7 +203,7 @@ const compactionTransition = (
   keepFrom: string,
   span: ReadonlyArray<Event>,
   owner: Event
-): ReadonlyArray<Transition<never, Infer | Self>> => [
+): ReadonlyArray<Transition<never, LanguageModel.LanguageModel | Self>> => [
     bindTransitionContext(owner, "compaction").effect("summarize", {
       invocation: null,
       input: {
@@ -234,11 +236,11 @@ const compactionTransition = (
             lines.join("\n")
           ].join("\n\n")
           // A summarize attempt offers no tools: the only sane action is a completion.
-          const infer = yield* Infer
+          const selection = yield* ModelSelection
           const summaryModel = input.model === undefined
             ? undefined
-            : infer.resolve?.(input.model).model ?? input.model
-          const action = yield* infer.react(
+            : selection.resolve?.(input.model).model ?? input.model
+          const action = yield* react(
             {
               trajectory: [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
               identity: { ...self, turn: `compact-${input.keepFrom}` },
@@ -247,7 +249,7 @@ const compactionTransition = (
               tools: []
             },
             `compact-${input.keepFrom}`
-          )
+          ).pipe(Effect.provideService(BindingSettings, yield* (selection.settings?.(summaryModel) ?? BindingSettings)))
           const summary = action.kind === "complete" ? action.output : input.summary
           return [compactionCompleted({
             keepFrom: input.keepFrom,
@@ -262,7 +264,7 @@ const compactionTransition = (
     })
   ]
 
-export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): CompleteTransitionDerivation<Infer | Self> => (history) => {
+export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): CompleteTransitionDerivation<LanguageModel.LanguageModel | Self> => (history) => {
   const log = history.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
   const model = policy.model ?? selectedModelOf(log)
   const resolved = contextPolicyFrom(log, policy)
@@ -280,7 +282,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Compl
 
 // compaction derives one resolved context contribution and the transitions governed by the same
 // model-relative policy.
-export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentComponent<Infer | Self> => {
+export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentComponent<LanguageModel.LanguageModel | Self> => {
   interface State {
     readonly turns: TurnProjectionState
     readonly transcript: TranscriptProjectionState

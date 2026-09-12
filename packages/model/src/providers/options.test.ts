@@ -1,7 +1,8 @@
+import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
-import { Infer } from "@clavia/tardigrade-agent"
+
 import { modelConfigOf, canonicalModelConfig, type ModelProviderConfig } from "../config"
 import { modelLayer } from "../host"
 import { protocolOptionsOf } from "./options"
@@ -45,9 +46,9 @@ for (const entry of cases) {
     }, { preconnect: globalThis.fetch.preconnect })
     const catalog = { snapshot: { source: "models.dev" as const, revision: "r1", refreshedAt: 1, status: "fresh" as const, providers: [{ id: "private", name: "Private", env: [], models: [{ id: "fixture", metadata: { contextWindowTokens: 200000 } }] }] } }
     const result = await Effect.runPromise(Effect.gen(function* () {
-      const infer = yield* Infer
+      const infer = yield* inferenceClient
       return yield* infer.react({ model: reference, identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] })
-    }).pipe(Effect.provide(modelLayer({ model: config, modelCredentials: { KEY: "fixture" } }, catalog, { configure: () => ({ throttleRetryDelaysMs: [], ...(configured === "override" ? { openai: { reasoning: { effort: "low" as const } }, compat: { reasoning_effort: "low" }, anthropic: { thinking: { type: "disabled" as const }, output_config: { effort: "low" as const } } } : {}) }) })), Effect.provideService(FetchHttpClient.Fetch, fetch)))
+    }).pipe(Effect.provide(modelLayer({ model: config, modelCredentials: { KEY: "fixture" } }, catalog, { configure: () => ({ retry: { backoffMs: [] }, ...(configured === "override" ? { openai: { reasoning: { effort: "low" as const } }, compat: { reasoning_effort: "low" }, anthropic: { thinking: { type: "disabled" as const }, output_config: { effort: "low" as const } } } : {}) }) })), Effect.provideService(FetchHttpClient.Fetch, fetch)))
     expect(result.kind).not.toBe("fail")
     expect(requests).toBe(1)
   })

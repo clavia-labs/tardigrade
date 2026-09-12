@@ -1,8 +1,9 @@
+import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
-import { Infer } from "@clavia/tardigrade-agent"
+
 import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
@@ -157,7 +158,7 @@ describe("cloudflare actor", () => {
       .rejects.toThrow("does not match model configuration")
     expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
-    const binding = await Effect.runPromise(Infer.pipe(Effect.provide(
+    const binding = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
       modelLayer(modelsFrom(env as Env, config), scope.catalog)
     )))
     expect(binding.resolve()).toMatchObject({
@@ -168,7 +169,7 @@ describe("cloudflare actor", () => {
       models: { allow: [{ provider: "openai", model_ids: ["gpt-test"] }] }
     })
     expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
-    const restricted = await Effect.runPromise(Infer.pipe(Effect.provide(
+    const restricted = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
       modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog)
     )))
     expect(() => restricted.resolve()).toThrow("excluded by the host model policy")

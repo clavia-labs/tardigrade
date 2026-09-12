@@ -30,13 +30,16 @@
     "./output/*": "./src/output/*.ts",
     "./packages/*": "./src/packages/*.ts",
     "./projection/*": "./src/projection/*.ts",
-    "./runtime/*": "./src/runtime/*.ts"
+    "./runtime/*": "./src/runtime/*.ts",
+    "./binding/*": "./src/binding/*.ts",
+    "./testing/*": "./src/testing/*.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "@cfworker/json-schema": "^4.1.1",
-    "effect": "npm:@tardie/effect@4.0.0-rc.113"
+    "effect": "npm:@tardie/effect@4.0.0-rc.113",
+    "@tardie/ai": "0.0.1"
   },
   "devDependencies": {
     "fast-check": "^4.9.0",

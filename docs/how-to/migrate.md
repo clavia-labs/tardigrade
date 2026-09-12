@@ -72,7 +72,7 @@ Convert each structured result to `output({ name, schema })`. Send that contract
 
 Keep the baseline provider and model when the Tardigrade binding supports their transport. The built-in binding accepts OpenAI Responses, OpenAI-compatible chat completions, Anthropic Messages, and Bedrock Converse. Run `tdg setup` to write the first private provider connection and default model together. Once that baseline exists, use `tdg setup provider` or `tdg setup default` when the migration changes one concern. The server resolves model metadata from its catalog snapshot.
 
-List every existing model option and confirm that the selected binding represents it. A custom transport or required option belongs in an application-owned `Infer` layer and custom host. Do not silently drop a temperature, provider option, retry bound, output guarantee, or timeout that affects behavior.
+List every model option and check that the selected provider represents it. Supply custom providers through Effect's `LanguageModel` service. Libraries with another model interface need a bridge to that service. Configure request limits through `maxOutputTokens`, `timeout`, and `retry`. Keep provider options, output guarantees, and model identity explicit.
 
 ## Move the application boundary
 

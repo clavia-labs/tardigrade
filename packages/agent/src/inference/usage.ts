@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnOf } from "@clavia/tardigrade-code/execution/turns"
 
@@ -34,15 +35,13 @@ export interface Usage {
 }
 
 // ModelPricing states the rates used for an independent cost projection.
-export interface ModelPricing {
-  readonly promptUsdPerToken: number
-  readonly completionUsdPerToken: number
-  // cachedPromptUsdPerToken and cacheWritePromptUsdPerToken price reported cache buckets. A
-  // table that omits a rate cannot estimate a usage stamp with tokens in that bucket
-  // (usage.test.ts, "cache buckets require declared rates").
-  readonly cachedPromptUsdPerToken?: number
-  readonly cacheWritePromptUsdPerToken?: number
-}
+export const ModelPricing = Schema.Struct({
+  promptUsdPerToken: Schema.Finite,
+  completionUsdPerToken: Schema.Finite,
+  cachedPromptUsdPerToken: Schema.optionalKey(Schema.Finite),
+  cacheWritePromptUsdPerToken: Schema.optionalKey(Schema.Finite)
+})
+export type ModelPricing = typeof ModelPricing.Type
 
 export const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0 }
 
@@ -301,7 +300,18 @@ const reportsOf = (value: unknown): ReadonlyArray<ProviderUsageReport> | undefin
 }
 
 export const usageOf = (value: unknown): Usage => {
-  const carried = asRecord(value)
+  const original = asRecord(value)
+  const input = asRecord(original?.inputTokens)
+  const output = asRecord(original?.outputTokens)
+  const carried = input === undefined && output === undefined ? original : {
+    ...original,
+    promptTokens: input?.total,
+    completionTokens: output?.total,
+    cachedPromptTokens: input?.cacheRead,
+    cacheWritePromptTokens: input?.cacheWrite,
+    reasoningTokens: output?.reasoning,
+    ...(typeof input?.total === "number" && typeof output?.total === "number" ? { totalTokens: input.total + output.total } : {})
+  }
   const costUsd = numberOf(carried?.costUsd)
   const source = carried?.costSource
   const provider = carried?.provider
@@ -411,7 +421,14 @@ export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
   sumUsage(
     log.flatMap((event) => {
       if (!ofTurn(event, turn)) return []
-      const carried = asRecord(event)?.usage
-      return carried === undefined ? [] : [usageOf(carried)]
+      const carried = event.legacyUsage ?? event.usage
+      if (carried === undefined) return []
+      const called = event.type === "ModelReturned" ? log.find((mark) => mark.type === "ModelCalled" && mark.turn === event.turn && mark.ordinal === event.ordinal) : undefined
+      const recordedPricing = called?.pricing ?? asRecord(called?.policy)?.pricing
+      const pricing = Schema.is(ModelPricing)(recordedPricing) ? recordedPricing : undefined
+      const endpoint = asRecord(event.endpoint)
+      const response = asRecord(event.response)
+      const usage = usageOf({ ...(endpoint?.provider === undefined ? {} : { provider: endpoint.provider }), ...(response?.modelId === undefined && endpoint?.model === undefined ? {} : { model: response?.modelId ?? endpoint?.model }), ...asRecord(carried), ...(event.reportedCostUsd === undefined ? {} : { reportedCostUsd: event.reportedCostUsd, costUsd: event.reportedCostUsd, costSource: "provider" }) })
+      return [pricing === undefined ? usage : priced(usage, pricing)]
     })
   )

@@ -102,6 +102,7 @@
     "e2e": {
       "name": "@clavia/tardigrade-e2e",
       "devDependencies": {
+        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
@@ -151,6 +152,7 @@
         "@cfworker/json-schema": "^4.1.1",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
+        "@tardie/ai": "0.0.1",
         "effect": "npm:@tardie/effect@4.0.0-rc.113",
       },
       "devDependencies": {

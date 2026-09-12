@@ -36,7 +36,7 @@
     "./directory": "./src/providers/directory.ts",
     "./reasoning": "./src/providers/options.ts",
     "./request-policy": "./src/inference/policy.ts",
-    "./output": "./src/inference/output.ts",
+    "./output": "./src/binding/output.ts",
     "./*": "./src/*.ts"
   },
   "dependencies": {

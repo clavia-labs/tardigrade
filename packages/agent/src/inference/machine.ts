@@ -2,7 +2,11 @@ import { upcastError } from "../log/upcast"
 import { hasUnansweredToolCall, responsesOf } from "../log/response"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
-import { Cause, Clock, Effect } from "effect"
+import { RetrySchedule, retryDelayOf } from "./retry"
+import { LanguageModel } from "effect/unstable/ai"
+import { react } from "../binding/index"
+import { BindingSettings, ModelSelection } from "../binding/settings"
+import { Cause, Clock, Effect, Random, Schema } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { HashMap, Option } from "effect"
 import { Self } from "@clavia/tardigrade-core/runtime"
@@ -43,7 +47,6 @@ import {
 } from "./access"
 import {
   DEFAULT_INFER_POLICY,
-  Infer,
   type InferPolicy,
   type ModelResolution,
   type Render
@@ -116,10 +119,7 @@ const completionOf = (action: Action & { readonly kind: "complete" }, ctx: Conse
     at: ctx.at
   } as Event
   if (ctx.contract === undefined) return completed
-  // A declared contract is obtained in a mode the binding chose, and every consequence records
-  // which. A binding that answers a declared turn without stating one has broken its own
-  // contract, and guessing a mode here would put a fact in the log nobody established
-  // (Infer above; packages/model/src/inference/output.ts, outputModeOf).
+  // mode identifies the binding's output contract enforcement (binding/output.ts, outputModeOf).
   if (mode === undefined) {
     return {
       type: "TurnFailed",
@@ -248,7 +248,7 @@ interface InferDerivation {
   readonly renderAfter: (event: Event) => ReturnType<Render>
 }
 
-const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivation): ReadonlyArray<import("@clavia/tardigrade-core/runtime").Transition<never, Infer | EventLog | Self>> => {
+const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivation): ReadonlyArray<import("@clavia/tardigrade-core/runtime").Transition<never, LanguageModel.LanguageModel | EventLog | Self>> => {
   const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
   const slice = derived.slice
   if (slice.length === 0 || hasUnansweredToolCall(slice) || terminated(slice)) return []
@@ -265,15 +265,18 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
     policyError = error instanceof Error ? error.message : String(error)
   }
   const died = diedAttempts(slice, epoch)
-  const prior = died === 0
-    ? undefined
-    : [...slice].reverse().find((event) => event.type === "ModelCalled") as { readonly model?: unknown } | undefined
-  const model = modelRefOf(prior?.model) ?? selectedModelOf(head, models.default)
+  const latestResponse = slice.findLast((event) => event.type === "ModelReturned" && Number(event.epoch ?? 0) === epoch)
+  const pendingRetry = latestResponse !== undefined && Schema.is(RetrySchedule)(latestResponse.retry) ? latestResponse.retry : undefined
+  const lastMark = slice.findLast((event) => event.type === "ModelCalled" && Number(event.epoch ?? 0) === epoch)
+  const model = ((died > 0 || pendingRetry !== undefined) ? modelRefOf(lastMark?.model) : undefined) ?? selectedModelOf(head, models.default)
   const marks = slice.filter((e) => e.type === "ModelCalled").length
   const modelFailures = derived.modelFailures
   // A rejected response is a spent logical attempt: the next ask must not reuse the idempotency
   // key, or a deduping provider answers the correction with the response it just refused.
-  const logicalAttempt = responsesOf(slice).returnedAttempts + modelFailures
+  const logicalAttempt = Math.max(
+    slice.filter((event) => event.type === "ModelReturned").length,
+    responsesOf(slice).returnedAttempts + modelFailures + slice.filter((event) => event.type === "ModelReturned" && event.retry !== undefined).length
+  )
   const attempt = `${turn}/infer/${logicalAttempt}`
   const rendered = derived.rendered
   const fallback = rendered.output?.fallback
@@ -344,9 +347,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
       })
     }
   }
-  // The attempt's identity, the same string its ModelCalled mark carries. A died attempt leaves
-  // its mark. Recorded responses count logical attempts, so an operator resume keeps the
-  // failed inference's provider idempotency key. The mark ordinal remains unique per physical run.
+  // attempt advances after a recorded response and survives an unanswered crash (inference/retry.test.ts).
   return [
     context.effect("infer", {
       invocation: { method: "message", id: turn, epoch },
@@ -355,6 +356,8 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
         epoch,
         attempt,
         ordinal: marks,
+        retryIndex: pendingRetry?.index ?? (died > 0 ? Number(lastMark?.retryIndex ?? 0) : 0),
+        dueAt: pendingRetry?.dueAt,
         trajectory: derived.trajectory,
         model,
         models,
@@ -376,10 +379,14 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
         Effect.gen(function* () {
           const events = yield* EventLog
           const self = yield* Self
+          if (input.dueAt !== undefined) {
+            const now = yield* Clock.currentTimeMillis
+            if (input.dueAt > now) yield* Effect.sleep(input.dueAt - now)
+          }
           const at = yield* Clock.currentTimeMillis
-          const binding = yield* Infer
+          const registry = yield* ModelSelection
           const selection = yield* Effect.try({
-            try: () => resolvedModelFor(binding.resolve, input.model, input.models, input.policyError),
+            try: () => resolvedModelFor(registry.resolve, input.model, input.models, input.policyError),
             catch: (error) => ({
               message: error instanceof Error ? error.message : String(error),
               cause: error instanceof ModelSelectionError ? "model_selection" as const : "inference_error" as const
@@ -403,14 +410,19 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             ]
           }
           const selected = selection.selected
+          const settings = yield* (registry.settings?.(selected) ?? BindingSettings)
+          const requestPolicy = settings.policy
+          const pricing = settings.pricing
           // The mark records the attempt BEFORE the inference, appended by the act itself: a
           // died attempt leaves its mark, the next derivation counts it, the bound holds.
-          // callId is the provider idempotency key (shared across retries of one logical
-          // attempt); ordinal is the occurrence the dedup key reads.
+          // callId is reused after a crash with no recorded response; a recorded failure
+          // schedules a fresh key (retry.test.ts). Ordinal identifies the physical run.
           const mark = modelCalled({
             callId: input.attempt,
             model: selected,
             ordinal: input.ordinal,
+            retryIndex: input.retryIndex,
+            ...(pricing === undefined ? {} : { pricing }),
             ...(input.stamp === undefined ? {} : { output: input.stamp }),
             turn: input.turn,
             ...epochStamp(input.epoch),
@@ -432,8 +444,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               Effect.asVoid
             )
           }
-          const action = normalizeAction(yield* binding
-            .react(
+          const action = normalizeAction(yield* react(
               {
                 trajectory,
                 identity: { ...self, turn: input.turn },
@@ -451,6 +462,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               }
             )
             .pipe(
+              Effect.provideService(BindingSettings, settings),
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
                   ? Effect.failCause(cause)
@@ -481,13 +493,17 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             ...(action.endpoint === undefined ? {} : { endpoint: action.endpoint }),
             failure: { cause: "inference_error", attempts: 1 }
           } : action
-          const consequences = consequencesOf(checked, {
+          const delay = checked.kind === "fail" && checked.retryable === true && requestPolicy !== undefined
+            ? retryDelayOf(requestPolicy, input.retryIndex, checked.retryAfterMs, yield* Random.next)
+            : undefined
+          const retry = delay === undefined ? undefined : { dueAt: after + delay, index: input.retryIndex + 1 }
+          const consequences = retry === undefined ? consequencesOf(checked, {
             turn: input.turn,
             epoch: input.epoch,
             attempt: input.attempt,
             at: after,
             contract: input.contract
-          })
+          }) : []
           const repaired = consequences.some((event) => event.type === "TurnCompleted")
             ? trajectory.filter((event) => {
                 if (event.type !== "OutputRejected") return false
@@ -503,11 +519,14 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             modelReturned({
               callId: input.attempt, ordinal: input.ordinal, turn: input.turn, ...epochStamp(input.epoch),
               outcome: action.kind === "fail" ? "failed" : "returned",
+              ...(retry === undefined ? {} : { retry }),
               usage: action.usage ?? {}, ...stampOf(action),
               ...(action.reasoning === undefined ? {} : { reasoning: action.reasoning }),
               ...(action.continuation === undefined ? {} : { continuation: action.continuation }),
               ...(action.response === undefined ? {} : { response: action.response }),
-              ...(action.kind === "fail" ? { error: upcastError(action.error), ...(action.text === undefined ? {} : { text: action.text }) } : {}), at: after
+              ...(action.finish === undefined ? {} : { finish: action.finish }),
+              ...(action.reportedCostUsd === undefined ? {} : { reportedCostUsd: action.reportedCostUsd }),
+              ...(action.kind === "fail" ? { error: action.error, ...(action.text === undefined ? {} : { text: action.text }) } : {}), at: after
             }),
             ...(action.kind === "calls" && action.text !== undefined && action.text !== ""
               ? [textReturned({ text: action.text, turn: input.turn, at: after })]
@@ -527,7 +546,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
 }
 
 // inferenceFromHistory derives inference through complete replay.
-export const inferenceFromHistory = (policy: Partial<InferPolicy>, render: Render): CompleteTransitionDerivation<Infer | EventLog | Self> => (history) => {
+export const inferenceFromHistory = (policy: Partial<InferPolicy>, render: Render): CompleteTransitionDerivation<LanguageModel.LanguageModel | EventLog | Self> => (history) => {
   const log = history.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
   const slice = turnView(log)
   const turn = String((slice[0] as { readonly id?: unknown } | undefined)?.id ?? "")
@@ -558,7 +577,7 @@ interface IncrementalInferState<State> {
 export const inferenceMachine = <State>(
   policy: Partial<InferPolicy>,
   projection: InferenceMachineProjection<State>
-): TransitionProjection<IncrementalInferState<State>, Infer | EventLog | Self> => transitionProjection({
+): TransitionProjection<IncrementalInferState<State>, LanguageModel.LanguageModel | EventLog | Self> => transitionProjection({
   initial: () => ({
     turns: initialTurnProjection(),
     render: projection.initial(),

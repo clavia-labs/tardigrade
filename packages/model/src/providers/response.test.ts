@@ -4,7 +4,7 @@ import { Effect, Layer, Redacted, Schema, Fiber, Deferred, Exit, Stream, Result 
 import { Prompt, Tool, Toolkit, LanguageModel } from "effect/unstable/ai"
 import { FetchHttpClient } from "effect/unstable/http"
 import { collectResponse } from "./response"
-import { providerLayer } from "../providers/layer"
+import { providerLayer } from "./layer"
 
 const dynamicToolkit = Toolkit.make(Tool.dynamic("read", { parameters: Schema.Struct({ path: Schema.String }) }))
 const toolkit = Toolkit.make(Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }), failureMode: "return" }))

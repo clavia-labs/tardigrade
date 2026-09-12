@@ -9,7 +9,6 @@ export { agentMethods } from "./actor/methods"
 export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
 export { PermissionRequestInput, PermissionDecision, requestPermissionMethod } from "./actor/permission"
 export {
-  Infer,
   NativeOutputSupport,
   DEFAULT_INFER_POLICY,
   type InferPolicy,

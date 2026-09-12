@@ -1,3 +1,5 @@
+import type { LanguageModel } from "effect/unstable/ai"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { createHash } from "node:crypto"
 import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -8,7 +10,7 @@ import * as NetAddress from "effect/unstable/net/NetAddress"
 import { HttpServer } from "effect/unstable/http"
 import { Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
-import { ACTOR_ARTIFACT_VERSION, Infer, type Actor } from "tardie"
+import { ACTOR_ARTIFACT_VERSION, type Actor } from "tardie"
 import type { Action } from "tardie/log/events"
 import { PROBLEM_CONTENT_TYPE } from "@clavia/tardigrade-client/contract"
 import { layerModelCatalogUnavailable } from "@clavia/tardigrade-server/catalog"
@@ -56,7 +58,7 @@ const buildDirectory = (): string => {
   return root
 }
 
-const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
+const layerScripted: Layer.Layer<LanguageModel.LanguageModel> = testInferenceLayer({
   resolve: (model = testModel) => ({ model, models: { default: model, allow: "*" } }),
   react: () => Effect.succeed({ kind: "complete", output: "the scripted answer" } satisfies Action)
 })

@@ -1,7 +1,8 @@
+import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
-import { Infer, type InferDelta } from "@clavia/tardigrade-agent"
+import { type InferDelta } from "@clavia/tardigrade-agent"
 import { modelLayer } from "./host"
 import { providerEvents } from "./testing/fixtures"
 
@@ -27,17 +28,17 @@ for (const provider of ["openai", "anthropic"] as const) {
       return new Response(events.map((event, sequence_number) => `event: ${event.type}\ndata: ${JSON.stringify({ sequence_number, ...event })}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })
     }, { preconnect: globalThis.fetch.preconnect })
     const binding = modelLayer(config, catalog, {
-      configure: () => ({ maxOutputTokens: 1000, throttleRetryDelaysMs: [], ...(provider === "openai" ? { openai: { max_output_tokens: 200, reasoning: { effort: "high" } } } : { anthropic: { max_tokens: 200, thinking: { type: "enabled", budget_tokens: 10 } } }) }),
+      configure: () => ({ maxOutputTokens: 1000, retry: { backoffMs: [] }, ...(provider === "openai" ? { openai: { max_output_tokens: 200, reasoning: { effort: "high" } } } : { anthropic: { max_tokens: 200, thinking: { type: "enabled", budget_tokens: 10 } } }) }),
       observer: { onDelta: (delta) => Effect.sync(() => { observed.push(delta) }) }
     })
     const action = await Effect.runPromise(Effect.gen(function* () {
-      const infer = yield* Infer
+      const infer = yield* inferenceClient
       const resolution = infer.resolve?.()
       expect(resolution).toMatchObject({ model: reference, contextWindowTokens: 200000, maxOutputTokens: 50, catalogRevision: "r1", models: { allow: [{ provider: reference.provider, model_ids: [reference.model_id] }] } })
       return yield* infer.react({ model: reference, identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] }, "attempt", undefined, (delta) => direct.push(delta))
     }).pipe(Effect.provide(binding), Effect.provideService(FetchHttpClient.Fetch, fetch)))
     expect(requests).toBe(1)
-    expect(action).toMatchObject({ kind: "calls", usage: { provider: reference.provider, model: reference.model_id, costUsd: 20 }, continuation: { provider: reference.provider } })
+    expect(action).toMatchObject({ kind: "calls", usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } }, continuation: { provider: reference.provider } })
     expect(observed.length).toBeGreaterThan(0)
     expect(observed).toEqual(direct)
     expect(observed.every((delta) => delta.model.provider === reference.provider)).toBe(true)
@@ -45,7 +46,7 @@ for (const provider of ["openai", "anthropic"] as const) {
 
     const denied = modelLayer({ ...config, model: { ...config.model, allow: [] } }, catalog)
     await Effect.runPromise(Effect.gen(function* () {
-      const infer = yield* Infer
+      const infer = yield* inferenceClient
       expect(() => infer.resolve?.()).toThrow("excluded")
       expect(yield* infer.react({ model: reference, identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [] })).toMatchObject({ kind: "fail", failure: { attempts: 0 } })
     }).pipe(Effect.provide(denied)))

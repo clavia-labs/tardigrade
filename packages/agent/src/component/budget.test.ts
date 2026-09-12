@@ -1,3 +1,4 @@
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
@@ -9,7 +10,7 @@ import { Router } from "@clavia/tardigrade-core/transport/router"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { threadAddressOf, parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/transport/link"
-import { Infer } from "../runtime/turn"
+
 import { NativeOutputSupport } from "../inference/contract"
 import { budget, budgetOf, budgetPhase, budgetSpent, caller, canRequestBudget } from "./budget"
 import { infer, renderOf } from "../runtime/composition"
@@ -40,7 +41,7 @@ const rest = Layer.mergeAll(
   }),
   Layer.succeed(Self, parseThreadAddress("test-agent:main:main")),
   Layer.succeed(NativeOutputSupport, { withTools: true }),
-  Layer.succeed(Infer, { react: () => Effect.die("the budget guard never asks the model") })
+  testInferenceLayer( { react: () => Effect.die("the budget guard never asks the model") })
 )
 
 // turn builds a budgeted trajectory whose final execute call is unanswered.
@@ -132,7 +133,7 @@ describe("budget admission reacts to BudgetExhausted", () => {
       Layer.succeed(Router, { send: () => Effect.void }),
       Layer.succeed(Self, parseThreadAddress("test-agent:main:main")),
       Layer.succeed(NativeOutputSupport, { withTools: true }),
-      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: "done" }) })
+      testInferenceLayer( { react: () => Effect.succeed({ kind: "complete" as const, output: "done" }) })
     )
 
     await Effect.runPromise(settleActor(rootActor).pipe(Effect.provide(environment)))

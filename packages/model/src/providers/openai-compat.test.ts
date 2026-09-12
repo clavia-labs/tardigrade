@@ -1,16 +1,17 @@
+import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { Effect, Layer, Redacted, Result, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { Prompt, Tool, Toolkit } from "effect/unstable/ai"
-import { collectResponse } from "../inference/response"
+import { collectResponse } from "./response"
 import { providerLayer } from "./layer"
 import { modelLayer } from "../host"
-import { Infer, agentMethods, infer, tool, outputValidateOnce } from "@clavia/tardigrade-agent"
+import { agentMethods, infer, tool, outputValidateOnce } from "@clavia/tardigrade-agent"
 import { actor } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { createHost } from "@clavia/tardigrade-host/host"
 import { KeyValueStore } from "effect/unstable/persistence"
-import { inferenceLayer } from "../inference/binding"
+import { inferenceLayer } from "../binding/index"
 
 const toolkit = Toolkit.make(Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }), failureMode: "return" }))
 const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, prompt_tokens_details: { cached_tokens: 3 }, completion_tokens_details: { reasoning_tokens: 2 }, cost: 0.25 }
@@ -64,15 +65,15 @@ test("compat: host fails truncated JSON once and retains usage", async () => {
     return new Response(frames("reasoning_content", limits.length === 1), { headers: { "content-type": "text/event-stream" } })
   }, { preconnect: globalThis.fetch.preconnect })
   const reference = { provider: "gateway", model_id: "gateway-model" }
-  const binding = modelLayer({ model: { default: reference, allow: "*", providers: { gateway: { baseUrl: "https://fixture.invalid/v1", protocol: "openai-chat-completions", env: ["KEY"] } } }, modelCredentials: { KEY: "private-key" } }, { snapshot: { source: "models.dev", revision: "r1", refreshedAt: 1, status: "fresh", providers: [{ id: "gateway", name: "Gateway", env: [], models: [{ id: "gateway-model", metadata: { contextWindowTokens: 200000, maxOutputTokens: 150 } }] }] } }, { configure: () => ({ reportedCostUsd: (finish) => { const cost = finish.metadata.openai?.usage?.cost; return typeof cost === "number" ? cost : undefined }, compat: { max_output_tokens: 200 }, throttleRetryDelaysMs: [] }) })
+  const binding = modelLayer({ model: { default: reference, allow: "*", providers: { gateway: { baseUrl: "https://fixture.invalid/v1", protocol: "openai-chat-completions", env: ["KEY"] } } }, modelCredentials: { KEY: "private-key" } }, { snapshot: { source: "models.dev", revision: "r1", refreshedAt: 1, status: "fresh", providers: [{ id: "gateway", name: "Gateway", env: [], models: [{ id: "gateway-model", metadata: { contextWindowTokens: 200000, maxOutputTokens: 150 } }] }] } }, { configure: () => ({ reportedCostUsd: (finish) => { const cost = finish.metadata.openai?.usage?.cost; return typeof cost === "number" ? cost : undefined }, compat: { max_output_tokens: 200 }, retry: { backoffMs: [] } }) })
   const action = await Effect.runPromise(Effect.gen(function* () {
-    const infer = yield* Infer
+    const infer = yield* inferenceClient
     expect(infer.resolve?.().model).toEqual(reference)
     return yield* infer.react({ model: reference, identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] })
   }).pipe(Effect.provide(binding), Effect.provideService(FetchHttpClient.Fetch, fetch)))
   expect(limits).toEqual([150])
   expect(prompts).toHaveLength(1)
-  expect(action).toMatchObject({ kind: "fail", error: { code: "output_limit" }, failure: { attempts: 1 }, usage: { promptTokens: 10, completionTokens: 5, costUsd: 0.25 } })
+  expect(action).toMatchObject({ kind: "fail", error: { reason: { _tag: "UnknownError" } }, failure: { cause: "output_limit", attempts: 1 }, usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } }, reportedCostUsd: 0.25 })
   expect(action).not.toHaveProperty("calls")
   expect(action).not.toHaveProperty("continuation")
 })
@@ -93,7 +94,7 @@ for (const broken of [false, true]) {
       executions.push(context.callId)
       return "contents"
     }) })], { models: { default: { provider: "openai-compat", model_id: "gateway-model" }, allow: "*" } })] })
-    const makeHost = () => createHost({ actorName: "compat-agent", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, inferenceLayer({ provider: "openai-compat", endpoint: "https://fixture.invalid/v1", client: { apiUrl: "https://fixture.invalid/v1" }, model: { model: "gateway-model" }, throttleRetryDelaysMs: [] }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))) })
+    const makeHost = () => createHost({ actorName: "compat-agent", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, inferenceLayer({ provider: "openai-compat", endpoint: "https://fixture.invalid/v1", client: { apiUrl: "https://fixture.invalid/v1" }, model: { model: "gateway-model" }, retry: { backoffMs: [] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))) })
     const host = makeHost()
     readHistory = () => host.read("root")
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Read", at: 1 })

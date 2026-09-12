@@ -75,7 +75,7 @@ Use `host` to allocate threads and call methods from the surrounding application
 
 ### Supply component requirements
 
-`layersFor(thread, instance)` returns an Effect layer supplying services your components need, such as `Infer` for model calls. Bun supplies the log, routing, thread identity, allocation, and workspace storage. TypeScript requires `layersFor` only when additional services are needed.
+`layersFor(thread, instance)` returns an Effect layer supplying services your components need, such as `LanguageModel` for model calls. Bun supplies the log, routing, thread identity, allocation, and workspace storage. TypeScript requires `layersFor` only when additional services are needed.
 
 ```ts
 import { modelLayer } from "./model"

@@ -1,10 +1,10 @@
-import { NATIVE_MODE, outputNameErrors, outputProfileErrors, type OutputMode } from "@clavia/tardigrade-agent/output/contract"
-import type { OutputRequest } from "@clavia/tardigrade-agent/inference/request"
+import { NATIVE_MODE, outputNameErrors, outputProfileErrors, type OutputMode } from "../output/contract"
+import type { OutputRequest } from "../inference/request"
 
 // The binding's half of the output contract: what an endpoint promises about a declared schema,
 // what that promise costs a request, and how the schema reaches each wire. A turn that declares a
 // contract the configured endpoint cannot honour fails here, before a socket opens
-// (inference/binding.test.ts).
+// (binding/index.test.ts).
 
 // OutputCapability is what one configured endpoint promises about a declared contract. It is a
 // union so a value cannot say two things at once: an endpoint that promises nothing has no
@@ -38,7 +38,7 @@ const UNPROVEN = (where: string, contract: string, implementation: string): stri
 // better guarantee than any local reading; mounting a fallback never turns that off. Native is
 // unavailable when the endpoint promises nothing, when it promises nothing native, or when it
 // cannot carry a schema beside the tools this request offers, and then the declared fallback runs.
-// With neither, the turn fails before it spends (inference/binding.test.ts).
+// With neither, the turn fails before it spends (binding/index.test.ts).
 export const outputModeOf = (
   request: { readonly output?: OutputRequest; readonly tools: ReadonlyArray<unknown> },
   config: { readonly provider?: string; readonly model: string; readonly output?: OutputCapability }
@@ -81,7 +81,7 @@ export const outputModeOf = (
 // outputPreflight says why this request cannot be served, before it is sent. It is empty when the
 // request can run in some mode, and it is the same reading outputModeOf does, so a host may call
 // it at startup against its own contracts and read what a turn would read
-// (inference/binding.test.ts).
+// (binding/index.test.ts).
 export const outputPreflight = (
   request: { readonly output?: OutputRequest; readonly tools: ReadonlyArray<unknown> },
   config: { readonly provider?: string; readonly model: string; readonly output?: OutputCapability }
@@ -96,12 +96,12 @@ export const outputSchemaFor = (output: OutputRequest | undefined, mode: OutputM
   output === undefined || output.kind !== "contract" || mode.kind !== "native" ? undefined : output.contract.schema
 
 // outputNameFor is the schema identity a native attempt sends beside the schema. Both wires carry
-// a name, and both carry the declared one (inference/response-format.test.ts).
+// a name, and both carry the declared one (providers/response-format.test.ts).
 export const outputNameFor = (output: OutputRequest | undefined, mode: OutputMode): string | undefined =>
   outputSchemaFor(output, mode) === undefined || output?.kind !== "contract" ? undefined : output.contract.name
 
 // fallbackSystemFor is the extra prompt an attempt sends: the fallback's own instruction, and only
 // on an attempt running as that fallback. A native attempt reads exactly what it would read with
-// nothing mounted (inference/binding.test.ts).
+// nothing mounted (binding/index.test.ts).
 export const fallbackSystemFor = (output: OutputRequest | undefined, mode: OutputMode): string | undefined =>
   mode.kind === "native" || output?.kind !== "contract" ? undefined : output.fallbackSystem

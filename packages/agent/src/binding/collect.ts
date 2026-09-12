@@ -6,14 +6,14 @@ import type { Tool, Toolkit } from "effect/unstable/ai"
 import type { StreamBounds } from "./policy"
 import { boundedStream, StreamBoundExceeded, StreamIncomplete } from "./request"
 
-// collectResponse preserves provider metadata while leaving tool execution to the caller (inference/response.test.ts).
+// collectResponse preserves provider metadata while leaving tool execution to the caller (providers/response.test.ts).
 export const collectResponse = <Tools extends Record<string, Tool.Any>>(prompt: Prompt.RawInput, toolkit: Toolkit.Toolkit<Tools>, onPart?: (part: Response.AnyPart) => void | Effect.Effect<void>, responseFormat?: LanguageModel.ProviderOptions["responseFormat"], bounds?: StreamBounds) =>
   LanguageModel.streamText({ prompt, toolkit, disableToolCallResolution: true }).pipe(
     (stream) => responseFormat === undefined ? stream : Stream.provideService(stream, ResponseFormat, responseFormat),
     (stream) => bounds === undefined ? stream : boundedStream(stream, bounds, (part) => (part.type === "text-delta" || part.type === "reasoning-delta" || part.type === "tool-params-delta") && part.delta.length > 0),
     Stream.tap((part) => Effect.suspend(() => onPart?.(part) ?? Effect.void)),
     Stream.runCollect,
-    (effect) => bounds?.totalMs === undefined ? effect : effect.pipe(Effect.timeoutOrElse({ duration: bounds.totalMs, orElse: () => Effect.fail(new StreamBoundExceeded({ bound: "totalMs" })) })),
+    (effect) => bounds?.attemptMs === undefined ? effect : effect.pipe(Effect.timeoutOrElse({ duration: bounds.attemptMs, orElse: () => Effect.fail(new StreamBoundExceeded({ bound: "attemptMs" })) })),
     Effect.tap((parts) => parts.some((part) => part.type === "finish" || (part.type === "error" && !Schema.is(ToolCallValidationError)(part.error))) ? Effect.void : Effect.fail(new StreamIncomplete())),
     Effect.flatMap((parts) => Schema.encodeEffect(Prompt.Prompt)(Prompt.fromResponseParts(parts.map((part) => part.type === "error" && Schema.is(ToolCallValidationError)(part.error)
       ? Response.makePart("tool-call", { id: part.error.id, name: part.error.name, params: part.error.params, providerExecuted: false, metadata: part.error.providerMetadata })

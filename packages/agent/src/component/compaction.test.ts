@@ -1,3 +1,4 @@
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { renderMessages } from "../projection/messages"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import { describe, expect, test } from "bun:test"
@@ -6,7 +7,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { actorFromProjections, Self, send } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection } from "@clavia/tardigrade-core/transition"
-import { Infer } from "../inference/contract"
+
 import { composeKeys } from "@clavia/tardigrade-core/log"
 import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
 import { agentKeys } from "../log/events"
@@ -25,7 +26,7 @@ import {
 
 // Compaction is a pure machine: a guard fires at a resolved tool round when the rendered suffix
 // passes FIRE tokens, the pass summarizes down to a KEEP-token tail, and the checkpoint binds by
-// event identity. The summarizer is the ordinary Infer seam, stubbed here. The size measure is
+// event identity. The summarizer is the ordinary inferenceClient seam, stubbed here. The size measure is
 // rendered chars over four.
 
 const head: Event = { type: "MessageReceived", id: "m0", text: "extract the covenants", at: 0 }
@@ -124,7 +125,7 @@ describe("the compaction pass", () => {
     const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
     let model: unknown
-    const actor = actorFromProjections<Infer | EventLog | Self>({
+    const actor = actorFromProjections<import("effect/unstable/ai").LanguageModel.LanguageModel | EventLog | Self>({
       transitions: [completeTransitionProjection(compactionReactor(policy))],
       keyOf: agentActorKeys
     })
@@ -136,7 +137,7 @@ describe("the compaction pass", () => {
           read: Ref.get(ref)
         })
       ),
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: ({ trajectory, model: selected }: { trajectory: ReadonlyArray<Event>; model?: unknown }) => {
           briefed = String((trajectory[0] as { text?: unknown }).text ?? "")
           model = selected
@@ -272,7 +273,7 @@ describe("a projected repair is invisible to compaction as well as to the render
       })).pipe(
         Effect.provide(
           Layer.mergeAll(
-            Layer.succeed(Infer, {
+            testInferenceLayer( {
               react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
                 briefs.push(String((trajectory[0] as { text?: unknown }).text))
                 return Effect.succeed({ kind: "complete" as const, output: "summarized" })

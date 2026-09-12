@@ -1,3 +1,5 @@
+import type { LanguageModel } from "effect/unstable/ai"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
@@ -10,7 +12,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { Ingress } from "@clavia/tardigrade-host/transport/ingress"
-import { ACTOR_ARTIFACT_VERSION, Infer, type InferDelta, type InferRequest } from "tardie"
+import { ACTOR_ARTIFACT_VERSION, type InferDelta, type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
 import { openStreams } from "./api"
@@ -62,7 +64,7 @@ const scripted = ({ trajectory }: InferRequest): Action => {
 
 const testModel = { provider: "openai", model_id: "gpt-mini" } as const
 
-const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
+const layerScripted: Layer.Layer<LanguageModel.LanguageModel> = testInferenceLayer({
   resolve: (model = testModel) => ({ model, models: { default: model, allow: "*" } }),
   react: (request: InferRequest) => Effect.succeed(scripted(request))
 })

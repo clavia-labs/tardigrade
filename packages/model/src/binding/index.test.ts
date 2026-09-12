@@ -1,3 +1,5 @@
+import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
+import { durableReact } from "../testing/durable-inference"
 import type { ProviderContinuation } from "@clavia/tardigrade-agent/inference/continuation"
 import { TestClock } from "effect/testing"
 import { expect, test } from "bun:test"
@@ -9,8 +11,8 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { createHost } from "@clavia/tardigrade-host/host"
 import { agentMethods, infer, tool, outputValidateOnce } from "@clavia/tardigrade-agent"
 import { ModelReturned } from "@clavia/tardigrade-agent/log/events"
-import { Infer } from "@clavia/tardigrade-agent/inference/contract"
-import { inferenceLayer } from "./binding"
+
+import { inferenceLayer } from "./index"
 import { providerEvents } from "../testing/fixtures"
 
 for (const provider of ["openai", "anthropic"] as const) {
@@ -47,7 +49,7 @@ for (const provider of ["openai", "anthropic"] as const) {
       spec: { name: "read", description: "Read file", inputSchema: { type: "object", properties: { path: { type: "string", pattern: "^[a-z]+$" } }, required: ["path"], additionalProperties: false } },
       run: (_args, context) => Effect.sync(() => { expect(readHistory().some((event) => event.type === "ModelReturned")).toBe(true); expect(readHistory().some((event) => event.type === "ToolReturned" && event.callId === "b")).toBe(true); executions.push(context.callId); return "contents" })
     })], { models: { default: { provider, model_id: options.model.model }, allow: "*" } })] })
-    const makeHost = () => createHost({ actorName: "effect-agent", actorFor: () => assembled, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, inferenceLayer({ ...options, pricing: { promptUsdPerToken: 0.01, completionUsdPerToken: 0.02, cachedPromptUsdPerToken: 0.001, cacheWritePromptUsdPerToken: 0.015 }, throttleRetryDelaysMs: [], ...(outputCase.startsWith("native") ? { output: { guarantee: "native", withTools: true } as const } : {}) }).pipe(
+    const makeHost = () => createHost({ actorName: "effect-agent", actorFor: () => assembled, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, inferenceLayer({ ...options, pricing: { promptUsdPerToken: 0.01, completionUsdPerToken: 0.02, cachedPromptUsdPerToken: 0.001, cacheWritePromptUsdPerToken: 0.015 }, retry: { backoffMs: [] }, ...(outputCase.startsWith("native") ? { output: { guarantee: "native", withTools: true } as const } : {}) }).pipe(
       Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))
     )) })
     const host = makeHost()
@@ -85,7 +87,7 @@ for (const provider of ["openai", "anthropic"] as const) {
       expect(history.find((event) => event.type === "TurnCompleted")).toMatchObject({ output: result })
       expect(JSON.stringify(requests[0])).toContain("answer")
     }
-    expect(history[responseIndex]?.usage).toMatchObject({ promptTokens: 10, completionTokens: 5, costSource: "table", providerReports: [expect.any(Object)] })
+    expect(history[responseIndex]?.usage).toMatchObject({ inputTokens: { total: 10 }, outputTokens: { total: 5 } })
     expect(history.filter((event) => event.type === "ToolCalled" || event.type === "ToolReturned").every((event) => event.usage === undefined)).toBe(true)
     expect(history[responseIndex]?.continuation).toMatchObject({ format: "effect-prompt" })
     expect(JSON.stringify(requests[1])).toContain(provider === "openai" ? "opaque-b" : "opaque")
@@ -145,7 +147,7 @@ for (const provider of ["openai", "anthropic"] as const) {
       Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))
     )
     const action = await Effect.runPromise(Effect.gen(function* () {
-      const infer = yield* Infer
+      const infer = yield* inferenceClient
       return yield* infer.react({
         identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Answer", tools: [],
         trajectory: [{ type: "MessageReceived", id: "m1", text: "Answer", at: 1, output: { name: "answer", schema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"], additionalProperties: false } } }]
@@ -173,10 +175,10 @@ for (const provider of ["openai", "anthropic"] as const) {
         const chunks = events.map((event, sequence_number) => new TextEncoder().encode(`event: ${event?.type}\ndata: ${JSON.stringify({ sequence_number, ...event })}\n\n`))
         return new Response(new ReadableStream({ pull(controller) { const chunk = chunks.shift(); if (chunk === undefined) controller.close(); else controller.enqueue(chunk) } }), { headers: { "content-type": "text/event-stream" } })
       }, { preconnect: globalThis.fetch.preconnect })
-      const binding = inferenceLayer({ provider, endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: provider === "openai" ? "gpt-5" : "claude-sonnet-4-5" }, throttleRetryDelaysMs: [0], retryAfterJitterMs: 0 }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
+      const binding = inferenceLayer({ provider, endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: provider === "openai" ? "gpt-5" : "claude-sonnet-4-5" }, retry: { backoffMs: [0], retryAfterJitterMs: 0 } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
       const action = await Effect.runPromise(Effect.gen(function* () {
-        const infer = yield* Infer
-        return yield* infer.react({ identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [{ type: "MessageReceived", id: "m1", text: "Read", at: 1 }], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string", pattern: "^[a-z]+$" } }, required: ["path"], additionalProperties: false } }] }, "attempt", undefined, (delta) => attempts.add(delta.physicalAttempt))
+        const infer = yield* inferenceClient
+        return yield* durableReact(infer, { identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [{ type: "MessageReceived", id: "m1", text: "Read", at: 1 }], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string", pattern: "^[a-z]+$" } }, required: ["path"], additionalProperties: false } }] }, "attempt", undefined, (delta) => attempts.add(delta.physicalAttempt))
       }).pipe(Effect.provide(binding)))
       expect(requests).toBe(2)
       expect(action).toMatchObject({ kind: "calls", calls: [{ callId: "a" }, { callId: "b" }, { callId: "c" }] })
@@ -185,23 +187,24 @@ for (const provider of ["openai", "anthropic"] as const) {
   }
 }
 
-test("request deadline aborts HTTP before retry and records exhaustion", async () => {
+test("request deadline aborts one physical request and reports retryability", async () => {
   let requests = 0
   let aborted = 0
   const fetch = Object.assign((_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     requests++
     init?.signal?.addEventListener("abort", () => { aborted++; reject(new Error("aborted")) }, { once: true })
   }), { preconnect: globalThis.fetch.preconnect })
-  const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, stream: { firstChunkMs: 10, idleMs: 100, totalMs: 100 }, throttleRetryDelaysMs: [0] }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
+  const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, timeout: { firstContentMs: 10, idleMs: 100, attemptMs: 100 }, retry: { backoffMs: [0] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
   const action = await Effect.runPromise(Effect.gen(function* () {
-    const infer = yield* Infer
+    const infer = yield* inferenceClient
     const fiber = yield* infer.react({ identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Answer", tools: [], trajectory: [] }).pipe(Effect.forkChild)
     yield* TestClock.adjust(20)
     return yield* Fiber.join(fiber)
   }).pipe(Effect.provide(Layer.merge(binding, TestClock.layer()))))
-  expect(requests).toBe(2)
-  expect(aborted).toBe(2)
-  expect(action).toMatchObject({ kind: "fail", failure: { attempts: 2, policy: { stream: { firstChunkMs: 10, idleMs: 100, totalMs: 100 }, throttleRetryDelaysMs: [0] } } })
+  expect(requests).toBe(1)
+  expect(aborted).toBe(1)
+  expect(action).toMatchObject({ kind: "fail", retryable: true, failure: { attempts: 1 } })
+  expect(action).not.toHaveProperty("failure.policy")
 })
 
 test("pre-cancelled inference sends nothing and the next request succeeds", async () => {
@@ -210,10 +213,10 @@ test("pre-cancelled inference sends nothing and the next request succeeds", asyn
     requests++
     return new Response(providerEvents("openai", false).map((event, sequence_number) => `event: ${event.type}\ndata: ${JSON.stringify({ sequence_number, ...event })}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })
   }, { preconnect: globalThis.fetch.preconnect })
-  const layer = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiUrl: "https://fixture.invalid" }, model: { model: "gpt-5" }, throttleRetryDelaysMs: [] }).pipe(Layer.provide(FetchHttpClient.layer))
+  const layer = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiUrl: "https://fixture.invalid" }, model: { model: "gpt-5" }, retry: { backoffMs: [] } }).pipe(Layer.provide(FetchHttpClient.layer))
   const request = { identity: { actor: "test", instance: "main", thread: "root", turn: "m" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string", pattern: "^[a-z]+$" } }, required: ["path"], additionalProperties: false } }] }
   await Effect.runPromise(Effect.gen(function* () {
-    const infer = yield* Infer
+    const infer = yield* inferenceClient
     const stopped = yield* infer.react(request, "cancelled", AbortSignal.abort()).pipe(Effect.exit)
     expect(stopped._tag).toBe("Failure")
     expect(requests).toBe(0)
@@ -232,7 +235,7 @@ for (const outcome of ["stop", "tool_calls", "content_filter", "length", "interr
       ]
       return new Response(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + (outcome === "interrupted" ? "" : "data: [DONE]\n\n"), { headers: { "content-type": "text/event-stream" } })
     }, { preconnect: globalThis.fetch.preconnect })
-    const binding = inferenceLayer({ provider: "openai-compat", providerId: "gateway", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "requested-model" }, throttleRetryDelaysMs: [] }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
+    const binding = inferenceLayer({ provider: "openai-compat", providerId: "gateway", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "requested-model" }, retry: { backoffMs: [] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
     const definition = actor({ name: "evidence", methods: agentMethods, components: [infer([outputValidateOnce, tool({ spec: { name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }, run: () => Effect.succeed("done") })], { models: { default: { provider: "gateway", model_id: "requested-model" }, allow: "*" } })] })
     const host = createHost({ actorName: "evidence", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, binding) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Read", budget: 1, at: 1 })
@@ -242,21 +245,21 @@ for (const outcome of ["stop", "tool_calls", "content_filter", "length", "interr
     expect(event.endpoint).toMatchObject({ provider: "gateway", model: "requested-model" })
     if (outcome === "rate-limit") {
       expect(event.response).toBeUndefined()
-      expect(event.error).toMatchObject({ statusCode: 429, isRetryable: true, details: expect.any(Object) })
+      expect(event.error).toMatchObject({ _tag: "AiError", reason: { _tag: "RateLimitError", http: { response: { status: 429 } } } })
       return
     }
-    expect(event.response).toMatchObject({ id: "reported-id", model: "served-model" })
+    expect(event.response).toMatchObject({ id: "reported-id", modelId: "served-model" })
     expect(event.reasoning).toBe("Thinking")
     if (outcome === "stop" || outcome === "tool_calls") {
       expect(event.outcome).toBe("returned")
-      expect(event.response?.finishReason).toBe(outcome === "stop" ? "stop" : "tool-calls")
+      expect(event.finish?.reason).toBe(outcome === "stop" ? "stop" : "tool-calls")
     } else {
       expect(event.outcome).toBe("failed")
       expect(event.text).toBe("Partial")
       expect(host.read("root").filter((event) => event.type === "ToolCalled")).toEqual([])
-      expect(event.response?.finishReason).toBe(outcome === "interrupted" ? undefined : outcome === "length" ? "length" : "content-filter")
+      expect(event.finish?.reason).toBe(outcome === "interrupted" ? undefined : outcome === "length" ? "length" : "content-filter")
       if (outcome !== "interrupted") {
-        expect(event.usage).toMatchObject({ promptTokens: 10, completionTokens: 3 })
+        expect(event.usage).toMatchObject({ inputTokens: { total: 10 }, outputTokens: { total: 3 } })
         expect(host.read("root").find((event) => event.type === "TurnFailed")).toMatchObject({ cause: outcome === "length" ? "output_limit" : "refused" })
       }
     }
@@ -266,12 +269,13 @@ for (const outcome of ["stop", "tool_calls", "content_filter", "length", "interr
 test.each([1, 2])("%i provider error parts retain their JSON structure without a finish part", async (count) => {
   const error = { type: "error", code: "server_error", message: "Try later", param: null, sequence_number: 1 }
   const fetch = Object.assign(async () => new Response(Array.from({ length: count }, () => `event: error\ndata: ${JSON.stringify(error)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } }), { preconnect: globalThis.fetch.preconnect })
-  const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, throttleRetryDelaysMs: [] }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
+  const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, retry: { backoffMs: [] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
   const action = await Effect.runPromise(Effect.gen(function* () {
-    const infer = yield* Infer
+    const infer = yield* inferenceClient
     return yield* infer.react({ identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Hello", trajectory: [], tools: [] })
   }).pipe(Effect.provide(binding)))
-  expect(action).toMatchObject({ kind: "fail", error: count === 1 ? { message: "Try later", details: error } : { details: [{ message: "Try later", details: error }, { message: "Try later", details: error }] } })
+  const item = { reason: { metadata: { tardigrade: { evidence: error } } } }
+  expect(action).toMatchObject({ kind: "fail", error: count === 1 ? item : { reason: { metadata: { tardigrade: { evidence: [item, item] } } } } })
   expect(action.response).toBeUndefined()
 })
 
@@ -281,13 +285,13 @@ test("a retry does not inherit the preceding response identity or partial output
     if (++requests === 2) return new Response(JSON.stringify({ error: { message: "Denied" } }), { status: 400, headers: { "content-type": "application/json" } })
     return new Response(`data: ${JSON.stringify({ id: "old-id", model: "old-model", created: 1, choices: [{ index: 0, delta: { content: "old-text" }, finish_reason: null }] })}\n\n`, { headers: { "content-type": "text/event-stream" } })
   }, { preconnect: globalThis.fetch.preconnect })
-  const binding = inferenceLayer({ provider: "openai-compat", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "requested" }, throttleRetryDelaysMs: [0], retryAfterJitterMs: 0 }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
+  const binding = inferenceLayer({ provider: "openai-compat", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "requested" }, retry: { backoffMs: [0], retryAfterJitterMs: 0 } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
   const action = await Effect.runPromise(Effect.gen(function* () {
-    const infer = yield* Infer
-    return yield* infer.react({ identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Hello", trajectory: [], tools: [] })
+    const infer = yield* inferenceClient
+    return yield* durableReact(infer, { identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Hello", trajectory: [], tools: [] })
   }).pipe(Effect.provide(binding)))
   expect(requests).toBe(2)
-  expect(action).toMatchObject({ kind: "fail", error: { statusCode: 400 } })
+  expect(action).toMatchObject({ kind: "fail", error: { reason: { _tag: "InvalidRequestError", http: { response: { status: 400 } } } } })
   expect(action).not.toHaveProperty("text")
   expect(action).not.toHaveProperty("response")
 })

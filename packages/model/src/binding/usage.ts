@@ -3,7 +3,7 @@ import { priced, type ModelPricing, type Usage } from "@clavia/tardigrade-agent/
 
 export type ReportedCostReader = (finish: Response.FinishPart) => number | undefined
 
-// responseUsageOf maps Effect's inclusive token counts without interpreting raw provider fields (inference/usage.test.ts).
+// responseUsageOf maps Effect's inclusive token counts without interpreting raw provider fields (binding/usage.test.ts).
 export const responseUsageOf = (finish: Response.FinishPart, stamp: { readonly provider: string; readonly model: string }, pricing?: ModelPricing, reportedCostUsd?: number): Usage => {
   const { inputTokens: input, outputTokens: output } = finish.usage
   return priced({

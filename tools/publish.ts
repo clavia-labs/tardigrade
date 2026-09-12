@@ -305,7 +305,7 @@ try {
       "./model/directory": "./src/model/providers/directory.ts",
       "./model/reasoning": "./src/model/providers/options.ts",
       "./model/request-policy": "./src/model/inference/policy.ts",
-      "./model/output": "./src/model/inference/output.ts",
+      "./model/output": "./src/model/binding/output.ts",
       "./model/*": "./src/model/*.ts"
     },
     dependencies: dependencyUnion(packages.map((source) => source.pkg)),

@@ -1,7 +1,8 @@
 import { cloudflareDirectory } from "./transport/directory"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
-import { Infer, type InferenceObserver, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
+import { type InferenceObserver, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
+import type { LanguageModel } from "effect/unstable/ai"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { modelLayer as configuredModelLayer } from "@clavia/tardigrade-model/host"
@@ -176,12 +177,7 @@ export const modelLayer = (
   models: CloudflareModels | undefined,
   scope: ModelCatalog,
   observer?: InferenceObserver
-) => Layer.effect(Infer, Effect.map(Infer, (binding) => ({
-  ...binding,
-  react: (request, key, signal) => models !== undefined && request.model === undefined
-    ? Effect.succeed({ kind: "fail" as const, error: "the actor selected no model", failure: { cause: "inference_error" as const, attempts: 0 } })
-    : binding.react(request, key, signal)
-}))).pipe(Layer.provide(configuredModelLayer(hostModelConfig(models), { snapshot: scope }, observer === undefined ? {} : { observer })))
+) => configuredModelLayer(hostModelConfig(models), { snapshot: scope }, observer === undefined ? {} : { observer })
 
 const positiveInteger = (raw: string | undefined, fallback: number, name: string): number => {
   if (raw === undefined) return fallback
@@ -243,7 +239,7 @@ export const assemblyOf = (name: string): Actor<never> | undefined =>
 export const methodsOf = (name: string): ActorMethods | undefined =>
   mountedActor?.actor.name === name ? mountedActor.actor.methods : undefined
 
-type CloudflareWorkerProvided = CloudflarePorts | Infer | HttpClient.HttpClient
+type CloudflareWorkerProvided = CloudflarePorts | LanguageModel.LanguageModel | HttpClient.HttpClient
 type CloudflareApplicationRequirements<R> = Exclude<R, CloudflareWorkerProvided>
 
 // CloudflareWorkerLayerContext exposes the Worker bindings and thread identity used to construct application services.

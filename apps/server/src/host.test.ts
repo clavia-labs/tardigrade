@@ -1,3 +1,5 @@
+import type { LanguageModel } from "effect/unstable/ai"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -5,7 +7,7 @@ import type { ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope
 import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import { Ingress } from "@clavia/tardigrade-host/transport/ingress"
 import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
-import { Infer, type InferRequest } from "tardie"
+import { type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
 import { layerConfig, readConfig, ServerConfig } from "./config"
@@ -24,7 +26,7 @@ setDefaultTimeout(BOOT_MS)
 // The host service against a real durable host on a volatile database, with the model seam bound
 // to a scripted mind: no credentials, no network, and the turn loop is the library's own.
 
-// The scripted mind answers the brief in one attempt. It honors the Infer contract by ending the
+// The scripted mind answers the brief in one attempt. It honors the inferenceClient contract by ending the
 // turn rather than calling a tool, which is all these assertions need
 // (packages/agent/src/index.test.ts, the scripted mind).
 const briefOf = (trajectory: ReadonlyArray<Event>): string => {
@@ -40,7 +42,7 @@ const testModel = { provider: "test", model_id: "scripted" } as const
 const resolveTestModel = (model: { readonly provider: string; readonly model_id: string } = testModel) =>
   ({ model, models: { default: model, allow: "*" as const } })
 
-const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
+const layerScripted: Layer.Layer<LanguageModel.LanguageModel> = testInferenceLayer({
   resolve: resolveTestModel,
   react: (request: InferRequest) => Effect.succeed(scripted(request))
 })
@@ -56,7 +58,7 @@ const config = layerConfig(readConfig({
 const running = <A, E>(
   body: (threads: Context.Service.Shape<typeof Threads>) => Effect.Effect<A, E, DriverGauge | Ingress>,
   options: {
-    readonly infer?: Layer.Layer<Infer> | false
+    readonly infer?: Layer.Layer<LanguageModel.LanguageModel> | false
     readonly config?: Layer.Layer<ServerConfig>
     readonly catalog?: Layer.Layer<ModelCatalogStore>
   } = {}
@@ -173,7 +175,7 @@ describe("the threads service", () => {
     let active = 0
     let peak = 0
     let calls = 0
-    const concurrent = Layer.succeed(Infer)({
+    const concurrent = testInferenceLayer({
       resolve: resolveTestModel,
       react: () => Effect.promise(async () => {
         active += 1

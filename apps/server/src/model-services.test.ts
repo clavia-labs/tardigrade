@@ -1,3 +1,4 @@
+import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -5,7 +6,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { Effect, FileSystem, Path } from "effect"
 import { HttpClient } from "effect/unstable/http"
-import { Infer } from "@clavia/tardigrade-agent"
+
 import { bunModelServices } from "./model-services"
 
 test("Bun model services resolve configuration and supply Effect inference by default", async () => {
@@ -35,7 +36,7 @@ test("Bun model services resolve configuration and supply Effect inference by de
     expect(catalog.snapshot?.providers[0]?.models[0]?.id).toBe("gpt")
     expect(JSON.stringify(catalog)).not.toContain("test-secret")
     await Effect.runPromise(Effect.gen(function*() {
-      const infer = yield* Infer
+      const infer = yield* inferenceClient
       expect(infer.resolve?.()).toMatchObject({ model: { provider: "openai", model_id: "gpt" }, contextWindowTokens: 128000, maxOutputTokens: 16000 })
       yield* FileSystem.FileSystem
       yield* Path.Path

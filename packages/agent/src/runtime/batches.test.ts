@@ -1,3 +1,4 @@
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import fc from "fast-check"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
@@ -8,7 +9,7 @@ import { EventLog } from "@clavia/tardigrade-core/log"
 import { createHost } from "@clavia/tardigrade-host/host"
 import { agentMethods, budget, codeMode, infer, nativeOutput, tool } from "../index"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
-import { Infer, NativeOutputSupport, type InferRequest } from "../inference/contract"
+import { NativeOutputSupport, type InferRequest } from "../inference/contract"
 import { usageIn } from "../inference/usage"
 import type { Action, ToolCall } from "../log/events"
 import { renderMessages } from "../projection/messages"
@@ -38,7 +39,7 @@ const setup = (
     layersFor: () => Layer.mergeAll(
       KeyValueStore.layerMemory,
       jsSandboxFor({}),
-      Layer.succeed(Infer, { react: (request, key) => Effect.sync(() => mind(request, key)) }),
+      testInferenceLayer( { react: (request, key) => Effect.sync(() => mind(request, key)) }),
       Layer.succeed(NativeOutputSupport, { withTools: true })
     )
   })
@@ -175,7 +176,7 @@ describe("tool batches", () => {
     expect(requests.every((event) => event.usage === undefined && event.batchIndex === undefined)).toBe(true)
     expect(run.read().find((event) => event.type === "TurnCompleted")?.usage).toBeUndefined()
     expect(usageIn(run.read(), TURN)).toMatchObject({ promptTokens: 150, completionTokens: 25, costUsd: 0.015 })
-    expect(renderMessages(run.read()).filter((message) => message.role !== "user")).toEqual([
+    expect(renderMessages(run.read()).filter((message) => message.role !== "user").map(({ continuation: _continuation, ...message }) => message)).toEqual([
       { role: "assistant", content: "Reading both files.", toolCalls: [
         { id: "lease", name: "read", arguments: '{"path":"lease"}' },
         { id: "amendment", name: "read", arguments: '{"path":"amendment"}' }

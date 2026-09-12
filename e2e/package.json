@@ -8,11 +8,16 @@
     "@clavia/tardigrade-host": "workspace:*",
     "effect": "npm:@tardie/effect@4.0.0-rc.113",
     "fast-check": "^4.9.0",
-    "tardie": "workspace:*"
+    "tardie": "workspace:*",
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0"
   },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "test:live:reasoning": "TARDIE_LIVE_REASONING=1 bun test ./inference/reasoning.live.test.ts"
+    "test:live": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/providers.test.ts ./inference/live/binding.test.ts ./inference/live/recovery.test.ts",
+    "test:live:reasoning": "bun run test:live:recovery",
+    "test:live:providers": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/providers.test.ts",
+    "test:live:binding": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/binding.test.ts",
+    "test:live:recovery": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/recovery.test.ts"
   }
 }

@@ -43,7 +43,7 @@ type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
 // HostOptions binds a host to its owner's world. actorFor names a
 // thread's reactors; a thread with none is a sink (a registry, a mirror)
 // and delivery still lands. layersFor supplies the rest of R; the host
-// binds HostPorts. A missing Infer is a type error.
+// binds HostPorts. A missing LanguageModel is a type error.
 export type HostOptions<R> = {
   readonly allocation?: ThreadAllocationPolicy
   readonly initializeRoot?: (target: ThreadAddress, at: number) => Promise<void>

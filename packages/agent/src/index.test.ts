@@ -1,3 +1,4 @@
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { definePackage } from "@clavia/tardigrade-code/package/definition"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
@@ -9,7 +10,7 @@ import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
 import { createHost, type Host, type ThreadEnv } from "@clavia/tardigrade-host/host"
 import type { Action } from "./log/events"
-import { Infer, NativeOutputSupport, type InferRequest } from "./inference/contract"
+import { NativeOutputSupport, type InferRequest } from "./inference/contract"
 import type { InferDelta } from "./inference/observer"
 import { boundaryOf } from "./output/boundary"
 import { resumeTurn } from "./runtime/resume"
@@ -57,7 +58,7 @@ const hosted = (
     Layer.mergeAll(
       KeyValueStore.layerMemory,
       jsSandboxFor({}),
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: (request: InferRequest, key?: string, signal?: AbortSignal, onDelta?: (delta: InferDelta) => void) =>
           Effect.promise(() => mind(request, key, signal, onDelta))
       }),
@@ -117,7 +118,7 @@ const headText = (trajectory: ReadonlyArray<Event>): string => {
   return ""
 }
 
-// The scripted mind honors the Infer seam's contract: fresh tool call
+// The scripted mind honors the inferenceClient seam's contract: fresh tool call
 // ids per call (real providers mint tooluse ids), and it reads only the
 // CURRENT turn's slice, so a second turn genuinely re-runs.
 const scripted = async ({ trajectory }: { trajectory: ReadonlyArray<Event> }): Promise<Action> => {
@@ -539,7 +540,7 @@ describe("an assembled agent", () => {
     const completed = await mind.resume(failed.turn)
     expect(completed).toEqual({ turn: "run-0", output: "contents" })
     expect(reads).toEqual(["contract"])
-    expect(keys).toEqual(["run-0/infer/0", "run-0/infer/1", "run-0/infer/1"])
+    expect(keys).toEqual(["run-0/infer/0", "run-0/infer/1", "run-0/infer/2"])
     expect(failureInRequest).toEqual([false, false, false])
 
     const log = mind.host.read(ROOT_THREAD)
@@ -672,7 +673,7 @@ test("a turn rejects reused provider IDs before dispatch, including after resume
   expect(mind.host.read(ROOT_THREAD).findLast((event) => event.type === "TurnFailed"))
     .toMatchObject({ cause: "inference_error", endpoint })
   expect(mind.host.read(ROOT_THREAD).findLast((event) => event.type === "ModelReturned"))
-    .toMatchObject({ outcome: "returned", usage, endpoint })
+    .toMatchObject({ outcome: "returned", usage: { inputTokens: { total: usage.promptTokens }, outputTokens: { total: usage.completionTokens } }, endpoint })
   expect((await mind.resume(first.turn)).error).toContain("duplicate tool call ID")
   expect(dispatched).toBe(1)
   await mind.host.drive()
