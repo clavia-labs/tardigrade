@@ -1,74 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { costNumber, priced, sumUsage, usageFrom, usageIn, usageOf, ZERO_USAGE } from "./usage"
+import { priced, sumUsage, usageIn, usageOf, ZERO_USAGE } from "./usage"
 
 const table = { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }
 
-describe("priced and usageFrom", () => {
-  test("a provider bill and a table estimate coexist", () => {
-    const raw = {
-      prompt_tokens: 10,
-      completion_tokens: 4,
-      total_tokens: 14,
-      prompt_tokens_details: { cached_tokens: 4 },
-      completion_tokens_details: { reasoning_tokens: 2 },
-      cost: 0
-    }
-    const billed = usageFrom(
-      raw,
-      { ...table, cachedPromptUsdPerToken: 0.0001 },
-      {
-        provider: "vercel-ai-gateway",
-        model: "anthropic/claude-sonnet-4.6"
-      }
-    )
-    expect(billed).toEqual({
-      promptTokens: 10,
-      completionTokens: 4,
-      totalTokens: 14,
-      cachedPromptTokens: 4,
-      reasoningTokens: 2,
-      costUsd: 0,
-      costSource: "provider",
-      reportedCostUsd: 0,
-      estimatedCostUsd: 6 * 0.001 + 4 * 0.0001 + 4 * 0.002,
-      provider: "vercel-ai-gateway",
-      model: "anthropic/claude-sonnet-4.6",
-      providerReports: [
-        { provider: "vercel-ai-gateway", model: "anthropic/claude-sonnet-4.6", providerSpecific: raw }
-      ]
-    })
-
-    const filledRaw = { prompt_tokens: 10, completion_tokens: 4 }
-    const filled = usageFrom(filledRaw, table, { provider: "openai", model: "test" })
-    expect(filled).toEqual({
-      promptTokens: 10,
-      completionTokens: 4,
-      costUsd: 10 * 0.001 + 4 * 0.002,
-      costSource: "table",
-      estimatedCostUsd: 10 * 0.001 + 4 * 0.002,
-      provider: "openai",
-      model: "test",
-      providerReports: [{ provider: "openai", model: "test", providerSpecific: filledRaw }]
-    })
-    const unknownRaw = { promptTokens: 10, completionTokens: 4 }
-    const unknown = usageFrom(unknownRaw)
-    expect(unknown).toEqual({
-      promptTokens: 10,
-      completionTokens: 4,
-      providerReports: [{ providerSpecific: unknownRaw }]
-    })
-    const futureRaw = { future_billable_units: 3 }
-    expect(usageFrom(futureRaw, table, { provider: "future", model: "m" })).toEqual({
-      promptTokens: 0,
-      completionTokens: 0,
-      provider: "future",
-      model: "m",
-      providerReports: [{ provider: "future", model: "m", providerSpecific: futureRaw }]
-    })
-    expect(usageFrom(undefined)).toBeUndefined()
-  })
-
+describe("priced", () => {
   test("priced retains a provider figure and recomputes the table projection", () => {
     const reported = { promptTokens: 1, completionTokens: 1, costUsd: 9, costSource: "provider" as const }
     expect(priced(reported, table)).toEqual({
@@ -80,6 +16,12 @@ describe("priced and usageFrom", () => {
       costUsd: 10 * 0.001 + 4 * 0.002,
       costSource: "table",
       estimatedCostUsd: 10 * 0.001 + 4 * 0.002
+    })
+    expect(priced({ promptTokens: 1, completionTokens: 1, reportedCostUsd: 0 }, table)).toMatchObject({
+      costUsd: 0,
+      costSource: "provider",
+      reportedCostUsd: 0,
+      estimatedCostUsd: 0.003
     })
     expect(priced({ promptTokens: 1, completionTokens: 1, costUsd: 9 }, table)).toEqual({
       promptTokens: 1,
@@ -119,55 +61,6 @@ describe("priced and usageFrom", () => {
     ).toMatchObject({ estimatedCostUsd: 4 * 0.001 + 4 * 0.0002 + 2 * 0.00125 + 4 * 0.002 })
   })
 
-  test("a normalized adapter view fills details the raw report omits", () => {
-    const raw = { prompt_tokens: 10, completion_tokens: 4, cost: 0 }
-    expect(
-      usageFrom(
-        [
-          raw,
-          {
-            promptTokens: 10,
-            completionTokens: 4,
-            totalTokens: 15,
-            promptTokensDetails: { cachedTokens: 4, cacheWriteTokens: 2 },
-            completionTokensDetails: { reasoningTokens: 2 }
-          }
-        ],
-        { ...table, cachedPromptUsdPerToken: 0.0002, cacheWritePromptUsdPerToken: 0.00125 }
-      )
-    ).toMatchObject({
-      totalTokens: 15,
-      cachedPromptTokens: 4,
-      cacheWritePromptTokens: 2,
-      reasoningTokens: 2,
-      reportedCostUsd: 0,
-      providerReports: [{ providerSpecific: raw }]
-    })
-
-    const converse = { inputTokens: 10, outputTokens: 2, totalTokens: 12, cacheReadInputTokens: 4 }
-    expect(
-      usageFrom(
-        [converse, { promptTokens: 10, completionTokens: 2, totalTokens: 12 }],
-        { ...table, cachedPromptUsdPerToken: 0.0002 },
-        { provider: "bedrock", model: "m" },
-        converse
-      )
-    ).toMatchObject({
-      promptTokens: 14,
-      completionTokens: 2,
-      totalTokens: 16,
-      cachedPromptTokens: 4,
-      estimatedCostUsd: 10 * 0.001 + 4 * 0.0002 + 2 * 0.002
-    })
-    expect(usageFrom({ promptTokens: 3, completionTokens: 2, totalTokens: 0 })).not.toHaveProperty("totalTokens")
-  })
-
-  test("costNumber reads the seats a gateway actually writes", () => {
-    expect(costNumber({ cost: 0.01 })).toBe(0.01)
-    expect(costNumber({ costUsd: "0.2" })).toBe(0.2)
-    expect(costNumber({ gateway: { cost: 0 } })).toBe(0)
-    expect(costNumber({ prompt_tokens: 3 })).toBeUndefined()
-  })
 })
 
 describe("sumUsage", () => {
@@ -207,16 +100,20 @@ describe("sumUsage", () => {
   })
 
   test("raw provider metrics survive normalization and aggregation", () => {
-    const first = usageFrom(
-      { inputTokens: 10, outputTokens: 2, totalTokens: 12, cacheReadInputTokens: 4 },
-      undefined,
-      { provider: "bedrock", model: "m" }
-    )!
-    const second = usageFrom(
-      { inputTokens: 12, outputTokens: 3, totalTokens: 15, cacheReadInputTokens: 5 },
-      undefined,
-      { provider: "bedrock", model: "m" }
-    )!
+    const first = usageOf({
+      inputTokens: { total: 14, cacheRead: 4 },
+      outputTokens: { total: 2 },
+      provider: "bedrock",
+      model: "m",
+      providerReports: [{ provider: "bedrock", model: "m", providerSpecific: { inputTokens: 10, cacheReadInputTokens: 4 } }]
+    })
+    const second = usageOf({
+      inputTokens: { total: 17, cacheRead: 5 },
+      outputTokens: { total: 3 },
+      provider: "bedrock",
+      model: "m",
+      providerReports: [{ provider: "bedrock", model: "m", providerSpecific: { inputTokens: 12, cacheReadInputTokens: 5 } }]
+    })
     expect(
       priced(first, { ...table, cachedPromptUsdPerToken: 0.0002 })
     ).toMatchObject({ estimatedCostUsd: 10 * 0.001 + 4 * 0.0002 + 2 * 0.002 })

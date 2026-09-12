@@ -114,7 +114,6 @@ export const ModelReturned = Schema.Struct({
   continuation: Schema.optional(ProviderContinuation),
   usage: ModelUsage,
   legacyUsage: Schema.optional(Schema.Unknown),
-  legacyResponse: Schema.optional(Schema.Unknown),
   finish: Schema.optional(ModelFinish),
   reportedCostUsd: Schema.optional(Schema.Finite),
   endpoint: Schema.optional(Endpoint),

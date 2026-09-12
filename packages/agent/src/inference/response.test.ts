@@ -13,13 +13,11 @@ test("native usage and metadata survive durable JSON without fabricated counts",
 })
 
 test("historical usage upcast preserves accounting without inventing a physical split", () => {
-  const old = { type: "ModelReturned", callId: "a", ordinal: 0, turn: "t", at: 1, outcome: "returned", usage: { promptTokens: 100, reasoningTokens: 0, costUsd: 0.25, costSource: "provider" }, response: { id: "r", model: "old", finishReason: "stop", rawFinishReason: "end_turn" } }
+  const old = { type: "ModelReturned", callId: "a", ordinal: 0, turn: "t", at: 1, outcome: "returned", usage: { promptTokens: 100, reasoningTokens: 0, costUsd: 0.25, costSource: "provider" } }
   const before = JSON.stringify(old)
   const next = upcastResponse(old)
   expect(next.usage).toEqual({ inputTokens: { total: 100 }, outputTokens: { reasoning: 0 } })
   expect(next.legacyUsage).toEqual(old.usage)
-  expect(next.legacyResponse).toEqual(old.response)
-  expect(next.response).toEqual({ id: "r", modelId: "old" })
   expect(upcastResponse(next)).toEqual(next)
   expect(usageIn([next], "t")).toMatchObject({ promptTokens: 100, costUsd: 0.25 })
   expect(JSON.stringify(old)).toBe(before)

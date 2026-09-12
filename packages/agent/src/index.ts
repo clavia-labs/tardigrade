@@ -118,7 +118,6 @@ export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./runtime/r
 export {
   usageIn,
   usageOf,
-  usageFrom,
   priced,
   costOf,
   sumUsage,

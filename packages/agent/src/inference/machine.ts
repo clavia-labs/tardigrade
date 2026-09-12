@@ -11,7 +11,6 @@ import { EventLog } from "@clavia/tardigrade-core/log"
 import { HashMap, Option } from "effect"
 import { Self } from "@clavia/tardigrade-core/runtime"
 import { transitionProjection, type CompleteTransitionDerivation, type TransitionProjection } from "@clavia/tardigrade-core/transition"
-import { normalizeAction } from "./action-compat"
 import { modelCalled, modelReturned, outputRejected, outputRepaired, textReturned, turnFailed } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Machine } from "@clavia/tardigrade-core/machine"
@@ -444,7 +443,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               Effect.asVoid
             )
           }
-          const action = normalizeAction(yield* react(
+          const action = yield* react(
               {
                 trajectory,
                 identity: { ...self, turn: input.turn },
@@ -477,7 +476,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               Effect.ensuring(
                 Effect.suspend(() => signal?.aborted === true ? persistPartialOutput() : Effect.void)
               )
-            ))
+            )
           const after = yield* Clock.currentTimeMillis
           const calls = action.kind === "calls" ? action.calls : []
           const seen = new Set(trajectory.filter((event) => event.type === "ToolCalled" && event.turn === input.turn).map((event) => String(event.callId)))

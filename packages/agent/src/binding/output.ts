@@ -14,18 +14,6 @@ export type OutputCapability =
   | { readonly guarantee: "none" }
   | { readonly guarantee: "native"; readonly withTools: boolean }
 
-// capabilityOf resolves the endpoint's capability: what the configuration declares, and nothing
-// else. A provider name is not evidence. Structured output on both wires this repository binds is
-// a property of the endpoint AND the model behind it: OpenAI documents Chat Completions
-// structured outputs for a listed set of models, and AWS documents Converse structured output for
-// a listed set of Claude models, so `provider: "openai"` or `provider: "bedrock"` says nothing
-// about the model id an operator configured. Inferring a strict guarantee from the vendor would
-// let an unsupported model pass preflight and spend
-// (https://developers.openai.com/api/docs/guides/structured-outputs;
-// https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html).
-export const capabilityOf = (config: { readonly output?: OutputCapability }): OutputCapability | undefined =>
-  config.output
-
 // UNPROVEN is the message an endpoint that declared nothing earns. It names the two ways out, so
 // an operator reading a failed turn knows what to set rather than which source to read.
 const UNPROVEN = (where: string, contract: string, implementation: string): string =>
@@ -58,7 +46,7 @@ export const outputModeOf = (
       ]
     }
   }
-  const capability = capabilityOf(config)
+  const capability = config.output
   if (capability?.guarantee === "native" && (capability.withTools || request.tools.length === 0)) {
     return { mode: NATIVE_MODE }
   }

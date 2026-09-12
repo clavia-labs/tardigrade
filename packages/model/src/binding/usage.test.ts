@@ -1,41 +1,16 @@
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
+import { modelReturned } from "@clavia/tardigrade-agent/log/events"
+import { usageIn } from "@clavia/tardigrade-agent/inference/usage"
 import { durableReact } from "../testing/durable-inference"
 import { expect, test } from "bun:test"
 import { Effect, Layer, Redacted } from "effect"
-import { Response as AiResponse } from "effect/unstable/ai"
 import { FetchHttpClient } from "effect/unstable/http"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 
-import { responseUsageOf } from "./usage"
 import { inferenceLayer } from "./index"
 import { providerEvents } from "../testing/fixtures"
 
 const pricing = { promptUsdPerToken: 1, completionUsdPerToken: 3, cachedPromptUsdPerToken: 0.1, cacheWritePromptUsdPerToken: 2 }
-const stamp = { provider: "openai", model: "fixture" }
-const finish = (reportedCost?: number, missing = false) => AiResponse.makePart("finish", {
-  reason: "stop",
-  usage: { inputTokens: missing ? {} : { total: 20, uncached: 14, cacheRead: 4, cacheWrite: 2 }, outputTokens: missing ? {} : { total: 10, reasoning: 3 } },
-  metadata: reportedCost === undefined ? {} : { openai: { usage: { input_tokens: 20, output_tokens: 10, total_tokens: 30, cost: reportedCost, extra_metric: "preserved" } } }
-})
-
-test("prices cache buckets without charging reasoning twice", () => {
-  expect(responseUsageOf(finish(), stamp, pricing)).toMatchObject({ promptTokens: 20, completionTokens: 10, totalTokens: 30, cachedPromptTokens: 4, cacheWritePromptTokens: 2, reasoningTokens: 3, estimatedCostUsd: 48.4, costUsd: 48.4, costSource: "table" })
-  expect(responseUsageOf(finish(), stamp, { promptUsdPerToken: 1, completionUsdPerToken: 3 }).costUsd).toBeUndefined()
-})
-
-test("retains provider bills including zero alongside estimates", () => {
-  for (const bill of [0, 7]) expect(responseUsageOf(finish(bill), stamp, pricing, bill)).toMatchObject({ costUsd: bill, costSource: "provider", reportedCostUsd: bill, estimatedCostUsd: 48.4, providerReports: [{ providerSpecific: { metadata: { openai: { usage: { extra_metric: "preserved" } } } } }] })
-})
-
-test("missing token totals do not become a zero-cost estimate", () => {
-  const usage = responseUsageOf(finish(undefined, true), stamp, pricing)
-  expect(usage.costUsd).toBeUndefined()
-  expect(usage.estimatedCostUsd).toBeUndefined()
-  expect(usage.totalTokens).toBeUndefined()
-  expect(usage.promptTokens).toBeUndefined()
-  expect(usage.completionTokens).toBeUndefined()
-  expect(usage.providerReports).toHaveLength(1)
-  expect(responseUsageOf(finish(7, true), stamp, pricing, 7)).toMatchObject({ reportedCostUsd: 7, costUsd: 7 })
-})
 
 for (const outcome of ["success", "refused", "truncated", "trailing-data", "unreported-retry", "exhausted"] as const) {
   test(`provider accounting survives ${outcome}`, async () => {
@@ -76,6 +51,31 @@ for (const outcome of ["success", "refused", "truncated", "trailing-data", "unre
     expect(action.reportedCostUsd).toBe(0.25)
     expect(action.usage).not.toHaveProperty("costUsd")
     expect(action.usage).not.toHaveProperty("estimatedCostUsd")
+    const accounting = usageIn([
+      { type: "ModelCalled", callId: "m1/infer/0", ordinal: 0, turn: "m1", pricing, at: 0 } as Event,
+      modelReturned({
+        callId: "m1/infer/0",
+        ordinal: 0,
+        turn: "m1",
+        outcome: action.kind === "fail" ? "failed" : "returned",
+        usage: action.usage ?? {},
+        endpoint: action.endpoint,
+        ...(action.reportedCostUsd === undefined ? {} : { reportedCostUsd: action.reportedCostUsd }),
+        at: 1
+      })
+    ], "m1")
+    expect(accounting).toMatchObject({
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      cachedPromptTokens: 3,
+      cacheWritePromptTokens: 2,
+      reasoningTokens: 2,
+      reportedCostUsd: 0.25,
+      estimatedCostUsd: 24.3,
+      costUsd: 0.25,
+      costSource: "provider"
+    })
   })
 }
 
@@ -97,21 +97,4 @@ test("Anthropic cache creation and reads are counted once", async () => {
   expect(action.kind).toBe("calls")
   expect(action.usage).toMatchObject({ inputTokens: { total: 15, cacheRead: 3, cacheWrite: 2 }, outputTokens: { total: 5 } })
   expect(action.finish?.metadata).toMatchObject({ anthropic: { usage: { cache_read_input_tokens: 3, cache_creation_input_tokens: 2 } } })
-})
-
-for (const example of [
-  { name: "Bedrock exclusive cache bucket", usage: { inputTokens: { total: 1780, uncached: 4, cacheWrite: 1776 }, outputTokens: { total: 165 } }, raw: { inputTokens: 4, cacheWriteInputTokens: 1776, outputTokens: 165, totalTokens: 1945 }, expected: { promptTokens: 1780, completionTokens: 165, totalTokens: 1945 } },
-  { name: "Chat inclusive input with cache alias", usage: { inputTokens: { total: 2998, uncached: 1958, cacheRead: 1040 }, outputTokens: { total: 449 } }, raw: { prompt_tokens: 2998, completion_tokens: 449, total_tokens: 3447, cache_read_input_tokens: 1040, prompt_tokens_details: { cached_tokens: 1040 } }, expected: { promptTokens: 2998, completionTokens: 449, totalTokens: 3447 } }
-]) {
-  test(`typed usage ignores raw field heuristics: ${example.name}`, () => {
-    const finish = AiResponse.makePart("finish", { reason: "stop", usage: example.usage, metadata: { evidence: example.raw } })
-    expect(responseUsageOf(finish, stamp, pricing)).toMatchObject(example.expected)
-    expect(responseUsageOf(finish, stamp).providerReports?.[0]?.providerSpecific).toEqual({ usage: finish.usage, metadata: finish.metadata })
-  })
-}
-
-test("provider cost requires an explicit typed value", () => {
-  expect(responseUsageOf(finish(7), stamp, pricing)).toMatchObject({ costUsd: 48.4, costSource: "table" })
-  expect(responseUsageOf(finish(7), stamp, pricing).reportedCostUsd).toBeUndefined()
-  expect(responseUsageOf(finish(7), stamp, pricing, 7)).toMatchObject({ reportedCostUsd: 7, costUsd: 7, costSource: "provider" })
 })
