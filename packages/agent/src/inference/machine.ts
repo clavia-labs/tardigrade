@@ -181,7 +181,10 @@ const consequencesOf = (action: Action, ctx: Consequence): ReadonlyArray<Event> 
     error: action.error,
     cause: action.failure?.cause ?? "model",
     attemptKey: ctx.attempt,
-    ...(action.failure === undefined ? {} : { attempts: action.failure.attempts, policy: action.failure.policy })
+    ...(action.failure === undefined ? {} : {
+      attempts: action.failure.attempts, policy: action.failure.policy,
+      ...(action.failure.errorDetails === undefined ? {} : { errorDetails: action.failure.errorDetails })
+    })
   }]
   if (ctx.contract !== undefined && action.mode === undefined) return [{
     ...stamp,

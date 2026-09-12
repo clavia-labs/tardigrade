@@ -208,6 +208,17 @@ export const OutputRepaired = Schema.Struct({
   at: Schema.Finite
 })
 
+// ModelErrorDetails retains provider failure metadata for retry decisions and terminal inspection (packages/model/src/model.test.ts, structured stream failures).
+export const ModelErrorDetails = Schema.Struct({
+  message: Schema.String,
+  code: Schema.optional(Schema.String),
+  statusCode: Schema.optional(Schema.Finite),
+  isRetryable: Schema.optional(Schema.Boolean),
+  details: Schema.optional(Schema.Unknown)
+})
+
+export type ModelErrorDetails = typeof ModelErrorDetails.Type
+
 // TurnFailed is the failure terminal for one execution epoch.
 export const TurnFailed = Schema.Struct({
   type: Schema.Literal("TurnFailed"),
@@ -219,6 +230,7 @@ export const TurnFailed = Schema.Struct({
   attempts: Schema.optional(Schema.Finite),
   attemptKey: Schema.optional(Schema.String),
   policy: Schema.optional(Schema.Unknown),
+  errorDetails: Schema.optional(ModelErrorDetails),
   mode: Schema.optional(Schema.Unknown),
   endpoint: Schema.optional(Endpoint),
   at: Schema.Finite
@@ -412,6 +424,7 @@ export type Action =
         readonly cause: TurnFailureCause
         readonly attempts: number
         readonly policy?: unknown
+        readonly errorDetails?: ModelErrorDetails
       }
     } & Served)
 
@@ -566,6 +579,7 @@ export const turnFailed = (
     readonly attempts?: number
     readonly attemptKey?: string
     readonly policy?: unknown
+    readonly errorDetails?: ModelErrorDetails
     readonly endpoint?: unknown
   } & EpochStamp
 ): Event =>
