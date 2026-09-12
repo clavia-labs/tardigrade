@@ -6,7 +6,7 @@
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
-    "effect": "npm:@tardie/effect@4.0.0-rc.113",
+    "effect": "4.0.0-rc.115",
     "fast-check": "^4.9.0",
     "tardie": "workspace:*",
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0"

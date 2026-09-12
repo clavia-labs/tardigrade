@@ -23,7 +23,7 @@ export const durableReact = (binding: Effect.Success<typeof inferenceClient>, ..
   await host.wake("root")
   await host.drive()
   const log = host.read("root")
-  const returned = Schema.decodeUnknownSync(ModelReturned)(log.findLast((event) => event.type === "ModelReturned"))
+  const returned = await Effect.runPromise(Schema.decodeUnknownEffect(ModelReturned)(log.findLast((event) => event.type === "ModelReturned")))
   const served = { usage: returned.usage, ...(returned.response === undefined ? {} : { response: returned.response }), ...(returned.finish === undefined ? {} : { finish: returned.finish }), ...(returned.endpoint === undefined ? {} : { endpoint: { model: returned.endpoint.model, ...(returned.endpoint.provider === undefined ? {} : { provider: returned.endpoint.provider }), ...(returned.endpoint.routedProvider === undefined ? {} : { routedProvider: returned.endpoint.routedProvider }), ...(returned.endpoint.routedModel === undefined ? {} : { routedModel: returned.endpoint.routedModel }) } }), ...(returned.reasoning === undefined ? {} : { reasoning: returned.reasoning }), ...(returned.continuation === undefined ? {} : { continuation: returned.continuation }), ...(returned.reportedCostUsd === undefined ? {} : { reportedCostUsd: returned.reportedCostUsd }) }
   const failed = log.findLast((event) => event.type === "TurnFailed")
   if (failed !== undefined) return { kind: "fail", ...served, error: modelErrorOf(returned.error) ?? String(failed.error), failure: { cause: failed.cause as TurnFailureCause, attempts: Number(failed.attempts) }, ...(returned.text === undefined ? {} : { text: returned.text }) }

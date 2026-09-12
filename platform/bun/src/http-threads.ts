@@ -24,6 +24,7 @@ export const bunHttpThreads = (host: BunHost, options: {
   allocateRoot: (name, request = {}) => Effect.promise(async () => {
     if (name !== undefined && request.key !== undefined) throw new Error("named allocations do not accept a separate key")
     // HTTP request identities are minted outside actor replay.
+    // @effect-diagnostics-next-line cryptoRandomUUIDInEffect:off
     const key = name === undefined ? { key: request.key ?? crypto.randomUUID() } : {}
     const scope = { actor: options.actor, instance: options.instance }
     const allocation: ThreadAllocation = request.parent === undefined

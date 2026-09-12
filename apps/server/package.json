@@ -29,8 +29,8 @@
     "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
-    "@effect/platform-bun": "4.0.0-rc.113",
-    "effect": "npm:@tardie/effect@4.0.0-rc.113",
+    "@effect/platform-bun": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115",
     "@clavia/tardigrade-http": "workspace:*"
   },
   "scripts": {

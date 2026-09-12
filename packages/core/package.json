@@ -54,7 +54,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "effect": "npm:@tardie/effect@4.0.0-rc.113"
+    "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
     "fast-check": "^4.9.0"

@@ -33,10 +33,10 @@
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
-    "@effect/sql-sqlite-bun": "4.0.0-rc.113",
-    "effect": "npm:@tardie/effect@4.0.0-rc.113",
+    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115",
     "@clavia/tardigrade-http": "workspace:*",
-    "@effect/platform-bun": "4.0.0-rc.113"
+    "@effect/platform-bun": "4.0.0-rc.115"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

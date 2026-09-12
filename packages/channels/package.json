@@ -32,7 +32,7 @@
   "dependencies": {
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
-    "effect": "npm:@tardie/effect@4.0.0-rc.113"
+    "effect": "4.0.0-rc.115"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

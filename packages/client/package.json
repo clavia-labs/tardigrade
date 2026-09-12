@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@clavia/tardigrade-core": "workspace:*",
-    "effect": "npm:@tardie/effect@4.0.0-rc.113",
+    "effect": "4.0.0-rc.115",
     "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*"
   },

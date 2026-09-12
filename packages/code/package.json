@@ -34,10 +34,10 @@
   },
   "dependencies": {
     "@clavia/tardigrade-core": "workspace:*",
-    "effect": "npm:@tardie/effect@4.0.0-rc.113"
+    "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
-    "@effect/platform-bun": "4.0.0-rc.113",
+    "@effect/platform-bun": "4.0.0-rc.115",
     "fast-check": "^4.9.0"
   },
   "scripts": {

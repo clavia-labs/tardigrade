@@ -44,7 +44,7 @@
     "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
-    "effect": "npm:@tardie/effect@4.0.0-rc.113",
+    "effect": "4.0.0-rc.115",
     "@clavia/tardigrade-bun": "workspace:*"
   },
   "scripts": {

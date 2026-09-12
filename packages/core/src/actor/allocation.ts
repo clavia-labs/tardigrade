@@ -48,6 +48,7 @@ const allocationIdentity = (options: { readonly name?: string; readonly key?: st
   const scope = yield* Effect.serviceOption(ThreadAllocationScope)
   const explicit = options.key === undefined ? undefined : yield* Schema.decodeEffect(Schema.NonEmptyString)(options.key).pipe(Effect.orDie)
   // Unscoped creation keys must remain independent of replay-seeded randomness.
+  // @effect-diagnostics-next-line cryptoRandomUUIDInEffect:off
   const key = Option.isSome(scope) ? scope.value.key(explicit) : explicit ?? crypto.randomUUID()
   return { name: "", key }
 })

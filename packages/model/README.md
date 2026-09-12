@@ -17,7 +17,7 @@ src/
 
 Tests sit beside the modules they cover. Shared fixtures are excluded from the published package. The export map retains established flat catalog paths.
 
-The package uses `@tardie/ai` and the scoped provider packages. Hosts install `effect` through the pinned `@tardie/effect` alias. Dynamic tools use native encoded schemas, and the shared provider wrapper supplies deferred validation and response formats.
+The package uses `@tardie/ai` and the scoped provider packages. Hosts install upstream `effect@4.0.0-rc.115`. Dynamic tools use native encoded schemas, and the shared provider wrapper supplies deferred validation and response formats.
 
 The agent package owns the shared translation in `src/binding/`. Its inference component calls binding functions that use Effect's `LanguageModel` service. Provider assembly and catalog selection stay in this package. Other libraries connect through a bridge that implements `LanguageModel`.
 

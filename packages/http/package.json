@@ -12,13 +12,13 @@
     "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
-    "effect": "npm:@tardie/effect@4.0.0-rc.113"
+    "effect": "4.0.0-rc.115"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
   "devDependencies": {
-    "@effect/platform-bun": "4.0.0-rc.113"
+    "@effect/platform-bun": "4.0.0-rc.115"
   }
 }

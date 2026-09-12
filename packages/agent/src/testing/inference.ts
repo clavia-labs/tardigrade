@@ -44,8 +44,8 @@ export const testInferenceLayer = (script: TestInference): Layer.Layer<LanguageM
     ...(script.resolve === undefined ? {} : { resolve: script.resolve }),
     settings: (model?: ModelRef) => Effect.gen(function* () {
       const defaults = yield* BindingSettings
-      const policy = yield* (script.policy?.(model) ?? Effect.succeed(undefined))
-      const pricing = yield* (script.pricing?.(model) ?? Effect.succeed(undefined))
+      const policy = yield* (script.policy?.(model) ?? Effect.void)
+      const pricing = yield* (script.pricing?.(model) ?? Effect.void)
       return { ...defaults, ...(script.output === undefined ? {} : { output: script.output }), ...(model === undefined ? {} : { provider: model.provider, model: model.model_id }), ...(policy === undefined ? {} : { policy }), ...(pricing === undefined ? {} : { pricing }), reportedCostUsd: (part: Response.FinishPart) => {
         const metadata = part.metadata.fixture
         const value = Schema.is(Schema.Record(Schema.String, Schema.Json))(metadata) ? metadata.reportedCostUsd : undefined
@@ -63,7 +63,7 @@ export const testInferenceLayer = (script: TestInference): Layer.Layer<LanguageM
       const action = normalizeAction(yield* script.react(invocation.request, invocation.key, invocation.signal, invocation.onDelta))
       if (action.kind === "fail") {
         const error = action.retryable === true ? AiError.make({ module: "Fixture", method: "streamText", reason: AiError.RateLimitError.make({}) }) : unknownModelError(action.error)
-        return Stream.concat(Stream.make(Response.makePart("finish", { reason: "error", usage: new Response.Usage(upcastUsage(action.usage)) })), Stream.fail(error))
+        return Stream.concat(Stream.make(Response.makePart("finish", { reason: "error", usage: Response.Usage.make(upcastUsage(action.usage)) })), Stream.fail(error))
       }
       const text = action.kind === "complete" ? action.output : action.text ?? ""
       const parts: Response.AnyPart[] = []
@@ -72,7 +72,7 @@ export const testInferenceLayer = (script: TestInference): Layer.Layer<LanguageM
       if (text !== "") parts.push(Response.makePart("text-start", { id: "text" }), Response.makePart("text-delta", { id: "text", delta: text }), Response.makePart("text-end", { id: "text" }))
       if (action.kind === "calls") for (const call of action.calls) parts.push(Response.makePart("tool-call", { id: call.callId, name: call.name, params: call.arguments, providerExecuted: false }))
       const cost = action.reportedCostUsd ?? legacyUsage?.costUsd
-      parts.push(Response.makePart("finish", { reason: action.kind === "calls" ? "tool-calls" : "stop", usage: new Response.Usage(upcastUsage(action.usage)), ...(cost === undefined ? {} : { metadata: { fixture: { reportedCostUsd: cost } } }) }))
+      parts.push(Response.makePart("finish", { reason: action.kind === "calls" ? "tool-calls" : "stop", usage: Response.Usage.make(upcastUsage(action.usage)), ...(cost === undefined ? {} : { metadata: { fixture: { reportedCostUsd: cost } } }) }))
       return Stream.fromIterable(parts)
     }))
   } as typeof LanguageModel.LanguageModel.Service)

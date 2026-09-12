@@ -13,7 +13,7 @@ export const encodeModelError = (error: AiError.AiError): Schema.Json => {
     const http = Schema.decodeUnknownSync(Schema.Json)(
       JSON.parse(Schema.encodeSync(Schema.fromJsonString(AiError.HttpContext))(error.reason.http))
     )
-    return { ...encoded, reason: { ...Schema.decodeUnknownSync(object)(reason), http } }
+    return { ...encoded, reason: { ...Schema.decodeSync(object)(reason), http } }
   }
   return encoded
 }

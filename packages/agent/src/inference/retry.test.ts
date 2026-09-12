@@ -1,6 +1,6 @@
 import { testInferenceLayer, type TestInference } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Clock, Effect, Layer } from "effect"
 import fc from "fast-check"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { actor } from "@clavia/tardigrade-core/actor"
@@ -65,8 +65,8 @@ for (const overdue of [false, true]) {
   test(`recovery honors the stored due time (overdue: ${overdue})`, async () => {
     const dueAt = Date.now() + (overdue ? -1000 : 25)
     let dispatchedAt = 0
-    const host = makeHost({ policy: () => Effect.succeed({ ...policy, maxOutputTokens: 999 }), react: (request, key) => Effect.sync(() => {
-      dispatchedAt = Date.now()
+    const host = makeHost({ policy: () => Effect.succeed({ ...policy, maxOutputTokens: 999 }), react: (request, key) => Effect.gen(function* () {
+      dispatchedAt = yield* Clock.currentTimeMillis
       expect(dispatchedAt).toBeGreaterThanOrEqual(dueAt)
       expect(request).not.toHaveProperty("policy")
       expect(key).toBe("m1/infer/1")
