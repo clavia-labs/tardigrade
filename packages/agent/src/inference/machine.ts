@@ -45,7 +45,8 @@ import {
   Infer,
   type InferPolicy,
   type ModelResolution,
-  type Render
+  type Render,
+  type TrajectoryFilter
 } from "./contract"
 
 // The inference machine derives a model attempt when the current turn has no unanswered tool call or terminal.
@@ -241,12 +242,23 @@ const openRejection = (events: ReadonlyArray<Event>): Event | undefined => {
     .at(-1)
 }
 
+const filteredTrajectory = (
+  trajectory: ReadonlyArray<Event>,
+  filters: ReadonlyArray<TrajectoryFilter>
+): ReadonlyArray<Event> => {
+  if (filters.length === 0) return trajectory
+  let filtered = [...trajectory]
+  for (const filter of filters) filtered = [...filter(filtered)]
+  return filtered
+}
+
 // Render derives what the model is shown over this log: the assembly owns it (runtime/composition.ts,
 // renderOf).
 interface InferDerivation {
   readonly slice: ReadonlyArray<Event>
   readonly epoch: number
   readonly trajectory: () => ReadonlyArray<Event>
+  readonly trajectoryFiltersAfter: (event: Event) => ReadonlyArray<TrajectoryFilter>
   readonly modelFailures: number
   readonly rendered: ReturnType<Render>
   readonly renderAfter: (event: Event) => ReturnType<Render>
@@ -422,7 +434,15 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
           })
           yield* events.append([mark])
           const actualRender = derived.renderAfter(mark)
+          // The filters decide what this one attempt reads, nothing else. Every framework check
+          // below, from the call IDs a turn has reserved to the repairs a completion releases,
+          // reads the complete trajectory, and the request carries the turn's declared output
+          // beside the filtered one, so no filter can remove what the turn still owes
+          // (contract.ts, InferRequest.declaredOutput; composition.test.ts, "a filter that hides
+          // a tool call keeps its call ID reserved" and "a trajectory filter cannot remove the
+          // turn's declared output").
           const trajectory = input.trajectory()
+          const modelTrajectory = filteredTrajectory(trajectory, derived.trajectoryFiltersAfter(mark))
           let partialOutput = ""
           let physicalAttempt = ""
           let partialPersisted = false
@@ -439,10 +459,11 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
           const action = normalizeAction(yield* binding
             .react(
               {
-                trajectory,
+                trajectory: modelTrajectory,
                 identity: { ...self, turn: input.turn },
                 model: selected,
-                ...actualRender
+                ...actualRender,
+                declaredOutput: declared
               },
               input.attempt,
               signal,
@@ -527,8 +548,15 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
   ]
 }
 
-// inferenceFromHistory derives inference through complete replay.
-export const inferenceFromHistory = (policy: Partial<InferPolicy>, render: Render): CompleteTransitionDerivation<Infer | EventLog | Self> => (history) => {
+// inferenceFromHistory derives inference through complete replay. The optional filter hook derives
+// the trajectory filters a replayed attempt reads, from the replayed log stepped past the mark
+// the same after-the-mark read the incremental projection takes from its render state, so replay
+// and live inference can share one filtering policy. Absent means replay reads the log unfiltered.
+export const inferenceFromHistory = (
+  policy: Partial<InferPolicy>,
+  render: Render,
+  trajectoryFilters?: (log: ReadonlyArray<Event>) => ReadonlyArray<TrajectoryFilter>
+): CompleteTransitionDerivation<Infer | EventLog | Self> => (history) => {
   const log = history.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
   const slice = turnView(log)
   const turn = String((slice[0] as { readonly id?: unknown } | undefined)?.id ?? "")
@@ -543,11 +571,14 @@ export const inferenceFromHistory = (policy: Partial<InferPolicy>, render: Rende
         String((event as { readonly cause?: unknown }).cause) === "model"
     ).length,
     rendered: render(log),
-    renderAfter: (event) => render([...log, event])
+    renderAfter: (event) => render([...log, event]),
+    trajectoryFiltersAfter: (event) => trajectoryFilters?.([...log, event]) ?? []
   })
 }
 
-export type InferenceMachineProjection<State> = Machine<Event, State, ReturnType<Render>>
+export type InferenceMachineProjection<State> = Machine<Event, State, ReturnType<Render>> & {
+  readonly trajectoryFilters?: (state: State) => ReadonlyArray<TrajectoryFilter>
+}
 
 interface IncrementalInferState<State> {
   readonly turns: TurnProjectionState
@@ -584,7 +615,8 @@ export const inferenceMachine = <State>(
       trajectory: () => trajectoryFrom(state.turns),
       modelFailures: Option.getOrElse(HashMap.get(state.modelFailures, turn), () => 0),
       rendered: projection.output(state.render),
-      renderAfter: (event) => projection.output(projection.step(state.render, event))
+      renderAfter: (event) => projection.output(projection.step(state.render, event)),
+      trajectoryFiltersAfter: (event) => projection.trajectoryFilters?.(projection.step(state.render, event)) ?? []
     })
   }
 })

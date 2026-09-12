@@ -3,6 +3,7 @@ import type { ContextPolicy } from "../component/compaction"
 import { renderMessages, type AgentMessage } from "../projection/messages"
 import {
   declaredOutputOf,
+  type DeclaredOutput,
   type OutputContract,
   type OutputFallback
 } from "../output/contract"
@@ -73,10 +74,16 @@ export const modelRequest = (
     readonly system: string
     readonly tools: ReadonlyArray<ToolSpec>
     readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
+    readonly declaredOutput?: DeclaredOutput
   },
   context: Partial<ContextPolicy> = {}
 ): ModelRequest => {
-  const declared = declaredOutputOf(trajectory)
+  // The actor's declaration rides the request when it states one: a filtered trajectory may no
+  // longer carry the message that declared the contract, but the turn still owes that contract, so
+  // the stated declaration outranks the trajectory. A render that states none keeps the
+  // trajectory as the declaration's home (request.test.ts, "the stated declaration outranks the
+  // trajectory").
+  const declared = render.declaredOutput ?? declaredOutputOf(trajectory)
   const fallback = render.output
   const base = SYSTEM(render.system)
   return {

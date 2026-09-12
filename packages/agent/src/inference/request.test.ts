@@ -203,6 +203,30 @@ describe("modelRequest tool and prompt policy", () => {
   })
 })
 
+describe("the declared output on the request", () => {
+  const head = (declared = false): Event[] => [
+    { type: "MessageReceived", id: "m1", text: "go", ...(declared ? { output: { name: SCOUT.name, schema: SCOUT.schema } } : {}), at: 0 }
+  ]
+
+  // A trajectory filter can remove the message that declared the contract from what the model
+  // reads; the actor still states the declaration on the request, so the binding serves the
+  // contract the turn owes (machine.ts; composition.test.ts, "a trajectory filter cannot remove
+  // the turn's declared output").
+  test("a stated declaration outranks a trajectory that no longer carries it", () => {
+    const req = modelRequest([], { ...CODE, declaredOutput: { kind: "contract", contract: SCOUT } })
+    expect(req.output?.kind).toBe("contract")
+    expect(req.output?.kind === "contract" && canonicalOf(req.output.contract)).toBe(canonicalOf(SCOUT))
+  })
+
+  test("a stated prose declaration stays prose over a stale trajectory declaration", () => {
+    // The earlier turn declared scout and the filter hid only the current head, so the
+    // trajectory's last message still carries the old contract. The stated declaration pins
+    // this turn as prose instead of inheriting it.
+    const req = modelRequest(head(true), { ...CODE, declaredOutput: { kind: "none" } })
+    expect(req.output).toBeUndefined()
+  })
+})
+
 describe("the repair exchange in the render", () => {
   const repair = (projectHistory: boolean) => ({
     kind: "repair" as const,
