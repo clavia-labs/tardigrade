@@ -242,7 +242,7 @@
         "@smithy/node-http-handler": "^4.11.2",
         "@tardie/ai": "0.0.2",
         "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.1",
-        "@tardie/ai-openai": "4.0.0-rc.113-clavia.1",
+        "@tardie/ai-openai": "4.0.0-rc.113-clavia.2",
         "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.1",
         "effect": "4.0.0-rc.115",
       },
@@ -897,7 +897,7 @@
 
     "@tardie/ai-anthropic": ["@tardie/ai-anthropic@4.0.0-rc.113-clavia.1", "", { "dependencies": { "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-jDvZx3rxycSmdJ59wawugah/eWYH+h02ctOR5RbCI9sDy5BcWhkNQY0meLCTV7T9XW50Pg3YRGqMTZjB+aTDMw=="],
 
-    "@tardie/ai-openai": ["@tardie/ai-openai@4.0.0-rc.113-clavia.1", "", { "dependencies": { "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-HQfbsHZum4LRigKQha8PCvmHLXTPEhtc0kFmxLWCkBnqd7vFilus8lPnucq9dkOvF4DH7D8u1bWFmvWKLuR9Lg=="],
+    "@tardie/ai-openai": ["@tardie/ai-openai@4.0.0-rc.113-clavia.2", "", { "dependencies": { "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-aw7BT3wLTyiRQ3J3HxxcW/aoY38YKcFrjeuPgnkNbzNDvstPtPhOqooiUP+oJmlimg6+9MDVSHsNncKkQ6d0Ew=="],
 
     "@tardie/ai-openai-compat": ["@tardie/ai-openai-compat@4.0.0-rc.113-clavia.1", "", { "dependencies": { "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-J2+XL8Y0Pyjw783QsNKPxfQqFW8xAxb1FKIAa5jsnXlU6BYn4ab2mckO1arDaCRK9C83tCJ+KjPP76jxX/YQFw=="],
 

@@ -44,7 +44,7 @@
     "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.1",
-    "@tardie/ai-openai": "4.0.0-rc.113-clavia.1",
+    "@tardie/ai-openai": "4.0.0-rc.113-clavia.2",
     "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.1",
     "@smithy/fetch-http-handler": "^5.6.3",
     "effect": "4.0.0-rc.115",

@@ -8,6 +8,28 @@ import { providerLayer } from "./layer"
 
 const dynamicToolkit = Toolkit.make(Tool.dynamic("read", { parameters: Schema.Struct({ path: Schema.String }) }))
 const toolkit = Toolkit.make(Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }), failureMode: "return" }))
+for (const segmented of [false, true]) {
+test(`Responses completion survives a trailing sentinel (segmented: ${segmented})`, async () => {
+  const frames = [...providerEvents("openai", false).map((event, sequence_number) => `data: ${JSON.stringify({ sequence_number, ...event })}\n\n`), "data: [DONE]\n\n"]
+  const fetch = Object.assign(async () => {
+    let index = 0
+    const body = segmented ? new ReadableStream<Uint8Array>({ pull(controller) {
+      const frame = frames[index++]
+      if (frame === undefined) controller.close()
+      else controller.enqueue(new TextEncoder().encode(frame))
+    } }) : frames.join("")
+    return new Response(body, { headers: { "content-type": "text/event-stream" } })
+  }, { preconnect: globalThis.fetch.preconnect })
+  const layer = providerLayer({ provider: "openai", client: { apiKey: Redacted.make("test"), apiUrl: "https://fixture.invalid/v1" }, model: { model: "gpt-5" } })
+  const response = await Effect.runPromise(collectResponse("Read the files", toolkit).pipe(
+    Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer))),
+    Effect.provideService(FetchHttpClient.Fetch, fetch)
+  ))
+  expect(response.parts.filter((part) => part.type === "finish").map((part) => part.reason)).toEqual(["tool-calls"])
+  expect(response.parts.filter((part) => part.type === "tool-call").map((part) => part.id)).toEqual(["a", "b", "c"])
+})
+}
+
 for (const provider of ["openai", "anthropic"] as const) {
  for (const malformed of [false, true]) {
   test(`${provider}: replay and parallel calls (schema mismatch: ${malformed})`, async () => {

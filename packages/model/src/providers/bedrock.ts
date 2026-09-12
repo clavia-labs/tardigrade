@@ -146,7 +146,7 @@ class BedrockResponse {
         if (this.stop === undefined) return yield* failure("Bedrock usage arrived before message completion")
         const reason = stopReason(this.stop)
         if (reason === "stop" || reason === "tool-calls") for (const [, call] of [...this.calls].sort(([a], [b]) => a - b)) {
-          const params = yield* Effect.try({ try: () => Tool.unsafeSecureJsonParse(call.text), catch: providerError })
+          const params = yield* Effect.try({ try: () => Tool.unsafeSecureJsonParse(call.text === "" ? "{}" : call.text), catch: providerError })
           const tool = this.tools.find((tool) => tool.name === call.name)
           if (tool === undefined) return yield* AiError.make({ module: "BedrockLanguageModel", method: "streamText", reason: AiError.ToolNotFoundError.make({ toolName: call.name!, availableTools: this.tools.map((tool) => tool.name) }) })
           parts.push({ type: "tool-call", id: call.id, name: tool.name, params })

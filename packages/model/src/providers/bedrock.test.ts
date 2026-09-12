@@ -26,6 +26,29 @@ const events = (truncated = false): ConverseStreamOutput[] => [
 ]
 const toolkit = Toolkit.make(Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }), failureMode: "return" }))
 
+for (const input of [undefined, "", "{}", "{"] as const) {
+  test(`Bedrock validates tool arguments when input is ${JSON.stringify(input)}`, async () => {
+    const selected = Toolkit.make(
+      Tool.make("empty", { parameters: Schema.Struct({}), failureMode: "return" }),
+      Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }), failureMode: "return" })
+    )
+    const layer = providerLayer({ provider: "bedrock", model: { model: "claude" }, client: { send: async () => ({ $metadata: {}, stream: (async function* () {
+      for (const [index, name] of ["empty", "read"].entries()) {
+        yield { contentBlockStart: { contentBlockIndex: index, start: { toolUse: { toolUseId: name, name } } } }
+        if (input !== undefined) yield { contentBlockDelta: { contentBlockIndex: index, delta: { toolUse: { input } } } }
+        yield { contentBlockStop: { contentBlockIndex: index } }
+      }
+      yield { messageStop: { stopReason: "tool_use" as const } }
+      yield { metadata: { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }, metrics: { latencyMs: 1 } } }
+    })() }) } })
+    const outcome = await Effect.runPromise(collectResponse("Read", selected).pipe(Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer))), Effect.result))
+    if (input === "{") { expect(outcome._tag).toBe("Failure"); return }
+    if (outcome._tag === "Failure") throw outcome.failure
+    expect(outcome.success.parts.filter((part) => part.type === "tool-call")).toMatchObject([{ id: "empty", params: {} }])
+    expect(outcome.success.parts.find((part) => part.type === "error")?.error).toMatchObject({ _tag: "ToolCallValidationError", id: "read" })
+  })
+}
+
 for (const interleaved of [false, true]) {
 test(`Bedrock preserves signed and redacted reasoning beside rejected calls (interleaved: ${interleaved})`, async () => {
   const inputs: ConverseStreamCommandInput[] = []
