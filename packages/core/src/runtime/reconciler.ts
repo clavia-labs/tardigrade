@@ -3,7 +3,7 @@ import { concurrentTransition, validateTransitions } from "../transition/transit
 import { Cause, Clock, Context, Effect, Option, type Tracer } from "effect"
 import { actorRuntimeOf, type ActorSource } from "./actor"
 import { Self, InvocationScope, InvocationSuspended, ThreadAllocationScope } from "./context"
-export { Self } from "./context"
+export { Self, InvocationSuspended } from "./context"
 import { actorInvocationContextOf } from "../interaction/invocation"
 import { cancelsInvocation } from "@clavia/tardigrade-core/interaction/cancellation"
 import type { ExternalEffect } from "@clavia/tardigrade-core/effect"

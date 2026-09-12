@@ -4,4 +4,4 @@ export { type ActorInvocation, type ActorMethodCall } from "./interaction/invoca
 export { type ActorMethodCancellationState } from "./interaction/state"
 export { type ActorMethodState } from "./interaction/state"
 export { actorCall, type ActorCall, type ActorCallOptions } from "./interaction/invoke"
-export { InvocationScope, InvocationFailed, InvocationCancelled, type InvocationOptions } from "./interaction"
+export { InvocationScope, InvocationSuspended, InvocationFailed, InvocationCancelled, durableOperations, actorOperations, type InvocationOptions, type OperationHandle, type OperationAdapter, type OperationRead, type ActorOperationHandle } from "./interaction"

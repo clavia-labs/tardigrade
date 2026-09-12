@@ -3,7 +3,8 @@ import { Effect, Schema } from "effect"
 import { defineActor, threadTarget, bindThreadMethods, allocateChildThread, allocateRootThread, legacyComponent } from "@clavia/tardigrade-core/actor"
 import { legacyActorMethod } from "@clavia/tardigrade-core/actor/method-compat"
 import { methodIngressKeyOf } from "@clavia/tardigrade-core/interaction/invocation"
-import { prepareInvocation } from "@clavia/tardigrade-core/interaction"
+import { actorOperations, prepareInvocation } from "@clavia/tardigrade-core/interaction"
+import { EventLog } from "@clavia/tardigrade-core/log"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { intent } from "@clavia/tardigrade-core/intent"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -52,7 +53,7 @@ test("unnamed allocation positions separate actions and invocation coordinates a
   expect(await run()).toEqual(first)
 })
 
-for (const placement of ["existing", "child", "root"] as const) test(`typed calls to ${placement} threads release a single host slot and replay without redispatch`, async () => {
+for (const mode of ["invoke", "split"] as const) for (const placement of ["existing", "child", "root"] as const) test(`${mode} calls to ${placement} threads release a single host slot and replay without redispatch`, async () => {
   const research = legacyActorMethod({
     input: Schema.Struct({ topic: Schema.String }), output: Schema.String,
     event: ({ invocation, input, at }): Event => ({ type: "ResearchRequested", id: invocation.id, topic: input.topic, at }),
@@ -76,7 +77,9 @@ for (const placement of ["existing", "child", "root"] as const) test(`typed call
   let attempts = 0
   const parent = legacyComponent({
     name: "parent",
-    keys: { prefixes: ["summary:"], keyOf: (event) => event.type === "SummaryCompleted" ? `summary:${String(event.id)}` : undefined },
+    keys: { prefixes: ["summary:", "between:"], keyOf: (event) => event.type === "SummaryCompleted"
+      ? `summary:${String(event.id)}`
+      : event.type === "WorkContinued" ? `between:${String(event.id)}` : undefined },
     derive: (events) => {
       const request = events.find((event) => event.type === "SummaryRequested")
       return { view: undefined, transitions: request === undefined ? [] : [effect({
@@ -91,8 +94,22 @@ for (const placement of ["existing", "child", "root"] as const) test(`typed call
             parent: threadTarget({ name: "test", methods }, "main", "root").coordinate, name: "worker"
           })
           workerThread = ref.coordinate.thread
-          const first = yield* ref.research({ topic: "energy" }, { key: "first" })
-          const second = yield* ref.research({ topic: "safety" }, { key: "second" })
+          const [first, second] = mode === "invoke"
+            ? [yield* ref.research({ topic: "energy" }, { key: "first" }), yield* ref.research({ topic: "safety" }, { key: "second" })]
+            // @effect-diagnostics-next-line nestedEffectGenYield:off -- The split branch groups the start, independent work, and await sequence selected by this test matrix.
+            : yield* Effect.gen(function* () {
+                const researchOperations = actorOperations(ref, "research")
+                const firstHandle = yield* researchOperations.start({ input: { topic: "energy" }, options: { key: "first" } })
+                const secondHandle = yield* researchOperations.start({ input: { topic: "safety" }, options: { key: "second" } })
+                const log = yield* EventLog
+                yield* log.append([{ type: "WorkContinued", id: request.id, at: 1 }])
+                return [yield* researchOperations.await(firstHandle), yield* researchOperations.await(secondHandle)] as const
+              })
+          const exactOutput: string = first
+          // @ts-expect-error actor operation output stays the method's declared string.
+          const invalidOutput: number = first
+          void exactOutput
+          void invalidOutput
           return [{ type: "SummaryCompleted", id: request.id, output: `${first}; ${second}` }]
         }).pipe(Effect.orDie)
       })] }
@@ -133,6 +150,7 @@ for (const placement of ["existing", "child", "root"] as const) test(`typed call
     await host.wake(workerThread)
   }
   expect(host.read("root").find((event) => event.type === "SummaryCompleted")?.output).toBe("energy; safety")
+  expect(host.read("root").filter((event) => event.type === "WorkContinued")).toHaveLength(mode === "split" ? 1 : 0)
   expect(host.read(workerThread).filter((event) => event.type === "ResearchRequested")).toHaveLength(2)
   expect(attempts).toBeGreaterThan(2)
   await host.drive()

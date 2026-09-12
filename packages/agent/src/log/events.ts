@@ -94,6 +94,16 @@ export const ModelCalled = Schema.Struct({
   at: Schema.Finite
 })
 
+export const ModelCallSuspended = Schema.Struct({
+  type: Schema.Literal("ModelCallSuspended"),
+  callId: Schema.String,
+  ordinal: Schema.Finite,
+  awaiting: Schema.String,
+  epoch: Schema.optional(Schema.Finite),
+  turn: Schema.String,
+  at: Schema.Finite
+})
+
 export const TurnError = Schema.Struct({
   message: Schema.String,
   code: Schema.optional(Schema.String),
@@ -372,6 +382,7 @@ export const BudgetDenied = Schema.Struct({
 export const AgentEvent = Schema.Union([
   MessageReceived,
   ModelCalled,
+  ModelCallSuspended,
   ModelReturned,
   TextReturned,
   ToolCalled,
@@ -456,7 +467,7 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bdec:", "bi:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
+  prefixes: ["tr:", "bdec:", "bi:", "tn:", "rs:", "mr:", "ms:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -481,6 +492,8 @@ export const agentKeys: KeyFragment = {
         return v.ordinal === undefined ? undefined : `mc:${String(v.turn)}/${String(v.ordinal)}`
       case "ModelReturned":
         return `mr:${String(v.turn)}/${String(v.ordinal)}`
+      case "ModelCallSuspended":
+        return `ms:${String(v.callId)}/${String(v.ordinal)}`
       case "BudgetExhausted":
         // The wall's occurrence is the ceiling it fired at: a grant raises it, so a second
         // crossing keys anew.
@@ -537,6 +550,14 @@ export const modelCalled = (
     }
   } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
+export const modelCallSuspended = (
+  fields: {
+    readonly callId: string
+    readonly ordinal: number
+    readonly awaiting: string
+    readonly turn: string
+  } & EpochStamp
+): Event => ({ type: "ModelCallSuspended", ...fields })
 export const modelReturned = (
   fields: {
     readonly callId: string

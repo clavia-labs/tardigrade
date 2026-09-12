@@ -14,7 +14,11 @@ export class InvocationScope extends Context.Service<InvocationScope, {
 }>()("tardigrade/InvocationScope") {}
 
 // InvocationSuspended marks a pending call for the reconciler.
-export class InvocationSuspended extends Error {}
+export class InvocationSuspended extends Error {
+  constructor(readonly awaiting?: string) {
+    super()
+  }
+}
 
 // ThreadAllocationScope identifies allocations within one replayed action.
 export class ThreadAllocationScope extends Context.Service<ThreadAllocationScope, {

@@ -34,6 +34,10 @@ describe("summaryOf", () => {
       "response · status: completed · bun:main:ag.survey.0"
     ],
     [{ type: "ModelCalled", callId: "m1/infer/1", ordinal: 1, turn: "m1", at }, "attempt 2 · m1"],
+    [
+      { type: "ModelCallSuspended", callId: "m1/infer/1", ordinal: 1, awaiting: "job:1", turn: "m1", at },
+      "attempt 2 awaits its answer · m1"
+    ],
     [{ type: "TextReturned", text: "thinking it over", at }, "thinking it over"],
     [
       { type: "ToolCalled", callId: "survey", name: "execute", arguments: { code: "const a = 1\nreturn a" }, at },
