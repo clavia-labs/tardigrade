@@ -1,8 +1,10 @@
+import { providerLayer } from "tardie/model/providers/openai-compat"
 import definition from "./actor"
 import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
+  providerLayer,
   scope: modelScopeFrom(modelLock)
 })
 

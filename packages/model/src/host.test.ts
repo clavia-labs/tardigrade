@@ -1,3 +1,5 @@
+import { providerLayer as openaiLayer } from "./providers/openai"
+import { providerLayer as anthropicLayer } from "./providers/anthropic"
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
@@ -7,7 +9,7 @@ import { modelLayer } from "./host"
 import { providerEvents } from "./testing/fixtures"
 
 for (const provider of ["openai", "anthropic"] as const) {
-  test(`${provider}: host selection, native settings, and observer delivery`, async () => {
+  for (const explicit of [false, true]) test(`${provider}: host selection, native settings, and observer delivery (explicit: ${explicit})`, async () => {
     const reference = { provider: "private-provider", model_id: provider === "openai" ? "gpt-5" : "claude-sonnet-4-5" }
     const config = { model: { default: reference, allow: "*" as const, providers: {
       [reference.provider]: { baseUrl: "https://fixture.invalid/v1", protocol: provider === "openai" ? "openai-responses" as const : "anthropic-messages" as const, env: ["MODEL_KEY"] }
@@ -28,6 +30,7 @@ for (const provider of ["openai", "anthropic"] as const) {
       return new Response(events.map((event, sequence_number) => `event: ${event.type}\ndata: ${JSON.stringify({ sequence_number, ...event })}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })
     }, { preconnect: globalThis.fetch.preconnect })
     const binding = modelLayer(config, catalog, {
+      ...(explicit ? { providerLayer: provider === "openai" ? openaiLayer : anthropicLayer } : {}),
       configure: () => ({ maxOutputTokens: 1000, retry: { backoffMs: [] }, ...(provider === "openai" ? { openai: { max_output_tokens: 200, reasoning: { effort: "high" } } } : { anthropic: { max_tokens: 200, thinking: { type: "enabled", budget_tokens: 10 } } }) }),
       observer: { onDelta: (delta) => Effect.sync(() => { observed.push(delta) }) }
     })

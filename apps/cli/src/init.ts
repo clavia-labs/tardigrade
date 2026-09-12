@@ -79,11 +79,15 @@ const manifestTemplate = (name: string, now: Date): string => `${JSON.stringify(
   }
 }, undefined, 2)}\n`
 
-const workerTemplate = (_protocol: ModelProtocol): string => `import definition from "./actor"
+const providerModule = (protocol: ModelProtocol) => ({ "openai-responses": "openai", "openai-chat-completions": "openai-compat", "anthropic-messages": "anthropic", "bedrock-converse": "bedrock" })[protocol]
+
+const workerTemplate = (protocol: ModelProtocol): string => `import { providerLayer } from "tardie/model/providers/${providerModule(protocol)}"
+import definition from "./actor"
 import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
+  providerLayer,
   scope: modelScopeFrom(modelLock)
 })
 
@@ -97,11 +101,13 @@ export default {
 }
 `
 
-const serverTemplate = (_protocol: ModelProtocol): string => `import { createBunHost, serve } from "tardie/bun"
+const serverTemplate = (protocol: ModelProtocol): string => `import { providerLayer } from "tardie/model/providers/${providerModule(protocol)}"
+import { createBunHost, serve } from "tardie/bun"
 import { bunModelServices } from "tardie/server/model-services"
 import definition from "./actor"
 
 const { config, layers, api } = await bunModelServices({
+  providerLayer,
   env: process.env
 })
 const host = await createBunHost({

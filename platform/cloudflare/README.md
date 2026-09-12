@@ -9,9 +9,11 @@ Run Tardigrade actors on Cloudflare Workers and SQLite Durable Objects. The Work
 ```ts
 import definition from "./actor"
 import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
+import { providerLayer } from "tardie/model/providers/openai-compat"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
+  providerLayer,
   scope: modelScopeFrom(modelLock)
 })
 

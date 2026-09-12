@@ -234,12 +234,9 @@
       "name": "@clavia/tardigrade-model",
       "version": "0.0.1",
       "dependencies": {
-        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
         "@clavia/tardigrade-agent": "workspace:*",
         "@clavia/tardigrade-client": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
-        "@smithy/fetch-http-handler": "^5.6.3",
-        "@smithy/node-http-handler": "^4.11.2",
         "@tardie/ai": "0.0.2",
         "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.1",
         "@tardie/ai-openai": "4.0.0-rc.113-clavia.2",
@@ -247,8 +244,21 @@
         "effect": "4.0.0-rc.115",
       },
       "devDependencies": {
+        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+        "@smithy/fetch-http-handler": "^5.6.3",
+        "@smithy/node-http-handler": "^4.11.2",
         "fast-check": "^4.9.0",
       },
+      "peerDependencies": {
+        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+        "@smithy/fetch-http-handler": "^5.6.3",
+        "@smithy/node-http-handler": "^4.11.2",
+      },
+      "optionalPeers": [
+        "@aws-sdk/client-bedrock-runtime",
+        "@smithy/fetch-http-handler",
+        "@smithy/node-http-handler",
+      ],
     },
     "packages/tardie": {
       "name": "tardie",

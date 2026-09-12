@@ -1,3 +1,4 @@
+import { providerLayer } from "../../packages/model/src/providers/openai-compat"
 import assert from "node:assert/strict"
 import { Effect } from "effect"
 import { actor } from "tardie/core"
@@ -11,7 +12,7 @@ export const definition = actor({ name: "inference-test", methods: agentMethods,
 
 export const modelLayer = (baseUrl: string) => configuredModelLayer({ model: { default: { provider: "test", model_id: "fixture" }, allow: "*", providers: { test: { baseUrl, protocol: "openai-chat-completions", env: ["KEY"] } } }, modelCredentials: { KEY: "fixture" } }, {
   snapshot: { source: "models.dev", revision: "r", refreshedAt: 1, status: "fresh", providers: [{ id: "test", name: "Test", env: [], models: [{ id: "fixture", metadata: { contextWindowTokens: 10000, maxOutputTokens: 1000 } }] }] }
-}, { configure: () => ({ retry: { backoffMs: [0], retryAfterJitterMs: 0 }, maxOutputTokens: 1000 }) })
+}, { providerLayer, configure: () => ({ retry: { backoffMs: [0], retryAfterJitterMs: 0 }, maxOutputTokens: 1000 }) })
 
 export const responseFor = (body: string): string => {
   const input = JSON.parse(body) as { messages: Array<{ role: string; content?: string }> }

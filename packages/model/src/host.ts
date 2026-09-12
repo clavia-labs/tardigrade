@@ -1,5 +1,5 @@
+import type { ProviderLayer } from "./providers/layer"
 import { protocolOptionsOf } from "./providers/options"
-import { bedrockGatewayHandler } from "./providers/bedrock-transport"
 import type { BedrockModelConfig } from "./providers/bedrock"
 import { requestPolicyOf } from "./inference/request"
 import { Effect, Layer, Redacted, Stream, type Schema } from "effect"
@@ -29,6 +29,7 @@ export interface ModelSettings extends RequestOptions {
 }
 
 export interface ModelHostOptions {
+  readonly providerLayer?: ProviderLayer
   readonly observer?: InferenceObserver
   readonly configure?: (selected: SelectedModel) => ModelSettings
 }
@@ -60,15 +61,17 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
       const region = selected.region ?? new URL(selected.baseUrl).pathname.split("/").filter(Boolean).at(-1)
       if (region === undefined) throw new Error("a Bedrock connection must declare its AWS region")
       const policy = requestPolicyOf(common)
-      return inferenceLayer({ ...common, provider: "bedrock", model: { model: selected.model_id, ...(settings.bedrock === undefined ? {} : { config: settings.bedrock }) }, client: {
-        region, endpoint: selected.baseUrl, token: { token: "byok" }, authSchemePreference: ["httpBearerAuth"], requestHandler: bedrockGatewayHandler(selected.apiKey, policy.timeout)
-      } }).pipe(Layer.provide(FetchHttpClient.layer))
+      return inferenceLayer({ ...common, provider: "bedrock", gateway: { apiKey: selected.apiKey, bounds: policy.timeout }, model: { model: selected.model_id, ...(settings.bedrock === undefined ? {} : { config: settings.bedrock }) }, client: {
+        region, endpoint: selected.baseUrl, token: { token: "byok" }, authSchemePreference: ["httpBearerAuth"]
+      } }, options.providerLayer).pipe(Layer.provide(FetchHttpClient.layer))
     }
-    return inferenceLayer(selected.protocol === "openai-responses"
+    return inferenceLayer(
+      selected.protocol === "openai-responses"
       ? { ...common, provider: "openai", model: { model: selected.model_id, ...(settings.openai === undefined ? {} : { config: settings.openai }) } }
       : selected.protocol === "openai-chat-completions"
       ? { ...common, provider: "openai-compat", model: { model: selected.model_id, ...(settings.compat === undefined ? {} : { config: settings.compat }) } }
       : { ...common, provider: "anthropic", model: { model: selected.model_id, ...(settings.anthropic === undefined ? {} : { config: settings.anthropic }) } }
+      , options.providerLayer
     ).pipe(Layer.provide(FetchHttpClient.layer))
   } catch (error) {
     return Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({

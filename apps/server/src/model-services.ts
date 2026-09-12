@@ -20,6 +20,7 @@ export type BunModelServicesOptions = {
   readonly catalog?: Parameters<typeof layerModelCatalog>[0]
   readonly inference?: InferenceLayerFactory
   readonly configure?: ModelHostOptions["configure"]
+  readonly providerLayer?: ModelHostOptions["providerLayer"]
 }
 
 // bunModelServices binds configured model inference, catalog discovery, and Bun services for a host.
@@ -40,7 +41,7 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const snapshot = await Effect.runPromise(ModelCatalogStore.pipe(Effect.provide(catalog)))
   const inference = makeInferenceStream()
   const layers = Layer.mergeAll(
-    options.inference === undefined ? modelLayer(config, snapshot, { observer: inference.observer, ...(options.configure === undefined ? {} : { configure: options.configure }) }) : options.inference(config, snapshot, inference.observer),
+    options.inference === undefined ? modelLayer(config, snapshot, { observer: inference.observer, ...(options.providerLayer === undefined ? {} : { providerLayer: options.providerLayer }), ...(options.configure === undefined ? {} : { configure: options.configure }) }) : options.inference(config, snapshot, inference.observer),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer

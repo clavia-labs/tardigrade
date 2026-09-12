@@ -46,17 +46,33 @@
     "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.1",
     "@tardie/ai-openai": "4.0.0-rc.113-clavia.2",
     "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.1",
-    "@smithy/fetch-http-handler": "^5.6.3",
     "effect": "4.0.0-rc.115",
-    "@tardie/ai": "0.0.2",
-    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
-    "@smithy/node-http-handler": "^4.11.2"
+    "@tardie/ai": "0.0.2"
   },
   "devDependencies": {
-    "fast-check": "^4.9.0"
+    "fast-check": "^4.9.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@smithy/fetch-http-handler": "^5.6.3",
+    "@smithy/node-http-handler": "^4.11.2"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"
+  },
+  "peerDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@smithy/fetch-http-handler": "^5.6.3",
+    "@smithy/node-http-handler": "^4.11.2"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-bedrock-runtime": {
+      "optional": true
+    },
+    "@smithy/fetch-http-handler": {
+      "optional": true
+    },
+    "@smithy/node-http-handler": {
+      "optional": true
+    }
   }
 }

@@ -1,3 +1,5 @@
+import { bedrockGatewayHandler } from "./bedrock-transport"
+import type { ProviderLayer } from "./layer"
 import * as ProviderLanguageModel from "@tardie/ai"
 import { Context, Effect, Encoding, Layer, Option, Schema, Stream } from "effect"
 import { AiError, LanguageModel, Tool } from "effect/unstable/ai"
@@ -190,3 +192,11 @@ const abortable = (stream: AsyncIterable<ConverseStreamOutput>, controller: Abor
     }
   }
 })
+
+// providerLayer supplies the Bedrock Effect model and optional gateway transport (bedrock.test.ts).
+export const providerLayer: ProviderLayer = (options) => {
+  if (options.provider !== "bedrock") throw new Error(`The Bedrock layer cannot serve ${options.provider}; supply the matching providerLayer`)
+  return bedrockLayer({ ...options, client: options.gateway === undefined ? options.client : {
+    ...options.client, requestHandler: bedrockGatewayHandler(options.gateway.apiKey, options.gateway.bounds)
+  } })
+}

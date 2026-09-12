@@ -83,6 +83,7 @@ const tasks: ReadonlyArray<Task> = [
   { id: "test:app-web", cwd: appPkg("web"), cmd: ["bun", "test"] },
   { id: "test:example-react-rlm-chat-web", cwd: examplePkg("web"), cmd: ["bun", "test"] },
   { id: "test:e2e", cwd: e2e, cmd: ["bun", "test"] },
+  { id: "bundle:model-providers", cmd: ["bun", "run", "tools/model-provider-bundles.ts"] },
   { id: "bundle:platform-cloudflare", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "bundle"] },
   ...bundled.map((name) => ({ id: `build:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "build"] })),
   { id: "build:example-react-rlm-chat-web", cwd: examplePkg("web"), cmd: ["bun", "run", "build"] },

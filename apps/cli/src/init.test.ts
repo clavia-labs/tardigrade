@@ -57,6 +57,8 @@ describe("initActor", () => {
     expect(worker).toContain('from "tardie/worker"')
     expect(worker).toContain('import modelLock from "./models.lock.json"')
     expect(worker).toContain("scope: modelScopeFrom(modelLock)")
+    expect(worker).toContain('import { providerLayer } from "tardie/model/providers/openai-compat"')
+    expect(worker).toContain("  providerLayer,")
     expect(manifest).toMatchObject({
       name: "reviewer",
       main: "worker.ts",

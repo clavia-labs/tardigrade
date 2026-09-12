@@ -12,9 +12,11 @@ Celld runs Wrangler Worker bundles and SQLite Durable Objects on a self-hosted f
 ```ts title="worker.ts"
 import definition from "./actor"
 import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
+import { providerLayer } from "tardie/model/providers/openai-compat"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
+  providerLayer,
   scope: modelScopeFrom(modelLock)
 })
 

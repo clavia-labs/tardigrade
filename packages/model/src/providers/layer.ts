@@ -2,31 +2,29 @@ import { Effect, Layer } from "effect"
 import { ProviderRequestKey } from "@clavia/tardigrade-agent/binding/settings"
 export { ProviderRequestKey } from "@clavia/tardigrade-agent/binding/settings"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
-import { OpenAiClient, OpenAiLanguageModel } from "@tardie/ai-openai"
-import { OpenAiClient as CompatClient, OpenAiLanguageModel as CompatLanguageModel } from "@tardie/ai-openai-compat"
-import { AnthropicClient, AnthropicLanguageModel } from "@tardie/ai-anthropic"
-import { bedrockLayer } from "./bedrock"
+import type { OpenAiClient, OpenAiLanguageModel } from "@tardie/ai-openai"
+import type { OpenAiClient as CompatClient, OpenAiLanguageModel as CompatLanguageModel } from "@tardie/ai-openai-compat"
+import type { AnthropicClient, AnthropicLanguageModel } from "@tardie/ai-anthropic"
+import type { bedrockLayer } from "./bedrock"
+import type { LanguageModel } from "effect/unstable/ai"
+import type { StreamBounds } from "../inference/policy"
 
 export type ProviderOptions =
-  | ({ readonly provider: "bedrock" } & Parameters<typeof bedrockLayer>[0])
+  | ({ readonly provider: "bedrock"; readonly gateway?: { readonly apiKey: string; readonly bounds: StreamBounds } } & Parameters<typeof bedrockLayer>[0])
   | { readonly provider: "openai-compat"; readonly client: Parameters<typeof CompatClient.layer>[0]; readonly model: Parameters<typeof CompatLanguageModel.layer>[0] }
   | { readonly provider: "openai"; readonly client: Parameters<typeof OpenAiClient.layer>[0]; readonly model: Parameters<typeof OpenAiLanguageModel.layer>[0] }
   | { readonly provider: "anthropic"; readonly client: Parameters<typeof AnthropicClient.layer>[0]; readonly model: Parameters<typeof AnthropicLanguageModel.layer>[0] }
 
-const requestKeys = HttpClient.mapRequestEffect((request) => Effect.map(ProviderRequestKey, (key) =>
+export const requestKeys = HttpClient.mapRequestEffect((request) => Effect.map(ProviderRequestKey, (key) =>
   key === undefined ? request : HttpClientRequest.setHeader(request, "Idempotency-Key", key)
 ))
 
-// providerLayer supplies a provider with native configuration and an injected HTTP transport.
-export const providerLayer = (options: ProviderOptions) => {
-  if (options.provider === "bedrock") return bedrockLayer(options)
-  const client = {
-    ...options.client,
-    transformClient: (client: HttpClient.HttpClient) => requestKeys(options.client.transformClient?.(client) ?? client)
-  }
-  return options.provider === "openai"
-    ? OpenAiLanguageModel.layer(options.model).pipe(Layer.provide(OpenAiClient.layer(client)))
-    : options.provider === "openai-compat"
-    ? CompatLanguageModel.layer(options.model).pipe(Layer.provide(CompatClient.layer(client)))
-    : AnthropicLanguageModel.layer(options.model).pipe(Layer.provide(AnthropicClient.layer(client)))
-}
+export type ProviderLayer = (options: ProviderOptions) => Layer.Layer<LanguageModel.LanguageModel, never, HttpClient.HttpClient>
+
+// providerLayer loads a selected provider in Bun; Workers supply an explicit factory (isolation.test.ts).
+export const providerLayer: ProviderLayer = (options) => Layer.unwrap(Effect.promise(async () => {
+  if ((globalThis as { Bun?: unknown }).Bun === undefined) throw new Error(`Import tardie/model/providers/${options.provider} and supply its providerLayer to workerModelServices`)
+  const path = `./${options.provider}.ts`
+  const loaded: { readonly providerLayer: ProviderLayer } = await import(/* @vite-ignore */ path)
+  return loaded.providerLayer(options)
+}))
