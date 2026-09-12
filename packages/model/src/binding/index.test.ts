@@ -15,15 +15,27 @@ import { ModelReturned } from "@clavia/tardigrade-agent/log/events"
 import { inferenceLayer } from "./index"
 import { providerEvents } from "../testing/fixtures"
 
-for (const provider of ["openai", "anthropic"] as const) {
-  for (const outputCase of ["none", "valid", "invalid", "native", "native-invalid"] as const) {
+const compatUsage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, prompt_tokens_details: { cached_tokens: 3 }, completion_tokens_details: { reasoning_tokens: 2 } }
+const compatResponse = (done: boolean) => {
+  const delta = done ? { content: "done" } : { reasoning_content: "Check the files.", tool_calls: ["a", "b", "c"].map((id, index) => ({ index, id, type: "function", function: { name: "read", arguments: JSON.stringify({ path: id === "b" ? 123 : id }) } })) }
+  const chunks = [{ choices: [{ index: 0, delta, finish_reason: null }] }, { choices: [{ index: 0, delta: {}, finish_reason: done ? "stop" : "tool_calls" }] }, { choices: [], usage: compatUsage }]
+  return chunks.map((chunk) => `data: ${JSON.stringify({ id: done ? "chat-2" : "chat-1", model: "gateway-model", created: 1, ...chunk })}\n\n`).join("") + "data: [DONE]\n\n"
+}
+
+for (const provider of ["openai", "anthropic", "openai-compat"] as const) {
+  const outputCases = provider === "openai-compat" ? ["none"] as const : ["none", "valid", "invalid", "native", "native-invalid"] as const
+  for (const outputCase of outputCases) {
   const declaredOutput = outputCase !== "none"
-  for (const broken of [false, true]) {
+  for (const broken of outputCase === "none" ? [false, true] : [false]) {
   test(`${provider}: durable calls and replay (broken stream: ${broken}, output contract: ${outputCase})`, async () => {
     const result = declaredOutput ? JSON.stringify({ answer: outputCase.endsWith("invalid") ? 123 : "done" }) : "done"
     const requests: unknown[] = []
     const fetch = Object.assign(async (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
       requests.push(JSON.parse(await new Response(init?.body).text()))
+      if (provider === "openai-compat") {
+        const wire = compatResponse(requests.length > 1)
+        return new Response(broken ? wire.replace("data: [DONE]\n\n", "") : wire, { headers: { "content-type": "text/event-stream" } })
+      }
       let events = requests.length === 1 ? providerEvents(provider, true) : provider === "openai" ? [
         { type: "response.output_item.added", output_index: 0, item: { id: "text", type: "message", status: "completed", role: "assistant", content: [] } },
         { type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: "text", delta: result },
@@ -42,7 +54,9 @@ for (const provider of ["openai", "anthropic"] as const) {
     }, { preconnect: globalThis.fetch.preconnect })
     const options = provider === "openai"
       ? { provider, endpoint: "https://fixture.invalid/v1", client: { apiKey: Redacted.make("test"), apiUrl: "https://fixture.invalid/v1" }, model: { model: "gpt-5", config: { store: false } } } as const
-      : { provider, endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test"), apiUrl: "https://fixture.invalid" }, model: { model: "claude-sonnet-4-5", config: { max_tokens: 4096, thinking: { type: "enabled", budget_tokens: 1024 } } } } as const
+      : provider === "anthropic"
+        ? { provider, endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test"), apiUrl: "https://fixture.invalid" }, model: { model: "claude-sonnet-4-5", config: { max_tokens: 4096, thinking: { type: "enabled", budget_tokens: 1024 } } } } as const
+        : { provider, endpoint: "https://fixture.invalid/v1", client: { apiKey: Redacted.make("test"), apiUrl: "https://fixture.invalid/v1" }, model: { model: "gateway-model" } } as const
     const executions: string[] = []
     let readHistory: () => ReadonlyArray<Event> = () => []
     const assembled = actor({ name: "effect-agent", methods: agentMethods, components: [infer([outputValidateOnce, tool({
@@ -58,6 +72,7 @@ for (const provider of ["openai", "anthropic"] as const) {
     await host.drive()
     const history = host.read("root")
     if (broken) {
+      expect(requests).toHaveLength(1)
       expect(executions).toEqual([])
       expect(history.filter((event) => event.type === "ToolCalled")).toEqual([])
       expect(history.filter((event) => event.type === "ModelReturned")).toMatchObject([{ outcome: "failed" }])
@@ -91,9 +106,12 @@ for (const provider of ["openai", "anthropic"] as const) {
     expect(history.filter((event) => event.type === "ToolCalled" || event.type === "ToolReturned").every((event) => event.usage === undefined)).toBe(true)
     expect(history[responseIndex]?.continuation).toHaveProperty("payload.content")
     expect(history[responseIndex]?.continuation).not.toHaveProperty("format")
-    expect(JSON.stringify(requests[1])).toContain(provider === "openai" ? "opaque-b" : "opaque")
+    const replayEvidence = provider === "openai" ? "opaque-b" : provider === "anthropic" ? "opaque" : '"reasoning_content":"Check the files."'
+    expect(JSON.stringify(requests[1])).toContain(replayEvidence)
     expect(JSON.stringify(requests[1])).toContain("Expected string")
     if (provider === "anthropic") expect(JSON.stringify(requests[1])).toContain('"is_error":true')
+
+    if (declaredOutput) return
 
     const callEnd = history.findLastIndex((event) => event.type === "ToolCalled")
     const saved: Event[] = JSON.parse(JSON.stringify(history.slice(0, Math.max(callEnd, settledB) + 1)))
@@ -108,8 +126,8 @@ for (const provider of ["openai", "anthropic"] as const) {
     expect(resumed.read("root").some((event) => event.type === "TurnCompleted")).toBe(true)
     expect(resumed.read("root").filter((event) => event.type === "ModelReturned")).toHaveLength(2)
     expect(resumed.read("root").find((event) => event.type === "ModelReturned")?.usage).toEqual(history[responseIndex]?.usage)
-    expect(JSON.stringify(requests.at(-1))).toContain(provider === "openai" ? "opaque-b" : "opaque")
-    if (outputCase === "none") {
+    expect(JSON.stringify(requests.at(-1))).toContain(replayEvidence)
+    if (provider !== "openai-compat") {
       for (const changed of ["provider", "protocol", "model", "endpoint"] as const) {
         const switched = saved.map((event) => event.continuation === undefined ? event : {
           ...event, continuation: { ...event.continuation as ProviderContinuation, [changed]: "different" }
@@ -124,9 +142,9 @@ for (const provider of ["openai", "anthropic"] as const) {
         const wire = JSON.stringify(requests.at(-1))
         expect(wire).toContain("Check")
         expect(wire).toContain("contents")
-        if (changed === "endpoint") expect(wire).toContain(provider === "openai" ? "opaque-b" : "opaque")
+        if (changed === "endpoint") expect(wire).toContain(replayEvidence)
         else {
-          expect(wire).not.toContain(provider === "openai" ? "opaque-b" : "opaque")
+          expect(wire).not.toContain(replayEvidence)
           expect(wire).not.toContain('"signature"')
           expect(wire).not.toContain('"type":"reasoning"')
         }

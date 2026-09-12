@@ -1,5 +1,6 @@
 import type { ProviderLayer } from "./providers/layer"
 import { protocolOptionsOf } from "./providers/options"
+import { MODEL_PROTOCOLS } from "./providers/directory"
 import type { ModelConfig as BedrockModelConfig } from "@tardie/ai-bedrock/BedrockLanguageModel"
 import { requestPolicyOf } from "./inference/request"
 import { Effect, Layer, Redacted, Stream, type Schema } from "effect"
@@ -16,8 +17,6 @@ import type { ReportedCostReader } from "./binding/usage"
 import type { OutputCapability } from "./binding/output"
 import type { RequestOptions } from "./inference/request"
 import { inferenceLayer } from "./binding/index"
-
-export const SUPPORTED_MODEL_PROTOCOLS = ["openai-responses", "anthropic-messages", "openai-chat-completions", "bedrock-converse"] as const
 
 export interface ModelSettings extends RequestOptions {
   readonly reportedCostUsd?: ReportedCostReader
@@ -79,7 +78,7 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
       streamText: () => Stream.fail(unknownModelError(error))
     }))
   }
-}, SUPPORTED_MODEL_PROTOCOLS)
+}, MODEL_PROTOCOLS)
 
 const bedrockDocument = (value: Schema.Json): NonNullable<BedrockModelConfig["additionalModelRequestFields"]> | null => {
   if (value === null || typeof value !== "object") return value

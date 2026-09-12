@@ -431,7 +431,6 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
           const actualRender = derived.renderAfter(mark)
           const trajectory = input.trajectory()
           let partialOutput = ""
-          let physicalAttempt = ""
           let partialPersisted = false
           const persistPartialOutput = () => {
             if (partialOutput === "" || partialPersisted) return Effect.void
@@ -453,10 +452,6 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               input.attempt,
               signal,
               (delta) => {
-                if (physicalAttempt !== delta.physicalAttempt) {
-                  physicalAttempt = delta.physicalAttempt
-                  partialOutput = ""
-                }
                 if (delta.kind !== "reasoning") partialOutput += delta.text
               }
             )

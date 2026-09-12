@@ -6,12 +6,6 @@ import { Prompt, Tool, Toolkit } from "effect/unstable/ai"
 import { collectResponse } from "./response"
 import { providerLayer } from "./layer"
 import { modelLayer } from "../host"
-import { agentMethods, infer, tool, outputValidateOnce } from "@clavia/tardigrade-agent"
-import { actor } from "@clavia/tardigrade-core/actor"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { createHost } from "@clavia/tardigrade-host/host"
-import { KeyValueStore } from "effect/unstable/persistence"
-import { inferenceLayer } from "../binding/index"
 
 const toolkit = Toolkit.make(Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }), failureMode: "return" }))
 const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, prompt_tokens_details: { cached_tokens: 3 }, completion_tokens_details: { reasoning_tokens: 2 }, cost: 0.25 }
@@ -77,53 +71,6 @@ test("compat: host fails truncated JSON once and retains usage", async () => {
   expect(action).not.toHaveProperty("calls")
   expect(action).not.toHaveProperty("continuation")
 })
-
-for (const broken of [false, true]) {
-  test(`compat: durable validation and restart (incomplete stream: ${broken})`, async () => {
-    const requests: unknown[] = []
-    const fetch = Object.assign(async (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
-      requests.push(JSON.parse(await new Response(init?.body).text()))
-      const wire = requests.length === 1 ? frames("reasoning_content") : `data: ${JSON.stringify({ id: "chat-2", model: "gateway-model", created: 1, choices: [{ index: 0, delta: { content: "done" }, finish_reason: "stop" }], usage })}\n\ndata: [DONE]\n\n`
-      return new Response(broken ? wire.replace("data: [DONE]\n\n", "") : wire, { headers: { "content-type": "text/event-stream" } })
-    }, { preconnect: globalThis.fetch.preconnect })
-    const executions: string[] = []
-    let readHistory: () => ReadonlyArray<Event> = () => []
-    const definition = actor({ name: "compat-agent", methods: agentMethods, components: [infer([outputValidateOnce, tool({ spec: { name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }, run: (_args, context) => Effect.sync(() => {
-      expect(readHistory().some((event) => event.type === "ModelReturned")).toBe(true)
-      expect(readHistory().some((event) => event.type === "ToolReturned" && event.callId === "b")).toBe(true)
-      executions.push(context.callId)
-      return "contents"
-    }) })], { models: { default: { provider: "openai-compat", model_id: "gateway-model" }, allow: "*" } })] })
-    const makeHost = () => createHost({ actorName: "compat-agent", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, inferenceLayer({ provider: "openai-compat", endpoint: "https://fixture.invalid/v1", client: { apiUrl: "https://fixture.invalid/v1" }, model: { model: "gateway-model" }, retry: { backoffMs: [] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))) })
-    const host = makeHost()
-    readHistory = () => host.read("root")
-    await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Read", at: 1 })
-    await host.drive()
-    const history = host.read("root")
-    if (broken) {
-      expect(history.filter((event) => event.type === "ModelReturned")).toMatchObject([{ outcome: "failed" }])
-      expect(requests).toHaveLength(1)
-      expect(executions).toEqual([])
-      expect(history.filter((event) => event.type === "ToolCalled")).toEqual([])
-      expect(history.some((event) => event.type === "TurnFailed")).toBe(true)
-      return
-    }
-    expect(executions.sort()).toEqual(["a", "c"])
-    expect(history.some((event) => event.type === "TurnCompleted")).toBe(true)
-    const end = history.findLastIndex((event) => event.type === "ToolCalled" || event.type === "ToolReturned" && event.callId === "b")
-    const saved: Event[] = JSON.parse(JSON.stringify(history.slice(0, end + 1)))
-    const resumed = makeHost()
-    executions.length = 0
-    readHistory = () => resumed.read("root")
-    resumed.seed("root", saved)
-    await resumed.wake("root")
-    await resumed.drive()
-    expect(executions.sort()).toEqual(["a", "c"])
-    expect(resumed.read("root").filter((event) => event.type === "ToolReturned" && event.callId === "b")).toHaveLength(1)
-    expect(resumed.read("root").filter((event) => event.type === "ModelReturned")).toHaveLength(2)
-    expect(JSON.stringify(requests.at(-1))).toContain('"reasoning_content":"Check the files."')
-  })
-}
 
 test("compat interleaving preserves complete arguments and reasoning across byte boundaries", async () => {
   const fc = await import("fast-check")

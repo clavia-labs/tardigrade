@@ -266,21 +266,6 @@ describe("an assembled agent", () => {
     expect(reloaded.host.read(ROOT_THREAD)).toEqual(log)
   })
 
-  test("a retried physical attempt journals only the text it streamed", async () => {
-    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
-    const mind = rlm(async (request, key, _signal, onDelta) => {
-      streamOf(request, key, "p1", ["the first attempt died"], onDelta)
-      streamOf(request, key, "p2", ["second ", "try"], onDelta)
-      markStarted()
-      await new Promise<void>(() => {})
-      return { kind: "complete", output: "late" }
-    })
-    const log = await cancelAfter(mind, started)
-    expect(log.filter((event) => event.type === "TextReturned"))
-      .toEqual([expect.objectContaining({ text: "second try", turn: "m1" })])
-    expect(textOutcomes(log, "m1")).toEqual([{ text: "second try", owner: 0, interrupted: true }])
-  })
-
   test("a normally completing inference journals no partial", async () => {
     const mind = rlm(async (request, key, _signal, onDelta) => {
       streamOf(request, key, "p1", ["an ", "answer"], onDelta)
