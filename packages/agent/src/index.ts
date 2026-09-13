@@ -102,7 +102,16 @@ export {
   type RepairPolicy
 } from "./component/repair"
 export { nativeOutput } from "./component/native-output"
-export { DEFAULT_BUDGET_POLICY, type BudgetPolicy, type SpendBudgetOptions } from "./component/budget"
+export {
+  DEFAULT_BUDGET_ON_UNKNOWN,
+  DEFAULT_BUDGET_POLICY,
+  spendUsd,
+  toolCalls,
+  type BudgetConstraint,
+  type BudgetPolicy,
+  type BudgetUnknownPolicy,
+  type SpendBudgetOptions
+} from "./component/budget"
 export { toolsReactorFrom, DEFAULT_TOOL_CONCURRENCY, type ToolConcurrency, type Answer, type PendingCall, type Serve } from "./runtime/tools"
 export {
   compactionReactor,

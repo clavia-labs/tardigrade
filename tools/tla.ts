@@ -102,6 +102,7 @@ export const checks: ReadonlyArray<Check> = [
   counterexample("component", "InferenceBudget", "InferenceBudgetFalseZero.cfg", "Invariant UnknownNeverZero is violated"),
   counterexample("component", "InferenceBudget", "InferenceBudgetAtBound.cfg", "Invariant NextCallWithinBudget is violated"),
   counterexample("component", "InferenceBudget", "InferenceBudgetRecoveryDrift.cfg", "Invariant ProjectionFromLog is violated"),
+  counterexample("component", "InferenceBudget", "InferenceBudgetMissingPolicy.cfg", "Invariant AdmissionEvidenceRecorded is violated"),
   pass("component", "Component", "Component.cfg"),
   counterexample("component", "Component", "ComponentCurrent.cfg", "Invariant CurrentViewRoutable is violated"),
   pass("interaction", "Cancellation", "Cancellation.cfg"),

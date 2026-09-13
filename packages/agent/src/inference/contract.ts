@@ -32,6 +32,7 @@ export interface InferRequest {
 // InferenceAdmission carries a component's replayable decision about the next model attempt.
 export type InferenceAdmission = {
   readonly component: string
+  readonly policy?: unknown
   readonly blocked?: {
     readonly cause: TurnFailureCause
     readonly error: string

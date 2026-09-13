@@ -22,6 +22,7 @@ import { formatThreadAddress, isThreadAddress, type ThreadAddress } from "@clavi
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { requestBudgetMethod } from "../actor/budget"
+import type { Projection } from "@clavia/tardigrade-core/projection"
 
 // BudgetPolicy sets the tool-call limit for turns that declare no budget.
 export interface BudgetPolicy {
@@ -53,49 +54,150 @@ export interface BudgetOptions extends Partial<BudgetPolicy> {
 // SpendBudgetOptions sets the observed dollar threshold for model-attempt admission.
 export interface SpendBudgetOptions {
   readonly usd: number
+  readonly onUnknown?: BudgetUnknownPolicy
+}
+
+export type BudgetUnknownPolicy = "block" | "admit"
+
+// DEFAULT_BUDGET_ON_UNKNOWN is the admission policy used when a constraint projection has no value.
+export const DEFAULT_BUDGET_ON_UNKNOWN: BudgetUnknownPolicy = "block"
+
+// BudgetConstraint configures admission against a numeric log projection.
+export interface BudgetConstraint {
+  readonly limit: number
+  readonly onUnknown?: BudgetUnknownPolicy
+  readonly name?: string
+}
+
+interface ResolvedConstraint {
+  readonly limit: number
+  readonly onUnknown: BudgetUnknownPolicy
+  readonly name: string
+}
+
+const constraintOf = (constraint: BudgetConstraint, fallbackName: string): ResolvedConstraint => {
+  if (!Number.isFinite(constraint.limit) || constraint.limit <= 0) {
+    throw new Error(`budget limit must be positive, got ${JSON.stringify(constraint.limit)}`)
+  }
+  const onUnknown = constraint.onUnknown ?? DEFAULT_BUDGET_ON_UNKNOWN
+  if (onUnknown !== "block" && onUnknown !== "admit") {
+    throw new Error(`budget onUnknown must be "block" or "admit", got ${JSON.stringify(onUnknown)}`)
+  }
+  return { limit: constraint.limit, onUnknown, name: constraint.name ?? fallbackName }
+}
+
+type BudgetDecision = "admitted" | "exhausted" | "unknown" | "unknown-admitted"
+
+const budgetDecision = (
+  observed: number | undefined,
+  constraint: ResolvedConstraint,
+  admission: "next" | "current" = "next"
+): BudgetDecision => {
+  if (observed === undefined) return constraint.onUnknown === "block" ? "unknown" : "unknown-admitted"
+  if (!Number.isFinite(observed) || observed < 0) {
+    throw new Error(`budget projection ${JSON.stringify(constraint.name)} must return a finite nonnegative number or undefined, got ${JSON.stringify(observed)}`)
+  }
+  return admission === "next"
+    ? (observed >= constraint.limit ? "exhausted" : "admitted")
+    : (observed > constraint.limit ? "exhausted" : "admitted")
+}
+
+// spendUsd projects the observed dollar cost of settled model attempts in the current turn.
+export const spendUsd: Projection<TurnProjectionState, number | undefined> & { readonly budgetName: "spendUsd" } = {
+  budgetName: "spendUsd",
+  initial: initialTurnProjection,
+  step: reduceTurnProjection,
+  output: (state) => {
+    const trajectory = turnViewFrom(state)
+    const head = trajectory[0] as { readonly id?: unknown } | undefined
+    if (head === undefined || !trajectory.some((event) => event.type === "ModelReturned")) return 0
+    return usageIn(trajectory, String(head.id ?? "")).costUsd
+  }
+}
+
+// toolCalls projects the number of tool-call actions supplied to it.
+export const toolCalls: Projection<number, number> & { readonly budgetName: "toolCalls" } = {
+  budgetName: "toolCalls",
+  initial: () => 0,
+  step: (count, event) => event.type === "ToolCalled" ? count + 1 : count,
+  output: (count) => count
+}
+
+const constraintPolicy = (constraint: ResolvedConstraint, observed: number | undefined, reason: BudgetDecision) => ({
+  constraint: constraint.name,
+  limit: constraint.limit,
+  observed: observed ?? null,
+  onUnknown: constraint.onUnknown,
+  reason: reason === "unknown-admitted" ? "unknown" : reason,
+  admitted: reason === "admitted" || reason === "unknown-admitted"
+})
+
+const appliedConstraintOf = (trajectory: ReadonlyArray<Event>, fallback: ResolvedConstraint): ResolvedConstraint => {
+  const initial = trajectory.find((event) => event.type === "BudgetGranted" && event.initial === true)
+  const policy = initial?.policy
+  const recordedLimit = typeof initial?.amount === "number" && Number.isFinite(initial.amount) && initial.amount > 0
+    ? initial.amount
+    : fallback.limit
+  if (policy === null || typeof policy !== "object") return { ...fallback, limit: recordedLimit }
+  const value = policy as Record<string, unknown>
+  if (typeof value.constraint !== "string" || typeof value.limit !== "number" ||
+      (value.onUnknown !== "block" && value.onUnknown !== "admit")) return fallback
+  return constraintOf({ name: value.constraint, limit: value.limit, onUnknown: value.onUnknown }, fallback.name)
+}
+
+const projectionBudget = <State>(
+  projection: Projection<State, number | undefined>,
+  options: BudgetConstraint,
+  compatibility?: "spendUsd"
+): AgentComponent => {
+  const projectedName = (projection as Projection<State, number | undefined> & { readonly budgetName?: unknown }).budgetName
+  const constraint = constraintOf(options, compatibility ?? (typeof projectedName === "string" ? projectedName : "budget"))
+  interface ConstraintState {
+    readonly measure: State
+    readonly turns: TurnProjectionState
+  }
+  return defineComponent<ConstraintState, AgentView>({
+    name: compatibility === "spendUsd" ? "spend-budget" : `budget-${constraint.name}`,
+    initial: () => ({ measure: projection.initial(), turns: initialTurnProjection() }),
+    step: (state, event) => ({
+      measure: projection.step(state.measure, event),
+      turns: reduceTurnProjection(state.turns, event)
+    }),
+    output: (state) => {
+      const observed = projection.output(state.measure)
+      const decision = budgetDecision(observed, constraint)
+      const genericPolicy = constraintPolicy(constraint, observed, decision)
+      const policy = compatibility === "spendUsd"
+        ? { ...genericPolicy, usd: constraint.limit, spentUsd: observed ?? null }
+        : genericPolicy
+      const attempts = turnViewFrom(state.turns).filter((event) => event.type === "ModelReturned").length
+      const blocked = decision === "admitted" || decision === "unknown-admitted" ? undefined : {
+        cause: "inference_budget_exhausted" as const,
+        error: decision === "unknown"
+          ? `the ${constraint.name} budget cannot admit another model attempt because recorded usage is unknown`
+          : `the ${constraint.name} budget of ${constraint.limit} is exhausted after ${observed}`,
+        attempts,
+        policy
+      }
+      return {
+        view: {
+          system: [], tools: [], context: [], output: [],
+          admission: [{ component: compatibility === "spendUsd" ? "spend-budget" : `budget-${constraint.name}`, policy, ...(blocked === undefined ? {} : { blocked }) }]
+        },
+        transitions: []
+      }
+    }
+  })
 }
 
 const spendBudget = (options: SpendBudgetOptions): AgentComponent => {
   if (!Number.isFinite(options.usd) || options.usd <= 0) {
     throw new Error(`spend budget usd must be positive, got ${JSON.stringify(options.usd)}`)
   }
-  return defineComponent({
-    name: "spend-budget",
-    initial: initialTurnProjection,
-    step: reduceTurnProjection,
-    output: (state) => {
-      const trajectory = turnViewFrom(state)
-      const head = trajectory[0] as { readonly id?: unknown } | undefined
-      const returned = trajectory.filter((event) => event.type === "ModelReturned")
-      const usage = head === undefined || returned.length === 0
-        ? undefined
-        : usageIn(trajectory, String(head.id ?? ""))
-      const blocked = usage === undefined
-        ? undefined
-        : usage.costUsd === undefined
-          ? {
-              cause: "inference_budget_exhausted" as const,
-              error: "the spend budget cannot admit another model attempt because recorded spend is unknown",
-              attempts: returned.length,
-              policy: { usd: options.usd, spentUsd: null, reason: "unknown" }
-            }
-          : usage.costUsd >= options.usd
-            ? {
-                cause: "inference_budget_exhausted" as const,
-                error: `the spend budget of $${options.usd} is exhausted after $${usage.costUsd}`,
-                attempts: returned.length,
-                policy: { usd: options.usd, spentUsd: usage.costUsd, reason: "exhausted" }
-              }
-            : undefined
-      return {
-        view: {
-          system: [], tools: [], context: [], output: [],
-          admission: [{ component: "spend-budget", ...(blocked === undefined ? {} : { blocked }) }]
-        },
-        transitions: []
-      }
-    }
-  })
+  return projectionBudget(spendUsd, {
+    limit: options.usd,
+    ...(options.onUnknown === undefined ? {} : { onUnknown: options.onUnknown })
+  }, "spendUsd")
 }
 
 // DEFAULT_BUDGET_POLICY is the default policy applied by budget and spawned agents.
@@ -159,16 +261,18 @@ export const canRequestBudget = (trajectory: ReadonlyArray<Event>): boolean =>
 const wallFor = (
   trajectory: ReadonlyArray<Event>,
   policy: BudgetPolicy,
-  used: number,
-  context: TransitionContext
+  used: number | null,
+  context: TransitionContext,
+  applied?: unknown,
+  appliedBudget?: number
 ): Intent<never> | undefined => {
   if (trajectory.length === 0 || budgetPhase(trajectory) !== "spending") return undefined
-  const budget = budgetOf(trajectory, policy)
-  if (used <= budget) return undefined
+  const budget = appliedBudget ?? budgetOf(trajectory, policy)
+  if (used !== null && used <= budget) return undefined
   const head = turnHead(trajectory) as { id?: unknown } | undefined
   const turn = head?.id === undefined ? undefined : String(head.id)
   return context.intent("budget.wall", (at) => budgetExhausted({
-    budget, used, ...(turn === undefined ? {} : { turn }), at
+    budget, used, ...(applied === undefined ? {} : { policy: applied }), ...(turn === undefined ? {} : { turn }), at
   }), (turn === undefined ? {} : { invocation: { method: "message", id: turn, epoch: turnEpochOf(trajectory, turn) } }))
 }
 
@@ -306,33 +410,65 @@ const budgetCommunication = (
 }
 
 // admissionOf fixes each call's budget decision from preceding grants and calls (runtime/batches.test.ts).
-const admissionOf = (trajectory: ReadonlyArray<Event>, toolNames: ReadonlySet<string>, policy: BudgetPolicy, callId: string) => {
-  let remaining = startingBudget(trajectory, policy.limit)
-  let used = 0
+const admissionOf = <State>(
+  trajectory: ReadonlyArray<Event>,
+  toolNames: ReadonlySet<string>,
+  policy: BudgetPolicy,
+  projection: Projection<State, number | undefined>,
+  constraint: ResolvedConstraint,
+  callId: string
+) => {
+  let state = projection.initial()
+  let granted = startingBudget(trajectory, policy.limit) - constraint.limit
   for (const event of trajectory) {
-    if (event.type === "BudgetGranted") remaining += Number(event.amount ?? 0)
-    if (event.type !== "ToolCalled" || !toolNames.has(String(event.name))) continue
-    const admitted = remaining > 0
-    if (admitted) {
-      remaining -= 1
-      used += 1
+    if (event.type === "BudgetGranted") granted += Number(event.amount ?? 0)
+    if (event.type !== "ToolCalled") {
+      state = projection.step(state, event)
+      continue
     }
-    if (event.callId === callId) return { admitted, used: admitted ? used : used + 1 }
+    // admissionOf supplies scoped admitted ToolCalled events to action projections; unscoped and refused calls cannot consume later grants.
+    if (!toolNames.has(String(event.name))) continue
+    const candidate = projection.step(state, event)
+    const observed = projection.output(candidate)
+    const effective = { ...constraint, limit: constraint.limit + granted }
+    const decision = budgetDecision(observed, effective, "current")
+    const admitted = decision === "admitted" || decision === "unknown-admitted"
+    if (admitted) {
+      state = candidate
+    }
+    if (event.callId === callId) return { admitted, observed, decision, effective }
   }
-  return { admitted: false, used: used + 1 }
+  const effective = { ...constraint, limit: constraint.limit + granted }
+  return { admitted: false, observed: undefined, decision: "unknown" as const, effective }
 }
 
-const guardedTool = <R>(
+const guardedTool = <R, State>(
   tool: AgentTool<R>,
   toolNames: ReadonlySet<string>,
-  policy: BudgetPolicy
+  policy: BudgetPolicy,
+  projection: Projection<State, number | undefined>,
+  constraint: ResolvedConstraint
 ): AgentTool<R> => ({
   ...tool,
   serve: (call, log, answer): ReadonlyArray<Transition<never, R>> => {
     const trajectory = turnView(log)
-    const admission = admissionOf(trajectory, toolNames, policy, call.callId)
+    const applied = appliedConstraintOf(trajectory, constraint)
+    const admission = admissionOf(trajectory, toolNames, policy, projection, applied, call.callId)
     if (admission.admitted) return tool.serve(call, log, answer)
-    const wall = wallFor(trajectory, policy, admission.used, call.context)
+    const callIndex = trajectory.findIndex((event) => event.type === "ToolCalled" && event.callId === call.callId)
+    const laterInitial = trajectory.slice(callIndex + 1).reduce(
+      (amount, event) => event.type === "BudgetGranted" && event.initial === true ? amount + Number(event.amount ?? 0) : amount,
+      0
+    )
+    const wallBudget = budgetOf(trajectory, policy) - laterInitial
+    const wall = wallFor(
+      trajectory,
+      policy,
+      admission.observed ?? null,
+      call.context,
+      constraintPolicy(admission.effective, admission.observed, admission.decision),
+      wallBudget
+    )
     return [
       ...(wall === undefined ? [] : [wall]),
       answer({ error: "Tool budget reached. Do not call this tool again. Answer now with your best result from what you have already gathered." })
@@ -342,20 +478,52 @@ const guardedTool = <R>(
 
 // budget applies either observed-spend admission to model attempts or tool-call admission to an agent subtree. The spend form checks the recorded total before the next attempt, while the tool form records its wall before dispatching the first call over the limit (inference/spend-budget.test.ts; budget.test.ts, "settling an over-budget execute records the wall and never dispatches the call").
 export function budget(options: SpendBudgetOptions): AgentComponent
+export function budget<State>(
+  projection: Projection<State, number | undefined>,
+  constraint: BudgetConstraint
+): AgentComponent
+export function budget<
+  State,
+  const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
+>(
+  components: Cs,
+  projection: Projection<State, number | undefined>,
+  options: BudgetOptions & BudgetConstraint
+): AgentComponent<ComponentRequirements<Cs[number]> | Router | Self>
 export function budget<
   const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
 >(
   components: Cs,
   options?: BudgetOptions
 ): AgentComponent<ComponentRequirements<Cs[number]> | Router | Self>
-export function budget(
-  components: SpendBudgetOptions | ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>,
-  options: BudgetOptions = {}
-): AgentComponent<unknown> {
-  if (!Array.isArray(components)) return spendBudget(components as SpendBudgetOptions)
-  type R = unknown
-  const resolved = budgetPolicyOf(options)
-  const combined = composeComponents("budget.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<R>
+export function budget<
+  State,
+  const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
+>(
+  components: SpendBudgetOptions | Projection<State, number | undefined> | Cs,
+  options: BudgetOptions | BudgetConstraint | Projection<State, number | undefined> = {},
+  constraintOptions?: BudgetOptions & BudgetConstraint
+): AgentComponent<ComponentRequirements<Cs[number]> | Router | Self> {
+  if (!Array.isArray(components)) {
+    if ("usd" in components) return spendBudget(components as SpendBudgetOptions)
+    return projectionBudget(components as Projection<State, number | undefined>, options as BudgetConstraint)
+  }
+  type R = ComponentRequirements<Cs[number]>
+  const customProjection = typeof options === "object" && "initial" in options
+    ? options as Projection<State, number | undefined>
+    : toolCalls
+  const toolProjection = customProjection as Projection<State, number | undefined>
+  const toolOptions = (customProjection === options ? constraintOptions : options) as BudgetOptions
+  const resolved = budgetPolicyOf(toolOptions)
+  const constraint = constraintOf(
+    customProjection === options
+      ? constraintOptions ?? { limit: resolved.limit }
+      : { limit: resolved.limit, name: "toolCalls" },
+    "toolCalls"
+  )
+  const initialObserved = toolProjection.output(toolProjection.initial())
+  budgetDecision(initialObserved, constraint, "current")
+  const combined = composeComponents("budget.children", AGENT_VIEW_ALGEBRA, components as Cs) as AgentComponent<R>
   const childMachine = combined.machine
   const common = {
     name: "budget",
@@ -365,13 +533,24 @@ export function budget(
     const head = turnHead(trajectory)
     const initial = head !== undefined && needsInitialBudget(trajectory)
       ? [bindTransitionContext(head, "budget").intent("budget.initial", (at) => budgetGranted({
-          amount: startingBudget(trajectory, resolved.limit), initial: true, turn: String(head.id), at
+          amount: startingBudget(trajectory, resolved.limit),
+          initial: true,
+          policy: constraintPolicy(
+            { ...constraint, limit: startingBudget(trajectory, resolved.limit) },
+            initialObserved,
+            budgetDecision(initialObserved, { ...constraint, limit: startingBudget(trajectory, resolved.limit) }, "current")
+          ),
+          turn: String(head.id),
+          at
         }))]
       : []
     const spent = budgetSpent(trajectory)
     const turn = String(head?.id ?? "")
-    const canRequest = canRequestBudget(trajectory) && authorityFor(log, turn, options.authority) !== undefined
-    const toolNames = new Set(children.view.tools.map((tool) => tool.spec.name))
+    const canRequest = canRequestBudget(trajectory) && authorityFor(log, turn, toolOptions.authority) !== undefined
+    if (children.view.tools.some((tool) => tool !== requestBudgetTool && tool.spec.name === REQUEST_BUDGET_TOOL.name)) {
+      throw new Error(`budget child tool name ${JSON.stringify(REQUEST_BUDGET_TOOL.name)} is reserved for escalation`)
+    }
+    const toolNames = new Set(children.view.tools.filter((tool) => tool !== requestBudgetTool).map((tool) => tool.spec.name))
     return {
       view: {
         system: spent
@@ -379,12 +558,14 @@ export function budget(
           : children.view.system,
         tools: spent
           ? (canRequest ? [requestBudgetTool] : [])
-          : children.view.tools.map((tool) => guardedTool(tool as AgentTool<R>, toolNames, resolved)),
+          : children.view.tools.map((tool) => tool === requestBudgetTool
+            ? tool
+            : guardedTool(tool as AgentTool<R>, toolNames, resolved, toolProjection, constraint)),
         context: children.view.context,
         output: children.view.output,
         ...(children.view.admission === undefined ? {} : { admission: children.view.admission })
       },
-      transitions: [...initial, ...budgetCommunication(log, options.authority), ...children.transitions] as ReadonlyArray<Transition<never, R | Router | Self>>
+      transitions: [...initial, ...budgetCommunication(log, toolOptions.authority), ...children.transitions] as ReadonlyArray<Transition<never, R | Router | Self>>
     }
   }
   const communicationEvent = (event: Event): boolean =>
@@ -399,8 +580,9 @@ export function budget(
     event.type === "CallTimedOut" ||
     event.type === "ResponseReceived" ||
     event.type === "InvocationLinked"
+  type ChildState = ReturnType<typeof childMachine.initial>
   type BudgetState = {
-    readonly children: unknown
+    readonly children: ChildState
     readonly turns: TurnProjectionState
     readonly communication: Chunk.Chunk<Event>
   }
@@ -424,7 +606,7 @@ export function budget(
     )
   })
   const inherited = inheritComponentContract<AgentView, R | Router | Self>(component, combined)
-  return options.authority === undefined
+  return toolOptions.authority === undefined
     ? inherited
-    : calls(options.authority, requestBudgetMethod, inherited)
+    : calls(toolOptions.authority, requestBudgetMethod, inherited)
 }

@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { inferenceFromHistory } from "./machine"
-import { budget } from "../component/budget"
+import { budget, spendUsd, toolCalls } from "../component/budget"
 import { nativeOutput } from "../component/native-output"
 import { renderOf } from "../runtime/composition"
 import { CostEvidence } from "@clavia/tardigrade-model/settings"
 import { Schema } from "effect"
+import type { Projection } from "@clavia/tardigrade-core/projection"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
 
 const model = { provider: "openai", model_id: "gpt-test" } as const
 const components = [budget({ usd: 0.5 }), nativeOutput]
@@ -85,11 +87,80 @@ describe("inference spend budget", () => {
   })
 
   test("stops visibly when returned spend is unknown", () => {
-    expect(eventFrom([head, called(0), returned(0)])).toMatchObject({
+    const failed = {
+      ...returned(0), outcome: "failed", error: { message: "busy" }, retry: { index: 0, dueAt: 3 }
+    } as Event
+    expect(eventFrom([head, called(0), failed])).toMatchObject({
       type: "TurnFailed",
       cause: "inference_budget_exhausted",
       policy: { usd: 0.5, spentUsd: null, reason: "unknown" }
     })
+  })
+
+  test("explicit unknown admission preserves the unknown observation", () => {
+    const failed = {
+      ...returned(0), outcome: "failed", error: { message: "busy" }, retry: { index: 0, dueAt: 3 }
+    } as Event
+    const admitted = renderOf([budget(spendUsd, { limit: 0.5, onUnknown: "admit" }), nativeOutput], [
+      head, called(0), failed
+    ])
+    expect(admitted.admission).toMatchObject([{
+      policy: { constraint: "spendUsd", limit: 0.5, observed: null, onUnknown: "admit", reason: "unknown", admitted: true }
+    }])
+    expect(inferenceFromHistory({ models: { default: model } }, () => admitted)([head, called(0), failed])[0]?.kind).toBe("effect")
+  })
+
+  test("a failed attempt retries when explicit evidence records zero cost", () => {
+    const failed = {
+      ...returned(0, { cost: { costUsd: 0, costSource: "provider" } }),
+      outcome: "failed", error: { message: "busy" }, retry: { index: 0, dueAt: 3 }
+    } as Event
+    expect(derive([head, called(0), failed])[0]?.kind).toBe("effect")
+  })
+
+  test("a plain third projection replays and updates incrementally", () => {
+    type State = { readonly turn: string; readonly attempts: number }
+    const modelAttempts: Projection<State, number> = {
+      initial: () => ({ turn: "", attempts: 0 }),
+      step: (state, event) => event.type === "MessageReceived"
+        ? { turn: String(event.id), attempts: 0 }
+        : event.type === "ModelReturned" && event.turn === state.turn
+          ? { ...state, attempts: state.attempts + 1 }
+          : state,
+      output: (state) => state.attempts
+    }
+    const history = [head, called(0), returned(0, { reportedCostUsd: 0 })]
+    const component = budget(modelAttempts, { limit: 1, name: "modelAttempts" })
+    const incremental = history.reduce((state, event) => component.machine.step(state, event), component.machine.initial())
+    const cold = renderOf([component, nativeOutput], history).admission
+    expect(component.machine.output(incremental).view.admission).toEqual(cold)
+    expect(replayProjection(modelAttempts, history)).toBe(1)
+    expect(cold).toMatchObject([{
+      policy: { constraint: "modelAttempts", observed: 1, reason: "exhausted" },
+      blocked: { cause: "inference_budget_exhausted", attempts: 1 }
+    }])
+    const next = { type: "MessageReceived", id: "next", text: "again", at: 9 } as Event
+    const reset = component.machine.step(incremental, next)
+    expect(component.machine.output(reset).view.admission).toMatchObject([{ policy: { observed: 0, admitted: true } }])
+  })
+
+  test("invalid observations fail both budget surfaces", () => {
+    for (const observed of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const invalid: Projection<undefined, number> = {
+        initial: () => undefined,
+        step: (state) => state,
+        output: () => observed
+      }
+      expect(() => renderOf([budget(invalid, { limit: 1, name: "invalid" }), nativeOutput], [])).toThrow("finite nonnegative")
+      expect(() => renderOf([budget([nativeOutput], invalid, { limit: 1, name: "invalid" })], [])).toThrow("finite nonnegative")
+    }
+  })
+
+  test("the tool-call projection measures every action supplied to it", () => {
+    expect(replayProjection(toolCalls, [
+      { type: "ToolCalled", callId: "request", name: "request_budget", arguments: {}, at: 1 } as Event,
+      { type: "ToolCalled", callId: "work", name: "read", arguments: {}, at: 2 } as Event
+    ])).toBe(2)
   })
 
   test("explicit unknown cost prevents fallback repricing", () => {

@@ -90,6 +90,7 @@ export const ModelCalled = Schema.Struct({
   // The output policy this attempt ran under, when the turn declared a contract. Recorded on the
   // ask, so a replay reads which policy produced which response.
   output: Schema.optional(OutputPolicy),
+  admission: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
   at: Schema.Finite
@@ -278,7 +279,8 @@ export const TurnResumed = Schema.Struct({
 export const BudgetExhausted = Schema.Struct({
   type: Schema.Literal("BudgetExhausted"),
   budget: Schema.Finite,
-  used: Schema.Finite,
+  used: Schema.NullOr(Schema.Finite),
+  policy: Schema.optional(Schema.Unknown),
   turn: Schema.optional(Schema.String),
   at: Schema.Finite
 })
@@ -353,8 +355,9 @@ export const PermissionRequestFailed = Schema.Struct({
 
 export const BudgetGranted = Schema.Struct({
   type: Schema.Literal("BudgetGranted"),
-  amount: Schema.Finite, // the tool calls added to this turn's budget
+  amount: Schema.Finite, // the demand units added to this turn's budget
   initial: Schema.optional(Schema.Boolean),
+  policy: Schema.optional(Schema.Unknown),
   // The BudgetRequested this grant answers. The dedup key reads it: a grant is summed into the
   // ceiling (component/budget.ts), so a redelivered grant landing twice would silently
   // double the budget; keyed by the request it answers, the store absorbs the repeat.
@@ -633,7 +636,7 @@ export const turnResumed = (fields: { readonly turn: string; readonly failedEpoc
   ({ type: "TurnResumed", ...fields }) as Event
 
 export const budgetExhausted = (
-  fields: { readonly budget: number; readonly used: number } & Stamp
+  fields: { readonly budget: number; readonly used: number | null; readonly policy?: unknown } & Stamp
 ): Event => ({ type: "BudgetExhausted", ...fields }) as Event
 
 export const budgetRequested = (
@@ -665,7 +668,7 @@ export const permissionRequestFailed = (
 ): Event => ({ type: "PermissionRequestFailed", ...fields }) as Event
 
 export const budgetGranted = (
-  fields: { readonly amount: number; readonly callId?: string; readonly initial?: boolean } & Stamp
+  fields: { readonly amount: number; readonly callId?: string; readonly initial?: boolean; readonly policy?: unknown } & Stamp
 ): Event => ({ type: "BudgetGranted", ...fields }) as Event
 
 export const budgetDenied = (

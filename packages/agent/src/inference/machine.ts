@@ -373,6 +373,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
                 fingerprint: fingerprintOf(contract),
                 ...(fallback === undefined ? {} : { fallback })
               },
+        admission: rendered.admission?.flatMap(({ policy }) => policy === undefined ? [] : [policy]),
         contract
       },
       act: (input, { signal }) =>
@@ -444,6 +445,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             retryIndex: input.retryIndex,
             ...(pricing === undefined ? {} : { pricing }),
             ...(input.stamp === undefined ? {} : { output: input.stamp }),
+            ...(input.admission === undefined ? {} : { admission: input.admission }),
             turn: input.turn,
             ...epochStamp(input.epoch),
             at
