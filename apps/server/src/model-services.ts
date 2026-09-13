@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { FetchHttpClient } from "effect/unstable/http"
-import { modelLayerFromLock, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
+import { modelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
 import type { InferenceObserver } from "@clavia/tardigrade-agent"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
@@ -45,7 +45,7 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const snapshot = runtime.catalog
   const inference = makeInferenceStream()
   const layers = Layer.mergeAll(
-    options.inference === undefined ? modelLayerFromLock(config.model, config.modelCredentials, { ...options.model, observer: inference.observer }).pipe(Layer.provide(lockLayer), Layer.orDie) : options.inference(config, snapshot, inference.observer),
+    options.inference === undefined ? modelLayer(config, snapshot, { ...options.model, observer: inference.observer }) : options.inference(config, snapshot, inference.observer),
     lockLayer,
     BunFileSystem.layer,
     BunPath.layer,

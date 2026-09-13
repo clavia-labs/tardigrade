@@ -89,7 +89,7 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
 
 export { MISSING_MODEL, modelIsConfigured, selectedModelFrom, modelLayerWith, type ModelHostConfig, type SelectedModel } from "./selection"
 
-// modelLayerFromLock binds inference to the supplied runtime registry (apps/server/src/model-services.test.ts).
+// modelLayerFromLock binds inference to the supplied runtime registry (platform/cloudflare/test/actor.workers.ts).
 export const modelLayerFromLock = (policy: ModelPolicy, credentials: ModelCredentials, options: ModelHostOptions = {}) =>
   Layer.unwrap(Effect.map(lockedModelState(policy), ({ model, catalog }) =>
     modelLayer({ model, modelCredentials: credentials }, catalog, options)))

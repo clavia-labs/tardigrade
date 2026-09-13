@@ -152,8 +152,7 @@ export const modelConfigForPolicy = (policy: ModelPolicy, lock: ModelLockData): 
   return { ...selected, providers: lockedProvidersOf(lock) }
 }
 
-// modelCatalogForConfig provides public discovery metadata derived from the lock (lock.test.ts).
-export const modelCatalogForConfig = async (policy: ModelPolicy, lock: ModelLockData): Promise<ModelCatalog> => {
+const modelStateOf = async (policy: ModelPolicy, lock: ModelLockData) => {
   const config = modelConfigForPolicy(policy, lock)
   const sourced = lock.models.filter((model) => model.source !== undefined).length
   const catalog: ModelCatalog = {
@@ -167,14 +166,18 @@ export const modelCatalogForConfig = async (policy: ModelPolicy, lock: ModelLock
       })
     }))
   }
-  return modelCatalogScopeOf(catalog, { providers: Object.keys(config.providers), policy: config })
+  return { model: config, catalog: { snapshot: modelCatalogScopeOf(catalog, { providers: Object.keys(config.providers), policy: config }) } }
 }
+
+// modelCatalogForConfig provides public discovery metadata derived from the lock (lock.test.ts).
+export const modelCatalogForConfig = async (policy: ModelPolicy, lock: ModelLockData): Promise<ModelCatalog> =>
+  (await modelStateOf(policy, lock)).catalog.snapshot
 
 // lockedModelState resolves runtime configuration and discovery from the ModelLock service (lock.test.ts).
 export const lockedModelState = (policy: ModelPolicy) => Effect.gen(function*() {
   const lock = yield* ModelLock
   return yield* Effect.tryPromise({
-    try: async () => ({ model: modelConfigForPolicy(policy, lock), catalog: { snapshot: await modelCatalogForConfig(policy, lock) } }),
+    try: () => modelStateOf(policy, lock),
     catch: modelLockErrorOf
   })
 })

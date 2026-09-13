@@ -102,17 +102,20 @@ test("Bun can boot without models or registry configuration", async () => {
   }
 })
 
-test("Bun consumes an in-memory ModelLock layer without a lock file", async () => {
+test("Bun shares in-memory locked state between discovery and inference", async () => {
   const directory = await mkdtemp(join(tmpdir(), "model-services-memory-"))
+  const hashing = spyOn(crypto.subtle, "digest")
   try {
     const configFile = join(directory, "wrangler.jsonc")
     await writeFile(configFile, JSON.stringify({ vars: { TARDIGRADE_CONFIG: { models: { allow: "*", default: { provider: "openai", model_id: "gpt" } } } } }))
     const lock = { schema: 2, providers: { openai: { protocol: "openai-responses", baseUrl: "https://example.test/v1", env: ["TEST_MODEL_KEY"] } }, models: [{ provider: "openai", model_id: "gpt", contextWindowTokens: 32000 }] }
     const services = await bunModelServices({ configFile, env: { TEST_MODEL_KEY: "secret" }, lock: layerModelLock(lock), model: { providerLayer } })
+    const discovery = await Effect.runPromise(services.api.catalog.read)
     expect(services.config.model.providers.openai?.baseUrl).toBe("https://example.test/v1")
     await Effect.runPromise(Effect.gen(function*() {
       expect((yield* ModelLock).models[0]?.model_id).toBe("gpt")
-      expect((yield* inferenceClient).resolve()).toMatchObject({ contextWindowTokens: 32000 })
+      expect((yield* inferenceClient).resolve()).toMatchObject({ contextWindowTokens: 32000, catalogRevision: discovery.snapshot?.revision })
     }).pipe(Effect.provide(services.layers)))
-  } finally { await rm(directory, { recursive: true, force: true }) }
+    expect(hashing).toHaveBeenCalledTimes(1)
+  } finally { hashing.mockRestore(); await rm(directory, { recursive: true, force: true }) }
 })
