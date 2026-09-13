@@ -8,6 +8,7 @@ const memoryStore = (fail = false) => {
   return {
     values,
     service: {
+      egress: "resolve" as const,
       owns: (reference: string) => reference.startsWith("image:fixture:"),
       put: (image: StoredImage) => fail
         ? Effect.die(new Error("image store unavailable"))

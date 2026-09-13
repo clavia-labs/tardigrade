@@ -448,9 +448,10 @@ describe("the bun host", () => {
   test("does not append when inline image storage fails", async () => {
     const path = freshPath()
     const unavailable: typeof ImageStore.Service = {
+      egress: "resolve",
       owns: () => false,
       put: () => Effect.die(new Error("fixture image store unavailable")),
-      get: () => Effect.sync((): import("@clavia/tardigrade-core/interaction/image").StoredImage | undefined => undefined)
+      get: () => Effect.void as Effect.Effect<import("@clavia/tardigrade-core/interaction/image").StoredImage | undefined>
     }
     const h = await createBunHost({ ...options(path), imageStore: unavailable })
     await expect(h.commitRoot("bun:default:echo", {

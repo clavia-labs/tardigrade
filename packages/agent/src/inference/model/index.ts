@@ -12,6 +12,8 @@ import { collectResponse } from "@clavia/tardigrade-model/stream/collect"
 import { BindingSettings, BindingInvocation, CurrentModel, ProviderRequestKey } from "./settings"
 
 import { fallbackSystemFor, outputModeOf, outputSchemaFor, outputNameFor } from "./output"
+import { ImageStore } from "@clavia/tardigrade-core/interaction/image"
+import { resolveMessageImages } from "./images"
 
 import { StreamIncomplete, StreamBoundExceeded, StreamTruncated } from "@clavia/tardigrade-model/stream/request"
 
@@ -48,7 +50,9 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
         parameters: importSchema(spec.inputSchema, options.schemaImport),
         failureMode: "return"
       })))
-      const history = yield* Effect.try(() => historyOf(req.messages, { provider: providerId, protocol, model: endpoint.model }))
+      const imageStore = yield* Effect.serviceOption(ImageStore)
+      const messages = imageStore._tag === "Some" ? yield* resolveMessageImages(req.messages, imageStore.value) : req.messages
+      const history = yield* Effect.try(() => historyOf(messages, { provider: providerId, protocol, model: endpoint.model }))
       const transport = Option.getOrElse(yield* Effect.serviceOption(FetchHttpClient.RequestInit), () => ({}))
       const fetchOptions = { ...transport, timeout: false }
       const response = yield* Effect.gen(function* () {

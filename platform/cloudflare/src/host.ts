@@ -92,9 +92,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const workspaceStore = await workspaceRuntime.runPromise(KeyValueStore.KeyValueStore)
   const workspace = Layer.succeed(KeyValueStore.KeyValueStore, workspaceStore)
   const imageStore: typeof ImageStore.Service = options.imageStore ?? {
+    egress: "defer",
     owns: () => false,
     put: () => Effect.die(new Error("inline image input requires CloudflareThreadHostOptions.imageStore")),
-    get: () => Effect.sync((): import("@clavia/tardigrade-core/interaction/image").StoredImage | undefined => undefined)
+    get: () => Effect.void as Effect.Effect<import("@clavia/tardigrade-core/interaction/image").StoredImage | undefined>
   }
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined =>

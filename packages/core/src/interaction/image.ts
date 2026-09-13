@@ -10,6 +10,7 @@ export interface StoredImage {
 export class ImageStore extends Context.Service<
   ImageStore,
   {
+    readonly egress: "resolve" | "defer"
     readonly put: (image: StoredImage) => Effect.Effect<string>
     readonly get: (reference: string) => Effect.Effect<StoredImage | undefined>
     readonly owns: (reference: string) => boolean

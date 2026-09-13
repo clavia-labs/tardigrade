@@ -14,6 +14,7 @@ const digestOf = (image: StoredImage): Effect.Effect<string> => Effect.promise(a
 
 // bunImageStore stores actor-instance image bytes in the actor directory database.
 export const bunImageStore = (sql: SqlClient.SqlClient): typeof ImageStore.Service => ({
+  egress: "resolve",
   owns: (reference) => reference.startsWith(PREFIX),
   put: (image) => Effect.gen(function* () {
     const reference = `${PREFIX}${yield* digestOf(image)}`
