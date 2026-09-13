@@ -626,7 +626,8 @@ describe("the bun host", () => {
     expect(actor.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
       { migration_id: 1, name: "actor_identity" },
       { migration_id: 2, name: "actor_directory" },
-      { migration_id: 3, name: "actor_events" }
+      { migration_id: 3, name: "actor_events" },
+      { migration_id: 4, name: "actor_images" }
     ])
     expect(thread.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
       { migration_id: 1, name: "thread_identity" },
