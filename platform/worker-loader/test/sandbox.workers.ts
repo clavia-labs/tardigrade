@@ -6,7 +6,7 @@ import { workerLoaderSandboxServiceFor } from "../src/sandbox"
 import type { Env } from "./fixture.worker"
 import {
   ISOLATED_CALLBACK_TRANSPORT,
-  replaySequenceWith,
+  sandboxSequenceWith,
   type IsolatedCallbackTransportResult
 } from "./sandbox.cases"
 
@@ -86,7 +86,7 @@ describe("worker loader sandbox", () => {
   })
 
   test("replays sequential and concurrent package calls", async () => {
-    const { result, observed } = await replaySequenceWith((env as Env).LOADER)
+    const { result, observed } = await sandboxSequenceWith((env as Env).LOADER)
 
     expect(result).toEqual({ result: [12, 10] })
     expect(observed).toEqual([

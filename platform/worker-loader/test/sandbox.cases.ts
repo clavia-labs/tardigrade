@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { sandboxReturned } from "@clavia/tardigrade-code/sandbox/service"
-import { workerLoaderSandboxServiceFor } from "../src/sandbox"
+import { workerLoaderSandboxServiceFor, type WorkerLoaderSandboxTransport } from "../src/sandbox"
 
 export const ISOLATED_CALLBACK_TRANSPORT = {
   executions: 20,
@@ -25,15 +25,18 @@ export const isolatedCallbackTransportBody = `
   return [first, second, third]
 `
 
-export interface ReplaySequenceResult {
+export interface SandboxSequenceResult {
   readonly result: unknown
   readonly observed: ReadonlyArray<{ readonly ordinal: number; readonly value: number }>
 }
 
-// replaySequenceWith runs the replay sequence shared by the workerd and Celld runtime suites.
-export const replaySequenceWith = async (loader: WorkerLoader): Promise<ReplaySequenceResult> => {
+// sandboxSequenceWith checks sequential and concurrent package calls in the workerd and Celld runtime suites.
+export const sandboxSequenceWith = async (
+  loader: WorkerLoader,
+  transport: WorkerLoaderSandboxTransport = "replay"
+): Promise<SandboxSequenceResult> => {
   const observed: Array<{ readonly ordinal: number; readonly value: number }> = []
-  const sandbox = workerLoaderSandboxServiceFor(loader, { transport: "replay" })
+  const sandbox = workerLoaderSandboxServiceFor(loader, { transport })
   const result = await Effect.runPromise(sandbox.run(
     `const first = await tools.double({ value: 3 })
     const pair = await Promise.all([
