@@ -57,7 +57,7 @@ const catalogFetch = (): typeof fetch =>
 
 interface Recorded {
   readonly allocated: Array<{ instance: string; name: string | undefined }>
-  readonly forked: Array<{ instance: string; thread: string; until: number | string; name: string | undefined }>
+  readonly forked: Array<{ instance: string; thread: string; checkpoint: { seq: number } | { event: string }; name: string | undefined }>
   readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
   readonly stateRefs: Array<ActorCallRef>
   readonly cancelled: Array<{ invocation: ActorCallRef; reason?: string }>
@@ -156,10 +156,10 @@ const clientOf = (
       recorded.allocated.push({ instance, name })
       return Promise.resolve({ actor: "agent", instance, thread: name ?? "generated" })
     },
-    fork: (instance, thread, until, name) => {
-      recorded.forked.push({ instance, thread, until, name })
+    forkThread: (instance, thread, checkpoint, name) => {
+      recorded.forked.push({ instance, thread, checkpoint, name })
       return answers.fail === undefined
-        ? Promise.resolve({ actor: "agent", instance, thread: name ?? "generated" })
+        ? Promise.resolve({ actor: "agent", instance, thread: name ?? "generated", seq: 2 })
         : Promise.reject(answers.fail)
     },
     cancel: (invocation, cancellation = {}) => {
@@ -291,7 +291,7 @@ describe("parsing", () => {
     for (const group of ["CREATE:", "RUN:", "CATALOG:", "INSPECT:"]) {
       expect(root).toContain(group)
     }
-    for (const command of ["setup", "init", "lint", "build", "providers", "models", "methods", "call", "fork"]) {
+    for (const command of ["setup", "init", "lint", "build", "providers", "models", "methods", "call", "thread"]) {
       expect(root).toContain(command)
     }
     expect(root).not.toContain("push")
@@ -681,19 +681,28 @@ describe("thread allocation", () => {
   })
 })
 
-describe("fork", () => {
-  test("copies a source prefix onto a named destination", async () => {
-    const ran = await drive(["fork", "root", "--until", "m1", "--name", "experiment", "--actor", "rick"])
+describe("thread fork", () => {
+  test("an event id names the checkpoint and the destination prints", async () => {
+    const ran = await drive(["thread", "fork", "root", "--event", "m1", "--name", "experiment", "--actor", "rick"])
     expect(ran.failed).toBe(false)
-    expect(ran.recorded.forked).toEqual([{ instance: "rick", thread: "root", until: "m1", name: "experiment" }])
+    expect(ran.recorded.forked).toEqual([{ instance: "rick", thread: "root", checkpoint: { event: "m1" }, name: "experiment" }])
     expect(ran.lines[0]).toBe("experiment")
   })
 
-  test("unnamed fork returns the host identity as JSON", async () => {
-    const ran = await drive(["fork", "root", "--until", "2", "--json"])
+  test("a row names the checkpoint and JSON carries the row used", async () => {
+    const ran = await drive(["thread", "fork", "root", "--seq", "2", "--json"])
     expect(ran.failed).toBe(false)
-    expect(ran.recorded.forked).toEqual([{ instance: "main", thread: "root", until: "2", name: undefined }])
-    expect(JSON.parse(ran.lines[0]!)).toEqual({ actor: "agent", instance: "main", thread: "generated" })
+    expect(ran.recorded.forked).toEqual([{ instance: "main", thread: "root", checkpoint: { seq: 2 }, name: undefined }])
+    expect(JSON.parse(ran.lines[0]!)).toEqual({ actor: "agent", instance: "main", thread: "generated", seq: 2 })
+  })
+
+  test("both or neither checkpoint flags fail before any call", async () => {
+    for (const args of [["thread", "fork", "root"], ["thread", "fork", "root", "--seq", "2", "--event", "m1"]]) {
+      const ran = await drive(args)
+      expect(ran.failed).toBe(true)
+      expect(ran.recorded.forked).toEqual([])
+      expect(failureText(ran)).toContain("exactly one of --seq")
+    }
   })
 })
 

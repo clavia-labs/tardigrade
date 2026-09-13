@@ -787,15 +787,16 @@ export const threadCreateCommand = Command.make("create", {
   yield* Console.log(flags.json ? jsonOf(coordinate) : coordinate.thread)
 })).pipe(Command.withDescription("Allocate a root thread and print its assigned identity."))
 
-export const threadCommand = Command.make("thread").pipe(
-  Command.withDescription("Allocate actor threads."),
-  Command.withSubcommands([threadCreateCommand])
-)
-
-export const forkCommand = Command.make("fork", {
-  thread: Argument.String("thread").pipe(Argument.withDescription("The source thread whose prefix to copy")),
-  until: Flag.String("until").pipe(
-    Flag.withDescription("The source checkpoint: a 1-based sequence or an event id.")
+// threadForkCommand names the checkpoint by row or by event id, never both (commands.test.ts, "fork").
+export const threadForkCommand = Command.make("fork", {
+  thread: Argument.String("thread").pipe(Argument.withDescription("The source thread whose rows are copied")),
+  seq: Flag.Int("seq").pipe(
+    Flag.withDescription("The source row to copy through, 1-based."),
+    Flag.optional
+  ),
+  event: Flag.String("event").pipe(
+    Flag.withDescription("The id of the source event to copy through. A repeated id, such as a callId, names its last row."),
+    Flag.optional
   ),
   name: Flag.String("name").pipe(
     Flag.withDescription("The destination root name. Omit to generate an assigned identity."),
@@ -803,15 +804,29 @@ export const forkCommand = Command.make("fork", {
   ),
   ...remote
 }, (flags) => Effect.gen(function*() {
+  const seq = Option.getOrUndefined(flags.seq)
+  const event = stated(flags.event)
+  if ((seq === undefined) === (event === undefined)) {
+    return yield* CliError.UserError.make({
+      cause: new Error("checkpoint"),
+      userMessage: "Pass exactly one of --seq <row> or --event <id>."
+    })
+  }
+  const checkpoint = seq === undefined ? { event: event! } : { seq }
   const client = yield* clientOf(flags)
-  const coordinate = yield* call(() => client.fork(flags.actor, flags.thread, flags.until, stated(flags.name)))
-  yield* Console.log(flags.json ? jsonOf(coordinate) : coordinate.thread)
+  const forked = yield* call(() => client.forkThread(flags.actor, flags.thread, checkpoint, stated(flags.name)))
+  yield* Console.log(flags.json ? jsonOf(forked) : forked.thread)
 })).pipe(
-  Command.withDescription("Copy a thread prefix through a checkpoint onto a new root."),
+  Command.withDescription("Copy a thread's rows through a checkpoint onto a new root."),
   Command.withExamples([
-    { command: "tdg fork root --until m1 --name experiment", description: "Fork root through event m1 onto experiment" },
-    { command: "tdg fork root --until 2 --json", description: "Fork root through sequence 2 and print the coordinate" }
+    { command: "tdg thread fork root --event m1 --name experiment", description: "Fork root through event m1 onto experiment" },
+    { command: "tdg thread fork root --seq 2 --json", description: "Fork root through row 2 and print the coordinate" }
   ])
+)
+
+export const threadCommand = Command.make("thread").pipe(
+  Command.withDescription("Allocate actor threads."),
+  Command.withSubcommands([threadCreateCommand, threadForkCommand])
 )
 
 export const callCommand = Command.make("call", {
@@ -1010,7 +1025,7 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription("Build, run, and inspect durable actors."),
   Command.withSubcommands([
     { group: "CREATE", commands: [initCommand, setupCommand, lintCommand, buildCommand] },
-    { group: "RUN", commands: [devCommand, threadCommand, forkCommand, callCommand] },
+    { group: "RUN", commands: [devCommand, threadCommand, callCommand] },
     { group: "CATALOG", commands: [providersCommand, modelsCommand, methodsCommand] },
     { group: "INSPECT", commands: [lsCommand, eventsCommand] }
   ])
