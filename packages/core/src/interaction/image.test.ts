@@ -64,6 +64,36 @@ describe("stored image events", () => {
     expect(puts).toBe(0)
   })
 
+  test("checks the distinct batch byte limit before calling the store", async () => {
+    let puts = 0
+    const store = memoryStore()
+    const service = { ...store.service, put: (image: StoredImage) => Effect.sync(() => { puts += 1; return `image:${image.bytes.length}` }) }
+    const events = [{ type: "MessageReceived", id: "picture", at: 1, content: [
+      { type: "input_image", image_url: "data:image/png;base64,YQ==" },
+      { type: "input_image", image_url: "data:image/png;base64,YQ==" },
+      { type: "input_image", image_url: "data:image/png;base64,Yg==" }
+    ] }] as Event[]
+    await expect(Effect.runPromise(storeEventImages(events, service, { maxTotalBytes: 1 }))).rejects.toThrow("above the 1-byte total limit")
+    expect(puts).toBe(0)
+  })
+
+  test("counts and stores a repeated source once", async () => {
+    let puts = 0
+    const store = memoryStore()
+    const service = { ...store.service, put: (image: StoredImage) => Effect.sync(() => {
+      puts += 1
+      return `image:fixture:${image.bytes.toHex()}`
+    }) }
+    const source = { type: "input_image", image_url: "data:image/png;base64,YQ==" }
+    const events = [{ type: "MessageReceived", id: "picture", at: 1, content: [source, source] }] as Event[]
+    const stored = await Effect.runPromise(storeEventImages(events, service, { maxTotalBytes: 2 }))
+    expect(puts).toBe(1)
+    expect((stored[0] as typeof events[number]).content).toEqual([
+      { type: "input_image", image_url: "image:fixture:61" },
+      { type: "input_image", image_url: "image:fixture:61" }
+    ])
+  })
+
   test("leaves old inline events readable when no append normalization runs", () => {
     const event = { type: "MessageReceived", id: "old", at: 1, content: [{ type: "input_image", image_url: "data:image/png;base64,YQ==" }] }
     expect(event.content[0]?.image_url).toBe("data:image/png;base64,YQ==")
