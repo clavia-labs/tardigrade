@@ -342,6 +342,9 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
       })
     }
   }
+  for (const admission of rendered.admission ?? []) {
+    if (admission.blocked !== undefined) return terminate(admission.blocked)
+  }
   // attempt advances after a recorded response and survives an unanswered crash (inference/retry.test.ts).
   return [
     context.effect("infer", {
@@ -516,6 +519,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               ...(action.response === undefined ? {} : { response: action.response }),
               ...(action.finish === undefined ? {} : { finish: action.finish }),
               ...(action.reportedCostUsd === undefined ? {} : { reportedCostUsd: action.reportedCostUsd }),
+              ...(action.cost === undefined ? {} : { cost: action.cost }),
               ...(action.kind === "fail" ? { error: action.error, ...(action.text === undefined ? {} : { text: action.text }) } : {}), at: after
             }),
             ...(action.kind === "calls" && action.text !== undefined && action.text !== ""

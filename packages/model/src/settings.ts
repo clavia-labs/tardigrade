@@ -1,4 +1,4 @@
-import { Context, Effect, type SchemaRepresentation } from "effect"
+import { Context, Effect, Schema, type SchemaRepresentation } from "effect"
 import type { Response } from "effect/unstable/ai"
 import type { ModelRef } from "./reference"
 import type { ModelResolution } from "./reference"
@@ -7,6 +7,24 @@ import type { InferenceObserver } from "./stream/observer"
 import type { OutputCapability } from "./output"
 import { requestPolicyOf } from "./stream/request"
 import type { RequestPolicy } from "./stream/policy"
+
+const NonNegativeCost = Schema.Finite.pipe(
+  Schema.check(Schema.makeFilter((value: number) => value >= 0, {
+    title: "at or above zero",
+    toJsonSchema: () => ({ minimum: 0 })
+  }))
+)
+
+// CostEvidence records the effective cost of a logical attempt and preserves independent provider and table evidence.
+export const CostEvidence = Schema.Struct({
+  costUsd: Schema.optionalKey(NonNegativeCost),
+  costSource: Schema.optionalKey(Schema.Literals(["provider", "table"])),
+  reportedCostUsd: Schema.optionalKey(NonNegativeCost),
+  estimatedCostUsd: Schema.optionalKey(NonNegativeCost)
+})
+export type CostEvidence = typeof CostEvidence.Type
+// CostReader extracts normalized cost evidence from a provider finish part.
+export type CostReader = (part: Response.FinishPart) => CostEvidence | undefined
 
 export interface BindingOptions {
   readonly provider: string
@@ -19,6 +37,7 @@ export interface BindingOptions {
   readonly observer?: InferenceObserver
   readonly schemaImport?: SchemaRepresentation.FromJsonSchemaOptions
   readonly reportedCostUsd?: (part: Response.FinishPart) => number | undefined
+  readonly cost?: CostReader
 }
 
 export const BindingSettings = Context.Reference<BindingOptions>("tardie/BindingSettings", {

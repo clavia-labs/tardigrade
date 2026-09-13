@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnOf } from "@clavia/tardigrade-code/execution/turns"
+export { CostEvidence } from "@clavia/tardigrade-model/settings"
 
 // Usage is what one model attempt spent. The normalized fields support projections, while
 // providerReports preserve the metrics each provider returned for later normalization and
@@ -258,7 +259,13 @@ export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
       const pricing = Schema.is(ModelPricing)(recordedPricing) ? recordedPricing : undefined
       const endpoint = asRecord(event.endpoint)
       const response = asRecord(event.response)
-      const usage = usageOf({ ...(endpoint?.provider === undefined ? {} : { provider: endpoint.provider }), ...(response?.modelId === undefined && endpoint?.model === undefined ? {} : { model: response?.modelId ?? endpoint?.model }), ...asRecord(carried), ...(event.reportedCostUsd === undefined ? {} : { reportedCostUsd: event.reportedCostUsd, costUsd: event.reportedCostUsd, costSource: "provider" }) })
-      return [pricing === undefined ? usage : priced(usage, pricing)]
+      const cost = asRecord(event.cost)
+      const carriedRecord = asRecord(carried) ?? {}
+      const { costUsd: _costUsd, costSource: _costSource, reportedCostUsd: _reportedCostUsd, estimatedCostUsd: _estimatedCostUsd, ...unpricedCarried } = carriedRecord
+      const legacyCost = cost === undefined && event.reportedCostUsd !== undefined
+        ? { reportedCostUsd: event.reportedCostUsd, costUsd: event.reportedCostUsd, costSource: "provider" as const }
+        : {}
+      const usage = usageOf({ ...(endpoint?.provider === undefined ? {} : { provider: endpoint.provider }), ...(response?.modelId === undefined && endpoint?.model === undefined ? {} : { model: response?.modelId ?? endpoint?.model }), ...(cost === undefined ? carriedRecord : unpricedCarried), ...legacyCost, ...cost })
+      return [cost === undefined ? (pricing === undefined ? usage : priced(usage, pricing)) : usage]
     })
   )

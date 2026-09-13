@@ -14,6 +14,7 @@ import {
   type TurnProjectionState
 } from "@clavia/tardigrade-code/execution/turn-projection"
 import { Chunk } from "effect"
+import { usageIn } from "../inference/usage"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool, type AgentView } from "../runtime/composition"
 import type { ToolSpec } from "../inference/request"
 import { Router } from "@clavia/tardigrade-core/transport/router"
@@ -47,6 +48,54 @@ export const caller = (): CallerBudgetAuthority => ({
 
 export interface BudgetOptions extends Partial<BudgetPolicy> {
   readonly authority?: BudgetAuthority
+}
+
+// SpendBudgetOptions sets the observed dollar threshold for model-attempt admission.
+export interface SpendBudgetOptions {
+  readonly usd: number
+}
+
+const spendBudget = (options: SpendBudgetOptions): AgentComponent => {
+  if (!Number.isFinite(options.usd) || options.usd <= 0) {
+    throw new Error(`spend budget usd must be positive, got ${JSON.stringify(options.usd)}`)
+  }
+  return defineComponent({
+    name: "spend-budget",
+    initial: initialTurnProjection,
+    step: reduceTurnProjection,
+    output: (state) => {
+      const trajectory = turnViewFrom(state)
+      const head = trajectory[0] as { readonly id?: unknown } | undefined
+      const returned = trajectory.filter((event) => event.type === "ModelReturned")
+      const usage = head === undefined || returned.length === 0
+        ? undefined
+        : usageIn(trajectory, String(head.id ?? ""))
+      const blocked = usage === undefined
+        ? undefined
+        : usage.costUsd === undefined
+          ? {
+              cause: "inference_budget_exhausted" as const,
+              error: "the spend budget cannot admit another model attempt because recorded spend is unknown",
+              attempts: returned.length,
+              policy: { usd: options.usd, spentUsd: null, reason: "unknown" }
+            }
+          : usage.costUsd >= options.usd
+            ? {
+                cause: "inference_budget_exhausted" as const,
+                error: `the spend budget of $${options.usd} is exhausted after $${usage.costUsd}`,
+                attempts: returned.length,
+                policy: { usd: options.usd, spentUsd: usage.costUsd, reason: "exhausted" }
+              }
+            : undefined
+      return {
+        view: {
+          system: [], tools: [], context: [], output: [],
+          admission: [{ component: "spend-budget", ...(blocked === undefined ? {} : { blocked }) }]
+        },
+        transitions: []
+      }
+    }
+  })
 }
 
 // DEFAULT_BUDGET_POLICY is the default policy applied by budget and spawned agents.
@@ -291,16 +340,20 @@ const guardedTool = <R>(
   }
 })
 
-// budget applies tool-call admission to an agent subtree. It records the wall before dispatching the
-// first call over the limit (budget.test.ts, "settling an over-budget execute records the wall and
-// never dispatches the call").
-export const budget = <
+// budget applies either observed-spend admission to model attempts or tool-call admission to an agent subtree. The spend form checks the recorded total before the next attempt, while the tool form records its wall before dispatching the first call over the limit (inference/spend-budget.test.ts; budget.test.ts, "settling an over-budget execute records the wall and never dispatches the call").
+export function budget(options: SpendBudgetOptions): AgentComponent
+export function budget<
   const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
 >(
   components: Cs,
+  options?: BudgetOptions
+): AgentComponent<ComponentRequirements<Cs[number]> | Router | Self>
+export function budget(
+  components: SpendBudgetOptions | ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>,
   options: BudgetOptions = {}
-): AgentComponent<ComponentRequirements<Cs[number]> | Router | Self> => {
-  type R = ComponentRequirements<Cs[number]>
+): AgentComponent<unknown> {
+  if (!Array.isArray(components)) return spendBudget(components as SpendBudgetOptions)
+  type R = unknown
   const resolved = budgetPolicyOf(options)
   const combined = composeComponents("budget.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<R>
   const childMachine = combined.machine
@@ -328,7 +381,8 @@ export const budget = <
           ? (canRequest ? [requestBudgetTool] : [])
           : children.view.tools.map((tool) => guardedTool(tool as AgentTool<R>, toolNames, resolved)),
         context: children.view.context,
-        output: children.view.output
+        output: children.view.output,
+        ...(children.view.admission === undefined ? {} : { admission: children.view.admission })
       },
       transitions: [...initial, ...budgetCommunication(log, options.authority), ...children.transitions] as ReadonlyArray<Transition<never, R | Router | Self>>
     }

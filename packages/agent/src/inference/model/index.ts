@@ -25,6 +25,7 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
   const delivery = yield* observeResponse(request.identity, { provider: providerId, model_id: endpoint.model }, key, options.observer, onDelta)
   return yield* Effect.suspend(() => {
     let reportedCostUsd: number | undefined
+    let cost: ReturnType<NonNullable<typeof options.cost>>
     let observed: Response.AnyPart[] = []
     let modeEvidence: Pick<Action, "mode"> = {}
     return Effect.gen(function* () {
@@ -56,7 +57,10 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
         observed = []
         const result = yield* collectResponse(Prompt.setSystem(Prompt.fromMessages(history), system), Toolkit.make(...tools), (part) => {
           observed.push(part)
-          if (part.type === "finish") reportedCostUsd = options.reportedCostUsd?.(part)
+          if (part.type === "finish") {
+            reportedCostUsd = options.reportedCostUsd?.(part)
+            cost = options.cost?.(part)
+          }
           return delivery.onPart(part)
         }, responseFormat, policy.timeout)
         if (result.parts.some((part) => part.type === "finish" && part.reason === "length")) return yield* new StreamTruncated({ maxOutputTokens })
@@ -98,6 +102,10 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
           failure: { cause: cause instanceof StreamTruncated ? "output_limit" : "inference_error", attempts: 1 }
         } satisfies Action
       })),
-      Effect.map((action): Action => reportedCostUsd === undefined ? action : { ...action, reportedCostUsd }))
+      Effect.map((action): Action => ({
+        ...action,
+        ...(reportedCostUsd === undefined ? {} : { reportedCostUsd }),
+        ...(cost === undefined ? {} : { cost })
+      })))
   }).pipe(Effect.ensuring(delivery.finish))
 })
