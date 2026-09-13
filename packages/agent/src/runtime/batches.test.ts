@@ -377,7 +377,7 @@ describe("tool batches", () => {
       { type: "ToolCalled", turn: TURN, callId: "b", name: "read", arguments: {}, ...(format === "current" ? { responseId: "m1/infer/0" } : { batchId: "m1/infer/0", batchIndex: 1 }), at: 1 },
       { type: "ToolReturned", turn: TURN, callId: "b", result: "x".repeat(500), at: 2 }
     ]
-    const reactor = compactionReactor({ contextWindowTokens: 100, fireRatio: 0.5, keepRatio: 0.1 })
+    const reactor = compactionReactor({ fireRatio: 0.5, keepRatio: 0.1 }, 100)
     expect(reactor(history)).toEqual([])
     history.push({ type: "ToolReturned", turn: TURN, callId: "a", result: "x".repeat(500), at: 3 })
     const transitions = reactor(history)

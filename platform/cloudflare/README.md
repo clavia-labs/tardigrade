@@ -4,7 +4,7 @@ Run Tardigrade actors on Cloudflare Workers and SQLite Durable Objects. The Work
 
 ## Worker entry point
 
-`tdg init` generates the entry point and deployment configuration. `tdg setup` configures a model provider and writes `models.lock.json`.
+`tdg init` generates the entry point and deployment configuration. `tdg setup` configures a model provider and writes `models.lock.json`. The provider-layer import must match the configured provider protocol. This example uses an OpenAI-compatible Chat Completions provider.
 
 ```ts
 import definition from "./actor"

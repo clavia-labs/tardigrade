@@ -1,7 +1,10 @@
+import { LanguageModel, Response } from "effect/unstable/ai"
+import { BindingInvocation } from "../inference/model/settings"
+import { CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
 import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Ref, Stream } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { FetchHttpClient } from "effect/unstable/http"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -115,6 +118,7 @@ describe("infer component", () => {
   test("a turn without any applicable default durably asks for a model reference", async () => {
     let calls = 0
     const mind = testInferenceLayer( {
+      resolve: null,
       react: () => {
         calls += 1
         return Effect.succeed({ kind: "complete" as const, output: "done" })
@@ -244,6 +248,7 @@ describe("infer component", () => {
   test("each turn can select a provider without losing its conversation", async () => {
     const seen: InferRequest[] = []
     const mind = testInferenceLayer( {
+      resolve: (model) => ({ model: model!, contextWindowTokens: model?.provider === "vercel" ? 200_000 : 100_000 }),
       react: (request: InferRequest) => {
         seen.push(request)
         return Effect.succeed({ kind: "complete" as const, output: "done" })
@@ -251,10 +256,7 @@ describe("infer component", () => {
     })
     const agent = assembled(infer(
       [
-            compaction({
-        contextWindowTokens: (model) =>
-          model?.provider === "vercel" ? 200_000 : 100_000
-      }),
+            compaction(),
       nativeOutput
     ], {
       models: {
@@ -447,12 +449,7 @@ describe("infer component", () => {
   test("compaction's context reaches the render, so the guard and the request hold one policy", () => {
     const render = renderOf([codeMode(), compaction({ messageRenderCap: 1234 }), nativeOutput], [])
     expect(render.context).toMatchObject({
-      messageRenderCap: 1234,
-      contextWindowTokens: 128_000,
-      fireRatio: 0.8,
-      keepRatio: 0.5,
-      fireTokens: 102_400,
-      keepTokens: 64_000
+      messageRenderCap: 1234
     })
   })
 
@@ -644,4 +641,55 @@ describe("infer component", () => {
     const bare: AgentComponent<KeyValueStore.KeyValueStore> = codeMode()
     expect([scoped.name, narrowed.name, empty.name, bare.name]).toEqual(["code", "code", "code", "code"])
   })
+})
+
+
+test.each(["explicit", "default"])("active model capacity compacts before inference with the %s summarizer", async mode => {
+  const calls: string[] = []
+  const model = Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+    generateText: () => Effect.die("stream only"),
+    streamText: () => Stream.unwrap(Effect.gen(function* () {
+      const invocation = yield* BindingInvocation
+      const selected = yield* CurrentModel
+      calls.push(selected!.model_id)
+      if (invocation !== undefined && selected?.model_id === "small") {
+        expect(invocation.request.trajectory.some(event => event.type === "CompactionCompleted")).toBe(true)
+        expect(invocation.request.context).toMatchObject({ contextWindowTokens: 100, fireTokens: 80, keepTokens: 50 })
+      }
+      return Stream.fromIterable([
+        Response.makePart("text-start", { id: "text" }),
+        Response.makePart("text-delta", { id: "text", delta: invocation === undefined ? "Earlier work." : "Done." }),
+        Response.makePart("text-end", { id: "text" }),
+        Response.makePart("finish", { reason: "stop", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) })
+      ])
+    }))
+  }))
+  const selection = Layer.succeed(ModelSelection, { resolve: (reference = { provider: "test", model_id: "host-default" }) => ({
+    model: reference, contextWindowTokens: reference?.model_id === "small" ? 100 : 1_000_000
+  }) })
+  const agent = assembled(infer([compaction(mode === "explicit" ? { model: { provider: "test", model_id: "summary" } } : {}), nativeOutput], TEST_MODEL))
+  const events = await run(Effect.gen(function* () {
+    yield* receive(agent, { id: "large-turn", text: "x".repeat(1000), model: { provider: "test", model_id: "large" } })
+    yield* receive(agent, { id: "small-turn", text: "continue", model: { provider: "test", model_id: "small" } })
+    return yield* readLog
+  }), Layer.mergeAll(memoryLog(), model, selection, noRouter, KeyValueStore.layerMemory))
+  expect(calls).toEqual(["large", mode === "explicit" ? "summary" : "host-default", "small"])
+  expect(events.find(event => event.type === "CompactionCompleted")).toMatchObject({ contextWindowTokens: 100, fireTokens: 80, keepTokens: 50 })
+  expect(events.filter(event => event.type === "TurnCompleted")).toHaveLength(2)
+})
+
+test.each([undefined, 0, -1, NaN, Infinity])("compaction rejects missing or invalid model capacity (%s) before inference", async window => {
+  let calls = 0
+  const mind = testInferenceLayer({ resolve: model => ({ model: model!, ...(window === undefined ? {} : { contextWindowTokens: window }) }), react: () => {
+    calls++
+    return Effect.succeed({ kind: "complete", output: "unexpected" })
+  } })
+  const agent = assembled(infer([compaction(), nativeOutput], TEST_MODEL))
+  const events = await run(Effect.gen(function* () {
+    yield* receive(agent, { id: "missing", text: "go" })
+    return yield* readLog
+  }), Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory))
+  expect(calls).toBe(0)
+  expect(events.some(event => event.type === "ModelCalled")).toBe(false)
+  expect(events.find(event => event.type === "TurnFailed")).toMatchObject({ cause: "model_selection" })
 })

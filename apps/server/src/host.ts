@@ -1,6 +1,5 @@
 import { bunHttpServices } from "@clavia/tardigrade-bun/http-threads"
 import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
-import { modelIsConfigured, selectedModelFrom } from "@clavia/tardigrade-model/selection"
 import { modelLayer } from "@clavia/tardigrade-model/host"
 export { selectedModelFrom, modelIsConfigured, MISSING_MODEL } from "@clavia/tardigrade-model/selection"
 import { createHost, hostBackend, type HostOptions, type Host } from "@clavia/tardigrade-bun/create-host"
@@ -221,12 +220,7 @@ const make = (options: ThreadsOptions) =>
             return modelsPageOf(snapshot, availability, { ...query, models, policy: models })
           }
         }
-    const builtIn = modelIsConfigured(config)
-      ? builtInActor({
-          contextWindowTokens: (model) => selectedModelFrom(config.model, config.modelCredentials, catalog, model).contextWindowTokens,
-          ...(agentCatalog === undefined ? {} : { catalog: agentCatalog })
-        })
-      : builtInActor(agentCatalog === undefined ? {} : { catalog: agentCatalog })
+    const builtIn = builtInActor(agentCatalog === undefined ? {} : { catalog: agentCatalog })
     const builtInSummary: ActorSummary = { name: RESERVED_ACTOR, builtIn: true }
     const root = resolve(config.actors)
     let mutations: Promise<void> = Promise.resolve()

@@ -59,7 +59,7 @@ const buildDirectory = (): string => {
 }
 
 const layerScripted: Layer.Layer<LanguageModel.LanguageModel> = testInferenceLayer({
-  resolve: (model = testModel) => ({ model, models: { default: model, allow: "*" } }),
+  resolve: (model = testModel) => ({ model, contextWindowTokens: 128_000, models: { default: model, allow: "*" } }),
   react: () => Effect.succeed({ kind: "complete", output: "the scripted answer" } satisfies Action)
 })
 

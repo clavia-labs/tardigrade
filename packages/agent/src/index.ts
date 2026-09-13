@@ -110,8 +110,7 @@ export {
   DEFAULT_COMPACTION_POLICY,
   resolvedContextPolicyOf,
   type CompactionPolicy,
-  type ContextPolicy,
-  type ContextWindowTokens
+  type ContextPolicy
 } from "./component/compaction"
 export { agentKeys, outputRepaired, outputRetryRequested, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./log/events"
 export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./runtime/resume"

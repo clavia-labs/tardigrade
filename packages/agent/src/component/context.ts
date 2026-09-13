@@ -27,23 +27,19 @@ export interface ContextPolicy {
   readonly summaryLineCap: number
 }
 
-export type ContextWindowTokens = number | ((model: ModelRef | undefined) => number)
-
 export interface CompactionPolicy {
   readonly messageRenderCap: number
   readonly resultRenderCap: number
-  readonly contextWindowTokens: ContextWindowTokens
   readonly fireRatio: number
   readonly keepRatio: number
   readonly summaryLineCap: number
-  // model selects the summarizer without changing the conversation context budget (compaction.properties.test.ts, compaction.test.ts).
+  // model selects the summarizer; omission uses the host default independently of conversation capacity (runtime/composition.test.ts).
   readonly model?: ModelRef
 }
 
 export const DEFAULT_COMPACTION_POLICY: CompactionPolicy = {
   messageRenderCap: 12_000,
   resultRenderCap: 6_000,
-  contextWindowTokens: 128_000,
   fireRatio: 0.8,
   keepRatio: 0.5,
   summaryLineCap: 200
@@ -63,14 +59,10 @@ const ratio = (value: number, name: string): number => {
 // guard and render. The fire and keep lines form one hysteresis policy, so they are validated
 // together.
 export const contextPolicyOf = (
-  policy: Partial<CompactionPolicy> = {},
-  model?: ModelRef
+  policy: Partial<CompactionPolicy>,
+  window: number
 ): ContextPolicy => {
-  const windowSource = policy.contextWindowTokens ?? DEFAULT_COMPACTION_POLICY.contextWindowTokens
-  const contextWindowTokens = positive(
-    typeof windowSource === "function" ? windowSource(model) : windowSource,
-    "contextWindowTokens"
-  )
+  const contextWindowTokens = positive(window, "contextWindowTokens")
   const fireRatio = ratio(policy.fireRatio ?? DEFAULT_COMPACTION_POLICY.fireRatio, "fireRatio")
   const keepRatio = ratio(policy.keepRatio ?? DEFAULT_COMPACTION_POLICY.keepRatio, "keepRatio")
   if (keepRatio >= fireRatio) throw new Error(`keepRatio must be less than fireRatio, got ${keepRatio} and ${fireRatio}`)
@@ -98,7 +90,7 @@ export const contextPolicyOf = (
 // resolvedContextPolicyOf fills a partial absolute policy at the render boundary. Components
 // normally contribute every field after resolving their model-relative policy.
 export const resolvedContextPolicyOf = (policy: Partial<ContextPolicy> = {}): ContextPolicy => {
-  const defaults = contextPolicyOf()
+  const defaults = { ...DEFAULT_COMPACTION_POLICY, contextWindowTokens: Infinity, fireTokens: Infinity, keepTokens: Infinity }
   return {
     messageRenderCap: policy.messageRenderCap ?? defaults.messageRenderCap,
     resultRenderCap: policy.resultRenderCap ?? defaults.resultRenderCap,

@@ -6,7 +6,7 @@ import { eventAt } from "@clavia/tardigrade-core/event"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { historyOf } from "../inference/model/prompt"
 import { renderMessages } from "../projection/messages"
-import { compaction, compactionReactor, estimateTokens } from "./compaction"
+import { compactionWithWindow as compaction, compactionReactor, estimateTokens } from "./compaction"
 
 const history = (hidden: "repaired" | "failed" | "unreferenced", size: number): Event[] => [
   { type: "MessageReceived", id: "before", text: "Remember this", at: 0 },
@@ -27,9 +27,9 @@ for (const hidden of ["repaired", "failed", "unreferenced"] as const) {
       const large = history(hidden, size)
       expect(renderMessages(large)).toEqual(renderMessages(small))
       expect(estimateTokens(large)).toBe(estimateTokens(small))
-      const policy = { contextWindowTokens }
-      const reactor = compactionReactor(policy)
-      const machine = compaction(policy).machine
+      const policy = { contextWindowTokens, fireRatio: 0.8 }
+      const reactor = compactionReactor(policy, policy.contextWindowTokens)
+      const machine = compaction(policy, policy.contextWindowTokens).machine
       const keys = (events: Event[]) => ({
         full: reactor(events).map((transition) => transition.key),
         incremental: machine.output(events.reduce((state, event, index) => machine.step(state, eventAt(event, index + 1)), machine.initial())).transitions.map((transition) => transition.key)
@@ -58,13 +58,13 @@ test("complete and incremental accounting retain the open request across a check
     { type: "ToolCalled", turn: "turn", callId: "b", name: "read", arguments: {}, at: 4 },
     { type: "ToolReturned", turn: "turn", callId: "b", result: "ok", at: 5 }
   ]
-  const policy = { contextWindowTokens: 125 }
-  const machine = compaction(policy).machine
+  const policy = { contextWindowTokens: 125, fireRatio: 0.8 }
+  const machine = compaction(policy, policy.contextWindowTokens).machine
   let state = machine.initial()
   for (let i = 0; i < events.length; i++) {
     state = machine.step(state, eventAt(events[i]!, i + 1))
     expect(machine.output(state).transitions.map((transition) => transition.key))
-      .toEqual(compactionReactor(policy)(events.slice(0, i + 1)).map((transition) => transition.key))
+      .toEqual(compactionReactor(policy, policy.contextWindowTokens)(events.slice(0, i + 1)).map((transition) => transition.key))
   }
 })
 
@@ -76,7 +76,7 @@ test("KEEP rounds the cumulative rendered size", () => {
       { type: "ToolReturned", turn: "turn", callId: String(index), result: "x", at: index * 2 + 2 }
     )
   }
-  const transition = compactionReactor({ contextWindowTokens: 100, fireRatio: 0.8, keepRatio: 0.5 })(events)[0]
+  const transition = compactionReactor({ fireRatio: 0.8, keepRatio: 0.5 }, 100)(events)[0]
   expect(transition).toBeDefined()
   const input = (transition as unknown as { readonly input: { readonly keepFrom: string } }).input
   const keptAt = events.findIndex((event) =>
@@ -110,10 +110,10 @@ for (const change of ["model", "provider"] as const) test(`${change} switches ex
     expect(estimateTokens(large)).toBe(estimateTokens(small))
     const original = { provider: "fixture", model_id: "fixture" }
     expect(estimateTokens(large, {}, original)).toBeGreaterThan(estimateTokens(small, {}, original) + 200)
-    const policy = { model: { provider: "summary", model_id: "summary" }, contextWindowTokens: (model: { readonly model_id: string } | undefined) => model?.model_id === "summary" ? 10 : 100 }
-    const machine = compaction(policy).machine
+    const policy = { model: { provider: "summary", model_id: "summary" }, contextWindowTokens: 100 }
+    const machine = compaction(policy, policy.contextWindowTokens).machine
     const keys = (log: Event[]) => machine.output(log.reduce((state, event, i) => machine.step(state, eventAt(event, i + 1)), machine.initial())).transitions.map((transition) => transition.key)
     expect(keys(large)).toEqual(keys(small))
-    expect(keys(large)).toEqual(compactionReactor(policy)(large).map((transition) => transition.key))
+    expect(keys(large)).toEqual(compactionReactor(policy, policy.contextWindowTokens)(large).map((transition) => transition.key))
   }))
 })
