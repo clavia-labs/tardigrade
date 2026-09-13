@@ -58,6 +58,8 @@ const assistant = infer([
 
 The dollar threshold applies to each turn. It admits the first model attempt, then checks recorded spend before each later attempt. An attempt may take the total past the threshold because its cost is known only after it finishes. Unknown recorded cost blocks the next attempt. A final answer still completes when its cost reaches or crosses the threshold.
 
+The component accounts for `ModelReturned` events and gates the inference machine's attempts. Compaction summaries and model calls made directly by other components do not produce these events and remain outside this budget's accounting and admission.
+
 The tool-call form remains `budget(components, { limit, authority })` and controls only the tools in its child components.
 
 A model integration can return authoritative cost evidence from its finish reader:
