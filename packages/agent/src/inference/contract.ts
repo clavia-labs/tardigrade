@@ -5,6 +5,7 @@ import type { OutputFallback } from "../output/contract"
 import type { ModelRef } from "./reference"
 import { DEFAULT_MODEL_POLICY_OVERRIDE, type ModelPolicyOverride } from "./access"
 import type { InferenceIdentity } from "./observer"
+import type { TurnFailureCause } from "../log/events"
 
 // InferPolicy states the process-crash ceiling and model authority applied by the inference machine. Output correction bounds belong to the mounted output component (component/repair.ts, RepairPolicy).
 export interface InferPolicy {
@@ -25,6 +26,18 @@ export interface InferRequest {
   readonly context?: Partial<ContextPolicy>
   readonly compaction?: Partial<import("../component/context").CompactionPolicy>
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
+  readonly admission?: ReadonlyArray<InferenceAdmission>
+}
+
+// InferenceAdmission carries a component's replayable decision about the next model attempt.
+export type InferenceAdmission = {
+  readonly component: string
+  readonly blocked?: {
+    readonly cause: TurnFailureCause
+    readonly error: string
+    readonly attempts: number
+    readonly policy: unknown
+  }
 }
 
 export type { ModelResolution } from "@clavia/tardigrade-model/reference"
@@ -36,4 +49,4 @@ export class NativeOutputSupport extends Context.Service<
 >()("agent/NativeOutputSupport") {}
 
 // Render derives the model-facing surface from event history.
-export type Render = (log: ReadonlyArray<Event>) => Pick<InferRequest, "system" | "tools" | "context" | "output" | "compaction">
+export type Render = (log: ReadonlyArray<Event>) => Pick<InferRequest, "system" | "tools" | "context" | "output" | "compaction" | "admission">

@@ -11,6 +11,7 @@ import { ModelPricing, type Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
 import { ProviderContinuation } from "../inference/continuation"
 import { ModelUsage, ModelResponse, ModelFinish } from "../inference/response"
+import { CostEvidence } from "@clavia/tardigrade-model/settings"
 export { ModelResponse } from "../inference/response"
 
 // The agent's domain events compose with core actor input and control events. The model responds
@@ -116,6 +117,7 @@ export const ModelReturned = Schema.Struct({
   legacyUsage: Schema.optional(Schema.Unknown),
   finish: Schema.optional(ModelFinish),
   reportedCostUsd: Schema.optional(Schema.Finite),
+  cost: Schema.optional(CostEvidence),
   endpoint: Schema.optional(Endpoint),
   text: Schema.optional(Schema.String),
   response: Schema.optional(ModelResponse),
@@ -167,6 +169,7 @@ export const TURN_FAILURE_CAUSES = [
   "model",
   "inference_error",
   "inference_attempts_exhausted",
+  "inference_budget_exhausted",
   "refused",
   "truncated",
   "output_limit",
@@ -417,6 +420,7 @@ type Served = {
   readonly response?: ModelResponse
   readonly finish?: ModelFinish
   readonly reportedCostUsd?: number
+  readonly cost?: CostEvidence
   readonly reasoning?: string
   readonly continuation?: import("../inference/continuation").ProviderContinuation
   // usage accepts historical custom bindings; modelReturned stores ModelUsage.
@@ -551,6 +555,7 @@ export const modelReturned = (
     readonly response?: ModelResponse
     readonly finish?: ModelFinish
     readonly reportedCostUsd?: number
+    readonly cost?: CostEvidence
   } & EpochStamp
 ): Event => ({ type: "ModelReturned", ...fields, usage: upcastUsage(fields.usage),
   ...(fields.error === undefined ? {} : { error: encodeModelError(unknownModelError(fields.error)) }),
