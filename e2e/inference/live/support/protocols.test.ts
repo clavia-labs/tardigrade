@@ -12,6 +12,8 @@ test("Responses retains encrypted reasoning evidence", () => {
 test("Chat Completions retains reasoning details", () => {
   const stream = `data: ${JSON.stringify({ choices: [{ delta: { reasoning_details: [{ type: "reasoning.encrypted", data: "sealed" }] } }] })}\n\n`
   expect(chatCompletions.responseEvidence(stream).opaqueParts).toBe(1)
+  expect(chatCompletions.opaqueEvidence(stream)).toEqual(["sealed"])
+  expect(chatCompletions.opaqueEvidence('data: {"choices":[{"delta":{"reasoning_details":[],"reasoning_content":"Readable"}}]}\n\n')).toEqual([])
   expect(chatCompletions.followUpEvidence(JSON.stringify({ messages: [{ reasoning_details: [{ type: "reasoning.encrypted", data: "sealed" }] }, { role: "tool", content: "nonce" }] }), "nonce")).toEqual({ opaqueParts: 1, hasToolResult: true })
 })
 

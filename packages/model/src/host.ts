@@ -1,22 +1,24 @@
 import { failedProviderLayer, type ProviderLayer } from "./providers/layer"
 import { protocolOptionsOf } from "./providers/options"
-import { MODEL_PROTOCOLS } from "./providers/directory"
+import { MODEL_PROTOCOLS, modelProviderModuleOf } from "./providers/directory"
 import type { ModelConfig as BedrockModelConfig } from "@tardie/ai-bedrock/BedrockLanguageModel"
-import { requestPolicyOf } from "./inference/request"
-import { Layer, Redacted, type Schema } from "effect"
+import { requestPolicyOf } from "./stream/request"
+import { Layer, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
-import { type InferenceObserver } from "@clavia/tardigrade-agent"
+import { type InferenceObserver } from "./stream/observer"
+import type { OpenRouterLanguageModel } from "@tardie/ai-openrouter"
 import type { OpenAiLanguageModel } from "@tardie/ai-openai"
 import type { OpenAiLanguageModel as CompatLanguageModel } from "@tardie/ai-openai-compat"
 import type { AnthropicLanguageModel } from "@tardie/ai-anthropic"
 import { modelLayerWith, type ModelHostConfig, type SelectedModel } from "./selection"
 import type { ModelCatalogState } from "./catalog/index"
-import type { ReportedCostReader } from "./binding/usage"
-import type { OutputCapability } from "./binding/output"
-import type { RequestOptions } from "./inference/request"
-import { inferenceLayer } from "./binding/index"
+import type { ReportedCostReader } from "./usage"
+import type { OutputCapability } from "./output"
+import type { RequestOptions } from "./stream/request"
+import { inferenceLayer } from "./services"
 
 export interface ModelSettings extends RequestOptions {
+  readonly openrouter?: Parameters<typeof OpenRouterLanguageModel.layer>[0]["config"]
   readonly reportedCostUsd?: ReportedCostReader
   readonly openai?: Parameters<typeof OpenAiLanguageModel.layer>[0]["config"]
   readonly bedrock?: BedrockModelConfig
@@ -25,10 +27,13 @@ export interface ModelSettings extends RequestOptions {
   readonly output?: OutputCapability
 }
 
-export interface ModelHostOptions {
+export interface ModelIntegrationOptions {
   readonly providerLayer?: ProviderLayer
-  readonly observer?: InferenceObserver
   readonly configure?: (selected: SelectedModel) => ModelSettings
+}
+
+export interface ModelHostOptions extends ModelIntegrationOptions {
+  readonly observer?: InferenceObserver
 }
 
 // modelLayer binds configured models through Effect while sharing host authority and catalog selection (host.test.ts).
@@ -36,14 +41,16 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
   try {
     const configured = protocolOptionsOf(selected.protocol, config.model.providers[selected.provider]?.models?.[selected.model_id]?.options)
     const overrides = options.configure?.(selected) ?? {}
+    const openrouter = modelProviderModuleOf(selected.provider, selected.protocol) === "openrouter"
     const settings: ModelSettings = {
       ...overrides,
       ...(configured.options === undefined ? {} : configured.protocol === "openai-responses" ? { openai: { ...configured.options, ...overrides.openai } }
+        : configured.protocol === "openai-chat-completions" && openrouter ? { openrouter: { ...configured.options, ...overrides.openrouter } }
         : configured.protocol === "openai-chat-completions" ? { compat: { ...configured.options, ...overrides.compat } }
         : configured.protocol === "anthropic-messages" ? { anthropic: { ...configured.options, ...overrides.anthropic } }
-        : { bedrock: { ...(configured.options.additionalModelRequestFields === undefined ? {} : { additionalModelRequestFields: bedrockDocument(configured.options.additionalModelRequestFields) }), ...overrides.bedrock } })
+        : { bedrock: { ...configured.options, ...overrides.bedrock } })
     }
-    const nativeLimit = selected.protocol === "bedrock-converse" ? settings.bedrock?.inferenceConfig?.maxTokens : selected.protocol === "openai-responses" ? settings.openai?.max_output_tokens : selected.protocol === "openai-chat-completions" ? settings.compat?.max_output_tokens : settings.anthropic?.max_tokens
+    const nativeLimit = openrouter ? (settings.openrouter?.max_completion_tokens ?? settings.openrouter?.max_tokens) : selected.protocol === "bedrock-converse" ? settings.bedrock?.inferenceConfig?.maxTokens : selected.protocol === "openai-responses" ? settings.openai?.max_output_tokens : selected.protocol === "openai-chat-completions" ? settings.compat?.max_output_tokens : settings.anthropic?.max_tokens
     const limits = [selected.maxOutputTokens, settings.maxOutputTokens, nativeLimit].filter((value): value is number => value != null)
     const common = {
       ...settings,
@@ -65,6 +72,8 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
     return inferenceLayer(
       selected.protocol === "openai-responses"
       ? { ...common, provider: "openai", model: { model: selected.model_id, ...(settings.openai === undefined ? {} : { config: settings.openai }) } }
+      : openrouter
+      ? { ...common, provider: "openrouter", model: { model: selected.model_id, ...(settings.openrouter === undefined ? {} : { config: settings.openrouter }) } }
       : selected.protocol === "openai-chat-completions"
       ? { ...common, provider: "openai-compat", model: { model: selected.model_id, ...(settings.compat === undefined ? {} : { config: settings.compat }) } }
       : { ...common, provider: "anthropic", model: { model: selected.model_id, ...(settings.anthropic === undefined ? {} : { config: settings.anthropic }) } }
@@ -74,11 +83,5 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
     return failedProviderLayer(error)
   }
 }, MODEL_PROTOCOLS)
-
-const bedrockDocument = (value: Schema.Json): NonNullable<BedrockModelConfig["additionalModelRequestFields"]> | null => {
-  if (value === null || typeof value !== "object") return value
-  if (Array.isArray(value)) return value.map(bedrockDocument)
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, bedrockDocument(entry)]))
-}
 
 export { MISSING_MODEL, modelIsConfigured, selectedModelFrom, modelLayerWith, type ModelHostConfig, type SelectedModel } from "./selection"

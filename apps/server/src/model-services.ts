@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { FetchHttpClient } from "effect/unstable/http"
-import { modelLayer, type ModelHostOptions } from "@clavia/tardigrade-model/host"
+import { modelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
 import type { InferenceObserver } from "@clavia/tardigrade-agent"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
@@ -19,8 +19,7 @@ export type BunModelServicesOptions = {
   readonly env: Parameters<typeof readConfig>[0]
   readonly catalog?: Parameters<typeof layerModelCatalog>[0]
   readonly inference?: InferenceLayerFactory
-  readonly configure?: ModelHostOptions["configure"]
-  readonly providerLayer?: ModelHostOptions["providerLayer"]
+  readonly model?: ModelIntegrationOptions
 }
 
 // bunModelServices binds configured model inference, catalog discovery, and Bun services for a host.
@@ -41,7 +40,7 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const snapshot = await Effect.runPromise(ModelCatalogStore.pipe(Effect.provide(catalog)))
   const inference = makeInferenceStream()
   const layers = Layer.mergeAll(
-    options.inference === undefined ? modelLayer(config, snapshot, { observer: inference.observer, ...(options.providerLayer === undefined ? {} : { providerLayer: options.providerLayer }), ...(options.configure === undefined ? {} : { configure: options.configure }) }) : options.inference(config, snapshot, inference.observer),
+    options.inference === undefined ? modelLayer(config, snapshot, { ...options.model, observer: inference.observer }) : options.inference(config, snapshot, inference.observer),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer

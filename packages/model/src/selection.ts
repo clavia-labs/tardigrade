@@ -1,8 +1,9 @@
 import { Effect, Layer, Stream } from "effect"
 import { LanguageModel } from "effect/unstable/ai"
-import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-agent/binding/settings"
-import { intersectModelPolicies, modelAllowedBy, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
-import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
+import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
+import { intersectModelPolicies, modelAllowedBy, type ModelPolicy } from "./access"
+import type { ModelRef } from "./reference"
+import type { ModelCatalog } from "@clavia/tardigrade-model/catalog/schema"
 import type { ModelConfig, ModelCredentials } from "./config"
 import type { ModelCatalogState } from "./catalog/index"
 import { providerAvailabilitiesOf } from "./catalog/availability"
@@ -26,7 +27,7 @@ export interface SelectedModel {
   readonly region?: string
   readonly contextWindowTokens: number
   readonly maxOutputTokens?: number
-  readonly pricing?: import("@clavia/tardigrade-agent/inference/usage").ModelPricing
+  readonly pricing?: import("@clavia/tardigrade-model/pricing").ModelPricing
   readonly catalogRevision: string
 }
 

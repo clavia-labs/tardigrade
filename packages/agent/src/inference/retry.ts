@@ -1,22 +1,7 @@
 import { Schema } from "effect"
 
-export const RetryPolicy = Schema.Struct({
-  backoffMs: Schema.Array(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
-  maxRetryAfterMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
-  retryAfterJitterMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
-})
-export type RetryPolicy = typeof RetryPolicy.Type
-
-export const RequestPolicy = Schema.Struct({
-  maxOutputTokens: Schema.Int.check(Schema.isGreaterThan(0)),
-  timeout: Schema.Struct({
-    firstChunkMs: Schema.Finite.check(Schema.isGreaterThan(0)),
-    idleMs: Schema.Finite.check(Schema.isGreaterThan(0)),
-    attemptMs: Schema.optional(Schema.Finite.check(Schema.isGreaterThan(0)))
-  }),
-  retry: RetryPolicy
-})
-export type RequestPolicy = typeof RequestPolicy.Type
+import type { RequestPolicy } from "@clavia/tardigrade-model/stream/policy"
+export { RequestPolicy, RetryPolicy } from "@clavia/tardigrade-model/stream/policy"
 
 // RetrySchedule records a chosen wake time and the number of retries already scheduled (retry.test.ts).
 export const RetrySchedule = Schema.Struct({

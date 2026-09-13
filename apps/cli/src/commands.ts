@@ -502,6 +502,7 @@ export const initCommand = Command.make("init", {
         ...(directory === undefined ? {} : { directory }),
         template: flags.template,
         modelProtocol: answers.protocol,
+        modelProvider: answers.provider,
         modelLock
       }),
       catch: userErrorOf

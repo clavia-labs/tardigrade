@@ -7,6 +7,8 @@ import { pathToFileURL } from "node:url"
 import { Effect, FileSystem, Path } from "effect"
 import { HttpClient } from "effect/unstable/http"
 
+import { ModelSelection } from "@clavia/tardigrade-model/settings"
+import { providerLayer } from "@clavia/tardigrade-model/providers/openai"
 import { bunModelServices } from "./model-services"
 
 test("Bun model services resolve configuration and supply Effect inference by default", async () => {
@@ -21,6 +23,13 @@ test("Bun model services resolve configuration and supply Effect inference by de
     let fetched = 0
     const services = await bunModelServices({
       configFile: pathToFileURL(configFile),
+      model: { providerLayer: (options) => {
+        expect(options.model.config).toMatchObject({ max_output_tokens: 1234 })
+        return providerLayer(options)
+      }, configure: (selected) => {
+        expect(selected.model_id).toBe("gpt")
+        return { maxOutputTokens: 1234, timeout: { idleMs: 12345 } }
+      } },
       env: { PORT: "4321", TEST_MODEL_KEY: "test-secret", TARDIGRADE_MODEL_CATALOG_CACHE: join(directory, "catalog.json") },
       catalog: { fetch: (async () => {
         fetched += 1
@@ -38,6 +47,9 @@ test("Bun model services resolve configuration and supply Effect inference by de
     await Effect.runPromise(Effect.gen(function*() {
       const infer = yield* inferenceClient
       expect(infer.resolve?.()).toMatchObject({ model: { provider: "openai", model_id: "gpt" }, contextWindowTokens: 128000, maxOutputTokens: 16000 })
+      const selection = yield* ModelSelection
+      const settings = yield* selection.settings!()
+      expect(settings.policy).toMatchObject({ maxOutputTokens: 1234, timeout: { idleMs: 12345 } })
       yield* FileSystem.FileSystem
       yield* Path.Path
       yield* HttpClient.HttpClient

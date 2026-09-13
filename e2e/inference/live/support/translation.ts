@@ -4,7 +4,7 @@ import { Effect, Schema } from "effect"
 import { Prompt, Tool, Toolkit } from "effect/unstable/ai"
 
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { collectResponse } from "../../../../packages/model/src/providers/response"
+import { collectResponse } from "../../../../packages/model/src/stream/collect"
 import { bindingFor, providerFor } from "./layers"
 import type { ResolvedLiveTarget } from "./config"
 

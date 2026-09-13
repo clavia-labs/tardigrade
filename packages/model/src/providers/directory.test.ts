@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import {
   MODEL_PROVIDER_CONNECTIONS,
   modelProviderConnectionOf,
-  modelProtocolOf
+  modelProtocolOf,
+  modelProviderModuleOf
 } from "./directory"
 
 describe("model providers", () => {
@@ -23,6 +24,9 @@ describe("model providers", () => {
   test("looks up presets and validates custom protocols", () => {
     expect(modelProviderConnectionOf("amazon-bedrock")).toMatchObject({ region: true })
     expect(modelProviderConnectionOf("custom")).toBeUndefined()
+    expect(modelProviderModuleOf("openrouter", "openai-chat-completions")).toBe("openrouter")
+    expect(modelProviderModuleOf("custom", "openai-chat-completions")).toBe("openai-compat")
+    expect(modelProviderModuleOf("openrouter", "openai-responses")).toBe("openai")
     expect(modelProtocolOf("openai-responses")).toBe("openai-responses")
     expect(() => modelProtocolOf("provider-name")).toThrow("model protocol must be one of")
   })

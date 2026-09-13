@@ -1,4 +1,3 @@
-import type { ProviderLayer } from "@clavia/tardigrade-model/providers/layer"
 import { cloudflareDirectory } from "./transport/directory"
 import { Effect, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
@@ -6,7 +5,7 @@ import { type InferenceObserver, type ModelPolicy, type ModelRef } from "@clavia
 import type { LanguageModel } from "effect/unstable/ai"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { modelLayer as configuredModelLayer } from "@clavia/tardigrade-model/host"
+import { modelLayer as configuredModelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/catalog/metadata"
 import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
@@ -178,7 +177,7 @@ export const modelLayer = (
   models: CloudflareModels | undefined,
   scope: ModelCatalog,
   observer?: InferenceObserver
-) => configuredModelLayer(hostModelConfig(models), { snapshot: scope }, { ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.providerLayer ?? (() => { throw new Error("Configured Worker models require providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
+) => configuredModelLayer(hostModelConfig(models), { snapshot: scope }, { ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
 
 const positiveInteger = (raw: string | undefined, fallback: number, name: string): number => {
   if (raw === undefined) return fallback
@@ -258,7 +257,7 @@ export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
 ) => CloudflareThreadStorePolicy
 
 interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
-  readonly providerLayer?: ProviderLayer
+  readonly model?: ModelIntegrationOptions
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly allocation?: ThreadAllocationPolicy
   readonly modelScope?: DeploymentModelScope

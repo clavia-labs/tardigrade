@@ -1,6 +1,6 @@
 import { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, type ContextPolicy, type CompactionPolicy } from "./context"
 export { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, suffixOf, DEFAULT_COMPACTION_POLICY, type ContextPolicy, type ContextWindowTokens, type CompactionPolicy } from "./context"
-import { replayOf } from "../binding/continuation"
+import { replayOf } from "../inference/model/continuation"
 import { renderMessageEntries } from "../projection/messages"
 import { upcastError } from "../log/upcast"
 import { hasUnansweredToolCall, responsesOf } from "../log/response"
@@ -25,8 +25,8 @@ import {
   type TranscriptProjectionState
 } from "../projection/transcript"
 import { LanguageModel } from "effect/unstable/ai"
-import { react } from "../binding/index"
-import { BindingSettings, ModelSelection } from "../binding/settings"
+import { summarize } from "./compaction/model"
+import { BindingSettings, ModelSelection } from "@clavia/tardigrade-model/settings"
 import { modelRefOf, type ModelRef } from "../inference/reference"
 import type { AgentComponent } from "../runtime/composition"
 
@@ -70,8 +70,8 @@ const renderedWeights = (events: ReadonlyArray<Event>, policy: ContextPolicy, mo
   for (const { event, message } of renderMessageEntries(events, policy)) {
     const continuation = message.continuation
     const replay = continuation === undefined ? undefined : replayOf(continuation, model === undefined ? continuation : { ...continuation, provider: model.provider, model: model.model_id })
-    const chars = replay?.messages === undefined
-      ? (message.content?.length ?? 0) + (message.toolCalls ?? []).reduce((sum, call) => sum + call.arguments.length, 0) + (replay?.reasoning ?? []).reduce((sum, text) => sum + text.length, 0)
+    const chars = replay === undefined
+      ? (message.content?.length ?? 0) + (message.toolCalls ?? []).reduce((sum, call) => sum + call.arguments.length, 0)
       : JSON.stringify(continuation!.payload).length
     weights.set(event, (weights.get(event) ?? 0) + chars)
   }
@@ -237,22 +237,13 @@ const compactionTransition = (
           const summaryModel = input.model === undefined
             ? undefined
             : selection.resolve?.(input.model).model ?? input.model
-          const action = yield* react(
-            {
-              trajectory: [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
-              identity: { ...self, turn: `compact-${input.keepFrom}` },
-              ...(summaryModel === undefined ? {} : { model: summaryModel }),
-              system: "",
-              tools: []
-            },
-            `compact-${input.keepFrom}`
-          ).pipe(Effect.provideService(BindingSettings, yield* (selection.settings?.(summaryModel) ?? BindingSettings)))
-          if (action.kind !== "complete" || action.output.trim() === "") {
-            return yield* Effect.die(action.kind === "fail" ? action.error : new Error("Compaction requires a nonempty summary"))
-          }
+          const summary = yield* summarize(brief, { ...self, turn: `compact-${input.keepFrom}` }, summaryModel).pipe(
+            Effect.provideService(BindingSettings, yield* (selection.settings?.(summaryModel) ?? BindingSettings)),
+            Effect.orDie
+          )
           return [compactionCompleted({
             keepFrom: input.keepFrom,
-            summary: action.output,
+            summary,
             contextWindowTokens: input.contextWindowTokens,
             fireTokens: input.fireTokens,
             keepTokens: input.keepTokens,

@@ -1,3 +1,4 @@
+import { validatedConfig } from "./options"
 import type { HttpClient } from "effect/unstable/http"
 import { Layer } from "effect"
 import { AnthropicClient, AnthropicLanguageModel } from "@tardie/ai-anthropic"
@@ -7,5 +8,5 @@ import { requestKeys, type ProviderLayer } from "./layer"
 export const providerLayer: ProviderLayer = (options) => {
   if (options.provider !== "anthropic") throw new Error(`The anthropic layer cannot serve ${options.provider}; supply the matching providerLayer`)
   const client = { ...options.client, transformClient: (http: HttpClient.HttpClient) => requestKeys(options.client.transformClient?.(http) ?? http) }
-  return AnthropicLanguageModel.layer(options.model).pipe(Layer.provide(AnthropicClient.layer(client)))
+  return AnthropicLanguageModel.layer({ ...options.model, config: validatedConfig(AnthropicLanguageModel.ModelConfigSchema, options.model.config, options.unvalidatedConfig) }).pipe(Layer.provide(AnthropicClient.layer(client)))
 }

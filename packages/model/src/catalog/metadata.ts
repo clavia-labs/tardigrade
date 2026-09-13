@@ -1,4 +1,4 @@
-import type { ModelPricing } from "@clavia/tardigrade-agent/inference/usage"
+import type { ModelPricing } from "@clavia/tardigrade-model/pricing"
 
 export const DEFAULT_MODEL_CATALOG_URL = "https://models.dev/api.json"
 

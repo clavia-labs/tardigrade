@@ -16,7 +16,7 @@ import { providerLayer } from "tardie/model/providers/openai-compat"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
-  providerLayer,
+  model: { providerLayer },
   scope: modelScopeFrom(modelLock)
 })
 

@@ -4,7 +4,11 @@ const parse = (body: string): ReadonlyArray<Record<string, unknown>> => body.spl
   if (!line.startsWith("data: ") || line === "data: [DONE]") return []
   try { return [JSON.parse(line.slice(6)) as Record<string, unknown>] } catch { return [] }
 })
-const reasoningValues = (value: unknown): ReadonlyArray<string> => value !== null && typeof value === "object" ? Object.entries(value).flatMap(([key, item]) => (key === "reasoning_details" || key === "reasoning_content") ? [JSON.stringify(item)] : reasoningValues(item)) : []
+const reasoningValues = (value: unknown): ReadonlyArray<string> => {
+  if (value === null || typeof value !== "object") return []
+  if ("type" in value && value.type === "reasoning.encrypted" && "data" in value && typeof value.data === "string" && value.data.length > 0) return [value.data]
+  return Object.entries(value).flatMap(([key, item]) => key === "signature" && typeof item === "string" && item.length > 0 ? [item] : reasoningValues(item))
+}
 
 export const chatCompletions: ProtocolDriver = {
   protocol: "openai-chat-completions",

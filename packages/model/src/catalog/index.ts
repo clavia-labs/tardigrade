@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Schema } from "effect"
 import {
   ModelCatalog as ModelCatalogSchema,
   type ModelCatalog
-} from "@clavia/tardigrade-client/contract"
+} from "@clavia/tardigrade-model/catalog/schema"
 import { modelsDevCatalogOf, type ModelMetadata } from "./metadata"
 
 import {

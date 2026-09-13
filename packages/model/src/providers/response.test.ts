@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { Effect, Layer, Redacted, Schema, Fiber, Deferred, Exit, Stream, Result } from "effect"
 import { Prompt, Tool, Toolkit, LanguageModel } from "effect/unstable/ai"
 import { FetchHttpClient } from "effect/unstable/http"
-import { collectResponse } from "./response"
+import { collectResponse } from "../stream/collect"
 import { providerLayer } from "./layer"
 
 const dynamicToolkit = Toolkit.make(Tool.dynamic("read", { parameters: Schema.Struct({ path: Schema.String }) }))

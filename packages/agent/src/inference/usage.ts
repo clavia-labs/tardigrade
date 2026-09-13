@@ -34,14 +34,8 @@ export interface Usage {
   readonly providerReports?: ReadonlyArray<ProviderUsageReport>
 }
 
-// ModelPricing states the rates used for an independent cost projection.
-export const ModelPricing = Schema.Struct({
-  promptUsdPerToken: Schema.Finite,
-  completionUsdPerToken: Schema.Finite,
-  cachedPromptUsdPerToken: Schema.optionalKey(Schema.Finite),
-  cacheWritePromptUsdPerToken: Schema.optionalKey(Schema.Finite)
-})
-export type ModelPricing = typeof ModelPricing.Type
+import { ModelPricing } from "@clavia/tardigrade-model/pricing"
+export { ModelPricing } from "@clavia/tardigrade-model/pricing"
 
 export const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0 }
 

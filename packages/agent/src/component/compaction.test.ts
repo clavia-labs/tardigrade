@@ -1,8 +1,11 @@
-import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
+import { LanguageModel, Response } from "effect/unstable/ai"
+import { CurrentModel } from "@clavia/tardigrade-model/settings"
+import type { ModelRef } from "@clavia/tardigrade-model/reference"
+import { unknownModelError } from "@clavia/tardigrade-model/error"
 import { renderMessages } from "../projection/messages"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Ref } from "effect"
+import { Effect, Layer, Ref, Stream } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { actorFromProjections, Self, settleActor } from "@clavia/tardigrade-core/runtime"
@@ -11,6 +14,21 @@ import { completeTransitionProjection } from "@clavia/tardigrade-core/transition
 import { composeKeys } from "@clavia/tardigrade-core/log"
 import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
 import { agentKeys, type Action } from "../log/events"
+
+const summaryLayer = (respond: (prompt: string, model: ModelRef | undefined) => Effect.Effect<Action>) => Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+  generateText: () => Effect.die("Use streaming in this fixture"),
+  streamText: request => Stream.unwrap(Effect.gen(function* () {
+    const model = yield* CurrentModel
+    const prompt = request.prompt.content.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.flatMap(part => part.type === "text" ? [part.text] : [])).join("\n")
+    const action = yield* respond(prompt, model)
+    if (action.kind === "fail") return Stream.fail(unknownModelError(action.error))
+    const text = action.kind === "complete" ? action.output : action.text ?? ""
+    const parts: Response.StreamPartEncoded[] = [Response.makePart("text-start", { id: "summary" }), Response.makePart("text-delta", { id: "summary", delta: text }), Response.makePart("text-end", { id: "summary" })]
+    if (action.kind === "calls") for (const call of action.calls) parts.push(Response.makePart("tool-call", { id: call.callId, name: call.name, params: call.arguments, providerExecuted: false }))
+    parts.push(Response.makePart("finish", { reason: "stop", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) }))
+    return Stream.fromIterable(parts)
+  }))
+}))
 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)
 import {
@@ -26,7 +44,7 @@ import {
 
 // Compaction is a pure machine: a guard fires at a resolved tool round when the rendered suffix
 // passes FIRE tokens, the pass summarizes down to a KEEP-token tail, and the checkpoint binds by
-// event identity. The summarizer is the ordinary inferenceClient seam, stubbed here. The size measure is
+// event identity. The summarizer receives native LanguageModel parts from this fixture. The size measure is
 // rendered chars over four.
 
 const head: Event = { type: "MessageReceived", id: "m0", text: "extract the covenants", at: 0 }
@@ -137,12 +155,10 @@ describe("the compaction pass", () => {
           read: Ref.get(ref)
         })
       ),
-      testInferenceLayer( {
-        react: ({ trajectory, model: selected }: { trajectory: ReadonlyArray<Event>; model?: unknown }) => {
-          briefed = String((trajectory[0] as { text?: unknown }).text ?? "")
+      summaryLayer((prompt, selected) => {
+          briefed = prompt
           model = selected
           return Effect.succeed(outcome)
-        }
       }),
       Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
     )
@@ -293,11 +309,9 @@ describe("a projected repair is invisible to compaction as well as to the render
       })).pipe(
         Effect.provide(
           Layer.mergeAll(
-            testInferenceLayer( {
-              react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
-                briefs.push(String((trajectory[0] as { text?: unknown }).text))
+            summaryLayer((prompt) => {
+                briefs.push(prompt)
                 return Effect.succeed({ kind: "complete" as const, output: "summarized" })
-              }
             }),
             Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
           )

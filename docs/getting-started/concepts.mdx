@@ -55,6 +55,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
     <h2>Components</h2>
     <p>A component is a named projection. Its output contains a view for its parent and the transitions that are enabled in the current state.</p>
     <p>Components are pure. Given the same state, they produce the same output without performing external work. Components can contain other components, which lets an actor combine inference, tools, budgets, compaction, permissions, and output policies.</p>
+    <p>Effects that call an LLM receive Effect’s <code>LanguageModel</code> service from the host. Shared model utilities collect streams, enforce supplied request timeouts, and encode provider errors. Each component owns its prompts and interpretation: inference derives tool requests and turn outcomes, while compaction accepts a summary and records its checkpoint. The model package has no dependency on the agent package.</p>
   </div>
 
   <ConceptInterface>

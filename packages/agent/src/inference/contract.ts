@@ -3,7 +3,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ContextPolicy } from "../component/compaction"
 import type { OutputFallback } from "../output/contract"
 import type { ModelRef } from "./reference"
-import { DEFAULT_MODEL_POLICY_OVERRIDE, type ModelPolicy, type ModelPolicyOverride } from "./access"
+import { DEFAULT_MODEL_POLICY_OVERRIDE, type ModelPolicyOverride } from "./access"
 import type { InferenceIdentity } from "./observer"
 
 // InferPolicy states the process-crash ceiling and model authority applied by the inference machine. Output correction bounds belong to the mounted output component (component/repair.ts, RepairPolicy).
@@ -26,11 +26,7 @@ export interface InferRequest {
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
-export interface ModelResolution {
-  readonly model: ModelRef
-  // models is the interpreter's current authority for validating this call. It is not recorded.
-  readonly models?: ModelPolicy
-}
+export type { ModelResolution } from "@clavia/tardigrade-model/reference"
 
 // NativeOutputSupport declares support for native structured output beside tools (component/native-output.ts).
 export class NativeOutputSupport extends Context.Service<

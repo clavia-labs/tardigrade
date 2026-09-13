@@ -1,5 +1,5 @@
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
-import type { StreamBounds } from "../inference/policy"
+import type { StreamBounds } from "../stream/policy"
 
 type SmithyHandler = Pick<FetchHttpHandler, "handle" | "destroy">
 

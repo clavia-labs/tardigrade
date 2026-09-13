@@ -1,10 +1,11 @@
+import type { Schema } from "effect"
 import { protocolOptionsOf, type ModelOptionsByProtocol } from "./providers/options"
-import { modelRefOf } from "@clavia/tardigrade-agent/inference/reference"
-import { modelAllowedBy, modelPolicyOf, type ModelPolicy } from "@clavia/tardigrade-agent/inference/access"
+import { modelRefOf } from "@clavia/tardigrade-model/reference"
+import { modelAllowedBy, modelPolicyOf, type ModelPolicy } from "@clavia/tardigrade-model/access"
 import { modelProtocolOf, type ModelProtocol } from "./providers/directory"
 
-export type ModelProviderConfig = ProviderConnection & ({
-  [P in ModelProtocol]: { readonly protocol: P; readonly models?: Readonly<Record<string, { readonly contextWindowTokens?: number; readonly options?: ModelOptionsByProtocol[P] }>> }
+export type ModelProviderConfig<Options = never> = ProviderConnection & ({
+  [P in ModelProtocol]: { readonly protocol: P; readonly models?: Readonly<Record<string, { readonly contextWindowTokens?: number; readonly options?: [Options] extends [never] ? ModelOptionsByProtocol[P] : Options }>> }
 }[ModelProtocol] | { readonly protocol: ModelProtocol; readonly models?: never })
 
 interface ProviderConnection {
@@ -15,7 +16,7 @@ interface ProviderConnection {
 
 // ModelConfig holds private provider connections and the reference used by the built-in actor.
 export interface ModelConfig extends ModelPolicy {
-  readonly providers: Readonly<Record<string, ModelProviderConfig>>
+  readonly providers: Readonly<Record<string, ModelProviderConfig | ModelProviderConfig<Schema.JsonObject>>>
 }
 
 const canonical = (value: unknown): unknown => {
@@ -52,7 +53,7 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
   const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "allow" && name !== "providers")
   if (unknownModelFields.length > 0) throw new Error(`models contains unknown fields: ${unknownModelFields.join(", ")}`)
   const providersSource = recordOf(source["providers"]) ?? {}
-  const providers: Record<string, ModelProviderConfig> = {}
+  const providers: Record<string, ModelProviderConfig<Schema.JsonObject>> = {}
   for (const [name, rawProvider] of Object.entries(providersSource)) {
     if (name.trim().length === 0) throw new Error("a model provider name cannot be empty")
     const provider = recordOf(rawProvider)
@@ -79,7 +80,7 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     if (selectedProtocol !== "bedrock-converse" && region !== undefined) {
       throw new Error(`provider ${JSON.stringify(name)} cannot declare region with protocol ${JSON.stringify(selectedProtocol)}`)
     }
-    let models: Record<string, { readonly contextWindowTokens?: number; readonly options?: ModelOptionsByProtocol[ModelProtocol] }> | undefined
+    let models: Record<string, { readonly contextWindowTokens?: number; readonly options?: Schema.JsonObject }> | undefined
     if (provider["models"] !== undefined) {
       const entries = recordOf(provider["models"])
       if (entries === undefined || Array.isArray(entries)) throw new Error(`provider ${name} models must map model IDs to settings`)
@@ -101,7 +102,7 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
       protocol: selectedProtocol,
       env,
       ...(region === undefined ? {} : { region })
-    } as ModelProviderConfig
+    } as ModelProviderConfig<Schema.JsonObject>
   }
   const selectedValue = source["default"]
   const selected = modelRefOf(selectedValue)

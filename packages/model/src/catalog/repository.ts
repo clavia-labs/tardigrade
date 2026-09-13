@@ -1,6 +1,6 @@
 import { Context, Data, Effect, Layer } from "effect"
-import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { modelAllowedBy, type ModelPolicy } from "@clavia/tardigrade-agent"
+import type { ModelCatalog } from "@clavia/tardigrade-model/catalog/schema"
+import { modelAllowedBy, type ModelPolicy } from "../access"
 
 export class ModelCatalogRepositoryError extends Data.TaggedError("ModelCatalogRepositoryError")<{
   readonly message: string

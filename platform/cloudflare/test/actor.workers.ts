@@ -13,6 +13,7 @@ import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/ru
 import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
 import {
   createWorker,
+  workerModelServices,
   cloudflareWorker,
   backgroundTaskOwnerOf,
   DEFAULT_BACKGROUND_TASK_OWNER,
@@ -22,6 +23,8 @@ import {
   type ActorThreadNode,
   type Env
 } from "../src/worker"
+import { providerLayer } from "@clavia/tardigrade-model/providers/openai-compat"
+import { ModelSelection } from "@clavia/tardigrade-model/settings"
 import { modelLayer, modelsFrom, mountedActor } from "../src/assembly"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
@@ -158,6 +161,27 @@ describe("cloudflare actor", () => {
       .rejects.toThrow("does not match model configuration")
     expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
+    const previousModel = mountedActor!.model
+    let configured = false
+    Object.assign(mountedActor!, workerModelServices({ model: { providerLayer: (options) => {
+      expect(options.model.config).toMatchObject({ max_output_tokens: 1234 })
+      return providerLayer(options)
+    }, configure: (selected) => {
+      configured = true
+      expect(selected.model_id).toBe("gpt-test")
+      return { maxOutputTokens: 1234, timeout: { idleMs: 12345 } }
+    } } }))
+    try {
+      const settings = await Effect.runPromise(Effect.gen(function* () {
+        const selection = yield* ModelSelection
+        return yield* selection.settings!()
+      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, config), scope.catalog))))
+      expect(configured).toBe(true)
+      expect(settings.policy).toMatchObject({ maxOutputTokens: 1234, timeout: { idleMs: 12345 } })
+    } finally {
+      if (previousModel === undefined) delete mountedActor!.model
+      else mountedActor!.model = previousModel
+    }
     const binding = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
       modelLayer(modelsFrom(env as Env, config), scope.catalog)
     )))

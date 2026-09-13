@@ -1,4 +1,4 @@
-import type { ProviderLayer } from "@clavia/tardigrade-model/providers/layer"
+import type { ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
 import { cloudflareHttp } from "./transport/http"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import type { Env } from "./env"
@@ -40,13 +40,13 @@ export const cloudflareWorker = <
 export default worker
 
 export interface WorkerModelServicesOptions {
-  readonly providerLayer?: ProviderLayer
+  readonly model?: ModelIntegrationOptions
   readonly scope?: DeploymentModelScope
 }
 
 // workerModelServices configures the deployment catalog for thread execution.
 export const workerModelServices = (options: WorkerModelServicesOptions) =>
-  ({ ...(options.scope === undefined ? {} : { modelScope: options.scope }), ...(options.providerLayer === undefined ? {} : { providerLayer: options.providerLayer }) })
+  ({ ...(options.model === undefined ? {} : { model: options.model }), ...(options.scope === undefined ? {} : { modelScope: options.scope }) })
 
 export type WorkerHostOptions<R, WorkerEnv extends Env = Env> = Omit<CloudflareWorkerOptions<R, WorkerEnv>, "modelScope"> & {
   readonly services?: ReturnType<typeof workerModelServices>

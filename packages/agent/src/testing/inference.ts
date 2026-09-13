@@ -10,11 +10,11 @@ import { unknownModelError } from "../inference/error"
 import type { RequestPolicy } from "../inference/retry"
 import type { ModelRef } from "../inference/reference"
 import type { ModelPricing } from "../inference/usage"
-import { BindingInvocation, BindingSettings, ModelSelection } from "../binding/settings"
-import { react } from "../binding/index"
+import { BindingInvocation, BindingSettings, ModelSelection } from "../inference/model/settings"
+import { react } from "../inference/model/index"
 
 export interface TestInference {
-  readonly output?: import("../binding/output").OutputCapability
+  readonly output?: import("../inference/model/output").OutputCapability
   readonly resolve?: (model?: ModelRef) => ModelResolution
   readonly policy?: (model?: ModelRef) => Effect.Effect<RequestPolicy | undefined>
   readonly pricing?: (model?: ModelRef) => Effect.Effect<ModelPricing | undefined>

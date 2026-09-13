@@ -1,28 +1,31 @@
 import { Schema } from "effect"
-import { OpenAiSchema } from "@tardie/ai-openai"
-import { Generated } from "@tardie/ai-anthropic"
+import type { OpenAiLanguageModel } from "@tardie/ai-openai"
+import type { OpenAiLanguageModel as CompatibleLanguageModel } from "@tardie/ai-openai-compat"
+import type { AnthropicLanguageModel } from "@tardie/ai-anthropic"
+import type { BedrockLanguageModel } from "@tardie/ai-bedrock"
 import type { ModelProtocol } from "./directory"
 
-const reasoning = OpenAiSchema.CreateResponse.fields.reasoning
-const schemas = {
-  "openai-responses": Schema.Struct({ reasoning }),
-  "openai-chat-completions": Schema.Struct({ reasoning_effort: Schema.optionalKey(Schema.Literals(["none", "minimal", "low", "medium", "high", "xhigh", "max"])) }),
-  "anthropic-messages": Schema.Struct({
-    thinking: Schema.optionalKey(Generated.BetaThinkingConfigParam),
-    output_config: Schema.optionalKey(Schema.Struct({ effort: Schema.optionalKey(Schema.NullOr(Schema.Literals(["low", "medium", "high"]))) }))
-  }),
-  "bedrock-converse": Schema.Struct({ additionalModelRequestFields: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)) })
+export interface ModelOptionsByProtocol {
+  readonly "openai-responses": NonNullable<Parameters<typeof OpenAiLanguageModel.layer>[0]["config"]>
+  readonly "openai-chat-completions": NonNullable<Parameters<typeof CompatibleLanguageModel.layer>[0]["config"]>
+  readonly "anthropic-messages": NonNullable<Parameters<typeof AnthropicLanguageModel.layer>[0]["config"]>
+  readonly "bedrock-converse": BedrockLanguageModel.ModelConfig
 }
 
-export type ModelOptionsByProtocol = { [P in ModelProtocol]: typeof schemas[P]["Type"] }
-export type ProtocolOptions = { [P in ModelProtocol]: { readonly protocol: P; readonly options?: ModelOptionsByProtocol[P] } }[ModelProtocol]
+export interface ProtocolOptions {
+  readonly protocol: ModelProtocol
+  readonly options?: Schema.JsonObject
+}
 
-// protocolOptionsOf validates host request options against the selected protocol (reasoning.test.ts).
-export const protocolOptionsOf = (protocol: ModelProtocol, value: unknown): ProtocolOptions => {
-  switch (protocol) {
-    case "openai-responses": return { protocol, ...(value === undefined ? {} : { options: Schema.decodeUnknownSync(schemas[protocol], { onExcessProperty: "error" })(value) }) }
-    case "openai-chat-completions": return { protocol, ...(value === undefined ? {} : { options: Schema.decodeUnknownSync(schemas[protocol], { onExcessProperty: "error" })(value) }) }
-    case "anthropic-messages": return { protocol, ...(value === undefined ? {} : { options: Schema.decodeUnknownSync(schemas[protocol], { onExcessProperty: "error" })(value) }) }
-    case "bedrock-converse": return { protocol, ...(value === undefined ? {} : { options: Schema.decodeUnknownSync(schemas[protocol], { onExcessProperty: "error" })(value) }) }
-  }
+// protocolOptionsOf checks JSON shape; the selected provider validates its settings at assembly (options.test.ts).
+export const protocolOptionsOf = (protocol: ModelProtocol, value: unknown): ProtocolOptions => ({
+  protocol,
+  ...(value === undefined ? {} : { options: Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(value) })
+})
+
+// validatedConfig checks options before and after host limits are applied (options.test.ts).
+export const validatedConfig = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown, original: unknown = value): S["Type"] => {
+  const decode = Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })
+  if (original !== value) decode(original ?? {})
+  return decode(value ?? {})
 }

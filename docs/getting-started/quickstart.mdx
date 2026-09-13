@@ -137,7 +137,7 @@ A model response can request several tools. Tardigrade records every call before
 
 `DEFAULT_TOOL_CONCURRENCY` is `"unbounded"`. Set `infer(components, { toolConcurrency: 4 })` to admit at most four pending calls at a time. Additional calls wait in recorded order. Set `concurrency: 1` on a native tool binding to serialize calls to that tool. These limits appear in the model instructions or tool description.
 
-Code mode defaults to `DEFAULT_CODE_TOOL_CONCURRENCY`, which is `1`. Set `codeMode(components, { toolConcurrency })` to control admission of `execute` calls. Code execution follows the code scheduler. Custom model integrations supply Effect's `LanguageModel` service. The agent binding translates its stream into response evidence and tool requests. The interpreter records those requests before tool execution.
+Code mode defaults to `DEFAULT_CODE_TOOL_CONCURRENCY`, which is `1`. Set `codeMode(components, { toolConcurrency })` to control admission of `execute` calls. Code execution follows the code scheduler. Custom model integrations supply Effect's `LanguageModel` service. The inference component translates its stream into response evidence and tool requests. The interpreter records those requests before tool execution.
 </Tip>
 
 ### Running it locally

@@ -4,7 +4,7 @@ import { Schema } from "effect"
 import { Prompt } from "effect/unstable/ai"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { historyOf } from "../binding/prompt"
+import { historyOf } from "../inference/model/prompt"
 import { renderMessages } from "../projection/messages"
 import { compaction, compactionReactor, estimateTokens } from "./compaction"
 
@@ -86,7 +86,7 @@ test("KEEP rounds the cumulative rendered size", () => {
   expect(estimateTokens(events.slice(keptAt - 1))).toBeGreaterThan(50)
 })
 
-for (const change of ["model", "provider"] as const) test(`${change} switches exclude opaque state from both the prompt and compaction`, () => {
+for (const change of ["model", "provider"] as const) test(`${change} switches exclude reasoning from both the prompt and compaction`, () => {
   fc.assert(fc.property(fc.integer({ min: 1000, max: 10000 }), fc.boolean(), (size, resolved) => {
     const target = { provider: change === "provider" ? "other" : "fixture", model_id: change === "model" ? "other" : "fixture" }
     const events = (length: number): Event[] => {
@@ -94,7 +94,7 @@ for (const change of ["model", "provider"] as const) test(`${change} switches ex
       log[3] = { ...log[3]!, continuation: {
         protocol: "openai-responses", provider: "fixture", model: "fixture", endpoint: "https://fixture.invalid",
         payload: Schema.encodeSync(Prompt.Prompt)(Prompt.make([Prompt.assistantMessage({ content: [
-          Prompt.makePart("reasoning", { text: "Think", options: { openai: { encryptedContent: "x".repeat(length) } } }),
+          Prompt.makePart("reasoning", { text: "Think".repeat(length), options: { openai: { encryptedContent: "x".repeat(length) } } }),
           Prompt.makePart("text", { text: "Okay" })
         ] })]))
       } }

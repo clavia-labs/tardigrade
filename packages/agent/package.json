@@ -31,7 +31,6 @@
     "./packages/*": "./src/packages/*.ts",
     "./projection/*": "./src/projection/*.ts",
     "./runtime/*": "./src/runtime/*.ts",
-    "./binding/*": "./src/binding/*.ts",
     "./testing/*": "./src/testing/*.ts"
   },
   "dependencies": {
@@ -39,11 +38,16 @@
     "@clavia/tardigrade-code": "workspace:*",
     "@cfworker/json-schema": "^4.1.1",
     "effect": "4.0.0-rc.115",
-    "@tardie/ai": "0.0.2"
+    "@clavia/tardigrade-model": "workspace:*"
   },
   "devDependencies": {
     "fast-check": "^4.9.0",
-    "@clavia/tardigrade-host": "workspace:*"
+    "@clavia/tardigrade-host": "workspace:*",
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@tardie/ai-openai": "4.0.0-rc.113-clavia.4",
+    "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.4",
+    "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.3",
+    "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.1"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

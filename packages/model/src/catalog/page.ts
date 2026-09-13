@@ -6,9 +6,9 @@ import type {
   ModelCatalogSortOrder,
   ModelCatalogUnpricedOrder,
   ProviderCatalogPage
-} from "@clavia/tardigrade-client/contract"
+} from "@clavia/tardigrade-model/catalog/schema"
 import { MODEL_PROVIDER_CONNECTIONS } from "../providers/directory"
-import { DEFAULT_MODEL_POLICY, modelAllowedBy, modelPolicyScopeOf, type ModelPolicy } from "@clavia/tardigrade-agent/inference/access"
+import { DEFAULT_MODEL_POLICY, modelAllowedBy, modelPolicyScopeOf, type ModelPolicy } from "@clavia/tardigrade-model/access"
 import {
   providerAvailabilityOf,
   type ProviderAvailabilities

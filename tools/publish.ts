@@ -304,8 +304,8 @@ try {
       "./model/metadata": "./src/model/catalog/metadata.ts",
       "./model/directory": "./src/model/providers/directory.ts",
       "./model/reasoning": "./src/model/providers/options.ts",
-      "./model/request-policy": "./src/model/inference/policy.ts",
-      "./model/output": "./src/model/binding/output.ts",
+      "./model/request-policy": "./src/model/stream/policy.ts",
+      "./model/output": "./src/model/output.ts",
       "./model/*": "./src/model/*.ts"
     },
     dependencies: dependencyUnion(packages.map((source) => source.pkg)),

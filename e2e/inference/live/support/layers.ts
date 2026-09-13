@@ -1,7 +1,7 @@
 import { Layer, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { providerLayer, type ProviderOptions } from "../../../../packages/model/src/providers/layer"
-import { inferenceLayer } from "../../../../packages/model/src/binding/index"
+import { inferenceLayer } from "../../../../packages/model/src/services"
 import type { Send as BedrockSend } from "@tardie/ai-bedrock/BedrockLanguageModel"
 import { DEFAULT_LIVE_MAX_OUTPUT_TOKENS, DEFAULT_LIVE_THINKING_TOKENS, DEFAULT_LIVE_TIMEOUT_MS, positive, type ResolvedLiveTarget } from "./config"
 
@@ -12,7 +12,9 @@ const optionsOf = (target: ResolvedLiveTarget): ProviderOptions => {
   const client = { apiKey: Redacted.make(target.apiKey), apiUrl: target.endpoint }
   switch (target.protocol) {
     case "openai-responses": return { provider: "openai", client, model: { model: target.model, config: { store: false, max_output_tokens: maxTokens, ...(reasoning ? { reasoning: { effort: "high" } } : {}) } } }
-    case "openai-chat-completions": return { provider: "openai-compat", client, model: { model: target.model, config: { max_output_tokens: maxTokens, ...(reasoning ? { reasoning_effort: "high" } : {}) } } }
+    case "openai-chat-completions": return target.id === "openrouter-chat-completions"
+      ? { provider: "openrouter", client, model: { model: target.model, config: { max_tokens: maxTokens, ...(reasoning ? { reasoning: { effort: "high", summary: "auto" } } : {}) } } }
+      : { provider: "openai-compat", client, model: { model: target.model, config: { max_output_tokens: maxTokens, ...(reasoning ? { reasoning_effort: "high" } : {}) } } }
     case "anthropic-messages": return { provider: "anthropic", client, model: { model: target.model, config: { max_tokens: maxTokens, ...(reasoning ? { thinking: { type: "enabled", budget_tokens: budget } } : {}) } } }
     case "bedrock-converse": return { provider: "bedrock", client: { ...(target.region === undefined ? {} : { region: target.region }), endpoint: target.endpoint, token: { token: target.apiKey }, authSchemePreference: ["httpBearerAuth"] }, model: { model: target.model, config: { inferenceConfig: { maxTokens }, ...(reasoning ? { additionalModelRequestFields: { thinking: { type: "enabled", budget_tokens: budget } } } : {}) } } }
   }

@@ -35,3 +35,7 @@ export const modelProtocolOf = (value: string): ModelProtocol => {
   if ((MODEL_PROTOCOLS as ReadonlyArray<string>).includes(value)) return value as ModelProtocol
   throw new Error(`model protocol must be one of ${MODEL_PROTOCOLS.join(", ")}, got ${JSON.stringify(value)}`)
 }
+
+// modelProviderModuleOf selects a provider implementation without importing it (directory.test.ts).
+export const modelProviderModuleOf = (provider: string | undefined, protocol: ModelProtocol) =>
+  provider === "openrouter" && protocol === "openai-chat-completions" ? "openrouter" : ({ "openai-responses": "openai", "openai-chat-completions": "openai-compat", "anthropic-messages": "anthropic", "bedrock-converse": "bedrock" } as const)[protocol]

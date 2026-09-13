@@ -13,7 +13,7 @@ import { providerLayer } from "tardie/model/providers/openai-compat"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
-  providerLayer,
+  model: { providerLayer },
   scope: modelScopeFrom(modelLock)
 })
 
@@ -26,7 +26,7 @@ export default { fetch: http.fetch }
 
 `workerModelServices` connects the configured providers to Effect AI and the catalog snapshot. `defineWorkerHost` registers the actor and exposes its Durable Object classes. `workerHttp` supplies the HTTP handler. Cloudflare calls `fetch` when a request arrives and creates object instances when they are addressed. The entry point registers one actor definition per module.
 
-An actor that does not use model inference can omit `services`. Provider configuration selects the protocol; the Worker entry point requires no provider imports.
+An actor that does not use model inference can omit `services`. The Worker entry point supplies its provider layer through `model.providerLayer`.
 
 ## Runtime and storage
 

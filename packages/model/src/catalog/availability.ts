@@ -1,4 +1,4 @@
-import type { ProviderAvailability } from "@clavia/tardigrade-client/contract"
+import type { ProviderAvailability } from "@clavia/tardigrade-model/catalog/schema"
 
 import type { ModelConfig, ModelCredentials } from "../config"
 

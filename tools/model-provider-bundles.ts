@@ -25,7 +25,7 @@ import { defineWorkerHost, workerHttp, workerModelServices } from "tardie/worker
 import { providerLayer } from "tardie/model/providers/${provider}"
 
 const host = defineWorkerHost(actor({ name: "bundle-proof", methods: {}, components: [] }), {
-  services: workerModelServices({ providerLayer })
+  services: workerModelServices({ model: { providerLayer } })
 })
 export const { ActorDO, ThreadDO } = host
 export default workerHttp(host)
@@ -57,7 +57,7 @@ const main = async (): Promise<void> => {
     if (tarballName === undefined) throw new Error("packed Tardigrade tarball is missing")
     const tarball = join(packed, tarballName)
 
-    const fixtures = ["anthropic", "openai", "openai-compat"] as const
+    const fixtures = ["anthropic", "openai", "openai-compat", "openrouter"] as const
 
     let packedManifest: PackedManifest | undefined
     for (const fixture of fixtures) {
@@ -87,7 +87,7 @@ const main = async (): Promise<void> => {
       await run([process.execPath, "-e", `
         import { Effect, Layer } from "effect";
         import { FetchHttpClient } from "effect/unstable/http";
-        import { inferenceLayer } from "tardie/model/binding/index";
+        import { inferenceLayer } from "tardie/model/services";
         await Effect.runPromise(Effect.scoped(Layer.build(inferenceLayer({
           provider: ${JSON.stringify(fixture)}, endpoint: "https://unused.invalid", client: {}, model: { model: "fixture" }
         }).pipe(Layer.provide(FetchHttpClient.layer)))));
