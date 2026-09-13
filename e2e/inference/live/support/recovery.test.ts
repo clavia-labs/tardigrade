@@ -32,19 +32,22 @@ test("HTTP live contracts preserve history through tool evolution, restart, and 
   expect(models).toEqual([...Array(10).fill(target.model), "other-model", "other-model", target.model])
 }, 15_000)
 
-test("Converse live contract runs native events through durable reasoning replay", async () => {
+test("Converse lifecycle preserves tool history and durably rejects disabled tools", async () => {
   const models: Array<string | undefined> = []
-  await runTarget({ ...target, protocol: "bedrock-converse", region: "us-east-1", behaviors: [...target.behaviors, "reasoning"] }, { bedrockSend: async (input) => {
+  const configured: ResolvedLiveTarget = { ...target, protocol: "bedrock-converse", region: "us-east-1", behaviors: [...target.behaviors, "reasoning"] }
+  const outcome = await runLifecycle([configured, { ...configured, id: "other", model: "other-model" }], { bedrockSend: async (input) => {
     models.push(input.modelId)
-    const result = input.messages?.flatMap((message) => message.content ?? []).find((part) => part.toolResult)?.toolResult
-    const nonce = (JSON.stringify(result) ?? "").match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0]
+    const result = input.messages?.at(-1)?.content?.at(-1)?.toolResult
+    const nonce = JSON.stringify(input.messages).match(/[0-9a-f]{8}-[0-9a-f-]{27}/g)?.at(-1)
+    const selected = input.toolConfig?.tools?.[0]?.toolSpec
+    const param = JSON.stringify(selected?.inputSchema).includes("priorNonce") ? "priorNonce" : selected?.name === "check_nonce" ? "nonce" : undefined
     const events: ConverseStreamOutput[] = result === undefined ? [
       { messageStart: { role: "assistant" } },
       { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: "Check" } } } },
-      { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: "signed" } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: `signed-${input.modelId}-${models.length}` } } } },
       { contentBlockStop: { contentBlockIndex: 0 } },
-      { contentBlockStart: { contentBlockIndex: 1, start: { toolUse: { toolUseId: "call", name: "read_nonce" } } } },
-      { contentBlockDelta: { contentBlockIndex: 1, delta: { toolUse: { input: "{}" } } } },
+      { contentBlockStart: { contentBlockIndex: 1, start: { toolUse: { toolUseId: `call-${models.length}`, name: selected?.name ?? "missing" } } } },
+      { contentBlockDelta: { contentBlockIndex: 1, delta: { toolUse: { input: JSON.stringify(param === undefined ? {} : { [param]: nonce }) } } } },
       { contentBlockStop: { contentBlockIndex: 1 } },
       { messageStop: { stopReason: "tool_use" } }
     ] : [
@@ -55,7 +58,8 @@ test("Converse live contract runs native events through durable reasoning replay
     ]
     return { $metadata: {}, stream: (async function* () { yield* events; yield { metadata: { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }, metrics: { latencyMs: 1 } } } })() }
   } })
-  expect(models).toEqual([target.model, target.model])
+  expect(outcome).toEqual({ turns: 4, requests: 6 })
+  expect(models).toEqual([target.model, target.model, target.model, target.model, "other-model", "other-model"])
 })
 
 test("cleanup releases remaining acquisitions after a closer fails", async () => {

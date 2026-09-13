@@ -164,6 +164,20 @@ const runConversation = async (targets: ReadonlyArray<ResolvedLiveTarget>, lifec
       await waitFor(async () => await status(path) !== "pending")
       if (inspectionFailure !== undefined) throw inspectionFailure
       const failure = (await events()).findLast((event) => event.type === "ModelReturned" && event.turn === `m${index + 1}` && event.error !== undefined)?.error?.reason
+      if (stage.mode === "recall" && stage.target.protocol === "bedrock-converse") {
+        assert.equal(await status(path), "failed")
+        assert.equal(failure?._tag, "InvalidRequestError")
+        assert.match(failure?.description ?? "", /tool history/)
+        assert.equal(requests, requestCount, "Unsupported tool history must fail before transport")
+        assert.equal(toolExecutions, 0)
+        const saved = await events()
+        assert.ok(JSON.stringify(saved.slice(0, before.length)) === JSON.stringify(before), "Rejection must preserve prior history")
+        await reopen()
+        assert.ok(JSON.stringify(await events()) === JSON.stringify(saved), "Failed-turn recovery must preserve events")
+        assert.equal(await status(path), "failed")
+        assert.equal(requests, requestCount, "Failed-turn recovery must not infer again")
+        continue
+      }
       const detail = targets.reduce((text, target) => text.replaceAll(target.apiKey, "[redacted]"), failure?.description ?? failure?._tag ?? "no provider error")
       assert.equal(await status(path), "completed", `Live turn ${index + 1} (${stage.target.id}) must complete: ${detail}`)
       assert.equal(requests - requestCount, stage.mode === "recall" ? 1 : 2, "Each turn must use only its planned requests, including after recovery")

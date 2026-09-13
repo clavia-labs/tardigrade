@@ -50,7 +50,7 @@
   "devDependencies": {
     "@smithy/fetch-http-handler": "^5.6.3",
     "@smithy/node-http-handler": "^4.11.2",
-    "@tardie/ai-bedrock": "0.0.2"
+    "@tardie/ai-bedrock": "0.0.3"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -59,7 +59,7 @@
   "peerDependencies": {
     "@smithy/fetch-http-handler": "^5.6.3",
     "@smithy/node-http-handler": "^4.11.2",
-    "@tardie/ai-bedrock": "0.0.2"
+    "@tardie/ai-bedrock": "0.0.3"
   },
   "peerDependenciesMeta": {
     "@smithy/fetch-http-handler": {

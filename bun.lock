@@ -106,7 +106,7 @@
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
-        "@tardie/ai-bedrock": "0.0.2",
+        "@tardie/ai-bedrock": "0.0.3",
         "effect": "4.0.0-rc.115",
         "fast-check": "^4.9.0",
         "tardie": "workspace:*",
@@ -251,12 +251,12 @@
       "devDependencies": {
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
-        "@tardie/ai-bedrock": "0.0.2",
+        "@tardie/ai-bedrock": "0.0.3",
       },
       "peerDependencies": {
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
-        "@tardie/ai-bedrock": "0.0.2",
+        "@tardie/ai-bedrock": "0.0.3",
       },
       "optionalPeers": [
         "@smithy/fetch-http-handler",
@@ -911,7 +911,7 @@
 
     "@tardie/ai-anthropic": ["@tardie/ai-anthropic@4.0.0-rc.113-clavia.3", "", { "dependencies": { "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-XyyouyJ0U501LQT/EIO914UnuU2aE3DyLKPA+ok/QKpkbZB0PN4vfJaO0lQifzgN2Eypd8MtkHmUvUwv+W8OIQ=="],
 
-    "@tardie/ai-bedrock": ["@tardie/ai-bedrock@0.0.2", "", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0", "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-SkCimp4JErv4ywx7ZAwzjeACiAcNXqhVplRiFT4W/twadJYu8Cs61OxcKPTSeQ6rQ5iheitm6PrAnxEHgr2nCA=="],
+    "@tardie/ai-bedrock": ["@tardie/ai-bedrock@0.0.3", "", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0", "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-ktld53fOgnld8hSrRN2SA6c+tOBoAQ3touzbGvxcX+X6rg7u7FtFq1iNW55FSRMdRH8s0bcz6MdRurWn3EPnQQ=="],
 
     "@tardie/ai-openai": ["@tardie/ai-openai@4.0.0-rc.113-clavia.4", "", { "dependencies": { "@tardie/ai": "0.0.2" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-HPO0gwRO0VCDF6FvSTAQLK2tlQzjlHo67rHAYM5RzCScm9N/jN3/ZAKAAQNqjcmrV5lUNuZJaPrrpKxd5dou0g=="],
 
