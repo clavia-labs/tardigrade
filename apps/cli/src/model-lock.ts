@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { Effect, Layer, Schema } from "effect"
 import { BunFileSystem } from "@effect/platform-bun"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { loadModelCatalog } from "@clavia/tardigrade-server/catalog"
+import { loadModelCatalog, modelCatalogWithConfiguredModels } from "@clavia/tardigrade-server/catalog"
 import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
 import { modelCatalogScopeOf } from "@clavia/tardigrade-server/catalog-store"
 import { canonicalModelConfig, type ModelConfig } from "@clavia/tardigrade-server/config"
@@ -53,8 +53,9 @@ export const resolveModelLock = async (
     policy: "refresh",
     ...(options.fetch === undefined ? {} : { fetch: options.fetch })
   }).pipe(Effect.provide(repository)))
-  if (state.snapshot === undefined) throw new Error(state.refreshError ?? state.cacheError ?? "model catalog is unavailable")
-  const catalog = modelCatalogScopeOf(state.snapshot, {
+  const snapshot = await modelCatalogWithConfiguredModels(config, state.snapshot)
+  if (snapshot === undefined) throw new Error(state.refreshError ?? state.cacheError ?? "model catalog is unavailable")
+  const catalog = modelCatalogScopeOf(snapshot, {
     providers: Object.keys(config.providers),
     policy: config
   })

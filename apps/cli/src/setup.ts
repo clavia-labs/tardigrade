@@ -1,3 +1,4 @@
+import { modelSettingsOf } from "@clavia/tardigrade-model/config"
 import { Console, Data, Effect, Layer, Redacted } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { FileSystem, type FileSystem as FileSystemService } from "effect/FileSystem"
@@ -126,6 +127,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
 
 // ProviderAnswers is one provider connection and an optional credential entered at a prompt.
 export interface ProviderAnswers {
+  readonly models?: ModelConfig["providers"][string]["models"]
   readonly provider: string
   readonly baseUrl: string
   readonly credential?: string
@@ -207,6 +209,7 @@ export interface SetupPromptOptions {
     readonly region?: string | undefined
   }
   readonly catalog?: ModelCatalogOptions
+  readonly providers?: ModelConfig["providers"] | undefined
 }
 
 export interface SetupFlowPromptOptions extends SetupPromptOptions {
@@ -385,7 +388,35 @@ const modelPrompt = (
     })
     selected = picked.tag === "model" ? picked.model : { id: yield* manual() }
   }
-  return selected.id
+  const saved = options.providers?.[provider]?.models
+  if (loaded?.some((model) => model.id === selected.id) || saved?.[selected.id]?.metadata?.contextWindowTokens !== undefined) {
+    return { model_id: selected.id, ...(saved === undefined ? {} : { models: saved }) }
+  }
+  const context = yield* Prompt.String({
+    message: "Context window (tokens)",
+    validate: (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0
+      ? Effect.succeed(value) : Effect.fail("Enter a positive safe integer")
+  })
+  const output = yield* Prompt.String({
+    message: "Maximum output tokens (optional)",
+    validate: (value) => value.trim() === "" || Number.isSafeInteger(Number(value)) && Number(value) > 0
+      ? Effect.succeed(value) : Effect.fail("Enter a positive safe integer or leave blank")
+  })
+  const toolCall = yield* Prompt.Confirm({ message: "Does this model support tool calls?" })
+  return {
+    model_id: selected.id,
+    models: {
+      ...saved,
+      [selected.id]: {
+        ...saved?.[selected.id],
+        metadata: {
+          contextWindowTokens: Number(context),
+          ...(output.trim() === "" ? {} : { maxOutputTokens: Number(output) }),
+          toolCall
+        }
+      }
+    }
+  }
 })
 
 // setupProviderPrompt collects one provider connection without changing the project default.
@@ -408,7 +439,7 @@ export const setupDefaultPrompt = (
   })
   return {
     provider,
-    model_id: yield* modelPrompt(provider, presetFor(provider), options)
+    ...yield* modelPrompt(provider, presetFor(provider), options)
   }
 })
 
@@ -417,7 +448,7 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
   const prompted = yield* providerPrompt(options)
   return {
     ...prompted.answers,
-    model_id: yield* modelPrompt(prompted.answers.provider, prompted.preset, options, prompted.catalog)
+    ...yield* modelPrompt(prompted.answers.provider, prompted.preset, options, prompted.catalog)
   } satisfies SetupAnswers
 })
 
@@ -454,11 +485,17 @@ export const setupFlowPrompt = (options: SetupFlowPromptOptions = {}) => Effect.
   const prompted = added.get(provider)
   const current = options.existing?.default
   const defaultModel = yield* modelPrompt(provider, prompted?.preset ?? presetFor(provider), current === undefined
-    ? options
-    : { ...options, current: { provider: current.provider, model_id: current.model_id } }, prompted?.catalog)
+    ? { ...options, providers: options.existing?.providers }
+    : { ...options, providers: options.existing?.providers, current: { provider: current.provider, model_id: current.model_id } }, prompted?.catalog)
   const plan: SetupPlan = {
-    providers: [...added.values()].map((entry) => entry.answers),
-    default: { provider, model_id: defaultModel }
+    providers: [
+      ...[...added.values()].filter((entry) => entry.answers.provider !== provider).map((entry) => entry.answers),
+      ...(prompted === undefined && options.existing?.providers[provider] === undefined ? [] : [{
+        ...(prompted?.answers ?? { ...options.existing!.providers[provider]!, provider }),
+        ...(defaultModel.models === undefined ? {} : { models: defaultModel.models })
+      }])
+    ],
+    default: { provider, model_id: defaultModel.model_id }
   }
   yield* Console.log(setupPlanReview(plan))
   return (yield* Prompt.Confirm({ message: "Continue?", initial: true })) ? plan : undefined
@@ -534,7 +571,7 @@ export const providerAnswersFrom = (
     throw new Error("tdg setup provider requires both <provider> and <config> when either argument is used")
   }
   const config = providerObjectOf(source)
-  const allowed = new Set(["baseUrl", "protocol", "env", "region"])
+  const allowed = new Set(["baseUrl", "protocol", "env", "region", "models"])
   const unknown = Object.keys(config).filter((name) => !allowed.has(name))
   if (unknown.length > 0) throw new Error(`provider config contains unknown ${unknown.length === 1 ? "field" : "fields"}: ${unknown.join(", ")}`)
   const connection = modelProviderConnectionOf(provider)
@@ -554,11 +591,13 @@ export const providerAnswersFrom = (
   if (protocol !== "bedrock-converse" && region !== undefined) {
     throw new Error(`provider ${JSON.stringify(provider)} cannot declare region with protocol ${JSON.stringify(protocol)}`)
   }
+  const models = modelSettingsOf(protocol, config.models)
   return {
     provider,
     baseUrl,
     protocol,
     env: providerEnv(config),
+    ...(models === undefined ? {} : { models }),
     ...(region === undefined ? {} : { region })
   }
 }
@@ -660,6 +699,20 @@ export interface SetupFiles {
   readonly celldConfigPath?: string
 }
 
+// providerConfigWithAnswers merges model definitions and replaces connection fields (setup.test.ts).
+export const providerConfigWithAnswers = (
+  current: ModelConfig["providers"][string] | undefined,
+  provider: ProviderAnswers
+) => ({
+  ...(current?.models === undefined && provider.models === undefined ? {} : {
+    models: { ...current?.models, ...provider.models }
+  }),
+  baseUrl: provider.baseUrl,
+  protocol: provider.protocol,
+  env: provider.env,
+  ...(provider.region === undefined ? {} : { region: provider.region })
+})
+
 const updatedProject = (
   raw: string,
   selected: NonNullable<ModelConfig["default"]> | undefined,
@@ -668,17 +721,13 @@ const updatedProject = (
   const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" }
   let next = raw.trim().length === 0 ? "{}\n" : raw
   const document = parse(next) as { readonly vars?: Readonly<Record<string, unknown>> }
-  const config = document.vars?.[TARDIGRADE_CONFIG_VAR] as { readonly models?: { readonly allow?: unknown } } | undefined
+  const config = document.vars?.[TARDIGRADE_CONFIG_VAR] as { readonly models?: ModelConfig } | undefined
   if (config?.models?.allow === undefined) {
     next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "allow"], "*", { formattingOptions }))
   }
   for (const provider of providers) {
-    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers", provider.provider], {
-      baseUrl: provider.baseUrl,
-      protocol: provider.protocol,
-      env: provider.env,
-      ...(provider.region === undefined ? {} : { region: provider.region })
-    }, { formattingOptions }))
+    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers", provider.provider],
+      providerConfigWithAnswers(config?.models?.providers?.[provider.provider], provider), { formattingOptions }))
   }
   if (selected !== undefined) {
     next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "default"], selected, { formattingOptions }))

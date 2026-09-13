@@ -1,11 +1,12 @@
-import type { Schema } from "effect"
+import { Schema } from "effect"
+import { ModelCatalogMetadata } from "./catalog/schema"
 import { protocolOptionsOf, type ModelOptionsByProtocol } from "./providers/options"
 import { modelRefOf } from "@clavia/tardigrade-model/reference"
 import { modelAllowedBy, modelPolicyOf, type ModelPolicy } from "@clavia/tardigrade-model/access"
 import { modelProtocolOf, type ModelProtocol } from "./providers/directory"
 
 export type ModelProviderConfig<Options = never> = ProviderConnection & ({
-  [P in ModelProtocol]: { readonly protocol: P; readonly models?: Readonly<Record<string, { readonly options?: [Options] extends [never] ? ModelOptionsByProtocol[P] : Options }>> }
+  [P in ModelProtocol]: { readonly protocol: P; readonly models?: Readonly<Record<string, { readonly metadata?: typeof ModelCatalogMetadata.Type; readonly options?: [Options] extends [never] ? ModelOptionsByProtocol[P] : Options }>> }
 }[ModelProtocol] | { readonly protocol: ModelProtocol; readonly models?: never })
 
 interface ProviderConnection {
@@ -46,6 +47,29 @@ const stringsOf = (value: unknown): ReadonlyArray<string> =>
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
+// modelSettingsOf validates provider options and model metadata (apps/cli/src/setup.test.ts).
+export const modelSettingsOf = (protocol: ModelProtocol, value: unknown): Record<string, { readonly options?: Schema.JsonObject; readonly metadata?: typeof ModelCatalogMetadata.Type }> | undefined => {
+  let models: Record<string, { readonly options?: Schema.JsonObject; readonly metadata?: typeof ModelCatalogMetadata.Type }> | undefined
+  if (value !== undefined) {
+    const entries = recordOf(value)
+    if (entries === undefined || Array.isArray(entries)) throw new Error("models must map model IDs to settings")
+    models = {}
+    for (const [model, value] of Object.entries(entries)) {
+      if (model.trim().length === 0) throw new Error("model ID cannot be empty")
+      const settings = recordOf(value)
+      if (settings === undefined || Array.isArray(settings)) throw new Error(`model ${model} settings must be an object`)
+      if (Object.keys(settings).some((field) => field !== "options" && field !== "metadata")) throw new Error(`model ${model} contains unsupported settings`)
+      const parsed = protocolOptionsOf(protocol, settings.options)
+      const metadata = settings.metadata === undefined ? undefined : Schema.decodeUnknownSync(ModelCatalogMetadata, { onExcessProperty: "error" })(settings.metadata)
+      models[model] = {
+        ...(parsed.options === undefined ? {} : { options: parsed.options }),
+        ...(metadata === undefined ? {} : { metadata })
+      }
+    }
+  }
+  return models
+}
+
 // modelConfigOf validates provider connections used by a directly hosted server.
 export const modelConfigOf = (value: unknown): ModelConfig => {
   const source = recordOf(value)
@@ -80,20 +104,7 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     if (selectedProtocol !== "bedrock-converse" && region !== undefined) {
       throw new Error(`provider ${JSON.stringify(name)} cannot declare region with protocol ${JSON.stringify(selectedProtocol)}`)
     }
-    let models: Record<string, { readonly options?: Schema.JsonObject }> | undefined
-    if (provider["models"] !== undefined) {
-      const entries = recordOf(provider["models"])
-      if (entries === undefined || Array.isArray(entries)) throw new Error(`provider ${name} models must map model IDs to settings`)
-      models = {}
-      for (const [model, value] of Object.entries(entries)) {
-        if (model.trim().length === 0) throw new Error("model ID cannot be empty")
-        const settings = recordOf(value)
-        if (settings === undefined || Array.isArray(settings)) throw new Error(`model ${model} settings must be an object`)
-        if (Object.keys(settings).some((field) => field !== "options")) throw new Error(`model ${model} contains unsupported settings`)
-        const parsed = protocolOptionsOf(selectedProtocol, settings.options)
-        models[model] = parsed.options === undefined ? {} : { options: parsed.options }
-      }
-    }
+    const models = modelSettingsOf(selectedProtocol, provider["models"])
     providers[name] = {
       ...(models === undefined ? {} : { models }),
       baseUrl,
