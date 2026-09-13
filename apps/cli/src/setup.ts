@@ -1,10 +1,9 @@
 import { modelSettingsOf } from "@clavia/tardigrade-model/config"
-import { Console, Data, Effect, Layer, Redacted } from "effect"
+import { Console, Data, Effect, Redacted } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { FileSystem, type FileSystem as FileSystemService } from "effect/FileSystem"
 import { Prompt } from "effect/unstable/cli"
 import { applyEdits, modify, parse } from "jsonc-parser"
-import { BunFileSystem } from "@effect/platform-bun"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import {
   MODEL_PROTOCOLS,
@@ -13,16 +12,15 @@ import {
   modelProtocolOf,
   type ModelProtocol
 } from "@clavia/tardigrade-model/providers/directory"
-import { loadModelCatalog } from "@clavia/tardigrade-server/catalog"
-import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
+import { ModelRegistry } from "@clavia/tardigrade-model/registry"
+import { withModelRegistry } from "./model-registry"
 import {
   TARDIGRADE_CONFIG_VAR,
   type Env,
   type ModelConfig
 } from "@clavia/tardigrade-server/config"
 import {
-  DEFAULT_MODEL_CATALOG_URL,
-  modelsDevCatalogOf
+  DEFAULT_MODEL_CATALOG_URL
 } from "@clavia/tardigrade-model/catalog/metadata"
 
 import { parseProjectConfig, projectConfigPathIn } from "./config"
@@ -227,58 +225,26 @@ const listedCatalogModels = (
     ...(model.name === undefined ? {} : { name: model.name })
   }))
 
-export const modelsDevAt = async (
-  provider: string,
-  options: ModelCatalogOptions = {}
-): Promise<{
-  readonly revision: string
-  readonly status: "fresh" | "cached"
-  readonly env: ReadonlyArray<string>
-  readonly models: ReadonlyArray<ListedModel>
-}> => {
-  const fetcher = options.fetch ?? globalThis.fetch
-  const timeoutMillis = options.timeoutMillis ?? DEFAULT_MODEL_LIST_TIMEOUT_MILLIS
-  const url = options.url ?? DEFAULT_MODEL_CATALOG_URL
-  const selectionPolicy = options.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY
-  if (options.cachePath !== undefined) {
-    const repository = layerFileModelCatalogRepository(options.cachePath).pipe(Layer.provide(BunFileSystem.layer))
-    const state = await Effect.runPromise(loadModelCatalog({
-      sourceUrl: url,
-      timeoutMillis,
-      policy: "cache-first",
-      ...(options.fetch === undefined ? {} : { fetch: options.fetch })
-    }).pipe(Effect.provide(repository)))
-    if (state.snapshot === undefined) throw new Error(state.refreshError ?? state.cacheError ?? "model catalog is unavailable")
-    const found = state.snapshot.providers.find((entry) => entry.id === provider)
+// modelRegistryAt discovers selectable models through the supplied registry (setup.test.ts).
+export const modelRegistryAt = (provider: string, options: ModelCatalogOptions = {}) =>
+  withModelRegistry(Effect.gen(function*() {
+    const registry = yield* ModelRegistry
+    const snapshot = yield* registry.load({ policy: "cache-first" })
+    const found = snapshot.providers.find((entry) => entry.id === provider)
     return {
-      revision: state.snapshot.revision,
-      status: state.snapshot.status,
+      revision: snapshot.revision,
+      status: snapshot.status,
       env: found?.env ?? [],
-      models: found === undefined ? [] : listedCatalogModels(found.models, selectionPolicy)
+      models: found === undefined ? [] : listedCatalogModels(found.models, options.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY)
     }
-  }
-  const response = await fetcher(url, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(timeoutMillis)
+  }), {
+    sourceUrl: options.url ?? DEFAULT_MODEL_CATALOG_URL,
+    timeoutMillis: options.timeoutMillis ?? DEFAULT_MODEL_LIST_TIMEOUT_MILLIS,
+    ...(options.cachePath === undefined ? {} : { cachePath: options.cachePath }),
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch })
   })
-  if (!response.ok) throw new Error(`model catalog returned ${response.status}`)
-  const revision = response.headers.get("etag") ?? response.headers.get("last-modified") ?? "unversioned"
-  const found = modelsDevCatalogOf(await response.json()).find((entry) => entry.id === provider)
-  return {
-    revision,
-    status: "fresh",
-    env: found?.env ?? [],
-    models: found?.models.filter((model) => agentModelIsSelectable({
-      outputModalities: model.metadata.outputModalities,
-      toolCall: model.metadata.toolCall
-    }, selectionPolicy)).map((model) => ({
-      id: model.id,
-      ...(model.name === undefined ? {} : { name: model.name })
-    })) ?? []
-  }
-}
 
-type ModelCatalogResult = Awaited<ReturnType<typeof modelsDevAt>>
+type ModelCatalogResult = Effect.Success<ReturnType<typeof modelRegistryAt>>
 
 interface PromptedProvider {
   readonly answers: ProviderAnswers
@@ -287,7 +253,7 @@ interface PromptedProvider {
 }
 
 const catalogResultFor = (provider: string, options: SetupPromptOptions) =>
-  Effect.tryPromise(() => modelsDevAt(provider, options.catalog)).pipe(
+  modelRegistryAt(provider, options.catalog).pipe(
     Effect.match({ onFailure: () => undefined, onSuccess: (result) => result })
   )
 
@@ -716,7 +682,7 @@ export const providerConfigWithAnswers = (
 const updatedProject = (
   raw: string,
   selected: NonNullable<ModelConfig["default"]> | undefined,
-  providers: ReadonlyArray<ProviderAnswers>
+  modelRegistry?: string
 ): string => {
   const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" }
   let next = raw.trim().length === 0 ? "{}\n" : raw
@@ -725,20 +691,22 @@ const updatedProject = (
   if (config?.models?.allow === undefined) {
     next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "allow"], "*", { formattingOptions }))
   }
-  for (const provider of providers) {
-    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers", provider.provider],
-      providerConfigWithAnswers(config?.models?.providers?.[provider.provider], provider), { formattingOptions }))
+  if (config?.models?.providers !== undefined) {
+    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers"], undefined, { formattingOptions }))
   }
   if (selected !== undefined) {
     next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "default"], selected, { formattingOptions }))
   }
+  if (modelRegistry !== undefined) {
+    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "modelRegistry"], modelRegistry, { formattingOptions }))
+  }
   return next.endsWith("\n") ? next : `${next}\n`
 }
 
-const writeSetupChanges = (
+// writeSetup applies provider credentials, default policy, and registry configuration (setup.test.ts).
+export const writeSetup = (
   root: string,
-  providers: ReadonlyArray<ProviderAnswers>,
-  selected: NonNullable<ModelConfig["default"]> | undefined,
+  { providers = [], default: selected }: Partial<SetupPlan>,
   env: Env = {}
 ): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
   Effect.gen(function*() {
@@ -759,7 +727,7 @@ const writeSetupChanges = (
       })
     })
     const secretsPath = envPathIn(root)
-    const updatedConfig = updatedProject(configRaw, selected, providers)
+    const updatedConfig = updatedProject(configRaw, selected, env["TARDIGRADE_MODEL_CATALOG_URL"]?.trim() || undefined)
     yield* Effect.try({
       try: () => parseProjectConfig(updatedConfig, configPath),
       catch: (cause) => new SetupConfigError({
@@ -816,38 +784,6 @@ const writtenConfigLines = (files: SetupFiles): ReadonlyArray<string> => [
   `wrote ${files.configPath}`,
   ...(files.celldConfigPath === undefined ? [] : [`wrote ${files.celldConfigPath}`])
 ]
-
-// writeSetup merges one connection and selects its model as the project default.
-export const writeSetup = (
-  root: string,
-  answers: SetupAnswers,
-  env: Env = {}
-): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
-  writeSetupChanges(root, [answers], { provider: answers.provider, model_id: answers.model_id }, env)
-
-// writeProviderSetup merges provider connections without changing the project default.
-export const writeProviderSetup = (
-  root: string,
-  providers: ReadonlyArray<ProviderAnswers>,
-  env: Env = {}
-): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
-  writeSetupChanges(root, providers, undefined, env)
-
-// writeDefaultSetup changes the project default without writing credentials.
-export const writeDefaultSetup = (
-  root: string,
-  selected: NonNullable<ModelConfig["default"]>,
-  env: Env = {}
-): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
-  writeSetupChanges(root, [], selected, env)
-
-// writeSetupPlan writes every collected connection and the selected default in one pass.
-export const writeSetupPlan = (
-  root: string,
-  plan: SetupPlan,
-  env: Env = {}
-): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
-  writeSetupChanges(root, plan.providers, plan.default, env)
 
 export const readSetupEnv = (root: string): Effect.Effect<Env, never, FileSystem> =>
   Effect.gen(function*() {

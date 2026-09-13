@@ -1,32 +1,21 @@
-import { Effect, Layer } from "effect"
-import { ServerConfig } from "./config"
-import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog/repository"
-import { ModelCatalogStore, loadModelCatalog, modelCatalogWithConfiguredModels, type ModelCatalogLoadOptions, type ModelCatalogLoadPolicy } from "@clavia/tardigrade-model/catalog"
+import { Context, Effect, Layer } from "effect"
+import { FileSystem } from "effect/FileSystem"
+import { emptyModelLock, layerFileModelLock, layerModelLock, lockedModelState, ModelLock, ModelLockError, modelLockErrorOf } from "@clavia/tardigrade-model/lock"
+import { ServerConfig, modelCredentialsFrom, type Env, type ServerConfigValue } from "./config"
+import { ModelCatalogStore } from "@clavia/tardigrade-model/catalog"
 export * from "@clavia/tardigrade-model/catalog"
 
-export const DEFAULT_SERVER_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolicy = "refresh"
+// layerRuntimeModelLock permits an empty lock only for an unconfigured project (model-services.test.ts).
+export const layerRuntimeModelLock = (config: ServerConfigValue): Layer.Layer<ModelLock, ModelLockError, FileSystem> =>
+  Layer.unwrap(Effect.gen(function*() {
+    const exists = yield* (yield* FileSystem).exists(config.modelLockPath).pipe(Effect.mapError(modelLockErrorOf))
+    if (!exists && config.model.default === undefined && Object.keys(config.model.providers).length === 0 && (config.model.allow === "*" || config.model.allow.length === 0)) return layerModelLock(emptyModelLock())
+    return layerFileModelLock(config.modelLockPath)
+  }))
 
-// layerModelCatalog refreshes the configured source once for the lifetime of the server process.
-export const layerModelCatalog = (
-  options: Partial<Pick<ModelCatalogLoadOptions, "fetch" | "now" | "policy">> = {}
-): Layer.Layer<ModelCatalogStore, never, ServerConfig | ModelCatalogRepository> =>
-  Layer.effect(
-    ModelCatalogStore,
-    Effect.flatMap(ServerConfig, (config) =>
-      Effect.tap(
-        loadModelCatalog({
-          sourceUrl: config.catalog.sourceUrl,
-          timeoutMillis: config.catalog.timeoutMillis,
-          policy: options.policy ?? DEFAULT_SERVER_MODEL_CATALOG_LOAD_POLICY,
-          ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-          ...(options.now === undefined ? {} : { now: options.now })
-        }).pipe(Effect.flatMap((state) => Effect.promise(async () => {
-          const snapshot = await modelCatalogWithConfiguredModels(config.model, state.snapshot)
-          return { ...state, ...(snapshot === undefined ? {} : { snapshot }) }
-        }))),
-        (state) => Effect.all([
-          state.refreshError === undefined ? Effect.void : Effect.logWarning(`model catalog refresh failed: ${state.refreshError}`),
-          state.cacheError === undefined ? Effect.void : Effect.logWarning(`model catalog cache failed: ${state.cacheError}`)
-        ], { discard: true })
-      ))
-  )
+// layerLockedServerModels derives configuration and discovery together from the lock (model-services.test.ts).
+export const layerLockedServerModels = (config: ServerConfigValue, env: Env = config.modelCredentials): Layer.Layer<ServerConfig | ModelCatalogStore, ModelLockError, ModelLock> =>
+  Layer.effectContext(Effect.map(lockedModelState(config.model), ({ model, catalog }) =>
+    Context.make(ServerConfig, { ...config, model, modelCredentials: modelCredentialsFrom(model, env) }).pipe(
+      Context.add(ModelCatalogStore, catalog)
+    )))

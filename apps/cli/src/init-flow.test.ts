@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import { Cause, Console, Effect, Layer, Option, Queue, Terminal } from "effect"
 import { Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
@@ -11,15 +11,25 @@ import { Cli } from "./services"
 const repository = new URL("../../../", import.meta.url).pathname
 const namespaces: Readonly<Record<string, string>> = {
   core: "packages/core/src/index.ts", agent: "packages/agent/src/index.ts", code: "packages/code/src/index.ts",
-  http: "packages/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/index.ts", server: "apps/server/src/index.ts"
+  worker: "platform/cloudflare/src/worker.ts", http: "packages/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/index.ts", server: "apps/server/src/index.ts"
 }
 
 // bundleServer resolves the public package namespaces against their publish sources.
-const bundleServer = async (directory: string) => {
+const bundleServer = async (directory: string, entry: "server" | "worker" = "server") => {
+  if (entry === "worker") {
+    await writeFile(join(directory, "tsconfig.json"), JSON.stringify({ compilerOptions: { paths: Object.fromEntries([
+      ["tardie", [join(repository, "packages/tardie/src/index.ts")]],
+      ...Object.entries(namespaces).flatMap(([name, path]) => [
+        [`tardie/${name}`, [join(repository, path)]],
+        [`tardie/${name}/*`, [join(repository, dirname(path), "*")]]
+      ])
+    ]) } }))
+    return
+  }
   const packed = process.env.TARDIE_TEST_PACKAGE
   const exports = packed === undefined ? undefined : (await Bun.file(join(packed, "package.json")).json() as { exports: Record<string, string> }).exports
   const built = await Bun.build({
-    entrypoints: [join(directory, "server.ts")], target: "bun", outdir: join(directory, "build"),
+    entrypoints: [join(directory, `${entry}.ts`)], target: "bun", outdir: join(directory, "build"),
     plugins: [{ name: "workspace-public-package", setup(build) {
       build.onResolve({ filter: /^tardie(?:\/|$)/ }, ({ path }) => {
         if (packed !== undefined && exports !== undefined) {
@@ -50,19 +60,29 @@ const eventually = async (check: () => Promise<boolean>, timeout = 10_000) => {
   throw new Error("quickstart condition did not complete before its deadline")
 }
 
-test.each(["registry", "custom", "interactive"] as const)("generated quickstart lifecycle with %s models", async (source) => {
-  const root = await mkdtemp(join(repository, ".cli-flow-"))
+test.each([
+  ["registry", "bun"], ["custom", "bun"], ["mixed", "bun"], ["interactive", "bun"],
+  ["custom", "cloudflare"], ["mixed", "cloudflare"]
+] as const)("generated quickstart: %s models on %s", async (source, runtime) => {
+  await mkdir(join(repository, ".tardigrade"), { recursive: true })
+  const root = await mkdtemp(join(repository, ".tardigrade/quickstart-"))
+  const requestedModels: string[] = []
+  let registryCalls = 0
   let modelCalls = 0
   let hold = false
   const model = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request): Promise<Response> {
-    if (new URL(request.url).pathname === "/catalog" && source !== "registry") return new Response("offline", { status: 503 })
-    if (new URL(request.url).pathname === "/catalog") return Response.json({ fixture: {
+    if (new URL(request.url).pathname === "/catalog") {
+      registryCalls++
+      if (source === "custom" || source === "interactive") return new Response("registry unavailable", { status: 503 })
+      return Response.json({ fixture: {
       id: "fixture", name: "Fixture", api: `${model.url}v1`, env: ["FIXTURE_KEY"], models: {
         test: { id: "test", name: "Test", tool_call: true, limit: { context: 32_000, output: 4096 }, modalities: { input: ["text"], output: ["text"] } }
     } } })
+    }
     modelCalls++
     if (hold) return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(": waiting\n\n")) } }), { headers: { "content-type": "text/event-stream" } })
-    const body = await request.json() as { messages: Array<{ role: string }> }
+    const body = await request.json() as { model: string; messages: Array<{ role: string }> }
+    requestedModels.push(body.model)
     if (!body.messages.some((message) => message.role === "tool")) return new Response([
       { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "weather", type: "function", function: { name: "get_weather", arguments: "{}" } }] } }] },
       { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
@@ -73,7 +93,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
   const port = reservation.port!
   await reservation.stop(true)
   const url = `http://127.0.0.1:${port}`
-  const env = { PATH: process.env.PATH!, PORT: String(port), FIXTURE_KEY: "fixture-secret", TARDIGRADE_MODEL_CATALOG_URL: `${model.url}catalog`, TARDIGRADE_TOKEN: "fixture-token" }
+  const env = { PATH: process.env.PATH!, PORT: String(port), FIXTURE_KEY: "fixture-secret", TARDIGRADE_TOKEN: "fixture-token" }
   let cwd = root
   const run = async (...args: string[]) => {
     const lines: string[] = []
@@ -82,7 +102,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
       Effect.provideService(Console.Console, capture),
       Effect.provide(Layer.mergeAll(BunServices.layer, Layer.succeed(Cli, {
         cwd, env, openClient: makeActorClient, fetch: globalThis.fetch,
-        installProject: bundleServer, mintId: () => crypto.randomUUID()
+        installProject: (directory) => bundleServer(directory, runtime === "cloudflare" ? "worker" : "server"), mintId: () => crypto.randomUUID()
       }))), Effect.runPromise
     )
     return lines.join("\n")
@@ -91,7 +111,14 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
   let child: ReturnType<typeof Bun.spawn> | undefined
   let stderr: Promise<string> | undefined
   const start = async () => {
-    const started = Bun.spawn([process.execPath, "build/server.js"], { cwd, env, stdout: "ignore", stderr: "pipe" })
+    const command = runtime === "bun" ? [process.execPath, "build/server.js"] : [
+      join(repository, "node_modules/.bin/wrangler"), "dev", "worker.ts",
+      "--config", "wrangler.jsonc", "--compatibility-date", "2026-08-24", "--ip", "127.0.0.1", "--port", String(port),
+      "--persist-to", join(cwd, ".worker-state"),
+      "--var", "TARDIGRADE_TOKEN:fixture-token", "--var", "FIXTURE_KEY:fixture-secret",
+      "--var", `TARDIGRADE_MODEL_CATALOG_URL:${model.url}catalog`
+    ]
+    const started = Bun.spawn(command, { cwd, env: { ...env, WRANGLER_SEND_METRICS: "false", WRANGLER_LOG_PATH: join(cwd, "wrangler.log") }, stdout: "ignore", stderr: "pipe" })
     child = started
     stderr = new Response(started.stderr).text()
     await eventually(async () => {
@@ -99,7 +126,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
       return fetch(`${url}/healthz`).then((r) => r.ok, () => false)
     })
   }
-  const stop = async () => { child?.kill("SIGTERM"); if (child) expect(await child.exited).toBe(0); child = undefined }
+  const stop = async () => { child?.kill("SIGTERM"); if (child) { const code = await child.exited; expect(runtime === "bun" ? code === 0 : code === 0 || code === 143).toBe(true) }; child = undefined }
   try {
     if (source === "interactive") {
       const key = (name: string, text?: string): Terminal.UserInput => ({ input: Option.fromUndefinedOr(text), key: { name, ctrl: false, meta: false, shift: false } })
@@ -129,11 +156,11 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
       const descriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
       Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true })
       try {
-        await Command.runWith(tdg, { version: "test", renderErrors: false })(["init"]).pipe(
+        await Command.runWith(tdg, { version: "test", renderErrors: false })(["init", "--model-registry", `${model.url}catalog`]).pipe(
           Effect.provideService(Terminal.Terminal, terminal),
           Effect.provide(Layer.mergeAll(BunServices.layer, Layer.succeed(Cli, {
             cwd, env, openClient: makeActorClient, fetch: globalThis.fetch,
-            installProject: bundleServer, mintId: () => crypto.randomUUID()
+            installProject: (directory) => bundleServer(directory, runtime === "cloudflare" ? "worker" : "server"), mintId: () => crypto.randomUUID()
           }))), Effect.runPromise
         )
       } finally {
@@ -146,13 +173,31 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
       expect(transcript).not.toContain("fixture-secret")
       expect(transcript).toContain("Enter a positive safe integer")
     } else {
-      await run("init", "tardie-agent", "--provider", "fixture", "--provider-config", JSON.stringify({ protocol: "openai-chat-completions", baseUrl: `${model.url}v1`, env: ["FIXTURE_KEY"], ...(source === "custom" ? { models: { test: { metadata: { contextWindowTokens: 32000, maxOutputTokens: 4096, toolCall: true } } } } : {}) }), "--default-model", "test", "--json")
+      await run("init", "tardie-agent", "--model-registry", `${model.url}catalog`, "--provider", "fixture", "--provider-config", JSON.stringify({
+        protocol: "openai-chat-completions", baseUrl: `${model.url}v1`, env: ["FIXTURE_KEY"],
+        ...(source === "registry" ? {} : { models: {
+          [source === "mixed" ? "custom-model" : "test"]: { metadata: { contextWindowTokens: 32000, maxOutputTokens: 4096, toolCall: true } }
+        } })
+      }), "--default-model", "test", "--json")
     }
     cwd = join(root, "tardie-agent")
+    for (const manifest of ["wrangler.jsonc", "celld.jsonc"]) {
+      expect(await readFile(join(cwd, manifest), "utf8")).toContain(`${model.url}catalog`)
+    }
     expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("defineWorkerHost")
     await run("lint", "actor.ts", "--json")
     expect(JSON.parse(await run("build", join(cwd, "actor.ts"), "--out", join(cwd, "artifact"), "--json"))).toMatchObject({ manifest: { name: "tardie-agent" } })
-    expect(JSON.parse(await run("models", "lock", "--json"))).toMatchObject({ schema: 1 })
+    expect(JSON.parse(await run("models", "lock", "--json"))).toMatchObject({ schema: 2 })
+    const lock = JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8"))
+    expect(lock.models.some((entry: { source?: string }) => entry.source !== undefined)).toBe(source === "registry" || source === "mixed")
+    const configuration = JSON.parse(await readFile(join(cwd, "wrangler.jsonc"), "utf8"))
+    expect(configuration.vars.TARDIGRADE_CONFIG.models.providers).toBeUndefined()
+    expect(lock.providers.fixture.baseUrl).toBe(`${model.url}v1`)
+    if (runtime === "cloudflare") {
+      expect(JSON.parse(await readFile(join(cwd, "wrangler.jsonc"), "utf8")).d1_databases).toBeUndefined()
+    }
+    const registryCallsBeforeStart = registryCalls
+    if (source === "custom") expect(registryCalls).toBe(0)
     await start()
     const cliProcess = Bun.spawn([process.execPath, join(repository, "apps/cli/src/main.ts"), "methods", "--url", url, "--token", "fixture-token", "--json"], { cwd, env, stdout: "pipe", stderr: "pipe" })
     const [cliOutput, cliError, cliCode] = await Promise.all([new Response(cliProcess.stdout).text(), new Response(cliProcess.stderr).text(), cliProcess.exited])
@@ -160,48 +205,65 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
     expect(cliCode).toBe(0)
     expect(JSON.parse(cliOutput)).toEqual(expect.arrayContaining([expect.objectContaining({ name: "message" })]))
     const client = makeActorClient({ baseUrl: url, token: "fixture-token" })
-    expect(await client.metadata()).toMatchObject({ name: "tardie-agent", storage: { kind: "sqlite" } })
+    expect(await client.metadata()).toMatchObject({ name: "tardie-agent", storage: { kind: runtime === "bun" ? "sqlite" : "durable-object" } })
     expect(JSON.parse(await remote("methods"))).toEqual(expect.arrayContaining([expect.objectContaining({ name: "message", cancellable: true })]))
     expect(JSON.parse(await remote("providers", "--search", "fixture"))).toMatchObject({ total: 1 })
-    expect(JSON.parse(await remote("models"))).toMatchObject({ total: 1 })
+    const listed = JSON.parse(await remote("models"))
+    expect(listed).toMatchObject({ total: source === "mixed" ? 2 : 1 })
+    expect(listed.items.map((entry: { id: string }) => entry.id).sort()).toEqual(source === "mixed" ? ["custom-model", "test"] : ["test"])
+    expect(registryCalls).toBe(registryCallsBeforeStart)
     expect(JSON.parse(await remote("thread", "create", "--name", "main"))).toMatchObject({ thread: "main" })
-    const inferenceResponse = await fetch(`${url}/v1/actors/main/threads/main/inference/stream`, { headers: { authorization: "Bearer fixture-token" }, signal: AbortSignal.timeout(15_000) })
-    expect(inferenceResponse.headers.get("content-type")).toContain("text/event-stream")
-    const inferenceReader = inferenceResponse.body!.getReader()
+    const inferenceReader = runtime === "bun" ? await (async () => {
+      const response = await fetch(`${url}/v1/actors/main/threads/main/inference/stream`, { headers: { authorization: "Bearer fixture-token" }, signal: AbortSignal.timeout(15_000) })
+      expect(response.headers.get("content-type")).toContain("text/event-stream")
+      return response.body!.getReader()
+    })() : undefined
     const completed = JSON.parse(await remote("call", "message", '{"text":"Hello"}', "--thread", "main", "--id", "hello", "--poll", "10"))
     expect(completed).toMatchObject({ status: "completed", output: "Hello from the fixture." })
-    let inferenceText = ""
-    while (!inferenceText.includes("Hello from the fixture.")) {
-      const chunk = await inferenceReader.read()
-      if (chunk.done) throw new Error("inference stream ended before its output")
-      inferenceText += new TextDecoder().decode(chunk.value)
+    if (inferenceReader !== undefined) {
+      let inferenceText = ""
+      while (!inferenceText.includes("Hello from the fixture.")) {
+        const chunk = await inferenceReader.read()
+        if (chunk.done) throw new Error("inference stream ended before its output")
+        inferenceText += new TextDecoder().decode(chunk.value)
+      }
+      await inferenceReader.cancel()
     }
-    await inferenceReader.cancel()
     expect(modelCalls).toBe(2)
+    expect(registryCalls).toBe(registryCallsBeforeStart)
+    if (source === "mixed") {
+      await remote("thread", "create", "--name", "custom")
+      const custom = JSON.parse(await remote("call", "message", JSON.stringify({ text: "Use the custom model", model: { provider: "fixture", model_id: "custom-model" } }), "--thread", "custom", "--id", "custom-call", "--poll", "10"))
+      expect(custom).toMatchObject({ status: "completed", output: "Hello from the fixture." })
+      expect(requestedModels).toEqual(["test", "test", "custom-model", "custom-model"])
+    }
+    expect(registryCalls).toBe(registryCallsBeforeStart)
     const calls = modelCalls
     expect(JSON.parse(await remote("call", "message", '{"text":"retry"}', "--thread", "main", "--id", "hello"))).toMatchObject({ status: "completed", output: completed.output })
     expect(modelCalls).toBe(calls)
     expect(JSON.parse(await remote("call", "state", "message", "hello", "--thread", "main"))).toMatchObject({ status: "completed" })
-    expect(JSON.parse(await remote("ls"))).toEqual(expect.arrayContaining([expect.objectContaining({ id: "main" })]))
-    expect(JSON.parse(await remote("events", "main"))).not.toHaveLength(0)
-    expect(await client.ensureActor("another")).toMatchObject({ id: "another", definition: "tardie-agent" })
-    expect(await client.actors()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "another" })]))
-    expect(await client.actor("another")).toMatchObject({ id: "another" })
-    const headers = { authorization: "Bearer fixture-token", "content-type": "application/json" }
-    const childResponse = await fetch(`${url}/v1/actors/main/threads`, { method: "POST", headers, body: JSON.stringify({ name: "research", parent: "main" }) })
-    expect(childResponse.ok).toBe(true)
-    expect(await childResponse.json()).toMatchObject({ actor: "tardie-agent", instance: "main", thread: "research" })
-    expect((await fetch(`${url}/v1/actors/main/threads/main/tree`, { headers })).status).toBe(200)
-    const stream = await fetch(`${url}/v1/actors/main/threads/main/events/stream`, { headers })
-    expect(stream.headers.get("content-type")).toContain("text/event-stream")
-    const reader = stream.body!.getReader()
-    const chunk = await reader.read()
-    expect(new TextDecoder().decode(chunk.value)).toContain("data:")
-    await reader.cancel()
-    const preflight = await fetch(`${url}/v1/actors/main/threads/main/methods/message`, { method: "OPTIONS", headers: { origin: "http://localhost:1234", "access-control-request-method": "POST", "access-control-request-headers": "idempotency-key,content-type" } })
-    expect(preflight.headers.get("access-control-allow-headers")).toContain("idempotency-key")
-    expect((await fetch(`${url}/v1/methods`)).status).toBe(401)
-    expect((await fetch(`${url}/openapi.json`)).status).toBe(200)
+    if (runtime === "bun") {
+      expect(JSON.parse(await remote("ls"))).toEqual(expect.arrayContaining([expect.objectContaining({ id: "main" })]))
+      expect(JSON.parse(await remote("events", "main"))).not.toHaveLength(0)
+      expect(await client.ensureActor("another")).toMatchObject({ id: "another", definition: "tardie-agent" })
+      expect(await client.actors()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "another" })]))
+      expect(await client.actor("another")).toMatchObject({ id: "another" })
+      const headers = { authorization: "Bearer fixture-token", "content-type": "application/json" }
+      const childResponse = await fetch(`${url}/v1/actors/main/threads`, { method: "POST", headers, body: JSON.stringify({ name: "research", parent: "main" }) })
+      expect(childResponse.ok).toBe(true)
+      expect(await childResponse.json()).toMatchObject({ actor: "tardie-agent", instance: "main", thread: "research" })
+      expect((await fetch(`${url}/v1/actors/main/threads/main/tree`, { headers })).status).toBe(200)
+      const stream = await fetch(`${url}/v1/actors/main/threads/main/events/stream`, { headers })
+      expect(stream.headers.get("content-type")).toContain("text/event-stream")
+      const reader = stream.body!.getReader()
+      const chunk = await reader.read()
+      expect(new TextDecoder().decode(chunk.value)).toContain("data:")
+      await reader.cancel()
+      const preflight = await fetch(`${url}/v1/actors/main/threads/main/methods/message`, { method: "OPTIONS", headers: { origin: "http://localhost:1234", "access-control-request-method": "POST", "access-control-request-headers": "idempotency-key,content-type" } })
+      expect(preflight.headers.get("access-control-allow-headers")).toContain("idempotency-key")
+      expect((await fetch(`${url}/v1/methods`)).status).toBe(401)
+      expect((await fetch(`${url}/openapi.json`)).status).toBe(200)
+    }
     hold = true
     await remote("call", "message", '{"text":"Wait"}', "--thread", "main", "--id", "cancel-me", "--no-wait")
     await eventually(async () => modelCalls > calls)
@@ -215,6 +277,10 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
     await start()
     expect(JSON.parse(await remote("call", "message", '{"text":"restart retry"}', "--thread", "main", "--id", "hello"))).toMatchObject({ status: "completed", output: completed.output })
     expect(modelCalls).toBe(calls + 1)
+    await remote("thread", "create", "--name", "after-restart")
+    expect(JSON.parse(await remote("call", "message", '{"text":"A fresh turn after restart"}', "--thread", "after-restart", "--id", "fresh", "--poll", "10"))).toMatchObject({ status: "completed", output: "Hello from the fixture." })
+    expect(modelCalls).toBe(calls + 3)
+    expect(registryCalls).toBe(registryCallsBeforeStart)
     await stop()
   } finally {
     child?.kill("SIGKILL")

@@ -1,7 +1,9 @@
+import { layerModelLock } from "@clavia/tardigrade-model/lock"
+import { publicCatalog } from "../src/assembly"
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
-import { Effect, ManagedRuntime, Schema } from "effect"
+import { Effect, Layer, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -108,59 +110,39 @@ const deadlineThreadHost = (state: DurableObjectState, thread: string) =>
   })
 
 beforeAll(async () => {
-  const db = (env as Env).CATALOG_DB
+  const db = (env as Env & { readonly CATALOG_DB: D1Database }).CATALOG_DB
   const statements = (env as Env & { readonly CATALOG_MIGRATION: string }).CATALOG_MIGRATION
     .split(";")
     .map((statement) => statement.trim())
     .filter((statement) => statement.length > 0)
     .map((statement) => db.prepare(statement))
   await db.batch(statements)
-  const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db))
-  const repository = await runtime.runPromise(ModelCatalogRepository)
-  await Effect.runPromise(repository.write("https://models.test/catalog.json", {
-    source: "models.dev",
-    revision: "workers-catalog-test",
-    refreshedAt: 1,
-    status: "fresh",
-    providers: [{
-      id: "openai",
-      name: "OpenAI",
-      env: ["OPENAI_API_KEY"],
-      models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
-    }]
-  }))
-  await runtime.dispose()
+
 })
 
 describe("cloudflare actor", () => {
   test("a deployment lock supplies only its matching model scope", async () => {
     const scope = modelScopeFrom({
-      schema: 1,
-      configDigest: "sha256:24490b510114acf10f5305913084ebe8ee0b0aea03ddf37529a4d4da3fa81ffa",
-      catalog: {
-        source: "models.dev",
-        revision: "bundled",
-        refreshedAt: 1,
-        status: "cached",
-        providers: [{ id: "openai", name: "OpenAI", env: [], models: [{ id: "gpt-test", metadata: { contextWindowTokens: 32000, maxOutputTokens: 4000 } }] }]
-      }
+      schema: 2,
+      providers: { openai: { baseUrl: "https://api.openai.test/v1", protocol: "openai-chat-completions", env: ["OPENAI_API_KEY"] } },
+      models: [{ provider: "openai", model_id: "gpt-test", contextWindowTokens: 32000, maxOutputTokens: 4000 }]
     })
-    const config = {
-      default: { provider: "openai", model_id: "gpt-test" },
-      allow: "*" as const,
-      providers: {
-        openai: {
-          baseUrl: "https://api.openai.test/v1",
-          protocol: "openai-chat-completions" as const,
-          env: ["OPENAI_API_KEY"]
-        }
-      }
+    const config = { default: { provider: "openai", model_id: "gpt-test" }, allow: "*" as const }
+    const snapshot = await modelCatalogForConfig(config, scope)
+    expect(snapshot).toMatchObject({ providers: [{ id: "openai" }] })
+    const previousScope = mountedActor!.modelScope
+    mountedActor!.modelScope = scope
+    try {
+      expect(await publicCatalog({ TARDIGRADE_CONFIG: { models: config } } as Env)).toEqual({ snapshot: snapshot })
+      await expect(publicCatalog({ TARDIGRADE_CONFIG: { models: { ...config, default: { provider: "openai", model_id: "changed" } } } } as Env)).rejects.toThrow("absent")
+    } finally {
+      if (previousScope === undefined) delete mountedActor!.modelScope
+      else mountedActor!.modelScope = previousScope
     }
-    expect(await modelCatalogForConfig(config, scope)).toMatchObject({ revision: "bundled", providers: [{ id: "openai" }] })
     await expect(modelCatalogForConfig({ ...config, default: { provider: "openai", model_id: "changed" } }, scope))
-      .rejects.toThrow("does not match model configuration")
-    expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
-    expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
+      .rejects.toThrow("absent")
+    expect(() => modelScopeFrom({ schema: 1, catalog: snapshot })).toThrow("Run `tdg setup` to migrate saved definitions offline")
+    expect(() => modelScopeFrom({ ...scope, models: [{ ...scope.models[0], source: "oops" }] })).toThrow("models[0].source (model openai/gpt-test) must be an absolute HTTP(S) URL")
     const previousModel = mountedActor!.model
     let configured = false
     Object.assign(mountedActor!, workerModelServices({ model: { providerLayer: (options) => {
@@ -175,7 +157,7 @@ describe("cloudflare actor", () => {
       const settings = await Effect.runPromise(Effect.gen(function* () {
         const selection = yield* ModelSelection
         return yield* selection.settings!()
-      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, config), scope.catalog))))
+      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers })).pipe(Layer.provide(layerModelLock(scope))))))
       expect(configured).toBe(true)
       expect(settings.policy).toMatchObject({ maxOutputTokens: 1234, timeout: { idleMs: 12345 } })
     } finally {
@@ -183,20 +165,19 @@ describe("cloudflare actor", () => {
       else mountedActor!.model = previousModel
     }
     const binding = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, config), scope.catalog)
+      modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers })).pipe(Layer.provide(layerModelLock(scope)))
     )))
     expect(binding.resolve()).toMatchObject({
       model: config.default,
-      catalogRevision: "bundled",
+      catalogRevision: snapshot.revision,
       contextWindowTokens: 32000,
       maxOutputTokens: 4000,
       models: { allow: [{ provider: "openai", model_ids: ["gpt-test"] }] }
     })
     expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
-    const restricted = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog)
-    )))
-    expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
+    await expect(Effect.runPromise(inferenceClient.pipe(Effect.provide(
+      modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers, allow: [] })).pipe(Layer.provide(layerModelLock(scope)))
+    )))).rejects.toThrow("excluded by allow")
   })
 
   test("root and staged creation await the host allocator before persistence", async () => {
@@ -569,7 +550,7 @@ describe("cloudflare actor", () => {
         models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
       }]
     }
-    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env).CATALOG_DB))
+    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env & { readonly CATALOG_DB: D1Database }).CATALOG_DB))
     try {
       const repository = await runtime.runPromise(ModelCatalogRepository)
       await Effect.runPromise(repository.write("https://models.test/catalog.json", snapshot))
@@ -584,8 +565,8 @@ describe("cloudflare actor", () => {
     const providers = await SELF.fetch("http://test/v1/providers?search=open&limit=1")
     expect(providers.status).toBe(200)
     expect(await providers.json()).toEqual(expect.objectContaining({
-      total: 2,
-      items: [expect.objectContaining({ id: "openai" })]
+      total: 0,
+      items: []
     }))
   })
 
@@ -608,7 +589,7 @@ describe("cloudflare actor", () => {
       }]
     }
     expect(new TextEncoder().encode(JSON.stringify(snapshot)).byteLength).toBeGreaterThan(4_425_714)
-    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env).CATALOG_DB))
+    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env & { readonly CATALOG_DB: D1Database }).CATALOG_DB))
     try {
       const repository = await runtime.runPromise(ModelCatalogRepository)
       await Effect.runPromise(repository.write("https://models.test/large.json", snapshot))
@@ -640,7 +621,7 @@ describe("cloudflare actor", () => {
         models: [{ id: model, metadata: { contextWindowTokens: 128_000 } }]
       }]
     })
-    const db = (env as Env).CATALOG_DB
+    const db = (env as Env & { readonly CATALOG_DB: D1Database }).CATALOG_DB
     const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db, { writeBatchSize: 1 }))
     try {
       const repository = await runtime.runPromise(ModelCatalogRepository)

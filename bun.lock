@@ -24,7 +24,6 @@
       "dependencies": {
         "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-client": "workspace:*",
-        "@clavia/tardigrade-cloudflare": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-server": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.115",

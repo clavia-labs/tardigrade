@@ -1,10 +1,9 @@
 import { Layer } from "effect"
-import { BunFileSystem, BunHttpServer, BunRuntime } from "@effect/platform-bun"
+import { BunHttpServer, BunRuntime, BunFileSystem } from "@effect/platform-bun"
 import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
 
-import { layerConfig, projectConfigOf, projectConfigPathOf, readConfig } from "./config"
-import { layerModelCatalog } from "./catalog"
-import { layerFileModelCatalogRepository } from "./catalog-repository"
+import { projectConfigOf, projectConfigPathOf, readConfig } from "./config"
+import { layerRuntimeModelLock, layerLockedServerModels } from "./catalog"
 import { layerThreads } from "./host"
 import { serve } from "./http"
 import { makeInferenceStream } from "./inference-stream"
@@ -24,15 +23,14 @@ if (!projectExists && process.env.TARDIGRADE_CONFIG_PATH?.trim().length) {
 const project = projectExists ? projectConfigOf(Bun.JSONC.parse(await projectFile.text())) : projectConfigOf({})
 const config = readConfig(process.env, project)
 
-const configLayer = layerConfig(config)
+const lock = layerRuntimeModelLock(config).pipe(Layer.provide(BunFileSystem.layer))
+const models = layerLockedServerModels(config, process.env).pipe(Layer.provide(lock))
 
 // The host is built from the same configuration the routes read, and closed with the scope the
 // server runs in, so the process that stops listening stops writing (host.ts, layerThreads).
-const catalogRepository = layerFileModelCatalogRepository(config.catalog.cachePath).pipe(Layer.provide(BunFileSystem.layer))
-const catalog = Layer.provide(layerModelCatalog(), [configLayer, catalogRepository])
 const inference = makeInferenceStream()
-const threads = Layer.provide(layerThreads({ inferenceObserver: inference.observer }), [configLayer, catalog])
+const threads = Layer.provide(layerThreads({ inferenceObserver: inference.observer }), models)
 
-const main = Layer.provide(serve({ api: { inference } }), [BunHttpServer.layer({ port: config.port }), configLayer, threads, catalog])
+const main = Layer.provide(serve({ api: { inference } }), [BunHttpServer.layer({ port: config.port }), models, threads])
 
 BunRuntime.runMain(Layer.launch(main))

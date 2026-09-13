@@ -31,8 +31,8 @@ Use `bunx tardie <command>` to run a command without installing it. Tardigrade r
   <div className="cli-command-row"><code>tdg ls</code><p>List threads</p></div>
   <div className="cli-command-row"><code>tdg events &lt;thread&gt;</code><p>Print a thread's event log</p></div>
   <div className="cli-command-row"><code>tdg providers</code><p>List provider protocols and setup requirements</p></div>
-  <div className="cli-command-row"><code>tdg models</code><p>Search and page the public model catalog</p></div>
-  <div className="cli-command-row"><code>tdg models lock</code><p>Resolve configured models into the deployment lock</p></div>
+  <div className="cli-command-row"><code>tdg models</code><p>Search and page the runtime model lock</p></div>
+  <div className="cli-command-row"><code>tdg models lock</code><p>Refresh sourced definitions in the runtime lock</p></div>
 </div>
 
 Commands that print data accept `--json` where their help lists it. Remote commands accept `--url`, `--token`, and `--actor`. The actor instance defaults to `main`. Run `tdg <command> --help` for every option.
@@ -79,7 +79,7 @@ A custom provider declares its endpoint and protocol:
 tdg setup provider private-gateway '{"baseUrl":"https://models.example.com/v1","protocol":"openai-responses","env":["PRIVATE_MODEL_KEY"]}'
 ```
 
-Interactive setup stores local credentials in `.dev.vars` with mode 0600 and adds `.dev.vars*` to `.gitignore`. It never prints a stored credential. Project configuration stays in `wrangler.jsonc` and `celld.jsonc`. Every successful setup command refreshes `models.lock.json`. Use `tdg models lock` when CI or an operator needs to refresh the lock without changing provider configuration.
+Interactive setup stores local credentials in `.dev.vars` with mode 0600 and adds `.dev.vars*` to `.gitignore`. It never prints a stored credential. Project configuration stays in `wrangler.jsonc` and `celld.jsonc`. Setup writes connections and model definitions to `models.lock.json`. It preserves existing definitions and imports missing ones. Use `tdg models lock` to refresh definitions that have a registry source.
 
 Setup preserves unrelated platform settings, JSONC comments, local secret entries, and other provider connections. The model services select the provider implementation from the configured protocol. Configuration rejects unsupported protocols.
 
@@ -112,16 +112,16 @@ bun run dev
 
 ## Discover providers and models
 
-If your model is absent from the catalog, the interactive prompt asks for its context window, optional output limit, and tool support. Setup saves these values in the provider's model settings in `wrangler.jsonc` and includes them in `models.lock.json`.
-
-For scripted setup, include `models` in the provider configuration:
+Use `--model-registry URL` with `tdg init`, `tdg setup`, or `tdg models lock` to select a models.dev-compatible JSON registry. The flag also works with `tdg setup provider` and `tdg setup default`.
 
 ```sh
-tdg setup provider localhost '{"protocol":"openai-chat-completions","baseUrl":"http://localhost:8080/v1","env":["API_KEY"],"models":{"qwen-local":{"metadata":{"contextWindowTokens":32768,"toolCall":true}}}}'
-tdg setup default --provider localhost --model qwen-local
+tdg init my-agent --model-registry https://models.example.com/api.json
+tdg models lock --model-registry https://models.example.com/api.json
 ```
 
-Initialization and setup use [models.dev](https://models.dev) for the searchable provider and model catalog. The first interactive run saves the validated public catalog in `.tardigrade/models.json`. Later runs can use that snapshot. The Bun server refreshes the same cache when it starts and keeps the resolved snapshot in memory.
+For imports, the source order is the flag, `TARDIGRADE_MODEL_CATALOG_URL`, `vars.TARDIGRADE_CONFIG.modelRegistry`, then the default registry. Successful commands save an explicit flag or environment source in project configuration. Each imported model records its source URL in the lock. Refresh uses those per-model URLs. An explicit flag or environment source overrides them.
+
+The model registry supplies definitions during setup and explicit lock updates. Its local cache is `.tardigrade/models.json`. Bun and Cloudflare use the lock for inference and model discovery. Neither runtime contacts the registry. The runtime rejects invalid definitions and policy references to absent models.
 
 Inspect provider requirements and search models through a running server:
 
@@ -131,6 +131,131 @@ tdg models --provider openrouter --search claude --limit 20 --json
 ```
 
 Each response includes `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and an optional `next_cursor`. Pass that cursor with the same filters to read the next page. Restart at the first page when the catalog revision or query changes.
+
+## Runtime model lock
+
+`models.lock.json` contains provider connections and complete model definitions. Models refer to providers by ID. Each `(provider, model_id)` pair must be unique. Provider credentials stay in environment variables.
+
+```json
+{
+  "schema": 2,
+  "providers": {
+    "openrouter": {
+      "protocol": "openai-chat-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "env": ["OPENROUTER_API_KEY"]
+    },
+    "localhost": {
+      "protocol": "openai-chat-completions",
+      "baseUrl": "http://localhost:8080/v1",
+      "env": ["API_KEY"]
+    }
+  },
+  "models": [
+    {
+      "provider": "openrouter",
+      "model_id": "vendor/model-a",
+      "contextWindowTokens": 128000,
+      "maxOutputTokens": 8192,
+      "toolCall": true,
+      "source": "https://models.dev/api.json"
+    },
+    {
+      "provider": "localhost",
+      "model_id": "qwen-local",
+      "contextWindowTokens": 32768,
+      "toolCall": true
+    }
+  ]
+}
+```
+
+Each model requires a positive integer `contextWindowTokens`. Optional fields include `maxOutputTokens`, `toolCall`, `structuredOutput`, input and output modalities, pricing, and protocol-specific `options`. The optional `source` is a registry URL. Refresh looks up the same provider and model ID at that URL. Entries without `source` are manual definitions.
+
+Project manifests contain selection policy:
+
+```json
+{
+  "vars": {
+    "TARDIGRADE_CONFIG": {
+      "models": {
+        "default": { "provider": "localhost", "model_id": "qwen-local" },
+        "allow": "*"
+      }
+    }
+  }
+}
+```
+
+`allow: "*"` exposes all locked models. Explicit selectors narrow that set. Changes to policy do not require lock regeneration.
+
+## In-memory model locks
+
+`ModelLock` is an Effect service. Applications can supply an object directly, without a file or registry loader:
+
+```ts
+import { Effect } from "effect"
+import { layerModelLock, ModelLock } from "tardie/model/lock"
+
+const lock = layerModelLock({
+  schema: 2,
+  providers: {
+    localhost: {
+      protocol: "openai-chat-completions",
+      baseUrl: "http://localhost:8080/v1",
+      env: ["API_KEY"]
+    }
+  },
+  models: [{ provider: "localhost", model_id: "qwen-local", contextWindowTokens: 32768 }]
+})
+
+const definitions = await Effect.runPromise(ModelLock.pipe(Effect.provide(lock)))
+```
+
+`layerFileModelLock(path)` supplies the same service from an injected Effect `FileSystem`. Both layers validate the same schema. `modelLayerFromLock(policy, credentials)` consumes this service for inference. `bunModelServices({ env, lock })` accepts the layer directly. Worker applications pass the lock value as `workerModelServices({ scope: definitions })`.
+
+## Programmatic registry
+
+`ModelRegistry` supplies definitions for imports and updates. Its `load` method receives a cache policy, an optional provider scope, and an optional source URL. A service can declare its default `source` URL for imported entries.
+
+```ts
+import { Effect, Layer } from "effect"
+import { ModelRegistry } from "tardie/model/registry"
+import { resolveModelLock } from "tardie/model/resolution"
+
+const registry = Layer.succeed(ModelRegistry)({
+  source: "https://models.example.com/api.json",
+  load: () => Effect.succeed(snapshot)
+})
+
+const lock = await Effect.runPromise(
+  resolveModelLock(config, { previous }).pipe(Effect.provide(registry))
+)
+```
+
+Here, `snapshot` is a validated catalog, `config` supplies import connections and policy, and `previous` is an optional existing lock. Resolution preserves existing definitions and imports missing ones. Pass `refresh: true` to refresh sourced metadata. Complete custom definitions require no registry service. Missing definitions without a registry produce `ModelRegistryError`. Invalid definitions produce `ModelLockResolutionError`.
+
+`layerHttpModelRegistry` implements HTTP access with an explicit source URL, timeout, and cache repository. The CLI uses this layer by default. Embedded commands and setup prompts preserve an injected `ModelRegistry` service.
+
+## Custom models and updates
+
+Add custom providers and models directly to the lock, or supply a definition during initialization:
+
+```bash
+tdg init local-agent --provider localhost --provider-config '{"protocol":"openai-chat-completions","baseUrl":"http://localhost:8080/v1","env":["API_KEY"],"models":{"qwen-local":{"metadata":{"contextWindowTokens":32768,"maxOutputTokens":4096,"toolCall":true}}}}' --default-model qwen-local
+```
+
+The CLI writes these definitions to the lock. Interactive setup asks for context size, an optional output limit, and tool support for an unlisted model.
+
+```bash
+tdg models lock
+```
+
+This command refreshes metadata and pricing for entries with `source`. It preserves manual definitions, provider connections, and request options. To keep an edited definition independent of future refreshes, remove its `source`. If any source lacks a complete definition, the command fails and preserves the saved lock. Successful writes replace the lock atomically.
+
+For a schema-1 project, setup commands migrate saved metadata and manifest connections into schema 2. `tdg models lock` also migrates the project, then refreshes sourced definitions. Migration writes the lock before removing provider definitions from platform manifests. Runtime hosts require schema 2.
+
+Restart the Bun server or redeploy the Worker to load lock edits.
 
 ## Call and control methods
 

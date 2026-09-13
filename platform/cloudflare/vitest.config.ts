@@ -13,21 +13,7 @@ export default defineConfig({
         CATALOG_MIGRATION: catalogMigration,
         TARDIGRADE_TOKEN: "workers-test-token",
         TARDIGRADE_ALARM_DELAY_MILLIS: "60000",
-        TARDIGRADE_MODEL_CATALOG_URL: "https://models.test/catalog.json",
-        TARDIGRADE_MODEL_CATALOG_LOAD_POLICY: "cache-first",
-        TARDIGRADE_CONFIG: JSON.stringify({
-          models: {
-            default: { provider: "openai", model_id: "gpt-test" },
-            allow: "*",
-            providers: {
-              openai: {
-                baseUrl: "https://api.openai.test/v1",
-                protocol: "openai-chat-completions",
-                env: ["OPENAI_API_KEY"]
-              }
-            }
-          }
-        }),
+        TARDIGRADE_CONFIG: "{}",
         OPENAI_API_KEY: "workers-test-key"
       }
     }

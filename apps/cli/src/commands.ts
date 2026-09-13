@@ -2,7 +2,7 @@ import { modelConfigOf } from "@clavia/tardigrade-model/config"
 import { Clock, Console, Effect, Layer, Option } from "effect"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
 import { ACTOR_NAME_PATTERN, type Actor } from "tardie"
 import {
@@ -19,14 +19,17 @@ import {
 
 import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
-import { modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-server/config"
+import { modelCatalogConfigOf, type ModelConfig, type Env } from "@clavia/tardigrade-server/config"
 
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary, loadBuiltActorModule } from "./build"
-import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
+import { modelRegistryUrlOf, resolve as resolveSetting, projectConfigPathIn, readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, devLayersForFrom, openBrowser } from "./dev"
 import { DEFAULT_ACTOR_ENTRY, DEFAULT_INIT_ACTOR_NAME, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 import { withLoader } from "./loader"
-import { resolveModelLock, writeModelLock } from "./model-lock"
+import { writeModelLock } from "./model-lock"
+import { resolveModelLock } from "@clavia/tardigrade-model/resolution"
+import type { ModelLockData } from "@clavia/tardigrade-model/lock"
+import { withModelRegistry } from "./model-registry"
 import { DEFAULT_INIT_TEMPLATE, INIT_TEMPLATES } from "./template"
 import {
   defaultModelFrom,
@@ -47,10 +50,7 @@ import {
   setupProviderPrompt,
   setupSummary,
   type ProviderAnswers,
-  writeDefaultSetup,
-  writeProviderSetup,
-  writeSetup,
-  writeSetupPlan
+  writeSetup
 } from "./setup"
 import {
   DEFAULT_DETAIL_WIDTH,
@@ -235,6 +235,22 @@ export const NO_MODEL_NOTICE =
 // notice instead (commands.test.ts, "dev asks only where someone can answer").
 const canAsk = (): boolean => process.stdin.isTTY === true
 
+const modelRegistry = Flag.String("model-registry").pipe(
+  Flag.withDescription("The models.dev-compatible registry URL. Saved for later setup and lock updates."),
+  Flag.optional
+)
+
+const registryCli = (cli: CliServices, flag?: string, saved?: string) => Effect.try({
+  try: (): CliServices => {
+    const source = resolveSetting(flag, cli.env["TARDIGRADE_MODEL_CATALOG_URL"], saved)
+    return source === undefined ? cli : {
+      ...cli,
+      env: { ...cli.env, TARDIGRADE_MODEL_CATALOG_URL: modelRegistryUrlOf(source) }
+    }
+  },
+  catch: userErrorOf
+})
+
 const setupPromptOptionsIn = (root: string, env: Readonly<Record<string, string | undefined>>) => {
   const catalog = modelCatalogConfigOf(env)
   return {
@@ -275,22 +291,19 @@ const configuredModels = (
   }
 })
 
-const resolveConfiguredModelLock = (cli: CliServices, models: ModelConfig) => Effect.gen(function*() {
+const resolveConfiguredModelLock = (cli: CliServices, models: ModelConfig, previous?: ModelLockData, refresh = false, source?: string) => Effect.gen(function*() {
   const catalog = modelCatalogConfigOf(cli.env)
-  return yield* Effect.tryPromise({
-    try: () => resolveModelLock(models, {
-      sourceUrl: catalog.sourceUrl,
-      cachePath: resolve(cli.cwd, catalog.cachePath),
-      timeoutMillis: catalog.timeoutMillis,
-      fetch: cli.fetch
-    }),
-    catch: userErrorOf
-  })
+  return yield* withModelRegistry(resolveModelLock(models, { ...(previous === undefined ? {} : { previous }), refresh, ...(source === undefined ? {} : { source }) }), {
+    sourceUrl: catalog.sourceUrl,
+    cachePath: resolve(cli.cwd, catalog.cachePath),
+    timeoutMillis: catalog.timeoutMillis,
+    fetch: cli.fetch
+  }).pipe(Effect.mapError(userErrorOf))
 })
 
-const persistModelLock = (cli: CliServices, lock: Awaited<ReturnType<typeof resolveModelLock>>) =>
+const persistModelLock = (cli: CliServices, lock: ModelLockData) =>
   Effect.tryPromise({
-    try: () => writeModelLock(cli.cwd, lock),
+    try: () => writeModelLock(dirname(projectConfigPathIn(cli.cwd, cli.env)), lock),
     catch: userErrorOf
   })
 
@@ -299,9 +312,11 @@ const writeSetupWithLock = <A, E, R>(
   models: ModelConfig,
   write: Effect.Effect<A, E, R>
 ) => Effect.gen(function*() {
-  const lock = yield* resolveConfiguredModelLock(cli, models)
+  const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+  const lock = yield* resolveConfiguredModelLock(cli, models, project.modelLock)
+  const path = yield* persistModelLock(cli, lock)
   const files = yield* write
-  return [files, yield* persistModelLock(cli, lock)] as const
+  return [files, path] as const
 })
 
 const setupOutput = (asJson: boolean, value: object, summary: string, modelLock: string): string =>
@@ -316,11 +331,13 @@ export const setupProviderCommand = Command.make("provider", {
     Argument.withDescription("The provider connection as JSON. Secret values stay in environment variables."),
     Argument.optional
   ),
+  modelRegistry,
   json
 }, (flags) =>
   Effect.gen(function*() {
-    const cli = yield* Cli
-    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+    const context = yield* Cli
+    const project = yield* Effect.mapError(readProjectConfig(context.cwd, context.env), userErrorOf)
+    const cli = yield* registryCli(context, stated(flags.modelRegistry), project.modelRegistry)
     if (project.models.default === undefined) {
       return yield* userErrorOf("the first provider and default must be configured together; run `tdg setup`")
     }
@@ -337,7 +354,7 @@ export const setupProviderCommand = Command.make("provider", {
     const [files, modelLock] = yield* writeSetupWithLock(
       cli,
       configuredModels(project.models, [answers]),
-      Effect.mapError(writeProviderSetup(cli.cwd, [answers], cli.env), userErrorOf)
+      Effect.mapError(writeSetup(cli.cwd, { providers: [answers] }, cli.env), userErrorOf)
     )
     yield* Console.log(setupOutput(
       flags.json,
@@ -361,15 +378,17 @@ export const setupProviderCommand = Command.make("provider", {
 export const setupDefaultCommand = Command.make("default", {
   provider: setupProvider,
   model: setupModel,
+  modelRegistry,
   json
 }, (flags) => Effect.gen(function*() {
-  const cli = yield* Cli
-  const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+  const context = yield* Cli
+  const project = yield* Effect.mapError(readProjectConfig(context.cwd, context.env), userErrorOf)
+  const cli = yield* registryCli(context, stated(flags.modelRegistry), project.modelRegistry)
   const declared = yield* Effect.try({
     try: () => defaultModelFrom({ provider: stated(flags.provider), model: stated(flags.model) }),
     catch: userErrorOf
   })
-  const selected: { readonly provider: string; readonly model_id: string; readonly models?: ProviderAnswers["models"] } = declared ?? (canAsk()
+  const selected: NonNullable<ModelConfig["default"]> & { readonly models?: ProviderAnswers["models"] } = declared ?? (canAsk()
     ? yield* Effect.mapError(setupDefaultPrompt(Object.keys(project.models.providers), {
       ...setupPromptOptionsIn(cli.cwd, cli.env),
       providers: project.models.providers,
@@ -379,14 +398,15 @@ export const setupDefaultCommand = Command.make("default", {
   if (project.models.providers[selected.provider] === undefined) {
     return yield* userErrorOf(`provider ${JSON.stringify(selected.provider)} is not configured; run \`tdg setup provider\``)
   }
-  const updates: ReadonlyArray<ProviderAnswers> = selected.models === undefined ? [] : [{
-    ...project.models.providers[selected.provider]!, provider: selected.provider, models: selected.models
-  }]
+  const connection = project.models.providers[selected.provider]!
+  const updates: ReadonlyArray<ProviderAnswers> = selected.models !== undefined
+    ? [{ ...connection, provider: selected.provider, models: selected.models }]
+    : []
   const reference = { provider: selected.provider, model_id: selected.model_id }
   const [files, modelLock] = yield* writeSetupWithLock(
     cli,
     configuredModels(project.models, updates, reference),
-    Effect.mapError(updates.length === 0 ? writeDefaultSetup(cli.cwd, reference, cli.env) : writeSetupPlan(cli.cwd, { providers: updates, default: reference }, cli.env), userErrorOf)
+    Effect.mapError(writeSetup(cli.cwd, { providers: updates, default: reference }, cli.env), userErrorOf)
   )
   yield* Console.log(setupOutput(flags.json, defaultSetupJson(files, selected), defaultSetupSummary(files, selected), modelLock))
 })).pipe(
@@ -401,6 +421,7 @@ export const setupCommand = Command.make("setup", {
   provider: setupProvider,
   providerConfig: setupProviderConfig,
   defaultModel: setupDefaultModel,
+  modelRegistry,
   json
 }, (flags) => Effect.gen(function*() {
   const declared = yield* Effect.try({
@@ -411,25 +432,13 @@ export const setupCommand = Command.make("setup", {
     }),
     catch: userErrorOf
   })
-  if (declared !== undefined) {
-    const cli = yield* Cli
-    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
-    const selected = { provider: declared.provider, model_id: declared.model_id }
-    const [files, modelLock] = yield* writeSetupWithLock(
-      cli,
-      configuredModels(project.models, [declared], selected),
-      Effect.mapError(writeSetup(cli.cwd, declared, cli.env), userErrorOf)
-    )
-    yield* Console.log(setupOutput(flags.json, setupJson(files, declared), setupSummary(files, declared), modelLock))
-    return
-  }
-  if (!canAsk()) return yield* userErrorOf(NON_INTERACTIVE_SETUP)
-  const cli = yield* Cli
-  const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
-  const plan = yield* Effect.mapError(setupFlowPrompt({
-    ...setupPromptOptionsIn(cli.cwd, cli.env),
-    existing: project.models
-  }), userErrorOf)
+  if (declared === undefined && !canAsk()) return yield* userErrorOf(NON_INTERACTIVE_SETUP)
+  const context = yield* Cli
+  const project = yield* Effect.mapError(readProjectConfig(context.cwd, context.env), userErrorOf)
+  const cli = yield* registryCli(context, stated(flags.modelRegistry), project.modelRegistry)
+  const plan = declared === undefined
+    ? yield* Effect.mapError(setupFlowPrompt({ ...setupPromptOptionsIn(cli.cwd, cli.env), existing: project.models }), userErrorOf)
+    : { providers: [declared], default: { provider: declared.provider, model_id: declared.model_id } }
   if (plan === undefined) {
     yield* Console.log("setup cancelled")
     return
@@ -437,11 +446,13 @@ export const setupCommand = Command.make("setup", {
   const [files, modelLock] = yield* writeSetupWithLock(
     cli,
     configuredModels(project.models, plan.providers, plan.default),
-    Effect.mapError(writeSetupPlan(cli.cwd, plan, cli.env), userErrorOf)
+    Effect.mapError(writeSetup(cli.cwd, plan, cli.env), userErrorOf)
   )
-  yield* Console.log(setupOutput(false, {}, setupPlanSummary(files, plan), modelLock))
+  yield* Console.log(declared === undefined
+    ? setupOutput(false, {}, setupPlanSummary(files, plan), modelLock)
+    : setupOutput(flags.json, setupJson(files, declared), setupSummary(files, declared), modelLock))
 })).pipe(
-  Command.withDescription("Configure project providers and a default model in the platform manifests. Entered credentials are stored in .dev.vars at 0600."),
+  Command.withDescription("Configure locked providers and project model policy. Entered credentials are stored in .dev.vars at 0600."),
   Command.withExamples([{
     command: "tdg setup --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4.6",
     description: "Configure the first provider and default atomically"
@@ -465,10 +476,12 @@ export const initCommand = Command.make("init", {
   provider: setupProvider,
   providerConfig: setupProviderConfig,
   defaultModel: setupDefaultModel,
+  modelRegistry,
   json
 }, (flags) =>
   Effect.gen(function*() {
-    const cli = yield* Cli
+    const context = yield* Cli
+    const cli = yield* registryCli(context, stated(flags.modelRegistry))
     const declaredName = stated(flags.name)
     const name = declaredName ?? (canAsk()
       ? yield* Prompt.String({
@@ -520,7 +533,7 @@ export const initCommand = Command.make("init", {
         ),
         catch: userErrorOf
       })
-      const files = yield* Effect.mapError(writeSetup(initialized.directory, answers, cli.env), userErrorOf)
+      const files = yield* Effect.mapError(writeSetup(initialized.directory, { providers: [answers], default: selected }, cli.env), userErrorOf)
       yield* Console.log(flags.json
         ? jsonOf({ ...initialized, setup: setupJson(files, answers) })
         : initSummary(initialized, files, answers, {
@@ -614,7 +627,7 @@ export const devCommand = Command.make("dev", {
       )
     }
     const localSecrets = yield* readSetupEnv(cli.cwd)
-    const runtimeEnv = runtimeEnvironmentOf(cli.env, localSecrets)
+    const runtimeEnv: Env & { readonly TARDIGRADE_CONFIG_PATH: string } = { ...runtimeEnvironmentOf(cli.env, localSecrets), TARDIGRADE_CONFIG_PATH: projectConfigPathIn(cli.cwd, cli.env) }
     const project = yield* Effect.mapError(readProjectConfig(cli.cwd, runtimeEnv), userErrorOf)
     const config = yield* Effect.try({
       try: () => resolveServer({
@@ -632,11 +645,12 @@ export const devCommand = Command.make("dev", {
       ? Effect.succeed(config)
       : canAsk()
       ? Effect.gen(function*() {
-        const answers = yield* Effect.mapError(setupPromptIn(cli.cwd, runtimeEnv), userErrorOf)
+        const setupCli = yield* registryCli({ ...cli, env: runtimeEnv }, undefined, project.modelRegistry)
+        const answers = yield* Effect.mapError(setupPromptIn(cli.cwd, setupCli.env), userErrorOf)
         const [files, modelLock] = yield* writeSetupWithLock(
-          { ...cli, env: runtimeEnv },
+          setupCli,
           configuredModels(project.models, [answers], { provider: answers.provider, model_id: answers.model_id }),
-          Effect.mapError(writeSetup(cli.cwd, answers, runtimeEnv), userErrorOf)
+          Effect.mapError(writeSetup(cli.cwd, { providers: [answers], default: { provider: answers.provider, model_id: answers.model_id } }, setupCli.env), userErrorOf)
         )
         yield* Console.log(setupOutput(false, {}, setupSummary(files, answers), modelLock))
         const written = yield* readSetupEnv(cli.cwd)
@@ -646,7 +660,7 @@ export const devCommand = Command.make("dev", {
             port: Option.getOrUndefined(flags.port),
             db: stated(flags.db),
             maxConcurrentThreads: Option.getOrUndefined(flags.maxConcurrentThreads)
-          }, runtimeEnvironmentOf(cli.env, written), writtenProject),
+          }, { ...runtimeEnvironmentOf(cli.env, written), TARDIGRADE_CONFIG_PATH: runtimeEnv.TARDIGRADE_CONFIG_PATH }, writtenProject),
           catch: userErrorOf
         })
       })
@@ -881,27 +895,17 @@ export const providersCommand = Command.make("providers", {
     ])
   )
 
-export const modelLockCommand = Command.make("lock", { json }, (flags) =>
+export const modelLockCommand = Command.make("lock", { json, modelRegistry }, (flags) =>
   Effect.gen(function*() {
-    const cli = yield* Cli
-    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
-    const catalog = modelCatalogConfigOf(cli.env)
-    const lock = yield* Effect.tryPromise({
-      try: () => resolveModelLock(project.models, {
-        sourceUrl: catalog.sourceUrl,
-        cachePath: resolve(cli.cwd, catalog.cachePath),
-        timeoutMillis: catalog.timeoutMillis,
-        fetch: cli.fetch
-      }),
-      catch: userErrorOf
-    })
-    const path = yield* Effect.tryPromise({
-      try: () => writeModelLock(cli.cwd, lock),
-      catch: userErrorOf
-    })
-    yield* Console.log(flags.json ? jsonOf({ path, ...lock }) : `locked ${lock.catalog.providers.length} providers at ${path}`)
+    const context = yield* Cli
+    const project = yield* Effect.mapError(readProjectConfig(context.cwd, context.env), userErrorOf)
+    const cli = yield* registryCli(context, stated(flags.modelRegistry), project.modelRegistry)
+    const lock = yield* resolveConfiguredModelLock(cli, project.models, project.modelLock, true, stated(flags.modelRegistry) ?? context.env["TARDIGRADE_MODEL_CATALOG_URL"])
+    const path = yield* persistModelLock(cli, lock)
+    yield* Effect.mapError(writeSetup(cli.cwd, {}, cli.env), userErrorOf)
+    yield* Console.log(flags.json ? jsonOf({ path, ...lock }) : `locked ${Object.keys(lock.providers).length} providers at ${path}`)
   })).pipe(
-    Command.withDescription("Resolve configured models from the public catalog into the deployment lock."),
+    Command.withDescription("Resolve configured models from the selected registry into the deployment lock."),
     Command.withExamples([{ command: "tdg models lock", description: "Update the deployment model lock" }])
   )
 

@@ -1,5 +1,6 @@
+import { layerModelLock, ModelLock } from "@clavia/tardigrade-model/lock"
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
-import { expect, test } from "bun:test"
+import { expect, test, spyOn } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -17,10 +18,14 @@ test("Bun model services resolve configuration and supply Effect inference by de
     const configFile = join(directory, "wrangler.jsonc")
     await writeFile(configFile, JSON.stringify({ vars: { TARDIGRADE_CONFIG: { models: {
       allow: "*",
-      providers: { openai: { protocol: "openai-responses", baseUrl: "https://example.test/v1", env: ["TEST_MODEL_KEY"] } },
       default: { provider: "openai", model_id: "gpt" }
     } } } }))
-    let fetched = 0
+    await writeFile(join(directory, "models.lock.json"), JSON.stringify({
+      schema: 2,
+      providers: { openai: { protocol: "openai-responses", baseUrl: "https://example.test/v1", env: ["TEST_MODEL_KEY"] } },
+      models: [{ provider: "openai", model_id: "gpt", contextWindowTokens: 128000, maxOutputTokens: 16000 }]
+    }))
+    const fetching = spyOn(globalThis, "fetch").mockRejectedValue(new Error("registry must not be contacted"))
     const services = await bunModelServices({
       configFile: pathToFileURL(configFile),
       model: { providerLayer: (options) => {
@@ -31,15 +36,12 @@ test("Bun model services resolve configuration and supply Effect inference by de
         return { maxOutputTokens: 1234, timeout: { idleMs: 12345 } }
       } },
       env: { PORT: "4321", TEST_MODEL_KEY: "test-secret", TARDIGRADE_MODEL_CATALOG_CACHE: join(directory, "catalog.json") },
-      catalog: { fetch: (async () => {
-        fetched += 1
-        return Response.json({ openai: { id: "openai", name: "OpenAI", models: {
-          gpt: { id: "gpt", name: "GPT", limit: { context: 128000, output: 16000 } }
-        } } })
-      }) as unknown as typeof fetch }
+
     })
     expect(services.config.port).toBe(4321)
-    expect(fetched).toBe(1)
+    expect(services.config.modelLockPath).toBe(join(directory, "models.lock.json"))
+    expect(fetching).not.toHaveBeenCalled()
+    fetching.mockRestore()
     const catalog = await Effect.runPromise(services.api.catalog.read)
     expect(catalog.policy.default).toEqual({ provider: "openai", model_id: "gpt" })
     expect(catalog.snapshot?.providers[0]?.models[0]?.id).toBe("gpt")
@@ -69,4 +71,51 @@ test("Bun model services reject missing explicit configuration before catalog lo
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test("Bun rejects missing and invalid locks without a registry fallback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "model-services-"))
+  try {
+    const configFile = join(directory, "wrangler.jsonc")
+    const models = { allow: "*", default: { provider: "local", model_id: "qwen" } }
+    await writeFile(configFile, JSON.stringify({ vars: { TARDIGRADE_CONFIG: { models } } }))
+    await expect(bunModelServices({ configFile, env: {} })).rejects.toThrow("models.lock.json")
+    const lockFile = join(directory, "custom.lock.json")
+    await writeFile(lockFile, JSON.stringify({ schema: 2, providers: {}, models: [] }))
+    await expect(bunModelServices({ configFile, lockFile, env: {} })).rejects.toThrow("absent")
+    await writeFile(lockFile, "{")
+    await expect(bunModelServices({ configFile, lockFile, env: {} })).rejects.toThrow(`${lockFile} is invalid JSON:`)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("Bun can boot without models or registry configuration", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "model-services-"))
+  try {
+    const configFile = join(directory, "wrangler.jsonc")
+    await writeFile(configFile, "{}")
+    const services = await bunModelServices({ configFile, env: { TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "invalid" } })
+    expect((await Effect.runPromise(services.api.catalog.read)).snapshot?.providers).toEqual([])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("Bun shares in-memory locked state between discovery and inference", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "model-services-memory-"))
+  const hashing = spyOn(crypto.subtle, "digest")
+  try {
+    const configFile = join(directory, "wrangler.jsonc")
+    await writeFile(configFile, JSON.stringify({ vars: { TARDIGRADE_CONFIG: { models: { allow: "*", default: { provider: "openai", model_id: "gpt" } } } } }))
+    const lock = { schema: 2, providers: { openai: { protocol: "openai-responses", baseUrl: "https://example.test/v1", env: ["TEST_MODEL_KEY"] } }, models: [{ provider: "openai", model_id: "gpt", contextWindowTokens: 32000 }] }
+    const services = await bunModelServices({ configFile, env: { TEST_MODEL_KEY: "secret" }, lock: layerModelLock(lock), model: { providerLayer } })
+    const discovery = await Effect.runPromise(services.api.catalog.read)
+    expect(services.config.model.providers.openai?.baseUrl).toBe("https://example.test/v1")
+    await Effect.runPromise(Effect.gen(function*() {
+      expect((yield* ModelLock).models[0]?.model_id).toBe("gpt")
+      expect((yield* inferenceClient).resolve()).toMatchObject({ contextWindowTokens: 32000, catalogRevision: discovery.snapshot?.revision })
+    }).pipe(Effect.provide(services.layers)))
+    expect(hashing).toHaveBeenCalledTimes(1)
+  } finally { hashing.mockRestore(); await rm(directory, { recursive: true, force: true }) }
 })

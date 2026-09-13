@@ -1,3 +1,5 @@
+import { modelProvidersOf } from "@clavia/tardigrade-model/config"
+import { ModelRegistry } from "@clavia/tardigrade-model/registry"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -12,9 +14,10 @@ import {
   defaultModelFrom,
   envPathIn,
   gitignorePathIn,
-  modelsDevAt,
+  modelRegistryAt,
   PRESETS,
   providerAnswersFrom,
+  providerConfigWithAnswers,
   readSetupEnv,
   runtimeEnvironmentOf,
   SECRETS_MODE,
@@ -22,13 +25,14 @@ import {
   setupJson,
   setupPlanSummary,
   setupSummary,
-  writeDefaultSetup,
-  writeProviderSetup,
   writeSetup,
-  writeSetupPlan,
   type ProviderAnswers,
   type SetupAnswers
 } from "./setup"
+
+// `tdg setup` against a home directory this file owns. The prompts are the one part a test cannot
+// drive, so the module splits at the answers: everything after them is a value, and the key's whole
+// journey from answer to file is checked here.
 
 const KEY = "sk-do-not-print-me"
 
@@ -44,7 +48,7 @@ const answers: SetupAnswers = {
 let root = ""
 
 const write = (given: SetupAnswers = answers) =>
-  Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, given), BunFileSystem.layer)))
+  Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, { providers: [given], default: { provider: given.provider, model_id: given.model_id } }), BunFileSystem.layer)))
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "tdg-project-"))
@@ -89,7 +93,7 @@ describe("model discovery", () => {
   }, { headers: { etag: "catalog-7" } })) as typeof fetch
 
   test("models.dev supplies compatible provider models with its revision", async () => {
-    expect(await modelsDevAt("openrouter", { fetch: fetcher })).toMatchObject({
+    expect(await Effect.runPromise(modelRegistryAt("openrouter", { fetch: fetcher }))).toMatchObject({
       revision: "catalog-7",
       env: ["OPENROUTER_API_KEY"],
       models: [{ id: "agent" }, { id: "unknown" }]
@@ -97,19 +101,19 @@ describe("model discovery", () => {
   })
 
   test("a caller can replace the visible selection policy", async () => {
-    const found = await modelsDevAt("openrouter", {
+    const found = await Effect.runPromise(modelRegistryAt("openrouter", {
       fetch: fetcher,
       selectionPolicy: { outputModality: "image", requireToolCalls: false }
-    })
+    }))
 
     expect(found.models.map((model) => model.id)).toEqual(["image", "unknown"])
   })
 
   test("a project cache prevents a second catalog fetch", async () => {
     const cachePath = join(root, ".tardigrade", "models.json")
-    const fresh = await modelsDevAt("openrouter", { cachePath, fetch: fetcher })
+    const fresh = await Effect.runPromise(modelRegistryAt("openrouter", { cachePath, fetch: fetcher }))
     const refused = (async () => { throw new Error("source should not be called") }) as unknown as typeof fetch
-    const cached = await modelsDevAt("openrouter", { cachePath, fetch: refused })
+    const cached = await Effect.runPromise(modelRegistryAt("openrouter", { cachePath, fetch: refused }))
 
     expect(fresh.status).toBe("fresh")
     expect(cached.status).toBe("cached")
@@ -221,13 +225,7 @@ describe("writeSetup", () => {
     expect(project.models).toEqual({
       default: { provider: "openai", model_id: "a-model" },
       allow: "*",
-      providers: {
-        openai: {
-          baseUrl: "https://api.example.com/v1",
-          protocol: "openai-responses",
-          env: ["OPENAI_API_KEY"]
-        }
-      }
+      providers: {}
     })
     const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
     expect(held.OPENAI_API_KEY).toBe(KEY)
@@ -266,18 +264,11 @@ describe("writeSetup", () => {
       models: {
         default: { provider: "openai", model_id: "a-model" },
         allow: "*",
-        providers: {
-          openai: {
-            baseUrl: "https://api.example.com/v1",
-            protocol: "openai-responses",
-            env: ["OPENAI_API_KEY"]
-          }
-        }
       }
     })
   })
 
-  test("a later setup keeps prior providers and changes the default", async () => {
+  test("a later setup keeps credentials and changes the default", async () => {
     await write()
     const first = await readFile(projectConfigPathIn(root), "utf8")
     await writeFile(
@@ -294,16 +285,13 @@ describe("writeSetup", () => {
     })
     const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
     const model = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8")).models
-    expect(Object.keys(model.providers).sort()).toEqual(["openai", "openrouter"])
+    expect(Object.keys(model.providers)).toEqual([])
     expect(model.default).toEqual({ provider: "openrouter", model_id: "another-model" })
-    expect(model.providers.openai?.baseUrl).toBe("https://api.example.com/v1")
-    expect(model.providers.openrouter?.baseUrl).toBe("https://secondary.example.com/v1")
-    expect(await readFile(projectConfigPathIn(root), "utf8")).toContain("// Keep this provider note.")
     expect(held.OPENAI_API_KEY).toBe(KEY)
     expect(held.OPENROUTER_API_KEY).toBe("secondary-key")
   })
 
-  test("later provider and default writes preserve runnable configuration", async () => {
+  test("provider writes keep policy and default writes change it", async () => {
     await write()
     const anthropic: ProviderAnswers = {
       provider: "anthropic",
@@ -312,15 +300,15 @@ describe("writeSetup", () => {
       protocol: "anthropic-messages",
       env: ["ANTHROPIC_API_KEY"]
     }
-    await Effect.runPromise(Effect.orDie(Effect.provide(writeProviderSetup(root, [anthropic]), BunFileSystem.layer)))
+    await Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, { providers: [anthropic] }), BunFileSystem.layer)))
     let project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
     expect(project.models.default).toEqual({ provider: "openai", model_id: "a-model" })
-    expect(Object.keys(project.models.providers).sort()).toEqual(["anthropic", "openai"])
+    expect(Object.keys(project.models.providers)).toEqual([])
 
-    await Effect.runPromise(Effect.orDie(Effect.provide(writeDefaultSetup(root, {
+    await Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, { default: {
       provider: "anthropic",
       model_id: "claude-sonnet-4-6"
-    }), BunFileSystem.layer)))
+    } }), BunFileSystem.layer)))
     project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
     expect(project.models.default).toEqual({ provider: "anthropic", model_id: "claude-sonnet-4-6" })
   })
@@ -333,13 +321,13 @@ describe("writeSetup", () => {
       protocol: "openai-chat-completions",
       env: ["OPENROUTER_API_KEY"]
     }
-    await Effect.runPromise(Effect.orDie(Effect.provide(writeSetupPlan(root, {
+    await Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, {
       providers: [answers, second],
       default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" }
     }), BunFileSystem.layer)))
     const project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
     const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
-    expect(Object.keys(project.models.providers).sort()).toEqual(["openai", "openrouter"])
+    expect(Object.keys(project.models.providers)).toEqual([])
     expect(project.models.default).toEqual({ provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" })
     expect(held).toMatchObject({ OPENAI_API_KEY: KEY, OPENROUTER_API_KEY: "router-key" })
   })
@@ -394,14 +382,51 @@ describe("what setup prints", () => {
   })
 })
 
-
-test("provider updates preserve custom model definitions", async () => {
-  const first = { ...answers, models: { local: { metadata: { contextWindowTokens: 32768, toolCall: true } } } }
+test("declarative model definitions survive provider updates", async () => {
+  const first = setupAnswersFrom({ provider: "local", defaultModel: "qwen", providerConfig: JSON.stringify({
+    baseUrl: "http://localhost:8080/v1", protocol: "openai-chat-completions", env: ["API_KEY"],
+    models: { qwen: { metadata: { contextWindowTokens: 32768, toolCall: true }, options: { temperature: 0.25 } } }
+  }) })!
   await write(first)
-  await Effect.runPromise(writeProviderSetup(root, [{ ...answers, models: { another: { metadata: { contextWindowTokens: 8192 } } } }]).pipe(Effect.provide(BunFileSystem.layer)))
-  const document = parse(await readFile(join(root, "wrangler.jsonc"), "utf8"))
-  expect(document.vars.TARDIGRADE_CONFIG.models.providers.openai.models).toEqual({
-    local: { metadata: { contextWindowTokens: 32768, toolCall: true } },
-    another: { metadata: { contextWindowTokens: 8192 } }
+  const update = providerAnswersFrom({ provider: "local", config: JSON.stringify({
+    baseUrl: "http://localhost:9090/v1", protocol: "openai-chat-completions", env: ["API_KEY"],
+    models: { another: { metadata: { contextWindowTokens: 16384 } } }
+  }) })!
+  await Effect.runPromise(Effect.provide(writeSetup(root, { providers: [update] }), BunFileSystem.layer))
+  const project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
+  expect(project.models.providers).toEqual({})
+  const merged = providerConfigWithAnswers(modelProvidersOf({ local: providerConfigWithAnswers(undefined, first) }).local, update)
+  expect(merged).toMatchObject({
+    baseUrl: "http://localhost:9090/v1",
+    models: {
+      qwen: { metadata: { contextWindowTokens: 32768, toolCall: true }, options: { temperature: 0.25 } },
+      another: { metadata: { contextWindowTokens: 16384 } }
+    }
   })
+})
+
+test("declarative metadata rejects unknown fields and invalid capability values", () => {
+  for (const metadata of [{ contextWindowTokens: 100, invented: true }, { contextWindowTokens: 100, toolCall: "yes" }]) {
+    expect(() => providerAnswersFrom({ provider: "local", config: JSON.stringify({
+      baseUrl: "http://localhost:8080/v1", protocol: "openai-chat-completions", env: ["API_KEY"], models: { qwen: { metadata } }
+    }) })).toThrow()
+  }
+})
+
+test("model prompts discover definitions through an injected registry", async () => {
+  const result = await Effect.runPromise(modelRegistryAt("fixture", {
+    fetch: (() => { throw new Error("HTTP must not be used") }) as unknown as typeof fetch
+  }).pipe(Effect.provideService(ModelRegistry, {
+    load: ({ policy }) => {
+      expect(policy).toBe("cache-first")
+      return Effect.succeed({
+        source: "custom", revision: "injected", refreshedAt: 0, status: "cached",
+        providers: [{ id: "fixture", name: "Fixture", env: ["FIXTURE_KEY"], models: [
+          { id: "agent", metadata: { contextWindowTokens: 32000, toolCall: true } },
+          { id: "no-tools", metadata: { contextWindowTokens: 32000, toolCall: false } }
+        ] }]
+      })
+    }
+  })))
+  expect(result).toEqual({ revision: "injected", status: "cached", env: ["FIXTURE_KEY"], models: [{ id: "agent" }] })
 })

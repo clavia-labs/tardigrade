@@ -47,14 +47,12 @@ describe("provider catalog pages", () => {
       required: ["baseUrl", "protocol", "env"],
       availability: { status: "unavailable", reason: "credential_missing" }
     })
-    expect(page.items.find((provider) => provider.id === "cloudflare-ai-gateway")).toMatchObject({
-      protocol: "openai-responses",
-      required: ["baseUrl", "env"]
-    })
+    expect(page.items.map((provider) => provider.id)).toEqual(["private-gateway"])
+    expect(providersPageOf({ ...catalog, providers: [] }, availability).items).toEqual([])
   })
 
   test("states Bedrock region and endpoint requirements", () => {
-    expect(providersPageOf(catalog, availability, { search: "bedrock" }).items[0]).toMatchObject({
+    expect(providersPageOf({ ...catalog, providers: [{ id: "amazon-bedrock", name: "Bedrock", env: [], models: [] }] }, availability, { search: "bedrock" }).items[0]).toMatchObject({
       id: "amazon-bedrock",
       protocol: "bedrock-converse",
       required: ["baseUrl", "env", "region"]
