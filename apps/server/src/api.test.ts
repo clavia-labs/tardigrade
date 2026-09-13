@@ -324,8 +324,9 @@ describe("actor methods", () => {
     expect(message?.inputSchema.$ref).toBe("#/$defs/AgentMessageInput")
     expect(message?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
       type: "object",
-      required: ["text"],
       properties: {
+        text: {},
+        content: {},
         model: {
           type: "object",
           required: ["provider", "model_id"],

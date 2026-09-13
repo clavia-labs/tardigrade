@@ -79,7 +79,11 @@ export const agentMessageMethod = actorMethod({
         let error: string | undefined
         if (event.type === "MessageReceived") {
           try {
-            Schema.decodeUnknownSync(AgentMessageReceived, { onExcessProperty: "error" })(event)
+            const content = (event as { readonly content?: unknown }).content
+            if (content !== undefined) {
+              Schema.decodeUnknownSync(MessageContent, { onExcessProperty: "error" })(content)
+            }
+            Schema.decodeUnknownSync(AgentMessageReceived)(event)
           } catch (failure) {
             error = failure instanceof Error ? failure.message : String(failure)
           }

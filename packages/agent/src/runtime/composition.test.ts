@@ -250,23 +250,28 @@ describe("infer component", () => {
       }
     })
     const agent = assembled(infer([nativeOutput], TEST_MODEL))
-    const events = await run(
-      Effect.gen(function* () {
-        yield* settleActor(agent)
-        return yield* readLog
-      }),
-      Layer.mergeAll(memoryLog([{
-        type: "MessageReceived",
-        id: "m1",
-        content: [{ type: "input_image", image_url: { url: "nested" } }],
-        at: 1
-      } as Event]), mind, noRouter, KeyValueStore.layerMemory)
-    )
-    expect(events.find((event) => event.type === "TurnFailed")).toMatchObject({
-      turn: "m1",
-      cause: "message_invalid",
-      attempts: 0
-    })
+    for (const content of [
+      [{ type: "input_text", text: "work", unsupported: true }],
+      [{ type: "input_image", image_url: { url: "nested" } }]
+    ]) {
+      const events = await run(
+        Effect.gen(function* () {
+          yield* settleActor(agent)
+          return yield* readLog
+        }),
+        Layer.mergeAll(memoryLog([{
+          type: "MessageReceived",
+          id: "m1",
+          content,
+          at: 1
+        } as Event]), mind, noRouter, KeyValueStore.layerMemory)
+      )
+      expect(events.find((event) => event.type === "TurnFailed")).toMatchObject({
+        turn: "m1",
+        cause: "message_invalid",
+        attempts: 0
+      })
+    }
     expect(seen).toEqual([])
   })
 
