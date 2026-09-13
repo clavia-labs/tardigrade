@@ -19,6 +19,9 @@ export const DEFAULT_CELLD_TEST_STORE_IMAGE = "quay.io/minio/minio@sha256:14cea4
 export const DEFAULT_CELLD_TEST_STORE_CLIENT_IMAGE = "quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727"
 
 const container = "container"
+// transport selects the E2E path; Celld v0.3.0 rejects capability callbacks with DataCloneError.
+const transport = process.env.TARDIGRADE_CELLD_TRANSPORT ?? "replay"
+if (transport !== "replay" && transport !== "capability") throw new Error("unknown sandbox transport")
 const port = Number(process.env.TARDIGRADE_CELLD_PORT ?? DEFAULT_CELLD_TEST_PORT)
 const timeoutMillis = Number(process.env.TARDIGRADE_CELLD_TIMEOUT_MILLIS ?? DEFAULT_CELLD_TEST_TIMEOUT_MILLIS)
 const loadedWorkerLimit = Number(
@@ -79,7 +82,7 @@ const waitForRuntime = async (): Promise<unknown> => {
   let lastError = "no response"
   while (Date.now() < until) {
     try {
-      const response = await fetch(`http://127.0.0.1:${port}`)
+      const response = await fetch(`http://127.0.0.1:${port}?transport=${transport}`)
       const body = await response.text()
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${body}`)
       return JSON.parse(body) as unknown
@@ -101,7 +104,7 @@ const cleanup = async (): Promise<void> => {
 }
 
 const main = async (): Promise<void> => {
-  console.log(`celld runtime ${celldImage}`)
+  console.log(`celld runtime ${celldImage}, transport ${transport}`)
   console.log(`loaded worker limit ${loadedWorkerLimit}`)
   try {
     await command([
@@ -155,7 +158,7 @@ const main = async (): Promise<void> => {
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error(`unexpected Celld result: ${JSON.stringify(actual)}`)
     }
-    console.log("celld replay passed")
+    console.log(`celld ${transport} passed`)
   } catch (cause) {
     for (const name of [runtime, store]) {
       const logs = await command(["logs", name], [0, 1])
