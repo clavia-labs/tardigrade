@@ -28,7 +28,7 @@ We took inspiration from React. React derives its component tree and declared ef
 - **Strongly typed, built on Effect.** Typed services and Layers make each component's dependencies explicit. A missing service fails during compile.
 - **Crash proof.** A durable host derives unfinished work from the stored log.
 - **Serverless.** All you need is a durable store, no process has to stay alive. Any new invocation reads the log, runs the transitions it owes, and settles.
-- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with state forked from any checkpoint. Copy a thread prefix onto a new root with `tdg fork` or `host.forkThread`.
+- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with state forked from any checkpoint. Copy a thread's rows onto a new root with `tdg thread fork` or `host.forkThread`.
 
 ## Quickstart
 
@@ -88,8 +88,6 @@ bun add tardie
 ```
 
 You can use `npm install tardie` instead. Install `tardie@next` to test a release candidate.
-
-A run can [fork a thread log from a checkpoint](docs/how-to/fork-experiments.md) onto a new root for an experiment. The source log stays unchanged.
 
 ### Create a component
 
