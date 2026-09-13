@@ -1,5 +1,5 @@
-import { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, type ContextPolicy, type CompactionPolicy } from "./context"
-export { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, suffixOf, DEFAULT_COMPACTION_POLICY, type ContextPolicy, type ContextWindowTokens, type CompactionPolicy } from "./context"
+import { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, type ContextPolicy, type CompactionPolicy, DEFAULT_COMPACTION_POLICY } from "./context"
+export { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, suffixOf, DEFAULT_COMPACTION_POLICY, type ContextPolicy, type CompactionPolicy } from "./context"
 import { replayOf } from "../inference/model/continuation"
 import { renderMessageEntries } from "../projection/messages"
 import { upcastError } from "../log/upcast"
@@ -26,7 +26,7 @@ import {
 } from "../projection/transcript"
 import { LanguageModel } from "effect/unstable/ai"
 import { summarize } from "./compaction/model"
-import { BindingSettings, ModelSelection } from "@clavia/tardigrade-model/settings"
+import { BindingSettings, ModelSelection, modelSettingsFor } from "@clavia/tardigrade-model/settings"
 import { modelRefOf, type ModelRef } from "../inference/reference"
 import type { AgentComponent } from "../runtime/composition"
 
@@ -61,8 +61,9 @@ const selectedModelOf = (log: ReadonlyArray<Event>): ModelRef | undefined => {
 
 const contextPolicyFrom = (
   log: ReadonlyArray<Event>,
-  policy: Partial<CompactionPolicy>
-): ContextPolicy => contextPolicyOf(policy, selectedModelOf(log))
+  policy: Partial<CompactionPolicy>,
+  window: number
+): ContextPolicy => contextPolicyOf(policy, window)
 
 // renderedWeights measures projected messages at their owning events; an unresolved protocol conservatively retains native state (compaction.properties.test.ts).
 const renderedWeights = (events: ReadonlyArray<Event>, policy: ContextPolicy, model: ModelRef | undefined): ReadonlyMap<Event, number> => {
@@ -119,7 +120,9 @@ const cutOf = (
   const responses = responsesOf(log)
   const firstCalls = responses.firstCalls
   const priorIndex = keepFromIndex(log, checkpointOf(log).keepFrom, responses)
-  const served = knownServed ?? new Set(log.map(turnOf).filter((t): t is string => t !== undefined))
+  const served = new Set(knownServed ?? log.map(turnOf).filter((t): t is string => t !== undefined))
+  const current = turnView(log)[0]
+  if (current?.type === "MessageReceived") served.add(String(current.id))
   const weights = renderedWeights(log, policy, model)
   let chars = 0
   let raw = priorIndex
@@ -234,11 +237,9 @@ const compactionTransition = (
           ].join("\n\n")
           // A summarize attempt offers no tools: the only sane action is a completion.
           const selection = yield* ModelSelection
-          const summaryModel = input.model === undefined
-            ? undefined
-            : selection.resolve?.(input.model).model ?? input.model
+          const summaryModel = selection.resolve?.(input.model).model ?? input.model
           const summary = yield* summarize(brief, { ...self, turn: `compact-${input.keepFrom}` }, summaryModel).pipe(
-            Effect.provideService(BindingSettings, yield* (selection.settings?.(summaryModel) ?? BindingSettings)),
+            Effect.provideService(BindingSettings, yield* modelSettingsFor(summaryModel)),
             Effect.orDie
           )
           return [compactionCompleted({
@@ -254,25 +255,25 @@ const compactionTransition = (
     })
   ]
 
-export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): CompleteTransitionDerivation<LanguageModel.LanguageModel | Self> => (history) => {
+export const compactionReactor = (policy: Partial<CompactionPolicy>, window: number, selected?: ModelRef): CompleteTransitionDerivation<LanguageModel.LanguageModel | Self> => (history) => {
   const log = history.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
-  const model = policy.model ?? selectedModelOf(log)
-  const resolved = contextPolicyFrom(log, policy)
+  const active = selected ?? selectedModelOf(log)
+  const model = policy.model
+  const resolved = contextPolicyFrom(log, policy, window)
   // The projection runs first, so the guard, the cut, and the brief all read the history the
   // model reads. A corrected exchange the render hides can neither trigger a paid pass nor leak
   // its rejected reply into a summary (src/projection/transcript.ts, projectedOutput).
   const view = projectedOutput(log)
-  if (!(firedUncovered(view) || (overContext(view, resolved, selectedModelOf(log)) && atRoundBoundary(view)))) return []
-  const cut = cutOf(view, resolved, undefined, selectedModelOf(log))
+  if (!(firedUncovered(view) || (overContext(view, resolved, active) && atRoundBoundary(view)))) return []
+  const cut = cutOf(view, resolved, undefined, active)
   if (cut === undefined) return []
   const prior = checkpointOf(view)
   const span = view.slice(cut.priorIndex, cut.index)
   return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span, view[cut.index]!)
 }
 
-// compaction derives one resolved context contribution and the transitions governed by the same
-// model-relative policy.
-export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentComponent<LanguageModel.LanguageModel | Self> => {
+// compactionWithWindow derives context and checkpoints from resolved model capacity (compaction.properties.test.ts).
+export const compactionWithWindow = (policy: Partial<CompactionPolicy>, window: number, active?: ModelRef): AgentComponent<LanguageModel.LanguageModel | Self> => {
   interface State {
     readonly turns: TurnProjectionState
     readonly transcript: TranscriptProjectionState
@@ -345,9 +346,9 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
     step: reduce,
     output: (state) => {
       const open = turnViewFrom(state.turns)
-      const selected = open.length > 0 ? selectedModelOf(open) : state.lastModel
-      const model = policy.model ?? selected
-      const resolved = contextPolicyOf(policy, selected)
+      const selected = active ?? (open.length > 0 ? selectedModelOf(open) : state.lastModel)
+      const model = policy.model
+      const resolved = contextPolicyOf(policy, window)
       return {
         view: {
           system: [],
@@ -360,3 +361,16 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
     }
   })
 }
+
+// compaction prepares conversation history using the active model capacity (runtime/composition.test.ts).
+export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentComponent => component({
+  name: "compaction",
+  initial: () => undefined,
+  step: (state) => state,
+  output: () => ({
+    view: { system: [], tools: [], context: [{ component: "compaction", policy: {
+      messageRenderCap: policy.messageRenderCap ?? DEFAULT_COMPACTION_POLICY.messageRenderCap, resultRenderCap: policy.resultRenderCap ?? DEFAULT_COMPACTION_POLICY.resultRenderCap
+    }, compaction: policy }], output: [] },
+    transitions: []
+  })
+})

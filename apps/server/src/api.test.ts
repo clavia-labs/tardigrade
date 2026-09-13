@@ -65,7 +65,7 @@ const scripted = ({ trajectory }: InferRequest): Action => {
 const testModel = { provider: "openai", model_id: "gpt-mini" } as const
 
 const layerScripted: Layer.Layer<LanguageModel.LanguageModel> = testInferenceLayer({
-  resolve: (model = testModel) => ({ model, models: { default: model, allow: "*" } }),
+  resolve: (model = testModel) => ({ model, contextWindowTokens: 128_000, models: { default: model, allow: "*" } }),
   react: (request: InferRequest) => Effect.succeed(scripted(request))
 })
 

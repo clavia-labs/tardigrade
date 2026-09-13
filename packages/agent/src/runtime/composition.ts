@@ -32,6 +32,7 @@ export interface AgentTool<R = never> {
 export interface ContextFragment {
   readonly component: string
   readonly policy: Partial<ContextPolicy>
+  readonly compaction?: Partial<import("../component/context").CompactionPolicy>
 }
 
 // NativeOutputFragment selects provider-native structured output without a fallback.
@@ -155,11 +156,14 @@ export interface Rendered {
   readonly system: string
   readonly tools: ReadonlyArray<ToolSpec>
   readonly context: Partial<ContextPolicy>
+  readonly compaction?: Partial<import("../component/context").CompactionPolicy>
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
 const renderView = (view: AgentView, concurrency: ToolConcurrency = DEFAULT_TOOL_CONCURRENCY): Rendered => {
   const fragment = outputFrom(view.output)
+  const compactions = view.context.filter((entry) => entry.compaction !== undefined)
+  if (compactions.length > 1) throw new Error("compaction declared by multiple components")
   return {
     system: [...view.system, toolConcurrencyInstruction(toolConcurrencyOf(concurrency))].filter((piece) => piece !== "").join("\n"),
     tools: checkedTools(view.tools).map((tool) => {
@@ -167,6 +171,7 @@ const renderView = (view: AgentView, concurrency: ToolConcurrency = DEFAULT_TOOL
       return instruction === "" ? tool.spec : { ...tool.spec, description: `${tool.spec.description}\n${instruction}` }
     }),
     context: contextOf(view.context),
+    ...(compactions[0] === undefined ? {} : { compaction: compactions[0].compaction }),
     ...(fragment.kind === "native"
       ? {}
       : {

@@ -1,3 +1,5 @@
+import { deriveComponent } from "@clavia/tardigrade-core/component"
+import { compactionWithWindow, contextPolicyOf } from "../component/compaction"
 import { upcastError } from "../log/upcast"
 import { hasUnansweredToolCall, responsesOf } from "../log/response"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
@@ -6,7 +8,7 @@ import { RetrySchedule, retryDelayOf } from "./retry"
 import { LanguageModel } from "effect/unstable/ai"
 import { react } from "./model/index"
 import { unknownModelError } from "./error"
-import { BindingSettings, ModelSelection } from "./model/settings"
+import { BindingSettings, ModelSelection, modelSettingsFor } from "@clavia/tardigrade-model/settings"
 import { Cause, Clock, Effect, Random, Schema } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { HashMap, Option } from "effect"
@@ -66,7 +68,7 @@ const resolvedModelFor = (
   reference: ModelRef | undefined,
   models: ModelPolicy,
   policyError: string | undefined
-): ModelRef => {
+): ModelResolution => {
   if (policyError !== undefined) throw new ModelSelectionError(policyError)
   if (reference !== undefined && !modelAllowedBy(models, reference)) {
     throw new ModelSelectionError(`model ${reference.provider}/${reference.model_id} is excluded by the effective model policy`)
@@ -76,13 +78,13 @@ const resolvedModelFor = (
     if (reference === undefined) {
       throw new ModelSelectionError("no model was selected; supply { provider, model_id } or configure a default")
     }
-    return reference
+    return { model: reference }
   }
   const allowed = applyModelPolicy(resolved.models ?? DEFAULT_MODEL_POLICY, models)
   if (!modelAllowedBy(allowed, resolved.model)) {
     throw new ModelSelectionError(`model ${resolved.model.provider}/${resolved.model.model_id} is excluded by the effective model policy`)
   }
-  return resolved.model
+  return resolved
 }
 
 const epochStamp = (epoch: number): { readonly epoch?: number } =>
@@ -404,8 +406,28 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               })
             ]
           }
-          const selected = selection.selected
-          const settings = yield* (registry.settings?.(selected) ?? BindingSettings)
+          const resolution = selection.selected
+          const selected = resolution.model
+          let preparedContext: ReturnType<typeof contextPolicyOf> | undefined
+          if (derived.rendered.compaction !== undefined) {
+            const policy = derived.rendered.compaction
+            const window = resolution.contextWindowTokens
+            if (window === undefined || !Number.isSafeInteger(window) || window <= 0) {
+              return [turnFailed({ error: "The active model requires a positive context window for compaction", cause: "model_selection", attempts: 0, attemptKey: `${input.turn}/model`, turn: input.turn, ...epochStamp(input.epoch), at })]
+            }
+            preparedContext = contextPolicyOf(policy, window)
+            const { transitions } = deriveComponent(compactionWithWindow(policy, window, selected), input.trajectory())
+            for (const transition of transitions) {
+              if (transition.kind === "effect") {
+                const completed = yield* transition.act(transition.input, signal)
+                if (completed.length > 0) {
+                  yield* events.append(completed)
+                  return []
+                }
+              }
+            }
+          }
+          const settings = yield* modelSettingsFor(selected)
           const requestPolicy = settings.policy
           const pricing = settings.pricing
           // The mark records the attempt BEFORE the inference, appended by the act itself: a
@@ -424,7 +446,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             at
           })
           yield* events.append([mark])
-          const actualRender = derived.renderAfter(mark)
+          const actualRender = { ...derived.renderAfter(mark), ...(preparedContext === undefined ? {} : { context: preparedContext }) }
           const trajectory = input.trajectory()
           let partialOutput = ""
           let partialPersisted = false

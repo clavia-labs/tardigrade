@@ -27,25 +27,28 @@ export interface ContextPolicy {
   readonly summaryLineCap: number
 }
 
-export type ContextWindowTokens = number | ((model: ModelRef | undefined) => number)
-
 export interface CompactionPolicy {
   readonly messageRenderCap: number
   readonly resultRenderCap: number
-  readonly contextWindowTokens: ContextWindowTokens
-  readonly fireRatio: number
-  readonly keepRatio: number
+  readonly triggerRatio?: number
+  readonly retainRatio?: number
+  /** @deprecated Use triggerRatio. */
+  readonly fireRatio?: number
+  /** @deprecated Use retainRatio. */
+  readonly keepRatio?: number
   readonly summaryLineCap: number
-  // model selects the summarizer without changing the conversation context budget (compaction.properties.test.ts, compaction.test.ts).
+  // model selects the summarizer; omission uses the host default independently of conversation capacity (runtime/composition.test.ts).
   readonly model?: ModelRef
 }
 
-export const DEFAULT_COMPACTION_POLICY: CompactionPolicy = {
+const defaultRatios = { triggerRatio: 0.8, retainRatio: 0.5 }
+
+export const DEFAULT_COMPACTION_POLICY: Required<Omit<CompactionPolicy, "model">> = {
   messageRenderCap: 12_000,
   resultRenderCap: 6_000,
-  contextWindowTokens: 128_000,
-  fireRatio: 0.8,
-  keepRatio: 0.5,
+  ...defaultRatios,
+  fireRatio: defaultRatios.triggerRatio,
+  keepRatio: defaultRatios.retainRatio,
   summaryLineCap: 200
 }
 
@@ -59,21 +62,23 @@ const ratio = (value: number, name: string): number => {
   return value
 }
 
+// ratioOf normalizes deprecated aliases and rejects conflicting declarations (compaction.properties.test.ts).
+const ratioOf = (value: number | undefined, legacy: number | undefined, name: string, alias: string, fallback: number): number => {
+  if (value !== undefined && legacy !== undefined && value !== legacy) throw new Error(`${name} conflicts with deprecated ${alias}`)
+  return ratio(value ?? legacy ?? fallback, name)
+}
+
 // contextPolicyOf resolves the model-relative policy into the absolute thresholds used by the
 // guard and render. The fire and keep lines form one hysteresis policy, so they are validated
 // together.
 export const contextPolicyOf = (
-  policy: Partial<CompactionPolicy> = {},
-  model?: ModelRef
+  policy: Partial<CompactionPolicy>,
+  window: number
 ): ContextPolicy => {
-  const windowSource = policy.contextWindowTokens ?? DEFAULT_COMPACTION_POLICY.contextWindowTokens
-  const contextWindowTokens = positive(
-    typeof windowSource === "function" ? windowSource(model) : windowSource,
-    "contextWindowTokens"
-  )
-  const fireRatio = ratio(policy.fireRatio ?? DEFAULT_COMPACTION_POLICY.fireRatio, "fireRatio")
-  const keepRatio = ratio(policy.keepRatio ?? DEFAULT_COMPACTION_POLICY.keepRatio, "keepRatio")
-  if (keepRatio >= fireRatio) throw new Error(`keepRatio must be less than fireRatio, got ${keepRatio} and ${fireRatio}`)
+  const contextWindowTokens = positive(window, "contextWindowTokens")
+  const fireRatio = ratioOf(policy.triggerRatio, policy.fireRatio, "triggerRatio", "fireRatio", DEFAULT_COMPACTION_POLICY.triggerRatio)
+  const keepRatio = ratioOf(policy.retainRatio, policy.keepRatio, "retainRatio", "keepRatio", DEFAULT_COMPACTION_POLICY.retainRatio)
+  if (keepRatio >= fireRatio) throw new Error(`retainRatio must be less than triggerRatio, got ${keepRatio} and ${fireRatio}`)
   return {
     messageRenderCap: positive(
       policy.messageRenderCap ?? DEFAULT_COMPACTION_POLICY.messageRenderCap,
@@ -98,7 +103,7 @@ export const contextPolicyOf = (
 // resolvedContextPolicyOf fills a partial absolute policy at the render boundary. Components
 // normally contribute every field after resolving their model-relative policy.
 export const resolvedContextPolicyOf = (policy: Partial<ContextPolicy> = {}): ContextPolicy => {
-  const defaults = contextPolicyOf()
+  const defaults = { ...DEFAULT_COMPACTION_POLICY, contextWindowTokens: Infinity, fireTokens: Infinity, keepTokens: Infinity }
   return {
     messageRenderCap: policy.messageRenderCap ?? defaults.messageRenderCap,
     resultRenderCap: policy.resultRenderCap ?? defaults.resultRenderCap,

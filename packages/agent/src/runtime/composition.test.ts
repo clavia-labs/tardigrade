@@ -1,7 +1,11 @@
+import * as fc from "fast-check"
+import { LanguageModel, Response } from "effect/unstable/ai"
+import { BindingInvocation } from "../inference/model/settings"
+import { CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
 import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Ref, Stream } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { FetchHttpClient } from "effect/unstable/http"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -115,6 +119,7 @@ describe("infer component", () => {
   test("a turn without any applicable default durably asks for a model reference", async () => {
     let calls = 0
     const mind = testInferenceLayer( {
+      resolve: null,
       react: () => {
         calls += 1
         return Effect.succeed({ kind: "complete" as const, output: "done" })
@@ -244,6 +249,7 @@ describe("infer component", () => {
   test("each turn can select a provider without losing its conversation", async () => {
     const seen: InferRequest[] = []
     const mind = testInferenceLayer( {
+      resolve: (model) => ({ model: model!, contextWindowTokens: model?.provider === "vercel" ? 200_000 : 100_000 }),
       react: (request: InferRequest) => {
         seen.push(request)
         return Effect.succeed({ kind: "complete" as const, output: "done" })
@@ -251,10 +257,7 @@ describe("infer component", () => {
     })
     const agent = assembled(infer(
       [
-            compaction({
-        contextWindowTokens: (model) =>
-          model?.provider === "vercel" ? 200_000 : 100_000
-      }),
+            compaction(),
       nativeOutput
     ], {
       models: {
@@ -447,12 +450,7 @@ describe("infer component", () => {
   test("compaction's context reaches the render, so the guard and the request hold one policy", () => {
     const render = renderOf([codeMode(), compaction({ messageRenderCap: 1234 }), nativeOutput], [])
     expect(render.context).toMatchObject({
-      messageRenderCap: 1234,
-      contextWindowTokens: 128_000,
-      fireRatio: 0.8,
-      keepRatio: 0.5,
-      fireTokens: 102_400,
-      keepTokens: 64_000
+      messageRenderCap: 1234
     })
   })
 
@@ -644,4 +642,103 @@ describe("infer component", () => {
     const bare: AgentComponent<KeyValueStore.KeyValueStore> = codeMode()
     expect([scoped.name, narrowed.name, empty.name, bare.name]).toEqual(["code", "code", "code", "code"])
   })
+})
+
+
+const checkModelCapacity = async ({ capacity, previousCapacity, summaryCapacity, historySize, fireRatio, keepRatio, mode, compact }: {
+  readonly capacity: number
+  readonly previousCapacity: number
+  readonly summaryCapacity: number
+  readonly historySize: number
+  readonly fireRatio: number
+  readonly keepRatio: number
+  readonly mode: string
+  readonly compact: boolean
+}) => {
+  const calls: string[] = []
+  let prefix: ReadonlyArray<Event> = []
+  const thresholds = { contextWindowTokens: capacity, fireTokens: Math.floor(capacity * fireRatio), keepTokens: Math.floor(capacity * keepRatio) }
+  const model = Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+    generateText: () => Effect.die("stream only"),
+    streamText: () => Stream.unwrap(Effect.gen(function* () {
+      const invocation = yield* BindingInvocation
+      const selected = yield* CurrentModel
+      calls.push(selected!.model_id)
+      if (invocation !== undefined && selected?.model_id === "small") {
+        expect(invocation.request.trajectory.some(event => event.type === "CompactionCompleted")).toBe(compact)
+        expect(invocation.request.context).toMatchObject(thresholds)
+      }
+      return Stream.fromIterable([
+        Response.makePart("text-start", { id: "text" }),
+        Response.makePart("text-delta", { id: "text", delta: invocation === undefined ? "Earlier work." : "Done." }),
+        Response.makePart("text-end", { id: "text" }),
+        Response.makePart("finish", { reason: "stop", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) })
+      ])
+    }))
+  }))
+  const selection = Layer.succeed(ModelSelection, { resolve: (reference = { provider: "test", model_id: "host-default" }) => ({
+    model: reference, contextWindowTokens: reference.model_id === "small" ? capacity : reference.model_id === "large" ? previousCapacity : summaryCapacity
+  }) })
+  const agent = assembled(infer([compaction({ triggerRatio: fireRatio, retainRatio: keepRatio, ...(mode === "explicit" ? { model: { provider: "test", model_id: "summary" } } : {}) }), nativeOutput], TEST_MODEL))
+  const events = await run(Effect.gen(function* () {
+    yield* receive(agent, { id: "large-turn", text: "x".repeat(historySize), model: { provider: "test", model_id: "large" } })
+    prefix = yield* readLog
+    yield* receive(agent, { id: "small-turn", text: "continue", model: { provider: "test", model_id: "small" } })
+    return yield* readLog
+  }), Layer.mergeAll(memoryLog(), model, selection, noRouter, KeyValueStore.layerMemory))
+  const summarizer = mode === "explicit" ? "summary" : "host-default"
+  expect(calls).toEqual(compact ? ["large", summarizer, "small"] : ["large", "small"])
+  const checkpoints = events.filter(event => event.type === "CompactionCompleted")
+  expect(checkpoints).toHaveLength(compact ? 1 : 0)
+  if (compact) expect(checkpoints[0]).toMatchObject({ ...thresholds, model: { provider: "test", model_id: summarizer } })
+  expect(events.slice(0, prefix.length)).toEqual([...prefix])
+  expect(events.filter(event => event.type === "MessageReceived").map(event => event.model)).toEqual([
+    { provider: "test", model_id: "large" }, { provider: "test", model_id: "small" }
+  ])
+  expect(events.filter(event => event.type === "ModelCalled").map(event => event.model)).toEqual([
+    { provider: "test", model_id: "large" }, { provider: "test", model_id: "small" }
+  ])
+  expect(events.filter(event => event.type === "TurnCompleted")).toHaveLength(2)
+}
+
+test("model switches preserve history and checkpoint against conversation capacity independently of the summarizer", async () => {
+  await fc.assert(fc.asyncProperty(fc.record({
+    capacity: fc.integer({ min: 300, max: 1200 }),
+    previousMultiplier: fc.integer({ min: 3, max: 20 }),
+    summaryCapacity: fc.integer({ min: 64, max: 100_000 }),
+    firePercent: fc.integer({ min: 60, max: 90 }),
+    keepPercent: fc.integer({ min: 20, max: 50 }),
+    mode: fc.constantFrom("explicit", "default"),
+    compact: fc.boolean()
+  }), async ({ capacity, previousMultiplier, summaryCapacity, firePercent, keepPercent, mode, compact }) => {
+    await checkModelCapacity({
+      capacity, previousCapacity: capacity * previousMultiplier, summaryCapacity,
+      historySize: compact ? capacity * 4 + 400 : 16,
+      fireRatio: firePercent / 100, keepRatio: keepPercent / 100, mode, compact
+    })
+  }), {
+    numRuns: 50,
+    examples: [
+      [{ capacity: 100, previousMultiplier: 10_000, summaryCapacity: 1_000_000, firePercent: 80, keepPercent: 50, mode: "explicit", compact: true }],
+      [{ capacity: 100, previousMultiplier: 10_000, summaryCapacity: 1_000_000, firePercent: 80, keepPercent: 50, mode: "default", compact: true }],
+      [{ capacity: 300, previousMultiplier: 3, summaryCapacity: 64, firePercent: 60, keepPercent: 20, mode: "explicit", compact: false }],
+      [{ capacity: 300, previousMultiplier: 3, summaryCapacity: 64, firePercent: 60, keepPercent: 20, mode: "default", compact: false }]
+    ]
+  })
+})
+
+test.each([undefined, 0, -1, NaN, Infinity])("compaction rejects missing or invalid model capacity (%s) before inference", async window => {
+  let calls = 0
+  const mind = testInferenceLayer({ resolve: model => ({ model: model!, ...(window === undefined ? {} : { contextWindowTokens: window }) }), react: () => {
+    calls++
+    return Effect.succeed({ kind: "complete", output: "unexpected" })
+  } })
+  const agent = assembled(infer([compaction(), nativeOutput], TEST_MODEL))
+  const events = await run(Effect.gen(function* () {
+    yield* receive(agent, { id: "missing", text: "go" })
+    return yield* readLog
+  }), Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory))
+  expect(calls).toBe(0)
+  expect(events.some(event => event.type === "ModelCalled")).toBe(false)
+  expect(events.find(event => event.type === "TurnFailed")).toMatchObject({ cause: "model_selection" })
 })

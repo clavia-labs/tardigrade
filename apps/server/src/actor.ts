@@ -13,8 +13,7 @@ import {
   infer,
   outputValidateOnce,
   workspacePackage,
-  type AgentCatalog,
-  type ModelRef
+  type AgentCatalog
 } from "tardie"
 import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
 
@@ -36,7 +35,6 @@ import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
 // requests to any host. There is no shell: a shell cannot be scoped the way a root or an origin can,
 // and this build has no place to ask an operator whether one command is allowed.
 export interface AssemblyModelPolicy {
-  readonly contextWindowTokens?: number | ((model: ModelRef | undefined) => number)
   readonly catalog?: AgentCatalog
 }
 
@@ -54,7 +52,7 @@ const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
           filesPackage(),
           fetchPackage()
         ])], { authority: caller() }),
-        compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
+        compaction(),
         outputValidateOnce
       ]),
       budgetAuthority()

@@ -175,7 +175,7 @@ const releaseAnalyst = actor({
 
 - `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless its `infer` options narrow it with `models`.
 
-- `compaction()` uses the selected model's catalog window. It summarizes at 80 percent and retains a 50 percent tail. Pass `fireRatio` and `keepRatio` to change those values. Each checkpoint records the policy it applied.
+- `compaction()` uses the active model's context window from model metadata. It summarizes at 80 percent and retains a 50 percent tail. Pass `triggerRatio` and `retainRatio` to change those values. Set `model` on `compaction()` to select a summarizer; omission uses the host default. The summarizer does not change the conversation budget. Each checkpoint records the policy it applied.
 
 - `codeMode([...components])` exposes its packages through one `execute` tool.
 

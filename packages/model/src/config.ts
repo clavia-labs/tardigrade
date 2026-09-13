@@ -5,7 +5,7 @@ import { modelAllowedBy, modelPolicyOf, type ModelPolicy } from "@clavia/tardigr
 import { modelProtocolOf, type ModelProtocol } from "./providers/directory"
 
 export type ModelProviderConfig<Options = never> = ProviderConnection & ({
-  [P in ModelProtocol]: { readonly protocol: P; readonly models?: Readonly<Record<string, { readonly contextWindowTokens?: number; readonly options?: [Options] extends [never] ? ModelOptionsByProtocol[P] : Options }>> }
+  [P in ModelProtocol]: { readonly protocol: P; readonly models?: Readonly<Record<string, { readonly options?: [Options] extends [never] ? ModelOptionsByProtocol[P] : Options }>> }
 }[ModelProtocol] | { readonly protocol: ModelProtocol; readonly models?: never })
 
 interface ProviderConnection {
@@ -80,7 +80,7 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     if (selectedProtocol !== "bedrock-converse" && region !== undefined) {
       throw new Error(`provider ${JSON.stringify(name)} cannot declare region with protocol ${JSON.stringify(selectedProtocol)}`)
     }
-    let models: Record<string, { readonly contextWindowTokens?: number; readonly options?: Schema.JsonObject }> | undefined
+    let models: Record<string, { readonly options?: Schema.JsonObject }> | undefined
     if (provider["models"] !== undefined) {
       const entries = recordOf(provider["models"])
       if (entries === undefined || Array.isArray(entries)) throw new Error(`provider ${name} models must map model IDs to settings`)
@@ -89,11 +89,9 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
         if (model.trim().length === 0) throw new Error("model ID cannot be empty")
         const settings = recordOf(value)
         if (settings === undefined || Array.isArray(settings)) throw new Error(`model ${model} settings must be an object`)
-        if (Object.keys(settings).some((field) => field !== "options" && field !== "contextWindowTokens")) throw new Error(`model ${model} contains unsupported settings`)
+        if (Object.keys(settings).some((field) => field !== "options")) throw new Error(`model ${model} contains unsupported settings`)
         const parsed = protocolOptionsOf(selectedProtocol, settings.options)
-        const contextWindowTokens = settings.contextWindowTokens
-        if (contextWindowTokens !== undefined && (typeof contextWindowTokens !== "number" || !Number.isSafeInteger(contextWindowTokens) || contextWindowTokens <= 0)) throw new Error(`model ${model} contextWindowTokens must be a positive safe integer`)
-        models[model] = { ...(parsed.options === undefined ? {} : { options: parsed.options }), ...(contextWindowTokens === undefined ? {} : { contextWindowTokens }) }
+        models[model] = parsed.options === undefined ? {} : { options: parsed.options }
       }
     }
     providers[name] = {

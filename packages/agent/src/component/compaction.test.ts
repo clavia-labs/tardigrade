@@ -33,7 +33,7 @@ const summaryLayer = (respond: (prompt: string, model: ModelRef | undefined) => 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)
 import {
   checkpointOf,
-  compaction,
+  compactionWithWindow as compaction,
   compactionReactor,
   contextPolicyOf,
   estimateTokens,
@@ -49,8 +49,8 @@ import {
 
 const head: Event = { type: "MessageReceived", id: "m0", text: "extract the covenants", at: 0 }
 const TEST_POLICY = { contextWindowTokens: 20_000, fireRatio: 0.8, keepRatio: 0.2 }
-const TEST_CONTEXT = contextPolicyOf(TEST_POLICY)
-const reactor = compactionReactor(TEST_POLICY)
+const TEST_CONTEXT = contextPolicyOf(TEST_POLICY, TEST_POLICY.contextWindowTokens)
+const reactor = compactionReactor(TEST_POLICY, TEST_POLICY.contextWindowTokens)
 
 // One resolved tool round inside the open turn, sized so a dozen rounds cross the token budget.
 const round = (i: number, turn = "m0"): Event[] => [
@@ -66,7 +66,7 @@ const openTurn = (rounds: number): Event[] => {
 
 describe("the compaction measure and guard", () => {
   test("the incremental quotient agrees with complete replay at every prefix", () => {
-    const component = compaction(TEST_POLICY)
+    const component = compaction(TEST_POLICY, TEST_POLICY.contextWindowTokens)
     const projection = component.machine
     let state = projection.initial()
     const log: Event[] = []
@@ -83,6 +83,7 @@ describe("the compaction measure and guard", () => {
     expect(estimateTokens([big])).toBe(Math.ceil(renderMessages([big])[0]!.content!.length / 4))
     const thread: Event = { type: "CodeSettled", execId: "c", result: 1, at: 2 } as Event
     expect(estimateTokens([thread])).toBe(0)
+    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(Math.ceil(renderMessages([big], { resultRenderCap: 40 })[0]!.content!.length / 4))
   })
 
   test("the guard fires inside an open turn once a resolved round passes FIRE", () => {
@@ -99,25 +100,8 @@ describe("the compaction measure and guard", () => {
     expect(reactor(awaiting)).toHaveLength(0)
   })
 
-  test("the policy is the consumer's: a raised FIRE holds the guard, a lowered one fires early", () => {
-    expect(compactionReactor({ contextWindowTokens: 1_250_000 })(openTurn(16))).toHaveLength(0)
-    expect(compactionReactor({ contextWindowTokens: 125 })(openTurn(2))).toHaveLength(1)
-    // The measure moves with the render cap, because one policy states both.
-    const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(Math.ceil(renderMessages([big], { resultRenderCap: 40 })[0]!.content!.length / 4))
-  })
-
-  test("the selected model resolves both hysteresis lines from one window", () => {
-    const policy = contextPolicyOf(
-      { contextWindowTokens: (model) => model?.model_id === "large" ? 1_000_000 : 100_000 },
-      { provider: "test", model_id: "large" }
-    )
-    expect(policy.fireTokens).toBe(800_000)
-    expect(policy.keepTokens).toBe(500_000)
-  })
-
   test("the keep line must remain below the fire line", () => {
-    expect(() => contextPolicyOf({ keepRatio: 0.9, fireRatio: 0.8 })).toThrow("keepRatio must be less than fireRatio")
+    expect(() => contextPolicyOf({ keepRatio: 0.9, fireRatio: 0.8 }, 100)).toThrow("retainRatio must be less than triggerRatio")
   })
 
   test("the guard is pure: the fold runs with the clock and randomness rigged to throw", () => {
@@ -139,12 +123,11 @@ describe("the compaction measure and guard", () => {
 })
 
 describe("the compaction pass", () => {
-  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> = TEST_POLICY, outcome: Action = { kind: "complete", output: "covenants 1 through 13 extracted" }) => {
+  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> & { contextWindowTokens: number } = TEST_POLICY, outcome: Action = { kind: "complete", output: "covenants 1 through 13 extracted" }) => {
     const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
-    let model: unknown
     const actor = actorFromProjections<import("effect/unstable/ai").LanguageModel.LanguageModel | EventLog | Self>({
-      transitions: [completeTransitionProjection(compactionReactor(policy))],
+      transitions: [completeTransitionProjection(compactionReactor(policy, policy.contextWindowTokens))],
       keyOf: agentActorKeys
     })
     const layers = Layer.mergeAll(
@@ -155,9 +138,8 @@ describe("the compaction pass", () => {
           read: Ref.get(ref)
         })
       ),
-      summaryLayer((prompt, selected) => {
+      summaryLayer((prompt) => {
           briefed = prompt
-          model = selected
           return Effect.succeed(outcome)
       }),
       Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
@@ -165,7 +147,7 @@ describe("the compaction pass", () => {
     const exit = await Effect.runPromiseExit(
       settleActor(actor).pipe(Effect.provide(layers)) as Effect.Effect<void>
     )
-    return { log: await Effect.runPromise(Ref.get(ref)), exit, briefed: () => briefed, model: () => model }
+    return { log: await Effect.runPromise(Ref.get(ref)), exit, briefed: () => briefed }
   }
 
   test.each([
@@ -203,17 +185,6 @@ describe("the compaction pass", () => {
     expect(estimateTokens(suffixOf(log))).toBeLessThanOrEqual(TEST_CONTEXT.keepTokens + 2 * roundTokens)
     expect(briefed()).toContain("extract the covenants")
     expect(briefed()).toContain("run 1")
-  })
-
-  test("a pass can select its model", async () => {
-    const selected = { provider: "test", model_id: "compact" } as const
-    const { log, model } = await run(openTurn(16), { ...TEST_POLICY, model: selected })
-    expect(model()).toEqual(selected)
-    expect(log.find((event) => event.type === "CompactionCompleted")).toMatchObject({ model: selected })
-  })
-
-  test("the cut lands on a boundary: a kept tail opens with a call, its return beside it", async () => {
-    const { log } = await run(openTurn(16))
     const suffix = suffixOf(log)
     expect(suffix[0]!.type).toBe("ToolCalled")
     const callId = String((suffix[0] as { callId?: unknown }).callId)
@@ -265,9 +236,9 @@ describe("a projected repair is invisible to compaction as well as to the render
   })
 
   test("the incremental quotient agrees while a completion hides its correction exchange", () => {
-    const policy = { contextWindowTokens: 125 }
-    const complete = compactionReactor(policy)
-    const component = compaction(policy)
+    const policy = { contextWindowTokens: 125, fireRatio: 0.8 }
+    const complete = compactionReactor(policy, 125)
+    const component = compaction(policy, policy.contextWindowTokens)
     const projection = component.machine
     const events: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },
