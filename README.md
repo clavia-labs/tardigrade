@@ -53,7 +53,7 @@ tdg thread create --name quickstart
 tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickstart
 ```
 
-The API listens at [localhost:4242](http://localhost:4242) by default.
+The API listens at [localhost:4242](http://localhost:4242) by default. View the interactive API reference at [localhost:4242/docs](http://localhost:4242/docs).
 
 <img alt="An actor serving API requests from its generated Bun development server" src="docs/assets/dev-server.png">
 

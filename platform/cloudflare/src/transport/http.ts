@@ -11,6 +11,8 @@ import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrade-http/methods"
 import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-http/models"
 import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
+import { layerApiDocs, UNAUTHENTICATED_PATHS } from "@clavia/tardigrade-http/docs"
+import { WorkerApi, workerRoutes } from "./contract"
 import type { Env } from "../env"
 import type { CloudflareDirectory } from "./directory"
 
@@ -82,13 +84,13 @@ export const cloudflareHttp = ({
   })
 
   const routes = [
-    HttpRouter.route("GET", "/healthz", Effect.gen(function* () {
+    HttpRouter.route(workerRoutes.healthz.method, workerRoutes.healthz.path, Effect.gen(function* () {
       return json({ status: "ready", actor: actorName() })
     })),
-    HttpRouter.route("GET", "/v1/metadata", workerRoute((_request, _env) =>
+    HttpRouter.route(workerRoutes.metadata.method, workerRoutes.metadata.path, workerRoute((_request, _env) =>
       Effect.succeed(json({ name: actorName(), storage: { kind: "durable-object" } }))
     )),
-    HttpRouter.route("PUT", "/v1/actors/:id", workerRoute((_request, env) =>
+    HttpRouter.route(workerRoutes.ensureActor.method, workerRoutes.ensureActor.path, workerRoute((_request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const instance = params.id ?? ""
@@ -98,7 +100,7 @@ export const cloudflareHttp = ({
         return json({ actor: instance, definition: actorName() })
       })
     )),
-    HttpRouter.route("GET", "/v1/actors/:id", workerRoute((_request, env) =>
+    HttpRouter.route(workerRoutes.actor.method, workerRoutes.actor.path, workerRoute((_request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const instance = params.id ?? ""
@@ -109,7 +111,7 @@ export const cloudflareHttp = ({
           : json({ actor: instance, definition: actorName() })
       })
     )),
-    HttpRouter.route("POST", "/v1/actors/:id/threads", workerRoute((request, env) =>
+    HttpRouter.route(workerRoutes.allocateRoot.method, workerRoutes.allocateRoot.path, workerRoute((request, env) =>
       Effect.gen(function* () {
         const selection = invocationQueryOf(request)
         if ("error" in selection) return json({ error: selection.error }, 400)
@@ -124,7 +126,7 @@ export const cloudflareHttp = ({
         return json(coordinate)
       })
     )),
-    HttpRouter.route("GET", "/v1/actors/:id/threads", workerRoute((request, env) =>
+    HttpRouter.route(workerRoutes.list.method, workerRoutes.list.path, workerRoute((request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const instance = params.id ?? ""
@@ -138,7 +140,7 @@ export const cloudflareHttp = ({
         return json(tree)
       })
     )),
-    HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/events", workerRoute((request, env) =>
+    HttpRouter.route(workerRoutes.append.method, workerRoutes.append.path, workerRoute((request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const actor = actorName()
@@ -156,7 +158,7 @@ export const cloudflareHttp = ({
         return json({ actor: instance, thread }, 202)
       })
     )),
-    HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/events", workerRoute((request, env) =>
+    HttpRouter.route(workerRoutes.events.method, workerRoutes.events.path, workerRoute((request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const actor = actorName()
@@ -185,12 +187,13 @@ export const cloudflareHttp = ({
 
   const { handler } = HttpRouter.toWebHandler(Layer.mergeAll(
     HttpRouter.addAll(routes),
+    layerApiDocs(WorkerApi),
     HttpApiBuilder.layer(CatalogApi).pipe(Layer.provide(layerCatalogHandlers), Layer.provide(layerRequestProblems)),
     HttpApiBuilder.layer(MethodApi).pipe(Layer.provide(layerMethodHandlers), Layer.provide(layerRequestProblems)),
     HttpRouter.middleware((effect) => Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest
       const path = new URL(request.url, "http://worker").pathname
-      if (["/healthz", "/v1/providers", "/v1/models"].includes(path)) return yield* effect
+      if (UNAUTHENTICATED_PATHS.includes(path)) return yield* effect
       return guard(request, yield* WorkerEnv) ?? (yield* effect)
     }), { global: true })
   ).pipe(Layer.provide(HttpServer.layerServices)), { disableLogger: true })
