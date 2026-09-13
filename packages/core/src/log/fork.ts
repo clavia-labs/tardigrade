@@ -1,105 +1,77 @@
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { isThreadCreated } from "../interaction/relations"
-import type { AppendResult, ThreadEventStore } from "./service"
+import { isThreadCreated, openChildInvocationsOf, sameThreadAddress } from "../interaction/relations"
+import { ThreadAddress } from "../transport/endpoint"
 
-// ForkUntil names a prefix bound as a 1-based sequence or as an event id (fork.test.ts).
-export const ForkUntil = Schema.Union([
-  Schema.Int.pipe(Schema.check(Schema.makeFilter((value: number) => value >= 1, { title: "at or above one" }))),
-  Schema.NonEmptyString
-])
-
-export type ForkUntil = typeof ForkUntil.Type
-
-// ThreadForked records that this log was copied from a source prefix (host.forkThread; fork.test.ts).
+// ThreadForked records that the rows before it were copied from a source thread. Its own row position is the fork boundary: rows copied = its seq - 1 (fork.test.ts).
 export const ThreadForked = Schema.Struct({
   type: Schema.Literal("ThreadForked"),
-  sourceThread: Schema.NonEmptyString,
-  until: ForkUntil,
-  forkedAt: Schema.Finite
+  source: ThreadAddress,
+  at: Schema.Finite
 })
 
 export type ThreadForked = typeof ThreadForked.Type
 
-// threadForked constructs a validated fork fact. Sequence 0 and empty source ids are refused.
+// threadForked constructs a validated fork fact.
 export const threadForked = (fields: {
-  readonly sourceThread: string
-  readonly until: ForkUntil
-  readonly forkedAt: number
+  readonly source: ThreadAddress
+  readonly at: number
 }): ThreadForked => Schema.decodeSync(ThreadForked)({ type: "ThreadForked", ...fields })
 
 // isThreadForked reports a valid fork fact. A malformed record is not a fork (fork.test.ts).
 export const isThreadForked = (event: Event | undefined): event is ThreadForked =>
   event !== undefined && Schema.is(ThreadForked)(event)
 
-// eventIdentityOf reads the checkpoint id a CLI `--until` value can name.
-export const eventIdentityOf = (event: Event): string | undefined => {
-  const value = event as { readonly id?: unknown; readonly callId?: unknown }
-  if (typeof value.id === "string" && value.id.length > 0) return value.id
-  if (typeof value.callId === "string" && value.callId.length > 0) return value.callId
-  return undefined
+// ForkSeq is a 1-based source row.
+export const ForkSeq = Schema.Int.pipe(Schema.check(Schema.makeFilter((value: number) => value >= 1, { title: "at or above one" })))
+
+// ForkCheckpoint names a source position by row, or by the id of an event whose row the edge resolves (fork.test.ts).
+export const ForkCheckpoint = Schema.Union([
+  Schema.Struct({ seq: ForkSeq }),
+  Schema.Struct({ event: Schema.NonEmptyString })
+])
+
+export type ForkCheckpoint = typeof ForkCheckpoint.Type
+
+// checkpointSeqOf resolves a checkpoint to a row. An event id names the last row whose id or callId matches, so a shared callId includes its response. A missing id throws (fork.test.ts).
+export const checkpointSeqOf = (events: ReadonlyArray<Event>, checkpoint: ForkCheckpoint): number => {
+  if ("seq" in checkpoint) return checkpoint.seq
+  const index = events.findLastIndex((event) => {
+    const value = event as { readonly id?: unknown; readonly callId?: unknown }
+    return value.id === checkpoint.event || value.callId === checkpoint.event
+  })
+  if (index === -1) throw new Error(`no event with id ${JSON.stringify(checkpoint.event)} is in the log`)
+  return index + 1
 }
 
-// forkUntilOf normalizes a caller checkpoint. A digit string that is a positive integer is a sequence (fork.test.ts).
-export const forkUntilOf = (until: number | string): ForkUntil => {
-  if (typeof until === "number") {
-    if (!Number.isSafeInteger(until) || until < 1) {
-      throw new Error(`checkpoint sequence must be a positive integer, got ${until}`)
-    }
-    return until
+// prefixOf returns source rows 1 through seq inclusive. A seq outside 1..events.length throws (fork.test.ts).
+export const prefixOf = (events: ReadonlyArray<Event>, seq: number): ReadonlyArray<Event> => {
+  if (!Number.isSafeInteger(seq) || seq < 1 || seq > events.length) {
+    throw new Error(`checkpoint ${seq} is outside the log (1..${events.length})`)
   }
-  if (/^[1-9]\d*$/.test(until)) {
-    const seq = Number(until)
-    if (!Number.isSafeInteger(seq) || seq < 1) {
-      throw new Error(`checkpoint sequence must be a positive integer, got ${until}`)
-    }
-    return seq
-  }
-  if (until.length === 0) throw new Error("checkpoint id must be nonempty")
-  return until
+  return events.slice(0, seq)
 }
 
-// prefixUntil returns the inclusive source prefix through `until`. A missing checkpoint throws (fork.test.ts).
-export const prefixUntil = (events: ReadonlyArray<Event>, until: number | string): ReadonlyArray<Event> => {
-  const checkpoint = forkUntilOf(until)
-  if (typeof checkpoint === "number") {
-    if (checkpoint > events.length) {
-      throw new Error(`checkpoint sequence ${checkpoint} is past the log head ${events.length}`)
-    }
-    return events.slice(0, checkpoint)
-  }
-  const index = events.findIndex((event) => eventIdentityOf(event) === checkpoint)
-  if (index === -1) throw new Error(`checkpoint id ${JSON.stringify(checkpoint)} is not in the log`)
-  return events.slice(0, index + 1)
-}
-
-// copyPrefix appends a source prefix through the destination store's copyPrefix path (fork.test.ts).
-export const copyPrefix = (
-  dest: ThreadEventStore,
-  events: ReadonlyArray<Event>
-): ReturnType<ThreadEventStore["copyPrefix"]> => dest.copyPrefix(events)
-
-export type CopyPrefixResult = AppendResult
-
-// forkBatchOf drops the source ThreadCreated row and appends ThreadForked. Dest already holds its own identity (fork.test.ts).
+// forkBatchOf returns the destination append batch: the source prefix without the source's ThreadCreated, then ThreadForked. A prefix with an open child invocation is refused, because the destination would wait forever on a reply addressed to the source (relations.ts, openChildInvocationsOf; fork.test.ts).
 export const forkBatchOf = (
   sourceEvents: ReadonlyArray<Event>,
-  fields: { readonly sourceThread: string; readonly until: number | string; readonly forkedAt: number }
+  seq: number,
+  source: ThreadAddress,
+  at: number
 ): ReadonlyArray<Event> => {
-  const checkpoint = forkUntilOf(fields.until)
-  const prefix = prefixUntil(sourceEvents, checkpoint)
+  const prefix = prefixOf(sourceEvents, seq)
+  const open = openChildInvocationsOf(prefix)
+  if (open.length > 0) {
+    const named = open.map((link) => `${link.target} ${link.child.invocation.method}/${link.child.invocation.id}`).join(", ")
+    throw new Error(`checkpoint ${seq} leaves ${open.length} child invocation${open.length === 1 ? "" : "s"} open: ${named}`)
+  }
   const history = isThreadCreated(prefix[0]) ? prefix.slice(1) : prefix
-  return [...history, threadForked({ sourceThread: fields.sourceThread, until: checkpoint, forkedAt: fields.forkedAt })]
+  return [...history, threadForked({ source, at })]
 }
 
-// matchingFork reports whether dest already recorded this source prefix (fork.test.ts).
-export const matchingFork = (
-  events: ReadonlyArray<Event>,
-  sourceThread: string,
-  until: number | string
-): boolean => {
-  const checkpoint = forkUntilOf(until)
-  return events.some((event) =>
-    isThreadForked(event) && event.sourceThread === sourceThread && event.until === checkpoint
-  )
+// matchingFork reports whether dest already holds this batch: a ThreadForked from the same source at the row the batch would place it. The destination's own ThreadCreated occupies row 1, so the marker sits at index batch.length (fork.test.ts).
+export const matchingFork = (destEvents: ReadonlyArray<Event>, batch: ReadonlyArray<Event>): boolean => {
+  const expected = batch.at(-1)
+  const recorded = destEvents[batch.length]
+  return isThreadForked(expected) && isThreadForked(recorded) && sameThreadAddress(recorded.source, expected.source)
 }

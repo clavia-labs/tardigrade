@@ -13,22 +13,23 @@ export interface AppendResult {
   readonly head: number
 }
 
+// AppendOptions constrains one append. expectedHead is the head the log must have for the batch to commit; a different head writes nothing and the result reports the current head with appended 0 (log/fork.ts; the store property test in each platform).
+export interface AppendOptions {
+  readonly expectedHead?: number
+}
+
 /**
  * ThreadEventStore is the durable boundary for one thread's event log.
  *
  *   ThreadEventStore
- *     ├── append(events)       commit an atomic event batch
- *     ├── copyPrefix(events)   copy a source prefix through append
- *     ├── read                 read the complete log
- *     ├── head                 read the latest durable sequence
- *     ├── readFrom(mark)       read the event tail after a mark
- *     └── readPage(mark, size) read a bounded tail with sequence numbers
- *
- * copyPrefix must be the store's append function so keys, codecs, and indexes cannot diverge (packages/core/src/log/fork.ts).
+ *     ├── append(events, options?)  commit an atomic event batch, optionally only at an expected head
+ *     ├── read                      read the complete log
+ *     ├── head                      read the latest durable sequence
+ *     ├── readFrom(mark)            read the event tail after a mark
+ *     └── readPage(mark, size)      read a bounded tail with sequence numbers
  */
 export interface ThreadEventStore {
-  readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<AppendResult>
-  readonly copyPrefix: (events: ReadonlyArray<Event>) => Effect.Effect<AppendResult>
+  readonly append: (events: ReadonlyArray<Event>, options?: AppendOptions) => Effect.Effect<AppendResult>
   readonly read: Effect.Effect<ReadonlyArray<Event>>
   readonly head: Effect.Effect<number>
   readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>

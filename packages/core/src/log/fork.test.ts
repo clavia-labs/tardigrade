@@ -1,95 +1,97 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { threadCreated } from "../interaction/relations"
-import type { AppendResult, ThreadEventStore } from "./service"
-import {
-  copyPrefix,
-  eventIdentityOf,
-  forkBatchOf,
-  forkUntilOf,
-  matchingFork,
-  prefixUntil,
-  threadForked
-} from "./fork"
+import { invocationLinked, threadCreated } from "../interaction/relations"
+import { formatThreadAddress } from "../transport/endpoint"
+import { checkpointSeqOf, forkBatchOf, isThreadForked, matchingFork, prefixOf, threadForked } from "./fork"
 
-const created = threadCreated({ actor: "agent", instance: "main", thread: "root" }, undefined, 1)
+const root = { actor: "agent", instance: "main", thread: "root" } as const
+const created = threadCreated(root, undefined, 1)
 const first = { type: "MessageReceived", id: "m1", text: "one", at: 2 } as Event
 const second = { type: "MessageReceived", id: "m2", text: "two", at: 3 } as Event
 const source = [created, first, second]
+const worker1 = formatThreadAddress({ ...root, thread: "worker-1" })
+const destCreated = threadCreated({ ...root, thread: "experiment" }, undefined, 10)
 
-const memoryStore = (): ThreadEventStore & { readonly writes: Array<ReadonlyArray<Event>> } => {
-  let events: Event[] = []
-  const writes: Array<ReadonlyArray<Event>> = []
-  const append = (batch: ReadonlyArray<Event>) => Effect.sync((): AppendResult => {
-    writes.push(batch)
-    events = [...events, ...batch]
-    return { appended: batch.length, head: events.length }
+describe("prefixOf", () => {
+  test("a seq copies rows 1 through seq", () => {
+    expect(prefixOf(source, 1)).toEqual([created])
+    expect(prefixOf(source, 2)).toEqual([created, first])
+    expect(prefixOf(source, 3)).toEqual(source)
   })
-  return {
-    append,
-    copyPrefix: append,
-    read: Effect.sync(() => events),
-    head: Effect.sync(() => events.length),
-    readFrom: (mark) => Effect.sync(() => events.slice(mark)),
-    readPage: (mark, limit) => Effect.sync(() =>
-      events.slice(mark, mark + limit).map((event, index) => ({ seq: mark + index + 1, event }))
-    ),
-    writes
-  }
-}
 
-describe("forkUntilOf", () => {
-  test("digit strings become sequences and other strings stay ids", () => {
-    expect(forkUntilOf(3)).toBe(3)
-    expect(forkUntilOf("3")).toBe(3)
-    expect(forkUntilOf("m1")).toBe("m1")
-    expect(() => forkUntilOf(0)).toThrow("positive integer")
-    expect(() => forkUntilOf("")).toThrow("nonempty")
+  test("a seq outside the log is refused", () => {
+    for (const seq of [0, -1, 1.5, 4, Number.NaN]) {
+      expect(() => prefixOf(source, seq)).toThrow("outside the log (1..3)")
+    }
   })
 })
 
-describe("prefixUntil", () => {
-  test("a sequence copies through that row", () => {
-    expect(prefixUntil(source, 1)).toEqual([created])
-    expect(prefixUntil(source, 2)).toEqual([created, first])
-    expect(prefixUntil(source, "2")).toEqual([created, first])
-  })
-
-  test("an event id copies through its first occurrence", () => {
-    expect(prefixUntil(source, "m2")).toEqual(source)
-    expect(eventIdentityOf(first)).toBe("m1")
-  })
-
-  test("a missing checkpoint is refused", () => {
-    expect(() => prefixUntil(source, 4)).toThrow("past the log head 3")
-    expect(() => prefixUntil(source, "ghost")).toThrow("not in the log")
-  })
-})
-
-describe("copyPrefix", () => {
-  test("copyPrefix is the store append function", async () => {
-    const store = memoryStore()
-    expect(store.copyPrefix).toBe(store.append)
-    const result = await Effect.runPromise(copyPrefix(store, [first]))
-    expect(result).toEqual({ appended: 1, head: 1 })
-    expect(store.writes).toEqual([[first]])
-    expect(await Effect.runPromise(store.read)).toEqual([first])
+describe("checkpointSeqOf", () => {
+  test("a row passes through and an event id names its last matching row", () => {
+    const called = { type: "ModelCalled", callId: "c1", at: 4 } as Event
+    const returned = { type: "ModelReturned", callId: "c1", at: 5 } as Event
+    const log = [created, first, second, called, returned]
+    expect(checkpointSeqOf(log, { seq: 3 })).toBe(3)
+    expect(checkpointSeqOf(log, { event: "m1" })).toBe(2)
+    expect(checkpointSeqOf(log, { event: "c1" })).toBe(5)
+    expect(() => checkpointSeqOf(log, { event: "ghost" })).toThrow('no event with id "ghost"')
   })
 })
 
 describe("forkBatchOf", () => {
-  test("the dest keeps its identity and records the source prefix", () => {
-    const batch = forkBatchOf(source, { sourceThread: "root", until: 2, forkedAt: 40 })
-    expect(batch).toEqual([
-      first,
-      { type: "ThreadForked", sourceThread: "root", until: 2, forkedAt: 40 }
-    ])
-    expect(matchingFork([...batch], "root", 2)).toBe(true)
-    expect(matchingFork([...batch], "root", 3)).toBe(false)
+  test("the batch drops the source identity and ends with the fork fact", () => {
+    const batch = forkBatchOf(source, 2, root, 40)
+    expect(batch).toEqual([first, { type: "ThreadForked", source: root, at: 40 }])
+    expect(isThreadForked(batch.at(-1))).toBe(true)
   })
 
-  test("ThreadForked refuses an empty source id", () => {
-    expect(() => threadForked({ sourceThread: "", until: 1, forkedAt: 1 })).toThrow()
+  test("the fork fact position is the boundary", () => {
+    const batch = forkBatchOf(source, 3, root, 40)
+    const dest = [destCreated, ...batch]
+    const marker = dest.findIndex(isThreadForked)
+    expect(marker).toBe(3)
+    expect(dest.slice(1, marker)).toEqual([first, second])
+  })
+
+  test("a prefix with an open child invocation is refused and the child is named", () => {
+    const linked = invocationLinked({
+      parent: { method: "message", id: "m1", epoch: 0 },
+      child: { invocation: { method: "message", id: "c1", epoch: 0 } },
+      target: worker1,
+      at: 3
+    })
+    const settled = {
+      type: "ResponseReceived", id: "c1.reply", from: worker1, method: "message", call: "c1", status: "completed", at: 4
+    } as Event
+    const withOpen = [created, first, linked]
+    expect(() => forkBatchOf(withOpen, 3, root, 40)).toThrow(`leaves 1 child invocation open: ${worker1} message/c1`)
+    expect(forkBatchOf([...withOpen, settled], 4, root, 40).map((event) => event.type)).toEqual([
+      "MessageReceived", "InvocationLinked", "ResponseReceived", "ThreadForked"
+    ])
+    expect(forkBatchOf(withOpen, 2, root, 40).map((event) => event.type)).toEqual(["MessageReceived", "ThreadForked"])
+  })
+
+  test("a source without a leading ThreadCreated is copied whole", () => {
+    expect(forkBatchOf([first, second], 2, root, 40).map((event) => event.type)).toEqual([
+      "MessageReceived", "MessageReceived", "ThreadForked"
+    ])
+  })
+})
+
+describe("matchingFork", () => {
+  test("a destination holding the same batch matches, another source or length does not", () => {
+    const batch = forkBatchOf(source, 2, root, 40)
+    expect(matchingFork([destCreated, ...batch], batch)).toBe(true)
+    expect(matchingFork([destCreated, ...batch], forkBatchOf(source, 3, root, 40))).toBe(false)
+    expect(matchingFork([destCreated, ...forkBatchOf(source, 2, { ...root, thread: "other" }, 40)], batch)).toBe(false)
+    expect(matchingFork([destCreated], batch)).toBe(false)
+    expect(matchingFork([destCreated, first], batch)).toBe(false)
+  })
+})
+
+describe("isThreadForked", () => {
+  test("a stored row with a string source is not a fork fact", () => {
+    expect(isThreadForked({ type: "ThreadForked", source: "root", at: 1 } as Event)).toBe(false)
+    expect(isThreadForked(threadForked({ source: root, at: 1 }))).toBe(true)
   })
 })
