@@ -1,3 +1,4 @@
+import { modelConfigOf } from "@clavia/tardigrade-model/config"
 import { Clock, Console, Effect, Layer, Option } from "effect"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
@@ -32,6 +33,7 @@ import {
   defaultSetupJson,
   defaultSetupSummary,
   providerAnswersFrom,
+  providerConfigWithAnswers,
   providerSetupJson,
   providerSetupSummary,
   readSetupEnv,
@@ -262,17 +264,14 @@ const configuredModels = (
   current: ModelConfig,
   providers: ReadonlyArray<ProviderAnswers>,
   selected: ModelConfig["default"] = current.default
-): ModelConfig => ({
+): ModelConfig => modelConfigOf({
   allow: current.allow,
   ...(selected === undefined ? {} : { default: selected }),
   providers: {
     ...current.providers,
-    ...Object.fromEntries(providers.map((provider) => [provider.provider, {
-      baseUrl: provider.baseUrl,
-      protocol: provider.protocol,
-      env: provider.env,
-      ...(provider.region === undefined ? {} : { region: provider.region })
-    }]))
+    ...Object.fromEntries(providers.map((provider) => [
+      provider.provider, providerConfigWithAnswers(current.providers[provider.provider], provider)
+    ]))
   }
 })
 
@@ -370,19 +369,24 @@ export const setupDefaultCommand = Command.make("default", {
     try: () => defaultModelFrom({ provider: stated(flags.provider), model: stated(flags.model) }),
     catch: userErrorOf
   })
-  const selected = declared ?? (canAsk()
+  const selected: { readonly provider: string; readonly model_id: string; readonly models?: ProviderAnswers["models"] } = declared ?? (canAsk()
     ? yield* Effect.mapError(setupDefaultPrompt(Object.keys(project.models.providers), {
       ...setupPromptOptionsIn(cli.cwd, cli.env),
+      providers: project.models.providers,
       ...(project.models.default === undefined ? {} : { current: project.models.default })
     }), userErrorOf)
     : yield* userErrorOf(NON_INTERACTIVE_DEFAULT_SETUP))
   if (project.models.providers[selected.provider] === undefined) {
     return yield* userErrorOf(`provider ${JSON.stringify(selected.provider)} is not configured; run \`tdg setup provider\``)
   }
+  const updates: ReadonlyArray<ProviderAnswers> = selected.models === undefined ? [] : [{
+    ...project.models.providers[selected.provider]!, provider: selected.provider, models: selected.models
+  }]
+  const reference = { provider: selected.provider, model_id: selected.model_id }
   const [files, modelLock] = yield* writeSetupWithLock(
     cli,
-    configuredModels(project.models, [], selected),
-    Effect.mapError(writeDefaultSetup(cli.cwd, selected, cli.env), userErrorOf)
+    configuredModels(project.models, updates, reference),
+    Effect.mapError(updates.length === 0 ? writeDefaultSetup(cli.cwd, reference, cli.env) : writeSetupPlan(cli.cwd, { providers: updates, default: reference }, cli.env), userErrorOf)
   )
   yield* Console.log(setupOutput(flags.json, defaultSetupJson(files, selected), defaultSetupSummary(files, selected), modelLock))
 })).pipe(

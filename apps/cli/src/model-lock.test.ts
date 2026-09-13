@@ -89,3 +89,25 @@ describe("model lock", () => {
     expect(() => assertModelLockCurrent({ ...config, allow: "*" }, lock)).toThrow("does not match")
   })
 })
+
+
+test("locks and reloads custom metadata without a registry", async () => {
+  root = await mkdtemp(join(process.cwd(), ".tdg-model-lock-test-"))
+  const custom: ModelConfig = {
+    allow: "*", default: { provider: "localhost", model_id: "local" },
+    providers: { localhost: {
+      protocol: "openai-chat-completions", baseUrl: "http://localhost:8080/v1", env: ["API_KEY"],
+      models: { local: { metadata: { contextWindowTokens: 32768, toolCall: true } } }
+    } }
+  }
+  const lock = await resolveModelLock(custom, {
+    sourceUrl: "https://example.com/catalog", cachePath: join(root, "cache.json"), timeoutMillis: 1000,
+    fetch: (async () => new Response("offline", { status: 503 })) as unknown as typeof fetch
+  })
+  expect(lock).toMatchObject({ schema: 1, catalog: { source: "custom", providers: [{ id: "localhost", models: [{
+    id: "local", metadata: { contextWindowTokens: 32768, toolCall: true }
+  }] }] } })
+  await writeModelLock(root, lock)
+  expect(await readModelLock(root)).toEqual(lock)
+  expect(() => assertModelLockCurrent(custom, lock)).not.toThrow()
+})
