@@ -14,10 +14,9 @@ const ThreadTree = Schema.Struct({
 const WorkerActor = Schema.Struct({ actor: Schema.String, definition: Schema.String })
 
 const WorkerError = Schema.Struct({ error: Schema.String })
-const errors = [400, 401, 404, 500, 503].map((status) => WorkerError.pipe(HttpApiSchema.status(status)))
 
 // workerEndpoint retains shared requests and replaces the manual transport's response declarations (test/actor.workers.ts).
-const workerEndpoint = (endpoint: Pick<HttpApiEndpoint.Top, "identifier" | "method" | "params" | "query" | "headers" | "payload" | "success"> & { readonly path: HttpRouter.PathInput }, success: ReadonlyArray<Schema.Top> = [...endpoint.success]) => {
+const workerEndpoint = <const Name extends string>(endpoint: Pick<HttpApiEndpoint.Top, "method" | "params" | "query" | "headers" | "payload" | "success"> & { readonly identifier: Name; readonly path: HttpRouter.PathInput }, errors: ReadonlyArray<number>, success: ReadonlyArray<Schema.Top> = [...endpoint.success]) => {
   const payload = [...endpoint.payload.values()].flatMap((entry) => entry.schemas)
   return HttpApiEndpoint.make(endpoint.method)(endpoint.identifier, endpoint.path, {
     params: endpoint.params,
@@ -25,27 +24,29 @@ const workerEndpoint = (endpoint: Pick<HttpApiEndpoint.Top, "identifier" | "meth
     headers: endpoint.headers,
     ...(payload.length === 0 ? {} : { payload }),
     success,
-    error: errors
+    error: [401, 503, ...errors].map((status) => WorkerError.pipe(HttpApiSchema.status(status)))
   })
 }
 
-// workerRoutes declares the manual Worker routes, including runtime-specific responses (test/actor.workers.ts).
-export const workerRoutes = {
-  healthz: HttpApiEndpoint.get("healthz", "/healthz", {
+const workerGroup = HttpApiGroup.make("worker").add(
+  HttpApiEndpoint.get("healthz", "/healthz", {
     success: Schema.Struct({ status: Schema.Literal("ready"), actor: Schema.String })
   }),
-  metadata: workerEndpoint(runtimeGroup.endpoints.metadata),
-  ensureActor: workerEndpoint(actorsGroup.endpoints.ensureActor, [WorkerActor]),
-  actor: workerEndpoint(actorsGroup.endpoints.actor, [WorkerActor]),
-  allocateRoot: workerEndpoint(threadsGroup.endpoints.allocateRoot),
-  list: workerEndpoint(threadsGroup.endpoints.list, [Schema.Array(ThreadTree)]),
-  append: workerEndpoint(threadsGroup.endpoints.append),
-  events: workerEndpoint(threadsGroup.endpoints.events)
-}
+  workerEndpoint(runtimeGroup.endpoints.metadata, []),
+  workerEndpoint(actorsGroup.endpoints.ensureActor, [400], [WorkerActor]),
+  workerEndpoint(actorsGroup.endpoints.actor, [400, 404], [WorkerActor]),
+  workerEndpoint(threadsGroup.endpoints.allocateRoot, [400, 404]),
+  workerEndpoint(threadsGroup.endpoints.list, [400, 404], [Schema.Array(ThreadTree)]),
+  workerEndpoint(threadsGroup.endpoints.append, [400, 404]),
+  workerEndpoint(threadsGroup.endpoints.events, [400, 404, 500])
+)
+
+// workerRoutes declares the manual Worker routes, including runtime-specific responses (test/actor.workers.ts).
+export const workerRoutes = workerGroup.endpoints
 
 // WorkerApi describes the routes mounted by cloudflareHttp (test/actor.workers.ts).
 export const WorkerApi = HttpApi.make("tardigrade-worker").add(
   modelsGroup,
   methodsGroup,
-  HttpApiGroup.make("worker").add(workerRoutes.healthz, workerRoutes.metadata, workerRoutes.ensureActor, workerRoutes.actor, workerRoutes.allocateRoot, workerRoutes.list, workerRoutes.append, workerRoutes.events)
+  workerGroup
 ).annotateMerge(OpenApi.annotations({ title: "Tardigrade", description: "Durable actor methods and thread logs on Cloudflare Workers." }))

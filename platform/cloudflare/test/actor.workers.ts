@@ -705,6 +705,18 @@ describe("cloudflare actor", () => {
       properties: { id: { type: "string" }, children: { type: "array" } }
     })
     expect(spec.paths["/v1/actors/{id}/threads/{thread}/events"]?.post?.responses).toHaveProperty("202")
+    for (const [path, method, statuses] of [
+      ["/healthz", "get", ["200"]],
+      ["/v1/metadata", "get", ["200", "401", "503"]],
+      ["/v1/actors/{id}", "put", ["200", "400", "401", "503"]],
+      ["/v1/actors/{id}", "get", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads", "post", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads", "get", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/events", "post", ["202", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/events", "get", ["200", "400", "401", "404", "500", "503"]]
+    ] as const) {
+      expect(Object.keys(spec.paths[path]![method]!.responses).sort()).toEqual(statuses)
+    }
     expect((await SELF.fetch("http://test/v1/methods")).status).toBe(401)
   })
 
