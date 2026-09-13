@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@clavia/tardigrade-core": "workspace:*",
-    "effect": "4.0.0-rc.110"
+    "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
     "fast-check": "^4.9.0"

@@ -48,7 +48,7 @@ export interface FallbackOutputFragment {
   readonly fallback: OutputFallback
   // The prompt this fallback needs when it runs. It reaches the model only on an attempt whose
   // mode is this fallback, so a native attempt reads exactly what it would read with nothing
-  // mounted (request.ts, OutputRequest; packages/model/src/model.ts).
+  // mounted (request.ts, OutputRequest; packages/agent/src/inference/model/output.ts).
   readonly system?: string
 }
 

@@ -1,14 +1,13 @@
+import { providerLayer } from "tardie/model/providers/openrouter"
 import { join } from "node:path"
 import { createBunHost, serve } from "tardie/bun"
 import { bunModelServices } from "tardie/server/model-services"
-import { modelAdapters } from "tardie/model/adapter"
-import { openAICompatibleAdapter } from "tardie/model/openai"
 import definition from "./actor"
 
 const { config, layers, api } = await bunModelServices({
+  model: { providerLayer, configure: () => ({ maxOutputTokens: 4096 }) },
   configFile: new URL("wrangler.jsonc", import.meta.url),
-  env: process.env,
-  adapters: modelAdapters(openAICompatibleAdapter)
+  env: process.env
 })
 
 const storage = config.db === ":memory:" ? ":memory:" : `${config.db}.actors`

@@ -1,200 +1,87 @@
-import { Effect, Layer } from "effect"
-import { Infer, intersectModelPolicies, modelAllowedBy, type ModelPolicy, type ModelRef, type InferenceObserver } from "@clavia/tardigrade-agent"
-import type { Action } from "@clavia/tardigrade-agent/log/events"
-import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import type { ModelConfig, ModelCredentials } from "./config"
-import type { ModelCatalogState } from "./catalog"
-import type { ModelAdapterRegistry } from "./adapter"
-import { providerAvailabilitiesOf } from "./catalog-availability"
-import { infer } from "./model"
+import { failedProviderLayer, type ProviderLayer } from "./providers/layer"
+import { protocolOptionsOf } from "./providers/options"
+import { MODEL_PROTOCOLS, modelProviderModuleOf } from "./providers/directory"
+import type { ModelConfig as BedrockModelConfig } from "@tardie/ai-bedrock/BedrockLanguageModel"
+import { requestPolicyOf } from "./stream/request"
+import { Layer, Redacted } from "effect"
+import { FetchHttpClient } from "effect/unstable/http"
+import { type InferenceObserver } from "./stream/observer"
+import type { OpenRouterLanguageModel } from "@tardie/ai-openrouter"
+import type { OpenAiLanguageModel } from "@tardie/ai-openai"
+import type { OpenAiLanguageModel as CompatLanguageModel } from "@tardie/ai-openai-compat"
+import type { AnthropicLanguageModel } from "@tardie/ai-anthropic"
+import { modelLayerWith, type ModelHostConfig, type SelectedModel } from "./selection"
+import type { ModelCatalogState } from "./catalog/index"
+import type { ReportedCostReader } from "./usage"
+import type { OutputCapability } from "./output"
+import type { RequestOptions } from "./stream/request"
+import { inferenceLayer } from "./services"
 
-export interface ModelHostConfig {
-  readonly model: ModelConfig
-  readonly modelCredentials: ModelCredentials
+export interface ModelSettings extends RequestOptions {
+  readonly openrouter?: Parameters<typeof OpenRouterLanguageModel.layer>[0]["config"]
+  readonly reportedCostUsd?: ReportedCostReader
+  readonly openai?: Parameters<typeof OpenAiLanguageModel.layer>[0]["config"]
+  readonly bedrock?: BedrockModelConfig
+  readonly compat?: Parameters<typeof CompatLanguageModel.layer>[0]["config"]
+  readonly anthropic?: Parameters<typeof AnthropicLanguageModel.layer>[0]["config"]
+  readonly output?: OutputCapability
 }
 
-// The model binding the configured references name. An absent reference is not an endpoint this
-// server invents: every attempt fails with what is missing, so the process still boots, still
-// answers /healthz, and says why a turn cannot run (config.ts, ModelConfig).
-export const MISSING_MODEL = "no model provider is configured: run `tdg setup`"
-
-interface SelectedModel {
-  readonly model_id: string
-  readonly provider: string
-  readonly baseUrl: string
-  readonly apiKey: string
-  readonly protocol: ModelConfig["providers"][string]["protocol"]
-  readonly region?: string
-  readonly contextWindowTokens: number
-  readonly maxOutputTokens?: number
-  readonly pricing?: import("@clavia/tardigrade-agent/inference/usage").ModelPricing
-  readonly catalogRevision: string
+export interface ModelIntegrationOptions {
+  readonly providerLayer?: ProviderLayer
+  readonly configure?: (selected: SelectedModel) => ModelSettings
 }
 
-interface ProviderConnection {
-  readonly baseUrl: string
-  readonly apiKey: string
-  readonly protocol: ModelConfig["providers"][string]["protocol"]
-  readonly region?: string
+export interface ModelHostOptions extends ModelIntegrationOptions {
+  readonly observer?: InferenceObserver
 }
 
-const connectionFrom = (
-  config: ModelConfig,
-  credentials: ModelCredentials,
-  selected: ModelRef
-): ProviderConnection => {
-  const provider = config.providers[selected.provider]
-  if (provider === undefined) {
-    const available = Object.keys(config.providers).sort()
-    throw new Error(
-      `provider ${JSON.stringify(selected.provider)} is not configured for model ${JSON.stringify(selected.model_id)}; ` +
-      `run \`tdg setup\`${available.length === 0 ? "" : `; configured providers: ${available.join(", ")}`}`
-    )
-  }
-  const apiKey = provider.env.flatMap((name) => credentials[name] === undefined ? [] : [credentials[name]!])[0]
-  if (apiKey === undefined) {
-    throw new Error(
-      `provider ${JSON.stringify(selected.provider)} needs a credential; set ${provider.env.join(" or ")} as a secret environment variable`
-    )
-  }
-  return {
-    baseUrl: provider.baseUrl,
-    apiKey,
-    protocol: provider.protocol,
-    ...(provider.region === undefined ? {} : { region: provider.region })
-  }
-}
-
-const catalogModelFrom = (
-  snapshot: ModelCatalog,
-  selected: ModelRef
-): ModelCatalog["providers"][number]["models"][number] => {
-  const provider = snapshot.providers.find((candidate) => candidate.id === selected.provider)
-  if (provider === undefined) {
-    throw new Error(
-      `provider ${JSON.stringify(selected.provider)} is absent from model catalog revision ${JSON.stringify(snapshot.revision)}`
-    )
-  }
-  const model = provider.models.find((candidate) => candidate.id === selected.model_id)
-  if (model === undefined) {
-    throw new Error(
-      `model ${selected.provider}/${selected.model_id} is absent from model catalog revision ${JSON.stringify(snapshot.revision)}`
-    )
-  }
-  return model
-}
-
-// selectedModelFrom combines one private provider connection with public metadata from the
-// process catalog snapshot.
-export const selectedModelFrom = (
-  config: ModelConfig,
-  credentials: ModelCredentials,
-  catalog: ModelCatalogState,
-  reference?: ModelRef
-): SelectedModel => {
-  const selected = reference ?? config.default
-  if (selected === undefined) throw new Error("the built-in actor has no model reference; run `tdg setup`")
-  if (!modelAllowedBy(config, selected)) {
-    throw new Error(`model ${selected.provider}/${selected.model_id} is excluded by the host model policy`)
-  }
-  const provider = connectionFrom(config, credentials, selected)
-  if (catalog.snapshot === undefined) {
-    throw new Error(`model catalog metadata is unavailable for ${selected.provider}/${selected.model_id}; check the server startup logs`)
-  }
-  const catalogModel = catalogModelFrom(catalog.snapshot, selected)
-  const metadata = catalogModel.metadata
-  if (metadata.contextWindowTokens === undefined) {
-    throw new Error(`model catalog has no context window for ${selected.provider}/${selected.model_id}`)
-  }
-  return {
-    ...selected,
-    baseUrl: provider.baseUrl,
-    apiKey: provider.apiKey,
-    protocol: provider.protocol,
-    ...(provider.region === undefined ? {} : { region: provider.region }),
-    contextWindowTokens: metadata.contextWindowTokens,
-    ...(metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: metadata.maxOutputTokens }),
-    ...(metadata.pricing === undefined ? {} : { pricing: metadata.pricing }),
-    catalogRevision: catalog.snapshot.revision
-  }
-}
-
-// modelIsConfigured says whether a turn can reach a model at all. The command line reads it to say
-// so once on boot rather than letting every turn be the first news (apps/cli/src/commands.ts).
-export const modelIsConfigured = (config: ModelHostConfig): boolean =>
-  (() => {
-    try {
-      if (config.model.default === undefined) return false
-      if (!modelAllowedBy(config.model, config.model.default)) return false
-      connectionFrom(config.model, config.modelCredentials, config.model.default)
-      return true
-    } catch {
-      return false
+// modelLayer binds configured models through Effect while sharing host authority and catalog selection (host.test.ts).
+export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, options: ModelHostOptions = {}) => modelLayerWith(config, catalog, (selected) => {
+  try {
+    const configured = protocolOptionsOf(selected.protocol, config.model.providers[selected.provider]?.models?.[selected.model_id]?.options)
+    const overrides = options.configure?.(selected) ?? {}
+    const openrouter = modelProviderModuleOf(selected.provider, selected.protocol) === "openrouter"
+    const settings: ModelSettings = {
+      ...overrides,
+      ...(configured.options === undefined ? {} : configured.protocol === "openai-responses" ? { openai: { ...configured.options, ...overrides.openai } }
+        : configured.protocol === "openai-chat-completions" && openrouter ? { openrouter: { ...configured.options, ...overrides.openrouter } }
+        : configured.protocol === "openai-chat-completions" ? { compat: { ...configured.options, ...overrides.compat } }
+        : configured.protocol === "anthropic-messages" ? { anthropic: { ...configured.options, ...overrides.anthropic } }
+        : { bedrock: { ...configured.options, ...overrides.bedrock } })
     }
-  })()
-
-export const modelLayer = (
-  config: ModelHostConfig,
-  catalog: ModelCatalogState,
-  adapters: ModelAdapterRegistry,
-  observer?: InferenceObserver
-): Layer.Layer<Infer> => {
-  if (Object.keys(config.model.providers).length === 0) {
-    const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
-    return Layer.succeed(Infer)({
-      resolve: () => { throw new Error(MISSING_MODEL) },
-      react: () => Effect.succeed(failed)
-    })
-  }
-  const availableModels = (): ModelPolicy => {
-    const snapshot = catalog.snapshot
-    if (snapshot === undefined) return { allow: [] }
-    const availability = providerAvailabilitiesOf(config.model, config.modelCredentials)
-    const configured: ModelPolicy = {
-      allow: snapshot.providers.flatMap((provider) =>
-        availability[provider.id]?.status === "available" && provider.models.length > 0
-          ? [{ provider: provider.id, model_ids: provider.models.map((model) => model.id) }]
-          : []
-      )
+    const nativeLimit = openrouter ? (settings.openrouter?.max_completion_tokens ?? settings.openrouter?.max_tokens) : selected.protocol === "bedrock-converse" ? settings.bedrock?.inferenceConfig?.maxTokens : selected.protocol === "openai-responses" ? settings.openai?.max_output_tokens : selected.protocol === "openai-chat-completions" ? settings.compat?.max_output_tokens : settings.anthropic?.max_tokens
+    const limits = [selected.maxOutputTokens, settings.maxOutputTokens, nativeLimit].filter((value): value is number => value != null)
+    const common = {
+      ...settings,
+      providerId: selected.provider,
+      endpoint: selected.baseUrl,
+      client: { apiKey: Redacted.make(selected.apiKey), apiUrl: selected.baseUrl },
+      ...(limits.length === 0 ? {} : { maxOutputTokens: Math.min(...limits) }),
+      ...(selected.pricing === undefined ? {} : { pricing: selected.pricing }),
+      ...(options.observer === undefined ? {} : { observer: options.observer })
     }
-    const authority = intersectModelPolicies([config.model, configured])
-    return { ...authority, ...(config.model.default === undefined ? {} : { default: config.model.default }) }
+    if (selected.protocol === "bedrock-converse") {
+      const region = selected.region ?? new URL(selected.baseUrl).pathname.split("/").filter(Boolean).at(-1)
+      if (region === undefined) throw new Error("a Bedrock connection must declare its AWS region")
+      const policy = requestPolicyOf(common)
+      return inferenceLayer({ ...common, provider: "bedrock", gateway: { apiKey: selected.apiKey, bounds: policy.timeout }, model: { model: selected.model_id, ...(settings.bedrock === undefined ? {} : { config: settings.bedrock }) }, client: {
+        region, endpoint: selected.baseUrl, token: { token: "byok" }, authSchemePreference: ["httpBearerAuth"]
+      } }, options.providerLayer).pipe(Layer.provide(FetchHttpClient.layer))
+    }
+    return inferenceLayer(
+      selected.protocol === "openai-responses"
+      ? { ...common, provider: "openai", model: { model: selected.model_id, ...(settings.openai === undefined ? {} : { config: settings.openai }) } }
+      : openrouter
+      ? { ...common, provider: "openrouter", model: { model: selected.model_id, ...(settings.openrouter === undefined ? {} : { config: settings.openrouter }) } }
+      : selected.protocol === "openai-chat-completions"
+      ? { ...common, provider: "openai-compat", model: { model: selected.model_id, ...(settings.compat === undefined ? {} : { config: settings.compat }) } }
+      : { ...common, provider: "anthropic", model: { model: selected.model_id, ...(settings.anthropic === undefined ? {} : { config: settings.anthropic }) } }
+      , options.providerLayer
+    ).pipe(Layer.provide(FetchHttpClient.layer))
+  } catch (error) {
+    return failedProviderLayer(error)
   }
-  return Layer.succeed(Infer, {
-    resolve: (reference) => {
-      const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, reference)
-      return {
-        model: { provider: selected.provider, model_id: selected.model_id },
-        models: availableModels(),
-        contextWindowTokens: selected.contextWindowTokens,
-        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
-        catalogRevision: selected.catalogRevision
-      }
-    },
-    react: (request, key, signal) => Effect.suspend(() => {
-      let selected: SelectedModel
-      try {
-        selected = selectedModelFrom(config.model, config.modelCredentials, catalog, request.model)
-      } catch (error) {
-        return Effect.succeed<Action>({
-          kind: "fail",
-          error: error instanceof Error ? error.message : String(error),
-          failure: { cause: "inference_error", attempts: 0 }
-        })
-      }
-      const binding = infer({
-        baseUrl: selected.baseUrl,
-        apiKey: selected.apiKey,
-        model: selected.model_id,
-        protocol: selected.protocol,
-        provider: selected.provider,
-        ...(selected.region === undefined ? {} : { region: selected.region }),
-        contextWindowTokens: selected.contextWindowTokens,
-        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
-        ...(selected.pricing === undefined ? {} : { pricing: selected.pricing })
-      }, adapters, observer === undefined ? {} : { observer })
-      return Effect.flatMap(Infer, (model) => model.react(request, key, signal)).pipe(Effect.provide(binding))
-    })
-  })
-}
+}, MODEL_PROTOCOLS)
 
+export { MISSING_MODEL, modelIsConfigured, selectedModelFrom, modelLayerWith, type ModelHostConfig, type SelectedModel } from "./selection"

@@ -1,3 +1,4 @@
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -5,12 +6,12 @@ import { join } from "node:path"
 import { Effect, Layer } from "effect"
 import { defineActor } from "tardie/core"
 import { createHost } from "tardie/bun"
-import { Infer, NativeOutputSupport, agentMessageMethod, infer, nativeOutput } from "tardie/agent"
+import { NativeOutputSupport, agentMessageMethod, infer, nativeOutput } from "tardie/agent"
 
 const meeseeks = defineActor("meeseeks", { message: agentMessageMethod }, [infer([nativeOutput], { models: { default: { provider: "test", model_id: "deterministic" }, allow: "*" } })])
 
 const missingRequirements = () => {
-  // @ts-expect-error Infer and NativeOutputSupport must be supplied by the caller.
+  // @ts-expect-error inferenceClient and NativeOutputSupport must be supplied by the caller.
   return createHost({ actor: meeseeks, storage: ":memory:" })
 }
 void missingRequirements
@@ -23,7 +24,7 @@ test("public Bun host supplies component requirements across four threads", asyn
     storage,
     layersFor: (thread) => Layer.mergeAll(
       Layer.succeed(NativeOutputSupport, { withTools: true }),
-      Layer.succeed(Infer, { react: (request) => Effect.sync(() => {
+      testInferenceLayer( { react: (request) => Effect.sync(() => {
         calls++
         const message = request.trajectory.findLast((event) => event.type === "MessageReceived")
         return { kind: "complete" as const, output: `${thread}: ${String(message?.text)}` }

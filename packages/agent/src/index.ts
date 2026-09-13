@@ -9,7 +9,6 @@ export { agentMethods } from "./actor/methods"
 export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
 export { PermissionRequestInput, PermissionDecision, requestPermissionMethod } from "./actor/permission"
 export {
-  Infer,
   NativeOutputSupport,
   DEFAULT_INFER_POLICY,
   type InferPolicy,
@@ -119,7 +118,6 @@ export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./runtime/r
 export {
   usageIn,
   usageOf,
-  usageFrom,
   priced,
   costOf,
   sumUsage,

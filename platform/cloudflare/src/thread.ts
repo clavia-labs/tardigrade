@@ -4,7 +4,6 @@ import { DurableObject } from "cloudflare:workers"
 import { Effect, Layer, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import { modelAdapters } from "@clavia/tardigrade-model/adapter"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { directoryRoute } from "@clavia/tardigrade-core/transport/router"
@@ -129,8 +128,6 @@ export class ThreadDO extends DurableObject<Env> {
       ? EMPTY_MODEL_SCOPE
       : await modelCatalogForConfig(modelConfig, deployedScope)
     const models = modelsFrom(this.env, modelConfig)
-    const adapters = mountedActor?.modelAdapters ?? modelAdapters()
-    for (const provider of Object.values(models?.providers ?? {})) adapters.resolve(provider.protocol)
     const actorName = this.name()
     const actorInstance = this.instance()
     const selectedAssembly = assemblyOf(actorName)
@@ -204,7 +201,7 @@ export class ThreadDO extends DurableObject<Env> {
       layers: (() => {
         const thread = currentThread
         const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, actorInstance, thread })
-        const framework = Layer.mergeAll(modelLayer(models, modelScope, adapters, observer), FetchHttpClient.layer, sandboxLayer)
+        const framework = Layer.mergeAll(modelLayer(models, modelScope, observer), FetchHttpClient.layer, sandboxLayer)
         const application = mountedActor?.layersFor?.({ env: this.env, actorInstance, thread })
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       })(),

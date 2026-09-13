@@ -1,14 +1,34 @@
+import { LanguageModel, Response } from "effect/unstable/ai"
+import { CurrentModel } from "@clavia/tardigrade-model/settings"
+import type { ModelRef } from "@clavia/tardigrade-model/reference"
+import { unknownModelError } from "@clavia/tardigrade-model/error"
+import { renderMessages } from "../projection/messages"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Ref } from "effect"
+import { Effect, Layer, Ref, Stream } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { actorFromProjections, Self, send } from "@clavia/tardigrade-core/runtime"
+import { actorFromProjections, Self, settleActor } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection } from "@clavia/tardigrade-core/transition"
-import { Infer } from "../inference/contract"
+
 import { composeKeys } from "@clavia/tardigrade-core/log"
 import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
-import { agentKeys } from "../log/events"
+import { agentKeys, type Action } from "../log/events"
+
+const summaryLayer = (respond: (prompt: string, model: ModelRef | undefined) => Effect.Effect<Action>) => Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+  generateText: () => Effect.die("Use streaming in this fixture"),
+  streamText: request => Stream.unwrap(Effect.gen(function* () {
+    const model = yield* CurrentModel
+    const prompt = request.prompt.content.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.flatMap(part => part.type === "text" ? [part.text] : [])).join("\n")
+    const action = yield* respond(prompt, model)
+    if (action.kind === "fail") return Stream.fail(unknownModelError(action.error))
+    const text = action.kind === "complete" ? action.output : action.text ?? ""
+    const parts: Response.StreamPartEncoded[] = [Response.makePart("text-start", { id: "summary" }), Response.makePart("text-delta", { id: "summary", delta: text }), Response.makePart("text-end", { id: "summary" })]
+    if (action.kind === "calls") for (const call of action.calls) parts.push(Response.makePart("tool-call", { id: call.callId, name: call.name, params: call.arguments, providerExecuted: false }))
+    parts.push(Response.makePart("finish", { reason: "stop", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) }))
+    return Stream.fromIterable(parts)
+  }))
+}))
 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)
 import {
@@ -24,7 +44,7 @@ import {
 
 // Compaction is a pure machine: a guard fires at a resolved tool round when the rendered suffix
 // passes FIRE tokens, the pass summarizes down to a KEEP-token tail, and the checkpoint binds by
-// event identity. The summarizer is the ordinary Infer seam, stubbed here. The size measure is
+// event identity. The summarizer receives native LanguageModel parts from this fixture. The size measure is
 // rendered chars over four.
 
 const head: Event = { type: "MessageReceived", id: "m0", text: "extract the covenants", at: 0 }
@@ -60,7 +80,7 @@ describe("the compaction measure and guard", () => {
 
   test("the measure counts what a render sends: capped results, skipped threads", () => {
     const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big])).toBe(Math.ceil(TEST_CONTEXT.resultRenderCap / 4))
+    expect(estimateTokens([big])).toBe(Math.ceil(renderMessages([big])[0]!.content!.length / 4))
     const thread: Event = { type: "CodeSettled", execId: "c", result: 1, at: 2 } as Event
     expect(estimateTokens([thread])).toBe(0)
   })
@@ -84,7 +104,7 @@ describe("the compaction measure and guard", () => {
     expect(compactionReactor({ contextWindowTokens: 125 })(openTurn(2))).toHaveLength(1)
     // The measure moves with the render cap, because one policy states both.
     const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(10)
+    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(Math.ceil(renderMessages([big], { resultRenderCap: 40 })[0]!.content!.length / 4))
   })
 
   test("the selected model resolves both hysteresis lines from one window", () => {
@@ -119,11 +139,11 @@ describe("the compaction measure and guard", () => {
 })
 
 describe("the compaction pass", () => {
-  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> = TEST_POLICY) => {
+  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> = TEST_POLICY, outcome: Action = { kind: "complete", output: "covenants 1 through 13 extracted" }) => {
     const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
     let model: unknown
-    const actor = actorFromProjections<Infer | EventLog | Self>({
+    const actor = actorFromProjections<import("effect/unstable/ai").LanguageModel.LanguageModel | EventLog | Self>({
       transitions: [completeTransitionProjection(compactionReactor(policy))],
       keyOf: agentActorKeys
     })
@@ -135,20 +155,38 @@ describe("the compaction pass", () => {
           read: Ref.get(ref)
         })
       ),
-      Layer.succeed(Infer, {
-        react: ({ trajectory, model: selected }: { trajectory: ReadonlyArray<Event>; model?: unknown }) => {
-          briefed = String((trajectory[0] as { text?: unknown }).text ?? "")
+      summaryLayer((prompt, selected) => {
+          briefed = prompt
           model = selected
-          return Effect.succeed({ kind: "complete" as const, output: "covenants 1 through 13 extracted" })
-        }
+          return Effect.succeed(outcome)
       }),
       Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
     )
-    await Effect.runPromise(
-      send(actor, { type: "CompactionFired", at: 999 }).pipe(Effect.provide(layers)) as Effect.Effect<void>
+    const exit = await Effect.runPromiseExit(
+      settleActor(actor).pipe(Effect.provide(layers)) as Effect.Effect<void>
     )
-    return { log: await Effect.runPromise(Ref.get(ref)), briefed: () => briefed, model: () => model }
+    return { log: await Effect.runPromise(Ref.get(ref)), exit, briefed: () => briefed, model: () => model }
   }
+
+  test.each([
+    { kind: "fail", error: "provider unavailable" },
+    { kind: "calls", calls: [{ callId: "unexpected", name: "read", arguments: {} }] },
+    { kind: "complete", output: "   " }
+  ] satisfies Action[])("an unusable summary preserves history until successful recovery: %j", async (outcome) => {
+    const initial = openTurn(16)
+    const failed = await run(initial, TEST_POLICY, outcome)
+    expect(failed.exit._tag).toBe("Failure")
+    expect(failed.log.filter((event) => event.type === "CompactionCompleted")).toEqual([])
+    expect(checkpointOf(failed.log)).toEqual(checkpointOf(initial))
+    expect(renderMessages(failed.log)).toEqual(renderMessages(initial))
+    expect(reactor(failed.log).map((transition) => transition.key)).toEqual(reactor(initial).map((transition) => transition.key))
+    const recovered = await run(failed.log)
+    expect(recovered.exit._tag).toBe("Success")
+    expect(recovered.log.filter((event) => event.type === "CompactionCompleted")).toHaveLength(1)
+    expect(keepFromIndex(recovered.log, checkpointOf(recovered.log).keepFrom)).toBeGreaterThan(0)
+    expect(recovered.briefed()).toContain("run 1")
+    expect(recovered.log.slice(0, initial.length)).toEqual(initial)
+  })
 
   test("a fire summarizes and checkpoints down to a KEEP-token tail, mid-turn", async () => {
     const { log, briefed } = await run(openTurn(16))
@@ -271,11 +309,9 @@ describe("a projected repair is invisible to compaction as well as to the render
       })).pipe(
         Effect.provide(
           Layer.mergeAll(
-            Layer.succeed(Infer, {
-              react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
-                briefs.push(String((trajectory[0] as { text?: unknown }).text))
+            summaryLayer((prompt) => {
+                briefs.push(prompt)
                 return Effect.succeed({ kind: "complete" as const, output: "summarized" })
-              }
             }),
             Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
           )

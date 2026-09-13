@@ -11,7 +11,7 @@ import {
   modelProviderConnectionOf,
   modelProtocolOf,
   type ModelProtocol
-} from "@clavia/tardigrade-model/directory"
+} from "@clavia/tardigrade-model/providers/directory"
 import { loadModelCatalog } from "@clavia/tardigrade-server/catalog"
 import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
 import {
@@ -22,7 +22,7 @@ import {
 import {
   DEFAULT_MODEL_CATALOG_URL,
   modelsDevCatalogOf
-} from "@clavia/tardigrade-model/metadata"
+} from "@clavia/tardigrade-model/catalog/metadata"
 
 import { parseProjectConfig, projectConfigPathIn } from "./config"
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigWithVarOf } from "./celld"
@@ -43,13 +43,7 @@ export const gitignorePathIn = (root: string): string => `${root.replace(/\/$/, 
 // DEFAULT_MODEL_LIST_TIMEOUT_MILLIS bounds the optional model catalog request.
 export const DEFAULT_MODEL_LIST_TIMEOUT_MILLIS = 10_000
 
-// Preset is one entry in the provider select. `baseUrl` prefills the next prompt and stays
-// editable; an absent one asks with no default. `provider` names the endpoint's vendor, which
-// also selects a protocol other than the OpenAI-compatible one the model binding speaks by
-// default (packages/model/src/model.ts).
-//
-// The list is short on purpose. Every URL here is a promise to keep it correct, so an endpoint this
-// repository does not track belongs behind "Other" rather than in the list.
+// Preset describes a provider choice with editable connection defaults (setup.test.ts).
 export interface Preset {
   readonly title: string
   readonly description: string
@@ -298,26 +292,26 @@ const presetFor = (provider: string): Preset =>
   PRESETS.find((preset) => preset.provider === provider) ?? PRESETS[PRESETS.length - 1]!
 
 const providerPrompt = (options: SetupPromptOptions) => Effect.gen(function*() {
-  const preset = yield* Prompt.select({
+  const preset = yield* Prompt.Select({
     message: "Which model provider?",
     choices: PRESETS.map((preset) => ({ title: preset.title, value: preset, description: preset.description }))
   })
-  const provider = preset.provider ?? (yield* Prompt.text({
+  const provider = preset.provider ?? (yield* Prompt.String({
     message: "Provider name",
     ...(options.current?.provider === undefined ? {} : { default: options.current.provider }),
     validate: nonEmpty("the provider name")
   }))
-  const protocol = preset.protocol ?? (yield* Prompt.select<ModelProtocol>({
+  const protocol = preset.protocol ?? (yield* Prompt.Select<ModelProtocol>({
     message: "Which protocol does this endpoint accept?",
     choices: MODEL_PROTOCOLS.map((protocol) => ({ title: protocol, value: protocol }))
   }))
   const defaultBaseUrl = (options.current?.provider === provider ? options.current.baseUrl : undefined) ?? preset.baseUrl
-  const baseUrl = yield* Prompt.text({
+  const baseUrl = yield* Prompt.String({
     message: preset.provider === "amazon-bedrock" ? "AI Gateway Bedrock endpoint" : "Base URL",
     ...(defaultBaseUrl === undefined ? {} : { default: defaultBaseUrl }),
     validate: nonEmpty("the base URL")
   })
-  const region = provider === "amazon-bedrock" ? yield* Prompt.text({
+  const region = provider === "amazon-bedrock" ? yield* Prompt.String({
     message: "AWS region",
     ...(options.current?.provider === provider && options.current.region !== undefined
       ? { default: options.current.region }
@@ -326,12 +320,12 @@ const providerPrompt = (options: SetupPromptOptions) => Effect.gen(function*() {
   }) : undefined
   const catalogResult = yield* catalogResultFor(provider, options)
   const suggestedEnv = (options.current?.provider === provider ? options.current.env?.[0] : undefined) ?? catalogResult?.env[0]
-  const credentialEnv = yield* Prompt.text({
+  const credentialEnv = yield* Prompt.String({
     message: "Credential environment variable",
     ...(suggestedEnv === undefined ? {} : { default: suggestedEnv }),
     validate: nonEmpty("the credential environment variable")
   })
-  const credential = yield* Prompt.password({
+  const credential = yield* Prompt.Password({
     message: `${preset.credential ?? "API key"} for ${credentialEnv}`,
     validate: nonEmpty("the API key")
   })
@@ -361,7 +355,7 @@ const modelPrompt = (
   const catalog = preset.modelsUrl === undefined ? "" : ` · Browse ${preset.modelsUrl}`
   const cache = catalogResult?.status === "cached" ? " · cached catalog" : ""
   const selection = selectionLabel(options.catalog?.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY)
-  const manual = () => Prompt.text({
+  const manual = () => Prompt.String({
     message: `${preset.modelExample === undefined ? "Default model ID" : `Default model ID, for example ${preset.modelExample}`}${catalog}`,
     ...(current === undefined || current.length === 0 ? {} : { default: current }),
     validate: nonEmpty("the model ID")
@@ -375,7 +369,7 @@ const modelPrompt = (
     if (current !== undefined && current.length > 0 && !models.some((model) => model.id === current)) {
       models.unshift({ id: current, name: "Currently configured" })
     }
-    const picked = yield* Prompt.autoComplete<ModelPick>({
+    const picked = yield* Prompt.AutoComplete<ModelPick>({
       message: `Choose the default model${selection}${cache}${catalog}`,
       filterLabel: "model",
       filterPlaceholder: "type to filter",
@@ -404,7 +398,7 @@ export const setupDefaultPrompt = (
   options: SetupPromptOptions = {}
 ) => Effect.gen(function*() {
   if (providers.length === 0) return yield* Effect.fail("no provider connection is configured; run `tdg setup provider`")
-  const provider = yield* Prompt.select<string>({
+  const provider = yield* Prompt.Select<string>({
     message: "Which provider should be the project default?",
     choices: [...providers].sort().map((provider) => ({
       title: provider,
@@ -442,14 +436,14 @@ export const setupFlowPrompt = (options: SetupFlowPromptOptions = {}) => Effect.
   for (;;) {
     const prompted = yield* providerPrompt(options)
     added.set(prompted.answers.provider, prompted)
-    const more = yield* Prompt.confirm({ message: "Add another provider?", initial: false })
+    const more = yield* Prompt.Confirm({ message: "Add another provider?", initial: false })
     if (!more) break
   }
   const providerNames = [...new Set([
     ...Object.keys(options.existing?.providers ?? {}),
     ...added.keys()
   ])]
-  const provider = yield* Prompt.select<string>({
+  const provider = yield* Prompt.Select<string>({
     message: "Which provider should be the project default?",
     choices: providerNames.sort().map((provider) => ({
       title: provider,
@@ -467,7 +461,7 @@ export const setupFlowPrompt = (options: SetupFlowPromptOptions = {}) => Effect.
     default: { provider, model_id: defaultModel }
   }
   yield* Console.log(setupPlanReview(plan))
-  return (yield* Prompt.confirm({ message: "Continue?", initial: true })) ? plan : undefined
+  return (yield* Prompt.Confirm({ message: "Continue?", initial: true })) ? plan : undefined
 })
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/

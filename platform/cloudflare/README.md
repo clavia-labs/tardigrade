@@ -9,12 +9,11 @@ Run Tardigrade actors on Cloudflare Workers and SQLite Durable Objects. The Work
 ```ts
 import definition from "./actor"
 import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
-import { modelAdapters } from "tardie/model/adapter"
-import { openAICompatibleAdapter } from "tardie/model/openai"
+import { providerLayer } from "tardie/model/providers/openai-compat"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
-  adapters: modelAdapters(openAICompatibleAdapter),
+  model: { providerLayer },
   scope: modelScopeFrom(modelLock)
 })
 
@@ -25,9 +24,9 @@ export const { ActorDO, ThreadDO } = host
 export default { fetch: http.fetch }
 ```
 
-`workerModelServices` selects the model adapters and catalog snapshot. `defineWorkerHost` registers the actor and exposes its Durable Object classes. `workerHttp` supplies the HTTP handler. Cloudflare calls `fetch` when a request arrives and creates object instances when they are addressed. The entry point registers one actor definition per module.
+`workerModelServices` connects the configured providers to Effect AI and the catalog snapshot. `defineWorkerHost` registers the actor and exposes its Durable Object classes. `workerHttp` supplies the HTTP handler. Cloudflare calls `fetch` when a request arrives and creates object instances when they are addressed. The entry point registers one actor definition per module.
 
-An actor that does not use model inference can omit `services`. Register the adapters required by your configured providers; `modelAdapters` accepts several adapters.
+An actor that does not use model inference can omit `services`. The Worker entry point supplies its provider layer through `model.providerLayer`.
 
 ## Runtime and storage
 

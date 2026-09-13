@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnOf } from "@clavia/tardigrade-code/execution/turns"
 
@@ -15,8 +16,8 @@ export interface ProviderUsageReport {
 }
 
 export interface Usage {
-  readonly promptTokens: number
-  readonly completionTokens: number
+  readonly promptTokens?: number
+  readonly completionTokens?: number
   readonly totalTokens?: number
   readonly cachedPromptTokens?: number
   readonly cacheWritePromptTokens?: number
@@ -33,16 +34,8 @@ export interface Usage {
   readonly providerReports?: ReadonlyArray<ProviderUsageReport>
 }
 
-// ModelPricing states the rates used for an independent cost projection.
-export interface ModelPricing {
-  readonly promptUsdPerToken: number
-  readonly completionUsdPerToken: number
-  // cachedPromptUsdPerToken and cacheWritePromptUsdPerToken price reported cache buckets. A
-  // table that omits a rate cannot estimate a usage stamp with tokens in that bucket
-  // (usage.test.ts, "cache buckets require declared rates").
-  readonly cachedPromptUsdPerToken?: number
-  readonly cacheWritePromptUsdPerToken?: number
-}
+import { ModelPricing } from "@clavia/tardigrade-model/pricing"
+export { ModelPricing } from "@clavia/tardigrade-model/pricing"
 
 export const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0 }
 
@@ -58,109 +51,14 @@ const numberOf = (value: unknown): number | undefined => {
   return undefined
 }
 
-const firstNumber = (rec: Record<string, unknown>, keys: ReadonlyArray<string>): number | undefined => {
-  for (const key of keys) {
-    const n = numberOf(rec[key])
-    if (n !== undefined) return n
-  }
-  return undefined
-}
-
-const nestedNumber = (
-  rec: Record<string, unknown>,
-  seats: ReadonlyArray<readonly [container: string, keys: ReadonlyArray<string>]>
-): number | undefined => {
-  for (const [container, keys] of seats) {
-    const nested = asRecord(rec[container])
-    if (nested === undefined) continue
-    const found = firstNumber(nested, keys)
-    if (found !== undefined) return found
-  }
-  return undefined
-}
-
-// costNumber reads a provider-billed dollar amount from a usage object. Gateways disagree on
-// the field name, so every common seat is checked; a table fill never writes these keys.
-export const costNumber = (value: unknown): number | undefined => {
-  const rec = asRecord(value)
-  if (rec === undefined) return undefined
-  const direct = firstNumber(rec, ["cost", "costUsd", "total_cost", "cost_usd"])
-  if (direct !== undefined) return direct
-  return costNumber(rec.gateway)
-}
-
-interface TokenMetrics {
-  readonly promptTokens: number
-  readonly completionTokens: number
-  readonly totalTokens?: number
-  readonly cachedPromptTokens?: number
-  readonly cacheWritePromptTokens?: number
-  readonly reasoningTokens?: number
-  readonly cacheBucketsWereExclusive?: true
-}
-
-const tokensOf = (value: unknown): TokenMetrics | undefined => {
-  const rec = asRecord(value)
-  if (rec === undefined) return undefined
-  const prompt = firstNumber(rec, ["promptTokens", "prompt_tokens", "inputTokens", "input_tokens"])
-  const completion = firstNumber(rec, ["completionTokens", "completion_tokens", "outputTokens", "output_tokens"])
-  if (prompt === undefined && completion === undefined) return undefined
-  const total = firstNumber(rec, ["totalTokens", "total_tokens"])
-  const exclusiveCached = firstNumber(rec, ["cacheReadInputTokens", "cache_read_input_tokens"])
-  const cached =
-    exclusiveCached ??
-    firstNumber(rec, ["cachedPromptTokens", "cached_prompt_tokens", "cachedTokens", "cached_tokens"]) ??
-    nestedNumber(rec, [
-      ["promptTokensDetails", ["cachedTokens", "cached_tokens"]],
-      ["prompt_tokens_details", ["cachedTokens", "cached_tokens"]],
-      ["input_tokens_details", ["cachedTokens", "cached_tokens"]]
-    ])
-  const exclusiveCacheWrite = firstNumber(rec, [
-    "cacheWriteInputTokens",
-    "cache_write_input_tokens",
-    "cacheCreationInputTokens",
-    "cache_creation_input_tokens"
-  ])
-  const cacheWrite =
-    exclusiveCacheWrite ??
-    firstNumber(rec, ["cacheWritePromptTokens", "cache_write_prompt_tokens"]) ??
-    nestedNumber(rec, [
-      ["promptTokensDetails", ["cacheWriteTokens", "cache_write_tokens"]],
-      ["prompt_tokens_details", ["cacheWriteTokens", "cache_write_tokens"]],
-      ["input_tokens_details", ["cacheWriteTokens", "cache_write_tokens"]]
-    ])
-  const reasoning =
-    firstNumber(rec, ["reasoningTokens", "reasoning_tokens"]) ??
-    nestedNumber(rec, [
-      ["completionTokensDetails", ["reasoningTokens", "reasoning_tokens"]],
-      ["completion_tokens_details", ["reasoningTokens", "reasoning_tokens"]],
-      ["output_tokens_details", ["reasoningTokens", "reasoning_tokens"]]
-    ])
-  const cacheBucketsWereExclusive = exclusiveCached !== undefined || exclusiveCacheWrite !== undefined
-  const exclusivePromptTokens = (exclusiveCached ?? 0) + (exclusiveCacheWrite ?? 0)
-  const normalizedTotal =
-    total === undefined || (total === 0 && (prompt ?? 0) + (completion ?? 0) > 0)
-      ? undefined
-      : total + exclusivePromptTokens
-  return {
-    promptTokens: (prompt ?? 0) + exclusivePromptTokens,
-    completionTokens: completion ?? 0,
-    ...(normalizedTotal === undefined ? {} : { totalTokens: normalizedTotal }),
-    ...(cached === undefined ? {} : { cachedPromptTokens: cached }),
-    ...(cacheWrite === undefined ? {} : { cacheWritePromptTokens: cacheWrite }),
-    ...(reasoning === undefined ? {} : { reasoningTokens: reasoning }),
-    ...(cacheBucketsWereExclusive ? { cacheBucketsWereExclusive: true as const } : {})
-  }
-}
-
 export const costOf = (
   pricing: ModelPricing | undefined,
-  promptTokens: number,
-  completionTokens: number,
+  promptTokens: number | undefined,
+  completionTokens: number | undefined,
   cachedPromptTokens: number = 0,
   cacheWritePromptTokens: number = 0
 ): number | undefined => {
-  if (pricing === undefined) return undefined
+  if (pricing === undefined || promptTokens === undefined || completionTokens === undefined) return undefined
   if (cachedPromptTokens > 0 && pricing.cachedPromptUsdPerToken === undefined) return undefined
   if (cacheWritePromptTokens > 0 && pricing.cacheWritePromptUsdPerToken === undefined) return undefined
   const uncachedPromptTokens = promptTokens - cachedPromptTokens - cacheWritePromptTokens
@@ -213,75 +111,6 @@ export const priced = (usage: Usage, pricing?: ModelPricing): Usage => {
   }
 }
 
-// usageFrom builds spend from one provider reply. The first reported part is retained verbatim;
-// later normalized parts refine fields without replacing details that only the wire exposed.
-export const usageFrom = (
-  reported: unknown,
-  pricing?: ModelPricing,
-  stamp?: { readonly provider?: string; readonly model?: string },
-  providerMetrics?: unknown
-): Usage | undefined => {
-  const parts = Array.isArray(reported) ? reported : [reported]
-  let tokens: TokenMetrics | undefined
-  let billed: number | undefined
-  let raw: unknown = providerMetrics
-  for (const part of parts) {
-    if (raw === undefined && part !== undefined && part !== null) raw = part
-    const next = tokensOf(part)
-    if (next !== undefined) {
-      const keepExclusiveFold =
-        tokens?.cacheBucketsWereExclusive === true &&
-        next.cacheBucketsWereExclusive !== true &&
-        next.cachedPromptTokens === undefined &&
-        next.cacheWritePromptTokens === undefined
-      const totalTokens = keepExclusiveFold ? tokens?.totalTokens : (next.totalTokens ?? tokens?.totalTokens)
-      const cachedPromptTokens = next.cachedPromptTokens ?? tokens?.cachedPromptTokens
-      const cacheWritePromptTokens = next.cacheWritePromptTokens ?? tokens?.cacheWritePromptTokens
-      const reasoningTokens = next.reasoningTokens ?? tokens?.reasoningTokens
-      tokens =
-        tokens === undefined
-          ? next
-          : {
-              promptTokens: keepExclusiveFold ? tokens.promptTokens : next.promptTokens,
-              completionTokens: next.completionTokens,
-              ...(totalTokens === undefined ? {} : { totalTokens }),
-              ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
-              ...(cacheWritePromptTokens === undefined ? {} : { cacheWritePromptTokens }),
-              ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
-              ...(tokens.cacheBucketsWereExclusive === true || next.cacheBucketsWereExclusive === true
-                ? { cacheBucketsWereExclusive: true as const }
-                : {})
-            }
-    }
-    const cost = costNumber(part)
-    if (cost !== undefined) billed = cost
-  }
-  if (tokens === undefined && billed === undefined && raw === undefined) return undefined
-  const usage: Usage = {
-    promptTokens: tokens?.promptTokens ?? 0,
-    completionTokens: tokens?.completionTokens ?? 0,
-    ...(tokens?.totalTokens === undefined ? {} : { totalTokens: tokens.totalTokens }),
-    ...(tokens?.cachedPromptTokens === undefined ? {} : { cachedPromptTokens: tokens.cachedPromptTokens }),
-    ...(tokens?.cacheWritePromptTokens === undefined ? {} : { cacheWritePromptTokens: tokens.cacheWritePromptTokens }),
-    ...(tokens?.reasoningTokens === undefined ? {} : { reasoningTokens: tokens.reasoningTokens }),
-    ...(stamp?.provider === undefined ? {} : { provider: stamp.provider }),
-    ...(stamp?.model === undefined ? {} : { model: stamp.model }),
-    ...(billed === undefined ? {} : { costUsd: billed, costSource: "provider" as const, reportedCostUsd: billed }),
-    ...(raw === undefined
-      ? {}
-      : {
-          providerReports: [
-            {
-              ...(stamp?.provider === undefined ? {} : { provider: stamp.provider }),
-              ...(stamp?.model === undefined ? {} : { model: stamp.model }),
-              providerSpecific: raw
-            }
-          ]
-        })
-  }
-  return tokens === undefined ? usage : priced(usage, pricing)
-}
-
 const reportsOf = (value: unknown): ReadonlyArray<ProviderUsageReport> | undefined => {
   if (!Array.isArray(value)) return undefined
   const reports = value.flatMap((candidate): ReadonlyArray<ProviderUsageReport> => {
@@ -301,21 +130,34 @@ const reportsOf = (value: unknown): ReadonlyArray<ProviderUsageReport> | undefin
 }
 
 export const usageOf = (value: unknown): Usage => {
-  const carried = asRecord(value)
+  const original = asRecord(value)
+  const input = asRecord(original?.inputTokens)
+  const output = asRecord(original?.outputTokens)
+  const carried = input === undefined && output === undefined ? original : {
+    ...original,
+    promptTokens: input?.total,
+    completionTokens: output?.total,
+    cachedPromptTokens: input?.cacheRead,
+    cacheWritePromptTokens: input?.cacheWrite,
+    reasoningTokens: output?.reasoning,
+    ...(typeof input?.total === "number" && typeof output?.total === "number" ? { totalTokens: input.total + output.total } : {})
+  }
   const costUsd = numberOf(carried?.costUsd)
   const source = carried?.costSource
   const provider = carried?.provider
   const model = carried?.model
   const reportedCostUsd = numberOf(carried?.reportedCostUsd)
   const estimatedCostUsd = numberOf(carried?.estimatedCostUsd)
+  const promptTokens = numberOf(carried?.promptTokens)
+  const completionTokens = numberOf(carried?.completionTokens)
   const totalTokens = numberOf(carried?.totalTokens)
   const cachedPromptTokens = numberOf(carried?.cachedPromptTokens)
   const cacheWritePromptTokens = numberOf(carried?.cacheWritePromptTokens)
   const reasoningTokens = numberOf(carried?.reasoningTokens)
   const providerReports = reportsOf(carried?.providerReports)
   return {
-    promptTokens: numberOf(carried?.promptTokens) ?? 0,
-    completionTokens: numberOf(carried?.completionTokens) ?? 0,
+    ...(promptTokens === undefined ? {} : { promptTokens }),
+    ...(completionTokens === undefined ? {} : { completionTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
     ...(cacheWritePromptTokens === undefined ? {} : { cacheWritePromptTokens }),
@@ -340,8 +182,6 @@ const same = (a: string | undefined, b: string | undefined): string | undefined 
 
 export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
   if (parts.length === 0) return ZERO_USAGE
-  let promptTokens = 0
-  let completionTokens = 0
   let costUsd = 0
   let known = true
   let source: CostSource | undefined
@@ -350,8 +190,6 @@ export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
   const providerReports: ProviderUsageReport[] = []
   let first = true
   for (const part of parts) {
-    promptTokens += part.promptTokens
-    completionTokens += part.completionTokens
     providerReports.push(...(part.providerReports ?? []))
     if (part.costUsd === undefined) known = false
     else costUsd += part.costUsd
@@ -375,6 +213,8 @@ export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
     }
     return total
   }
+  const promptTokens = sumKnown((part) => part.promptTokens)
+  const completionTokens = sumKnown((part) => part.completionTokens)
   const totalTokens = sumKnown((part) => part.totalTokens)
   const cachedPromptTokens = sumKnown((part) => part.cachedPromptTokens)
   const cacheWritePromptTokens = sumKnown((part) => part.cacheWritePromptTokens)
@@ -382,8 +222,8 @@ export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
   const reportedCostUsd = sumKnown((part) => part.reportedCostUsd)
   const estimatedCostUsd = sumKnown((part) => part.estimatedCostUsd)
   return {
-    promptTokens,
-    completionTokens,
+    ...(promptTokens === undefined ? {} : { promptTokens }),
+    ...(completionTokens === undefined ? {} : { completionTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
     ...(cacheWritePromptTokens === undefined ? {} : { cacheWritePromptTokens }),
@@ -411,7 +251,14 @@ export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
   sumUsage(
     log.flatMap((event) => {
       if (!ofTurn(event, turn)) return []
-      const carried = asRecord(event)?.usage
-      return carried === undefined ? [] : [usageOf(carried)]
+      const carried = event.legacyUsage ?? event.usage
+      if (carried === undefined) return []
+      const called = event.type === "ModelReturned" ? log.find((mark) => mark.type === "ModelCalled" && mark.turn === event.turn && mark.ordinal === event.ordinal) : undefined
+      const recordedPricing = called?.pricing ?? asRecord(called?.policy)?.pricing
+      const pricing = Schema.is(ModelPricing)(recordedPricing) ? recordedPricing : undefined
+      const endpoint = asRecord(event.endpoint)
+      const response = asRecord(event.response)
+      const usage = usageOf({ ...(endpoint?.provider === undefined ? {} : { provider: endpoint.provider }), ...(response?.modelId === undefined && endpoint?.model === undefined ? {} : { model: response?.modelId ?? endpoint?.model }), ...asRecord(carried), ...(event.reportedCostUsd === undefined ? {} : { reportedCostUsd: event.reportedCostUsd, costUsd: event.reportedCostUsd, costSource: "provider" }) })
+      return [pricing === undefined ? usage : priced(usage, pricing)]
     })
   )

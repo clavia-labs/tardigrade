@@ -3,8 +3,8 @@ import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi"
 import { InvalidRequest, ModelCatalogUnavailable, modelsGroup, RequestProblems } from "@clavia/tardigrade-client/contract"
 import type { ModelConfig, ModelCredentials } from "@clavia/tardigrade-model/config"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
-import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog-availability"
-import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-model/catalog-page"
+import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
+import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-model/catalog/page"
 
 // CatalogDiscovery supplies a public snapshot with the host's provider availability and model policy.
 export class CatalogDiscovery extends Context.Service<CatalogDiscovery, {

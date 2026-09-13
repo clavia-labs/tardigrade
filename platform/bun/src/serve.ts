@@ -1,5 +1,6 @@
 import { bunHttpServices } from "./http-threads"
-import { Layer, ManagedRuntime } from "effect"
+import { Layer, ManagedRuntime, Result } from "effect"
+import * as NetAddress from "effect/unstable/net/NetAddress"
 import { BunHttpServer } from "@effect/platform-bun"
 import { HttpServer } from "effect/unstable/http"
 import { serve as serveHttp } from "@clavia/tardigrade-http/http"
@@ -43,8 +44,8 @@ export const serve = async <Methods extends ActorMethods>(host: Host<Methods>, o
   try {
     const server = await runtime.runPromise(HttpServer.HttpServer)
     const address = server.address
-    if (address._tag !== "TcpAddress") throw new Error("Bun HTTP server did not bind a TCP address")
-    return { url: new URL(`http://${address.hostname}:${address.port}`), port: address.port, close: () => { streams.abort(); return runtime.dispose() } }
+    if (NetAddress.isUnixPathAddress(address)) throw new Error("Bun HTTP server did not bind a TCP address")
+    return { url: Result.getOrThrow(NetAddress.toUrl(address)), port: address.port, close: () => { streams.abort(); return runtime.dispose() } }
   } catch (error) {
     await runtime.dispose()
     throw error

@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 import { DEFAULT_PROJECT_CONFIG_PATH } from "@clavia/tardigrade-server/config"
 import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflare/catalog-migration"
-import type { ModelProtocol } from "@clavia/tardigrade-model/directory"
+import { modelProviderModuleOf, type ModelProtocol } from "@clavia/tardigrade-model/providers/directory"
 
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
 import { actorTemplate, DEFAULT_INIT_TEMPLATE, type InitTemplate } from "./template"
@@ -26,6 +26,7 @@ export interface InitActorOptions {
   readonly now?: Date
   readonly packageVersion?: string
   readonly modelProtocol?: ModelProtocol
+  readonly modelProvider?: string
   readonly modelLock?: ModelLock
   readonly template?: InitTemplate
 }
@@ -79,28 +80,13 @@ const manifestTemplate = (name: string, now: Date): string => `${JSON.stringify(
   }
 }, undefined, 2)}\n`
 
-const adapterFor = (protocol: ModelProtocol): { readonly name: string; readonly source: string } => {
-  switch (protocol) {
-    case "anthropic-messages":
-      return { name: "anthropicAdapter", source: "tardie/model/anthropic" }
-    case "bedrock-converse":
-      return { name: "bedrockAdapter", source: "tardie/model/bedrock" }
-    case "openai-responses":
-    case "openai-chat-completions":
-      return { name: "openAICompatibleAdapter", source: "tardie/model/openai" }
-  }
-}
-
-const workerTemplate = (protocol: ModelProtocol): string => {
-  const adapter = adapterFor(protocol)
-  return `import definition from "./actor"
+const workerTemplate = (provider: string): string => `import { providerLayer } from "tardie/model/providers/${provider}"
+import definition from "./actor"
 import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
-import { modelAdapters } from "tardie/model/adapter"
-import { ${adapter.name} } from "${adapter.source}"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
-  adapters: modelAdapters(${adapter.name}),
+  model: { providerLayer },
   scope: modelScopeFrom(modelLock)
 })
 
@@ -113,19 +99,15 @@ export default {
   fetch: http.fetch
 }
 `
-}
 
-const serverTemplate = (protocol: ModelProtocol): string => {
-  const adapter = adapterFor(protocol)
-  return `import { createBunHost, serve } from "tardie/bun"
+const serverTemplate = (provider: string): string => `import { providerLayer } from "tardie/model/providers/${provider}"
+import { createBunHost, serve } from "tardie/bun"
 import { bunModelServices } from "tardie/server/model-services"
-import { modelAdapters } from "tardie/model/adapter"
-import { ${adapter.name} } from "${adapter.source}"
 import definition from "./actor"
 
 const { config, layers, api } = await bunModelServices({
-  env: process.env,
-  adapters: modelAdapters(${adapter.name})
+  model: { providerLayer },
+  env: process.env
 })
 const host = await createBunHost({
   actor: definition,
@@ -149,7 +131,6 @@ try {
   await host.close()
 }
 `
-}
 
 const packageTemplate = (
   version: string,
@@ -200,8 +181,8 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
 
   try {
     await writeFile(entry, source, "utf8")
-    await writeFile(server, serverTemplate(options.modelProtocol ?? "openai-chat-completions"), "utf8")
-    await writeFile(worker, workerTemplate(options.modelProtocol ?? "openai-chat-completions"), "utf8")
+    await writeFile(server, serverTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
+    await writeFile(worker, workerTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
     await writeFile(manifest, manifestSource, "utf8")
     await writeFile(celldManifest, celldConfigOf(manifestSource, manifest).source, "utf8")
     await writeFile(packageManifest, packageTemplate(packageVersion, effectVersion, platformBunVersion), "utf8")

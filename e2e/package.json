@@ -6,12 +6,20 @@
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
-    "effect": "4.0.0-rc.110",
+    "effect": "4.0.0-rc.115",
     "fast-check": "^4.9.0",
-    "tardie": "workspace:*"
+    "tardie": "workspace:*",
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@tardie/ai-bedrock": "0.0.3"
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:live": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/providers.test.ts ./inference/live/binding.test.ts ./inference/live/recovery.test.ts",
+    "test:live:reasoning": "bun run test:live:recovery",
+    "test:live:providers": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/providers.test.ts",
+    "test:live:binding": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/binding.test.ts",
+    "test:live:lifecycle": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/lifecycle.test.ts",
+    "test:live:recovery": "TARDIE_LIVE=1 bun test --env-file=../.env ./inference/live/recovery.test.ts"
   }
 }

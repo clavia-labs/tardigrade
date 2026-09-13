@@ -41,3 +41,20 @@ test("tool groups preserve child and answer boundaries and report pending work",
   events.push({ type: "ToolReturned", callId: "third" } as Event)
   expect(render()).not.toContain("1 of 2 steps completed")
 })
+
+test("replayed reasoning stays collapsed and separate from answers and opaque data", () => {
+  const rows: EventRow[] = JSON.parse(JSON.stringify([
+    { seq: 1, event: { type: "ModelReturned", reasoning: "Compare **both** sources", continuation: { payload: [{ signature: "opaque-secret" }] } } },
+    { seq: 2, event: { type: "TurnCompleted", output: "Final answer" } },
+    { seq: 3, event: { type: "ModelReturned", reasoning: " ", continuation: { payload: [{ encrypted_content: "opaque-only" }] } } }
+  ]))
+  const html = renderToStaticMarkup(<Transcript empty="Empty" rows={rows} streamingText="Partial answer" onOpenThread={() => {}} />)
+  expect(html.match(/class="tool-call reasoning"/g)).toHaveLength(1)
+  expect(html).toContain("<strong>both</strong>")
+  expect(html).toContain("Final answer")
+  expect(html).toContain("Partial answer")
+  expect(html.indexOf("</details>")).toBeLessThan(html.indexOf("Final answer"))
+  expect(html).not.toContain("opaque-secret")
+  expect(html).not.toContain("opaque-only")
+  expect(html).not.toContain(" open=")
+})

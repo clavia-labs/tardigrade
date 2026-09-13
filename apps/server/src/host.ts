@@ -1,7 +1,8 @@
 import { bunHttpServices } from "@clavia/tardigrade-bun/http-threads"
 import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
-import { modelLayer, modelIsConfigured, selectedModelFrom } from "@clavia/tardigrade-model/host"
-export { selectedModelFrom, modelIsConfigured, MISSING_MODEL } from "@clavia/tardigrade-model/host"
+import { modelIsConfigured, selectedModelFrom } from "@clavia/tardigrade-model/selection"
+import { modelLayer } from "@clavia/tardigrade-model/host"
+export { selectedModelFrom, modelIsConfigured, MISSING_MODEL } from "@clavia/tardigrade-model/selection"
 import { createHost, hostBackend, type HostOptions, type Host } from "@clavia/tardigrade-bun/create-host"
 import { Context, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -17,7 +18,6 @@ import {
   applyModelPolicy,
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
-  Infer,
   actorMethodsOf,
   type ActorMethods,
   type InferenceObserver,
@@ -27,7 +27,6 @@ import {
 import { type BunHostOptions } from "@clavia/tardigrade-bun/host"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
-import { modelAdapters, type ModelAdapter, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
 import {
   RESERVED_ACTOR,
   type ActorArtifact,
@@ -41,31 +40,6 @@ import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { DriverGauge } from "./driver-gauge"
 
-const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelAdapterRegistry> => {
-  const protocols = new Set(Object.values(config.model.providers).map((provider) => provider.protocol))
-  const selected: Array<ModelAdapter> = []
-  if (protocols.has("openai-responses") || protocols.has("openai-chat-completions")) {
-    selected.push(await import("@clavia/tardigrade-model/openai").then((module) => module.openAICompatibleAdapter))
-  }
-  if (protocols.has("anthropic-messages")) {
-    selected.push(await import("@clavia/tardigrade-model/anthropic").then((module) => module.anthropicAdapter))
-  }
-  if (protocols.has("bedrock-converse")) {
-    try {
-      const module = await import("@clavia/tardigrade-model/bedrock")
-      selected.push(await module.bedrockAdapterForBun())
-    } catch (cause) {
-      throw new Error(
-        "model protocol \"bedrock-converse\" requires the optional Bedrock provider dependencies; install @aws-sdk/client-bedrock-runtime, @smithy/fetch-http-handler, @smithy/node-http-handler, and @tanstack/ai-bedrock",
-        { cause }
-      )
-    }
-  }
-  const adapters = modelAdapters(...selected)
-  for (const protocol of protocols) adapters.resolve(protocol)
-  return adapters
-}
-
 // ActorPushRefused is why a pushed actor was not accepted, in the sentence the route prints. The
 // artifact checks and the swap both raise it, so a caller reads one failure rather than telling a
 // validation `Error` apart from a filesystem one by its message (api.ts, pushActor).
@@ -77,11 +51,10 @@ export { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade
 const layerThread = (
   config: ServerConfigValue,
   catalog: ModelCatalogState,
-  options: ThreadsOptions,
-  adapters: ModelAdapterRegistry
+  options: ThreadsOptions
 ) =>
   Layer.mergeAll(
-    options.infer ?? modelLayer(config, catalog, adapters, options.inferenceObserver),
+    options.infer ?? modelLayer(config, catalog, options.inferenceObserver === undefined ? {} : { observer: options.inferenceObserver }),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer
@@ -90,12 +63,8 @@ const layerThread = (
 export interface ThreadsOptions {
   readonly allocation?: BunHostOptions<never>["allocation"]
   readonly threadAllocator?: typeof ThreadAllocator.Service
-  // The model seam. Absent, the binding is derived from ServerConfig; present, it replaces that
-  // derivation whole, which is how a test runs a scripted mind with no credentials
-  // (host.test.ts). It is the one seam because Infer is the one place a turn leaves the process.
-  readonly infer?: Layer.Layer<Infer>
-  // modelAdapters replaces the host's protocol implementations and must cover every configured provider.
-  readonly modelAdapters?: ModelAdapterRegistry
+  // infer supplies an Effect model in place of the configured provider (host.test.ts).
+  readonly infer?: Layer.Layer<import("effect/unstable/ai").LanguageModel.LanguageModel>
   // inferenceObserver receives ephemeral normalized text outside the durable event log.
   readonly inferenceObserver?: InferenceObserver
   // providers interpret replies whose durable inbound link targets an external provider instance.
@@ -151,7 +120,7 @@ export type ActorThreadLayersFor<R> = (
   context: ActorThreadLayerContext
 ) => Layer.Layer<ActorApplicationRequirements<R>>
 
-type ActorThreadsBaseOptions = Pick<ThreadsOptions, "infer" | "inferenceObserver" | "modelAdapters" | "providers" | "threadAllocator" | "allocation">
+type ActorThreadsBaseOptions = Pick<ThreadsOptions, "infer" | "inferenceObserver" | "providers" | "threadAllocator" | "allocation">
 
 export type ActorThreadsOptions<R> = ActorThreadsBaseOptions & ([ActorApplicationRequirements<R>] extends [never]
   ? { readonly layersFor?: ActorThreadLayersFor<R> }
@@ -203,10 +172,8 @@ export const layerActorThreads = <R>(
   Layer.effectContext(Effect.gen(function*() {
     const config = yield* ServerConfig
     const catalog = yield* ModelCatalogStore
-    const adapters = options.modelAdapters ?? (yield* Effect.promise(() => serverModelAdaptersFor(config)))
-    for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
     const host = yield* Effect.acquireRelease(
-      Effect.promise(() => mountedHost(definition, config, layerThread(config, catalog, options, adapters), options)),
+      Effect.promise(() => mountedHost(definition, config, layerThread(config, catalog, options), options)),
       (host) => Effect.promise(host.close)
     )
     return bunHttpServices(host)
@@ -236,9 +203,7 @@ const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
     const catalog = yield* ModelCatalogStore
-    const adapters = options.modelAdapters ?? (yield* Effect.promise(() => serverModelAdaptersFor(config)))
-    for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
-    const thread = layerThread(config, catalog, options, adapters)
+    const thread = layerThread(config, catalog, options)
     const runtimes = new Map<string, LoadedActor>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())

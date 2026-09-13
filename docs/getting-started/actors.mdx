@@ -75,13 +75,26 @@ Use `host` to allocate threads and call methods from the surrounding application
 
 ### Supply component requirements
 
-`layersFor(thread, instance)` returns an Effect layer supplying services your components need, such as `Infer` for model calls. Bun supplies the log, routing, thread identity, allocation, and workspace storage. TypeScript requires `layersFor` only when additional services are needed.
+`layersFor(thread, instance)` returns an Effect layer supplying services your components need, such as `LanguageModel` for model calls. Bun supplies the log, routing, thread identity, allocation, and workspace storage. TypeScript requires `layersFor` only when additional services are needed.
 
 ```ts
-import { modelLayer } from "./model"
+import { Layer, Redacted } from "effect"
+import { FetchHttpClient } from "effect/unstable/http"
+import { OpenAiClient, OpenAiLanguageModel } from "@tardie/ai-openai"
 
-export const layersFor = (_thread: string) => modelLayer
+export const modelLayer = (apiKey: string) =>
+  OpenAiLanguageModel.layer({ model: "gpt-5" }).pipe(
+    Layer.provide(OpenAiClient.layer({ apiKey: Redacted.make(apiKey) })),
+    Layer.provide(FetchHttpClient.layer),
+  )
+
+const apiKey = process.env.OPENAI_API_KEY
+if (!apiKey) throw new Error("OPENAI_API_KEY is required")
+
+export const layersFor = (_thread: string) => modelLayer(apiKey)
 ```
+
+For catalog selection and project configuration, use `bunModelServices({ env, model: { providerLayer, configure } })` and return its `layers` from `layersFor`. Worker applications pass `workerModelServices({ model: { providerLayer, configure } })` to `defineWorkerHost`. Both helpers accept `ModelIntegrationOptions` from `tardie/model/host` under `model`. Its `configure(selected)` callback supplies request limits and native provider settings. Project configuration parsing checks that `model.options` is a JSON object. The selected provider validates those options and the host overrides with its native configuration schema during assembly, before HTTP. Unselected providers are not loaded for validation.
 
 <HostLayersDiagram />
 

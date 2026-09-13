@@ -109,6 +109,29 @@ OPENROUTER_API_KEY='your-deployment-secret'
 
 The generated `bun run dev` script reads local credentials from `.dev.vars`. A hosted process reads the same credential names from its platform secret store. The manifest contains names such as `OPENROUTER_API_KEY`, never their values.
 
+The Effect inference binding accepts request settings at `providers.<provider>.models.<model_id>.options`:
+
+```jsonc
+"models": {
+  "gpt-5": {
+    "options": { "reasoning": { "effort": "high" } }
+  }
+}
+```
+
+Place `models` beside the provider's `baseUrl`, `protocol`, and `env`. These entries configure requests; `default` and `allow` still control selection and access. Missing options preserve provider defaults. The host's `configure` callback overrides configured options by top-level field.
+
+| Protocol | Options |
+| --- | --- |
+| `openai-responses` | `reasoning: { effort: "high" }` |
+| `openai-chat-completions` | `reasoning_effort: "high"` |
+| `anthropic-messages` | `thinking: { type: "adaptive" }`, `output_config: { effort: "high" }` |
+| `bedrock-converse` | `additionalModelRequestFields: { thinking: { type: "enabled", budget_tokens: 1024 } }` |
+
+OpenAI Responses also accepts native reasoning summary settings. Anthropic accepts adaptive, disabled, or enabled thinking; enabled thinking requires at least 1024 budget tokens. The installed Effect version accepts Anthropic effort values `low`, `medium`, `high`, or `null`. Providers validate support for the selected model. Bedrock's additional fields are provider-specific JSON and follow the selected model's request contract.
+
+These settings require `modelLayer`; the legacy inference binding rejects nonempty options. The Effect binding is currently opt-in through the Bun model services inference factory. Regenerate the model lock after changing provider configuration.
+
 The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and catalog requests do not read the cache file on each request. With no valid source or cache, both catalog endpoints answer 503. Provider credentials never appear in either response.
 
 Catalog responses use cursor pagination. They include `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and optional `next_cursor`. The default limit is `50` and callers can state another positive integer. Search is a case-insensitive substring over IDs and names. `GET /v1/models` also accepts an exact provider filter. Pass `next_cursor` with the same filters to continue. A cursor records the catalog revision and query, so a changed revision or filter returns 400 and the caller starts again without a cursor.
@@ -117,7 +140,7 @@ Catalog responses use cursor pagination. They include `revision`, `status`, `ref
 
 The server publishes normalized model text at `GET /v1/actors/{instance}/threads/{thread}/inference/stream`. The SSE connection carries output produced after it opens and does not replay. Each delta names the actor, instance, thread, turn, logical attempt, physical provider request, model, text block, and sequence. `makeActorClient().followInference(...)` opens the stream for a public thread ID.
 
-For another WebSocket, Redis, pub/sub, or telemetry transport, supply an observer as the fourth argument to `modelLayer(config, snapshot, adapters, observer)` when composing model services:
+For another WebSocket, Redis, pub/sub, or telemetry transport, supply an observer through `modelLayer(config, snapshot, { observer })` when composing model services:
 
 ```ts
 import { Effect } from "effect"
@@ -132,6 +155,8 @@ const observer: InferenceObserver = {
 Replace the logging handler with your transport. `makeInferenceStream(observer)` from `tardie/http/inference-stream` combines this observer with an HTTP stream; pass its `observer` to `modelLayer` and the stream as `api.inference` to `serve`. The `bunModelServices` helper supplies the HTTP stream for the standard setup.
 
 The observer queue drops new deltas when it is full. Each accepted delivery has the configured timeout. Each SSE connection also drops unread frames past `inferenceBufferCapacity`, which defaults to the exported `DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY`. Observer failure, timeout, and dropped deltas leave inference and the durable event log unchanged. A completed or failed turn remains authoritative. Replaying settled history emits no deltas. A recovery call that opens a new provider stream uses a fresh `physicalAttempt` under the same durable `logicalAttempt`. `DEFAULT_INFERENCE_OBSERVER_POLICY` exports the observer queue and timeout defaults.
+
+The inference binding fails a turn with `output_limit` when the provider exhausts its output allowance. It records reported usage and executes no tools from the truncated response. It does not retry with a higher limit. Direct bindings accept `maxOutputTokens` and otherwise use the native configuration or `DEFAULT_MAX_OUTPUT_TOKENS` from `tardie/model/request-policy`. The default is 32,768 tokens.
 
 ## Clients
 

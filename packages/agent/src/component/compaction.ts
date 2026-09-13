@@ -1,4 +1,9 @@
-import { responsesOf } from "../log/response"
+import { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, type ContextPolicy, type CompactionPolicy } from "./context"
+export { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, suffixOf, DEFAULT_COMPACTION_POLICY, type ContextPolicy, type ContextWindowTokens, type CompactionPolicy } from "./context"
+import { replayOf } from "../inference/model/continuation"
+import { renderMessageEntries } from "../projection/messages"
+import { upcastError } from "../log/upcast"
+import { hasUnansweredToolCall, responsesOf } from "../log/response"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 import { Clock, Effect, HashSet } from "effect"
@@ -19,7 +24,9 @@ import {
   transcriptProjection,
   type TranscriptProjectionState
 } from "../projection/transcript"
-import { Infer } from "../inference/contract"
+import { LanguageModel } from "effect/unstable/ai"
+import { summarize } from "./compaction/model"
+import { BindingSettings, ModelSelection } from "@clavia/tardigrade-model/settings"
 import { modelRefOf, type ModelRef } from "../inference/reference"
 import type { AgentComponent } from "../runtime/composition"
 
@@ -43,104 +50,13 @@ import type { AgentComponent } from "../runtime/composition"
 // Nothing is deleted; the full log stays for the rubric and replay. Consecutive fires with no
 // completion between them are a crash-looping summarizer, and the usual give-up evidence applies.
 
-// ContextPolicy is every number that decides how much of the log the model sees: the render's
-// truncation caps, the fire and keep lines, and the per-event cap on a summary brief's lines.
-// They are one object because the render and the measure must agree; two policies would let a
-// consumer raise the render's cap and leave the guard firing against a size no request reaches.
-// The same policy therefore goes to the reactor and to the render (request.ts, modelRequest).
-export interface ContextPolicy {
-  // Chars of one inbound message the render sends; past it the message truncates with a pointer.
-  readonly messageRenderCap: number
-  // Chars of one tool result the render sends; past it the result truncates.
-  readonly resultRenderCap: number
-  // Selected model context window used to derive the hysteresis lines.
-  readonly contextWindowTokens: number
-  // Fraction of the selected model window that fires compaction.
-  readonly fireRatio: number
-  // Fraction of the selected model window retained verbatim after compaction.
-  readonly keepRatio: number
-  // Rendered suffix size, in estimated tokens, that fires a compaction pass.
-  readonly fireTokens: number
-  // Estimated tokens of the tail a pass keeps verbatim. Below fireTokens, which is the
-  // hysteresis (module comment).
-  readonly keepTokens: number
-  // Chars of one event's line in the summary brief a pass sends its summarizer.
-  readonly summaryLineCap: number
-}
-
-export type ContextWindowTokens = number | ((model: ModelRef | undefined) => number)
-
-export interface CompactionPolicy {
-  readonly messageRenderCap: number
-  readonly resultRenderCap: number
-  readonly contextWindowTokens: ContextWindowTokens
-  readonly fireRatio: number
-  readonly keepRatio: number
-  readonly summaryLineCap: number
-  readonly model?: ModelRef
-}
-
-export const DEFAULT_COMPACTION_POLICY: CompactionPolicy = {
-  messageRenderCap: 12_000,
-  resultRenderCap: 6_000,
-  contextWindowTokens: 128_000,
-  fireRatio: 0.8,
-  keepRatio: 0.5,
-  summaryLineCap: 200
-}
-
-const positive = (value: number, name: string): number => {
-  if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a finite positive number, got ${value}`)
-  return value
-}
-
-const ratio = (value: number, name: string): number => {
-  if (!Number.isFinite(value) || value <= 0 || value >= 1) throw new Error(`${name} must be between 0 and 1, got ${value}`)
-  return value
-}
-
 // selectedModelOf returns the open turn's explicit selection or the latest model actually called.
 const selectedModelOf = (log: ReadonlyArray<Event>): ModelRef | undefined => {
   const open = turnView(log)
-  if (open.length > 0) return modelRefOf((open[0] as { readonly model?: unknown }).model)
-  const called = [...log].reverse().find((event) => event.type === "ModelCalled") as { readonly model?: unknown } | undefined
+  const requested = open.length > 0 ? modelRefOf((open[0] as { readonly model?: unknown }).model) : undefined
+  if (requested !== undefined) return requested
+  const called = (open.length > 0 ? open : log).findLast((event) => event.type === "ModelCalled") as { readonly model?: unknown } | undefined
   return modelRefOf(called?.model)
-}
-
-// contextPolicyOf resolves the model-relative policy into the absolute thresholds used by the
-// guard and render. The fire and keep lines form one hysteresis policy, so they are validated
-// together.
-export const contextPolicyOf = (
-  policy: Partial<CompactionPolicy> = {},
-  model?: ModelRef
-): ContextPolicy => {
-  const windowSource = policy.contextWindowTokens ?? DEFAULT_COMPACTION_POLICY.contextWindowTokens
-  const contextWindowTokens = positive(
-    typeof windowSource === "function" ? windowSource(model) : windowSource,
-    "contextWindowTokens"
-  )
-  const fireRatio = ratio(policy.fireRatio ?? DEFAULT_COMPACTION_POLICY.fireRatio, "fireRatio")
-  const keepRatio = ratio(policy.keepRatio ?? DEFAULT_COMPACTION_POLICY.keepRatio, "keepRatio")
-  if (keepRatio >= fireRatio) throw new Error(`keepRatio must be less than fireRatio, got ${keepRatio} and ${fireRatio}`)
-  return {
-    messageRenderCap: positive(
-      policy.messageRenderCap ?? DEFAULT_COMPACTION_POLICY.messageRenderCap,
-      "messageRenderCap"
-    ),
-    resultRenderCap: positive(
-      policy.resultRenderCap ?? DEFAULT_COMPACTION_POLICY.resultRenderCap,
-      "resultRenderCap"
-    ),
-    contextWindowTokens,
-    fireRatio,
-    keepRatio,
-    fireTokens: Math.floor(contextWindowTokens * fireRatio),
-    keepTokens: Math.floor(contextWindowTokens * keepRatio),
-    summaryLineCap: positive(
-      policy.summaryLineCap ?? DEFAULT_COMPACTION_POLICY.summaryLineCap,
-      "summaryLineCap"
-    )
-  }
 }
 
 const contextPolicyFrom = (
@@ -148,113 +64,36 @@ const contextPolicyFrom = (
   policy: Partial<CompactionPolicy>
 ): ContextPolicy => contextPolicyOf(policy, selectedModelOf(log))
 
-// resolvedContextPolicyOf fills a partial absolute policy at the render boundary. Components
-// normally contribute every field after resolving their model-relative policy.
-export const resolvedContextPolicyOf = (policy: Partial<ContextPolicy> = {}): ContextPolicy => {
-  const defaults = contextPolicyOf()
-  return {
-    messageRenderCap: policy.messageRenderCap ?? defaults.messageRenderCap,
-    resultRenderCap: policy.resultRenderCap ?? defaults.resultRenderCap,
-    contextWindowTokens: policy.contextWindowTokens ?? defaults.contextWindowTokens,
-    fireRatio: policy.fireRatio ?? defaults.fireRatio,
-    keepRatio: policy.keepRatio ?? defaults.keepRatio,
-    fireTokens: policy.fireTokens ?? defaults.fireTokens,
-    keepTokens: policy.keepTokens ?? defaults.keepTokens,
-    summaryLineCap: policy.summaryLineCap ?? defaults.summaryLineCap
+// renderedWeights measures projected messages at their owning events; an unresolved protocol conservatively retains native state (compaction.properties.test.ts).
+const renderedWeights = (events: ReadonlyArray<Event>, policy: ContextPolicy, model: ModelRef | undefined): ReadonlyMap<Event, number> => {
+  const weights = new Map<Event, number>()
+  for (const { event, message } of renderMessageEntries(events, policy)) {
+    const continuation = message.continuation
+    const replay = continuation === undefined ? undefined : replayOf(continuation, model === undefined ? continuation : { ...continuation, provider: model.provider, model: model.model_id })
+    const chars = replay === undefined
+      ? (message.content?.length ?? 0) + (message.toolCalls ?? []).reduce((sum, call) => sum + call.arguments.length, 0)
+      : JSON.stringify(continuation!.payload).length
+    weights.set(event, (weights.get(event) ?? 0) + chars)
   }
+  return weights
 }
 
-// renderedChars counts the characters a render sends for one event: capped where the render
-// caps, zero for an event the render skips. The guard must measure the request the model sees;
-// a measure over raw event JSON counts tool results the render truncates and threads the render
-// never shows, and fires against a size no request ever reaches.
-const renderedChars = (e: Event, policy: ContextPolicy): number => {
-  const v = e as Record<string, unknown>
-  switch (e.type) {
-    case "MessageReceived":
-      return Math.min(String(v.text ?? "").length, policy.messageRenderCap)
-    case "TextReturned":
-      return String(v.text ?? "").length
-    case "ToolCalled":
-      return JSON.stringify(v.arguments ?? {}).length
-    case "ToolReturned":
-      return Math.min(JSON.stringify(v.result ?? null).length, policy.resultRenderCap)
-    case "OutputRejected":
-      // A rejected response and its reasons render while the correction is owed. A projected one
-      // never reaches this function: the measure reads the same projection the render does
-      // (src/projection/transcript.ts, projectedOutput).
-      return String(v.text ?? "").length + JSON.stringify(v.errors ?? []).length
-    case "OutputRetryRequested":
-      return String(v.feedback ?? "").length
-    case "TurnCompleted":
-      return String(v.output ?? "").length
-    case "TurnFailed":
-      return String(v.error ?? "").length
-    case "TurnCancelled":
-      return String(v.reason ?? "cancelled").length
-    default:
-      return 0
-  }
-}
-
-// estimateTokens estimates the span's rendered tokens as chars over four. A real tokenizer would
-// be a dependency and an impure path, and every budget decision must fold the same on replay, so
-// the estimate is a pure function of the recorded events (compaction.test.ts, "the measure").
-export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}): number => {
-  const resolved = resolvedContextPolicyOf(policy)
-  return Math.ceil(projectedOutput(events).reduce((n, e) => n + renderedChars(e, resolved), 0) / 4)
-}
-
-// checkpointOf returns the last checkpoint: the identity the next span starts from, and the
-// summary to date.
-export const checkpointOf = (log: ReadonlyArray<Event>): { readonly keepFrom: string; readonly summary: string } => {
-  let keepFrom = ""
-  let summary = ""
-  for (const e of log) {
-    if (e.type === "CompactionCompleted") {
-      keepFrom = String((e as { keepFrom?: unknown }).keepFrom ?? "")
-      summary = String((e as { summary?: unknown }).summary ?? "")
-    }
-  }
-  return { keepFrom, summary }
-}
-
-// keepFromIndex resolves a checkpoint identity in one sequence: the first index holding the
-// named event, zero when the identity is empty or absent. Absence keeps everything, the safe
-// side; the guard then re-fires and cuts anew.
-export const keepFromIndex = (events: ReadonlyArray<Event>, keepFrom: string): number => {
-  if (keepFrom === "") return 0
-  for (let i = 0; i < events.length; i++) {
-    const e = events[i]!
-    const v = e as { callId?: unknown; id?: unknown }
-    if (keepFrom.startsWith("c:") && e.type === "ToolCalled" && JSON.stringify([e.turn ?? null, v.callId]) === keepFrom.slice(2)) {
-      return events.indexOf(responsesOf(events).firstCalls.get(e)!)
-    }
-    if (keepFrom.startsWith("m:") && e.type === "MessageReceived" && String(v.id) === keepFrom.slice(2)) return i
-  }
-  return 0
-}
-
-// suffixOf returns everything after the checkpoint: the span a render or a fire decision sees.
-export const suffixOf = (log: ReadonlyArray<Event>): ReadonlyArray<Event> =>
-  log.slice(keepFromIndex(log, checkpointOf(log).keepFrom))
+// estimateTokens estimates projected context as characters over four (compaction.properties.test.ts).
+export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}, model = selectedModelOf(events)): number =>
+  Math.ceil([...renderedWeights(events, resolvedContextPolicyOf(policy), model).values()].reduce((sum, weight) => sum + weight, 0) / 4)
 
 // overContext reports whether the suffix has passed FIRE tokens. It is pure and total over the
 // log, so the fire decision re-folds identically on replay: it reads only the log, no clock and
 // no random source.
-const overContext = (log: ReadonlyArray<Event>, policy: ContextPolicy): boolean =>
-  estimateTokens(suffixOf(log), policy) > policy.fireTokens
+const overContext = (log: ReadonlyArray<Event>, policy: ContextPolicy, model: ModelRef | undefined): boolean =>
+  estimateTokens(log, policy, model) > policy.fireTokens
 
 // atRoundBoundary gates the guard: a pass may land whenever the open turn awaits no tool call,
 // between turns included. A checkpoint landing mid-round would cut a call from the return the
 // world still owes it.
 const atRoundBoundary = (log: ReadonlyArray<Event>): boolean => {
   const open = turnView(log)
-  if (open.length === 0) return true
-  const answered = new Set(
-    open.filter((e) => e.type === "ToolReturned").map((e) => String((e as { callId?: unknown }).callId))
-  )
-  return !open.some((e) => e.type === "ToolCalled" && !answered.has(String((e as { callId?: unknown }).callId)))
+  return open.length === 0 || !hasUnansweredToolCall(open)
 }
 
 // boundaryIdOf returns the identity a cut at this event would record: a ToolCalled keeps its
@@ -274,27 +113,36 @@ const boundaryIdOf = (e: Event, served: ReadonlySet<string>, firstCalls: Readonl
 const cutOf = (
   log: ReadonlyArray<Event>,
   policy: ContextPolicy,
-  knownServed?: ReadonlySet<string>
-): { readonly keepFrom: string; readonly index: number } | undefined => {
-  const firstCalls = responsesOf(log).firstCalls
-  const priorIndex = keepFromIndex(log, checkpointOf(log).keepFrom)
+  knownServed?: ReadonlySet<string>,
+  model = selectedModelOf(log)
+): { readonly keepFrom: string; readonly index: number; readonly priorIndex: number } | undefined => {
+  const responses = responsesOf(log)
+  const firstCalls = responses.firstCalls
+  const priorIndex = keepFromIndex(log, checkpointOf(log).keepFrom, responses)
   const served = knownServed ?? new Set(log.map(turnOf).filter((t): t is string => t !== undefined))
-  let tokens = 0
+  const weights = renderedWeights(log, policy, model)
+  let chars = 0
   let raw = priorIndex
   for (let i = log.length - 1; i >= priorIndex; i--) {
-    tokens += estimateTokens([log[i]!], policy)
-    if (tokens > policy.keepTokens) {
+    chars += weights.get(log[i]!) ?? 0
+    if (Math.ceil(chars / 4) > policy.keepTokens) {
       raw = i + 1
       break
     }
   }
   for (let i = Math.min(raw, log.length - 1); i > priorIndex; i--) {
     const id = boundaryIdOf(log[i]!, served, firstCalls)
-    if (id !== undefined) return { keepFrom: id, index: i }
+    if (id !== undefined) {
+      const index = keepFromIndex(log, id, responses)
+      if (index > priorIndex) return { keepFrom: id, index, priorIndex }
+    }
   }
   for (let i = Math.max(raw + 1, priorIndex + 1); i < log.length; i++) {
     const id = boundaryIdOf(log[i]!, served, firstCalls)
-    if (id !== undefined) return { keepFrom: id, index: i }
+    if (id !== undefined) {
+      const index = keepFromIndex(log, id, responses)
+      if (index > priorIndex) return { keepFrom: id, index, priorIndex }
+    }
   }
   return undefined
 }
@@ -323,7 +171,7 @@ const lineOf = (e: Event, policy: ContextPolicy): string | null => {
     case "TurnCompleted":
       return `agent: ${String(v.output ?? "")}`
     case "TurnFailed":
-      return `failed: ${String(v.error ?? "")}`
+      return `failed: ${upcastError(v.error).message}`
     case "TurnCancelled":
       return `cancelled${v.reason === undefined ? "" : `: ${String(v.reason)}`}`
     default:
@@ -343,16 +191,8 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
   return fires > passes
 }
 
-// compactionReactor derives a pass when the suffix has crossed FIRE at a round boundary, or an
-// explicit `CompactionFired` stands uncovered. The act always advances the checkpoint (the
-// retained tail is bounded by KEEP < FIRE), so a served pass quiets the derivation instead of
-// re-firing. The checkpoint's key is the identity it keeps from: cc:<keepFrom>. Its input is the
-// span to fold, a projection, so a retried fire summarizes the same span. A crash-looping
-// summarizer re-derives the same key and its retries absorb, while a later fire reaches further
-// and keys anew.
-//
-// The policy this takes must be the one the render takes, or the guard measures a request the
-// model never sees (ContextPolicy above).
+// compactionTransition checkpoints a nonempty summary and leaves failed cuts available for recovery (compaction.test.ts).
+// The resolved policy must also govern rendering so the cut measures the visible history.
 const compactionTransition = (
   resolved: ContextPolicy,
   model: ModelRef | undefined,
@@ -360,7 +200,7 @@ const compactionTransition = (
   keepFrom: string,
   span: ReadonlyArray<Event>,
   owner: Event
-): ReadonlyArray<Transition<never, Infer | Self>> => [
+): ReadonlyArray<Transition<never, LanguageModel.LanguageModel | Self>> => [
     bindTransitionContext(owner, "compaction").effect("summarize", {
       invocation: null,
       input: {
@@ -393,21 +233,14 @@ const compactionTransition = (
             lines.join("\n")
           ].join("\n\n")
           // A summarize attempt offers no tools: the only sane action is a completion.
-          const infer = yield* Infer
+          const selection = yield* ModelSelection
           const summaryModel = input.model === undefined
             ? undefined
-            : infer.resolve?.(input.model).model ?? input.model
-          const action = yield* infer.react(
-            {
-              trajectory: [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
-              identity: { ...self, turn: `compact-${input.keepFrom}` },
-              ...(summaryModel === undefined ? {} : { model: summaryModel }),
-              system: "",
-              tools: []
-            },
-            `compact-${input.keepFrom}`
+            : selection.resolve?.(input.model).model ?? input.model
+          const summary = yield* summarize(brief, { ...self, turn: `compact-${input.keepFrom}` }, summaryModel).pipe(
+            Effect.provideService(BindingSettings, yield* (selection.settings?.(summaryModel) ?? BindingSettings)),
+            Effect.orDie
           )
-          const summary = action.kind === "complete" ? action.output : input.summary
           return [compactionCompleted({
             keepFrom: input.keepFrom,
             summary,
@@ -421,7 +254,7 @@ const compactionTransition = (
     })
   ]
 
-export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): CompleteTransitionDerivation<Infer | Self> => (history) => {
+export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): CompleteTransitionDerivation<LanguageModel.LanguageModel | Self> => (history) => {
   const log = history.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
   const model = policy.model ?? selectedModelOf(log)
   const resolved = contextPolicyFrom(log, policy)
@@ -429,17 +262,17 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Compl
   // model reads. A corrected exchange the render hides can neither trigger a paid pass nor leak
   // its rejected reply into a summary (src/projection/transcript.ts, projectedOutput).
   const view = projectedOutput(log)
-  if (!(firedUncovered(view) || (overContext(view, resolved) && atRoundBoundary(view)))) return []
-  const cut = cutOf(view, resolved)
+  if (!(firedUncovered(view) || (overContext(view, resolved, selectedModelOf(log)) && atRoundBoundary(view)))) return []
+  const cut = cutOf(view, resolved, undefined, selectedModelOf(log))
   if (cut === undefined) return []
   const prior = checkpointOf(view)
-  const span = view.slice(keepFromIndex(view, prior.keepFrom), cut.index)
+  const span = view.slice(cut.priorIndex, cut.index)
   return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span, view[cut.index]!)
 }
 
 // compaction derives one resolved context contribution and the transitions governed by the same
 // model-relative policy.
-export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentComponent<Infer | Self> => {
+export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentComponent<LanguageModel.LanguageModel | Self> => {
   interface State {
     readonly turns: TurnProjectionState
     readonly transcript: TranscriptProjectionState
@@ -449,8 +282,7 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
     readonly passes: number
     readonly lastModel?: ModelRef
   }
-  const measurePolicy = contextPolicyOf(policy, policy.model)
-  const transcript = transcriptProjection((event) => renderedChars(event, measurePolicy))
+  const transcript = transcriptProjection()
   const initial = (): State => ({
     turns: initialTurnProjection(),
     transcript: transcript.initial(),
@@ -464,6 +296,11 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
     for (const event of events) state = transcript.step(state, event)
     return state
   }
+  const retainedTranscript = (events: ReadonlyArray<Event>, keepFrom: string): TranscriptProjectionState => {
+    const from = keepFromIndex(events, keepFrom)
+    const visible = new Set(renderMessageEntries(events).map((entry) => entry.event))
+    return transcriptFrom(events.filter((event, index) => index >= from || visible.has(event)))
+  }
   const reduce = (state: State, event: Event): State => {
     const completed = event.type === "CompactionCompleted"
     const projected = transcript.step(state.transcript, event)
@@ -475,9 +312,7 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
       : state.checkpoint
     const projectedEvents = completed ? transcript.output(projected).events : undefined
     const retained = completed
-      ? transcriptFrom(
-          projectedEvents!.slice(keepFromIndex(projectedEvents!, nextCheckpoint.keepFrom))
-        )
+      ? retainedTranscript(projectedEvents!, nextCheckpoint.keepFrom)
       : projected
     const servedTurn = turnOf(event)
     const model = event.type === "ModelCalled"
@@ -493,15 +328,15 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
       ...(model === undefined ? {} : { lastModel: model })
     }
   }
-  const transitions = (state: State, resolved: ContextPolicy, model: ModelRef | undefined) => {
+  const transitions = (state: State, resolved: ContextPolicy, model: ModelRef | undefined, selected: ModelRef | undefined) => {
     const transcriptOutput = transcript.output(state.transcript)
-    const overFireLine = Math.ceil(transcriptOutput.weight / 4) > resolved.fireTokens
+    const overFireLine = estimateTokens(transcriptOutput.events, resolved, selected) > resolved.fireTokens
     if (!(state.fires > state.passes || (overFireLine && atRoundBoundary(turnViewFrom(state.turns))))) return []
     const suffix = transcriptOutput.events
-    const cut = cutOf(suffix, resolved, new Set(state.served))
+    const cut = cutOf(suffix, resolved, new Set(state.served), selected)
     if (cut === undefined) return []
     const prior = checkpointOf(suffix)
-    const span = suffix.slice(keepFromIndex(suffix, prior.keepFrom), cut.index)
+    const span = suffix.slice(cut.priorIndex, cut.index)
     return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span, suffix[cut.index]!)
   }
   return component({
@@ -510,10 +345,9 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
     step: reduce,
     output: (state) => {
       const open = turnViewFrom(state.turns)
-      const model = policy.model ?? (open.length > 0
-        ? modelRefOf((open[0] as { readonly model?: unknown }).model)
-        : state.lastModel)
-      const resolved = contextPolicyOf(policy, model)
+      const selected = open.length > 0 ? selectedModelOf(open) : state.lastModel
+      const model = policy.model ?? selected
+      const resolved = contextPolicyOf(policy, selected)
       return {
         view: {
           system: [],
@@ -521,7 +355,7 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
           context: [{ component: "compaction", policy: resolved }],
           output: []
         },
-        transitions: transitions(state, resolved, model)
+        transitions: transitions(state, resolved, model, selected)
       }
     }
   })

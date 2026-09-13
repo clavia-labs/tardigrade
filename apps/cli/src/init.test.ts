@@ -24,7 +24,7 @@ describe("initActor", () => {
 
   test("creates a buildable named quickstart", async () => {
     const cwd = await temporaryRoot()
-    const initialized = await initActor("reviewer", { cwd, now: new Date("2026-08-24T00:00:00Z"), packageVersion: "0.7.1-test" })
+    const initialized = await initActor("reviewer", { cwd, now: new Date("2026-08-24T00:00:00Z"), packageVersion: "0.7.1-test", modelProvider: "openrouter" })
     const source = await readFile(initialized.entry, "utf8")
     const server = await readFile(initialized.server, "utf8")
     const worker = await readFile(initialized.worker, "utf8")
@@ -55,11 +55,10 @@ describe("initActor", () => {
     expect(worker).toContain("fetch: http.fetch")
     expect(worker).toContain('import definition from "./actor"')
     expect(worker).toContain('from "tardie/worker"')
-    expect(worker).toContain('import { modelAdapters } from "tardie/model/adapter"')
-    expect(worker).toContain('import { openAICompatibleAdapter } from "tardie/model/openai"')
-    expect(worker).toContain("adapters: modelAdapters(openAICompatibleAdapter)")
     expect(worker).toContain('import modelLock from "./models.lock.json"')
     expect(worker).toContain("scope: modelScopeFrom(modelLock)")
+    expect(worker).toContain('import { providerLayer } from "tardie/model/providers/openrouter"')
+    expect(worker).toContain("  model: { providerLayer },")
     expect(manifest).toMatchObject({
       name: "reviewer",
       main: "worker.ts",

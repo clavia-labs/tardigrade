@@ -212,7 +212,7 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
   return Layer.tap(running, (context) => {
     const server = Context.get(context, HttpServer.HttpServer)
     const address = server.address
-    const port = address._tag === "TcpAddress" ? address.port : options.config.port
+    const port = address._tag !== "UnixPathAddress" ? address.port : options.config.port
     const url = `http://${DEV_URL_HOST}:${port}`
     return Effect.tryPromise(() => options.onListen!(url)).pipe(
       Effect.catch((error) => Console.log(`could not open ${url}: ${String(error)}`))

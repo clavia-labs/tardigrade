@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect"
 import { ServerConfig } from "./config"
-import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog-store"
+import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog/repository"
 import { ModelCatalogStore, loadModelCatalog, type ModelCatalogLoadOptions, type ModelCatalogLoadPolicy } from "@clavia/tardigrade-model/catalog"
 export * from "@clavia/tardigrade-model/catalog"
 

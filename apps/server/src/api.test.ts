@@ -1,3 +1,5 @@
+import type { LanguageModel } from "effect/unstable/ai"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
@@ -10,7 +12,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { Ingress } from "@clavia/tardigrade-host/transport/ingress"
-import { ACTOR_ARTIFACT_VERSION, Infer, type InferDelta, type InferRequest } from "tardie"
+import { ACTOR_ARTIFACT_VERSION, type InferDelta, type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
 import { openStreams } from "./api"
@@ -62,7 +64,7 @@ const scripted = ({ trajectory }: InferRequest): Action => {
 
 const testModel = { provider: "openai", model_id: "gpt-mini" } as const
 
-const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
+const layerScripted: Layer.Layer<LanguageModel.LanguageModel> = testInferenceLayer({
   resolve: (model = testModel) => ({ model, models: { default: model, allow: "*" } }),
   react: (request: InferRequest) => Effect.succeed(scripted(request))
 })
@@ -112,7 +114,7 @@ const catalogLayer = layerModelCatalogValue(catalog)
 const inference = makeInferenceStream()
 
 const app = (threadAllocator?: typeof ThreadAllocator.Service) => Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true, api: { inference } }), [
-  BunHttpServer.layer({ port: 0 }),
+  BunHttpServer.layer({ port: 0, hostname: "127.0.0.1" }),
   config,
   catalogLayer,
   Layer.provide(layerThreads({ infer: layerScripted, ...(threadAllocator === undefined ? {} : { threadAllocator }) }), [config, catalogLayer])
@@ -124,7 +126,7 @@ const serving = <A>(body: (base: string) => Promise<A>, threadAllocator?: typeof
   Effect.gen(function*() {
     const server = yield* HttpServer.HttpServer
     const address = server.address
-    const port = address._tag === "TcpAddress" ? address.port : 0
+    const port = address._tag !== "UnixPathAddress" ? address.port : 0
     return yield* Effect.promise(() => body(`http://127.0.0.1:${port}`))
   }).pipe(Effect.provide(app(threadAllocator)), Effect.scoped, Effect.runPromise) as Promise<A>
 
@@ -619,7 +621,7 @@ describe("actors", () => {
     }))
     const isolatedCatalog = layerModelCatalogValue(catalog)
     const isolatedApp = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
-      BunHttpServer.layer({ port: 0 }),
+      BunHttpServer.layer({ port: 0, hostname: "127.0.0.1" }),
       isolatedConfig,
       isolatedCatalog,
       Layer.provide(layerThreads({ infer: layerScripted }), [isolatedConfig, isolatedCatalog])
@@ -630,7 +632,7 @@ describe("actors", () => {
       const result = await Effect.gen(function*() {
         const server = yield* HttpServer.HttpServer
         const address = server.address
-        const port = address._tag === "TcpAddress" ? address.port : 0
+        const port = address._tag !== "UnixPathAddress" ? address.port : 0
         const base = `http://127.0.0.1:${port}`
         return yield* Effect.promise(async () => {
           const incompatible = await put(base, "/v1/definitions", {
@@ -783,7 +785,7 @@ describe("the event stream", () => {
       disableLogger: true,
       disableListenLog: true,
       api: { heartbeat: Duration.millis(10) }
-    }), [BunHttpServer.layer({ port: 0 }), config, catalogLayer, threads, ingress, layerGaugeResting])
+    }), [BunHttpServer.layer({ port: 0, hostname: "127.0.0.1" }), config, catalogLayer, threads, ingress, layerGaugeResting])
 
     const verify = async (port: number) => {
       const abort = new AbortController()
@@ -823,7 +825,7 @@ describe("the event stream", () => {
     await Effect.gen(function*() {
       const server = yield* HttpServer.HttpServer
       const address = server.address
-      const port = address._tag === "TcpAddress" ? address.port : 0
+      const port = address._tag !== "UnixPathAddress" ? address.port : 0
       yield* Effect.promise(() => verify(port))
     }).pipe(Effect.provide(testApp), Effect.scoped, Effect.runPromise)
   })

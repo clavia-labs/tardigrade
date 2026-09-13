@@ -99,6 +99,34 @@ describe("boundaryViolations", () => {
       edge(bun.id, http.id), edge(app.id, bun.id), edge(facade.id, bun.id)], [])).toEqual([])
   })
 
+  test("model stays independent through internal helpers and erased type imports", () => {
+    const model = node("packages/model/src/stream/collect.ts", "model")
+    const helper = node("packages/model/src/settings.ts", "model")
+    const inference = node("packages/agent/src/inference/model/index.ts", "agent")
+    const compaction = node("packages/agent/src/component/compaction/model.ts", "agent")
+    const client = node("packages/client/src/contract.ts", "client")
+    const graph = [model, helper, inference, compaction, client]
+    const inward = [edge(inference.id, model.id), edge(compaction.id, model.id), edge(model.id, helper.id)]
+    expect(boundaryViolations(graph, inward, [])).toEqual([])
+    for (const target of [inference, client]) for (const typeOnly of [false, true]) {
+      const backedge = { ...edge(helper.id, target.id, typeOnly), specifier: "../../../" + target.layer + "/src/index" }
+      expect(boundaryViolations(graph, [...inward, backedge], [])).toEqual([{
+        rule: "model-independent", source: helper.id, target: target.id, line: 7,
+        message: `packages/model imports ${target.package}`
+      }])
+    }
+  })
+
+  test("model cannot acquire workspace dependencies through its production manifest", () => {
+    const graph = [pkg("packages/model", "model", ["packages/client"]),
+      pkg("packages/client", "client", ["packages/agent"]), pkg("packages/agent", "agent")]
+    expect(boundaryViolations([], [], graph)).toEqual([{
+      rule: "manifest:model-independent", source: "packages/model/package.json",
+      target: "packages/client/package.json", line: 1,
+      message: "packages/model declares a production dependency on packages/client"
+    }])
+  })
+
   test("reports forbidden source dependencies with their original locations", () => {
     const forbidden = [edge(core.id, host.id), edge(host.id, http.id), edge(http.id, bun.id),
       edge(bun.id, app.id), edge(http.id, facade.id)]
@@ -147,9 +175,9 @@ describe("boundaryViolations", () => {
 })
 
 test("generic HTTP permits model policy data but rejects transitive agent execution", () => {
-  const http = "packages/http/src/http.ts", catalog = "packages/model/src/catalog-page.ts"
-  const policy = "packages/agent/src/inference/access.ts", runtime = "packages/agent/src/index.ts"
-  const nodes = [node(http, "http"), node(catalog, "model"), node(policy, "agent"), node(runtime, "agent")]
+  const http = "packages/http/src/http.ts", catalog = "packages/model/src/catalog/page.ts"
+  const policy = "packages/model/src/access.ts", runtime = "packages/agent/src/index.ts"
+  const nodes = [node(http, "http"), node(catalog, "model"), node(policy, "model"), node(runtime, "agent")]
   const edges = [edge(http, catalog), edge(catalog, policy)]
   expect(boundaryViolations(nodes, edges, [])).toEqual([])
   expect(boundaryViolations(nodes, [...edges, edge(catalog, runtime)], [])).toContainEqual({

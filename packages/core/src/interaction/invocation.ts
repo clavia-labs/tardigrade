@@ -36,16 +36,7 @@ export const invocationCoordinateOf = (target: ThreadCoordinate, invocation: Inv
 export const decodeInvocationCoordinate = Schema.decodeUnknownSync(InvocationCoordinate)
 
 // invocationCoordinateJsonSchema embeds the reference schema without root-relative definitions.
-export const invocationCoordinateJsonSchema: JsonSchema.JsonSchema = (() => {
-  const document = Schema.toJsonSchemaDocument(InvocationCoordinate)
-  return JSON.parse(JSON.stringify(document.schema, (_key, value: unknown) => {
-    if (typeof value !== "object" || value === null || !("$ref" in value) || typeof value.$ref !== "string") return value
-    const { $ref, ...siblings } = value
-    const resolved = JsonSchema.resolve$ref($ref, document.definitions)
-    if (resolved === undefined) throw new Error(`unresolved invocation schema reference ${$ref}`)
-    return { ...resolved, ...siblings }
-  })) as JsonSchema.JsonSchema
-})()
+export const invocationCoordinateJsonSchema: JsonSchema.JsonSchema = Schema.toJsonSchemaDocument(InvocationCoordinate, { referencePolicy: () => undefined }).schema
 
 // invocationCoordinateKey preserves every target and invocation coordinate (interaction.properties.test.ts).
 export const invocationCoordinateKey = (reference: InvocationCoordinate): string => {

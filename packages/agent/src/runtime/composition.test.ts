@@ -1,3 +1,4 @@
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Ref } from "effect"
@@ -28,7 +29,7 @@ import { system } from "../component/system"
 import { permissions } from "../component/permissions"
 import { requestPermissionMethod } from "../actor/permission"
 import { receive } from "./turn"
-import { Infer, NativeOutputSupport, type InferRequest } from "../inference/contract"
+import { NativeOutputSupport, type InferRequest } from "../inference/contract"
 import { selectedModelOf } from "../inference/machine"
 
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
@@ -113,7 +114,7 @@ describe("infer component", () => {
 
   test("a turn without any applicable default durably asks for a model reference", async () => {
     let calls = 0
-    const mind = Layer.succeed(Infer, {
+    const mind = testInferenceLayer( {
       react: () => {
         calls += 1
         return Effect.succeed({ kind: "complete" as const, output: "done" })
@@ -142,7 +143,7 @@ describe("infer component", () => {
   test("an actor with no model override inherits the host default", async () => {
     const selected = { provider: "openai", model_id: "small" } as const
     const seen: InferRequest[] = []
-    const mind = Layer.succeed(Infer, {
+    const mind = testInferenceLayer( {
       resolve: (model) => ({
         model: model ?? selected,
         models: {
@@ -173,7 +174,7 @@ describe("infer component", () => {
     const recorded = { provider: "openai", model_id: "small" } as const
     const current = { provider: "openai", model_id: "large" } as const
     const seen: InferRequest[] = []
-    const mind = Layer.succeed(Infer, {
+    const mind = testInferenceLayer( {
       resolve: (model) => ({ model: model ?? current, models: { default: current, allow: "*" } }),
       react: (request: InferRequest) => {
         seen.push(request)
@@ -204,7 +205,7 @@ describe("infer component", () => {
 
   test("a historical model string durably fails its turn", async () => {
     const seen: InferRequest[] = []
-    const mind = Layer.succeed(Infer, {
+    const mind = testInferenceLayer( {
       react: (request: InferRequest) => {
         seen.push(request)
         return Effect.succeed({ kind: "complete" as const, output: "done" })
@@ -242,7 +243,7 @@ describe("infer component", () => {
 
   test("each turn can select a provider without losing its conversation", async () => {
     const seen: InferRequest[] = []
-    const mind = Layer.succeed(Infer, {
+    const mind = testInferenceLayer( {
       react: (request: InferRequest) => {
         seen.push(request)
         return Effect.succeed({ kind: "complete" as const, output: "done" })
@@ -310,7 +311,7 @@ describe("infer component", () => {
 
   test("the render is the composed output, and the request carries it to the model", async () => {
     const seen: InferRequest[] = []
-    const mind = Layer.succeed(Infer, {
+    const mind = testInferenceLayer( {
       react: (request: InferRequest) => {
         seen.push(request)
         const returned = request.trajectory.some((e) => e.type === "ToolReturned")
@@ -338,7 +339,7 @@ describe("infer component", () => {
   })
 
   test("a call outside the derived tools answers unknown-tool naming the composed tools", async () => {
-    const mind = Layer.succeed(Infer, {
+    const mind = testInferenceLayer( {
       react: (request: InferRequest) => {
         const returned = request.trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
         return Effect.succeed(
@@ -362,7 +363,7 @@ describe("infer component", () => {
   })
 
   test("a direct package call teaches the execute calling convention", async () => {
-    const mind = Layer.succeed(Infer, {
+    const mind = testInferenceLayer( {
       react: (request: InferRequest) => {
         const returned = request.trajectory.find((event) => event.type === "ToolReturned") as { result?: unknown } | undefined
         return Effect.succeed(
@@ -425,7 +426,7 @@ describe("infer component", () => {
         output: []
       })
     )
-    const mind = Layer.succeed(Infer, {
+    const mind = testInferenceLayer( {
       react: (request: InferRequest) => Effect.succeed(
         request.trajectory.some((event) => event.type === "ToolReturned")
           ? { kind: "complete" as const, output: "done" }

@@ -1,13 +1,15 @@
+import { responseKeyOf, upcastError } from "../log/upcast"
+import type { ProviderContinuation } from "../inference/continuation"
 import { responsesOf } from "../log/response"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replayProjection, type Projection } from "@clavia/tardigrade-core/projection"
 import { terminalReportOutcomeOf } from "@clavia/tardigrade-core/interaction/provider-message"
-import { checkpointOf, keepFromIndex, resolvedContextPolicyOf, type ContextPolicy } from "../component/compaction"
+import { checkpointOf, keepFromIndex, resolvedContextPolicyOf, type ContextPolicy } from "../component/context"
 import {
   correctionText,
   modeOf
 } from "../output/contract"
-import { transcriptProjection, type TranscriptProjectionState } from "./transcript"
+import { projectedOutput, transcriptProjection, type TranscriptProjectionState } from "./transcript"
 
 export interface AgentToolCall {
   readonly id: string
@@ -16,10 +18,12 @@ export interface AgentToolCall {
 }
 
 export interface AgentMessage {
+  readonly continuation?: ProviderContinuation
   readonly role: "user" | "assistant" | "tool"
   readonly content: string | null
   readonly toolCalls?: ReadonlyArray<AgentToolCall>
   readonly toolCallId?: string
+  readonly isFailure?: boolean
 }
 
 const feedbackFor = (
@@ -48,11 +52,17 @@ const userMessageOf = (event: Event, policy: ContextPolicy): AgentMessage => {
   }
 }
 
-const messagesFrom = (
+export interface RenderedMessageEntry {
+  readonly event: Event
+  readonly message: AgentMessage
+}
+
+const messageEntriesFrom = (
   projected: ReadonlyArray<Event>,
   resolved: ContextPolicy
-): ReadonlyArray<AgentMessage> => {
-  const messages: AgentMessage[] = []
+): ReadonlyArray<RenderedMessageEntry> => {
+  const messages: RenderedMessageEntry[] = []
+  const push = (event: Event, message: AgentMessage) => messages.push({ event, message })
   const checkpoint = checkpointOf(projected)
   const from = keepFromIndex(projected, checkpoint.keepFrom)
   const terminated = new Set(
@@ -71,8 +81,8 @@ const messagesFrom = (
   const openHead = projected.findIndex(
     (event) => event.type === "MessageReceived" && !terminated.has(String((event as { id?: unknown }).id))
   )
-  if (openHead !== -1 && openHead < from) messages.push(userMessageOf(projected[openHead]!, resolved))
-  if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
+  if (openHead !== -1 && openHead < from) push(projected[openHead]!, userMessageOf(projected[openHead]!, resolved))
+  if (checkpoint.summary !== "") push(projected.findLast((event) => event.type === "CompactionCompleted")!, { role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
   const responses = responsesOf(projected)
   const batches = new Map<string, AgentToolCall[]>()
   const callOf = (event: Event): AgentToolCall => ({
@@ -89,11 +99,17 @@ const messagesFrom = (
   }
   const emitted = new Set<string>()
   let pendingText: string | null = null
+  const continuations = new Map(projected.filter((event) => event.type === "ModelReturned" && event.continuation !== undefined)
+    .map((event) => [responseKeyOf(event, event.callId), event.continuation as ProviderContinuation]))
+  const continuationOf = (event: Event, id: unknown) => {
+    const continuation = id === undefined ? undefined : continuations.get(responseKeyOf(event, id))
+    return continuation === undefined ? {} : { continuation }
+  }
   for (const event of projected.slice(from)) {
     const value = event as Record<string, unknown>
     switch (event.type) {
       case "MessageReceived":
-        messages.push(userMessageOf(event, resolved))
+        push(event, userMessageOf(event, resolved))
         break
       case "TextReturned":
         pendingText = String(value.text ?? "")
@@ -102,9 +118,10 @@ const messagesFrom = (
         const key = responses.keys.get(event)
         if (key !== undefined && emitted.has(key)) break
         if (key !== undefined) emitted.add(key)
-        messages.push({
+        push(event, {
           role: "assistant",
           content: pendingText,
+          ...continuationOf(event, value.responseId),
           toolCalls: key === undefined ? [callOf(event)] : batches.get(key)!
         })
         pendingText = null
@@ -112,9 +129,10 @@ const messagesFrom = (
       }
       case "ToolReturned": {
         const body = JSON.stringify(value.result ?? null)
-        messages.push({
+        push(event, {
           role: "tool",
           toolCallId: String(value.callId),
+          ...(value.isFailure === true ? { isFailure: true } : {}),
           content: body.length > resolved.resultRenderCap
             ? `${body.slice(0, resolved.resultRenderCap)}…[truncated at ${resolved.resultRenderCap} of ${body.length} chars]`
             : body
@@ -122,20 +140,20 @@ const messagesFrom = (
         break
       }
       case "OutputRejected": {
-        messages.push({ role: "assistant", content: String(value.text ?? "") })
+        push(event, { role: "assistant", content: String(value.text ?? ""), ...continuationOf(event, value.attempt) })
         const feedback = feedbackFor(value, decided)
-        if (feedback !== undefined) messages.push({ role: "user", content: feedback })
+        if (feedback !== undefined) push(event, { role: "user", content: feedback })
         break
       }
       case "TurnCompleted":
-        messages.push({ role: "assistant", content: String(value.output ?? "") })
+        push(event, { role: "assistant", content: String(value.output ?? ""), ...continuationOf(event, value.attemptKey) })
         break
       case "TurnFailed":
-        messages.push({ role: "assistant", content: `the turn failed: ${String(value.error ?? "")}` })
+        push(event, { role: "assistant", content: `the turn failed: ${upcastError(value.error).message}` })
         break
       case "TurnCancelled": {
         const reason = String(value.reason ?? "")
-        messages.push({
+        push(event, {
           role: "assistant",
           content: reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}`
         })
@@ -162,7 +180,7 @@ export const messagesProjection = (
   return {
     initial: () => ({ transcript: transcript.initial() }),
     step: (state, event) => ({ transcript: transcript.step(state.transcript, event) }),
-    output: (state) => messagesFrom(transcript.output(state.transcript).events, resolved)
+    output: (state) => messageEntriesFrom(transcript.output(state.transcript).events, resolved).map((entry) => entry.message)
   }
 }
 
@@ -171,3 +189,7 @@ export const renderMessages = (
   trajectory: ReadonlyArray<Event>,
   policy: Partial<ContextPolicy> = {}
 ): ReadonlyArray<AgentMessage> => replayProjection(messagesProjection(policy), trajectory)
+
+// renderMessageEntries retains message ownership for compaction cuts (component/compaction.properties.test.ts).
+export const renderMessageEntries = (trajectory: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}): ReadonlyArray<RenderedMessageEntry> =>
+  messageEntriesFrom(projectedOutput(trajectory), resolvedContextPolicyOf(policy))
