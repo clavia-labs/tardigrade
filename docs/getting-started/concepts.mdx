@@ -94,7 +94,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <div className="compaction-example-copy">
     <h3>Example: compaction</h3>
-    <p>Before an inference request, compaction checks the active model's context window from model metadata. With a 128k window and the default `fireRatio: 0.8`, 104k tokens crosses the threshold and triggers a summary of the older span. The effect appends `CompactionCompleted`. Later model requests use its summary with a 64k-token tail, while the full event log remains available. Set `fireRatio` and `keepRatio` on `compaction()` to change these thresholds.</p>
+    <p>Before an inference request, compaction checks the active model's context window from model metadata. With a 128k window and the default `triggerRatio: 0.8`, 104k tokens crosses the threshold and triggers a summary of the older span. The effect appends `CompactionCompleted`. Later model requests use its summary with a 64k-token tail, while the full event log remains available. Set `triggerRatio` and `retainRatio` on `compaction()` to change these thresholds.</p>
   </div>
 
   <div className="component-diagram-frame">

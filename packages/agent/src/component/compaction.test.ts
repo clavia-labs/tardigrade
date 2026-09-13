@@ -101,7 +101,7 @@ describe("the compaction measure and guard", () => {
   })
 
   test("the keep line must remain below the fire line", () => {
-    expect(() => contextPolicyOf({ keepRatio: 0.9, fireRatio: 0.8 }, 100)).toThrow("keepRatio must be less than fireRatio")
+    expect(() => contextPolicyOf({ keepRatio: 0.9, fireRatio: 0.8 }, 100)).toThrow("retainRatio must be less than triggerRatio")
   })
 
   test("the guard is pure: the fold runs with the clock and randomness rigged to throw", () => {

@@ -679,7 +679,7 @@ const checkModelCapacity = async ({ capacity, previousCapacity, summaryCapacity,
   const selection = Layer.succeed(ModelSelection, { resolve: (reference = { provider: "test", model_id: "host-default" }) => ({
     model: reference, contextWindowTokens: reference.model_id === "small" ? capacity : reference.model_id === "large" ? previousCapacity : summaryCapacity
   }) })
-  const agent = assembled(infer([compaction({ fireRatio, keepRatio, ...(mode === "explicit" ? { model: { provider: "test", model_id: "summary" } } : {}) }), nativeOutput], TEST_MODEL))
+  const agent = assembled(infer([compaction({ triggerRatio: fireRatio, retainRatio: keepRatio, ...(mode === "explicit" ? { model: { provider: "test", model_id: "summary" } } : {}) }), nativeOutput], TEST_MODEL))
   const events = await run(Effect.gen(function* () {
     yield* receive(agent, { id: "large-turn", text: "x".repeat(historySize), model: { provider: "test", model_id: "large" } })
     prefix = yield* readLog

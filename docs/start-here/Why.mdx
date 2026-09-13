@@ -101,8 +101,8 @@ export const researcher = actor({
   components: [infer([
     system("Research the given topic and cite your sources."),
     compaction({
-      fireRatio: 0.8,
-      keepRatio: 0.5
+      triggerRatio: 0.8,
+      retainRatio: 0.5
     }),
     nativeOutput
   ])]

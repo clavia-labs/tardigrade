@@ -30,18 +30,25 @@ export interface ContextPolicy {
 export interface CompactionPolicy {
   readonly messageRenderCap: number
   readonly resultRenderCap: number
-  readonly fireRatio: number
-  readonly keepRatio: number
+  readonly triggerRatio?: number
+  readonly retainRatio?: number
+  /** @deprecated Use triggerRatio. */
+  readonly fireRatio?: number
+  /** @deprecated Use retainRatio. */
+  readonly keepRatio?: number
   readonly summaryLineCap: number
   // model selects the summarizer; omission uses the host default independently of conversation capacity (runtime/composition.test.ts).
   readonly model?: ModelRef
 }
 
-export const DEFAULT_COMPACTION_POLICY: CompactionPolicy = {
+const defaultRatios = { triggerRatio: 0.8, retainRatio: 0.5 }
+
+export const DEFAULT_COMPACTION_POLICY: Required<Omit<CompactionPolicy, "model">> = {
   messageRenderCap: 12_000,
   resultRenderCap: 6_000,
-  fireRatio: 0.8,
-  keepRatio: 0.5,
+  ...defaultRatios,
+  fireRatio: defaultRatios.triggerRatio,
+  keepRatio: defaultRatios.retainRatio,
   summaryLineCap: 200
 }
 
@@ -55,6 +62,12 @@ const ratio = (value: number, name: string): number => {
   return value
 }
 
+// ratioOf normalizes deprecated aliases and rejects conflicting declarations (compaction.properties.test.ts).
+const ratioOf = (value: number | undefined, legacy: number | undefined, name: string, alias: string, fallback: number): number => {
+  if (value !== undefined && legacy !== undefined && value !== legacy) throw new Error(`${name} conflicts with deprecated ${alias}`)
+  return ratio(value ?? legacy ?? fallback, name)
+}
+
 // contextPolicyOf resolves the model-relative policy into the absolute thresholds used by the
 // guard and render. The fire and keep lines form one hysteresis policy, so they are validated
 // together.
@@ -63,9 +76,9 @@ export const contextPolicyOf = (
   window: number
 ): ContextPolicy => {
   const contextWindowTokens = positive(window, "contextWindowTokens")
-  const fireRatio = ratio(policy.fireRatio ?? DEFAULT_COMPACTION_POLICY.fireRatio, "fireRatio")
-  const keepRatio = ratio(policy.keepRatio ?? DEFAULT_COMPACTION_POLICY.keepRatio, "keepRatio")
-  if (keepRatio >= fireRatio) throw new Error(`keepRatio must be less than fireRatio, got ${keepRatio} and ${fireRatio}`)
+  const fireRatio = ratioOf(policy.triggerRatio, policy.fireRatio, "triggerRatio", "fireRatio", DEFAULT_COMPACTION_POLICY.triggerRatio)
+  const keepRatio = ratioOf(policy.retainRatio, policy.keepRatio, "retainRatio", "keepRatio", DEFAULT_COMPACTION_POLICY.retainRatio)
+  if (keepRatio >= fireRatio) throw new Error(`retainRatio must be less than triggerRatio, got ${keepRatio} and ${fireRatio}`)
   return {
     messageRenderCap: positive(
       policy.messageRenderCap ?? DEFAULT_COMPACTION_POLICY.messageRenderCap,

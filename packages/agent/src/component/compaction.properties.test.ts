@@ -6,7 +6,7 @@ import { eventAt } from "@clavia/tardigrade-core/event"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { historyOf } from "../inference/model/prompt"
 import { renderMessages } from "../projection/messages"
-import { compactionWithWindow as compaction, compactionReactor, estimateTokens } from "./compaction"
+import { compactionWithWindow as compaction, compactionReactor, contextPolicyOf, estimateTokens } from "./compaction"
 
 const history = (hidden: "repaired" | "failed" | "unreferenced", size: number): Event[] => [
   { type: "MessageReceived", id: "before", text: "Remember this", at: 0 },
@@ -116,4 +116,23 @@ for (const change of ["model", "provider"] as const) test(`${change} switches ex
     expect(keys(large)).toEqual(keys(small))
     expect(keys(large)).toEqual(compactionReactor(policy, policy.contextWindowTokens)(large).map((transition) => transition.key))
   }))
+})
+
+
+test("deprecated ratio aliases preserve thresholds and reject conflicting declarations", () => {
+  fc.assert(fc.property(
+    fc.integer({ min: 1, max: 1_000_000 }),
+    fc.integer({ min: 60, max: 99 }),
+    fc.integer({ min: 1, max: 50 }),
+    (window, triggerPercent, retainPercent) => {
+      const triggerRatio = triggerPercent / 100
+      const retainRatio = retainPercent / 100
+      const current = { triggerRatio, retainRatio }
+      const legacy = { fireRatio: triggerRatio, keepRatio: retainRatio }
+      expect(contextPolicyOf(legacy, window)).toEqual(contextPolicyOf(current, window))
+      expect(contextPolicyOf({ ...current, ...legacy }, window)).toEqual(contextPolicyOf(current, window))
+      expect(() => contextPolicyOf({ ...current, fireRatio: triggerRatio / 2 }, window)).toThrow("triggerRatio conflicts")
+      expect(() => contextPolicyOf({ ...current, keepRatio: retainRatio / 2 }, window)).toThrow("retainRatio conflicts")
+    }
+  ))
 })
