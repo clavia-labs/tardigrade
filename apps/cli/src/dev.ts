@@ -5,7 +5,7 @@ import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 import type { Actor } from "tardie"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
-import { layerModelCatalog, layerRuntimeModelLock, layerLockedServerConfig, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
+import { layerRuntimeModelLock, layerLockedServerModels, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
 import {
   layerActorThreads,
   layerThreads,
@@ -174,10 +174,9 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
   }
   const root = resolveAssets(options.assets)
   const lock = layerRuntimeModelLock(options.config).pipe(Layer.provide(BunFileSystem.layer))
-  const config = options.catalog === undefined
-    ? layerLockedServerConfig(options.config).pipe(Layer.provide(lock))
-    : layerConfig(options.config)
-  const catalog = options.catalog ?? Layer.provide(layerModelCatalog, [config, lock])
+  const models = options.catalog === undefined
+    ? layerLockedServerModels(options.config).pipe(Layer.provide(lock))
+    : Layer.merge(layerConfig(options.config), options.catalog)
   const inference = makeInferenceStream(options.threads?.inferenceObserver)
   const threadOptions = { ...options.threads, inferenceObserver: inference.observer }
   const threads = Layer.provide(
@@ -192,7 +191,7 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
             ? {}
             : { layersFor: options.layersFor as ActorThreadLayersFor<ServerR> })
         }),
-    [config, catalog]
+    models
   )
   // provideMerge rather than provide: the listening server stays visible in the layer's own
   // services, which is what lets a caller read the address it was given when it asked for port 0
@@ -206,7 +205,7 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
       port: options.config.port,
       hostname: DEV_HOST,
       gracefulShutdownTimeout: Duration.millis(shutdownMillis)
-    }), config, threads, catalog]
+    }), models, threads]
   )
   if (options.onListen === undefined) return running
   return Layer.tap(running, (context) => {

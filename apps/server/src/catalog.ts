@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { FileSystem } from "effect/FileSystem"
 import { emptyModelLock, layerFileModelLock, layerModelLock, lockedModelState, ModelLock, ModelLockError, modelLockErrorOf } from "@clavia/tardigrade-model/lock"
 import { ServerConfig, modelCredentialsFrom, type Env, type ServerConfigValue } from "./config"
@@ -13,15 +13,9 @@ export const layerRuntimeModelLock = (config: ServerConfigValue): Layer.Layer<Mo
     return layerFileModelLock(config.modelLockPath)
   }))
 
-// layerLockedServerConfig derives connections and credentials from the supplied lock (model-services.test.ts).
-export const layerLockedServerConfig = (config: ServerConfigValue, env: Env = config.modelCredentials): Layer.Layer<ServerConfig, ModelLockError, ModelLock> =>
-  Layer.effect(ServerConfig)(Effect.map(lockedModelState(config.model), ({ model }) => ({
-    ...config, model, modelCredentials: modelCredentialsFrom(model, env)
-  })))
-
-// layerModelCatalog derives discovery from the runtime lock service (model-services.test.ts).
-export const layerModelCatalog: Layer.Layer<ModelCatalogStore, ModelLockError, ModelLock | ServerConfig> =
-  Layer.effect(ModelCatalogStore)(Effect.gen(function*() {
-    const config = yield* ServerConfig
-    return (yield* lockedModelState(config.model)).catalog
-  }))
+// layerLockedServerModels derives configuration and discovery together from the lock (model-services.test.ts).
+export const layerLockedServerModels = (config: ServerConfigValue, env: Env = config.modelCredentials): Layer.Layer<ServerConfig | ModelCatalogStore, ModelLockError, ModelLock> =>
+  Layer.effectContext(Effect.map(lockedModelState(config.model), ({ model, catalog }) =>
+    Context.make(ServerConfig, { ...config, model, modelCredentials: modelCredentialsFrom(model, env) }).pipe(
+      Context.add(ModelCatalogStore, catalog)
+    )))

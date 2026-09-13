@@ -3,7 +3,7 @@ import { BunHttpServer, BunRuntime, BunFileSystem } from "@effect/platform-bun"
 import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
 
 import { projectConfigOf, projectConfigPathOf, readConfig } from "./config"
-import { layerModelCatalog, layerRuntimeModelLock, layerLockedServerConfig } from "./catalog"
+import { layerRuntimeModelLock, layerLockedServerModels } from "./catalog"
 import { layerThreads } from "./host"
 import { serve } from "./http"
 import { makeInferenceStream } from "./inference-stream"
@@ -24,14 +24,13 @@ const project = projectExists ? projectConfigOf(Bun.JSONC.parse(await projectFil
 const config = readConfig(process.env, project)
 
 const lock = layerRuntimeModelLock(config).pipe(Layer.provide(BunFileSystem.layer))
-const configLayer = layerLockedServerConfig(config, process.env).pipe(Layer.provide(lock))
+const models = layerLockedServerModels(config, process.env).pipe(Layer.provide(lock))
 
 // The host is built from the same configuration the routes read, and closed with the scope the
 // server runs in, so the process that stops listening stops writing (host.ts, layerThreads).
-const catalog = Layer.provide(layerModelCatalog, [configLayer, lock])
 const inference = makeInferenceStream()
-const threads = Layer.provide(layerThreads({ inferenceObserver: inference.observer }), [configLayer, catalog])
+const threads = Layer.provide(layerThreads({ inferenceObserver: inference.observer }), models)
 
-const main = Layer.provide(serve({ api: { inference } }), [BunHttpServer.layer({ port: config.port }), configLayer, threads, catalog])
+const main = Layer.provide(serve({ api: { inference } }), [BunHttpServer.layer({ port: config.port }), models, threads])
 
 BunRuntime.runMain(Layer.launch(main))
