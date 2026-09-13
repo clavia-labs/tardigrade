@@ -1,3 +1,4 @@
+import * as fc from "fast-check"
 import { LanguageModel, Response } from "effect/unstable/ai"
 import { BindingInvocation } from "../inference/model/settings"
 import { CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
@@ -644,8 +645,19 @@ describe("infer component", () => {
 })
 
 
-test.each(["explicit", "default"])("active model capacity compacts before inference with the %s summarizer", async mode => {
+const checkModelCapacity = async ({ capacity, previousCapacity, summaryCapacity, historySize, fireRatio, keepRatio, mode, compact }: {
+  readonly capacity: number
+  readonly previousCapacity: number
+  readonly summaryCapacity: number
+  readonly historySize: number
+  readonly fireRatio: number
+  readonly keepRatio: number
+  readonly mode: string
+  readonly compact: boolean
+}) => {
   const calls: string[] = []
+  let prefix: ReadonlyArray<Event> = []
+  const thresholds = { contextWindowTokens: capacity, fireTokens: Math.floor(capacity * fireRatio), keepTokens: Math.floor(capacity * keepRatio) }
   const model = Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
     generateText: () => Effect.die("stream only"),
     streamText: () => Stream.unwrap(Effect.gen(function* () {
@@ -653,8 +665,8 @@ test.each(["explicit", "default"])("active model capacity compacts before infere
       const selected = yield* CurrentModel
       calls.push(selected!.model_id)
       if (invocation !== undefined && selected?.model_id === "small") {
-        expect(invocation.request.trajectory.some(event => event.type === "CompactionCompleted")).toBe(true)
-        expect(invocation.request.context).toMatchObject({ contextWindowTokens: 100, fireTokens: 80, keepTokens: 50 })
+        expect(invocation.request.trajectory.some(event => event.type === "CompactionCompleted")).toBe(compact)
+        expect(invocation.request.context).toMatchObject(thresholds)
       }
       return Stream.fromIterable([
         Response.makePart("text-start", { id: "text" }),
@@ -665,17 +677,50 @@ test.each(["explicit", "default"])("active model capacity compacts before infere
     }))
   }))
   const selection = Layer.succeed(ModelSelection, { resolve: (reference = { provider: "test", model_id: "host-default" }) => ({
-    model: reference, contextWindowTokens: reference?.model_id === "small" ? 100 : 1_000_000
+    model: reference, contextWindowTokens: reference.model_id === "small" ? capacity : reference.model_id === "large" ? previousCapacity : summaryCapacity
   }) })
-  const agent = assembled(infer([compaction(mode === "explicit" ? { model: { provider: "test", model_id: "summary" } } : {}), nativeOutput], TEST_MODEL))
+  const agent = assembled(infer([compaction({ fireRatio, keepRatio, ...(mode === "explicit" ? { model: { provider: "test", model_id: "summary" } } : {}) }), nativeOutput], TEST_MODEL))
   const events = await run(Effect.gen(function* () {
-    yield* receive(agent, { id: "large-turn", text: "x".repeat(1000), model: { provider: "test", model_id: "large" } })
+    yield* receive(agent, { id: "large-turn", text: "x".repeat(historySize), model: { provider: "test", model_id: "large" } })
+    prefix = yield* readLog
     yield* receive(agent, { id: "small-turn", text: "continue", model: { provider: "test", model_id: "small" } })
     return yield* readLog
   }), Layer.mergeAll(memoryLog(), model, selection, noRouter, KeyValueStore.layerMemory))
-  expect(calls).toEqual(["large", mode === "explicit" ? "summary" : "host-default", "small"])
-  expect(events.find(event => event.type === "CompactionCompleted")).toMatchObject({ contextWindowTokens: 100, fireTokens: 80, keepTokens: 50 })
+  const summarizer = mode === "explicit" ? "summary" : "host-default"
+  expect(calls).toEqual(compact ? ["large", summarizer, "small"] : ["large", "small"])
+  const checkpoints = events.filter(event => event.type === "CompactionCompleted")
+  expect(checkpoints).toHaveLength(compact ? 1 : 0)
+  if (compact) expect(checkpoints[0]).toMatchObject({ ...thresholds, model: { provider: "test", model_id: summarizer } })
+  expect(events.slice(0, prefix.length)).toEqual([...prefix])
+  expect(events.filter(event => event.type === "MessageReceived").map(event => event.model)).toEqual([
+    { provider: "test", model_id: "large" }, { provider: "test", model_id: "small" }
+  ])
+  expect(events.filter(event => event.type === "ModelCalled").map(event => event.model)).toEqual([
+    { provider: "test", model_id: "large" }, { provider: "test", model_id: "small" }
+  ])
   expect(events.filter(event => event.type === "TurnCompleted")).toHaveLength(2)
+}
+
+test.each(["explicit", "default"])("active model capacity compacts before inference with the %s summarizer", async mode => {
+  await checkModelCapacity({ capacity: 100, previousCapacity: 1_000_000, summaryCapacity: 1_000_000, historySize: 1000, fireRatio: 0.8, keepRatio: 0.5, mode, compact: true })
+})
+
+test("model switches preserve history and checkpoint against conversation capacity independently of the summarizer", async () => {
+  await fc.assert(fc.asyncProperty(fc.record({
+    capacity: fc.integer({ min: 300, max: 1200 }),
+    previousMultiplier: fc.integer({ min: 3, max: 20 }),
+    summaryCapacity: fc.integer({ min: 64, max: 100_000 }),
+    firePercent: fc.integer({ min: 60, max: 90 }),
+    keepPercent: fc.integer({ min: 20, max: 50 }),
+    mode: fc.constantFrom("explicit", "default"),
+    compact: fc.boolean()
+  }), async ({ capacity, previousMultiplier, summaryCapacity, firePercent, keepPercent, mode, compact }) => {
+    await checkModelCapacity({
+      capacity, previousCapacity: capacity * previousMultiplier, summaryCapacity,
+      historySize: compact ? capacity * 4 + 400 : 16,
+      fireRatio: firePercent / 100, keepRatio: keepPercent / 100, mode, compact
+    })
+  }), { numRuns: 50 })
 })
 
 test.each([undefined, 0, -1, NaN, Infinity])("compaction rejects missing or invalid model capacity (%s) before inference", async window => {
