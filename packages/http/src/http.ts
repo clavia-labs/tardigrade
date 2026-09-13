@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect"
 import { Headers, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder, HttpApiScalar } from "effect/unstable/httpapi"
+import { HttpApiBuilder } from "effect/unstable/httpapi"
 
 import {
   layerActorsGroup,
@@ -14,9 +14,11 @@ import {
   layerUnknownProjection,
   type ApiOptions
 } from "./api"
-import { Api, apiOf, DOCS_PATH, OPENAPI_PATH, type Health } from "@clavia/tardigrade-client/contract"
+import { Api, apiOf, type Health } from "@clavia/tardigrade-client/contract"
 import { layerRequestProblems } from "./contract"
 import { DriverGauge } from "./driver-gauge"
+import { layerApiDocs, UNAUTHENTICATED_PATHS } from "./docs"
+export { UNAUTHENTICATED_PATHS } from "./docs"
 
 // The HTTP surface. The JSON routes are one declaration (contract.ts) implemented through
 // HttpApiBuilder, and everything around them is a layer over effect's own HttpRouter, so the server
@@ -27,9 +29,6 @@ import { DriverGauge } from "./driver-gauge"
 
 import { problem } from "./problem"
 export { problem, type Problem, PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE } from "./problem"
-
-// UNAUTHENTICATED_PATHS names process capabilities that expose no actor state.
-export const UNAUTHENTICATED_PATHS: ReadonlyArray<string> = ["/healthz", "/v1/providers", "/v1/models", OPENAPI_PATH, DOCS_PATH]
 
 const pathOf = (url: string): string => {
   const query = url.indexOf("?")
@@ -143,38 +142,6 @@ export const layerCors = HttpRouter.cors({
   exposedHeaders: ["content-type", "location"]
 })
 
-const scalarCss = `
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
-
-:root {
-  --scalar-font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --scalar-font-code: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --scalar-background-1: #f3f0e4;
-  --scalar-background-2: #faf8ef;
-  --scalar-background-3: #e9eadc;
-  --scalar-background-accent: #e2eadf;
-  --scalar-color-1: #243128;
-  --scalar-color-2: #556158;
-  --scalar-color-3: #879087;
-  --scalar-color-accent: #4f6f52;
-  --scalar-border-color: #d1d6c2;
-  --scalar-radius: 6px;
-  --scalar-radius-lg: 6px;
-}
-
-.dark-mode {
-  --scalar-background-1: #131514;
-  --scalar-background-2: #1b1d1c;
-  --scalar-background-3: #0e100f;
-  --scalar-background-accent: #22302a;
-  --scalar-color-1: #e8eae8;
-  --scalar-color-2: #a3a8a4;
-  --scalar-color-3: #6b706c;
-  --scalar-color-accent: #7fae8c;
-  --scalar-border-color: #2a2d2b;
-}
-`.trim()
-
 // The application: the declared API, the stream beside it, the document and the page derived from
 // the same declaration, plus the conventions that wrap them all. A route inherits the gate and the
 // error shape by being part of the same router.
@@ -182,7 +149,7 @@ export const layerApp = (options: ApiOptions = {}) => {
   const api = apiOf(options.projections ?? {})
   return Layer.mergeAll(
     Layer.provide(
-      Layer.provide(HttpApiBuilder.layer(api, { openapiPath: OPENAPI_PATH }), [
+      Layer.provide(HttpApiBuilder.layer(api), [
         layerActorsGroup,
         layerDefinitionsGroup,
         layerModelsGroup(options),
@@ -194,14 +161,7 @@ export const layerApp = (options: ApiOptions = {}) => {
       ]),
       layerRequestProblems
     ),
-    HttpApiScalar.layer(api, {
-      path: DOCS_PATH,
-      scalar: {
-        customCss: scalarCss,
-        theme: "none",
-        withDefaultFonts: false
-      }
-    }),
+    layerApiDocs(api),
     layerStream(options),
     // layerUnknownProjection names the declared projections when a lookup misses.
     layerUnknownProjection(options.projections),

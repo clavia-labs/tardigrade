@@ -35,6 +35,8 @@ Base path `/v1`. Runtime routes address instances of the actor mounted at the se
 | `PUT /v1/definitions` | Push an actor artifact to a host with a writable definition registry |
 | `GET /healthz` `GET /openapi.json` `GET /docs` | Unversioned |
 
+Bun HTTP hosts and Cloudflare Worker HTTP handlers serve Scalar at `/docs` and the OpenAPI document at `/openapi.json`. Each document describes its host's declared routes. Method calls use a generic payload in OpenAPI; `GET /v1/methods` provides the mounted actor's input and output schemas. An actor used in-process exposes no HTTP routes until a host serves it.
+
 ```bash
 curl -X POST localhost:4242/v1/actors/main/threads \
   -H 'content-type: application/json' \

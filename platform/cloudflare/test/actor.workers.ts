@@ -680,6 +680,46 @@ describe("cloudflare actor", () => {
     expect(catalogTables).toEqual([])
   })
 
+  test("public API docs describe only mounted Worker routes", async () => {
+    const page = await SELF.fetch("http://test/docs")
+    expect(page.status).toBe(200)
+    expect(page.headers.get("content-type")).toContain("text/html")
+    const html = await page.text()
+    expect(html).toContain("Scalar")
+    expect(html).toContain("--scalar-background-1: #f3f0e4")
+
+    const response = await SELF.fetch("http://test/openapi.json")
+    expect(response.status).toBe(200)
+    const spec = await response.json() as { paths: Record<string, Record<string, { responses: Record<string, unknown> }>>; components: { schemas: Record<string, unknown> } }
+    expect(Object.keys(spec.paths).sort()).toEqual([
+      "/healthz", "/v1/metadata", "/v1/providers", "/v1/models", "/v1/methods",
+      "/v1/actors/{id}", "/v1/actors/{id}/threads", "/v1/actors/{id}/threads/{thread}/events",
+      "/v1/actors/{id}/threads/{thread}/methods/{method}",
+      "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}",
+      "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellation"
+    ].sort())
+    expect(spec.paths["/healthz"]?.get?.responses["200"]).toMatchObject({
+      content: { "application/json": { schema: { properties: { status: { enum: ["ready"] }, actor: { type: "string" } } } } }
+    })
+    expect(spec.components.schemas.WorkerThreadTree).toMatchObject({
+      properties: { id: { type: "string" }, children: { type: "array" } }
+    })
+    expect(spec.paths["/v1/actors/{id}/threads/{thread}/events"]?.post?.responses).toHaveProperty("202")
+    for (const [path, method, statuses] of [
+      ["/healthz", "get", ["200"]],
+      ["/v1/metadata", "get", ["200", "401", "503"]],
+      ["/v1/actors/{id}", "put", ["200", "400", "401", "503"]],
+      ["/v1/actors/{id}", "get", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads", "post", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads", "get", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/events", "post", ["202", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/events", "get", ["200", "400", "401", "404", "500", "503"]]
+    ] as const) {
+      expect(Object.keys(spec.paths[path]![method]!.responses).sort()).toEqual(statuses)
+    }
+    expect((await SELF.fetch("http://test/v1/methods")).status).toBe(401)
+  })
+
   test("a mounted actor exposes durable methods", async () => {
     const refused = await SELF.fetch("http://test/v1/methods")
     expect(refused.status).toBe(401)
