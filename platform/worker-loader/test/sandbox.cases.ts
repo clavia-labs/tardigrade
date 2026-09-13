@@ -14,13 +14,8 @@ export interface IsolatedCallbackTransportResult {
   readonly resultMarkers: number
 }
 
-interface ModeledDistinctExecutionBudget {
-  readonly maxDistinctExecutions: number
-  readonly initialBudget: number
-}
-
 export interface IsolatedCallbackTransportOptions {
-  readonly modeledDistinctExecutionBudget?: ModeledDistinctExecutionBudget
+  readonly modeledExecutionLimit?: number
 }
 
 export const isolatedCallbackTransportBody = `
@@ -38,9 +33,7 @@ export interface ReplaySequenceResult {
 // replaySequenceWith runs the replay sequence shared by the workerd and Celld runtime suites.
 export const replaySequenceWith = async (loader: WorkerLoader): Promise<ReplaySequenceResult> => {
   const observed: Array<{ readonly ordinal: number; readonly value: number }> = []
-  const sandbox = workerLoaderSandboxServiceFor(loader, () => {
-    throw new Error("replay transport must not open a capability")
-  }, { transport: "replay" })
+  const sandbox = workerLoaderSandboxServiceFor(loader, { transport: "replay" })
   const result = await Effect.runPromise(sandbox.run(
     `const first = await tools.double({ value: 3 })
     const pair = await Promise.all([

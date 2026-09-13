@@ -26,8 +26,8 @@ export class SandboxBridge extends DurableObject<Env> {
 
   private callbackIngress = 0
 
-  // modeledDistinctExecutionBudget bounds distinct callback reentries for sandbox.workers.ts.
-  private modeledDistinctExecutionBudget: { readonly max: number; remaining: number } | undefined
+  // modeledExecutionLimit bounds distinct callback reentries for sandbox.workers.ts.
+  private modeledExecutionLimit: number | undefined
 
   private readonly modeledExecutions = new Set<string>()
 
@@ -35,13 +35,12 @@ export class SandboxBridge extends DurableObject<Env> {
     execution: string,
     calls: ReadonlyArray<SandboxBridgeCall>
   ): Promise<ReadonlyArray<SandboxCallOutcome>> {
-    const modeledBudget = this.modeledDistinctExecutionBudget
-    if (modeledBudget !== undefined && !this.modeledExecutions.has(execution)) {
-      if (this.modeledExecutions.size >= modeledBudget.max || modeledBudget.remaining === 0) {
+    const limit = this.modeledExecutionLimit
+    if (limit !== undefined && !this.modeledExecutions.has(execution)) {
+      if (this.modeledExecutions.size >= limit) {
         throw new Error(`fixture modeled callback budget exhausted at ${this.modeledExecutions.size} distinct executions`)
       }
       this.modeledExecutions.add(execution)
-      modeledBudget.remaining--
     }
     this.callbackIngress++
     const callback = this.callbacks.get(execution)
@@ -52,19 +51,14 @@ export class SandboxBridge extends DurableObject<Env> {
   async runIsolatedCallbackTransport(
     options: IsolatedCallbackTransportOptions = {}
   ): Promise<IsolatedCallbackTransportResult> {
-    const configuredBudget = options.modeledDistinctExecutionBudget
-    if (configuredBudget !== undefined && (
-      configuredBudget.initialBudget < 0 ||
-      configuredBudget.maxDistinctExecutions < configuredBudget.initialBudget
-    )) {
-      throw new Error("fixture modeled callback budget is invalid")
+    const limit = options.modeledExecutionLimit
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
+      throw new Error("fixture modeled execution limit must be a nonnegative integer")
     }
     this.callbacks.clear()
     this.callbackIngress = 0
     this.modeledExecutions.clear()
-    this.modeledDistinctExecutionBudget = configuredBudget === undefined
-      ? undefined
-      : { max: configuredBudget.maxDistinctExecutions, remaining: configuredBudget.initialBudget }
+    this.modeledExecutionLimit = limit
     let packageCalls = 0
     let resultMarkers = 0
     for (let index = 0; index < ISOLATED_CALLBACK_TRANSPORT.executions; index++) {
@@ -88,9 +82,10 @@ export class SandboxBridge extends DurableObject<Env> {
           }
         }
       }))
-      if (!Array.isArray(result.result) || result.result.length !== ISOLATED_CALLBACK_TRANSPORT.callsPerExecution) {
+      if (!Array.isArray(result.result) || result.result.length !== ISOLATED_CALLBACK_TRANSPORT.callsPerExecution ||
+        result.result.some((marker, step) => marker !== `${execution}:${step}`)) {
         throw new Error(
-          `sandbox execution ${index} returned ${JSON.stringify(result.error)} after ${this.callbackIngress} callback ingress calls`
+          `sandbox execution ${index} returned ${JSON.stringify(result.error ?? result.result)} after ${this.callbackIngress} callback ingress calls`
         )
       }
       packageCalls += localState.calls
