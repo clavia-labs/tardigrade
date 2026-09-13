@@ -41,3 +41,30 @@ import type { Machine } from "tardie/core/machine"
 import type { Projection } from "tardie/core/projection"
 import type { ComponentOutput } from "tardie/core/component"
 ```
+
+## Image inputs
+
+The `message` method in `agentMethods` and the public `receive` helper accept an ordered `content` array using the [OpenResponses](https://www.openresponses.org/reference#inputimagecontent) input format:
+
+```ts
+const message = {
+  content: [
+    { type: "input_text", text: "Compare the two images." },
+    { type: "input_image", image_url: firstImageDataUrl, detail: "auto" },
+    { type: "input_text", text: "This is the revised version." },
+    { type: "input_image", image_url: secondImageDataUrl, detail: "auto" }
+  ]
+} as const
+```
+
+An `input_image` carries an `image_url` and optional `detail` of `auto`, `low`, or `high`. A data URL carries its media type and base64 bytes; an HTTP or HTTPS URL names an image the provider can retrieve. The selected provider and model determine which image formats and detail levels they accept. A custom model layer must resolve private resource references before submitting them to a provider. Provider file IDs and image-bearing tool results are outside this message input contract.
+
+An image-only message contains image parts without a fabricated text part. A text-only caller can continue to send `{ text: "Hello" }`. A message supplies either `text` or `content`; supplying both is an error. Application-owned `input` and model selection remain separate from message content.
+
+`MessageReceived` stores the supplied content in order. Model history preserves retained images through replay and later turns. Text caps apply across a message's text parts and leave image sources intact. Compaction removes completed old prompts from model history while retaining the active turn's prompt. The durable log remains available. A summary receives text and an explicit count of omitted images without their bytes; that count does not summarize what the images depict.
+
+## Image context estimates
+
+`compaction({ imageTokens: 4_784 })` sets the estimated token weight of each image. The exported default is 4,784 and accepts a positive override. This heuristic is independent of encoded byte length or URL length. Provider token use depends on the model, image dimensions, and detail, so the estimate cannot guarantee provider admission. Set the context window and image estimate for the selected model.
+
+The context estimate includes retained active images and summary text after a checkpoint. Replay and incremental projection use the same rendered content to measure the prompt. An image prompt that cannot fit under the applied estimate produces an explicit context failure before inference. Compaction estimates remain separate from provider-reported token usage and monetary cost; changing `imageTokens` does not change recorded usage.
