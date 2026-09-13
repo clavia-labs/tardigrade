@@ -4,7 +4,11 @@ import { describe, expect, test } from "vitest"
 import { sandboxReturned } from "@clavia/tardigrade-code/sandbox/service"
 import { workerLoaderSandboxServiceFor, type SandboxBridgeFactory } from "../src/sandbox"
 import type { Env } from "./fixture.worker"
-import { replaySequenceWith } from "./sandbox.cases"
+import {
+  ISOLATED_CALLBACK_TRANSPORT,
+  replaySequenceWith,
+  type IsolatedCallbackTransportResult
+} from "./sandbox.cases"
 
 const bridgeFor: SandboxBridgeFactory = (_call) => ({
   binding: (env as Env).BRIDGE.getByName("sandbox-test"),
@@ -96,6 +100,37 @@ describe("worker loader sandbox", () => {
       { ordinal: 1, value: 6 },
       { ordinal: 2, value: 5 }
     ])
+  })
+
+  test("runs isolated callback transport through the durable object", async () => {
+    const result: IsolatedCallbackTransportResult = await (env as Env).BRIDGE
+      .getByName("sandbox-test")
+      .runIsolatedCallbackTransport()
+
+    expect(result).toEqual({
+      executions: ISOLATED_CALLBACK_TRANSPORT.executions,
+      packageCalls: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution,
+      callbackIngress: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution,
+      resultMarkers: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution
+    })
+  })
+
+  test("isolated callback transport avoids durable object reentry under the fixture model", async () => {
+    const result: IsolatedCallbackTransportResult = await (env as Env).BRIDGE
+      .getByName("sandbox-modeled-depth-test")
+      .runIsolatedCallbackTransport({
+        modeledDistinctExecutionBudget: {
+          maxDistinctExecutions: ISOLATED_CALLBACK_TRANSPORT.executions,
+          initialBudget: 14
+        }
+      })
+
+    expect(result).toEqual({
+      executions: ISOLATED_CALLBACK_TRANSPORT.executions,
+      packageCalls: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution,
+      callbackIngress: 0,
+      resultMarkers: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution
+    })
   })
 
   test("replay ignores object member order across the loader boundary", async () => {

@@ -2,6 +2,34 @@ import { Effect } from "effect"
 import { sandboxReturned } from "@clavia/tardigrade-code/sandbox/service"
 import { workerLoaderSandboxServiceFor } from "../src/sandbox"
 
+export const ISOLATED_CALLBACK_TRANSPORT = {
+  executions: 20,
+  callsPerExecution: 3
+} as const
+
+export interface IsolatedCallbackTransportResult {
+  readonly executions: number
+  readonly packageCalls: number
+  readonly callbackIngress: number
+  readonly resultMarkers: number
+}
+
+export interface ModeledDistinctExecutionBudget {
+  readonly maxDistinctExecutions: number
+  readonly initialBudget: number
+}
+
+export interface IsolatedCallbackTransportOptions {
+  readonly modeledDistinctExecutionBudget?: ModeledDistinctExecutionBudget
+}
+
+export const isolatedCallbackTransportBody = `
+  const first = await tools.mark({ step: 0 })
+  const second = await tools.mark({ step: 1 })
+  const third = await tools.mark({ step: 2 })
+  return [first, second, third]
+`
+
 export interface ReplaySequenceResult {
   readonly result: unknown
   readonly observed: ReadonlyArray<{ readonly ordinal: number; readonly value: number }>

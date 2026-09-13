@@ -1,0 +1,25 @@
+{
+  "remote": {
+    "version": "cb986837-fbee-47d9-a9ba-36e46354d4f5",
+    "status": 500,
+    "executionIndex": 14,
+    "callbackIngress": 42,
+    "error": "Subrequest depth limit exceeded"
+  },
+  "local": {
+    "executions": 20,
+    "packageCalls": 60,
+    "callbackIngress": 60,
+    "resultMarkers": 60
+  },
+  "fixtureModel": {
+    "maxDistinctExecutions": 20,
+    "initialBudget": 14,
+    "assumptions": [
+      "The model counts distinct sandbox execution identifiers at SandboxBridge.sandboxCallBatch.",
+      "Calls for an execution already counted do not consume another unit.",
+      "The model does not account for every Worker or Durable Object hop."
+    ]
+  },
+  "documentation": "https://developers.cloudflare.com/workers/observability/errors/#loop-limit"
+}
