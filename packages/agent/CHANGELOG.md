@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.26.0](https://github.com/clavia-labs/tardigrade/compare/v0.25.0...v0.26.0) (2026-09-13)
+
+
+### Features
+
+* **model:** adopt Effect AI ([#438](https://github.com/clavia-labs/tardigrade/issues/438)) ([b2be4a4](https://github.com/clavia-labs/tardigrade/commit/b2be4a4e3d02b3f754485deb3569370e3afd3a7e))
+
+
+### Bug Fixes
+
+* **release:** restore published baseline ([#445](https://github.com/clavia-labs/tardigrade/issues/445)) ([5a9353c](https://github.com/clavia-labs/tardigrade/commit/5a9353c1ed5bd764610649e698ceb0c38752b877))
+* **web:** repair quickstart tree ([#440](https://github.com/clavia-labs/tardigrade/issues/440)) ([2f99bf2](https://github.com/clavia-labs/tardigrade/commit/2f99bf2ca3eb798106861385753000f01e59753e))
+
+
+### Reverts
+
+* undo external reply changes ([#436](https://github.com/clavia-labs/tardigrade/issues/436)) ([4fca5f7](https://github.com/clavia-labs/tardigrade/commit/4fca5f74e7b5e4bad08b0cd9961617a9ef047fc2))
+
 ## [0.24.0](https://github.com/clavia-labs/tardigrade/compare/v0.23.0...v0.24.0) (2026-09-08)
 
 
