@@ -18,7 +18,7 @@ test("an injected registry fills default and explicitly allowed definitions besi
   const registry = Layer.succeed(ModelRegistry)({ load: ({ policy }) => Effect.sync(() => {
     expect(policy).toBe("refresh")
     calls++
-    return catalog
+    return { ...catalog, providers: [...catalog.providers, { ...catalog.providers[0]!, id: "unconfigured" }] }
   }) })
   for (const model_id of ["registered", "custom"]) {
     const mixed: ModelConfig = {
@@ -27,7 +27,8 @@ test("an injected registry fills default and explicitly allowed definitions besi
     }
     const lock = await Effect.runPromise(resolveModelLock(mixed).pipe(Effect.provide(registry)))
     expect(lock.models.map((model) => model.model_id).sort()).toEqual(["allowed", "custom", "registered"])
-    expect((await modelCatalogForConfig(mixed, lock)).providers[0]?.models).toHaveLength(3)
+    expect(Object.keys(lock.providers)).toEqual(["local"])
+    expect((await modelCatalogForConfig({ ...mixed, allow: [{ provider: "local", model_ids: [model_id] }] }, lock)).providers[0]?.models).toHaveLength(1)
   }
   expect(calls).toBe(2)
 })
@@ -46,18 +47,12 @@ test("custom metadata overrides supplied definitions before lock validation", as
   const partial: ModelConfig = {
     ...config, default: { provider: "local", model_id: "registered" },
     providers: { local: { ...config.providers.local!, protocol: "openai-chat-completions", models: {
-      registered: { metadata: { maxOutputTokens: 1024 } }
+      registered: { metadata: { maxOutputTokens: 1024, toolCall: false } }
     } } }
   }
   const registry = Layer.succeed(ModelRegistry)({ load: () => Effect.succeed(catalog) })
   const lock = await Effect.runPromise(resolveModelLock(partial).pipe(Effect.provide(registry)))
-  expect(lock.models[0]).toMatchObject({ contextWindowTokens: 128000, maxOutputTokens: 1024 })
-})
-
-test("setup preserves existing definitions without consulting their sources", async () => {
-  const previous = await Effect.runPromise(resolveModelLock(config))
-  const registry = Layer.succeed(ModelRegistry)({ load: () => Effect.die("unexpected registry lookup") })
-  expect(await Effect.runPromise(resolveModelLock(config, { previous }).pipe(Effect.provide(registry)))).toEqual(previous)
+  expect(lock.models[0]).toMatchObject({ contextWindowTokens: 128000, maxOutputTokens: 1024, toolCall: false })
 })
 
 test("refresh uses each saved source and preserves manual definitions, connections, and options", async () => {
@@ -66,6 +61,8 @@ test("refresh uses each saved source and preserves manual definitions, connectio
     { provider: "local", model_id: "registered", contextWindowTokens: 100, toolCall: true, source: "https://one.example/api.json", options: { temperature: 0.25 } },
     { provider: "local", model_id: "allowed", contextWindowTokens: 200, source: "https://two.example/api.json" }
   ] }
+  const offline = Layer.succeed(ModelRegistry)({ load: () => Effect.die("setup must preserve sourced definitions without lookup") })
+  expect(await Effect.runPromise(resolveModelLock(config, { previous }).pipe(Effect.provide(offline)))).toEqual(previous)
   const calls: Array<string | undefined> = []
   const registry = Layer.succeed(ModelRegistry)({ load: ({ source }) => Effect.sync(() => { calls.push(source); return catalog }) })
   const lock = await Effect.runPromise(resolveModelLock(config, { previous, refresh: true }).pipe(Effect.provide(registry)))
@@ -85,4 +82,19 @@ test("a missing upstream definition fails refresh without mutating the prior loc
   const failure = await Effect.runPromise(resolveModelLock(config, { previous, refresh: true }).pipe(Effect.provide(registry), Effect.flip))
   expect(failure.message).toContain("no complete definition for local/custom")
   expect(previous).toEqual(before)
+})
+
+
+test("invalid custom metadata fails before registry lookup; incomplete metadata requires a registry definition", async () => {
+  let calls = 0
+  const registry = Layer.succeed(ModelRegistry)({ load: () => Effect.sync(() => { calls++; return catalog }) })
+  for (const contextWindowTokens of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
+    const input: ModelConfig = { ...config, providers: { local: { ...config.providers.local!, protocol: "openai-chat-completions", models: {
+      custom: { metadata: contextWindowTokens === undefined ? { toolCall: true } : { contextWindowTokens } }
+    } } } }
+    const failure = await Effect.runPromise(resolveModelLock(input).pipe(Effect.provide(registry), Effect.flip))
+    expect(failure._tag).toBe("ModelLockResolutionError")
+    if (contextWindowTokens === undefined) expect(failure.message).toContain("must declare contextWindowTokens")
+    expect(calls).toBe(contextWindowTokens === undefined ? 1 : 0)
+  }
 })

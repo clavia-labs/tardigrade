@@ -53,6 +53,10 @@ const catalogSource = {
   }
 }
 
+const setupArgs = (model = "anthropic/claude-sonnet-4-6") => [
+  "--provider", "openrouter", "--provider-config", '{"env":["OPENROUTER_API_KEY"]}', "--default-model", model
+]
+
 const catalogFetch = (): typeof fetch =>
   (async () => Response.json(catalogSource, { headers: { etag: "catalog-test" } })) as unknown as typeof fetch
 
@@ -328,8 +332,7 @@ describe("parsing", () => {
     }
     try {
       expect((await drive([
-        "setup", "--provider", "openrouter", "--provider-config", '{"env":["OPENROUTER_API_KEY"]}',
-        "--default-model", "anthropic/claude-sonnet-4-6"
+        "setup", ...setupArgs()
       ], options)).failed).toBe(false)
       expect((await drive(["models", "lock"], options)).failed).toBe(false)
       expect(calls).toBe(2)
@@ -350,8 +353,7 @@ describe("parsing", () => {
     try {
       await writeFile(join(cwd, "celld.jsonc"), "{}")
       const configured = await drive([
-        "setup", "--provider", "openrouter", "--provider-config", '{"env":["OPENROUTER_API_KEY"]}',
-        "--default-model", "anthropic/claude-sonnet-4-6", "--model-registry", "https://flag.example/api.json"
+        "setup", ...setupArgs(), "--model-registry", "https://flag.example/api.json"
       ], { cwd, fetch, env: { TARDIGRADE_MODEL_CATALOG_URL: "https://env.example/api.json" } })
       expect(configured.failed).toBe(false)
       expect(urls.pop()).toBe("https://flag.example/api.json")
@@ -360,14 +362,8 @@ describe("parsing", () => {
         const config = manifest.vars.TARDIGRADE_CONFIG
         expect((typeof config === "string" ? JSON.parse(config) : config).modelRegistry).toBe("https://flag.example/api.json")
       }
-      for (const args of [
-        ["models", "lock"],
-        ["setup", "default", "--provider", "openrouter", "--model", "anthropic/claude-sonnet-4-6"],
-        ["setup", "provider", "openrouter", '{"env":["OPENROUTER_API_KEY"]}']
-      ]) {
-        expect((await drive(args, { cwd, fetch })).failed).toBe(false)
-        expect(urls.pop()).toBe(args[0] === "models" ? "https://flag.example/api.json" : undefined)
-      }
+      expect((await drive(["models", "lock"], { cwd, fetch })).failed).toBe(false)
+      expect(urls.pop()).toBe("https://flag.example/api.json")
       expect((await drive(["models", "lock"], { cwd, fetch, env: { TARDIGRADE_MODEL_CATALOG_URL: "https://env.example/api.json" } })).failed).toBe(false)
       expect(urls.pop()).toBe("https://env.example/api.json")
       expect((await drive(["models", "lock", "--model-registry", "https://next.example/api.json"], { cwd, fetch })).failed).toBe(false)
@@ -442,12 +438,7 @@ describe("parsing", () => {
     try {
       const configured = await drive([
         "setup",
-        "--provider",
-        "openrouter",
-        "--provider-config",
-        '{"env":["OPENROUTER_API_KEY"]}',
-        "--default-model",
-        "anthropic/claude-sonnet-4-6"
+        ...setupArgs()
       ], { cwd })
       expect(configured.failed).toBe(false)
       await expect(readFile(join(cwd, ".dev.vars"), "utf8")).rejects.toThrow()
@@ -467,12 +458,7 @@ describe("parsing", () => {
     try {
       const initial = await drive([
         "setup",
-        "--provider",
-        "openrouter",
-        "--provider-config",
-        '{"env":["OPENROUTER_API_KEY"]}',
-        "--default-model",
-        "anthropic/claude-sonnet-4-6"
+        ...setupArgs()
       ], { cwd })
       expect(initial.failed).toBe(false)
       const configPath = join(cwd, "wrangler.jsonc")
@@ -514,12 +500,7 @@ describe("parsing", () => {
       const ran = await drive([
         "init",
         "researcher",
-        "--provider",
-        "openrouter",
-        "--provider-config",
-        '{"env":["OPENROUTER_API_KEY"]}',
-        "--default-model",
-        "anthropic/claude-sonnet-4-6",
+        ...setupArgs(),
         "--json"
       ], { cwd })
       const directory = join(cwd, "researcher")
@@ -570,12 +551,7 @@ describe("parsing", () => {
       const ran = await drive([
         "init",
         "researcher",
-        "--provider",
-        "openrouter",
-        "--provider-config",
-        '{"env":["OPENROUTER_API_KEY"]}',
-        "--default-model",
-        "anthropic/claude-sonnet-4.6"
+        ...setupArgs("anthropic/claude-sonnet-4.6")
       ], { cwd })
 
       expect(ran.failed).toBe(true)
@@ -594,12 +570,7 @@ describe("parsing", () => {
       const ran = await drive([
         "init",
         "researcher",
-        "--provider",
-        "openrouter",
-        "--provider-config",
-        '{"env":["OPENROUTER_API_KEY"]}',
-        "--default-model",
-        "anthropic/claude-sonnet-4.6"
+        ...setupArgs("anthropic/claude-sonnet-4.6")
       ], {
         cwd,
         installProject: () => Promise.reject(new Error("bun install exited 1"))

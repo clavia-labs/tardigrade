@@ -1,7 +1,7 @@
 import { sha256Of } from "./digest"
 import { Context, Data, Effect, Layer, Schema } from "effect"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "./catalog/schema"
-import { modelsDevCatalogOf, type ModelMetadata } from "./catalog/metadata"
+import { modelsDevCatalogOf } from "./catalog/metadata"
 import { ModelCatalogRepository, modelCatalogScopeOf, type ModelCatalogScope } from "./catalog/repository"
 import type { ModelCatalogState } from "./catalog/index"
 
@@ -22,28 +22,6 @@ const messageOf = (error: unknown): string => error instanceof Error ? error.mes
 
 const recordOf = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
-
-const pricingOf = (metadata: ModelMetadata) => {
-  const pricing = metadata.pricing
-  if (pricing === undefined) return undefined
-  for (const [name, rate] of Object.entries(pricing)) {
-    if (!Number.isFinite(rate) || rate < 0) throw new Error(`model catalog pricing ${name} must be a non-negative number`)
-  }
-  return pricing
-}
-
-const metadataOf = (metadata: ModelMetadata): ModelCatalog["providers"][number]["models"][number]["metadata"] => {
-  const pricing = pricingOf(metadata)
-  return {
-    ...(metadata.contextWindowTokens === undefined ? {} : { contextWindowTokens: metadata.contextWindowTokens }),
-    ...(metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: metadata.maxOutputTokens }),
-    ...(pricing === undefined ? {} : { pricing }),
-    ...(metadata.toolCall === undefined ? {} : { toolCall: metadata.toolCall }),
-    ...(metadata.structuredOutput === undefined ? {} : { structuredOutput: metadata.structuredOutput }),
-    ...(metadata.inputModalities === undefined ? {} : { inputModalities: metadata.inputModalities }),
-    ...(metadata.outputModalities === undefined ? {} : { outputModalities: metadata.outputModalities })
-  }
-}
 
 // modelCatalogOf validates one models.dev document and projects the public response owned by this API.
 export const modelCatalogOf = (
@@ -75,7 +53,7 @@ export const modelCatalogOf = (
     models: provider.models.map((model) => ({
       id: model.id,
       ...(model.name === undefined ? {} : { name: model.name }),
-      metadata: metadataOf(model.metadata)
+      metadata: model.metadata
     }))
   }))
   if (providers.every((provider) => provider.models.length === 0)) {

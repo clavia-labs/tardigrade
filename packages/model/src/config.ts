@@ -20,6 +20,10 @@ export interface ModelConfig extends ModelPolicy {
   readonly providers: Readonly<Record<string, ModelProviderConfig | ModelProviderConfig<Schema.JsonObject>>>
 }
 
+// modelConnectionsOf extracts shared connections for lock import and migration (resolution.test.ts, migration.test.ts).
+export const modelConnectionsOf = (providers: ModelConfig["providers"]) =>
+  Object.fromEntries(Object.entries(providers).map(([id, { models: _models, ...connection }]) => [id, connection]))
+
 const canonical = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonical)
   if (typeof value !== "object" || value === null) return value

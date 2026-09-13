@@ -1,6 +1,6 @@
 import { Data, Effect, Option } from "effect"
 import type { ModelCatalog } from "./catalog/schema"
-import { modelConfigOf, type ModelConfig } from "./config"
+import { modelConfigOf, modelConnectionsOf, type ModelConfig } from "./config"
 import { MODEL_LOCK_SCHEMA, modelLockOf, modelConfigForPolicy, type ModelLockData } from "./lock"
 import { ModelRegistry, ModelRegistryError } from "./registry"
 
@@ -28,13 +28,7 @@ export const resolveModelLock = (input: ModelConfig, options: ModelLockResolutio
   const load = (source?: string) => Option.isNone(supplied)
     ? Effect.fail(new ModelRegistryError({ message: "model definitions are missing; provide a ModelRegistry service or complete custom metadata" }))
     : supplied.value.load({ policy: "refresh", ...(source === undefined ? {} : { source }) })
-  const providers = {
-    ...previous?.providers,
-    ...Object.fromEntries(Object.entries(config.providers).map(([id, connection]) => {
-      const { models: _models, ...provider } = connection
-      return [id, provider]
-    }))
-  }
+  const providers = { ...previous?.providers, ...modelConnectionsOf(config.providers) }
   const pending = Object.entries(config.providers).flatMap(([provider, connection]) =>
     Object.entries(connection.models ?? {}).map(([model_id, settings]) => ({ provider, model_id, settings })))
   for (const { provider, model_id, settings } of pending) {

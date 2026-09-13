@@ -50,11 +50,7 @@ import {
   setupProviderPrompt,
   setupSummary,
   type ProviderAnswers,
-  writeDefaultSetup,
-  writeProviderSetup,
-  writeSetup,
-  writeSetupPlan,
-  writeRegistrySetup
+  writeSetup
 } from "./setup"
 import {
   DEFAULT_DETAIL_WIDTH,
@@ -358,7 +354,7 @@ export const setupProviderCommand = Command.make("provider", {
     const [files, modelLock] = yield* writeSetupWithLock(
       cli,
       configuredModels(project.models, [answers]),
-      Effect.mapError(writeProviderSetup(cli.cwd, [answers], cli.env), userErrorOf)
+      Effect.mapError(writeSetup(cli.cwd, { providers: [answers] }, cli.env), userErrorOf)
     )
     yield* Console.log(setupOutput(
       flags.json,
@@ -410,7 +406,7 @@ export const setupDefaultCommand = Command.make("default", {
   const [files, modelLock] = yield* writeSetupWithLock(
     cli,
     configuredModels(project.models, updates, reference),
-    Effect.mapError(updates.length === 0 ? writeDefaultSetup(cli.cwd, reference, cli.env) : writeSetupPlan(cli.cwd, { providers: updates, default: reference }, cli.env), userErrorOf)
+    Effect.mapError(writeSetup(cli.cwd, { providers: updates, default: reference }, cli.env), userErrorOf)
   )
   yield* Console.log(setupOutput(flags.json, defaultSetupJson(files, selected), defaultSetupSummary(files, selected), modelLock))
 })).pipe(
@@ -436,27 +432,13 @@ export const setupCommand = Command.make("setup", {
     }),
     catch: userErrorOf
   })
-  if (declared !== undefined) {
-    const context = yield* Cli
-    const project = yield* Effect.mapError(readProjectConfig(context.cwd, context.env), userErrorOf)
-    const cli = yield* registryCli(context, stated(flags.modelRegistry), project.modelRegistry)
-    const selected = { provider: declared.provider, model_id: declared.model_id }
-    const [files, modelLock] = yield* writeSetupWithLock(
-      cli,
-      configuredModels(project.models, [declared], selected),
-      Effect.mapError(writeSetup(cli.cwd, declared, cli.env), userErrorOf)
-    )
-    yield* Console.log(setupOutput(flags.json, setupJson(files, declared), setupSummary(files, declared), modelLock))
-    return
-  }
-  if (!canAsk()) return yield* userErrorOf(NON_INTERACTIVE_SETUP)
+  if (declared === undefined && !canAsk()) return yield* userErrorOf(NON_INTERACTIVE_SETUP)
   const context = yield* Cli
   const project = yield* Effect.mapError(readProjectConfig(context.cwd, context.env), userErrorOf)
   const cli = yield* registryCli(context, stated(flags.modelRegistry), project.modelRegistry)
-  const plan = yield* Effect.mapError(setupFlowPrompt({
-    ...setupPromptOptionsIn(cli.cwd, cli.env),
-    existing: project.models
-  }), userErrorOf)
+  const plan = declared === undefined
+    ? yield* Effect.mapError(setupFlowPrompt({ ...setupPromptOptionsIn(cli.cwd, cli.env), existing: project.models }), userErrorOf)
+    : { providers: [declared], default: { provider: declared.provider, model_id: declared.model_id } }
   if (plan === undefined) {
     yield* Console.log("setup cancelled")
     return
@@ -464,9 +446,11 @@ export const setupCommand = Command.make("setup", {
   const [files, modelLock] = yield* writeSetupWithLock(
     cli,
     configuredModels(project.models, plan.providers, plan.default),
-    Effect.mapError(writeSetupPlan(cli.cwd, plan, cli.env), userErrorOf)
+    Effect.mapError(writeSetup(cli.cwd, plan, cli.env), userErrorOf)
   )
-  yield* Console.log(setupOutput(false, {}, setupPlanSummary(files, plan), modelLock))
+  yield* Console.log(declared === undefined
+    ? setupOutput(false, {}, setupPlanSummary(files, plan), modelLock)
+    : setupOutput(flags.json, setupJson(files, declared), setupSummary(files, declared), modelLock))
 })).pipe(
   Command.withDescription("Configure locked providers and project model policy. Entered credentials are stored in .dev.vars at 0600."),
   Command.withExamples([{
@@ -549,7 +533,7 @@ export const initCommand = Command.make("init", {
         ),
         catch: userErrorOf
       })
-      const files = yield* Effect.mapError(writeSetup(initialized.directory, answers, cli.env), userErrorOf)
+      const files = yield* Effect.mapError(writeSetup(initialized.directory, { providers: [answers], default: selected }, cli.env), userErrorOf)
       yield* Console.log(flags.json
         ? jsonOf({ ...initialized, setup: setupJson(files, answers) })
         : initSummary(initialized, files, answers, {
@@ -666,7 +650,7 @@ export const devCommand = Command.make("dev", {
         const [files, modelLock] = yield* writeSetupWithLock(
           setupCli,
           configuredModels(project.models, [answers], { provider: answers.provider, model_id: answers.model_id }),
-          Effect.mapError(writeSetup(cli.cwd, answers, setupCli.env), userErrorOf)
+          Effect.mapError(writeSetup(cli.cwd, { providers: [answers], default: { provider: answers.provider, model_id: answers.model_id } }, setupCli.env), userErrorOf)
         )
         yield* Console.log(setupOutput(false, {}, setupSummary(files, answers), modelLock))
         const written = yield* readSetupEnv(cli.cwd)
@@ -918,7 +902,7 @@ export const modelLockCommand = Command.make("lock", { json, modelRegistry }, (f
     const cli = yield* registryCli(context, stated(flags.modelRegistry), project.modelRegistry)
     const lock = yield* resolveConfiguredModelLock(cli, project.models, project.modelLock, true, stated(flags.modelRegistry) ?? context.env["TARDIGRADE_MODEL_CATALOG_URL"])
     const path = yield* persistModelLock(cli, lock)
-    yield* Effect.mapError(writeRegistrySetup(cli.cwd, cli.env), userErrorOf)
+    yield* Effect.mapError(writeSetup(cli.cwd, {}, cli.env), userErrorOf)
     yield* Console.log(flags.json ? jsonOf({ path, ...lock }) : `locked ${Object.keys(lock.providers).length} providers at ${path}`)
   })).pipe(
     Command.withDescription("Resolve configured models from the selected registry into the deployment lock."),

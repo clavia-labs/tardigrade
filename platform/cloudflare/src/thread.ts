@@ -16,7 +16,7 @@ import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alar
 import { initializeCloudflareThreadSchema } from "./storage"
 import { createCloudflareThreadHost, type CloudflareThreadHost } from "./host"
 import type { Env } from "./env"
-import { DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, type BackgroundTaskOwner, DEFAULT_BACKGROUND_TASK_OWNER, backgroundTaskOwnerOf, retainBackgroundTask, mountedActor, EMPTY_MODEL_SCOPE, modelCatalogForConfig, deployed, directory, modelConfigFrom, modelsFrom, modelLayer, nonNegativeInteger, optionalNonNegativeInteger, sandboxTransportOf, assemblyOf } from "./assembly"
+import { DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, type BackgroundTaskOwner, DEFAULT_BACKGROUND_TASK_OWNER, backgroundTaskOwnerOf, retainBackgroundTask, mountedActor, deployed, directory, modelConfigFrom, modelsFrom, modelLayer, nonNegativeInteger, optionalNonNegativeInteger, sandboxTransportOf, assemblyOf } from "./assembly"
 
 // ThreadDO runs one thread over one SQLite-backed Durable Object.
 export class ThreadDO extends DurableObject<Env> {
@@ -111,9 +111,6 @@ export class ThreadDO extends DurableObject<Env> {
     if (modelConfig !== undefined && deployedScope === undefined) {
       throw new Error("model configuration requires models.lock.json; run `tdg models lock`")
     }
-    const modelScope = modelConfig === undefined || deployedScope === undefined
-      ? EMPTY_MODEL_SCOPE
-      : await modelCatalogForConfig(modelConfig, deployedScope)
     const models = modelsFrom(this.env, modelConfig)
     const actorName = this.name()
     const actorInstance = this.instance()
@@ -175,7 +172,7 @@ export class ThreadDO extends DurableObject<Env> {
       layers: (() => {
         const thread = currentThread
         const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, actorInstance, thread })
-        const framework = Layer.mergeAll(modelLayer(models, modelScope, observer).pipe(Layer.provide(layerModelLock(deployedScope ?? emptyModelLock())), Layer.orDie), FetchHttpClient.layer, sandboxLayer)
+        const framework = Layer.mergeAll(modelLayer(models, observer).pipe(Layer.provide(layerModelLock(deployedScope ?? emptyModelLock())), Layer.orDie), FetchHttpClient.layer, sandboxLayer)
         const application = mountedActor?.layersFor?.({ env: this.env, actorInstance, thread })
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       })(),

@@ -140,7 +140,6 @@ const hostModelConfig = (models: CloudflareModels | undefined) => ({
 
 export const modelLayer = (
   models: CloudflareModels | undefined,
-  _scope: ModelCatalog,
   observer?: InferenceObserver
 ) => configuredModelLayer(hostModelConfig(models).model, hostModelConfig(models).modelCredentials, { ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
 

@@ -11,7 +11,7 @@ import { layerRuntimeModelLock } from "./catalog"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { MODEL_LOCK_FILE, lockedModelState, ModelLock, ModelLockError } from "@clavia/tardigrade-model/lock"
-import { projectConfigOf, projectConfigPathOf, readConfig } from "./config"
+import { projectConfigOf, projectConfigPathOf, readConfig, modelCredentialsFrom } from "./config"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 
 type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel>
@@ -40,8 +40,8 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const lockLoader = options.lock ?? layerRuntimeModelLock(initial).pipe(Layer.provide(BunFileSystem.layer))
   const lockValue = await Effect.runPromise(ModelLock.pipe(Effect.provide(lockLoader)))
   const lockLayer = Layer.succeed(ModelLock)(lockValue)
-  const runtime = await Effect.runPromise(lockedModelState(project.models).pipe(Effect.provide(lockLayer)))
-  const config = { ...readConfig(options.env, { models: runtime.model }), modelLockPath: initial.modelLockPath }
+  const runtime = await Effect.runPromise(lockedModelState(initial.model).pipe(Effect.provide(lockLayer)))
+  const config = { ...initial, model: runtime.model, modelCredentials: modelCredentialsFrom(runtime.model, options.env) }
   const snapshot = runtime.catalog
   const inference = makeInferenceStream()
   const layers = Layer.mergeAll(

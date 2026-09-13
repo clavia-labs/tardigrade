@@ -25,10 +25,7 @@ import {
   setupJson,
   setupPlanSummary,
   setupSummary,
-  writeDefaultSetup,
-  writeProviderSetup,
   writeSetup,
-  writeSetupPlan,
   type ProviderAnswers,
   type SetupAnswers
 } from "./setup"
@@ -51,7 +48,7 @@ const answers: SetupAnswers = {
 let root = ""
 
 const write = (given: SetupAnswers = answers) =>
-  Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, given), BunFileSystem.layer)))
+  Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, { providers: [given], default: { provider: given.provider, model_id: given.model_id } }), BunFileSystem.layer)))
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "tdg-project-"))
@@ -303,15 +300,15 @@ describe("writeSetup", () => {
       protocol: "anthropic-messages",
       env: ["ANTHROPIC_API_KEY"]
     }
-    await Effect.runPromise(Effect.orDie(Effect.provide(writeProviderSetup(root, [anthropic]), BunFileSystem.layer)))
+    await Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, { providers: [anthropic] }), BunFileSystem.layer)))
     let project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
     expect(project.models.default).toEqual({ provider: "openai", model_id: "a-model" })
     expect(Object.keys(project.models.providers)).toEqual([])
 
-    await Effect.runPromise(Effect.orDie(Effect.provide(writeDefaultSetup(root, {
+    await Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, { default: {
       provider: "anthropic",
       model_id: "claude-sonnet-4-6"
-    }), BunFileSystem.layer)))
+    } }), BunFileSystem.layer)))
     project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
     expect(project.models.default).toEqual({ provider: "anthropic", model_id: "claude-sonnet-4-6" })
   })
@@ -324,7 +321,7 @@ describe("writeSetup", () => {
       protocol: "openai-chat-completions",
       env: ["OPENROUTER_API_KEY"]
     }
-    await Effect.runPromise(Effect.orDie(Effect.provide(writeSetupPlan(root, {
+    await Effect.runPromise(Effect.orDie(Effect.provide(writeSetup(root, {
       providers: [answers, second],
       default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" }
     }), BunFileSystem.layer)))
@@ -395,7 +392,7 @@ test("declarative model definitions survive provider updates", async () => {
     baseUrl: "http://localhost:9090/v1", protocol: "openai-chat-completions", env: ["API_KEY"],
     models: { another: { metadata: { contextWindowTokens: 16384 } } }
   }) })!
-  await Effect.runPromise(Effect.provide(writeProviderSetup(root, [update]), BunFileSystem.layer))
+  await Effect.runPromise(Effect.provide(writeSetup(root, { providers: [update] }), BunFileSystem.layer))
   const project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
   expect(project.models.providers).toEqual({})
   const merged = providerConfigWithAnswers(modelProvidersOf({ local: providerConfigWithAnswers(undefined, first) }).local, update)

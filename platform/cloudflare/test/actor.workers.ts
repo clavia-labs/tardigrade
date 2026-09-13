@@ -117,21 +117,7 @@ beforeAll(async () => {
     .filter((statement) => statement.length > 0)
     .map((statement) => db.prepare(statement))
   await db.batch(statements)
-  const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db))
-  const repository = await runtime.runPromise(ModelCatalogRepository)
-  await Effect.runPromise(repository.write("https://models.test/catalog.json", {
-    source: "models.dev",
-    revision: "workers-catalog-test",
-    refreshedAt: 1,
-    status: "fresh",
-    providers: [{
-      id: "openai",
-      name: "OpenAI",
-      env: ["OPENAI_API_KEY"],
-      models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
-    }]
-  }))
-  await runtime.dispose()
+
 })
 
 describe("cloudflare actor", () => {
@@ -171,7 +157,7 @@ describe("cloudflare actor", () => {
       const settings = await Effect.runPromise(Effect.gen(function* () {
         const selection = yield* ModelSelection
         return yield* selection.settings!()
-      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers }), snapshot).pipe(Layer.provide(layerModelLock(scope))))))
+      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers })).pipe(Layer.provide(layerModelLock(scope))))))
       expect(configured).toBe(true)
       expect(settings.policy).toMatchObject({ maxOutputTokens: 1234, timeout: { idleMs: 12345 } })
     } finally {
@@ -179,7 +165,7 @@ describe("cloudflare actor", () => {
       else mountedActor!.model = previousModel
     }
     const binding = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers }), snapshot).pipe(Layer.provide(layerModelLock(scope)))
+      modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers })).pipe(Layer.provide(layerModelLock(scope)))
     )))
     expect(binding.resolve()).toMatchObject({
       model: config.default,
@@ -190,7 +176,7 @@ describe("cloudflare actor", () => {
     })
     expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
     await expect(Effect.runPromise(inferenceClient.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers, allow: [] }), snapshot).pipe(Layer.provide(layerModelLock(scope)))
+      modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers, allow: [] })).pipe(Layer.provide(layerModelLock(scope)))
     )))).rejects.toThrow("excluded by allow")
   })
 

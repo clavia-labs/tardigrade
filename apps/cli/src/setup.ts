@@ -703,10 +703,10 @@ const updatedProject = (
   return next.endsWith("\n") ? next : `${next}\n`
 }
 
-const writeSetupChanges = (
+// writeSetup applies provider credentials, default policy, and registry configuration (setup.test.ts).
+export const writeSetup = (
   root: string,
-  providers: ReadonlyArray<ProviderAnswers>,
-  selected: NonNullable<ModelConfig["default"]> | undefined,
+  { providers = [], default: selected }: Partial<SetupPlan>,
   env: Env = {}
 ): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
   Effect.gen(function*() {
@@ -784,38 +784,6 @@ const writtenConfigLines = (files: SetupFiles): ReadonlyArray<string> => [
   `wrote ${files.configPath}`,
   ...(files.celldConfigPath === undefined ? [] : [`wrote ${files.celldConfigPath}`])
 ]
-
-// writeSetup merges one connection and selects its model as the project default.
-export const writeSetup = (
-  root: string,
-  answers: SetupAnswers,
-  env: Env = {}
-): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
-  writeSetupChanges(root, [answers], { provider: answers.provider, model_id: answers.model_id }, env)
-
-// writeProviderSetup merges provider connections without changing the project default.
-export const writeProviderSetup = (
-  root: string,
-  providers: ReadonlyArray<ProviderAnswers>,
-  env: Env = {}
-): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
-  writeSetupChanges(root, providers, undefined, env)
-
-// writeDefaultSetup changes the project default without writing credentials.
-export const writeDefaultSetup = (
-  root: string,
-  selected: NonNullable<ModelConfig["default"]>,
-  env: Env = {}
-): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
-  writeSetupChanges(root, [], selected, env)
-
-// writeSetupPlan writes every collected connection and the selected default in one pass.
-export const writeSetupPlan = (
-  root: string,
-  plan: SetupPlan,
-  env: Env = {}
-): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
-  writeSetupChanges(root, plan.providers, plan.default, env)
 
 export const readSetupEnv = (root: string): Effect.Effect<Env, never, FileSystem> =>
   Effect.gen(function*() {
@@ -900,7 +868,3 @@ export const defaultSetupJson = (files: SetupFiles, selected: NonNullable<ModelC
   ...(files.celldConfigPath === undefined ? {} : { celldConfigPath: files.celldConfigPath }),
   default: selected
 })
-
-// writeRegistrySetup saves the source for subsequent lock updates (commands.test.ts).
-export const writeRegistrySetup = (root: string, env: Env) =>
-  writeSetupChanges(root, [], undefined, env)
