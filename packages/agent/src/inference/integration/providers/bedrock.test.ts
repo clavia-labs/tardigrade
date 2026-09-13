@@ -1,3 +1,7 @@
+import { actor } from "@clavia/tardigrade-core/actor"
+import { createHost } from "@clavia/tardigrade-host/host"
+import { agentMethods, infer, tool, outputValidateOnce } from "@clavia/tardigrade-agent"
+import { KeyValueStore } from "effect/unstable/persistence"
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
@@ -90,4 +94,54 @@ test("Bedrock normalizes cache buckets before estimating cost", async () => {
   }).pipe(Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer)))))
   expect(result.usage).toMatchObject({ inputTokens: { total: 15, cacheRead: 3, cacheWrite: 2 }, outputTokens: { total: 5 } })
   expect(JSON.stringify(result.finish?.metadata)).toContain(JSON.stringify(nativeUsage))
+})
+
+
+test("Bedrock feeds unknown calls back while executing valid siblings once", async () => {
+  const inputs: ConverseStreamCommandInput[] = []
+  const executions: string[] = []
+  const definition = actor({ name: "recovery", methods: agentMethods, components: [infer([outputValidateOnce, tool({
+    spec: { name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+    run: (_args, context) => Effect.sync(() => { executions.push(context.callId); return "contents" })
+  })], { models: { default: { provider: "bedrock", model_id: "claude" }, allow: "*" } })] })
+  const layer = inferenceLayer({ provider: "bedrock", endpoint: "https://fixture.invalid", model: { model: "claude" }, retry: { backoffMs: [] }, client: {
+    send: async (input) => {
+      inputs.push(input)
+      return { $metadata: {}, stream: (async function* (): AsyncGenerator<ConverseStreamOutput, void, unknown> {
+        if (inputs.length === 1) {
+          for (const event of events()) {
+            const call = event.contentBlockStart?.start?.toolUse
+            if (call?.toolUseId === "b") call.name = "packages"
+            yield event
+          }
+        } else if (inputs.length === 2) {
+          expect(input.messages?.at(-1)?.content).toEqual(expect.arrayContaining([
+            expect.objectContaining({ toolResult: expect.objectContaining({ toolUseId: "b", status: "error" }) })
+          ]))
+          expect(JSON.stringify(input.messages?.at(-1))).toContain("ToolNotFoundError")
+          expect(JSON.stringify(input.messages?.at(-1))).toContain("read")
+          yield { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: "corrected", name: "read" } } } }
+          yield { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"path":"b"}' } } } }
+          yield { contentBlockStop: { contentBlockIndex: 0 } }
+          yield { messageStop: { stopReason: "tool_use" } }
+          yield { metadata: { usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 }, metrics: { latencyMs: 1 } } }
+        } else {
+          yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "done" } } }
+          yield { contentBlockStop: { contentBlockIndex: 0 } }
+          yield { messageStop: { stopReason: "end_turn" } }
+          yield { metadata: { usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 }, metrics: { latencyMs: 1 } } }
+        }
+      })() }
+    }
+  } })
+  const host = createHost({ actorName: "recovery", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, layer.pipe(Layer.provide(FetchHttpClient.layer))) })
+  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Read", at: 1 })
+  await host.drive()
+  const history = host.read("root")
+  expect(inputs).toHaveLength(3)
+  expect(executions.sort()).toEqual(["a", "c", "corrected"])
+  expect(history.filter((event) => event.type === "ModelReturned")).toMatchObject([{ outcome: "returned" }, { outcome: "returned" }, { outcome: "returned" }])
+  expect(history.filter((event) => event.type === "ToolReturned" && event.callId === "b")).toMatchObject([{ isFailure: true }])
+  expect(history.some((event) => event.type === "TurnFailed")).toBe(false)
+  expect(history.some((event) => event.type === "TurnCompleted")).toBe(true)
 })
