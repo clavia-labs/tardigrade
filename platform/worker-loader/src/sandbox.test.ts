@@ -1,48 +1,44 @@
-import { Effect } from "effect"
+import { Effect, Fiber } from "effect"
 import { describe, expect, test } from "vitest"
-import { sandboxParked, sandboxReturned } from "@clavia/tardigrade-code/sandbox/service"
+import { sandboxParked, sandboxReturned, type SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
 import {
   DEFAULT_WORKER_LOADER_SANDBOX_POLICY,
   workerLoaderSandboxServiceFor,
-  type SandboxBridgeBinding
+  type SandboxBridgeCall
 } from "./sandbox"
+
+type CallBatch = (calls: ReadonlyArray<SandboxBridgeCall>) => Promise<ReadonlyArray<SandboxCallOutcome>>
 
 describe("worker loader sandbox bridge", () => {
   test("keeps the capability transport as the default", () => {
     expect(DEFAULT_WORKER_LOADER_SANDBOX_POLICY.transport).toBe("capability")
   })
 
-  test("forwards package calls and closes the capability", async () => {
-    let closed = false
+  test("forwards package calls through the entrypoint", async () => {
+    let disposed = false
     const loader = {
-      load: (worker: WorkerLoaderWorkerCode) => ({
-        getEntrypoint: () => ({
-          fetch: async () => {
-            const bridge = (worker.env as { readonly BRIDGE: SandboxBridgeBinding }).BRIDGE
-            const input = worker.env as { readonly BRIDGE: SandboxBridgeBinding; readonly INPUT: { readonly execution: string } }
-            const [outcome] = await bridge.sandboxCallBatch(input.INPUT.execution, [{
-              ordinal: 0,
-              packageName: "tools",
-              method: "add",
-              args: { left: 2, right: 3 }
-            }])
-            if (outcome === undefined) return Response.json({ error: "missing outcome" })
-            return Response.json(outcome._tag === "Parked" ? { error: "parked" } : { result: outcome.result })
+      load: (worker: WorkerLoaderWorkerCode) => {
+        expect(worker.env).not.toHaveProperty("BRIDGE")
+        return ({
+          getEntrypoint: () => ({
+            run: async (_input: unknown, callBatch: CallBatch) => {
+              const [outcome] = await callBatch([{
+                ordinal: 0,
+                packageName: "tools",
+                method: "add",
+                args: { left: 2, right: 3 }
+              }])
+              if (outcome === undefined) return JSON.stringify({ error: "missing outcome" })
+              return JSON.stringify(outcome._tag === "Parked" ? { error: "parked" } : { result: outcome.result })
+            }
+          }),
+          dispose: () => {
+            disposed = true
           }
         })
-      })
-    } as unknown as WorkerLoader
-    const sandbox = workerLoaderSandboxServiceFor(loader, (call) => ({
-      binding: {
-        sandboxCallBatch: (_execution, calls) => Promise.all(calls.map((entry) =>
-          call(entry.ordinal, entry.packageName, entry.method, entry.args)
-        ))
-      },
-      execution: "test-execution",
-      close: () => {
-        closed = true
       }
-    }))
+    } as unknown as WorkerLoader
+    const sandbox = workerLoaderSandboxServiceFor(loader)
     const result = await Effect.runPromise(sandbox.run("return 0", {
       tools: {
         add: async (input) => {
@@ -52,7 +48,22 @@ describe("worker loader sandbox bridge", () => {
       }
     }))
     expect(result).toEqual({ result: 5 })
-    expect(closed).toBe(true)
+    expect(disposed).toBe(true)
+  })
+
+  test("accepts an ignored legacy bridge factory", async () => {
+    const loader = {
+      load: () => ({
+        getEntrypoint: () => ({
+          run: async () => JSON.stringify({ result: "done" })
+        })
+      })
+    } as unknown as WorkerLoader
+    const sandbox = workerLoaderSandboxServiceFor(loader, () => {
+      throw new Error("legacy bridge factory must be ignored")
+    })
+
+    expect(await Effect.runPromise(sandbox.run("return 0", {}))).toEqual({ result: "done" })
   })
 
   test("returns concurrent parked calls across the bridge", async () => {
@@ -60,31 +71,24 @@ describe("worker loader sandbox bridge", () => {
     const observed: Array<{ readonly input: number; readonly ordinal: number }> = []
     const arrival = [4, 1, 3, 0, 2]
     const loader = {
-      load: (worker: WorkerLoaderWorkerCode) => ({
-        getEntrypoint: () => ({
-          fetch: async () => {
-            const bridge = (worker.env as { readonly BRIDGE: SandboxBridgeBinding }).BRIDGE
-            const input = worker.env as { readonly INPUT: { readonly execution: string } }
-            const outcomes = await bridge.sandboxCallBatch(input.INPUT.execution, arrival.map((index) => ({
-              ordinal: index,
-              packageName: "agents",
-              method: "run",
-              args: { index }
-            })))
-            return Response.json({ result: outcomes.filter((outcome) => outcome._tag === "Parked").length })
-          }
+      load: (worker: WorkerLoaderWorkerCode) => {
+        expect(worker.env).not.toHaveProperty("BRIDGE")
+        return ({
+          getEntrypoint: () => ({
+            run: async (_input: unknown, callBatch: CallBatch) => {
+              const outcomes = await callBatch(arrival.map((index) => ({
+                ordinal: index,
+                packageName: "agents",
+                method: "run",
+                args: { index }
+              })))
+              return JSON.stringify({ result: outcomes.filter((outcome) => outcome._tag === "Parked").length })
+            }
+          })
         })
-      })
+      }
     } as unknown as WorkerLoader
-    const sandbox = workerLoaderSandboxServiceFor(loader, (call) => ({
-      binding: {
-        sandboxCallBatch: (_execution, calls) => Promise.all(calls.map((entry) =>
-          call(entry.ordinal, entry.packageName, entry.method, entry.args)
-        ))
-      },
-      execution: "test-execution",
-      close: () => undefined
-    }))
+    const sandbox = workerLoaderSandboxServiceFor(loader)
     const result = await Effect.runPromise(sandbox.run("return 0", {
       agents: {
         run: async (input, ordinal) => {
@@ -121,9 +125,7 @@ describe("worker loader sandbox bridge", () => {
         })
       })
     } as unknown as WorkerLoader
-    const sandbox = workerLoaderSandboxServiceFor(loader, () => {
-      throw new Error("replay transport must not open a capability")
-    }, { transport: "replay" })
+    const sandbox = workerLoaderSandboxServiceFor(loader, { transport: "replay" })
     const calls: Array<number> = []
     const result = await Effect.runPromise(sandbox.run("return 0", {
       tools: {
@@ -160,9 +162,7 @@ describe("worker loader sandbox bridge", () => {
         })
       })
     } as unknown as WorkerLoader
-    const sandbox = workerLoaderSandboxServiceFor(loader, () => {
-      throw new Error("replay transport must not open a capability")
-    }, { transport: "replay" })
+    const sandbox = workerLoaderSandboxServiceFor(loader, { transport: "replay" })
     const result = await Effect.runPromise(sandbox.run("return 0", {
       agents: { result: async () => sandboxParked }
     }))
@@ -197,9 +197,7 @@ describe("worker loader sandbox bridge", () => {
         }
       }
     } as unknown as WorkerLoader
-    const sandbox = workerLoaderSandboxServiceFor(loader, () => {
-      throw new Error("replay transport must not open a capability")
-    }, { transport: "replay" })
+    const sandbox = workerLoaderSandboxServiceFor(loader, { transport: "replay" })
     const result = await Effect.runPromise(sandbox.run("return 0", {
       tools: { read: async () => sandboxReturned("value") }
     }))
@@ -213,14 +211,13 @@ describe("worker loader sandbox bridge", () => {
   test("disposes a failed capability worker", async () => {
     let live = 0
     let disposed = 0
-    let closed = false
     const symbolDispose = (Symbol as { readonly dispose?: symbol }).dispose
     if (symbolDispose === undefined) throw new Error("Symbol.dispose is unavailable")
     const loader = {
       load: () => {
         live++
         return {
-          getEntrypoint: () => ({ fetch: async () => new Response("unavailable", { status: 503 }) }),
+          getEntrypoint: () => ({ run: async () => { throw new Error("unavailable") } }),
           [symbolDispose]: () => {
             live--
             disposed++
@@ -228,18 +225,56 @@ describe("worker loader sandbox bridge", () => {
         }
       }
     } as unknown as WorkerLoader
-    const sandbox = workerLoaderSandboxServiceFor(loader, () => ({
-      binding: { sandboxCallBatch: async () => [] },
-      execution: "test-execution",
-      close: () => {
-        closed = true
-      }
-    }))
+    const sandbox = workerLoaderSandboxServiceFor(loader)
     const result = await Effect.runPromise(sandbox.run("return 0", {}))
 
-    expect(result).toEqual({ error: "sandbox returned HTTP 503" })
+    expect(result).toEqual({ error: "Error: unavailable" })
     expect(disposed).toBe(1)
     expect(live).toBe(0)
-    expect(closed).toBe(true)
+  })
+
+  test("rejects saved calls after an interrupted entrypoint run", async () => {
+    const started = Promise.withResolvers<void>()
+    let disposed = 0
+    let invoked = 0
+    let savedCallBatch: CallBatch | undefined
+    const loader = {
+      load: () => ({
+        getEntrypoint: () => ({
+          run: async (_input: unknown, callBatch: CallBatch) => {
+            savedCallBatch = callBatch
+            started.resolve()
+            await new Promise<void>(() => undefined)
+            return JSON.stringify({ result: "unreachable" })
+          }
+        }),
+        dispose: () => {
+          disposed++
+        }
+      })
+    } as unknown as WorkerLoader
+    const sandbox = workerLoaderSandboxServiceFor(loader)
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(sandbox.run("return 0", {
+        tools: {
+          later: async () => {
+            invoked++
+            return sandboxReturned("called")
+          }
+        }
+      }))
+      yield* Effect.promise(() => started.promise)
+      yield* Fiber.interrupt(fiber)
+    })))
+
+    expect(disposed).toBe(1)
+    if (savedCallBatch === undefined) throw new Error("entrypoint did not receive callBatch")
+    await expect(savedCallBatch([{
+      ordinal: 0,
+      packageName: "tools",
+      method: "later",
+      args: {}
+    }])).rejects.toThrow()
+    expect(invoked).toBe(0)
   })
 })

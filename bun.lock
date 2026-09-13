@@ -301,7 +301,6 @@
       "dependencies": {
         "@clavia/tardigrade-agent": "workspace:*",
         "@clavia/tardigrade-client": "workspace:*",
-        "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
         "@clavia/tardigrade-http": "workspace:*",
