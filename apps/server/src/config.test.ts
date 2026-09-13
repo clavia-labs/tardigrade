@@ -6,7 +6,8 @@ import {
   DEFAULT_MAX_CONCURRENT_THREADS,
   DEFAULT_PORT,
   projectConfigOf,
-  readConfig
+  readConfig,
+  modelCatalogConfigOf
 } from "./config"
 
 describe("config", () => {
@@ -23,11 +24,6 @@ describe("config", () => {
       providers: {}
     })
     expect(config.modelCredentials).toEqual({})
-    expect(config.catalog).toEqual({
-      sourceUrl: "https://models.dev/api.json",
-      cachePath: ".tardigrade/models.json",
-      timeoutMillis: 10_000
-    })
   })
 
   test("the environment overrides every default", () => {
@@ -47,25 +43,20 @@ describe("config", () => {
     expect(config.token).toBe("secret")
     expect(config.model).toEqual({ allow: "*", providers: {} })
     expect(config.modelCredentials).toEqual({})
-    expect(config.catalog).toEqual({
-      sourceUrl: "https://models.dev/api.json",
-      cachePath: ".tardigrade/models.json",
-      timeoutMillis: 10_000
-    })
   })
 
   test("the catalog source, cache, and timeout are configurable", () => {
-    const config = readConfig({
+    const config = modelCatalogConfigOf({
       TARDIGRADE_MODEL_CATALOG_URL: "https://catalog.example/models.json",
       TARDIGRADE_MODEL_CATALOG_CACHE: "/var/cache/tardigrade/models.json",
       TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "2500"
     })
-    expect(config.catalog).toEqual({
+    expect(config).toEqual({
       sourceUrl: "https://catalog.example/models.json",
       cachePath: "/var/cache/tardigrade/models.json",
       timeoutMillis: 2500
     })
-    expect(() => readConfig({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "0" })).toThrow("positive integer")
+    expect(() => modelCatalogConfigOf({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "0" })).toThrow("positive integer")
   })
 
   test("provider configuration and credentials resolve from separate sources", () => {

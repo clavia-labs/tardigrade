@@ -78,9 +78,6 @@ Declared request failures are `application/problem+json`.
 | `TARDIGRADE_MAX_CONCURRENT_THREADS` | Maximum actor threads settled at once. Defaults to `4` |
 | `TARDIGRADE_TOKEN` | Unset. When set, runtime and control routes need `Authorization: Bearer`. `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
 | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc`. Project and platform configuration for a directly hosted server |
-| `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json`. Source for the public model catalog |
-| `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json`. Last validated public snapshot |
-| `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000`. Startup refresh timeout |
 | Provider credentials | Set each variable named by a provider's `env` list. Use deployment secrets on a hosted server |
 
 The server boots without a provider connection and serves every read; turns fail naming what is missing. A `models` block with provider connections requires `allow` and `default`. The default must name a configured provider and belong to the allowed set. `allow` accepts `"*"` or provider selectors. Actors inherit this complete policy and may narrow its coordinates or select another allowed default. Interactive `tdg setup` writes provider configuration under `vars.TARDIGRADE_CONFIG` in the generated platform manifests and local credentials to `.dev.vars`. Its declarative form accepts `--provider`, `--provider-config`, and `--default-model` together. The CLI writes the first provider and default atomically. Once the host has a valid baseline, the `provider` and `default` subcommands update either concern while preserving runnable configuration.
@@ -134,7 +131,7 @@ OpenAI Responses also accepts native reasoning summary settings. Anthropic accep
 
 Built-in Bun and Worker model services apply these settings through Effect `modelLayer`. Regenerate the model lock after changing provider configuration.
 
-The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and catalog requests do not read the cache file on each request. With no valid source or cache, both catalog endpoints answer 503. Provider credentials never appear in either response.
+The server reads `models.lock.json` beside the project configuration at startup. `bunModelServices` accepts a `lockFile` override. The lock supplies metadata for inference and model discovery without registry access. A configured server refuses a missing, invalid, or stale lock. A server without configured models can start without a lock. Provider credentials never appear in catalog responses.
 
 Catalog responses use cursor pagination. They include `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and optional `next_cursor`. The default limit is `50` and callers can state another positive integer. Search is a case-insensitive substring over IDs and names. `GET /v1/models` also accepts an exact provider filter. Pass `next_cursor` with the same filters to continue. A cursor records the catalog revision and query, so a changed revision or filter returns 400 and the caller starts again without a cursor.
 

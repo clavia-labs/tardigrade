@@ -208,3 +208,10 @@ describe("the config file", () => {
       .toEqual({ baseUrl: "https://flag.example.com", token: "flag" })
   })
 })
+
+test("project registry sources require HTTP(S) URLs", () => {
+  for (const modelRegistry of [42, "file:///tmp/catalog.json", "invalid"]) {
+    expect(() => parseProjectConfig(JSON.stringify({ vars: { TARDIGRADE_CONFIG: { modelRegistry } } }))).toThrow()
+  }
+  expect(parseProjectConfig('{"vars":{"TARDIGRADE_CONFIG":{"modelRegistry":"https://example.com/api.json"}}}').modelRegistry).toBe("https://example.com/api.json")
+})

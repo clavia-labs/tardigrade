@@ -1,3 +1,5 @@
+import { dirname, resolve } from "node:path"
+import { MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelConfigOf, type ModelConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
 export { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
 import { Context, Layer } from "effect"
@@ -46,8 +48,6 @@ export interface ModelCatalogConfig {
   readonly timeoutMillis: number
 }
 
-// ModelProviderConfig is one private provider connection. Public model metadata belongs to the
-// catalog snapshot, so changing models does not change connection configuration.
 // ProjectConfig holds Tardigrade configuration loaded from the Wrangler manifest.
 export interface ProjectConfig {
   readonly models: ModelConfig
@@ -65,7 +65,7 @@ export interface ServerConfigValue {
   readonly token: string | undefined
   readonly model: ModelConfig
   readonly modelCredentials: ModelCredentials
-  readonly catalog: ModelCatalogConfig
+  readonly modelLockPath: string
 }
 
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigValue>()(
@@ -220,7 +220,7 @@ export const readConfig = (
     token: text(env, "TARDIGRADE_TOKEN"),
     model,
     modelCredentials: modelCredentialsFrom(model, env),
-    catalog: modelCatalogConfigOf(env)
+    modelLockPath: resolve(dirname(projectConfigPathOf(env)), MODEL_LOCK_FILE)
   }
 }
 

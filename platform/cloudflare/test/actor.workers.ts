@@ -1,3 +1,4 @@
+import { publicCatalog } from "../src/assembly"
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
@@ -108,7 +109,7 @@ const deadlineThreadHost = (state: DurableObjectState, thread: string) =>
   })
 
 beforeAll(async () => {
-  const db = (env as Env).CATALOG_DB
+  const db = (env as Env & { readonly CATALOG_DB: D1Database }).CATALOG_DB
   const statements = (env as Env & { readonly CATALOG_MIGRATION: string }).CATALOG_MIGRATION
     .split(";")
     .map((statement) => statement.trim())
@@ -157,6 +158,15 @@ describe("cloudflare actor", () => {
       }
     }
     expect(await modelCatalogForConfig(config, scope)).toMatchObject({ revision: "bundled", providers: [{ id: "openai" }] })
+    const previousScope = mountedActor!.modelScope
+    mountedActor!.modelScope = scope
+    try {
+      expect(await publicCatalog({ TARDIGRADE_CONFIG: { models: config } } as Env)).toEqual({ snapshot: scope.catalog })
+      await expect(publicCatalog({ TARDIGRADE_CONFIG: { models: { ...config, default: { provider: "openai", model_id: "changed" } } } } as Env)).rejects.toThrow("does not match")
+    } finally {
+      if (previousScope === undefined) delete mountedActor!.modelScope
+      else mountedActor!.modelScope = previousScope
+    }
     await expect(modelCatalogForConfig({ ...config, default: { provider: "openai", model_id: "changed" } }, scope))
       .rejects.toThrow("does not match model configuration")
     expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
@@ -569,7 +579,7 @@ describe("cloudflare actor", () => {
         models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
       }]
     }
-    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env).CATALOG_DB))
+    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env & { readonly CATALOG_DB: D1Database }).CATALOG_DB))
     try {
       const repository = await runtime.runPromise(ModelCatalogRepository)
       await Effect.runPromise(repository.write("https://models.test/catalog.json", snapshot))
@@ -584,8 +594,8 @@ describe("cloudflare actor", () => {
     const providers = await SELF.fetch("http://test/v1/providers?search=open&limit=1")
     expect(providers.status).toBe(200)
     expect(await providers.json()).toEqual(expect.objectContaining({
-      total: 2,
-      items: [expect.objectContaining({ id: "openai" })]
+      total: 0,
+      items: []
     }))
   })
 
@@ -608,7 +618,7 @@ describe("cloudflare actor", () => {
       }]
     }
     expect(new TextEncoder().encode(JSON.stringify(snapshot)).byteLength).toBeGreaterThan(4_425_714)
-    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env).CATALOG_DB))
+    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env & { readonly CATALOG_DB: D1Database }).CATALOG_DB))
     try {
       const repository = await runtime.runPromise(ModelCatalogRepository)
       await Effect.runPromise(repository.write("https://models.test/large.json", snapshot))
@@ -640,7 +650,7 @@ describe("cloudflare actor", () => {
         models: [{ id: model, metadata: { contextWindowTokens: 128_000 } }]
       }]
     })
-    const db = (env as Env).CATALOG_DB
+    const db = (env as Env & { readonly CATALOG_DB: D1Database }).CATALOG_DB
     const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db, { writeBatchSize: 1 }))
     try {
       const repository = await runtime.runPromise(ModelCatalogRepository)

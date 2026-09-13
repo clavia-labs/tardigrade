@@ -1,9 +1,9 @@
-import { Console, Data, Effect, Layer, Redacted } from "effect"
+import { modelSettingsOf } from "@clavia/tardigrade-model/config"
+import { Console, Data, Effect, Redacted } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { FileSystem, type FileSystem as FileSystemService } from "effect/FileSystem"
 import { Prompt } from "effect/unstable/cli"
 import { applyEdits, modify, parse } from "jsonc-parser"
-import { BunFileSystem } from "@effect/platform-bun"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import {
   MODEL_PROTOCOLS,
@@ -12,16 +12,15 @@ import {
   modelProtocolOf,
   type ModelProtocol
 } from "@clavia/tardigrade-model/providers/directory"
-import { loadModelCatalog } from "@clavia/tardigrade-server/catalog"
-import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
+import { ModelRegistry } from "@clavia/tardigrade-model/registry"
+import { withModelRegistry } from "./model-registry"
 import {
   TARDIGRADE_CONFIG_VAR,
   type Env,
   type ModelConfig
 } from "@clavia/tardigrade-server/config"
 import {
-  DEFAULT_MODEL_CATALOG_URL,
-  modelsDevCatalogOf
+  DEFAULT_MODEL_CATALOG_URL
 } from "@clavia/tardigrade-model/catalog/metadata"
 
 import { parseProjectConfig, projectConfigPathIn } from "./config"
@@ -126,6 +125,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
 
 // ProviderAnswers is one provider connection and an optional credential entered at a prompt.
 export interface ProviderAnswers {
+  readonly models?: ModelConfig["providers"][string]["models"]
   readonly provider: string
   readonly baseUrl: string
   readonly credential?: string
@@ -207,6 +207,7 @@ export interface SetupPromptOptions {
     readonly region?: string | undefined
   }
   readonly catalog?: ModelCatalogOptions
+  readonly providers?: ModelConfig["providers"] | undefined
 }
 
 export interface SetupFlowPromptOptions extends SetupPromptOptions {
@@ -224,58 +225,26 @@ const listedCatalogModels = (
     ...(model.name === undefined ? {} : { name: model.name })
   }))
 
-export const modelsDevAt = async (
-  provider: string,
-  options: ModelCatalogOptions = {}
-): Promise<{
-  readonly revision: string
-  readonly status: "fresh" | "cached"
-  readonly env: ReadonlyArray<string>
-  readonly models: ReadonlyArray<ListedModel>
-}> => {
-  const fetcher = options.fetch ?? globalThis.fetch
-  const timeoutMillis = options.timeoutMillis ?? DEFAULT_MODEL_LIST_TIMEOUT_MILLIS
-  const url = options.url ?? DEFAULT_MODEL_CATALOG_URL
-  const selectionPolicy = options.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY
-  if (options.cachePath !== undefined) {
-    const repository = layerFileModelCatalogRepository(options.cachePath).pipe(Layer.provide(BunFileSystem.layer))
-    const state = await Effect.runPromise(loadModelCatalog({
-      sourceUrl: url,
-      timeoutMillis,
-      policy: "cache-first",
-      ...(options.fetch === undefined ? {} : { fetch: options.fetch })
-    }).pipe(Effect.provide(repository)))
-    if (state.snapshot === undefined) throw new Error(state.refreshError ?? state.cacheError ?? "model catalog is unavailable")
-    const found = state.snapshot.providers.find((entry) => entry.id === provider)
+// modelRegistryAt discovers selectable models through the supplied registry (setup.test.ts).
+export const modelRegistryAt = (provider: string, options: ModelCatalogOptions = {}) =>
+  withModelRegistry(Effect.gen(function*() {
+    const registry = yield* ModelRegistry
+    const snapshot = yield* registry.load({ policy: "cache-first" })
+    const found = snapshot.providers.find((entry) => entry.id === provider)
     return {
-      revision: state.snapshot.revision,
-      status: state.snapshot.status,
+      revision: snapshot.revision,
+      status: snapshot.status,
       env: found?.env ?? [],
-      models: found === undefined ? [] : listedCatalogModels(found.models, selectionPolicy)
+      models: found === undefined ? [] : listedCatalogModels(found.models, options.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY)
     }
-  }
-  const response = await fetcher(url, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(timeoutMillis)
+  }), {
+    sourceUrl: options.url ?? DEFAULT_MODEL_CATALOG_URL,
+    timeoutMillis: options.timeoutMillis ?? DEFAULT_MODEL_LIST_TIMEOUT_MILLIS,
+    ...(options.cachePath === undefined ? {} : { cachePath: options.cachePath }),
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch })
   })
-  if (!response.ok) throw new Error(`model catalog returned ${response.status}`)
-  const revision = response.headers.get("etag") ?? response.headers.get("last-modified") ?? "unversioned"
-  const found = modelsDevCatalogOf(await response.json()).find((entry) => entry.id === provider)
-  return {
-    revision,
-    status: "fresh",
-    env: found?.env ?? [],
-    models: found?.models.filter((model) => agentModelIsSelectable({
-      outputModalities: model.metadata.outputModalities,
-      toolCall: model.metadata.toolCall
-    }, selectionPolicy)).map((model) => ({
-      id: model.id,
-      ...(model.name === undefined ? {} : { name: model.name })
-    })) ?? []
-  }
-}
 
-type ModelCatalogResult = Awaited<ReturnType<typeof modelsDevAt>>
+type ModelCatalogResult = Effect.Success<ReturnType<typeof modelRegistryAt>>
 
 interface PromptedProvider {
   readonly answers: ProviderAnswers
@@ -284,7 +253,7 @@ interface PromptedProvider {
 }
 
 const catalogResultFor = (provider: string, options: SetupPromptOptions) =>
-  Effect.tryPromise(() => modelsDevAt(provider, options.catalog)).pipe(
+  modelRegistryAt(provider, options.catalog).pipe(
     Effect.match({ onFailure: () => undefined, onSuccess: (result) => result })
   )
 
@@ -385,7 +354,35 @@ const modelPrompt = (
     })
     selected = picked.tag === "model" ? picked.model : { id: yield* manual() }
   }
-  return selected.id
+  const saved = options.providers?.[provider]?.models
+  if (loaded?.some((model) => model.id === selected.id) || saved?.[selected.id]?.metadata?.contextWindowTokens !== undefined) {
+    return { model_id: selected.id, ...(saved === undefined ? {} : { models: saved }) }
+  }
+  const context = yield* Prompt.String({
+    message: "Context window (tokens)",
+    validate: (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0
+      ? Effect.succeed(value) : Effect.fail("Enter a positive safe integer")
+  })
+  const output = yield* Prompt.String({
+    message: "Maximum output tokens (optional)",
+    validate: (value) => value.trim() === "" || Number.isSafeInteger(Number(value)) && Number(value) > 0
+      ? Effect.succeed(value) : Effect.fail("Enter a positive safe integer or leave blank")
+  })
+  const toolCall = yield* Prompt.Confirm({ message: "Does this model support tool calls?" })
+  return {
+    model_id: selected.id,
+    models: {
+      ...saved,
+      [selected.id]: {
+        ...saved?.[selected.id],
+        metadata: {
+          contextWindowTokens: Number(context),
+          ...(output.trim() === "" ? {} : { maxOutputTokens: Number(output) }),
+          toolCall
+        }
+      }
+    }
+  }
 })
 
 // setupProviderPrompt collects one provider connection without changing the project default.
@@ -408,7 +405,7 @@ export const setupDefaultPrompt = (
   })
   return {
     provider,
-    model_id: yield* modelPrompt(provider, presetFor(provider), options)
+    ...yield* modelPrompt(provider, presetFor(provider), options)
   }
 })
 
@@ -417,7 +414,7 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
   const prompted = yield* providerPrompt(options)
   return {
     ...prompted.answers,
-    model_id: yield* modelPrompt(prompted.answers.provider, prompted.preset, options, prompted.catalog)
+    ...yield* modelPrompt(prompted.answers.provider, prompted.preset, options, prompted.catalog)
   } satisfies SetupAnswers
 })
 
@@ -454,11 +451,17 @@ export const setupFlowPrompt = (options: SetupFlowPromptOptions = {}) => Effect.
   const prompted = added.get(provider)
   const current = options.existing?.default
   const defaultModel = yield* modelPrompt(provider, prompted?.preset ?? presetFor(provider), current === undefined
-    ? options
-    : { ...options, current: { provider: current.provider, model_id: current.model_id } }, prompted?.catalog)
+    ? { ...options, providers: options.existing?.providers }
+    : { ...options, providers: options.existing?.providers, current: { provider: current.provider, model_id: current.model_id } }, prompted?.catalog)
   const plan: SetupPlan = {
-    providers: [...added.values()].map((entry) => entry.answers),
-    default: { provider, model_id: defaultModel }
+    providers: [
+      ...[...added.values()].filter((entry) => entry.answers.provider !== provider).map((entry) => entry.answers),
+      ...(prompted === undefined && options.existing?.providers[provider] === undefined ? [] : [{
+        ...(prompted?.answers ?? { ...options.existing!.providers[provider]!, provider }),
+        ...(defaultModel.models === undefined ? {} : { models: defaultModel.models })
+      }])
+    ],
+    default: { provider, model_id: defaultModel.model_id }
   }
   yield* Console.log(setupPlanReview(plan))
   return (yield* Prompt.Confirm({ message: "Continue?", initial: true })) ? plan : undefined
@@ -534,7 +537,7 @@ export const providerAnswersFrom = (
     throw new Error("tdg setup provider requires both <provider> and <config> when either argument is used")
   }
   const config = providerObjectOf(source)
-  const allowed = new Set(["baseUrl", "protocol", "env", "region"])
+  const allowed = new Set(["baseUrl", "protocol", "env", "region", "models"])
   const unknown = Object.keys(config).filter((name) => !allowed.has(name))
   if (unknown.length > 0) throw new Error(`provider config contains unknown ${unknown.length === 1 ? "field" : "fields"}: ${unknown.join(", ")}`)
   const connection = modelProviderConnectionOf(provider)
@@ -554,11 +557,13 @@ export const providerAnswersFrom = (
   if (protocol !== "bedrock-converse" && region !== undefined) {
     throw new Error(`provider ${JSON.stringify(provider)} cannot declare region with protocol ${JSON.stringify(protocol)}`)
   }
+  const models = modelSettingsOf(protocol, config.models)
   return {
     provider,
     baseUrl,
     protocol,
     env: providerEnv(config),
+    ...(models === undefined ? {} : { models }),
     ...(region === undefined ? {} : { region })
   }
 }
@@ -660,28 +665,42 @@ export interface SetupFiles {
   readonly celldConfigPath?: string
 }
 
+// providerConfigWithAnswers merges model definitions and replaces connection fields (setup.test.ts).
+export const providerConfigWithAnswers = (
+  current: ModelConfig["providers"][string] | undefined,
+  provider: ProviderAnswers
+) => ({
+  ...(current?.models === undefined && provider.models === undefined ? {} : {
+    models: { ...current?.models, ...provider.models }
+  }),
+  baseUrl: provider.baseUrl,
+  protocol: provider.protocol,
+  env: provider.env,
+  ...(provider.region === undefined ? {} : { region: provider.region })
+})
+
 const updatedProject = (
   raw: string,
   selected: NonNullable<ModelConfig["default"]> | undefined,
-  providers: ReadonlyArray<ProviderAnswers>
+  providers: ReadonlyArray<ProviderAnswers>,
+  modelRegistry?: string
 ): string => {
   const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" }
   let next = raw.trim().length === 0 ? "{}\n" : raw
   const document = parse(next) as { readonly vars?: Readonly<Record<string, unknown>> }
-  const config = document.vars?.[TARDIGRADE_CONFIG_VAR] as { readonly models?: { readonly allow?: unknown } } | undefined
+  const config = document.vars?.[TARDIGRADE_CONFIG_VAR] as { readonly models?: ModelConfig } | undefined
   if (config?.models?.allow === undefined) {
     next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "allow"], "*", { formattingOptions }))
   }
   for (const provider of providers) {
-    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers", provider.provider], {
-      baseUrl: provider.baseUrl,
-      protocol: provider.protocol,
-      env: provider.env,
-      ...(provider.region === undefined ? {} : { region: provider.region })
-    }, { formattingOptions }))
+    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers", provider.provider],
+      providerConfigWithAnswers(config?.models?.providers?.[provider.provider], provider), { formattingOptions }))
   }
   if (selected !== undefined) {
     next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "default"], selected, { formattingOptions }))
+  }
+  if (modelRegistry !== undefined) {
+    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "modelRegistry"], modelRegistry, { formattingOptions }))
   }
   return next.endsWith("\n") ? next : `${next}\n`
 }
@@ -710,7 +729,7 @@ const writeSetupChanges = (
       })
     })
     const secretsPath = envPathIn(root)
-    const updatedConfig = updatedProject(configRaw, selected, providers)
+    const updatedConfig = updatedProject(configRaw, selected, providers, env["TARDIGRADE_MODEL_CATALOG_URL"]?.trim() || undefined)
     yield* Effect.try({
       try: () => parseProjectConfig(updatedConfig, configPath),
       catch: (cause) => new SetupConfigError({
@@ -883,3 +902,7 @@ export const defaultSetupJson = (files: SetupFiles, selected: NonNullable<ModelC
   ...(files.celldConfigPath === undefined ? {} : { celldConfigPath: files.celldConfigPath }),
   default: selected
 })
+
+// writeRegistrySetup saves the source for subsequent lock updates (commands.test.ts).
+export const writeRegistrySetup = (root: string, env: Env) =>
+  writeSetupChanges(root, [], undefined, env)

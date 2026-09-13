@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { Effect, Layer } from "effect"
 import { BunFileSystem } from "@effect/platform-bun"
 
-import { modelCatalogOf } from "./catalog"
+import { modelCatalogOf } from "@clavia/tardigrade-model/registry"
 import { layerFileModelCatalogRepository, ModelCatalogRepository } from "./catalog-repository"
 
 let root = ""

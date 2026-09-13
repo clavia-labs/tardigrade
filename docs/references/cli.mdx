@@ -31,7 +31,7 @@ Use `bunx tardie <command>` to run a command without installing it. Tardigrade r
   <div className="cli-command-row"><code>tdg ls</code><p>List threads</p></div>
   <div className="cli-command-row"><code>tdg events &lt;thread&gt;</code><p>Print a thread's event log</p></div>
   <div className="cli-command-row"><code>tdg providers</code><p>List provider protocols and setup requirements</p></div>
-  <div className="cli-command-row"><code>tdg models</code><p>Search and page the public model catalog</p></div>
+  <div className="cli-command-row"><code>tdg models</code><p>Search and page the runtime model lock</p></div>
   <div className="cli-command-row"><code>tdg models lock</code><p>Resolve configured models into the deployment lock</p></div>
 </div>
 
@@ -112,7 +112,16 @@ bun run dev
 
 ## Discover providers and models
 
-Initialization and setup use [models.dev](https://models.dev) for the searchable provider and model catalog. The first interactive run saves the validated public catalog in `.tardigrade/models.json`. Later runs can use that snapshot. The Bun server refreshes the same cache when it starts and keeps the resolved snapshot in memory.
+Use `--model-registry URL` with `tdg init`, `tdg setup`, or `tdg models lock` to select a models.dev-compatible JSON registry. The flag also works with `tdg setup provider` and `tdg setup default`.
+
+```sh
+tdg init my-agent --model-registry https://models.example.com/api.json
+tdg models lock --model-registry https://models.example.com/api.json
+```
+
+The source order is the flag, `TARDIGRADE_MODEL_CATALOG_URL`, `vars.TARDIGRADE_CONFIG.modelRegistry`, then the default registry. Successful commands save an explicit flag or environment source in project configuration. Later setup and lock updates reuse that URL. The saved URL is separate from `models` and does not affect the model configuration digest.
+
+The model registry supplies definitions from [models.dev](https://models.dev) during setup and explicit lock updates. Its local cache is `.tardigrade/models.json`. Bun and Cloudflare use `models.lock.json` for inference metadata and model discovery. Neither runtime contacts the registry. A configured runtime refuses a missing lock or a lock that does not match its configuration.
 
 Inspect provider requirements and search models through a running server:
 
@@ -122,6 +131,74 @@ tdg models --provider openrouter --search claude --limit 20 --json
 ```
 
 Each response includes `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and an optional `next_cursor`. Pass that cursor with the same filters to read the next page. Restart at the first page when the catalog revision or query changes.
+
+## Programmatic registry
+
+When model definitions come from your own service, provide a `ModelRegistry` layer to `resolveModelLock`. The service returns a validated catalog snapshot. Its `load` method receives a cache policy and an optional provider scope.
+
+```ts
+import { Effect, Layer } from "effect"
+import { modelConfigOf } from "tardie/model/config"
+import { ModelRegistry } from "tardie/model/registry"
+import { resolveModelLock } from "tardie/model/resolution"
+
+const registry = Layer.succeed(ModelRegistry)({
+  load: () => Effect.succeed({
+    source: "custom",
+    revision: "internal-v1",
+    refreshedAt: 0,
+    status: "cached",
+    providers: [{
+      id: "internal",
+      name: "Internal",
+      env: ["INTERNAL_API_KEY"],
+      models: [{ id: "chat", metadata: { contextWindowTokens: 32000 } }]
+    }]
+  })
+})
+
+const config = modelConfigOf({
+  default: { provider: "internal", model_id: "chat" },
+  providers: {
+    internal: {
+      protocol: "openai-chat-completions",
+      baseUrl: "https://inference.example.com/v1",
+      env: ["INTERNAL_API_KEY"]
+    }
+  }
+})
+
+const lock = await Effect.runPromise(
+  resolveModelLock(config).pipe(Effect.provide(registry))
+)
+await Bun.write("models.lock.json", JSON.stringify(lock, null, 2))
+```
+
+Save the same model configuration in your project. Runtime hosts read the lock without a registry layer. Complete custom definitions resolve without consulting a registry. Missing definitions without a registry produce `ModelRegistryError`. Invalid configuration or lock metadata produces `ModelLockResolutionError`.
+
+`layerHttpModelRegistry` implements the service with an explicit source URL, timeout, and cache repository. The CLI selects this layer from `--model-registry` and project configuration. Embedded CLI commands and setup prompts preserve a supplied `ModelRegistry` service.
+
+## Custom models
+
+Custom definitions belong under `models.providers.<provider>.models.<model>.metadata` in the project configuration. Each custom model requires a positive integer `contextWindowTokens`. Optional metadata includes `maxOutputTokens`, `toolCall`, `structuredOutput`, input and output modalities, and pricing.
+
+For a local OpenAI-compatible server, initialize a project with an explicit model definition:
+
+```bash
+tdg init local-agent --provider localhost --provider-config '{"protocol":"openai-chat-completions","baseUrl":"http://localhost:8080/v1","env":["API_KEY"],"models":{"qwen-local":{"metadata":{"contextWindowTokens":32768,"maxOutputTokens":4096,"toolCall":true}}}}' --default-model qwen-local
+```
+
+Interactive setup asks for context size, an optional output limit, and tool support for an unlisted model. Provider credentials stay in environment variables. Model definitions stay in the project configuration and survive lock updates.
+
+When every configured provider declares complete model definitions, lock creation needs no registry access. Otherwise, the registry supplies missing definitions and explicit metadata overrides matching fields. The lock records its source as `models.dev`, `custom`, or `mixed`.
+
+After a manual configuration edit, update the lock:
+
+```bash
+tdg models lock
+```
+
+Restart the Bun server or redeploy the Worker to load the updated lock.
 
 ## Call and control methods
 

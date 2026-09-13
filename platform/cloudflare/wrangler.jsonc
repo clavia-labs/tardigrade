@@ -10,17 +10,11 @@
       { "name": "THREADS", "class_name": "ThreadDO" }
     ]
   },
-  "d1_databases": [
-    { "binding": "CATALOG_DB", "database_name": "tardigrade-catalog", "migrations_dir": "migrations" }
-  ],
   "worker_loaders": [{ "binding": "LOADER" }],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO"] }],
   "observability": { "enabled": true },
   "limits": { "cpu_ms": 300000 },
   "vars": {
-    "TARDIGRADE_MODEL_CATALOG_URL": "https://models.dev/api.json",
-    "TARDIGRADE_MODEL_CATALOG_LOAD_POLICY": "refresh",
-    "TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS": "10000",
     "TARDIGRADE_CONFIG": {}
   }
 }

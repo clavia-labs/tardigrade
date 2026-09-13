@@ -21,6 +21,7 @@ import {
 
 import { NO_MODEL_NOTICE, problemLine, tdg } from "./commands"
 import { Cli, type CliServices } from "./services"
+import { ModelRegistry, modelCatalogOf } from "@clavia/tardigrade-model/registry"
 
 // The command tree, driven the way a shell drives it: real arguments through the real parser, over
 // a client this file wrote. Nothing here spawns a process, and nothing here reaches a network.
@@ -193,6 +194,7 @@ interface Ran {
 const drive = async (
   args: ReadonlyArray<string>,
   options: {
+    readonly registry?: Layer.Layer<ModelRegistry>
     readonly answers?: Parameters<typeof clientOf>[1]
     readonly env?: Record<string, string | undefined>
     readonly ids?: ReadonlyArray<string>
@@ -232,7 +234,7 @@ const drive = async (
   })
   const exit = await Command.runWith(tdg, { version: "test", renderErrors: false })([...args]).pipe(
     Effect.provideService(Console.Console, capture),
-    Effect.provide(Layer.mergeAll(BunServices.layer, Layer.succeed(Cli)(services))),
+    Effect.provide(Layer.mergeAll(BunServices.layer, Layer.succeed(Cli)(services), options.registry ?? Layer.empty)),
     Effect.runPromiseExit
   )
   return {
@@ -311,6 +313,77 @@ describe("parsing", () => {
     expect(failureText(ran)).toContain("--provider")
     expect(failureText(ran)).toContain("--provider-config")
     expect(failureText(ran)).toContain("--default-model")
+  })
+
+  test("setup and lock commands preserve an injected registry layer", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-registry-layer-"))
+    let calls = 0
+    const registry = Layer.succeed(ModelRegistry)({ load: () => Effect.sync(() => {
+      calls++
+      return modelCatalogOf(catalogSource, "injected", 0)
+    }) })
+    const options = {
+      cwd, registry,
+      fetch: (() => { throw new Error("HTTP must not be used") }) as unknown as typeof fetch
+    }
+    try {
+      expect((await drive([
+        "setup", "--provider", "openrouter", "--provider-config", '{"env":["OPENROUTER_API_KEY"]}',
+        "--default-model", "anthropic/claude-sonnet-4-6"
+      ], options)).failed).toBe(false)
+      expect((await drive(["models", "lock"], options)).failed).toBe(false)
+      expect(calls).toBe(2)
+      expect(JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8")).catalog.revision).toBe("injected")
+      expect(existsSync(join(cwd, ".tardigrade", "models.json"))).toBe(false)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  test("registry flags persist and later commands reuse the source", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-registry-"))
+    const urls: string[] = []
+    const fetch = (async (input: string | URL | Request) => {
+      urls.push(String(input))
+      return Response.json(catalogSource)
+    }) as typeof globalThis.fetch
+    try {
+      await writeFile(join(cwd, "celld.jsonc"), "{}")
+      const configured = await drive([
+        "setup", "--provider", "openrouter", "--provider-config", '{"env":["OPENROUTER_API_KEY"]}',
+        "--default-model", "anthropic/claude-sonnet-4-6", "--model-registry", "https://flag.example/api.json"
+      ], { cwd, fetch, env: { TARDIGRADE_MODEL_CATALOG_URL: "https://env.example/api.json" } })
+      expect(configured.failed).toBe(false)
+      expect(urls.pop()).toBe("https://flag.example/api.json")
+      for (const file of ["wrangler.jsonc", "celld.jsonc"]) {
+        const manifest = JSON.parse(await readFile(join(cwd, file), "utf8"))
+        const config = manifest.vars.TARDIGRADE_CONFIG
+        expect((typeof config === "string" ? JSON.parse(config) : config).modelRegistry).toBe("https://flag.example/api.json")
+      }
+      for (const args of [
+        ["models", "lock"],
+        ["setup", "default", "--provider", "openrouter", "--model", "anthropic/claude-sonnet-4-6"],
+        ["setup", "provider", "openrouter", '{"env":["OPENROUTER_API_KEY"]}']
+      ]) {
+        expect((await drive(args, { cwd, fetch })).failed).toBe(false)
+        expect(urls.pop()).toBe("https://flag.example/api.json")
+      }
+      expect((await drive(["models", "lock"], { cwd, fetch, env: { TARDIGRADE_MODEL_CATALOG_URL: "https://env.example/api.json" } })).failed).toBe(false)
+      expect(urls.pop()).toBe("https://env.example/api.json")
+      expect((await drive(["models", "lock", "--model-registry", "https://next.example/api.json"], { cwd, fetch })).failed).toBe(false)
+      expect(urls.pop()).toBe("https://next.example/api.json")
+      const before = await readFile(join(cwd, "wrangler.jsonc"), "utf8")
+      const lockBefore = await readFile(join(cwd, "models.lock.json"), "utf8")
+      expect((await drive(["models", "lock", "--model-registry", "https://unavailable.example/api.json"], {
+        cwd, fetch: (async () => new Response("unavailable", { status: 503 })) as unknown as typeof globalThis.fetch
+      })).failed).toBe(true)
+      expect(await readFile(join(cwd, "models.lock.json"), "utf8")).toBe(lockBefore)
+      expect((await drive(["models", "lock", "--model-registry", "file:///tmp/catalog.json"], { cwd, fetch })).failed).toBe(true)
+      expect(await readFile(join(cwd, "wrangler.jsonc"), "utf8")).toBe(before)
+      expect(urls).toEqual([])
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
   })
 
   test("setup writes the first provider and default atomically", async () => {

@@ -10,7 +10,7 @@ import {
   projectConfigPathOf,
   readConfig,
   type Env,
-  type ProjectConfig,
+  type ProjectConfig as RuntimeProjectConfig,
   type ServerConfigValue
 } from "@clavia/tardigrade-server/config"
 
@@ -18,6 +18,18 @@ import {
 // the environment, the user-level file, then the exported default (config.test.ts).
 
 export type { Env }
+
+export interface ProjectConfig extends RuntimeProjectConfig {
+  readonly modelRegistry?: string
+}
+
+// modelRegistryUrlOf validates registry sources used by CLI commands (config.test.ts).
+export const modelRegistryUrlOf = (value: unknown): string => {
+  if (typeof value !== "string") throw new Error("modelRegistry must be an HTTP(S) URL")
+  const url = new URL(value.trim())
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("modelRegistry must be an HTTP(S) URL")
+  return url.href
+}
 
 // An empty or blank variable is an absent one, matching the server's reader: an exported variable
 // nobody set should not shadow a default.
@@ -64,7 +76,9 @@ export const parseProjectConfig = (raw: string, path = "wrangler.jsonc"): Projec
     })
   }
   try {
-    return projectConfigOf(value)
+    const project = projectConfigOf(value)
+    const registry = (value as { vars?: { TARDIGRADE_CONFIG?: { modelRegistry?: unknown } } }).vars?.TARDIGRADE_CONFIG?.modelRegistry
+    return { ...project, ...(registry === undefined ? {} : { modelRegistry: modelRegistryUrlOf(registry) }) }
   } catch (cause) {
     throw new ProjectFileError({
       message: `${path} is invalid: ${cause instanceof Error ? cause.message : String(cause)}`,

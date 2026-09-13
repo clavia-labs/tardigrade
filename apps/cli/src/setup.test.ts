@@ -1,3 +1,4 @@
+import { ModelRegistry } from "@clavia/tardigrade-model/registry"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -12,7 +13,7 @@ import {
   defaultModelFrom,
   envPathIn,
   gitignorePathIn,
-  modelsDevAt,
+  modelRegistryAt,
   PRESETS,
   providerAnswersFrom,
   readSetupEnv,
@@ -93,7 +94,7 @@ describe("model discovery", () => {
   }, { headers: { etag: "catalog-7" } })) as typeof fetch
 
   test("models.dev supplies compatible provider models with its revision", async () => {
-    expect(await modelsDevAt("openrouter", { fetch: fetcher })).toMatchObject({
+    expect(await Effect.runPromise(modelRegistryAt("openrouter", { fetch: fetcher }))).toMatchObject({
       revision: "catalog-7",
       env: ["OPENROUTER_API_KEY"],
       models: [{ id: "agent" }, { id: "unknown" }]
@@ -101,19 +102,19 @@ describe("model discovery", () => {
   })
 
   test("a caller can replace the visible selection policy", async () => {
-    const found = await modelsDevAt("openrouter", {
+    const found = await Effect.runPromise(modelRegistryAt("openrouter", {
       fetch: fetcher,
       selectionPolicy: { outputModality: "image", requireToolCalls: false }
-    })
+    }))
 
     expect(found.models.map((model) => model.id)).toEqual(["image", "unknown"])
   })
 
   test("a project cache prevents a second catalog fetch", async () => {
     const cachePath = join(root, ".tardigrade", "models.json")
-    const fresh = await modelsDevAt("openrouter", { cachePath, fetch: fetcher })
+    const fresh = await Effect.runPromise(modelRegistryAt("openrouter", { cachePath, fetch: fetcher }))
     const refused = (async () => { throw new Error("source should not be called") }) as unknown as typeof fetch
-    const cached = await modelsDevAt("openrouter", { cachePath, fetch: refused })
+    const cached = await Effect.runPromise(modelRegistryAt("openrouter", { cachePath, fetch: refused }))
 
     expect(fresh.status).toBe("fresh")
     expect(cached.status).toBe("cached")
@@ -396,4 +397,51 @@ describe("what setup prints", () => {
     expect(summary).toContain(celldConfigPath)
     expect(summary.match(/default openai\/a-model/g)).toHaveLength(1)
   })
+})
+
+test("declarative model definitions survive provider updates", async () => {
+  const first = setupAnswersFrom({ provider: "local", defaultModel: "qwen", providerConfig: JSON.stringify({
+    baseUrl: "http://localhost:8080/v1", protocol: "openai-chat-completions", env: ["API_KEY"],
+    models: { qwen: { metadata: { contextWindowTokens: 32768, toolCall: true }, options: { temperature: 0.25 } } }
+  }) })!
+  await write(first)
+  const update = providerAnswersFrom({ provider: "local", config: JSON.stringify({
+    baseUrl: "http://localhost:9090/v1", protocol: "openai-chat-completions", env: ["API_KEY"],
+    models: { another: { metadata: { contextWindowTokens: 16384 } } }
+  }) })!
+  await Effect.runPromise(Effect.provide(writeProviderSetup(root, [update]), BunFileSystem.layer))
+  const project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
+  expect(project.models.providers.local).toMatchObject({
+    baseUrl: "http://localhost:9090/v1",
+    models: {
+      qwen: { metadata: { contextWindowTokens: 32768, toolCall: true }, options: { temperature: 0.25 } },
+      another: { metadata: { contextWindowTokens: 16384 } }
+    }
+  })
+})
+
+test("declarative metadata rejects unknown fields and invalid capability values", () => {
+  for (const metadata of [{ contextWindowTokens: 100, invented: true }, { contextWindowTokens: 100, toolCall: "yes" }]) {
+    expect(() => providerAnswersFrom({ provider: "local", config: JSON.stringify({
+      baseUrl: "http://localhost:8080/v1", protocol: "openai-chat-completions", env: ["API_KEY"], models: { qwen: { metadata } }
+    }) })).toThrow()
+  }
+})
+
+test("model prompts discover definitions through an injected registry", async () => {
+  const result = await Effect.runPromise(modelRegistryAt("fixture", {
+    fetch: (() => { throw new Error("HTTP must not be used") }) as unknown as typeof fetch
+  }).pipe(Effect.provideService(ModelRegistry, {
+    load: ({ policy }) => {
+      expect(policy).toBe("cache-first")
+      return Effect.succeed({
+        source: "custom", revision: "injected", refreshedAt: 0, status: "cached",
+        providers: [{ id: "fixture", name: "Fixture", env: ["FIXTURE_KEY"], models: [
+          { id: "agent", metadata: { contextWindowTokens: 32000, toolCall: true } },
+          { id: "no-tools", metadata: { contextWindowTokens: 32000, toolCall: false } }
+        ] }]
+      })
+    }
+  })))
+  expect(result).toEqual({ revision: "injected", status: "cached", env: ["FIXTURE_KEY"], models: [{ id: "agent" }] })
 })

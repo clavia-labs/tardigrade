@@ -1,11 +1,10 @@
 import { Console, Context, Duration, Effect, Layer } from "effect"
 import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
-import { BunFileSystem, BunHttpServer } from "@effect/platform-bun"
+import { BunHttpServer } from "@effect/platform-bun"
 import type { Actor } from "tardie"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
 import { layerModelCatalog, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
-import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
 import {
   layerActorThreads,
   layerThreads,
@@ -174,10 +173,7 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
   }
   const root = resolveAssets(options.assets)
   const config = layerConfig(options.config)
-  const catalogRepository = layerFileModelCatalogRepository(options.config.catalog.cachePath).pipe(
-    Layer.provide(BunFileSystem.layer)
-  )
-  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), [config, catalogRepository])
+  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), config)
   const inference = makeInferenceStream(options.threads?.inferenceObserver)
   const threadOptions = { ...options.threads, inferenceObserver: inference.observer }
   const threads = Layer.provide(
