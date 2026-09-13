@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Schema, Tracer } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
+import type { ImageStore } from "@clavia/tardigrade-core/interaction/image"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 import { effect } from "@clavia/tardigrade-core/effect"
@@ -421,6 +422,43 @@ describe("the bun host", () => {
     expect(await second.threads()).toEqual(["echo"])
     expect(await second.resting()).toBe(true)
     await second.close()
+  })
+
+  test("stores inline image bytes outside the thread log across restart", async () => {
+    const path = freshPath()
+    const first = await createBunHost(options(path))
+    await first.commitRoot("bun:default:echo", {
+      type: "MessageReceived", id: "picture", at: 1,
+      content: [{ type: "input_image", image_url: "data:image/png;base64,YQ==", detail: "low" }]
+    } as Event)
+    const before = await first.read("echo")
+    const message = before.find((event) => event.type === "MessageReceived") as unknown as { readonly content: ReadonlyArray<{ readonly image_url?: string }> }
+    expect(message.content[0]?.image_url).toMatch(/^tardigrade:image:sha256:[0-9a-f]{64}$/)
+    expect(JSON.stringify(before)).not.toContain("data:image")
+    await first.close()
+
+    const database = new Database(path, { readonly: true })
+    expect(database.query<{ readonly n: number }, []>("SELECT COUNT(*) AS n FROM images").get()?.n).toBe(1)
+    database.close()
+    const second = await createBunHost(options(path))
+    expect(await second.read("echo")).toEqual(before)
+    await second.close()
+  })
+
+  test("does not append when inline image storage fails", async () => {
+    const path = freshPath()
+    const unavailable: typeof ImageStore.Service = {
+      owns: () => false,
+      put: () => Effect.die(new Error("fixture image store unavailable")),
+      get: () => Effect.sync((): import("@clavia/tardigrade-core/interaction/image").StoredImage | undefined => undefined)
+    }
+    const h = await createBunHost({ ...options(path), imageStore: unavailable })
+    await expect(h.commitRoot("bun:default:echo", {
+      type: "MessageReceived", id: "picture", at: 1,
+      content: [{ type: "input_image", image_url: "data:image/png;base64,YQ==" }]
+    } as Event)).rejects.toThrow("fixture image store unavailable")
+    expect(await h.read("echo")).toEqual([])
+    await h.close()
   })
 
   test("recover() settles work a death interrupted", async () => {

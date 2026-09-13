@@ -14,6 +14,7 @@ import { initializingThreadAllocator } from "@clavia/tardigrade-host/allocation"
 import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { alarmFired, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
+import { ImageStore, storeEventImages, type ImageInputPolicy } from "@clavia/tardigrade-core/interaction/image"
 import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
 import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import {
@@ -29,7 +30,7 @@ import { CommitDispatcher, type CommitObserver } from "@clavia/tardigrade-host/c
 import type { HostPorts } from "@clavia/tardigrade-host/ports"
 import { CloudflareEventStore, layerWorkspace, type CloudflareThreadStorePolicy } from "./storage"
 
-export type CloudflarePorts = HostPorts | KeyValueStore.KeyValueStore
+export type CloudflarePorts = HostPorts | KeyValueStore.KeyValueStore | ImageStore
 export type CloudflareThreadEnv<R> = Layer.Layer<Exclude<R, CloudflarePorts>, never, CloudflarePorts>
 
 type LayersFor<R> = [Exclude<R, CloudflarePorts>] extends [never]
@@ -48,6 +49,8 @@ export type CloudflareThreadHostOptions<R> = {
   readonly routes?: ReadonlyArray<TransportRoute>
   readonly keyOf?: (event: Event) => string | undefined
   readonly store?: CloudflareThreadStorePolicy
+  readonly imageStore?: typeof ImageStore.Service
+  readonly imageInput?: Partial<ImageInputPolicy>
   readonly commitObserver?: CommitObserver
   readonly retainCommitTask?: (task: Promise<void>) => void
 } & LayersFor<R>
@@ -88,10 +91,19 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const workspaceRuntime = ManagedRuntime.make(layerWorkspace(sql))
   const workspaceStore = await workspaceRuntime.runPromise(KeyValueStore.KeyValueStore)
   const workspace = Layer.succeed(KeyValueStore.KeyValueStore, workspaceStore)
+  const imageStore: typeof ImageStore.Service = options.imageStore ?? {
+    owns: () => false,
+    put: () => Effect.die(new Error("inline image input requires CloudflareThreadHostOptions.imageStore")),
+    get: () => Effect.sync((): import("@clavia/tardigrade-core/interaction/image").StoredImage | undefined => undefined)
+  }
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined =>
     hostEventKeyOf(event, options.keyOf)
   const events = new CloudflareEventStore(sql, storeKeyOf, options.store?.codec, options.store?.indexKey)
+  const appendImages = (batch: ReadonlyArray<Event>) => Effect.flatMap(
+    storeEventImages(batch, imageStore, options.imageInput),
+    (stored) => events.append(stored)
+  )
   const interruptions = effectInterruptionRegistry()
   await Effect.runPromise(events.initialize())
   const sync = Effect.promise(() => options.storage.sync())
@@ -131,7 +143,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
           return creation === undefined ? [] : [creation]
         }),
         head: events.head,
-        append: (batch) => events.append(batch),
+        append: appendImages,
         reserveRoot: reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, allocator), Effect.asVoid)
       })
       if (result.opened) {
@@ -164,7 +176,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const router = Layer.succeed(Router, { send: (envelope) => sendThrough(routes, envelope) })
   const self = formatThreadAddress(identity)
   const store = {
-    append: (batch: ReadonlyArray<Event>) => events.append(batch).pipe(
+    append: (batch: ReadonlyArray<Event>) => appendImages(batch).pipe(
       Effect.tap((result) => result.appended > 0 ? Effect.sync(() => interruptions.interrupt(batch)) : Effect.void),
       Effect.tap(syncCommit)
     ),
@@ -178,6 +190,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     Layer.succeed(EffectInterruptions, interruptions),
     router,
     workspace,
+    Layer.succeed(ImageStore, imageStore),
     Layer.succeed(Self, identity),
     Layer.succeed(ThreadAllocator, initializingThreadAllocator(
       allocator,

@@ -36,6 +36,7 @@
     "./runtime/*": "./src/runtime/*.ts",
     "./agent": "./src/agent.ts",
     "./core": "./src/core.ts",
+    "./core/interaction": "./src/core/interaction.ts",
     "./code": "./src/code.ts",
     "./agent/*": "./src/*.ts",
     "./bun": "./src/bun.ts"

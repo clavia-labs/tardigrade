@@ -21,6 +21,7 @@ import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type Provi
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { actorEventKeyOf, actorThreadsOf, type ActorThreadRecord, type ThreadRegistered, type ThreadRequested } from "@clavia/tardigrade-core/actor"
 import { alarmFired, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
+import { ImageStore, storeEventImages, type ImageInputPolicy } from "@clavia/tardigrade-core/interaction/image"
 import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
 import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import {
@@ -40,8 +41,9 @@ import { assertSupportedBun } from "./runtime"
 import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 import { bunSandboxFor, type BunSandboxPolicy } from "./sandbox"
 import { bunAlarmScheduler, type BunAlarmHandle, type BunAlarmScheduler } from "./alarm"
+import { bunImageStore } from "./images"
 
-type BunPorts = HostPorts | KeyValueStore.KeyValueStore
+type BunPorts = HostPorts | KeyValueStore.KeyValueStore | ImageStore
 type BunThreadServices = BunPorts | SqlClient.SqlClient
 type BunThreadEnv<R> = Layer.Layer<Exclude<R, BunPorts>, never, BunPorts>
 type LayersFor<R> = [Exclude<R, BunPorts>] extends [never]
@@ -68,6 +70,8 @@ export type BunHostOptions<R> = {
   readonly telemetry?: Layer.Layer<never>
   readonly workspace?: Layer.Layer<KeyValueStore.KeyValueStore, never, SqlClient.SqlClient>
   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
+  readonly imageStore?: typeof ImageStore.Service
+  readonly imageInput?: Partial<ImageInputPolicy>
   readonly sandbox?: Partial<BunSandboxPolicy>
   readonly actorName?: string
   readonly actorInstance?: string
@@ -184,6 +188,14 @@ const actorMigrations = SqliteMigrator.fromRecord({
       event TEXT NOT NULL
     ) WITHOUT ROWID`
     yield* sql`CREATE UNIQUE INDEX actor_events_key ON actor_events (key) WHERE key IS NOT NULL`
+  }),
+  "0004_actor_images": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE images (
+      reference TEXT PRIMARY KEY,
+      media_type TEXT NOT NULL,
+      bytes BLOB NOT NULL
+    ) WITHOUT ROWID`
   })
 })
 
@@ -262,6 +274,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   }
   const pathOf = options.threadDatabase ?? ((thread: string) => bunThreadDatabasePath(options.database, thread))
   const { runtime: directoryRuntime, sql: directorySql } = await openActorDirectory(options, actorName, actorInstance)
+  const imageStore = options.imageStore ?? bunImageStore(directorySql)
   const assignments = sqlThreadDirectory(directorySql, "actor_events", (target, existingRoot) =>
     directorySql<{ parent_thread: string | null }>`SELECT parent_thread FROM thread_directory WHERE thread = ${target.thread}`.pipe(
       Effect.map((rows) => rows.length > 0 && (!existingRoot || rows[0]?.parent_thread !== null)), Effect.orDie
@@ -412,7 +425,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const currentHead = await runtime.runPromise(head)
       await runtime.runPromise(PubSub.publish(commits, currentHead))
     }
-    const append: ThreadEventStore["append"] = (events) => {
+    const appendRaw: ThreadEventStore["append"] = (events) => {
       if (events.length === 0) return Effect.map(head, (current) => ({ appended: 0, head: current }))
       return sql.withTransaction(Effect.gen(function* () {
         const rows = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
@@ -440,6 +453,10 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         Effect.orDie
       )
     }
+    const append: ThreadEventStore["append"] = (events) => Effect.flatMap(
+      storeEventImages(events, imageStore, options.imageInput),
+      appendRaw
+    )
     return {
       runtime,
       store: { append, read, head, readFrom, readPage },
@@ -528,6 +545,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Layer.succeed(EventLog, eventLogFrom(store)), router,
       Layer.succeed(EffectInterruptions, threadRuntime.interruptions),
       Layer.succeed(KeyValueStore.KeyValueStore, threadRuntime.workspace),
+      Layer.succeed(ImageStore, imageStore),
       Layer.succeed(Self, parseThreadAddress(self(thread))), bunSandboxFor(options.sandbox ?? {}),
       Layer.succeed(ThreadAllocator, initializingThreadAllocator(
         rawAllocator,

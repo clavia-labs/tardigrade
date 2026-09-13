@@ -57,11 +57,13 @@ const message = {
 } as const
 ```
 
-An `input_image` carries an `image_url` and optional `detail` of `auto`, `low`, or `high`. A data URL carries its media type and base64 bytes; an HTTP or HTTPS URL names an image the provider can retrieve. The selected provider and model determine which image formats and detail levels they accept. A custom model layer must resolve private resource references before submitting them to a provider. Provider file IDs and image-bearing tool results are outside this message input contract.
+An `input_image` carries an `image_url` and optional `detail` of `auto`, `low`, or `high`. A data URL carries its media type and base64 bytes; an HTTP or HTTPS URL names an image the provider can retrieve. The host stores data URL bytes before it appends the message or a native `message` call plan, and the log keeps the store's stable reference. A custom host supplies one `ImageStore` for every thread in an actor instance and its model binding resolves owned references with `resolveImageSource` at its provider boundary. Provider file IDs and image-bearing tool results are outside this message input contract.
 
 An image-only message contains image parts without a fabricated text part. A text-only caller can continue to send `{ text: "Hello" }`. A message supplies either `text` or `content`; supplying both is an error. Application-owned `input` and model selection remain separate from message content.
 
 `MessageReceived` stores the supplied content in order. Model history preserves retained images through replay and later turns. Text caps apply across a message's text parts and leave image sources intact. Compaction removes completed old prompts from model history while retaining the active turn's prompt. The durable log remains available. A summary receives text and an explicit count of omitted images without their bytes; that count does not summarize what the images depict.
+
+`DEFAULT_IMAGE_INPUT_POLICY.maxBytes` is the default decoded size limit for one inline image. A host accepts `imageInput: { maxBytes }` beside its image store. An image above the applied limit or a store failure prevents the event batch from reaching the log. The Bun host stores images in the actor instance database by default. A Cloudflare thread host must receive `imageStore` before it accepts inline image data because a thread Durable Object cannot provide storage shared by every thread in the actor instance.
 
 ## Image context estimates
 
