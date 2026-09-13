@@ -77,6 +77,18 @@ describe("stored image events", () => {
     expect(puts).toBe(0)
   })
 
+  test("validates every distinct source before calling the store", async () => {
+    let puts = 0
+    const store = memoryStore()
+    const service = { ...store.service, put: (image: StoredImage) => Effect.sync(() => { puts += 1; return `image:${image.bytes.length}` }) }
+    const events = [{ type: "MessageReceived", id: "picture", at: 1, content: [
+      { type: "input_image", image_url: "data:image/png;base64,YQ==" },
+      { type: "input_image", image_url: "data:image/png;base64,Y===" }
+    ] }] as Event[]
+    await expect(Effect.runPromise(storeEventImages(events, service))).rejects.toThrow("base64-encoded image bytes")
+    expect(puts).toBe(0)
+  })
+
   test("counts and stores a repeated source once", async () => {
     let puts = 0
     const store = memoryStore()

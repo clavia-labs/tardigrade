@@ -44,6 +44,11 @@ interface InlineImage {
   readonly decodedBytes: number
 }
 
+interface ValidatedInlineImage {
+  readonly source: string
+  readonly image: StoredImage
+}
+
 const inlineImageOf = (source: string, policy: ImageInputPolicy): InlineImage | undefined => {
   if (!source.startsWith("data:")) return undefined
   const matched = /^data:([^;,]+);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(source)
@@ -74,7 +79,7 @@ const eventContentOf = (event: Event): ReadonlyArray<unknown> | undefined => {
   return undefined
 }
 
-const inlineImagesOf = (events: ReadonlyArray<Event>, policy: ImageInputPolicy): ReadonlyArray<InlineImage> => {
+const inlineImagesOf = (events: ReadonlyArray<Event>, policy: ImageInputPolicy): ReadonlyArray<ValidatedInlineImage> => {
   const images: InlineImage[] = []
   const sources = new Map<string, InlineImage>()
   let totalBytes = 0
@@ -94,14 +99,14 @@ const inlineImagesOf = (events: ReadonlyArray<Event>, policy: ImageInputPolicy):
       images.push(image)
     }
   }
-  for (const image of images) {
-      const decoded = Encoding.decodeBase64(image.encoded)
-      if (decoded._tag === "Failure") throw new Error("input_image contains invalid base64 image bytes")
-      if (decoded.success.byteLength === 0 || Encoding.encodeBase64(decoded.success) !== image.encoded) {
-        throw new Error("input_image contains non-canonical base64 image bytes")
-      }
-  }
-  return images
+  return images.map((image) => {
+    const decoded = Encoding.decodeBase64(image.encoded)
+    if (decoded._tag === "Failure") throw new Error("input_image contains invalid base64 image bytes")
+    if (decoded.success.byteLength === 0 || Encoding.encodeBase64(decoded.success) !== image.encoded) {
+      throw new Error("input_image contains non-canonical base64 image bytes")
+    }
+    return { source: image.source, image: { bytes: decoded.success, mediaType: image.mediaType } }
+  })
 }
 
 const replaceContent = (event: Event, references: ReadonlyMap<string, string>): Event => {
@@ -130,9 +135,7 @@ export const storeEventImages = (
   if (images.length === 0) return events
   const references = new Map<string, string>()
   for (const inline of images) {
-    const decoded = Encoding.decodeBase64(inline.encoded)
-    if (decoded._tag === "Failure") return yield* Effect.die(new Error("validated input_image could not be decoded"))
-    const reference = yield* store.put({ bytes: decoded.success, mediaType: inline.mediaType })
+    const reference = yield* store.put(inline.image)
     if (reference.startsWith("data:") || !store.owns(reference)) {
       return yield* Effect.die(new Error("ImageStore.put must return an owned durable reference"))
     }
