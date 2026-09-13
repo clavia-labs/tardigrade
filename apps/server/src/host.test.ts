@@ -40,7 +40,7 @@ const briefOf = (trajectory: ReadonlyArray<Event>): string => {
 const scripted = (request: InferRequest): Action => ({ kind: "complete", output: `ok: ${briefOf(request.trajectory)}` })
 const testModel = { provider: "test", model_id: "scripted" } as const
 const resolveTestModel = (model: { readonly provider: string; readonly model_id: string } = testModel) =>
-  ({ model, models: { default: model, allow: "*" as const } })
+  ({ model, contextWindowTokens: 128_000, models: { default: model, allow: "*" as const } })
 
 const layerScripted: Layer.Layer<LanguageModel.LanguageModel> = testInferenceLayer({
   resolve: resolveTestModel,

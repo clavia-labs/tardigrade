@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test"
 import { Data, Deferred, Effect } from "effect"
 import { TestClock } from "effect/testing"
+import { Response } from "effect/unstable/ai"
+import { FetchHttpClient } from "effect/unstable/http"
+import { BindingSettings, CurrentModel, ProviderRequestKey } from "../settings"
+import { withModelRequest } from "./invocation"
 import { deltaDelivery } from "./delivery"
 
 class ObserverFailed extends Data.TaggedError("ObserverFailed") {}
@@ -34,5 +38,37 @@ test("observer errors do not prevent later delivery", async () => {
     yield* Deferred.await(second)
     yield* delivery.finish
     expect(seen).toEqual([0, 1])
+  }))
+})
+
+
+test.each([false, true])("request context restores services and closes observation after failure=%s", async fail => {
+  await Effect.runPromise(Effect.gen(function* () {
+    const started = yield* Deferred.make<void>()
+    const original = yield* CurrentModel
+    const key = yield* ProviderRequestKey
+    const settings = yield* BindingSettings
+    let closed = false
+    const selected = { provider: "alias", model_id: "deployment" }
+    const served = { provider: "provider", model_id: "native" }
+    const exit = yield* withModelRequest({ identity: delta(0), model: selected, observedModel: served, key: "request" }, onPart => Effect.gen(function* () {
+      expect(yield* CurrentModel).toEqual(selected)
+      expect(yield* ProviderRequestKey).toBe("request")
+      expect(yield* FetchHttpClient.RequestInit).toMatchObject({ headers: { "x-test": "kept" }, timeout: false })
+      yield* onPart(Response.makePart("text-delta", { id: "text", delta: "hello" }))
+      yield* Deferred.await(started)
+      if (fail) return yield* new ObserverFailed()
+    })).pipe(
+      Effect.provideService(FetchHttpClient.RequestInit, { headers: { "x-test": "kept" } }),
+      Effect.provideService(BindingSettings, { ...settings, observer: { onDelta: item => {
+        expect(item.model).toEqual(served)
+        return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never), Effect.ensuring(Effect.sync(() => { closed = true })))
+      } } }),
+      Effect.exit
+    )
+    expect(exit._tag).toBe(fail ? "Failure" : "Success")
+    expect(closed).toBe(true)
+    expect(yield* CurrentModel).toEqual(original)
+    expect(yield* ProviderRequestKey).toBe(key)
   }))
 })

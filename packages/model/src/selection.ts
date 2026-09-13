@@ -103,7 +103,7 @@ export const selectedModelFrom = (
   }
   const catalogModel = catalogModelFrom(catalog.snapshot, selected)
   const metadata = catalogModel.metadata
-  const contextWindowTokens = config.providers[selected.provider]?.models?.[selected.model_id]?.contextWindowTokens ?? metadata.contextWindowTokens
+  const contextWindowTokens = metadata.contextWindowTokens
   if (contextWindowTokens === undefined) {
     throw new Error(`model catalog has no context window for ${selected.provider}/${selected.model_id}`)
   }

@@ -21,6 +21,7 @@ import type { ModelPolicy } from "./access"
 
 export interface ModelResolution {
   readonly model: ModelRef
+  readonly contextWindowTokens?: number
   // models is the interpreter's current authority for validating this call. It is not recorded.
   readonly models?: ModelPolicy
 }

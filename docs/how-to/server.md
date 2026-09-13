@@ -35,6 +35,8 @@ Base path `/v1`. Runtime routes address instances of the actor mounted at the se
 | `PUT /v1/definitions` | Push an actor artifact to a host with a writable definition registry |
 | `GET /healthz` `GET /openapi.json` `GET /docs` | Unversioned |
 
+Bun HTTP hosts and Cloudflare Worker HTTP handlers serve Scalar at `/docs` and the OpenAPI document at `/openapi.json`. Each document describes its host's declared routes. Method calls use a generic payload in OpenAPI; `GET /v1/methods` provides the mounted actor's input and output schemas. An actor used in-process exposes no HTTP routes until a host serves it.
+
 ```bash
 curl -X POST localhost:4242/v1/actors/main/threads \
   -H 'content-type: application/json' \
@@ -130,7 +132,7 @@ Place `models` beside the provider's `baseUrl`, `protocol`, and `env`. These ent
 
 OpenAI Responses also accepts native reasoning summary settings. Anthropic accepts adaptive, disabled, or enabled thinking; enabled thinking requires at least 1024 budget tokens. The installed Effect version accepts Anthropic effort values `low`, `medium`, `high`, or `null`. Providers validate support for the selected model. Bedrock's additional fields are provider-specific JSON and follow the selected model's request contract.
 
-These settings require `modelLayer`; the legacy inference binding rejects nonempty options. The Effect binding is currently opt-in through the Bun model services inference factory. Regenerate the model lock after changing provider configuration.
+Built-in Bun and Worker model services apply these settings through Effect `modelLayer`. Regenerate the model lock after changing provider configuration.
 
 The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and catalog requests do not read the cache file on each request. With no valid source or cache, both catalog endpoints answer 503. Provider credentials never appear in either response.
 

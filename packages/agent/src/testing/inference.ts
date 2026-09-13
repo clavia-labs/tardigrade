@@ -15,7 +15,7 @@ import { react } from "../inference/model/index"
 
 export interface TestInference {
   readonly output?: import("../inference/model/output").OutputCapability
-  readonly resolve?: (model?: ModelRef) => ModelResolution
+  readonly resolve?: ((model?: ModelRef) => ModelResolution) | null
   readonly policy?: (model?: ModelRef) => Effect.Effect<RequestPolicy | undefined>
   readonly pricing?: (model?: ModelRef) => Effect.Effect<ModelPricing | undefined>
   readonly react: (request: InferRequest, key?: string, signal?: AbortSignal, onDelta?: (delta: InferDelta) => void) => Effect.Effect<Action | LegacyCallAction>
@@ -41,7 +41,10 @@ export const inferenceClient = Effect.gen(function* () {
 // testInferenceLayer translates scripted outcomes into native model parts for runtime fixtures.
 export const testInferenceLayer = (script: TestInference): Layer.Layer<LanguageModel.LanguageModel> => {
   const selection = Layer.succeed(ModelSelection, {
-    ...(script.resolve === undefined ? {} : { resolve: script.resolve }),
+    ...(script.resolve === null ? {} : { resolve: script.resolve ?? ((model) => {
+      if (model === undefined) throw new Error("Fixture requires a model")
+      return { model, contextWindowTokens: 128_000 }
+    }) }),
     settings: (model?: ModelRef) => Effect.gen(function* () {
       const defaults = yield* BindingSettings
       const policy = yield* (script.policy?.(model) ?? Effect.void)

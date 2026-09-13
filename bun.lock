@@ -252,6 +252,7 @@
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
         "@tardie/ai-bedrock": "0.0.3",
+        "fast-check": "^4.9.0",
       },
       "peerDependencies": {
         "@smithy/fetch-http-handler": "^5.6.3",

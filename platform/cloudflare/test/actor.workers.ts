@@ -29,6 +29,7 @@ import { modelLayer, modelsFrom, mountedActor } from "../src/assembly"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
 import { plaintextEventCodec } from "../src/storage"
+import type { ImageStore, StoredImage } from "@clavia/tardigrade-core/interaction/image"
 
 const authorization = { authorization: "Bearer workers-test-token" }
 const WORKER_INTEGRATION_TIMEOUT_MILLIS = 15_000
@@ -133,6 +134,41 @@ beforeAll(async () => {
 })
 
 describe("cloudflare actor", () => {
+  test("inline image ingress requires shared storage before persistence", async () => {
+    await runInDurableObject(threadStub("image-storage"), async (_instance, state) => {
+      const common = {
+        storage: state.storage, actorName: "echo", actorInstance: "main", thread: "image-storage",
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
+      }
+      const absent = await createCloudflareThreadHost(common)
+      await expect(absent.commitRoot({
+        type: "MessageReceived", id: "missing", at: 1,
+        content: [{ type: "input_image", image_url: "data:image/png;base64,YQ==" }]
+      })).rejects.toThrow("imageStore")
+      expect(await absent.read()).toEqual([])
+      await absent.close()
+
+      const values = new Map<string, StoredImage>()
+      const imageStore: typeof ImageStore.Service = {
+        egress: "defer",
+        owns: (reference) => reference.startsWith("image:fixture:"),
+        put: (image) => Effect.sync(() => { const reference = "image:fixture:61"; values.set(reference, image); return reference }),
+        get: (reference) => Effect.succeed(values.get(reference))
+      }
+      const configured = await createCloudflareThreadHost({ ...common, imageStore })
+      await configured.commitRoot({
+        type: "MessageReceived", id: "stored", at: 2,
+        content: [{ type: "input_image", image_url: "data:image/png;base64,YQ==", detail: "low" }]
+      })
+      expect(JSON.stringify(await configured.read())).not.toContain("data:image")
+      expect(await configured.read()).toEqual(expect.arrayContaining([expect.objectContaining({
+        type: "MessageReceived", content: [{ type: "input_image", image_url: "image:fixture:61", detail: "low" }]
+      })]))
+      expect(values.get("image:fixture:61")).toEqual({ mediaType: "image/png", bytes: new Uint8Array([97]) })
+      await configured.close()
+    })
+  })
+
   test("a deployment lock supplies only its matching model scope", async () => {
     const scope = modelScopeFrom({
       schema: 1,
@@ -678,6 +714,46 @@ describe("cloudflare actor", () => {
       ).toArray().map((row) => row.name)
     )
     expect(catalogTables).toEqual([])
+  })
+
+  test("public API docs describe only mounted Worker routes", async () => {
+    const page = await SELF.fetch("http://test/docs")
+    expect(page.status).toBe(200)
+    expect(page.headers.get("content-type")).toContain("text/html")
+    const html = await page.text()
+    expect(html).toContain("Scalar")
+    expect(html).toContain("--scalar-background-1: #f3f0e4")
+
+    const response = await SELF.fetch("http://test/openapi.json")
+    expect(response.status).toBe(200)
+    const spec = await response.json() as { paths: Record<string, Record<string, { responses: Record<string, unknown> }>>; components: { schemas: Record<string, unknown> } }
+    expect(Object.keys(spec.paths).sort()).toEqual([
+      "/healthz", "/v1/metadata", "/v1/providers", "/v1/models", "/v1/methods",
+      "/v1/actors/{id}", "/v1/actors/{id}/threads", "/v1/actors/{id}/threads/{thread}/events",
+      "/v1/actors/{id}/threads/{thread}/methods/{method}",
+      "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}",
+      "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellation"
+    ].sort())
+    expect(spec.paths["/healthz"]?.get?.responses["200"]).toMatchObject({
+      content: { "application/json": { schema: { properties: { status: { enum: ["ready"] }, actor: { type: "string" } } } } }
+    })
+    expect(spec.components.schemas.WorkerThreadTree).toMatchObject({
+      properties: { id: { type: "string" }, children: { type: "array" } }
+    })
+    expect(spec.paths["/v1/actors/{id}/threads/{thread}/events"]?.post?.responses).toHaveProperty("202")
+    for (const [path, method, statuses] of [
+      ["/healthz", "get", ["200"]],
+      ["/v1/metadata", "get", ["200", "401", "503"]],
+      ["/v1/actors/{id}", "put", ["200", "400", "401", "503"]],
+      ["/v1/actors/{id}", "get", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads", "post", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads", "get", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/events", "post", ["202", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/events", "get", ["200", "400", "401", "404", "500", "503"]]
+    ] as const) {
+      expect(Object.keys(spec.paths[path]![method]!.responses).sort()).toEqual(statuses)
+    }
+    expect((await SELF.fetch("http://test/v1/methods")).status).toBe(401)
   })
 
   test("a mounted actor exposes durable methods", async () => {
