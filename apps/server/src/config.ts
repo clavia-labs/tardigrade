@@ -1,3 +1,4 @@
+import { modelPolicyOf } from "@clavia/tardigrade-model/access"
 import { dirname, resolve } from "node:path"
 import { MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelConfigOf, type ModelConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
@@ -37,7 +38,7 @@ export const TARDIGRADE_CONFIG_VAR = "TARDIGRADE_CONFIG"
 // DEFAULT_MODEL_CATALOG_CACHE is the last validated public snapshot used when a refresh fails.
 export const DEFAULT_MODEL_CATALOG_CACHE = ".tardigrade/models.json"
 
-// DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS bounds the source request made when the server starts.
+// DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS bounds registry import requests.
 export const DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS = 10_000
 
 export { DEFAULT_MODEL_CATALOG_URL }
@@ -107,14 +108,7 @@ const legacyModelError = (env: Env): Error | undefined => {
       [TARDIGRADE_CONFIG_VAR]: {
         models: {
           default: { provider, model_id },
-          allow: "*",
-          providers: {
-            [provider]: {
-              baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
-              protocol: "<protocol>",
-              env: ["<api-key-env>"]
-            }
-          }
+          allow: "*"
         }
       }
     }
@@ -122,7 +116,7 @@ const legacyModelError = (env: Env): Error | undefined => {
   return new Error(
     `${present.join(", ")} ${present.length === 1 ? "is" : "are"} no longer accepted. ` +
     `Run \`tdg setup\`, or put ${JSON.stringify(replacement)} in wrangler.jsonc. ` +
-    "Replace <protocol>, set <api-key-env> as a secret environment variable, and remove the legacy variables. The legacy API key was not printed."
+    "Put provider connections and model definitions in models.lock.json. Set credentials as secret environment variables and remove the legacy variables. The legacy API key was not printed."
   )
 }
 
@@ -141,10 +135,13 @@ export const projectConfigOf = (value: unknown): ProjectConfig => {
   if (configValue === undefined) return { models: modelConfigOf(DEFAULT_MODEL_POLICY) }
   const config = recordOf(configValue)
   if (config === undefined) throw new Error(`${TARDIGRADE_CONFIG_VAR} must be a JSON object`)
-  return { models: modelConfigOf(config["models"] ?? DEFAULT_MODEL_POLICY) }
+  if (recordOf(config["models"])?.["providers"] !== undefined) {
+    throw new Error("models.providers belongs in models.lock.json; run tdg models lock to migrate the project")
+  }
+  return { models: { ...modelPolicyOf(config["models"] ?? DEFAULT_MODEL_POLICY), providers: {} } }
 }
 
-const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {
+export const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {
   const credentials: Record<string, string> = {}
   for (const provider of Object.values(model.providers)) {
     for (const name of provider.env) {

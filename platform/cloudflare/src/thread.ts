@@ -1,3 +1,4 @@
+import { layerModelLock, emptyModelLock } from "@clavia/tardigrade-model/lock"
 import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { cloudflareRpcTransport } from "./transport/rpc"
 import { DurableObject } from "cloudflare:workers"
@@ -174,7 +175,7 @@ export class ThreadDO extends DurableObject<Env> {
       layers: (() => {
         const thread = currentThread
         const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, actorInstance, thread })
-        const framework = Layer.mergeAll(modelLayer(models, modelScope, observer), FetchHttpClient.layer, sandboxLayer)
+        const framework = Layer.mergeAll(modelLayer(models, modelScope, observer).pipe(Layer.provide(layerModelLock(deployedScope ?? emptyModelLock())), Layer.orDie), FetchHttpClient.layer, sandboxLayer)
         const application = mountedActor?.layersFor?.({ env: this.env, actorInstance, thread })
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       })(),

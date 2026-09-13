@@ -1,8 +1,9 @@
+import { layerModelLock } from "@clavia/tardigrade-model/lock"
 import { publicCatalog } from "../src/assembly"
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
-import { Effect, ManagedRuntime, Schema } from "effect"
+import { Effect, Layer, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -136,40 +137,25 @@ beforeAll(async () => {
 describe("cloudflare actor", () => {
   test("a deployment lock supplies only its matching model scope", async () => {
     const scope = modelScopeFrom({
-      schema: 1,
-      configDigest: "sha256:24490b510114acf10f5305913084ebe8ee0b0aea03ddf37529a4d4da3fa81ffa",
-      catalog: {
-        source: "models.dev",
-        revision: "bundled",
-        refreshedAt: 1,
-        status: "cached",
-        providers: [{ id: "openai", name: "OpenAI", env: [], models: [{ id: "gpt-test", metadata: { contextWindowTokens: 32000, maxOutputTokens: 4000 } }] }]
-      }
+      schema: 2,
+      providers: { openai: { baseUrl: "https://api.openai.test/v1", protocol: "openai-chat-completions", env: ["OPENAI_API_KEY"] } },
+      models: [{ provider: "openai", model_id: "gpt-test", contextWindowTokens: 32000, maxOutputTokens: 4000 }]
     })
-    const config = {
-      default: { provider: "openai", model_id: "gpt-test" },
-      allow: "*" as const,
-      providers: {
-        openai: {
-          baseUrl: "https://api.openai.test/v1",
-          protocol: "openai-chat-completions" as const,
-          env: ["OPENAI_API_KEY"]
-        }
-      }
-    }
-    expect(await modelCatalogForConfig(config, scope)).toMatchObject({ revision: "bundled", providers: [{ id: "openai" }] })
+    const config = { default: { provider: "openai", model_id: "gpt-test" }, allow: "*" as const }
+    const snapshot = await modelCatalogForConfig(config, scope)
+    expect(snapshot).toMatchObject({ providers: [{ id: "openai" }] })
     const previousScope = mountedActor!.modelScope
     mountedActor!.modelScope = scope
     try {
-      expect(await publicCatalog({ TARDIGRADE_CONFIG: { models: config } } as Env)).toEqual({ snapshot: scope.catalog })
-      await expect(publicCatalog({ TARDIGRADE_CONFIG: { models: { ...config, default: { provider: "openai", model_id: "changed" } } } } as Env)).rejects.toThrow("does not match")
+      expect(await publicCatalog({ TARDIGRADE_CONFIG: { models: config } } as Env)).toEqual({ snapshot: snapshot })
+      await expect(publicCatalog({ TARDIGRADE_CONFIG: { models: { ...config, default: { provider: "openai", model_id: "changed" } } } } as Env)).rejects.toThrow("absent")
     } finally {
       if (previousScope === undefined) delete mountedActor!.modelScope
       else mountedActor!.modelScope = previousScope
     }
     await expect(modelCatalogForConfig({ ...config, default: { provider: "openai", model_id: "changed" } }, scope))
-      .rejects.toThrow("does not match model configuration")
-    expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
+      .rejects.toThrow("absent")
+    expect(() => modelScopeFrom({ schema: 1, catalog: snapshot })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
     const previousModel = mountedActor!.model
     let configured = false
@@ -185,7 +171,7 @@ describe("cloudflare actor", () => {
       const settings = await Effect.runPromise(Effect.gen(function* () {
         const selection = yield* ModelSelection
         return yield* selection.settings!()
-      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, config), scope.catalog))))
+      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers }), snapshot).pipe(Layer.provide(layerModelLock(scope))))))
       expect(configured).toBe(true)
       expect(settings.policy).toMatchObject({ maxOutputTokens: 1234, timeout: { idleMs: 12345 } })
     } finally {
@@ -193,20 +179,19 @@ describe("cloudflare actor", () => {
       else mountedActor!.model = previousModel
     }
     const binding = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, config), scope.catalog)
+      modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers }), snapshot).pipe(Layer.provide(layerModelLock(scope)))
     )))
     expect(binding.resolve()).toMatchObject({
       model: config.default,
-      catalogRevision: "bundled",
+      catalogRevision: snapshot.revision,
       contextWindowTokens: 32000,
       maxOutputTokens: 4000,
       models: { allow: [{ provider: "openai", model_ids: ["gpt-test"] }] }
     })
     expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
-    const restricted = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog)
-    )))
-    expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
+    await expect(Effect.runPromise(inferenceClient.pipe(Effect.provide(
+      modelLayer(modelsFrom(env as Env, { ...config, providers: scope.providers, allow: [] }), snapshot).pipe(Layer.provide(layerModelLock(scope)))
+    )))).rejects.toThrow("excluded by allow")
   })
 
   test("root and staged creation await the host allocator before persistence", async () => {

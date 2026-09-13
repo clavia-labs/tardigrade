@@ -293,7 +293,7 @@ describe("parsing", () => {
     expect(root).not.toContain("run ")
     expect(root).not.toContain("send")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
-    expect(help).toContain("platform manifests")
+    expect(help).toContain("locked providers and project model policy")
     expect(help).toContain(".dev.vars")
     expect(help).toContain("0600")
     expect(help).toContain("provider")
@@ -318,7 +318,7 @@ describe("parsing", () => {
   test("setup and lock commands preserve an injected registry layer", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tdg-registry-layer-"))
     let calls = 0
-    const registry = Layer.succeed(ModelRegistry)({ load: () => Effect.sync(() => {
+    const registry = Layer.succeed(ModelRegistry)({ source: "https://injected.example/api.json", load: () => Effect.sync(() => {
       calls++
       return modelCatalogOf(catalogSource, "injected", 0)
     }) })
@@ -333,7 +333,7 @@ describe("parsing", () => {
       ], options)).failed).toBe(false)
       expect((await drive(["models", "lock"], options)).failed).toBe(false)
       expect(calls).toBe(2)
-      expect(JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8")).catalog.revision).toBe("injected")
+      expect(JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8")).models[0].source).toBe("https://injected.example/api.json")
       expect(existsSync(join(cwd, ".tardigrade", "models.json"))).toBe(false)
     } finally {
       await rm(cwd, { recursive: true, force: true })
@@ -366,7 +366,7 @@ describe("parsing", () => {
         ["setup", "provider", "openrouter", '{"env":["OPENROUTER_API_KEY"]}']
       ]) {
         expect((await drive(args, { cwd, fetch })).failed).toBe(false)
-        expect(urls.pop()).toBe("https://flag.example/api.json")
+        expect(urls.pop()).toBe(args[0] === "models" ? "https://flag.example/api.json" : undefined)
       }
       expect((await drive(["models", "lock"], { cwd, fetch, env: { TARDIGRADE_MODEL_CATALOG_URL: "https://env.example/api.json" } })).failed).toBe(false)
       expect(urls.pop()).toBe("https://env.example/api.json")
@@ -381,6 +381,57 @@ describe("parsing", () => {
       expect((await drive(["models", "lock", "--model-registry", "file:///tmp/catalog.json"], { cwd, fetch })).failed).toBe(true)
       expect(await readFile(join(cwd, "wrangler.jsonc"), "utf8")).toBe(before)
       expect(urls).toEqual([])
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  test("setup migrates saved definitions offline and refresh preserves manual models", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-lock-migration-"))
+    const manifest = {
+      vars: { TARDIGRADE_CONFIG: { models: {
+        allow: "*", default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" },
+        providers: { openrouter: {
+          protocol: "openai-chat-completions", baseUrl: "https://gateway.example/v1", env: ["OPENROUTER_API_KEY"],
+          models: { manual: { metadata: { contextWindowTokens: 32000, toolCall: true }, options: { temperature: 0.25 } } }
+        } }
+      } } }
+    }
+    try {
+      await writeFile(join(cwd, "wrangler.jsonc"), JSON.stringify(manifest))
+      await writeFile(join(cwd, "models.lock.json"), JSON.stringify({ schema: 1, configDigest: "old", catalog: modelCatalogOf(catalogSource, "saved", 0) }))
+      const offline = (() => { throw new Error("migration must not download definitions") }) as unknown as typeof fetch
+      const migrated = await drive(["setup", "default", "--provider", "openrouter", "--model", "manual"], { cwd, fetch: offline })
+      expect(migrated.failed).toBe(false)
+      const saved = JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8"))
+      const config = JSON.parse(await readFile(join(cwd, "wrangler.jsonc"), "utf8"))
+      expect(config.vars.TARDIGRADE_CONFIG.models).toEqual({ allow: "*", default: { provider: "openrouter", model_id: "manual" } })
+      expect(saved.schema).toBe(2)
+      expect(saved.providers.openrouter.baseUrl).toBe("https://gateway.example/v1")
+      const manual = { provider: "openrouter", model_id: "manual", contextWindowTokens: 32000, toolCall: true, options: { temperature: 0.25 } }
+      expect(saved.models).toContainEqual(manual)
+      expect((await drive(["models", "lock"], { cwd })).failed).toBe(false)
+      expect(JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8")).models).toContainEqual(manual)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  test("setup preserves an authored lock and writes beside an explicit manifest", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-authored-lock-"))
+    const lock = { schema: 2, providers: { local: { protocol: "openai-chat-completions", baseUrl: "http://localhost:8080/v1", env: ["API_KEY"] } }, models: [{ provider: "local", model_id: "qwen", contextWindowTokens: 32000 }] }
+    const offline = (() => { throw new Error("unexpected registry access") }) as unknown as typeof fetch
+    try {
+      await writeFile(join(cwd, "models.lock.json"), JSON.stringify(lock))
+      expect((await drive(["setup", "default", "--provider", "local", "--model", "qwen"], { cwd, fetch: offline })).failed).toBe(false)
+      expect(JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8"))).toEqual(lock)
+      await mkdir(join(cwd, "deployment"))
+      await writeFile(join(cwd, "deployment", "wrangler.jsonc"), await readFile(join(cwd, "wrangler.jsonc")))
+      await writeFile(join(cwd, "deployment", "models.lock.json"), JSON.stringify(lock))
+      const options = { cwd, fetch: offline, env: { TARDIGRADE_CONFIG_PATH: "deployment/wrangler.jsonc" } }
+      expect((await drive(["setup", "provider", "local", '{"protocol":"openai-chat-completions","baseUrl":"http://localhost:9090/v1","env":["API_KEY"]}'], options)).failed).toBe(false)
+      expect(JSON.parse(await readFile(join(cwd, "deployment", "models.lock.json"), "utf8")).providers.local.baseUrl).toBe("http://localhost:9090/v1")
+      expect(JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8"))).toEqual(lock)
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }
@@ -404,7 +455,7 @@ describe("parsing", () => {
       const modelLock = JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8")) as Record<string, unknown>
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
-      expect(modelLock).toMatchObject({ schema: 1, catalog: { revision: "catalog-test" } })
+      expect(modelLock).toMatchObject({ schema: 2, providers: { openrouter: { protocol: "openai-chat-completions" } } })
       expect(configured.lines.join("\n")).toContain("models.lock.json")
     } finally {
       await rm(cwd, { recursive: true, force: true })

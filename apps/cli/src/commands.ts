@@ -2,7 +2,7 @@ import { modelConfigOf } from "@clavia/tardigrade-model/config"
 import { Clock, Console, Effect, Layer, Option } from "effect"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
 import { ACTOR_NAME_PATTERN, type Actor } from "tardie"
 import {
@@ -28,7 +28,7 @@ import { DEFAULT_ACTOR_ENTRY, DEFAULT_INIT_ACTOR_NAME, defaultInitDirectory, ini
 import { withLoader } from "./loader"
 import { writeModelLock } from "./model-lock"
 import { resolveModelLock } from "@clavia/tardigrade-model/resolution"
-import type { ModelLock } from "@clavia/tardigrade-model/lock"
+import type { ModelLockData } from "@clavia/tardigrade-model/lock"
 import { withModelRegistry } from "./model-registry"
 import { DEFAULT_INIT_TEMPLATE, INIT_TEMPLATES } from "./template"
 import {
@@ -295,9 +295,9 @@ const configuredModels = (
   }
 })
 
-const resolveConfiguredModelLock = (cli: CliServices, models: ModelConfig) => Effect.gen(function*() {
+const resolveConfiguredModelLock = (cli: CliServices, models: ModelConfig, previous?: ModelLockData, refresh = false, source?: string) => Effect.gen(function*() {
   const catalog = modelCatalogConfigOf(cli.env)
-  return yield* withModelRegistry(resolveModelLock(models), {
+  return yield* withModelRegistry(resolveModelLock(models, { ...(previous === undefined ? {} : { previous }), refresh, ...(source === undefined ? {} : { source }) }), {
     sourceUrl: catalog.sourceUrl,
     cachePath: resolve(cli.cwd, catalog.cachePath),
     timeoutMillis: catalog.timeoutMillis,
@@ -305,9 +305,9 @@ const resolveConfiguredModelLock = (cli: CliServices, models: ModelConfig) => Ef
   }).pipe(Effect.mapError(userErrorOf))
 })
 
-const persistModelLock = (cli: CliServices, lock: ModelLock) =>
+const persistModelLock = (cli: CliServices, lock: ModelLockData) =>
   Effect.tryPromise({
-    try: () => writeModelLock(cli.cwd, lock),
+    try: () => writeModelLock(dirname(projectConfigPathIn(cli.cwd, cli.env)), lock),
     catch: userErrorOf
   })
 
@@ -316,9 +316,11 @@ const writeSetupWithLock = <A, E, R>(
   models: ModelConfig,
   write: Effect.Effect<A, E, R>
 ) => Effect.gen(function*() {
-  const lock = yield* resolveConfiguredModelLock(cli, models)
+  const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+  const lock = yield* resolveConfiguredModelLock(cli, models, project.modelLock)
+  const path = yield* persistModelLock(cli, lock)
   const files = yield* write
-  return [files, yield* persistModelLock(cli, lock)] as const
+  return [files, path] as const
 })
 
 const setupOutput = (asJson: boolean, value: object, summary: string, modelLock: string): string =>
@@ -466,7 +468,7 @@ export const setupCommand = Command.make("setup", {
   )
   yield* Console.log(setupOutput(false, {}, setupPlanSummary(files, plan), modelLock))
 })).pipe(
-  Command.withDescription("Configure project providers and a default model in the platform manifests. Entered credentials are stored in .dev.vars at 0600."),
+  Command.withDescription("Configure locked providers and project model policy. Entered credentials are stored in .dev.vars at 0600."),
   Command.withExamples([{
     command: "tdg setup --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4.6",
     description: "Configure the first provider and default atomically"
@@ -914,15 +916,10 @@ export const modelLockCommand = Command.make("lock", { json, modelRegistry }, (f
     const context = yield* Cli
     const project = yield* Effect.mapError(readProjectConfig(context.cwd, context.env), userErrorOf)
     const cli = yield* registryCli(context, stated(flags.modelRegistry), project.modelRegistry)
-    const lock = yield* resolveConfiguredModelLock(cli, project.models)
-    if (cli.env["TARDIGRADE_MODEL_CATALOG_URL"] !== undefined) {
-      yield* Effect.mapError(writeRegistrySetup(cli.cwd, cli.env), userErrorOf)
-    }
-    const path = yield* Effect.tryPromise({
-      try: () => writeModelLock(cli.cwd, lock),
-      catch: userErrorOf
-    })
-    yield* Console.log(flags.json ? jsonOf({ path, ...lock }) : `locked ${lock.catalog.providers.length} providers at ${path}`)
+    const lock = yield* resolveConfiguredModelLock(cli, project.models, project.modelLock, true, stated(flags.modelRegistry) ?? context.env["TARDIGRADE_MODEL_CATALOG_URL"])
+    const path = yield* persistModelLock(cli, lock)
+    yield* Effect.mapError(writeRegistrySetup(cli.cwd, cli.env), userErrorOf)
+    yield* Console.log(flags.json ? jsonOf({ path, ...lock }) : `locked ${Object.keys(lock.providers).length} providers at ${path}`)
   })).pipe(
     Command.withDescription("Resolve configured models from the selected registry into the deployment lock."),
     Command.withExamples([{ command: "tdg models lock", description: "Update the deployment model lock" }])

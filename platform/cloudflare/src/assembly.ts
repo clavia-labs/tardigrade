@@ -1,14 +1,15 @@
-import { modelLockOf, modelCatalogForConfig, type ModelScope } from "@clavia/tardigrade-model/lock"
+import { modelPolicyOf } from "@clavia/tardigrade-model/access"
+import { modelLockOf, modelCatalogForConfig, modelConfigForPolicy, type ModelScope } from "@clavia/tardigrade-model/lock"
 import { cloudflareDirectory } from "./transport/directory"
 import { HttpClient } from "effect/unstable/http"
 import { type InferenceObserver, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import { type ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { modelLayer as configuredModelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
+import { modelLayerFromLock as configuredModelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
 import { type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
-import { modelConfigOf, type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-model/config"
+import { type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-model/config"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
 import { type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
@@ -95,7 +96,11 @@ const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<s
 
 export const modelConfigFrom = (env: Env): ModelConfig | undefined => {
   const rawModels = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)?.["models"]
-  return rawModels === undefined ? undefined : modelConfigOf(rawModels)
+  if (rawModels === undefined) return undefined
+  const policy = modelPolicyOf(rawModels)
+  const scope = mountedActor?.modelScope
+  if (scope === undefined) throw new Error("model policy requires a ModelLock; supply workerModelServices scope")
+  return modelConfigForPolicy(policy, scope)
 }
 
 export const modelsFrom = (env: Env, parsed: ModelConfig | undefined): CloudflareModels | undefined => {
@@ -114,8 +119,7 @@ export const modelsFrom = (env: Env, parsed: ModelConfig | undefined): Cloudflar
 }
 
 export const providerAvailabilityFrom = (env: Env) => {
-  const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
-  const parsed = modelConfigOf(config?.["models"] ?? { allow: "*" })
+  const parsed = modelConfigFrom(env) ?? { allow: "*" as const, providers: {} }
   const values = env as unknown as Readonly<Record<string, unknown>>
   const credentials = Object.fromEntries(
     Object.values(parsed.providers).flatMap((provider) => provider.env.flatMap((name) => {
@@ -128,7 +132,7 @@ export const providerAvailabilityFrom = (env: Env) => {
 
 export const modelPolicyFrom = (env: Env): ModelPolicy => {
   const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
-  const parsed = modelConfigOf(config?.["models"] ?? { allow: "*" })
+  const parsed = modelPolicyOf(config?.["models"] ?? { allow: "*" })
   return { ...(parsed.default === undefined ? {} : { default: parsed.default }), allow: parsed.allow }
 }
 
@@ -140,9 +144,9 @@ const hostModelConfig = (models: CloudflareModels | undefined) => ({
 
 export const modelLayer = (
   models: CloudflareModels | undefined,
-  scope: ModelCatalog,
+  _scope: ModelCatalog,
   observer?: InferenceObserver
-) => configuredModelLayer(hostModelConfig(models), { snapshot: scope }, { ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
+) => configuredModelLayer(hostModelConfig(models).model, hostModelConfig(models).modelCredentials, { ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
 
 export const publicCatalog = async (env: Env): Promise<ModelCatalogState> => {
   const scope = mountedActor?.modelScope

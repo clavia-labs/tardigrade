@@ -1,21 +1,39 @@
 import { expect, test } from "bun:test"
-import { modelCatalogForConfig, modelLockOf } from "./lock"
+import { Effect, Layer } from "effect"
+import { FileSystem } from "effect/FileSystem"
+import { ModelLock, layerModelLock, layerFileModelLock, modelCatalogForConfig, modelConfigForPolicy, modelLockOf, lockedModelState } from "./lock"
 import { runtimeModelConfig as config, runtimeModelLock as lock } from "./testing/models"
 
-test("a valid custom lock supplies the runtime snapshot", async () => {
-  expect(await modelCatalogForConfig(config, modelLockOf(lock))).toEqual(lock.catalog)
-  await expect(modelCatalogForConfig({ ...config, allow: [] }, lock)).rejects.toThrow("does not match")
+test("policy selects from locked definitions without binding a config digest", async () => {
+  expect((await modelCatalogForConfig(config, modelLockOf(lock))).providers[0]?.models[0]?.id).toBe("qwen")
+  expect((await modelCatalogForConfig({ allow: [] }, lock)).providers).toEqual([])
+  expect(modelConfigForPolicy(config, lock).providers.local?.baseUrl).toBe("http://localhost:8080/v1")
 })
 
-test("duplicate providers and model IDs are rejected", () => {
-  const provider = lock.catalog.providers[0]!
-  expect(() => modelLockOf({ ...lock, catalog: { ...lock.catalog, providers: [provider, provider] } })).toThrow("duplicate model provider")
-  expect(() => modelLockOf({ ...lock, catalog: { ...lock.catalog, providers: [{ ...provider, models: [...provider.models, ...provider.models] }] } })).toThrow("duplicate model local/qwen")
+test("invalid coordinates, metadata, sources and policy references are rejected", async () => {
+  expect(() => modelLockOf({ ...lock, models: [...lock.models, ...lock.models] })).toThrow("duplicate model")
+  expect(() => modelLockOf({ ...lock, providers: {} })).toThrow("absent provider")
+  expect(() => modelLockOf({ ...lock, models: [{ provider: "local", model_id: "qwen" }] })).toThrow()
+  expect(() => modelLockOf({ ...lock, models: [{ ...lock.models[0], source: "file:///tmp/models.json" }] })).toThrow("HTTP(S)")
+  expect(() => modelLockOf({ ...lock, schema: 1 })).toThrow()
+  expect(() => modelLockOf({ ...lock, unexpected: true })).toThrow()
+  expect(() => modelConfigForPolicy({ allow: "*", default: { provider: "local", model_id: "missing" } }, lock)).toThrow("absent")
+  expect(() => modelConfigForPolicy({ allow: [{ provider: "local", model_ids: ["missing"] }] }, lock)).toThrow("absent")
 })
 
-test("locks require a default entry and usable context metadata", async () => {
-  await expect(modelCatalogForConfig(config, { ...lock, catalog: { ...lock.catalog, providers: [] } })).rejects.toThrow("absent from models.lock.json")
-  const provider = lock.catalog.providers[0]!
-  await expect(modelCatalogForConfig(config, { ...lock, catalog: { ...lock.catalog, providers: [{ ...provider, models: [{ id: "qwen", metadata: {} }] }] } })).rejects.toThrow("contextWindowTokens")
-  expect(() => modelLockOf({ ...lock, schema: 2 })).toThrow()
+test("an in-memory lock supplies runtime services without a filesystem or registry", async () => {
+  const state = await Effect.runPromise(lockedModelState(config).pipe(Effect.provide(layerModelLock(lock))))
+  expect(state.model.providers.local?.env).toEqual(["API_KEY"])
+  expect(state.catalog.snapshot.providers[0]?.models[0]?.metadata.contextWindowTokens).toBe(32768)
+})
+
+test("file and in-memory layers validate and supply the same lock", async () => {
+  const fs = Layer.succeed(FileSystem)({ readFileString: (path: string) => {
+    expect(path).toBe("models.lock.json")
+    return Effect.succeed(JSON.stringify(lock))
+  } } as unknown as FileSystem)
+  const file = layerFileModelLock("models.lock.json").pipe(Layer.provide(fs))
+  expect(await Effect.runPromise(ModelLock.pipe(Effect.provide(file)))).toEqual(await Effect.runPromise(ModelLock.pipe(Effect.provide(layerModelLock(lock)))))
+  const invalid = await Effect.runPromise(ModelLock.pipe(Effect.provide(layerModelLock({ schema: 2 })), Effect.flip))
+  expect(invalid._tag).toBe("ModelLockError")
 })

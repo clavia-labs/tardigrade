@@ -59,36 +59,15 @@ describe("config", () => {
     expect(() => modelCatalogConfigOf({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "0" })).toThrow("positive integer")
   })
 
-  test("provider configuration and credentials resolve from separate sources", () => {
-    const project = projectConfigOf({
-      vars: { TARDIGRADE_CONFIG: { models: {
-        default: { provider: "openai", model_id: "gpt" },
-        allow: [{ provider: "openai", model_ids: ["gpt"] }],
-        providers: {
-          openai: {
-            baseUrl: "https://api.openai.com/v1",
-            protocol: "openai-responses",
-            env: ["OPENAI_API_KEY"]
-          }
-        }
-      } } }
-    })
+  test("project configuration contains policy while connections come from the lock", () => {
+    const project = projectConfigOf({ vars: { TARDIGRADE_CONFIG: { models: {
+      default: { provider: "openai", model_id: "gpt" }, allow: [{ provider: "openai", model_ids: ["gpt"] }]
+    } } } })
     const config = readConfig({ OPENAI_API_KEY: "secret" }, project)
-    expect(config.model).toMatchObject({
-      default: { provider: "openai", model_id: "gpt" },
-      allow: [{ provider: "openai", model_ids: ["gpt"] }],
-      providers: { openai: { protocol: "openai-responses" } }
-    })
-    expect(config.modelCredentials).toEqual({ OPENAI_API_KEY: "secret" })
-    expect(() => projectConfigOf({
-      vars: { TARDIGRADE_CONFIG: { models: { allow: "*", providers: { openai: { apiKey: "must-not-live-here", env: ["OPENAI_API_KEY"] } } } } }
-    })).toThrow("cannot contain apiKey")
-    expect(() => projectConfigOf({
-      vars: { TARDIGRADE_CONFIG: { models: { allow: "*", providers: { openai: { baseUrl: "https://api.openai.com/v1", protocol: "openai-responses", env: ["bad-name"] } } } } }
-    })).toThrow("invalid name")
-    expect(() => projectConfigOf({
-      vars: { TARDIGRADE_CONFIG: { models: { default: { provider: "missing", model_id: "gpt" }, allow: "*", providers: {} } } }
-    })).toThrow("unconfigured provider")
+    expect(config.model.providers).toEqual({})
+    expect(config.model.default).toEqual({ provider: "openai", model_id: "gpt" })
+    expect(config.modelCredentials).toEqual({})
+    expect(() => projectConfigOf({ vars: { TARDIGRADE_CONFIG: { models: { allow: "*", providers: {} } } } })).toThrow("run tdg models lock")
     expect(() => projectConfigOf({ models: {} })).toThrow("vars.TARDIGRADE_CONFIG")
   })
 
@@ -107,8 +86,7 @@ describe("config", () => {
     }
     expect(message).toContain("wrangler.jsonc")
     expect(message).toContain('"default":{"provider":"openai","model_id":"gpt-5.2"}')
-    expect(message).toContain('"protocol":"<protocol>"')
-    expect(message).toContain('"env":["<api-key-env>"]')
+    expect(message).toContain("models.lock.json")
     expect(message).not.toContain(env.MODEL_API_KEY)
   })
 

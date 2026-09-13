@@ -1,7 +1,11 @@
+import { MODEL_LOCK_FILE, modelLockOf, lockedProvidersOf, type ModelLockData } from "@clavia/tardigrade-model/lock"
+import { migrateModelLock } from "@clavia/tardigrade-model/migration"
+import { modelConfigOf } from "@clavia/tardigrade-model/config"
+import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 import { Data, Effect, Result } from "effect"
 import { FileSystem } from "effect/FileSystem"
 import type { PlatformError } from "effect/PlatformError"
-import { isAbsolute, join } from "node:path"
+import { dirname, isAbsolute, join } from "node:path"
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
 import {
@@ -21,6 +25,7 @@ export type { Env }
 
 export interface ProjectConfig extends RuntimeProjectConfig {
   readonly modelRegistry?: string
+  readonly modelLock?: ModelLockData
 }
 
 // modelRegistryUrlOf validates registry sources used by CLI commands (config.test.ts).
@@ -76,7 +81,9 @@ export const parseProjectConfig = (raw: string, path = "wrangler.jsonc"): Projec
     })
   }
   try {
-    const project = projectConfigOf(value)
+    const document = value as { vars?: { TARDIGRADE_CONFIG?: { models?: { providers?: unknown } } } }
+    const models = document?.vars?.TARDIGRADE_CONFIG?.models
+    const project = models?.providers === undefined ? projectConfigOf(value) : { models: modelConfigOf(models) }
     const registry = (value as { vars?: { TARDIGRADE_CONFIG?: { modelRegistry?: unknown } } }).vars?.TARDIGRADE_CONFIG?.modelRegistry
     return { ...project, ...(registry === undefined ? {} : { modelRegistry: modelRegistryUrlOf(registry) }) }
   } catch (cause) {
@@ -95,24 +102,34 @@ export const readProjectConfig = (
   Effect.gen(function*() {
     const path = projectConfigPathIn(root, env)
     const read = yield* Effect.result((yield* FileSystem).readFileString(path))
-    if (Result.isFailure(read)) {
-      const stated = env["TARDIGRADE_CONFIG_PATH"]?.trim()
-      if (read.failure.reason._tag === "NotFound" && (stated === undefined || stated.length === 0)) {
-        return projectConfigOf({})
-      }
-      return yield* read.failure
-    }
-    return yield* Effect.try({
-      try: () => parseProjectConfig(read.success, path),
+    const missingDefault = Result.isFailure(read) && read.failure.reason._tag === "NotFound" && text(env["TARDIGRADE_CONFIG_PATH"]) === undefined
+    if (Result.isFailure(read) && !missingDefault) return yield* read.failure
+    const project = yield* Effect.try({
+      try: () => parseProjectConfig(Result.isSuccess(read) ? read.success : "{}", path),
       catch: (cause) => cause instanceof ProjectFileError
         ? cause
         : new ProjectFileError({ message: String(cause), cause })
+    })
+    const foundLock = yield* Effect.result((yield* FileSystem).readFileString(join(dirname(path), MODEL_LOCK_FILE)))
+    if (Result.isFailure(foundLock)) {
+      if (foundLock.failure.reason._tag === "NotFound") return project
+      return yield* foundLock.failure
+    }
+    return yield* Effect.try({
+      try: () => {
+        const raw = JSON.parse(foundLock.success)
+        const modelLock = raw.schema === 1
+          ? migrateModelLock(raw, project.models, resolve(undefined, env["TARDIGRADE_MODEL_CATALOG_URL"], project.modelRegistry) ?? DEFAULT_MODEL_CATALOG_URL)
+          : modelLockOf(raw)
+        return { ...project, modelLock, models: { ...project.models, providers: lockedProvidersOf(modelLock) } }
+      },
+      catch: (cause) => new ProjectFileError({ message: String(cause), cause })
     })
   })
 
 
 // FileConfig is the user-level file's whole shape. It holds remote client settings that apply
-// across projects. Model connections belong to each project's JSONC file (setup.ts).
+// across projects. Model connections belong to models.lock.json (model-lock.ts).
 export interface FileConfig {
   readonly url?: string
   readonly token?: string

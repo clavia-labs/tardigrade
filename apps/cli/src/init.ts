@@ -8,7 +8,7 @@ import { actorTemplate, DEFAULT_INIT_TEMPLATE, type InitTemplate } from "./templ
 import type { SetupAnswers, SetupFiles } from "./setup"
 import { dependencyVersionIn, versionIn } from "./version"
 import { callCommand, RLM_ONBOARDING_BRIEF, shellWord } from "./workflow"
-import { emptyModelLock, MODEL_LOCK_FILE, type ModelLock } from "./model-lock"
+import { emptyModelLock, MODEL_LOCK_FILE, type ModelLockData } from "./model-lock"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
 export const DEFAULT_INIT_ACTOR_NAME = "my-agent"
@@ -25,7 +25,7 @@ export interface InitActorOptions {
   readonly packageVersion?: string
   readonly modelProtocol?: ModelProtocol
   readonly modelProvider?: string
-  readonly modelLock?: ModelLock
+  readonly modelLock?: ModelLockData
   readonly template?: InitTemplate
 }
 

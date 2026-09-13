@@ -187,9 +187,12 @@ test.each([
     expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("defineWorkerHost")
     await run("lint", "actor.ts", "--json")
     expect(JSON.parse(await run("build", join(cwd, "actor.ts"), "--out", join(cwd, "artifact"), "--json"))).toMatchObject({ manifest: { name: "tardie-agent" } })
-    expect(JSON.parse(await run("models", "lock", "--json"))).toMatchObject({ schema: 1 })
+    expect(JSON.parse(await run("models", "lock", "--json"))).toMatchObject({ schema: 2 })
     const lock = JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8"))
-    expect(lock.catalog.source).toBe(source === "registry" ? "models.dev" : source === "mixed" ? "mixed" : "custom")
+    expect(lock.models.some((entry: { source?: string }) => entry.source !== undefined)).toBe(source === "registry" || source === "mixed")
+    const configuration = JSON.parse(await readFile(join(cwd, "wrangler.jsonc"), "utf8"))
+    expect(configuration.vars.TARDIGRADE_CONFIG.models.providers).toBeUndefined()
+    expect(lock.providers.fixture.baseUrl).toBe(`${model.url}v1`)
     if (runtime === "cloudflare") {
       expect(JSON.parse(await readFile(join(cwd, "wrangler.jsonc"), "utf8")).d1_databases).toBeUndefined()
     }

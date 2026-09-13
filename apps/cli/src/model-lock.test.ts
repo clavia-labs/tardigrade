@@ -1,5 +1,4 @@
-import { modelCatalogForConfig, modelConfigDigest } from "@clavia/tardigrade-model/lock"
-import { modelCatalogOf } from "@clavia/tardigrade-model/registry"
+import { modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
 import { Effect } from "effect"
 import { resolveModelLock as resolveLock } from "@clavia/tardigrade-model/resolution"
 import { layerCliModelRegistry } from "./model-registry"
@@ -63,29 +62,21 @@ describe("model lock", () => {
       fetch: (async () => Response.json(source, { headers: { etag: "catalog-7" } })) as unknown as typeof fetch
     })
 
-    expect(lock).toMatchObject({
-      schema: 1,
-      catalog: {
-        revision: "catalog-7",
-        providers: [{ id: "openai", models: [{ id: "gpt" }] }]
-      }
-    })
-    expect(lock.catalog.providers[0]?.models).toHaveLength(1)
-    expect(lock.configDigest).toBe(await modelConfigDigest(config))
+    expect(lock.providers.openai?.baseUrl).toBe(config.providers.openai?.baseUrl)
+    expect(lock.models.map((model) => model.model_id)).toEqual(["gpt", "hidden"])
+    expect((await modelCatalogForConfig(config, lock)).providers[0]?.models).toHaveLength(1)
   })
 
   test("persists the lock and detects changed configuration", async () => {
     root = await mkdtemp(join(process.cwd(), ".tdg-model-lock-test-"))
-    const lock = {
-      schema: 1 as const,
-      configDigest: await modelConfigDigest(config),
-      catalog: modelCatalogOf(source, "catalog-7", 1)
-    }
+    const lock = { schema: 2 as const, providers: { openai: {
+      protocol: "openai-responses" as const, baseUrl: "https://api.openai.com/v1", env: ["OPENAI_API_KEY"]
+    } }, models: [{ provider: "openai", model_id: "gpt", contextWindowTokens: 128000 }] }
     await writeModelLock(root, lock)
 
     expect(await readModelLock(root)).toEqual(lock)
-    expect(await modelCatalogForConfig(config, lock)).toEqual(lock.catalog)
-    await expect(modelCatalogForConfig({ ...config, allow: "*" }, lock)).rejects.toThrow("does not match")
+    expect((await modelCatalogForConfig(config, lock)).providers[0]?.models[0]?.id).toBe("gpt")
+    await expect(modelCatalogForConfig({ allow: "*", default: { provider: "openai", model_id: "missing" } }, lock)).rejects.toThrow("absent")
   })
 })
 
@@ -112,9 +103,7 @@ const offlineOptions = () => ({
 test("custom models resolve and regenerate without registry access", async () => {
   root = await mkdtemp(join(process.cwd(), ".tdg-model-lock-test-"))
   const lock = await resolveModelLock(localConfig, offlineOptions())
-  expect(lock.catalog).toMatchObject({ source: "custom", providers: [{
-    id: "localhost", models: [{ id: "qwen-local", metadata: { contextWindowTokens: 32768, maxOutputTokens: 4096, toolCall: true } }]
-  }] })
+  expect(lock.models).toEqual([{ provider: "localhost", model_id: "qwen-local", contextWindowTokens: 32768, maxOutputTokens: 4096, toolCall: true }])
   expect(await resolveModelLock(localConfig, offlineOptions())).toEqual(lock)
   await writeModelLock(root, lock)
   expect(await readModelLock(root)).toEqual(lock)
@@ -126,8 +115,7 @@ test("custom metadata overrides registry fields before policy filters the lock",
     ...config.providers.openai!, protocol: "openai-responses", models: { gpt: { metadata: { maxOutputTokens: 2048, toolCall: false } } }
   } } }
   const lock = await resolveModelLock(overrides, { ...offlineOptions(), fetch: (async () => Response.json(source)) as unknown as typeof fetch })
-  expect(lock.catalog.source).toBe("mixed")
-  expect(lock.catalog.providers[0]?.models).toEqual([{ id: "gpt", metadata: { contextWindowTokens: 128000, maxOutputTokens: 2048, toolCall: false } }])
+  expect(lock.models.find((model) => model.model_id === "gpt")).toMatchObject({ contextWindowTokens: 128000, maxOutputTokens: 2048, toolCall: false })
 })
 
 test("invalid custom metadata fails before a registry request", async () => {
@@ -160,7 +148,6 @@ test("explicit model references still resolve from the registry beside custom en
   const options = { ...offlineOptions(), fetch: (async () => Response.json(source)) as unknown as typeof fetch }
   for (const selected of ["gpt", "custom"]) {
     const lock = await resolveModelLock({ ...mixed, default: { provider: "openai", model_id: selected } }, options)
-    expect(lock.catalog.source).toBe("mixed")
-    expect(lock.catalog.providers[0]?.models.map((model) => model.id).sort()).toEqual(["custom", "gpt", "hidden"])
+      expect(lock.models.map((model) => model.model_id).sort()).toEqual(["custom", "gpt", "hidden"])
   }
 })

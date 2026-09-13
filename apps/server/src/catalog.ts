@@ -1,31 +1,27 @@
-import { readFile } from "node:fs/promises"
-import { Data, Effect, Layer } from "effect"
-import { modelLockOf, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
-import { ServerConfig } from "./config"
-import { ModelCatalogStore, type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
-import type { ModelConfig } from "@clavia/tardigrade-model/config"
+import { Effect, Layer } from "effect"
+import { FileSystem } from "effect/FileSystem"
+import { emptyModelLock, layerFileModelLock, layerModelLock, lockedModelState, ModelLock, ModelLockError, modelLockErrorOf } from "@clavia/tardigrade-model/lock"
+import { ServerConfig, modelCredentialsFrom, type Env, type ServerConfigValue } from "./config"
+import { ModelCatalogStore } from "@clavia/tardigrade-model/catalog"
 export * from "@clavia/tardigrade-model/catalog"
 
-// readLockedCatalog loads runtime metadata without registry access (model-services.test.ts).
-export const readLockedCatalog = async (config: ModelConfig, path: string): Promise<ModelCatalogState> => {
-  let raw: string
-  try {
-    raw = await readFile(path, "utf8")
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      if (Object.keys(config.providers).length === 0 && config.default === undefined) return {}
-      throw new Error(`${path} is missing; run \`tdg models lock\``)
-    }
-    throw error
-  }
-  return { snapshot: await modelCatalogForConfig(config, modelLockOf(JSON.parse(raw))) }
-}
+// layerRuntimeModelLock permits an empty lock only for an unconfigured project (model-services.test.ts).
+export const layerRuntimeModelLock = (config: ServerConfigValue): Layer.Layer<ModelLock, ModelLockError, FileSystem> =>
+  Layer.unwrap(Effect.gen(function*() {
+    const exists = yield* (yield* FileSystem).exists(config.modelLockPath).pipe(Effect.mapError(modelLockErrorOf))
+    if (!exists && config.model.default === undefined && Object.keys(config.model.providers).length === 0 && (config.model.allow === "*" || config.model.allow.length === 0)) return layerModelLock(emptyModelLock())
+    return layerFileModelLock(config.modelLockPath)
+  }))
 
-export class ModelLockError extends Data.TaggedError("ModelLockError")<{ readonly message: string; readonly cause: unknown }> {}
-
-// layerModelCatalog supplies the locked runtime snapshot (model-services.test.ts).
-export const layerModelCatalog = (options: { readonly lockFile?: string } = {}): Layer.Layer<ModelCatalogStore, ModelLockError, ServerConfig> =>
-  Layer.effect(ModelCatalogStore, Effect.flatMap(ServerConfig, (config) => Effect.tryPromise({
-    try: () => readLockedCatalog(config.model, options.lockFile ?? config.modelLockPath),
-    catch: (cause) => new ModelLockError({ message: cause instanceof Error ? cause.message : String(cause), cause })
+// layerLockedServerConfig derives connections and credentials from the supplied lock (model-services.test.ts).
+export const layerLockedServerConfig = (config: ServerConfigValue, env: Env = config.modelCredentials): Layer.Layer<ServerConfig, ModelLockError, ModelLock> =>
+  Layer.effect(ServerConfig)(Effect.map(lockedModelState(config.model), ({ model }) => ({
+    ...config, model, modelCredentials: modelCredentialsFrom(model, env)
   })))
+
+// layerModelCatalog derives discovery from the runtime lock service (model-services.test.ts).
+export const layerModelCatalog: Layer.Layer<ModelCatalogStore, ModelLockError, ModelLock | ServerConfig> =
+  Layer.effect(ModelCatalogStore)(Effect.gen(function*() {
+    const config = yield* ServerConfig
+    return (yield* lockedModelState(config.model)).catalog
+  }))

@@ -156,12 +156,14 @@ export class ModelRegistryError extends Data.TaggedError("ModelRegistryError")<{
 }> {}
 
 export interface ModelRegistryRequest {
+  readonly source?: string
   readonly policy: ModelRegistryLoadPolicy
   readonly scope?: ModelCatalogScope
 }
 
 // ModelRegistry supplies definitions for discovery and lock resolution (resolution.test.ts).
 export class ModelRegistry extends Context.Service<ModelRegistry, {
+  readonly source?: string
   readonly load: (request: ModelRegistryRequest) => Effect.Effect<ModelCatalog, ModelRegistryError>
 }>()("tardigrade/model/ModelRegistry") {}
 
@@ -171,7 +173,8 @@ export const layerHttpModelRegistry = (
 ): Layer.Layer<ModelRegistry, never, ModelCatalogRepository> => Layer.effect(ModelRegistry)(Effect.gen(function*() {
   const repository = yield* ModelCatalogRepository
   return {
-    load: (request) => loadModelRegistry({ ...options, ...request }).pipe(
+    source: options.sourceUrl,
+    load: (request) => loadModelRegistry({ ...options, ...request, sourceUrl: request.source ?? options.sourceUrl }).pipe(
       Effect.provideService(ModelCatalogRepository, repository),
       Effect.flatMap((state) => state.snapshot === undefined
         ? Effect.fail(new ModelRegistryError({ message: state.refreshError ?? state.cacheError ?? "model registry is unavailable" }))

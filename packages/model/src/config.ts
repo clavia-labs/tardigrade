@@ -26,7 +26,7 @@ const canonical = (value: unknown): unknown => {
   return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, canonical(entry)]))
 }
 
-// canonicalModelConfig serializes model configuration deterministically for deployment lock verification.
+// canonicalModelConfig serializes model configuration with sorted object keys (packages/agent/src/inference/integration/providers/options.test.ts).
 export const canonicalModelConfig = (config: ModelConfig): string => JSON.stringify(canonical(config))
 
 export type ModelCredentials = Readonly<Record<string, string>>
@@ -70,13 +70,9 @@ export const modelSettingsOf = (protocol: ModelProtocol, value: unknown): Record
   return models
 }
 
-// modelConfigOf validates provider connections used by a directly hosted server.
-export const modelConfigOf = (value: unknown): ModelConfig => {
-  const source = recordOf(value)
-  if (source === undefined) throw new Error("provider connection configuration must be a JSON object")
-  const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "allow" && name !== "providers")
-  if (unknownModelFields.length > 0) throw new Error(`models contains unknown fields: ${unknownModelFields.join(", ")}`)
-  const providersSource = recordOf(source["providers"]) ?? {}
+// modelProvidersOf validates connection records and protocol options (config.test.ts).
+export const modelProvidersOf = (value: unknown): ModelConfig["providers"] => {
+  const providersSource = recordOf(value) ?? {}
   const providers: Record<string, ModelProviderConfig<Schema.JsonObject>> = {}
   for (const [name, rawProvider] of Object.entries(providersSource)) {
     if (name.trim().length === 0) throw new Error("a model provider name cannot be empty")
@@ -113,6 +109,16 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
       ...(region === undefined ? {} : { region })
     } as ModelProviderConfig<Schema.JsonObject>
   }
+  return providers
+}
+
+// modelConfigOf validates provider connections used by a directly hosted server.
+export const modelConfigOf = (value: unknown): ModelConfig => {
+  const source = recordOf(value)
+  if (source === undefined) throw new Error("provider connection configuration must be a JSON object")
+  const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "allow" && name !== "providers")
+  if (unknownModelFields.length > 0) throw new Error(`models contains unknown fields: ${unknownModelFields.join(", ")}`)
+  const providers = modelProvidersOf(source["providers"])
   const selectedValue = source["default"]
   const selected = modelRefOf(selectedValue)
   if (selectedValue !== undefined && selected === undefined) throw new Error("models.default must be { provider, model_id }")

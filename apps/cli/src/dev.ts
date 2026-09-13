@@ -1,10 +1,11 @@
+import { BunFileSystem } from "@effect/platform-bun"
 import { Console, Context, Duration, Effect, Layer } from "effect"
 import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 import type { Actor } from "tardie"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
-import { layerModelCatalog, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
+import { layerModelCatalog, layerRuntimeModelLock, layerLockedServerConfig, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
 import {
   layerActorThreads,
   layerThreads,
@@ -172,8 +173,11 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
     throw new Error(`shutdown must be a non-negative integer, got ${shutdownMillis}`)
   }
   const root = resolveAssets(options.assets)
-  const config = layerConfig(options.config)
-  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), config)
+  const lock = layerRuntimeModelLock(options.config).pipe(Layer.provide(BunFileSystem.layer))
+  const config = options.catalog === undefined
+    ? layerLockedServerConfig(options.config).pipe(Layer.provide(lock))
+    : layerConfig(options.config)
+  const catalog = options.catalog ?? Layer.provide(layerModelCatalog, [config, lock])
   const inference = makeInferenceStream(options.threads?.inferenceObserver)
   const threadOptions = { ...options.threads, inferenceObserver: inference.observer }
   const threads = Layer.provide(

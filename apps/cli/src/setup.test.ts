@@ -1,3 +1,4 @@
+import { modelProvidersOf } from "@clavia/tardigrade-model/config"
 import { ModelRegistry } from "@clavia/tardigrade-model/registry"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
@@ -16,6 +17,7 @@ import {
   modelRegistryAt,
   PRESETS,
   providerAnswersFrom,
+  providerConfigWithAnswers,
   readSetupEnv,
   runtimeEnvironmentOf,
   SECRETS_MODE,
@@ -226,13 +228,7 @@ describe("writeSetup", () => {
     expect(project.models).toEqual({
       default: { provider: "openai", model_id: "a-model" },
       allow: "*",
-      providers: {
-        openai: {
-          baseUrl: "https://api.example.com/v1",
-          protocol: "openai-responses",
-          env: ["OPENAI_API_KEY"]
-        }
-      }
+      providers: {}
     })
     const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
     expect(held.OPENAI_API_KEY).toBe(KEY)
@@ -271,18 +267,11 @@ describe("writeSetup", () => {
       models: {
         default: { provider: "openai", model_id: "a-model" },
         allow: "*",
-        providers: {
-          openai: {
-            baseUrl: "https://api.example.com/v1",
-            protocol: "openai-responses",
-            env: ["OPENAI_API_KEY"]
-          }
-        }
       }
     })
   })
 
-  test("a later setup keeps prior providers and changes the default", async () => {
+  test("a later setup keeps credentials and changes the default", async () => {
     await write()
     const first = await readFile(projectConfigPathIn(root), "utf8")
     await writeFile(
@@ -299,16 +288,13 @@ describe("writeSetup", () => {
     })
     const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
     const model = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8")).models
-    expect(Object.keys(model.providers).sort()).toEqual(["openai", "openrouter"])
+    expect(Object.keys(model.providers)).toEqual([])
     expect(model.default).toEqual({ provider: "openrouter", model_id: "another-model" })
-    expect(model.providers.openai?.baseUrl).toBe("https://api.example.com/v1")
-    expect(model.providers.openrouter?.baseUrl).toBe("https://secondary.example.com/v1")
-    expect(await readFile(projectConfigPathIn(root), "utf8")).toContain("// Keep this provider note.")
     expect(held.OPENAI_API_KEY).toBe(KEY)
     expect(held.OPENROUTER_API_KEY).toBe("secondary-key")
   })
 
-  test("later provider and default writes preserve runnable configuration", async () => {
+  test("provider writes keep policy and default writes change it", async () => {
     await write()
     const anthropic: ProviderAnswers = {
       provider: "anthropic",
@@ -320,7 +306,7 @@ describe("writeSetup", () => {
     await Effect.runPromise(Effect.orDie(Effect.provide(writeProviderSetup(root, [anthropic]), BunFileSystem.layer)))
     let project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
     expect(project.models.default).toEqual({ provider: "openai", model_id: "a-model" })
-    expect(Object.keys(project.models.providers).sort()).toEqual(["anthropic", "openai"])
+    expect(Object.keys(project.models.providers)).toEqual([])
 
     await Effect.runPromise(Effect.orDie(Effect.provide(writeDefaultSetup(root, {
       provider: "anthropic",
@@ -344,7 +330,7 @@ describe("writeSetup", () => {
     }), BunFileSystem.layer)))
     const project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
     const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
-    expect(Object.keys(project.models.providers).sort()).toEqual(["openai", "openrouter"])
+    expect(Object.keys(project.models.providers)).toEqual([])
     expect(project.models.default).toEqual({ provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" })
     expect(held).toMatchObject({ OPENAI_API_KEY: KEY, OPENROUTER_API_KEY: "router-key" })
   })
@@ -411,7 +397,9 @@ test("declarative model definitions survive provider updates", async () => {
   }) })!
   await Effect.runPromise(Effect.provide(writeProviderSetup(root, [update]), BunFileSystem.layer))
   const project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
-  expect(project.models.providers.local).toMatchObject({
+  expect(project.models.providers).toEqual({})
+  const merged = providerConfigWithAnswers(modelProvidersOf({ local: providerConfigWithAnswers(undefined, first) }).local, update)
+  expect(merged).toMatchObject({
     baseUrl: "http://localhost:9090/v1",
     models: {
       qwen: { metadata: { contextWindowTokens: 32768, toolCall: true }, options: { temperature: 0.25 } },

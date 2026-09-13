@@ -22,13 +22,6 @@
     "TARDIGRADE_CONFIG": {
       "models": {
         "allow": [{ "provider": "openrouter", "model_ids": ["openai/gpt-5.6-sol"] }],
-        "providers": {
-          "openrouter": {
-            "baseUrl": "https://openrouter.ai/api/v1",
-            "protocol": "openai-chat-completions",
-            "env": ["OPENROUTER_API_KEY"]
-          }
-        },
         "default": {
           "provider": "openrouter",
           "model_id": "openai/gpt-5.6-sol"

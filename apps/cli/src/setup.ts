@@ -682,7 +682,6 @@ export const providerConfigWithAnswers = (
 const updatedProject = (
   raw: string,
   selected: NonNullable<ModelConfig["default"]> | undefined,
-  providers: ReadonlyArray<ProviderAnswers>,
   modelRegistry?: string
 ): string => {
   const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" }
@@ -692,9 +691,8 @@ const updatedProject = (
   if (config?.models?.allow === undefined) {
     next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "allow"], "*", { formattingOptions }))
   }
-  for (const provider of providers) {
-    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers", provider.provider],
-      providerConfigWithAnswers(config?.models?.providers?.[provider.provider], provider), { formattingOptions }))
+  if (config?.models?.providers !== undefined) {
+    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers"], undefined, { formattingOptions }))
   }
   if (selected !== undefined) {
     next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "default"], selected, { formattingOptions }))
@@ -729,7 +727,7 @@ const writeSetupChanges = (
       })
     })
     const secretsPath = envPathIn(root)
-    const updatedConfig = updatedProject(configRaw, selected, providers, env["TARDIGRADE_MODEL_CATALOG_URL"]?.trim() || undefined)
+    const updatedConfig = updatedProject(configRaw, selected, env["TARDIGRADE_MODEL_CATALOG_URL"]?.trim() || undefined)
     yield* Effect.try({
       try: () => parseProjectConfig(updatedConfig, configPath),
       catch: (cause) => new SetupConfigError({

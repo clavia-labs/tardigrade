@@ -80,7 +80,9 @@ Declared request failures are `application/problem+json`.
 | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc`. Project and platform configuration for a directly hosted server |
 | Provider credentials | Set each variable named by a provider's `env` list. Use deployment secrets on a hosted server |
 
-The server boots without a provider connection and serves every read; turns fail naming what is missing. A `models` block with provider connections requires `allow` and `default`. The default must name a configured provider and belong to the allowed set. `allow` accepts `"*"` or provider selectors. Actors inherit this complete policy and may narrow its coordinates or select another allowed default. Interactive `tdg setup` writes provider configuration under `vars.TARDIGRADE_CONFIG` in the generated platform manifests and local credentials to `.dev.vars`. Its declarative form accepts `--provider`, `--provider-config`, and `--default-model` together. The CLI writes the first provider and default atomically. Once the host has a valid baseline, the `provider` and `default` subcommands update either concern while preserving runnable configuration.
+The server can start without models and serve read requests. Inference requires a locked model and its credentials. Project configuration contains the default and allow policy. The default must exist in the lock and belong to the allowed set. Actors inherit this policy and can narrow it.
+
+Interactive `tdg setup` writes connections and model definitions to `models.lock.json`, policy to platform manifests, and local credentials to `.dev.vars`.
 
 ```jsonc
 {
@@ -88,14 +90,7 @@ The server boots without a provider connection and serves every read; turns fail
     "TARDIGRADE_CONFIG": {
       "models": {
         "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4.6" },
-        "allow": "*",
-        "providers": {
-          "openrouter": {
-            "baseUrl": "https://openrouter.ai/api/v1",
-            "protocol": "openai-chat-completions",
-            "env": ["OPENROUTER_API_KEY"]
-          }
-        }
+        "allow": "*"
       }
     }
   }
@@ -106,19 +101,20 @@ The server boots without a provider connection and serves every read; turns fail
 OPENROUTER_API_KEY='your-deployment-secret'
 ```
 
-The generated `bun run dev` script reads local credentials from `.dev.vars`. A hosted process reads the same credential names from its platform secret store. The manifest contains names such as `OPENROUTER_API_KEY`, never their values.
+The generated `bun run dev` script reads local credentials from `.dev.vars`. A hosted process reads the same credential names from its platform secret store. The lock contains credential names such as `OPENROUTER_API_KEY`, never their values.
 
-The Effect inference binding accepts request settings at `providers.<provider>.models.<model_id>.options`:
+Each lock model accepts native request options:
 
 ```jsonc
-"models": {
-  "gpt-5": {
-    "options": { "reasoning": { "effort": "high" } }
-  }
+{
+  "provider": "openai",
+  "model_id": "gpt-5",
+  "contextWindowTokens": 400000,
+  "options": { "reasoning": { "effort": "high" } }
 }
 ```
 
-Place `models` beside the provider's `baseUrl`, `protocol`, and `env`. These entries configure requests; `default` and `allow` still control selection and access. Missing options preserve provider defaults. The host's `configure` callback overrides configured options by top-level field.
+Missing options preserve provider defaults. The host's `configure` callback overrides these options by top-level field.
 
 | Protocol | Options |
 | --- | --- |
@@ -129,9 +125,9 @@ Place `models` beside the provider's `baseUrl`, `protocol`, and `env`. These ent
 
 OpenAI Responses also accepts native reasoning summary settings. Anthropic accepts adaptive, disabled, or enabled thinking; enabled thinking requires at least 1024 budget tokens. The installed Effect version accepts Anthropic effort values `low`, `medium`, `high`, or `null`. Providers validate support for the selected model. Bedrock's additional fields are provider-specific JSON and follow the selected model's request contract.
 
-Built-in Bun and Worker model services apply these settings through Effect `modelLayer`. Regenerate the model lock after changing provider configuration.
+Built-in Bun and Worker model services consume the Effect `ModelLock` service through `modelLayerFromLock`.
 
-The server reads `models.lock.json` beside the project configuration at startup. `bunModelServices` accepts a `lockFile` override. The lock supplies metadata for inference and model discovery without registry access. A configured server refuses a missing, invalid, or stale lock. A server without configured models can start without a lock. Provider credentials never appear in catalog responses.
+The server reads `models.lock.json` beside project configuration at startup. `bunModelServices` accepts a `lockFile` path or a `lock` layer supplied by `layerModelLock(value)`. The in-memory layer requires no filesystem loader. The lock supplies connections and metadata for inference and discovery without registry access. A configured server rejects missing or invalid definitions. Provider credentials never appear in catalog responses. See the [lock schema and registry APIs](/references/cli#runtime-model-lock).
 
 Catalog responses use cursor pagination. They include `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and optional `next_cursor`. The default limit is `50` and callers can state another positive integer. Search is a case-insensitive substring over IDs and names. `GET /v1/models` also accepts an exact provider filter. Pass `next_cursor` with the same filters to continue. A cursor records the catalog revision and query, so a changed revision or filter returns 400 and the caller starts again without a cursor.
 

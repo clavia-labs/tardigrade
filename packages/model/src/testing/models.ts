@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto"
-import { canonicalModelConfig, type ModelConfig } from "../config"
+import { type ModelConfig } from "../config"
 import type { ModelCatalog } from "../catalog/schema"
 
 export const httpRegistrySource = { local: { id: "local", models: { test: { id: "test", limit: { context: 32000 } } } } }
@@ -24,9 +23,7 @@ export const runtimeModelConfig: ModelConfig = {
   providers: { local: { baseUrl: "http://localhost:8080/v1", protocol: "openai-chat-completions", env: ["API_KEY"] } }
 }
 export const runtimeModelLock = {
-  schema: 1 as const,
-  configDigest: `sha256:${createHash("sha256").update(canonicalModelConfig(runtimeModelConfig)).digest("hex")}`,
-  catalog: { source: "custom" as const, revision: "local", refreshedAt: 0, status: "cached" as const, providers: [{
-    id: "local", name: "local", env: ["API_KEY"], models: [{ id: "qwen", metadata: { contextWindowTokens: 32768 } }]
-  }] }
+  schema: 2 as const,
+  providers: { local: { protocol: "openai-chat-completions" as const, baseUrl: "http://localhost:8080/v1", env: ["API_KEY"] } },
+  models: [{ provider: "local", model_id: "qwen", contextWindowTokens: 32768, toolCall: true }]
 }

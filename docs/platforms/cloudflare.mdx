@@ -62,7 +62,7 @@ tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickst
 
 `tdg init` creates `wrangler.jsonc` and the Worker entry for your actor. Run `tdg setup` to select a model and write its visible configuration to the project.
 
-The Worker uses the bundled `models.lock.json` for inference metadata and model discovery. The lock must match the provider configuration. Runtime model resolution requires no registry connection or catalog database.
+The Worker uses the bundled `models.lock.json` for inference metadata and model discovery. The lock supplies provider connections and model definitions. Project configuration supplies default and allow policy. Runtime model resolution requires no registry connection or catalog database.
 
 Store the Tardigrade token and each model provider credential as Wrangler secrets:
 
