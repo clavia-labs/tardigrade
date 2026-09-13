@@ -26,7 +26,7 @@ export class SandboxBridge extends DurableObject<Env> {
 
   private callbackIngress = 0
 
-  // modeledDistinctExecutionBudget applies the fixture model derived from test/evidence.json.
+  // modeledDistinctExecutionBudget bounds distinct callback reentries for sandbox.workers.ts.
   private modeledDistinctExecutionBudget: { readonly max: number; remaining: number } | undefined
 
   private readonly modeledExecutions = new Set<string>()

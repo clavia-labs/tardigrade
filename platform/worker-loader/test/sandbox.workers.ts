@@ -115,6 +115,15 @@ describe("worker loader sandbox", () => {
     })
   })
 
+  /*
+   * The fixture model captures the observed remote limit absent from local workerd.
+   * At 3367407, local workerd completed 20 executions and 60 namespace callbacks;
+   * Cloudflare rejected execution 15 after 42 callbacks with a subrequest depth error.
+   * The budget of 14 models this fixture, not Cloudflare's complete hop accounting.
+   * With direct callbacks, both runtimes completed 20 executions and 60 package calls
+   * with zero namespace callbacks; the remote run had this model disabled.
+   * https://developers.cloudflare.com/workers/observability/errors/#loop-limit
+   */
   test("isolated callback transport avoids durable object reentry under the fixture model", async () => {
     const result: IsolatedCallbackTransportResult = await (env as Env).BRIDGE
       .getByName("sandbox-modeled-depth-test")
