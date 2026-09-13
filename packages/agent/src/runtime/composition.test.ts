@@ -701,10 +701,6 @@ const checkModelCapacity = async ({ capacity, previousCapacity, summaryCapacity,
   expect(events.filter(event => event.type === "TurnCompleted")).toHaveLength(2)
 }
 
-test.each(["explicit", "default"])("active model capacity compacts before inference with the %s summarizer", async mode => {
-  await checkModelCapacity({ capacity: 100, previousCapacity: 1_000_000, summaryCapacity: 1_000_000, historySize: 1000, fireRatio: 0.8, keepRatio: 0.5, mode, compact: true })
-})
-
 test("model switches preserve history and checkpoint against conversation capacity independently of the summarizer", async () => {
   await fc.assert(fc.asyncProperty(fc.record({
     capacity: fc.integer({ min: 300, max: 1200 }),
@@ -720,7 +716,15 @@ test("model switches preserve history and checkpoint against conversation capaci
       historySize: compact ? capacity * 4 + 400 : 16,
       fireRatio: firePercent / 100, keepRatio: keepPercent / 100, mode, compact
     })
-  }), { numRuns: 50 })
+  }), {
+    numRuns: 50,
+    examples: [
+      [{ capacity: 100, previousMultiplier: 10_000, summaryCapacity: 1_000_000, firePercent: 80, keepPercent: 50, mode: "explicit", compact: true }],
+      [{ capacity: 100, previousMultiplier: 10_000, summaryCapacity: 1_000_000, firePercent: 80, keepPercent: 50, mode: "default", compact: true }],
+      [{ capacity: 300, previousMultiplier: 3, summaryCapacity: 64, firePercent: 60, keepPercent: 20, mode: "explicit", compact: false }],
+      [{ capacity: 300, previousMultiplier: 3, summaryCapacity: 64, firePercent: 60, keepPercent: 20, mode: "default", compact: false }]
+    ]
+  })
 })
 
 test.each([undefined, 0, -1, NaN, Infinity])("compaction rejects missing or invalid model capacity (%s) before inference", async window => {

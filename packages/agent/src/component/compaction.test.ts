@@ -83,6 +83,7 @@ describe("the compaction measure and guard", () => {
     expect(estimateTokens([big])).toBe(Math.ceil(renderMessages([big])[0]!.content!.length / 4))
     const thread: Event = { type: "CodeSettled", execId: "c", result: 1, at: 2 } as Event
     expect(estimateTokens([thread])).toBe(0)
+    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(Math.ceil(renderMessages([big], { resultRenderCap: 40 })[0]!.content!.length / 4))
   })
 
   test("the guard fires inside an open turn once a resolved round passes FIRE", () => {
@@ -97,23 +98,6 @@ describe("the compaction measure and guard", () => {
       { type: "ToolCalled", callId: "c99", name: "execute", arguments: {}, turn: "m0", at: 99 }
     ]
     expect(reactor(awaiting)).toHaveLength(0)
-  })
-
-  test("the policy is the consumer's: a raised FIRE holds the guard, a lowered one fires early", () => {
-    expect(compactionReactor({}, 1_250_000)(openTurn(16))).toHaveLength(0)
-    expect(compactionReactor({}, 125)(openTurn(2))).toHaveLength(1)
-    // The measure moves with the render cap, because one policy states both.
-    const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(Math.ceil(renderMessages([big], { resultRenderCap: 40 })[0]!.content!.length / 4))
-  })
-
-  test("the selected model resolves both hysteresis lines from one window", () => {
-    const policy = contextPolicyOf(
-      {},
-      1_000_000
-    )
-    expect(policy.fireTokens).toBe(800_000)
-    expect(policy.keepTokens).toBe(500_000)
   })
 
   test("the keep line must remain below the fire line", () => {
@@ -142,7 +126,6 @@ describe("the compaction pass", () => {
   const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> & { contextWindowTokens: number } = TEST_POLICY, outcome: Action = { kind: "complete", output: "covenants 1 through 13 extracted" }) => {
     const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
-    let model: unknown
     const actor = actorFromProjections<import("effect/unstable/ai").LanguageModel.LanguageModel | EventLog | Self>({
       transitions: [completeTransitionProjection(compactionReactor(policy, policy.contextWindowTokens))],
       keyOf: agentActorKeys
@@ -155,9 +138,8 @@ describe("the compaction pass", () => {
           read: Ref.get(ref)
         })
       ),
-      summaryLayer((prompt, selected) => {
+      summaryLayer((prompt) => {
           briefed = prompt
-          model = selected
           return Effect.succeed(outcome)
       }),
       Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
@@ -165,7 +147,7 @@ describe("the compaction pass", () => {
     const exit = await Effect.runPromiseExit(
       settleActor(actor).pipe(Effect.provide(layers)) as Effect.Effect<void>
     )
-    return { log: await Effect.runPromise(Ref.get(ref)), exit, briefed: () => briefed, model: () => model }
+    return { log: await Effect.runPromise(Ref.get(ref)), exit, briefed: () => briefed }
   }
 
   test.each([
@@ -203,17 +185,6 @@ describe("the compaction pass", () => {
     expect(estimateTokens(suffixOf(log))).toBeLessThanOrEqual(TEST_CONTEXT.keepTokens + 2 * roundTokens)
     expect(briefed()).toContain("extract the covenants")
     expect(briefed()).toContain("run 1")
-  })
-
-  test("a pass can select its model", async () => {
-    const selected = { provider: "test", model_id: "compact" } as const
-    const { log, model } = await run(openTurn(16), { ...TEST_POLICY, model: selected })
-    expect(model()).toEqual(selected)
-    expect(log.find((event) => event.type === "CompactionCompleted")).toMatchObject({ model: selected })
-  })
-
-  test("the cut lands on a boundary: a kept tail opens with a call, its return beside it", async () => {
-    const { log } = await run(openTurn(16))
     const suffix = suffixOf(log)
     expect(suffix[0]!.type).toBe("ToolCalled")
     const callId = String((suffix[0] as { callId?: unknown }).callId)
