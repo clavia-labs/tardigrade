@@ -12,6 +12,8 @@ export interface ContextPolicy {
   readonly messageRenderCap: number
   // Chars of one tool result the render sends; past it the result truncates.
   readonly resultRenderCap: number
+  // imageTokens estimates each image's rendered context weight.
+  readonly imageTokens: number
   // Selected model context window used to derive the hysteresis lines.
   readonly contextWindowTokens: number
   // Fraction of the selected model window that fires compaction.
@@ -32,6 +34,7 @@ export type ContextWindowTokens = number | ((model: ModelRef | undefined) => num
 export interface CompactionPolicy {
   readonly messageRenderCap: number
   readonly resultRenderCap: number
+  readonly imageTokens: number
   readonly contextWindowTokens: ContextWindowTokens
   readonly fireRatio: number
   readonly keepRatio: number
@@ -43,6 +46,7 @@ export interface CompactionPolicy {
 export const DEFAULT_COMPACTION_POLICY: CompactionPolicy = {
   messageRenderCap: 12_000,
   resultRenderCap: 6_000,
+  imageTokens: 4_784,
   contextWindowTokens: 128_000,
   fireRatio: 0.8,
   keepRatio: 0.5,
@@ -83,6 +87,10 @@ export const contextPolicyOf = (
       policy.resultRenderCap ?? DEFAULT_COMPACTION_POLICY.resultRenderCap,
       "resultRenderCap"
     ),
+    imageTokens: positive(
+      policy.imageTokens ?? DEFAULT_COMPACTION_POLICY.imageTokens,
+      "imageTokens"
+    ),
     contextWindowTokens,
     fireRatio,
     keepRatio,
@@ -102,6 +110,7 @@ export const resolvedContextPolicyOf = (policy: Partial<ContextPolicy> = {}): Co
   return {
     messageRenderCap: policy.messageRenderCap ?? defaults.messageRenderCap,
     resultRenderCap: policy.resultRenderCap ?? defaults.resultRenderCap,
+    imageTokens: policy.imageTokens ?? defaults.imageTokens,
     contextWindowTokens: policy.contextWindowTokens ?? defaults.contextWindowTokens,
     fireRatio: policy.fireRatio ?? defaults.fireRatio,
     keepRatio: policy.keepRatio ?? defaults.keepRatio,

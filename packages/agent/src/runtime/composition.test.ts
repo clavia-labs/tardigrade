@@ -241,6 +241,40 @@ describe("infer component", () => {
     expect(events.at(-1)?.type).toBe("TurnCompleted")
   })
 
+  test("invalid rich content durably fails before inference", async () => {
+    const seen: InferRequest[] = []
+    const mind = testInferenceLayer({
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = assembled(infer([nativeOutput], TEST_MODEL))
+    for (const content of [
+      [{ type: "input_text", text: "work", unsupported: true }],
+      [{ type: "input_image", image_url: { url: "nested" } }]
+    ]) {
+      const events = await run(
+        Effect.gen(function* () {
+          yield* settleActor(agent)
+          return yield* readLog
+        }),
+        Layer.mergeAll(memoryLog([{
+          type: "MessageReceived",
+          id: "m1",
+          content,
+          at: 1
+        } as Event]), mind, noRouter, KeyValueStore.layerMemory)
+      )
+      expect(events.find((event) => event.type === "TurnFailed")).toMatchObject({
+        turn: "m1",
+        cause: "message_invalid",
+        attempts: 0
+      })
+    }
+    expect(seen).toEqual([])
+  })
+
   test("each turn can select a provider without losing its conversation", async () => {
     const seen: InferRequest[] = []
     const mind = testInferenceLayer( {

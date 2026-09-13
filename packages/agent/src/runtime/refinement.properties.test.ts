@@ -19,6 +19,7 @@ import {
   compaction,
   compactionReactor,
   contextPolicyOf,
+  estimateTokens,
   type CompactionPolicy
 } from "../component/compaction"
 import { nativeOutput } from "../component/native-output"
@@ -224,6 +225,46 @@ const historyArbitrary = fc.array(
 ).map(eventsFor)
 
 describe("agent projection refinement", () => {
+  test("image context admission fails only an irreducible active prompt", () => {
+    const policy = contextPolicyOf({ contextWindowTokens: 100, imageTokens: 101 }, MODEL)
+    const render = () => ({ system: "", tools: [], context: policy })
+    const pinned: Event[] = [{ type: "MessageReceived", id: "picture", content: [{ type: "input_image", image_url: "artifact:private/image" }], model: MODEL, at: 0 }]
+    const refused = inferenceFromHistory(INFER_OPTIONS, render)(pinned)
+    expect(refused).toHaveLength(1)
+    expect(refused[0]?.kind).toBe("intent")
+    expect(refused[0]?.kind === "intent" ? refused[0].events(refused[0].input, 1)[0] : undefined).toMatchObject({
+      type: "TurnFailed",
+      cause: "inference_error",
+      attempts: 0,
+      policy: { contextWindowTokens: 100, imageTokens: 101, estimatedTokens: 101 }
+    })
+    expect(inferenceFromHistory(INFER_OPTIONS, () => ({ system: "", tools: [], context: contextPolicyOf({ contextWindowTokens: 101, imageTokens: 101 }, MODEL) }))(pinned)[0]?.kind).toBe("effect")
+
+    const compactable: Event[] = [
+      { ...pinned[0]!, id: "old", content: [{ type: "input_image", image_url: "artifact:old" }] },
+      { type: "TurnCompleted", turn: "old", output: "done", at: 1 },
+      { type: "MessageReceived", id: "next", content: [{ type: "input_image", image_url: "artifact:next" }], model: MODEL, at: 2 },
+      { type: "ToolCalled", callId: "c1", name: "read", arguments: {}, turn: "next", at: 3 },
+      { type: "ToolReturned", callId: "c1", result: "ok", turn: "next", at: 4 }
+    ]
+    const compactPolicy = { contextWindowTokens: 100, imageTokens: 60 }
+    expect(compactionReactor(compactPolicy)(compactable)).toHaveLength(1)
+    expect(inferenceFromHistory(INFER_OPTIONS, (events) => renderOf([compaction(compactPolicy), nativeOutput], events))(compactable)).toEqual([])
+    const withoutCompaction = () => ({ system: "", tools: [], context: contextPolicyOf(compactPolicy, MODEL) })
+    expect(inferenceFromHistory(INFER_OPTIONS, withoutCompaction)(compactable)[0]?.kind).toBe("intent")
+
+    const summaryAndHead: Event[] = [
+      { type: "MessageReceived", id: "picture", content: [{ type: "input_image", image_url: "artifact:private/image" }], model: MODEL, at: 0 },
+      { type: "ToolCalled", callId: "c1", name: "read", arguments: {}, turn: "picture", at: 1 },
+      { type: "ToolReturned", callId: "c1", result: "ok", turn: "picture", at: 2 },
+      { type: "CompactionCompleted", keepFrom: `c:${JSON.stringify(["picture", "c1"])}`, summary: "x".repeat(200), at: 3 }
+    ]
+    const summaryPolicy = contextPolicyOf({ contextWindowTokens: 100, imageTokens: 60 }, MODEL)
+    expect(estimateTokens([summaryAndHead[0]!], summaryPolicy)).toBe(60)
+    expect(estimateTokens(summaryAndHead, summaryPolicy)).toBeGreaterThan(100)
+    expect(inferenceFromHistory(INFER_OPTIONS, () => ({ system: "", tools: [], context: summaryPolicy }))(summaryAndHead)[0]?.kind).toBe("intent")
+  })
+
   test("inference agrees with its complete-history output", () => {
     fc.assert(fc.property(historyArbitrary, (log) => {
       const render = (events: ReadonlyArray<Event>) => ({ system: `events:${events.length}`, tools: [] })
@@ -280,12 +321,13 @@ describe("agent projection refinement", () => {
       const incremental = compaction(policy) as Component<AgentView, unknown>
       const complete: CompleteComponentProjection<AgentView, unknown> = {
         derive: (prefix) => {
+          const transitions = compactionReactor(policy)(prefix)
           return {
             view: {
               ...AGENT_VIEW_ALGEBRA.empty,
-              context: [{ component: "compaction", policy: contextPolicyOf(policy, MODEL) }]
+              context: [{ component: "compaction", policy: contextPolicyOf(policy, MODEL), ...(transitions.length === 0 ? {} : { compactionPending: true }) }]
             },
-            transitions: compactionReactor(policy)(prefix)
+            transitions
           }
         }
       }

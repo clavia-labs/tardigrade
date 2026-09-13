@@ -1,6 +1,6 @@
 import { upcastError } from "../log/upcast"
 import { Schema } from "effect"
-import { MessageReceived, messageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
+import { MessageContent, MessageReceivedFields, messageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { actorMethod, durableInputProjection } from "@clavia/tardigrade-core/actor/method"
 import { type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
@@ -16,20 +16,34 @@ import { ModelRef } from "../inference/reference"
 import { ModelPolicy } from "../inference/access"
 import { turnCancelled, turnFailed } from "../log/events"
 
+type AgentMessageShape =
+  | { readonly text: string; readonly content?: never }
+  | { readonly text?: never; readonly content: ReadonlyArray<unknown> }
+
+const agentMessageShape = <A extends { readonly text?: string | undefined; readonly content?: ReadonlyArray<unknown> | undefined }>(value: A): value is A & AgentMessageShape =>
+  (value.text === undefined) !== (value.content === undefined)
+
 export const AgentMessageInput = Schema.Struct({
-  text: Schema.String,
+  text: Schema.optional(Schema.String),
+  content: Schema.optional(MessageContent),
   input: Schema.optionalKey(Schema.Unknown),
   model: Schema.optionalKey(ModelRef)
-}).annotate({ identifier: "AgentMessageInput" })
+}).pipe(
+  Schema.refine(agentMessageShape, { message: "exactly one of text or content is required" }),
+  Schema.annotate({ identifier: "AgentMessageInput" })
+)
 
 export type AgentMessageInput = typeof AgentMessageInput.Type
 
 // AgentMessageReceived is the durable input contract interpreted by the message method.
 export const AgentMessageReceived = Schema.Struct({
-  ...MessageReceived.fields,
+  ...MessageReceivedFields,
   model: Schema.optional(ModelRef),
   models: Schema.optional(ModelPolicy)
-}).annotate({ identifier: "AgentMessageReceived" })
+}).pipe(
+  Schema.refine(agentMessageShape, { message: "exactly one of text or content is required" }),
+  Schema.annotate({ identifier: "AgentMessageReceived" })
+)
 
 const turnOf = (event: Event): string => String((event as { readonly id?: unknown }).id)
 
@@ -65,6 +79,10 @@ export const agentMessageMethod = actorMethod({
         let error: string | undefined
         if (event.type === "MessageReceived") {
           try {
+            const content = (event as { readonly content?: unknown }).content
+            if (content !== undefined) {
+              Schema.decodeUnknownSync(MessageContent, { onExcessProperty: "error" })(content)
+            }
             Schema.decodeUnknownSync(AgentMessageReceived)(event)
           } catch (failure) {
             error = failure instanceof Error ? failure.message : String(failure)
@@ -86,14 +104,18 @@ export const agentMessageMethod = actorMethod({
       })
     })
   },
-  event: ({ invocation, input, at }) => messageReceived({
-    id: invocation.id,
-    text: input.text,
-    ...(invocation.epoch === 0 ? {} : { epoch: invocation.epoch }),
-    ...(input.input === undefined ? {} : { input: input.input }),
-    ...(input.model === undefined ? {} : { model: input.model }),
-    at
-  }),
+  event: ({ invocation, input, at }) => {
+    const fields = {
+      id: invocation.id,
+      ...(invocation.epoch === 0 ? {} : { epoch: invocation.epoch }),
+      ...(input.input === undefined ? {} : { input: input.input }),
+      ...(input.model === undefined ? {} : { model: input.model }),
+      at
+    }
+    return input.content === undefined
+      ? messageReceived({ ...fields, text: input.text! })
+      : messageReceived({ ...fields, content: input.content })
+  },
   projection: {
     initial: initialTurnProjection,
     step: reduceTurnProjection,

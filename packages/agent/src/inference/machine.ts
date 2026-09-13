@@ -38,6 +38,10 @@ import {
   type OutputContract
 } from "../output/contract"
 import { modelRefOf, type ModelRef } from "./reference"
+import { estimateTokens } from "../component/compaction"
+import { resolvedContextPolicyOf } from "../component/context"
+import { renderMessages } from "../projection/messages"
+import { MessageContent } from "@clavia/tardigrade-core/interaction/provider-message"
 import {
   applyModelPolicy,
   DEFAULT_MODEL_POLICY,
@@ -288,6 +292,33 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
       ...input, attemptKey: attempt, turn, ...epochStamp(epoch), at
     }), { invocation: { method: "message", id: turn, epoch } })
   ]
+  const contextPolicy = resolvedContextPolicyOf(rendered.context ?? {})
+  const trajectory = derived.trajectory()
+  const richContent = trajectory
+    .filter((event) => event.type === "MessageReceived" && event.content !== undefined)
+    .map((event) => event.content)
+  if (richContent.length > 0 && richContent.every((content) => Schema.is(MessageContent)(content))) {
+    const messages = renderMessages(trajectory, contextPolicy)
+    const hasImages = messages.some((message) =>
+      Array.isArray(message.content) && message.content.some((part) => part.type === "input_image")
+    )
+    if (hasImages) {
+      const estimatedTokens = estimateTokens(trajectory, contextPolicy, model)
+      if (estimatedTokens > contextPolicy.contextWindowTokens) {
+        if (rendered.compactionPending === true) return []
+        return terminate({
+          cause: "inference_error",
+          error: `the rendered input is estimated at ${estimatedTokens} tokens, above the ${contextPolicy.contextWindowTokens}-token context window`,
+          attempts: 0,
+          policy: {
+            contextWindowTokens: contextPolicy.contextWindowTokens,
+            imageTokens: contextPolicy.imageTokens,
+            estimatedTokens
+          }
+        })
+      }
+    }
+  }
   // A declaration that is not a contract this repository can serve ends the turn here, before a
   // socket opens. It is the same class the binding reports when an endpoint cannot promise a
   // contract, because both are the turn asking for an output nobody can produce.

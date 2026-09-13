@@ -23,6 +23,7 @@ export interface InferRequest {
   readonly system: string
   readonly tools: ReadonlyArray<import("./request").ToolSpec>
   readonly context?: Partial<ContextPolicy>
+  readonly compactionPending?: boolean
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
@@ -35,4 +36,4 @@ export class NativeOutputSupport extends Context.Service<
 >()("agent/NativeOutputSupport") {}
 
 // Render derives the model-facing surface from event history.
-export type Render = (log: ReadonlyArray<Event>) => Pick<InferRequest, "system" | "tools" | "context" | "output">
+export type Render = (log: ReadonlyArray<Event>) => Pick<InferRequest, "system" | "tools" | "context" | "compactionPending" | "output">

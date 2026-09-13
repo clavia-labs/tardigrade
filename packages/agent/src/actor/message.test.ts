@@ -19,6 +19,24 @@ const head = agentMessageMethod.event({
 })
 
 describe("agentMessageMethod", () => {
+  test("accepts ordered image content and rejects ambiguous message shapes", () => {
+    const decode = (input: unknown) => Schema.decodeUnknownSync(agentMessageMethod.input)(input)
+    const content = [
+      { type: "input_text" as const, text: "compare" },
+      { type: "input_image" as const, image_url: "artifact:ns/picture", detail: "high" as const }
+    ]
+    const event = agentMessageMethod.event({ invocation: { method: "message", id: "pictures", epoch: 0 }, input: { content }, at: 1 })
+    expect(event).toEqual({ type: "MessageReceived", id: "pictures", content, at: 1 })
+    const replayed: unknown = JSON.parse(JSON.stringify(event))
+    expect(Schema.decodeUnknownSync(AgentEvent)(replayed)).toEqual({ type: "MessageReceived", id: "pictures", content, at: 1 })
+    expect(() => decode({ text: "mixed", content })).toThrow("exactly one")
+    expect(() => decode({ content: [] })).toThrow("at least one")
+    expect(() => decode({ content: [{ type: "input_image", image_url: "x", detail: "full" }] })).toThrow()
+    expect(() => decode({ content: [{ type: "input_text", text: "x", image_url: "extra" }] })).toThrow()
+    expect(() => decode({ content: [{ type: "input_image", image_url: { url: "nested" } }] })).toThrow()
+    expect(() => decode({ content: [{ type: "input_image", image_url: "" }] })).toThrow("image_url")
+  })
+
   test("turns its typed input into the agent's durable inbound", () => {
     expect(head).toEqual({
       type: "MessageReceived",

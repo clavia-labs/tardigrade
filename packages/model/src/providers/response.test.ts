@@ -8,6 +8,39 @@ import { providerLayer } from "./layer"
 
 const dynamicToolkit = Toolkit.make(Tool.dynamic("read", { parameters: Schema.Struct({ path: Schema.String }) }))
 const toolkit = Toolkit.make(Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }), failureMode: "return" }))
+
+test("native image parts preserve MIME, order, and detail on provider wires", async () => {
+  const prompt = Prompt.make([{ role: "user", content: [
+    Prompt.makePart("file", { mediaType: "image/png", data: "data:image/png;base64,cG5n", options: { openai: { imageDetail: "low" } } }),
+    Prompt.makePart("text", { text: "compare" }),
+    Prompt.makePart("file", { mediaType: "image/jpeg", data: "https://fixture.invalid/image.jpg", options: { openai: { imageDetail: "high" } } })
+  ] }])
+  for (const provider of ["openai", "anthropic"] as const) {
+    let body: { readonly input?: ReadonlyArray<{ readonly role?: string; readonly content?: unknown }>; readonly messages?: ReadonlyArray<{ readonly role?: string; readonly content?: unknown }> } = {}
+    const fetch = Object.assign(async (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+      body = JSON.parse(await new Response(init?.body).text())
+      return new Response(JSON.stringify({ error: { message: "captured" } }), { status: 400, headers: { "content-type": "application/json" } })
+    }, { preconnect: globalThis.fetch.preconnect })
+    const layer = providerLayer(provider === "openai"
+      ? { provider, client: { apiKey: Redacted.make("test"), apiUrl: "https://fixture.invalid/v1" }, model: { model: "gpt-5" } }
+      : { provider, client: { apiKey: Redacted.make("test") }, model: { model: "claude-sonnet-4-5", config: { max_tokens: 100 } } })
+    await Effect.runPromise(LanguageModel.generateText({ prompt, toolkit: Toolkit.empty }).pipe(
+      Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer))),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+      Effect.result
+    ))
+    const content = (provider === "openai" ? body.input : body.messages)?.find((message) => message.role === "user")?.content
+    expect(content).toEqual(provider === "openai" ? [
+      { type: "input_image", image_url: "data:image/png;base64,cG5n", detail: "low" },
+      { type: "input_text", text: "compare" },
+      { type: "input_image", image_url: "https://fixture.invalid/image.jpg", detail: "high" }
+    ] : [
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "cG5n" }, cache_control: null },
+      { type: "text", text: "compare", cache_control: null },
+      { type: "image", source: { type: "url", url: "https://fixture.invalid/image.jpg" }, cache_control: null }
+    ])
+  }
+})
 for (const segmented of [false, true]) {
 test(`Responses completion survives a trailing sentinel (segmented: ${segmented})`, async () => {
   const frames = [...providerEvents("openai", false).map((event, sequence_number) => `data: ${JSON.stringify({ sequence_number, ...event })}\n\n`), "data: [DONE]\n\n"]
