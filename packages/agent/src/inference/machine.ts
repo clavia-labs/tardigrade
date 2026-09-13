@@ -8,7 +8,7 @@ import { RetrySchedule, retryDelayOf } from "./retry"
 import { LanguageModel } from "effect/unstable/ai"
 import { react } from "./model/index"
 import { unknownModelError } from "./error"
-import { BindingSettings, ModelSelection } from "./model/settings"
+import { BindingSettings, ModelSelection, modelSettingsFor } from "@clavia/tardigrade-model/settings"
 import { Cause, Clock, Effect, Random, Schema } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { HashMap, Option } from "effect"
@@ -427,7 +427,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               }
             }
           }
-          const settings = yield* (registry.settings?.(selected) ?? BindingSettings)
+          const settings = yield* modelSettingsFor(selected)
           const requestPolicy = settings.policy
           const pricing = settings.pricing
           // The mark records the attempt BEFORE the inference, appended by the act itself: a

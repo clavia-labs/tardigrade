@@ -26,7 +26,7 @@ import {
 } from "../projection/transcript"
 import { LanguageModel } from "effect/unstable/ai"
 import { summarize } from "./compaction/model"
-import { BindingSettings, ModelSelection } from "@clavia/tardigrade-model/settings"
+import { BindingSettings, ModelSelection, modelSettingsFor } from "@clavia/tardigrade-model/settings"
 import { modelRefOf, type ModelRef } from "../inference/reference"
 import type { AgentComponent } from "../runtime/composition"
 
@@ -239,7 +239,7 @@ const compactionTransition = (
           const selection = yield* ModelSelection
           const summaryModel = selection.resolve?.(input.model).model ?? input.model
           const summary = yield* summarize(brief, { ...self, turn: `compact-${input.keepFrom}` }, summaryModel).pipe(
-            Effect.provideService(BindingSettings, yield* (selection.settings?.(summaryModel) ?? BindingSettings)),
+            Effect.provideService(BindingSettings, yield* modelSettingsFor(summaryModel)),
             Effect.orDie
           )
           return [compactionCompleted({

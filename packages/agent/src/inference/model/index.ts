@@ -1,15 +1,14 @@
 import { historyOf, importSchema } from "./prompt"
 import { actionOf, responseEvidence, errorOf } from "./response"
-import { observeResponse } from "@clavia/tardigrade-model/stream/delivery"
+import { withModelRequest } from "@clavia/tardigrade-model/stream/invocation"
 import type { InferDelta } from "../observer"
 import type { InferRequest } from "../contract"
-import { FetchHttpClient } from "effect/unstable/http"
-import { Duration, Effect, Option } from "effect"
+import { Duration, Effect } from "effect"
 import { AiError, Prompt, Response, Tool, Toolkit } from "effect/unstable/ai"
 import { modelRequest } from "../request"
 import type { Action } from "../../log/events"
 import { collectResponse } from "@clavia/tardigrade-model/stream/collect"
-import { BindingSettings, BindingInvocation, CurrentModel, ProviderRequestKey } from "./settings"
+import { BindingSettings, BindingInvocation } from "./settings"
 
 import { fallbackSystemFor, outputModeOf, outputSchemaFor, outputNameFor } from "./output"
 
@@ -22,8 +21,7 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
   const endpoint = { provider: providerId, model: request.model?.model_id ?? options.model }
   const outputPolicy = { ...endpoint, ...(options.output === undefined ? {} : { output: options.output }) }
   if (signal?.aborted) return yield* Effect.interrupt
-  const delivery = yield* observeResponse(request.identity, { provider: providerId, model_id: endpoint.model }, key, options.observer, onDelta)
-  return yield* Effect.suspend(() => {
+  return yield* withModelRequest({ identity: request.identity, model: request.model, observedModel: { provider: providerId, model_id: endpoint.model }, key, onDelta }, onPart => Effect.suspend(() => {
     let reportedCostUsd: number | undefined
     let observed: Response.AnyPart[] = []
     let modeEvidence: Pick<Action, "mode"> = {}
@@ -49,23 +47,18 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
         failureMode: "return"
       })))
       const history = yield* Effect.try(() => historyOf(req.messages, { provider: providerId, protocol, model: endpoint.model }))
-      const transport = Option.getOrElse(yield* Effect.serviceOption(FetchHttpClient.RequestInit), () => ({}))
-      const fetchOptions = { ...transport, timeout: false }
       const response = yield* Effect.gen(function* () {
         const maxOutputTokens = policy.maxOutputTokens
         observed = []
         const result = yield* collectResponse(Prompt.setSystem(Prompt.fromMessages(history), system), Toolkit.make(...tools), (part) => {
           observed.push(part)
           if (part.type === "finish") reportedCostUsd = options.reportedCostUsd?.(part)
-          return delivery.onPart(part)
+          return onPart(part)
         }, responseFormat, policy.timeout)
         if (result.parts.some((part) => part.type === "finish" && part.reason === "length")) return yield* new StreamTruncated({ maxOutputTokens })
         return result
       }).pipe(
-        Effect.provideService(BindingInvocation, { request, key, signal, onDelta }),
-        Effect.provideService(CurrentModel, request.model),
-        Effect.provideService(ProviderRequestKey, key),
-        Effect.provideService(FetchHttpClient.RequestInit, fetchOptions)
+        Effect.provideService(BindingInvocation, { request, key, signal, onDelta })
       )
       const evidence = responseEvidence(response.parts)
       const served = {
@@ -99,5 +92,5 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
         } satisfies Action
       })),
       Effect.map((action): Action => reportedCostUsd === undefined ? action : { ...action, reportedCostUsd }))
-  }).pipe(Effect.ensuring(delivery.finish))
+  }))
 })

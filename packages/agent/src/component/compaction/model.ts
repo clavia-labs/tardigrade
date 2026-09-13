@@ -1,9 +1,8 @@
-import { Effect, Option } from "effect"
+import { Effect } from "effect"
 import { Toolkit, type Response } from "effect/unstable/ai"
-import { FetchHttpClient } from "effect/unstable/http"
 import { collectResponse } from "@clavia/tardigrade-model/stream/collect"
-import { observeResponse } from "@clavia/tardigrade-model/stream/delivery"
-import { BindingSettings, CurrentModel, ProviderRequestKey } from "@clavia/tardigrade-model/settings"
+import { withModelRequest } from "@clavia/tardigrade-model/stream/invocation"
+import { BindingSettings } from "@clavia/tardigrade-model/settings"
 import type { InferenceIdentity } from "@clavia/tardigrade-model/stream/observer"
 import type { ModelRef } from "@clavia/tardigrade-model/reference"
 import { unknownModelError } from "@clavia/tardigrade-model/error"
@@ -11,14 +10,8 @@ import { unknownModelError } from "@clavia/tardigrade-model/error"
 // summarize accepts a nonempty completed summary without tool calls (component/compaction.test.ts).
 export const summarize = (prompt: string, identity: InferenceIdentity, model?: ModelRef) => Effect.gen(function* () {
   const settings = yield* BindingSettings
-  const observer = yield* observeResponse(identity, model ?? { provider: settings.provider, model_id: settings.model }, identity.turn, settings.observer)
-  const transport = Option.getOrElse(yield* Effect.serviceOption(FetchHttpClient.RequestInit), () => ({}))
-  const fetchOptions = { ...transport, timeout: false }
-  const response = yield* collectResponse(prompt, Toolkit.make(), observer.onPart, undefined, settings.policy.timeout).pipe(
-    Effect.provideService(CurrentModel, model),
-    Effect.provideService(ProviderRequestKey, identity.turn),
-    Effect.provideService(FetchHttpClient.RequestInit, fetchOptions),
-    Effect.ensuring(observer.finish)
+  const response = yield* withModelRequest({ identity, model, key: identity.turn }, onPart =>
+    collectResponse(prompt, Toolkit.make(), onPart, undefined, settings.policy.timeout)
   )
   const parts: ReadonlyArray<Response.AnyPart> = response.parts
   const error = parts.find(part => part.type === "error")
