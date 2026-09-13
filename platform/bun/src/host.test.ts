@@ -429,12 +429,12 @@ describe("the bun host", () => {
     const first = await createBunHost({ database: path, actorFor: () => undefined })
     await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "m1", at: 1 } as Event)
     await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "m2", at: 2 } as Event)
-    const dest = await first.forkThread({ source: "root", until: "m1", name: "experiment" })
+    const dest = await first.forkThread({ source: "root", seq: 2, name: "experiment" })
     expect(dest.thread).toBe("experiment")
     const log = await first.read("experiment")
     expect(log.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
     expect(isThreadForked(log[2])).toBe(true)
-    expect(log[2]).toMatchObject({ sourceThread: "root", until: "m1" })
+    expect(log[2]).toMatchObject({ source: parseThreadAddress(first.self("root")) })
     await first.close()
     const reopened = await createBunHost({ database: path, actorFor: () => undefined })
     expect((await reopened.read("experiment")).map((event) => event.type)).toEqual([
@@ -444,8 +444,16 @@ describe("the bun host", () => {
     ])
     await reopened.commitRoot(reopened.self("experiment"), { type: "MessageReceived", id: "alt", at: 3 } as Event)
     expect((await reopened.read("root")).some((event) => event.id === "alt")).toBe(false)
-    await expect(reopened.forkThread({ source: "ghost", until: 1 })).rejects.toThrow("has ever existed")
     await reopened.close()
+  })
+
+  test("concurrent forks of one name land once through sqlite", async () => {
+    const host = await createBunHost({ database: freshPath(), actorFor: () => undefined })
+    await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 } as Event)
+    const results = await Promise.all([1, 2, 3, 4].map(() => host.forkThread({ source: "root", seq: 2, name: "experiment" })))
+    expect(new Set(results.map((result) => result.thread))).toEqual(new Set(["experiment"]))
+    expect((await host.read("experiment")).map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
+    await host.close()
   })
 
   test("recover() settles work a death interrupted", async () => {

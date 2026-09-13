@@ -289,11 +289,11 @@ export class ThreadDO extends DurableObject<Env> {
     return true
   }
 
-  // copyPrefix appends a source prefix through the store append path without kicking drive (packages/core/src/log/fork.ts).
-  async copyPrefix(events: ReadonlyArray<Event>): Promise<void> {
+  // appendAt commits a batch only at the expected head and does not drive. The fork's check-and-copy is atomic here because this object runs one request at a time (packages/host/src/fork.ts, FORK_EXPECTED_HEAD).
+  async appendAt(events: ReadonlyArray<Event>, expectedHead: number): Promise<{ readonly appended: number; readonly head: number }> {
     if (!this.initialized()) throw new Error("Thread DO has not been initialized")
     const host = await this.host()
-    await host.copyPrefix(events)
+    return host.appendAt(events, expectedHead)
   }
 
   private validateDelivery(envelope: ActorEnvelope): void {

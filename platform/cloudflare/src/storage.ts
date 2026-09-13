@@ -3,7 +3,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteMigrator } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { AppendResult, ThreadEventStore } from "@clavia/tardigrade-core/log"
+import type { AppendOptions, AppendResult, ThreadEventStore } from "@clavia/tardigrade-core/log"
 
 export interface EventRow {
   readonly seq: number
@@ -183,7 +183,7 @@ export class CloudflareEventStore implements ThreadEventStore {
       )
   }
 
-  append(events: ReadonlyArray<Event>): Effect.Effect<AppendResult> {
+  append(events: ReadonlyArray<Event>, options: AppendOptions = {}): Effect.Effect<AppendResult> {
     if (events.length === 0) return Effect.map(this.head, (head) => ({ appended: 0, head }))
     const sql = this.sql
     const keyOf = this.keyOf
@@ -204,6 +204,7 @@ export class CloudflareEventStore implements ThreadEventStore {
             "SELECT COALESCE(MAX(seq), 0) AS head FROM events"
           )
           const currentHead = Number(heads[0]?.head ?? 0)
+          if (options.expectedHead !== undefined && currentHead !== options.expectedHead) return { appended: 0, head: currentHead }
           let seq = currentHead + 1
           let appended = 0
           for (let index = 0; index < encoded.length; index++) {
@@ -227,11 +228,6 @@ export class CloudflareEventStore implements ThreadEventStore {
         })
       )
     }).pipe(Effect.orDie)
-  }
-
-  // copyPrefix is the store append path so keys, codecs, and indexes cannot diverge (packages/core/src/log/fork.ts).
-  copyPrefix(events: ReadonlyArray<Event>): Effect.Effect<AppendResult> {
-    return this.append(events)
   }
 }
 

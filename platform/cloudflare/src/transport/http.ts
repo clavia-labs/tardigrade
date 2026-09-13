@@ -1,7 +1,8 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
-import { ForkUntil } from "@clavia/tardigrade-core/log"
+import { ForkRequest, forkCheckpointOf, UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
+import type { ForkCheckpoint } from "@clavia/tardigrade-core/log"
+import type { ForkRefusal } from "@clavia/tardigrade-host/fork"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ModelPolicy } from "@clavia/tardigrade-agent"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
@@ -47,6 +48,13 @@ interface CloudflareHttpOptions {
 }
 
 // cloudflareHttp adapts HTTP requests to the mounted host's methods and directory.
+type ForkOutcome =
+  | { readonly ok: true; readonly coordinate: { readonly actor: string; readonly instance: string; readonly thread: string }; readonly seq: number }
+  | { readonly ok: false; readonly refusal: ForkRefusal; readonly message: string }
+
+// FORK_REFUSAL_STATUS maps a fork refusal to its HTTP status (packages/host/src/fork.ts, ForkRefusal).
+const FORK_REFUSAL_STATUS = { "unknown-source": 404, checkpoint: 400, occupied: 409 } as const
+
 export const cloudflareHttp = ({
   actorName, methodsOf, publicCatalog, providerAvailabilityFrom, modelPolicyFrom, directory
 }: CloudflareHttpOptions): ExportedHandler<Env> => {
@@ -134,24 +142,17 @@ export const cloudflareHttp = ({
         const thread = params.thread ?? ""
         if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
         const payload = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
-        if (!Schema.is(Schema.Struct({
-          until: ForkUntil,
-          name: Schema.optionalKey(Schema.NonEmptyString)
-        }))(payload)) {
-          return json({ error: "until must be a positive sequence or a nonempty event id" }, 400)
+        if (!Schema.is(ForkRequest)(payload)) {
+          return json({ error: "the body needs a checkpoint, { seq } at or above one or { event } naming an event id, and an optional nonempty name" }, 400)
         }
+        const body = payload as ForkRequest
         const directory = yield* Effect.promise(() => actorStub(env, actorName(), instance, false))
         if (directory === undefined) return json({ error: "unknown actor" }, 404)
-        return yield* Effect.tryPromise({
-          try: () => directory.forkThread(thread, payload.until, payload.name),
-          catch: (cause) => cause instanceof Error ? cause.message : String(cause)
-        }).pipe(Effect.match({
-          onFailure: (error) => json(
-            { error },
-            error.includes("has ever existed") ? 404 : 400
-          ),
-          onSuccess: (coordinate) => json(coordinate)
-        }))
+        const checkpoint: ForkCheckpoint = forkCheckpointOf(body)
+        const outcome = yield* Effect.promise(async (): Promise<ForkOutcome> => directory.forkThread(thread, checkpoint, body.name))
+        return outcome.ok
+          ? json({ ...outcome.coordinate, seq: outcome.seq })
+          : json({ error: outcome.message }, FORK_REFUSAL_STATUS[outcome.refusal])
       })
     )),
     HttpRouter.route(workerRoutes.list.method, workerRoutes.list.path, workerRoute((request, env) =>

@@ -1,51 +1,49 @@
 import { describe, expect, test } from "bun:test"
-import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { forkCopyPlan, forkRootAllocation } from "./fork"
+import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { forkBatchFor, forkOutcomeOf, forkRootAllocation, isForkRefused, resolveForkCheckpoint, ForkRefused } from "./fork"
 
-const created = threadCreated({ actor: "mem", instance: "main", thread: "root" }, undefined, 1)
+const root = { actor: "mem", instance: "main", thread: "root" } as const
+const created = threadCreated(root, undefined, 1)
 const message = { type: "MessageReceived", id: "m1", at: 2 } as Event
-const destCreated = threadCreated({ actor: "mem", instance: "main", thread: "experiment" }, undefined, 3)
+const destCreated = threadCreated({ ...root, thread: "experiment" }, undefined, 3)
 
-describe("forkCopyPlan", () => {
-  test("a fresh dest receives the prefix and ThreadForked", () => {
-    const plan = forkCopyPlan([created, message], [destCreated], {
-      source: "root",
-      until: 2,
-      dest: "experiment",
-      forkedAt: 40
-    })
-    expect("events" in plan).toBe(true)
-    if ("events" in plan) {
-      expect(plan.events.map((event) => event.type)).toEqual(["MessageReceived", "ThreadForked"])
-    }
+const refusalOf = (run: () => unknown): ForkRefused["refusal"] | undefined => {
+  try {
+    run()
+    return undefined
+  } catch (failure) {
+    return isForkRefused(failure) ? failure.refusal : undefined
+  }
+}
+
+describe("forkBatchFor", () => {
+  test("each refusal carries its kind", () => {
+    expect(refusalOf(() => forkBatchFor([created, message], { source: root, seq: 2, dest: "experiment" }, 40))).toBeUndefined()
+    expect(refusalOf(() => forkBatchFor([], { source: { ...root, thread: "ghost" }, seq: 1, dest: "x" }, 40))).toBe("unknown-source")
+    expect(refusalOf(() => forkBatchFor([message], { source: root, seq: 1, dest: "x" }, 40))).toBe("unknown-source")
+    expect(refusalOf(() => forkBatchFor([created, message], { source: root, seq: 1, dest: "root" }, 40))).toBe("checkpoint")
+    expect(refusalOf(() => forkBatchFor([created, message], { source: root, seq: 9, dest: "x" }, 40))).toBe("checkpoint")
   })
+})
 
-  test("a matching dest is returned without a second copy", () => {
-    const first = forkCopyPlan([created, message], [destCreated], {
-      source: "root",
-      until: "m1",
-      dest: "experiment",
-      forkedAt: 40
-    })
-    if (!("events" in first)) throw new Error("expected copy")
-    const dest = [destCreated, ...first.events]
-    const again = forkCopyPlan([created, message], dest, {
-      source: "root",
-      until: "m1",
-      dest: "experiment",
-      forkedAt: 41
-    })
-    expect(again).toEqual({ existing: true })
+describe("resolveForkCheckpoint", () => {
+  test("a row passes through and an event id resolves to its last row", () => {
+    const shared = { type: "ModelCalled", callId: "c1", at: 3 } as Event
+    const returned = { type: "ModelReturned", callId: "c1", at: 4 } as Event
+    expect(resolveForkCheckpoint([created, message, shared, returned], { seq: 3 })).toBe(3)
+    expect(resolveForkCheckpoint([created, message, shared, returned], { event: "m1" })).toBe(2)
+    expect(resolveForkCheckpoint([created, message, shared, returned], { event: "c1" })).toBe(4)
+    expect(refusalOf(() => resolveForkCheckpoint([created, message], { event: "ghost" }))).toBe("checkpoint")
   })
+})
 
-  test("an occupied dest that is not this fork is refused", () => {
-    expect(() => forkCopyPlan([created, message], [destCreated, message], {
-      source: "root",
-      until: 2,
-      dest: "experiment",
-      forkedAt: 40
-    })).toThrow("already has a log")
+describe("forkOutcomeOf", () => {
+  test("a destination holding the same batch is existing, anything else is occupied", () => {
+    const batch = forkBatchFor([created, message], { source: root, seq: 2, dest: "experiment" }, 40)
+    expect(forkOutcomeOf([destCreated, ...batch], batch, "experiment")).toBe("existing")
+    expect(refusalOf(() => forkOutcomeOf([destCreated, message], batch, "experiment"))).toBe("occupied")
+    expect(refusalOf(() => forkOutcomeOf([destCreated], batch, "experiment"))).toBe("occupied")
   })
 })
 

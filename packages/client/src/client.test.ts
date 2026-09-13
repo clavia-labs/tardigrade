@@ -204,15 +204,15 @@ describe("a declared actor method", () => {
     expect(await client.allocateRoot("rick")).toEqual(coordinate)
   })
   test("forks a source prefix onto a named destination", async () => {
-    const coordinate = { actor: "agent", instance: "rick", thread: "experiment" }
-    answer = () => new Response(JSON.stringify(coordinate), { headers: { "content-type": "application/json" } })
+    const forked = { actor: "agent", instance: "rick", thread: "experiment", seq: 2 }
+    answer = () => new Response(JSON.stringify(forked), { headers: { "content-type": "application/json" } })
     const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
-    expect(await client.fork("rick", "root", "m1", "experiment")).toEqual(coordinate)
+    expect(await client.forkThread("rick", "root", { event: "m1" }, "experiment")).toEqual(forked)
     expect(calls[0]?.method).toBe("POST")
     expect(lastUrl().pathname).toBe("/v1/actors/rick/threads/root/fork")
-    expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ until: "m1", name: "experiment" })
-    expect(await client.fork("rick", "root", 2)).toEqual(coordinate)
-    expect(JSON.parse(calls[1]!.body ?? "")).toEqual({ until: 2 })
+    expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ event: "m1", name: "experiment" })
+    expect(await client.forkThread("rick", "root", { seq: 2 })).toEqual(forked)
+    expect(JSON.parse(calls[1]!.body ?? "")).toEqual({ seq: 2 })
   })
   test("discovers method schemas at the actor", async () => {
     answer = () => new Response(JSON.stringify([{

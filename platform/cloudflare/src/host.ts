@@ -4,7 +4,7 @@ import { Effect, Layer, ManagedRuntime } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom, type ThreadEventRow } from "@clavia/tardigrade-core/log"
+import { EventLog, eventLogFrom, type ThreadEventRow, type AppendOptions } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
@@ -60,7 +60,8 @@ export interface CloudflareThreadHost {
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly commitRoot: (event: Event) => Promise<void>
   readonly initializeRoot: (at: number) => Promise<void>
-  readonly copyPrefix: (events: ReadonlyArray<Event>) => Promise<{ readonly appended: number; readonly head: number }>
+  // appendAt commits a batch only when the log head equals expectedHead, without driving (packages/core/src/log/service.ts, AppendOptions).
+  readonly appendAt: (events: ReadonlyArray<Event>, expectedHead: number) => Promise<{ readonly appended: number; readonly head: number }>
   readonly stageRoot: (event: Event) => Promise<void>
   readonly publishStaged: () => void
   readonly drive: () => Promise<void>
@@ -164,13 +165,11 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   ]
   const router = Layer.succeed(Router, { send: (envelope) => sendThrough(routes, envelope) })
   const self = formatThreadAddress(identity)
-  const wrappedAppend = (batch: ReadonlyArray<Event>) => events.append(batch).pipe(
-    Effect.tap((result) => result.appended > 0 ? Effect.sync(() => interruptions.interrupt(batch)) : Effect.void),
-    Effect.tap(syncCommit)
-  )
   const store = {
-    append: wrappedAppend,
-    copyPrefix: wrappedAppend,
+    append: (batch: ReadonlyArray<Event>, options?: AppendOptions) => events.append(batch, options).pipe(
+      Effect.tap((result) => result.appended > 0 ? Effect.sync(() => interruptions.interrupt(batch)) : Effect.void),
+      Effect.tap(syncCommit)
+    ),
     read: events.read,
     head: events.head,
     readFrom: (mark: number) => events.readFrom(mark),
@@ -235,7 +234,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),
     commitRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined)),
     initializeRoot: (at) => Effect.runPromise(commitEffect(identity, threadCreated(identity, undefined, at), undefined, undefined, undefined, true, true)),
-    copyPrefix: (events) => Effect.runPromise(store.copyPrefix(events)),
+    appendAt: (batch, expectedHead) => Effect.runPromise(store.append(batch, { expectedHead })),
     stageRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined, undefined, undefined, false)),
     publishStaged: () => {
       if (stagedHead === 0) return

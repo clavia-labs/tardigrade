@@ -713,7 +713,7 @@ describe("cloudflare actor", () => {
       ["/v1/actors/{id}", "get", ["200", "400", "401", "404", "503"]],
       ["/v1/actors/{id}/threads", "post", ["200", "400", "401", "404", "503"]],
       ["/v1/actors/{id}/threads", "get", ["200", "400", "401", "404", "503"]],
-      ["/v1/actors/{id}/threads/{thread}/fork", "post", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/fork", "post", ["200", "400", "401", "404", "409", "503"]],
       ["/v1/actors/{id}/threads/{thread}/events", "post", ["202", "400", "401", "404", "503"]],
       ["/v1/actors/{id}/threads/{thread}/events", "get", ["200", "400", "401", "404", "500", "503"]]
     ] as const) {
@@ -973,15 +973,15 @@ describe("cloudflare actor", () => {
     const forked = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/fork", {
       method: "POST",
       headers: { ...authorization, "content-type": "application/json" },
-      body: JSON.stringify({ until: "m1", name: "fork-dst" })
+      body: JSON.stringify({ event: "m1", name: "fork-dst" })
     })
     expect(forked.status).toBe(200)
-    expect(await forked.json()).toEqual({ actor: "echo", instance: "main", thread: "fork-dst" })
+    expect(await forked.json()).toEqual({ actor: "echo", instance: "main", thread: "fork-dst", seq: 2 })
     const visible = await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })
-    const rows = await visible.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly id?: string; readonly text?: string; readonly sourceThread?: string } }>
+    const rows = await visible.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly id?: string; readonly text?: string; readonly source?: unknown } }>
     expect(rows.map((row) => row.event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
     expect(rows[1]?.event).toMatchObject({ type: "MessageReceived", id: "m1", text: secret })
-    expect(rows[2]?.event).toMatchObject({ type: "ThreadForked", sourceThread: "fork-src", until: "m1" })
+    expect(rows[2]?.event).toMatchObject({ type: "ThreadForked", source: { actor: "echo", instance: "main", thread: "fork-src" } })
     const raw = await runInDurableObject(threadStub("fork-dst"), (_instance, state) =>
       state.storage.sql.exec<{ readonly event: string }>("SELECT event FROM events ORDER BY seq").toArray()
     )
@@ -993,15 +993,39 @@ describe("cloudflare actor", () => {
     const unknown = await SELF.fetch("http://test/v1/actors/main/threads/ghost/fork", {
       method: "POST",
       headers: { ...authorization, "content-type": "application/json" },
-      body: JSON.stringify({ until: 1 })
+      body: JSON.stringify({ seq: 1 })
     })
     expect(unknown.status).toBe(404)
     const missing = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/fork", {
       method: "POST",
       headers: { ...authorization, "content-type": "application/json" },
-      body: JSON.stringify({ until: 99, name: "missing" })
+      body: JSON.stringify({ seq: 99, name: "missing" })
     })
     expect(missing.status).toBe(400)
+    const again = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ seq: 2, name: "fork-dst" })
+    })
+    expect(again.status).toBe(200)
+    expect((await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })).json()).resolves.toHaveLength(3)
+    const occupied = await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ seq: 2, name: "fork-src" })
+    })
+    expect(occupied.status).toBe(409)
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
+  test("a Thread DO commits an expected-head append once under concurrency", async () => {
+    await createThread("fork-race")
+    const stub = threadStub("fork-race")
+    const row = { type: "MessageReceived", id: "race", text: "x", at: 1 } as Event
+    const results = await Promise.all([1, 2, 3, 4].map(() => stub.appendAt([row, { ...row, id: "race-2" }], 1)))
+    expect(results.filter((result) => result.appended === 2)).toHaveLength(1)
+    expect(results.filter((result) => result.appended === 0)).toHaveLength(3)
+    expect(results.every((result) => result.head === 3)).toBe(true)
+    expect(await stub.events("fork-race")).toHaveLength(3)
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
   test("opaque child addresses execute and round-trip through the public API", async () => {

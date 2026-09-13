@@ -9,7 +9,7 @@ import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, eventLogFrom, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
-import { forkCopyPlan, forkRootAllocation, type ForkThreadRequest } from "@clavia/tardigrade-host/fork"
+import { FORK_EXPECTED_HEAD, forkBatchFor, forkOutcomeOf, forkRootAllocation, type ForkThreadRequest } from "@clavia/tardigrade-host/fork"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
@@ -414,11 +414,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const currentHead = await runtime.runPromise(head)
       await runtime.runPromise(PubSub.publish(commits, currentHead))
     }
-    const append: ThreadEventStore["append"] = (events) => {
+    const append: ThreadEventStore["append"] = (events, options = {}) => {
       if (events.length === 0) return Effect.map(head, (current) => ({ appended: 0, head: current }))
       return sql.withTransaction(Effect.gen(function* () {
         const rows = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
         const currentHead = Number(rows[0]?.seq ?? 0)
+        if (options.expectedHead !== undefined && currentHead !== options.expectedHead) return { appended: 0, head: currentHead }
         let seq = currentHead + 1
         let appended = 0
         for (const event of events) {
@@ -444,7 +445,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
     return {
       runtime,
-      store: { append, copyPrefix: append, read, head, readFrom, readPage },
+      store: { append, read, head, readFrom, readPage },
       commits,
       interruptions,
       ...(commitDispatcher === undefined ? {} : { commitDispatcher }),
@@ -516,17 +517,15 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
 
   const layersOf = async (thread: string): Promise<Layer.Layer<R | EventLog>> => {
     const threadRuntime = await runtimeOf(thread)
-    const wrappedAppend: ThreadEventStore["append"] = (events) => threadRuntime.store.append(events).pipe(Effect.tap((result) => {
-      if (result.appended === 0) return Effect.void
-      const interrupted = Effect.sync(() => threadRuntime.interruptions.interrupt(events))
-      return isFirstAppend(result)
-        ? Effect.all([interrupted, Effect.promise(() => register(thread))]).pipe(Effect.asVoid)
-        : interrupted
-    }))
     const store: ThreadEventStore = {
       ...threadRuntime.store,
-      append: wrappedAppend,
-      copyPrefix: wrappedAppend
+      append: (events, options) => threadRuntime.store.append(events, options).pipe(Effect.tap((result) => {
+        if (result.appended === 0) return Effect.void
+        const interrupted = Effect.sync(() => threadRuntime.interruptions.interrupt(events))
+        return isFirstAppend(result)
+          ? Effect.all([interrupted, Effect.promise(() => register(thread))]).pipe(Effect.asVoid)
+          : interrupted
+      }))
     }
     const ports = Layer.mergeAll(
       Layer.succeed(EventLog, eventLogFrom(store)), router,
@@ -647,26 +646,22 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true))
   )
 
+  // forkThread copies source rows 1..seq onto a new root. The copy commits only at the fresh root's head (host.test.ts, "concurrent forks of one name land once").
   const forkThread = async (request: ForkThreadRequest): Promise<ThreadAddress> => {
-    if ((await actorThread(request.source)) === undefined) {
-      throw new Error(`No thread named ${JSON.stringify(request.source)} has ever existed.`)
-    }
-    const sourceRuntime = await runtimeOf(request.source)
-    const sourceEvents = await sourceRuntime.runtime.runPromise(sourceRuntime.store.read)
+    const sourceEvents = (await actorThread(request.source)) === undefined
+      ? []
+      : await (async () => { const runtime = await runtimeOf(request.source); return runtime.runtime.runPromise(runtime.store.read) })()
     const dest = await Effect.runPromise(initializingThreadAllocator(rawAllocator, initializeAllocatedRoot).allocate(
       forkRootAllocation({ actor: actorName, instance: actorInstance }, request.name)
     ))
+    const batch = forkBatchFor(sourceEvents, {
+      source: { actor: actorName, instance: actorInstance, thread: request.source },
+      seq: request.seq,
+      dest: dest.thread
+    }, Date.now())
     const destRuntime = await runtimeOf(dest.thread)
-    const destEvents = await destRuntime.runtime.runPromise(destRuntime.store.read)
-    const plan = forkCopyPlan(sourceEvents, destEvents, {
-      source: request.source,
-      until: request.until,
-      dest: dest.thread,
-      forkedAt: Date.now()
-    })
-    if ("existing" in plan) return dest
-    const result = await destRuntime.runtime.runPromise(destRuntime.store.copyPrefix(plan.events))
-    if (result.appended > 0) destRuntime.interruptions.interrupt(plan.events)
+    const result = await destRuntime.runtime.runPromise(destRuntime.store.append(batch, { expectedHead: FORK_EXPECTED_HEAD }))
+    if (result.appended === 0) forkOutcomeOf(await destRuntime.runtime.runPromise(destRuntime.store.read), batch, dest.thread)
     return dest
   }
 
