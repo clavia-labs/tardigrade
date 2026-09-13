@@ -7,7 +7,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ToolSpec } from "../inference/request"
 import { fallbackOf, type OutputFallback } from "../output/contract"
 import { agentKeys } from "../log/events"
-import type { InferPolicy } from "../inference/contract"
+import type { InferPolicy, InferenceAdmission } from "../inference/contract"
 import { inferenceMachine } from "../inference/machine"
 import { modelPolicyOverrideOf, type ModelPolicyOverride } from "../inference/access"
 import { incrementalToolsComponentFrom, toolConcurrencyOf, toolConcurrencyInstruction, DEFAULT_TOOL_CONCURRENCY, type ToolConcurrency, type Answer, type PendingCall } from "./tools"
@@ -61,6 +61,7 @@ export interface AgentView {
   readonly tools: ReadonlyArray<AgentTool<unknown>>
   readonly context: ReadonlyArray<ContextFragment>
   readonly output: ReadonlyArray<OutputFragment>
+  readonly admission?: ReadonlyArray<InferenceAdmission>
 }
 
 // AgentComponent is a core component whose view is interpreted by its infer root.
@@ -89,12 +90,16 @@ export const defineOutputFallback = <R>(component: AgentComponent<R>): OutputFal
 // applies the agent-specific collision and rendering rules to the combined value.
 export const AGENT_VIEW_ALGEBRA: ViewAlgebra<AgentView> = {
   empty: { system: [], tools: [], context: [], output: [] },
-  combine: (left, right) => ({
-    system: [...left.system, ...right.system],
-    tools: [...left.tools, ...right.tools],
-    context: [...left.context, ...right.context],
-    output: [...left.output, ...right.output]
-  })
+  combine: (left, right) => {
+    const admission = [...(left.admission ?? []), ...(right.admission ?? [])]
+    return {
+      system: [...left.system, ...right.system],
+      tools: [...left.tools, ...right.tools],
+      context: [...left.context, ...right.context],
+      output: [...left.output, ...right.output],
+      ...(admission.length === 0 ? {} : { admission })
+    }
+  }
 }
 
 // outputFrom resolves the output strategy the assembly declares. A turn has one final response,
@@ -156,6 +161,7 @@ export interface Rendered {
   readonly tools: ReadonlyArray<ToolSpec>
   readonly context: Partial<ContextPolicy>
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
+  readonly admission?: ReadonlyArray<InferenceAdmission>
 }
 
 const renderView = (view: AgentView, concurrency: ToolConcurrency = DEFAULT_TOOL_CONCURRENCY): Rendered => {
@@ -167,6 +173,7 @@ const renderView = (view: AgentView, concurrency: ToolConcurrency = DEFAULT_TOOL
       return instruction === "" ? tool.spec : { ...tool.spec, description: `${tool.spec.description}\n${instruction}` }
     }),
     context: contextOf(view.context),
+    ...((view.admission?.length ?? 0) === 0 ? {} : { admission: view.admission }),
     ...(fragment.kind === "native"
       ? {}
       : {

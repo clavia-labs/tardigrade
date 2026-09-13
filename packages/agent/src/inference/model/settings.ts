@@ -1,7 +1,7 @@
 import { Context } from "effect"
 import type { InferRequest } from "../contract"
 import type { InferDelta } from "../observer"
-export { BindingSettings, CurrentModel, ModelSelection, ProviderRequestKey, type BindingOptions } from "@clavia/tardigrade-model/settings"
+export { BindingSettings, CostEvidence, CurrentModel, ModelSelection, ProviderRequestKey, type BindingOptions } from "@clavia/tardigrade-model/settings"
 
 export const BindingInvocation = Context.Reference<{
   readonly request: InferRequest

@@ -41,3 +41,35 @@ import type { Machine } from "tardie/core/machine"
 import type { Projection } from "tardie/core/projection"
 import type { ComponentOutput } from "tardie/core/component"
 ```
+
+## Agent budgets
+
+Compose a dollar budget with the tool-call budget and the other components passed to `infer`. In this example, the application supplies `search` and `browse`:
+
+```ts
+import { budget, infer, nativeOutput, system } from "tardie/agent"
+import { browse, search } from "./tools"
+
+const assistant = infer([
+  system("Answer concisely."),
+  budget({ usd: 0.5 }),
+  budget([search, browse], { limit: 10 }),
+  nativeOutput
+])
+```
+
+The dollar threshold applies to each turn. It reads spend from every `ModelReturned` event in that turn, admits the first model attempt, then checks recorded spend before each later attempt. An attempt may take the total past the threshold because its cost is known only after it finishes. Unknown recorded cost blocks the next attempt. A final answer still completes when its cost reaches or crosses the threshold. Multiple dollar-budget components inspect the same turn spend and impose overlapping constraints, so any one of them can block; they do not create separate spending pools.
+
+The component accounts for `ModelReturned` events and gates the inference machine's attempts. Compaction summaries and model calls made directly by other components do not produce these events and remain outside this budget's accounting and admission.
+
+The tool-call form `budget(components, { limit, authority })` controls only calls to tools in its child components. Composing both forms is the preferred pattern when an inference needs separate spend and tool-count constraints.
+
+A model integration can return authoritative cost evidence from its finish reader:
+
+```ts
+const settings = {
+  cost: (finish) => readReceipt(finish) ?? {}
+}
+```
+
+The reader returns `costUsd` for the effective logical-attempt total and can also retain `reportedCostUsd`, `estimatedCostUsd`, and `costSource`. Returning `{}` records that the total is unknown and prevents fallback repricing. Returning `undefined` leaves the existing provider report and pricing-table fallback in effect.
