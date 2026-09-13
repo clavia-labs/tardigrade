@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/execution/turns"
 import { modelRequest } from "./request"
 import { messagesProjection, renderMessages } from "../projection/messages"
 import { budget, canonicalOf, codeMode, nativeOutput, output, outputRepairFor, renderOf, tool } from "../index"
+import { AgentEvent } from "../log/events"
+import { historyOf } from "./model/prompt"
 
 // One declared contract, used wherever a turn needs one.
 const SCOUT = output({
@@ -24,6 +26,72 @@ const budgetedCode = (log: ReadonlyArray<Event>) => renderOf([budget([codeMode()
 // prompt policy. Both live in the domain, so they test without a provider.
 
 describe("renderMessages", () => {
+  test("ordered native content survives JSON replay and Effect prompt conversion", () => {
+    const png = "data:image/png;base64,cG5n"
+    const privateImage = "artifact:private/image"
+    const content = [
+      { type: "input_image" as const, image_url: png, detail: "low" as const },
+      { type: "input_text" as const, text: "compare" },
+      { type: "input_image" as const, image_url: privateImage, detail: "high" as const }
+    ]
+    const event = Schema.decodeUnknownSync(AgentEvent)(JSON.parse(JSON.stringify({ type: "MessageReceived", id: "pictures", content, at: 0 })))
+    const messages = renderMessages([event])
+    expect(messages[0]?.content).toEqual(content)
+    const prompt = historyOf(messages, { provider: "openai", protocol: "openai-responses", model: "gpt-5" })[0]
+    expect(prompt?.role === "user" ? prompt.content.map((part) => part.type === "file"
+      ? { type: part.type, mediaType: part.mediaType, data: part.data, detail: part.options.openai?.imageDetail }
+      : { type: part.type, text: part.text }) : []).toEqual([
+      { type: "file", mediaType: "image/png", data: png, detail: "low" },
+      { type: "text", text: "compare" },
+      { type: "file", mediaType: "image/*", data: privateImage, detail: "high" }
+    ])
+  })
+
+  test("completed image content remains visible to a later turn", () => {
+    const content = [{ type: "input_image" as const, image_url: "artifact:private/image", detail: "high" as const }]
+    expect(renderMessages([
+      { type: "MessageReceived", id: "picture", content, at: 0 },
+      { type: "TurnCompleted", turn: "picture", output: "described", at: 1 },
+      { type: "MessageReceived", id: "later", text: "use that", at: 2 }
+    ])).toEqual([
+      { role: "user", content },
+      { role: "assistant", content: "described" },
+      { role: "user", content: "use that" }
+    ])
+  })
+
+  test("text caps retain image references and an active head across a checkpoint", () => {
+    const content = [{ type: "input_text" as const, text: "describe the image" }, { type: "input_image" as const, image_url: "artifact:private/image" }]
+    const trajectory: Event[] = [
+      { type: "MessageReceived", id: "pictures", content, at: 0 },
+      { type: "ToolCalled", callId: "c1", name: "read", arguments: {}, turn: "pictures", at: 1 },
+      { type: "ToolReturned", callId: "c1", result: "ok", turn: "pictures", at: 2 },
+      { type: "CompactionCompleted", keepFrom: `c:${JSON.stringify(["pictures", "c1"])}`, summary: "earlier work", at: 3 }
+    ]
+    const rendered = renderMessages(trajectory, { messageRenderCap: 4 })[0]?.content
+    expect(Array.isArray(rendered) && rendered[0]?.type === "input_text" ? rendered[0].text : "").toContain("truncated at 4 chars")
+    expect(Array.isArray(rendered) ? rendered[1] : undefined).toEqual(content[1])
+    expect(JSON.stringify(renderMessages([...trajectory, { type: "TurnCompleted", turn: "pictures", output: "done", at: 4 }]))).not.toContain("artifact:private/image")
+  })
+
+  test("one text cap spans interleaved rich content", () => {
+    const content = [
+      { type: "input_text" as const, text: "abc" },
+      { type: "input_image" as const, image_url: "first" },
+      { type: "input_text" as const, text: "def" },
+      { type: "input_image" as const, image_url: "second" },
+      { type: "input_text" as const, text: "ignored" }
+    ]
+    const rendered = renderMessages([{ type: "MessageReceived", id: "rich", content, at: 0 }], { messageRenderCap: 5 })[0]?.content
+    expect(Array.isArray(rendered) ? rendered.length : 0).toBe(5)
+    expect(Array.isArray(rendered) ? rendered[0] : undefined).toEqual(content[0])
+    expect(Array.isArray(rendered) ? rendered[1] : undefined).toEqual(content[1])
+    expect(Array.isArray(rendered) && rendered[2]?.type === "input_text" ? rendered[2].text : "").toContain("de…[truncated at 5 chars")
+    expect(Array.isArray(rendered) ? rendered[3] : undefined).toEqual(content[3])
+    expect(Array.isArray(rendered) ? rendered[4] : undefined).toEqual({ type: "input_text", text: "" })
+    expect(JSON.stringify(rendered).match(/truncated/g)).toHaveLength(1)
+  })
+
   test("the projection matches complete replay at every prefix", () => {
     const events: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "inspect it", at: 0 },
@@ -119,6 +187,14 @@ describe("renderMessages", () => {
         content: `[Terminal report: ${outcome}. Your answer to this report stays in this thread and is not sent back to its sender.]\nworld built`
       })
     }
+  })
+
+  test("terminal reports prepend their notice to rich content", () => {
+    const image = { type: "input_image" as const, image_url: "artifact:report/image" }
+    expect(renderMessages([{ type: "MessageReceived", id: "run.reply", content: [image], outcome: "completed", at: 0 }])[0]?.content).toEqual([
+      { type: "input_text", text: expect.stringContaining("Terminal report: completed") },
+      image
+    ])
   })
 
 })

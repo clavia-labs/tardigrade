@@ -32,6 +32,7 @@ export interface AgentTool<R = never> {
 export interface ContextFragment {
   readonly component: string
   readonly policy: Partial<ContextPolicy>
+  readonly compactionPending?: boolean
 }
 
 // NativeOutputFragment selects provider-native structured output without a fallback.
@@ -155,6 +156,7 @@ export interface Rendered {
   readonly system: string
   readonly tools: ReadonlyArray<ToolSpec>
   readonly context: Partial<ContextPolicy>
+  readonly compactionPending?: boolean
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
@@ -167,6 +169,7 @@ const renderView = (view: AgentView, concurrency: ToolConcurrency = DEFAULT_TOOL
       return instruction === "" ? tool.spec : { ...tool.spec, description: `${tool.spec.description}\n${instruction}` }
     }),
     context: contextOf(view.context),
+    ...(view.context.some((entry) => entry.compactionPending === true) ? { compactionPending: true } : {}),
     ...(fragment.kind === "native"
       ? {}
       : {

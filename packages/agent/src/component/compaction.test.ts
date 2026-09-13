@@ -65,6 +65,30 @@ const openTurn = (rounds: number): Event[] => {
 }
 
 describe("the compaction measure and guard", () => {
+  test("images have configurable weight independent of reference length", () => {
+    const short: Event = { type: "MessageReceived", id: "picture", content: [{ type: "input_image", image_url: "x" }], at: 0 }
+    const long: Event = { ...short, content: [{ type: "input_image", image_url: "x".repeat(100_000) }] }
+    expect(estimateTokens([short], { imageTokens: 900 })).toBe(900)
+    expect(estimateTokens([long], { imageTokens: 900 })).toBe(900)
+    expect(() => contextPolicyOf({ imageTokens: 0 })).toThrow("imageTokens")
+  })
+
+  test("a checkpoint estimate includes its summary and retained active image head", () => {
+    const events: Event[] = [
+      { type: "MessageReceived", id: "picture", content: [{ type: "input_image", image_url: "artifact:private/image" }], at: 0 },
+      { type: "ToolCalled", callId: "c1", name: "read", arguments: {}, turn: "picture", at: 1 },
+      { type: "ToolReturned", callId: "c1", result: "ok", turn: "picture", at: 2 },
+      { type: "CompactionCompleted", keepFrom: `c:${JSON.stringify(["picture", "c1"])}`, summary: "x".repeat(400), at: 3 }
+    ]
+    expect(estimateTokens(events, { imageTokens: 900 })).toBeGreaterThanOrEqual(1_000)
+    const policy = { contextWindowTokens: 1_100, fireRatio: 0.9, keepRatio: 0.5, imageTokens: 900 }
+    const projection = compaction(policy).machine
+    let state = projection.initial()
+    for (const event of events) state = projection.step(state, event)
+    expect(projection.output(state).transitions.map((transition) => transition.key))
+      .toEqual(compactionReactor(policy)(events).map((transition) => transition.key))
+  })
+
   test("the incremental quotient agrees with complete replay at every prefix", () => {
     const component = compaction(TEST_POLICY)
     const projection = component.machine
@@ -203,6 +227,18 @@ describe("the compaction pass", () => {
     expect(estimateTokens(suffixOf(log))).toBeLessThanOrEqual(TEST_CONTEXT.keepTokens + 2 * roundTokens)
     expect(briefed()).toContain("extract the covenants")
     expect(briefed()).toContain("run 1")
+  })
+
+  test("a summary brief names omitted images without copying references", async () => {
+    const reference = "artifact:private/sensitive-image"
+    const initial = openTurn(16)
+    initial[0] = { type: "MessageReceived", id: "m0", content: [
+      { type: "input_text", text: "extract the covenants" },
+      { type: "input_image", image_url: reference }
+    ], at: 0 }
+    const { briefed } = await run(initial, { ...TEST_POLICY, imageTokens: 1 })
+    expect(briefed()).toContain("[1 images omitted from summary] extract the covenants")
+    expect(briefed()).not.toContain(reference)
   })
 
   test("a pass can select its model", async () => {

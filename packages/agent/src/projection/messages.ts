@@ -1,9 +1,11 @@
+import { Schema } from "effect"
 import { responseKeyOf, upcastError } from "../log/upcast"
 import type { ProviderContinuation } from "../inference/continuation"
 import { responsesOf } from "../log/response"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replayProjection, type Projection } from "@clavia/tardigrade-core/projection"
 import { terminalReportOutcomeOf } from "@clavia/tardigrade-core/interaction/provider-message"
+import { MessageContent, type MessageContentPart } from "@clavia/tardigrade-core/interaction/provider-message"
 import { checkpointOf, keepFromIndex, resolvedContextPolicyOf, type ContextPolicy } from "../component/context"
 import {
   correctionText,
@@ -17,14 +19,31 @@ export interface AgentToolCall {
   readonly arguments: string
 }
 
-export interface AgentMessage {
-  readonly continuation?: ProviderContinuation
-  readonly role: "user" | "assistant" | "tool"
-  readonly content: string | null
-  readonly toolCalls?: ReadonlyArray<AgentToolCall>
-  readonly toolCallId?: string
-  readonly isFailure?: boolean
-}
+export type AgentMessage =
+  | {
+      readonly continuation?: ProviderContinuation
+      readonly role: "user"
+      readonly content: string | ReadonlyArray<MessageContentPart>
+      readonly toolCalls?: never
+      readonly toolCallId?: never
+      readonly isFailure?: never
+    }
+  | {
+      readonly continuation?: ProviderContinuation
+      readonly role: "assistant"
+      readonly content: string | null
+      readonly toolCalls?: ReadonlyArray<AgentToolCall>
+      readonly toolCallId?: never
+      readonly isFailure?: never
+    }
+  | {
+      readonly continuation?: ProviderContinuation
+      readonly role: "tool"
+      readonly content: string | null
+      readonly toolCalls?: never
+      readonly toolCallId?: string
+      readonly isFailure?: boolean
+    }
 
 const feedbackFor = (
   rejection: Record<string, unknown>,
@@ -39,16 +58,36 @@ const feedbackFor = (
 
 const userMessageOf = (event: Event, policy: ContextPolicy): AgentMessage => {
   const value = event as Record<string, unknown>
-  const text = String(value.text ?? "")
-  const rendered = text.length > policy.messageRenderCap
+  const renderText = (text: string): string => text.length > policy.messageRenderCap
     ? `${text.slice(0, policy.messageRenderCap)}…[truncated at ${policy.messageRenderCap} of ${text.length} chars; read the full message with logs.events on this facet, id ${String(value.id)}]`
     : text
   const report = terminalReportOutcomeOf(value)
+  const prefix = report === undefined
+    ? ""
+    : `[Terminal report: ${report}. Your answer to this report stays in this thread and is not sent back to its sender.]\n`
+  if (value.content !== undefined) {
+    if (!Schema.is(MessageContent)(value.content)) return { role: "user", content: "[invalid message content]" }
+    let remaining = policy.messageRenderCap
+    let truncated = false
+    const content = value.content.flatMap((part): ReadonlyArray<MessageContentPart> => {
+      if (part.type === "input_image") return [part]
+      if (truncated) return [{ ...part, text: "" }]
+      if (part.text.length <= remaining) {
+        remaining -= part.text.length
+        return [part]
+      }
+      truncated = true
+      return [{
+        type: "input_text",
+        text: `${part.text.slice(0, remaining)}…[truncated at ${policy.messageRenderCap} chars; read the full message with logs.events on this facet, id ${String(value.id)}]`
+      }]
+    })
+    return { role: "user", content: prefix === "" ? content : [{ type: "input_text", text: prefix }, ...content] }
+  }
+  const rendered = renderText(String(value.text ?? ""))
   return {
     role: "user",
-    content: report === undefined
-      ? rendered
-      : `[Terminal report: ${report}. Your answer to this report stays in this thread and is not sent back to its sender.]\n${rendered}`
+    content: `${prefix}${rendered}`
   }
 }
 

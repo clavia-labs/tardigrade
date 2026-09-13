@@ -71,12 +71,19 @@ const renderedWeights = (events: ReadonlyArray<Event>, policy: ContextPolicy, mo
     const continuation = message.continuation
     const replay = continuation === undefined ? undefined : replayOf(continuation, model === undefined ? continuation : { ...continuation, provider: model.provider, model: model.model_id })
     const chars = replay === undefined
-      ? (message.content?.length ?? 0) + (message.toolCalls ?? []).reduce((sum, call) => sum + call.arguments.length, 0)
+      ? contentWeight(message.content, policy) + (message.toolCalls ?? []).reduce((sum, call) => sum + call.arguments.length, 0)
       : JSON.stringify(continuation!.payload).length
     weights.set(event, (weights.get(event) ?? 0) + chars)
   }
   return weights
 }
+
+const contentWeight = (content: import("../projection/messages").AgentMessage["content"], policy: ContextPolicy): number =>
+  typeof content === "string"
+    ? content.length
+    : content === null
+    ? 0
+    : content.reduce((sum, part) => sum + (part.type === "input_text" ? part.text.length : policy.imageTokens * 4), 0)
 
 // estimateTokens estimates projected context as characters over four (compaction.properties.test.ts).
 export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}, model = selectedModelOf(events)): number =>
@@ -153,11 +160,21 @@ const cutOf = (
 const clip = (text: string, cap: number): string =>
   text.length > cap ? `${text.slice(0, cap)}…[cut at ${cap} of ${text.length} chars]` : text
 
+const inboundLine = (value: Record<string, unknown>): string => {
+  if (!Array.isArray(value.content)) return String(value.text ?? "")
+  const images = value.content.filter((part) => (part as { readonly type?: unknown }).type === "input_image").length
+  const text = value.content
+    .filter((part) => (part as { readonly type?: unknown }).type === "input_text")
+    .map((part) => String((part as { readonly text?: unknown }).text ?? ""))
+    .join(" ")
+  return `${images === 0 ? "" : `[${images} images omitted from summary] `}${text}`
+}
+
 const lineOf = (e: Event, policy: ContextPolicy): string | null => {
   const v = e as Record<string, unknown>
   switch (e.type) {
     case "MessageReceived":
-      return `user: ${String(v.text ?? "")}`
+      return `user: ${inboundLine(v)}`
     case "TextReturned":
       return `agent (working): ${String(v.text ?? "")}`
     case "ToolCalled":
@@ -348,14 +365,15 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
       const selected = open.length > 0 ? selectedModelOf(open) : state.lastModel
       const model = policy.model ?? selected
       const resolved = contextPolicyOf(policy, selected)
+      const pending = transitions(state, resolved, model, selected)
       return {
         view: {
           system: [],
           tools: [],
-          context: [{ component: "compaction", policy: resolved }],
+          context: [{ component: "compaction", policy: resolved, ...(pending.length === 0 ? {} : { compactionPending: true }) }],
           output: []
         },
-        transitions: transitions(state, resolved, model, selected)
+        transitions: pending
       }
     }
   })

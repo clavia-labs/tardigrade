@@ -16,15 +16,27 @@ export const historyOf = (messages: ReadonlyArray<AgentMessage>, identity: Repla
 }
 
 const promptMessage = (message: AgentMessage, names: ReadonlyMap<string, string>): ReadonlyArray<Prompt.Message> => {
-  if (message.role === "user") return [Prompt.userMessage({ content: [Prompt.makePart("text", { text: message.content ?? "" })] })]
+  if (message.role === "user") return [Prompt.userMessage({ content: typeof message.content === "string" || message.content === null
+    ? [Prompt.makePart("text", { text: message.content ?? "" })]
+    : message.content.map((part) => part.type === "input_text"
+      ? Prompt.makePart("text", { text: part.text })
+      : Prompt.makePart("file", {
+          mediaType: mediaTypeOf(part.image_url),
+          data: part.image_url,
+          options: { openai: { imageDetail: part.detail ?? "auto" } }
+        }))
+  })]
   if (message.role === "tool") return [Prompt.toolMessage({ content: [Prompt.makePart("tool-result", {
-    id: message.toolCallId ?? "", name: names.get(message.toolCallId ?? "") ?? "", result: message.content ?? "", isFailure: message.isFailure ?? false, providerExecuted: false
+    id: message.toolCallId ?? "", name: names.get(message.toolCallId ?? "") ?? "", result: messageText(message.content), isFailure: message.isFailure ?? false, providerExecuted: false
   })] })]
   return [Prompt.assistantMessage({ content: [
-    ...(message.content ? [Prompt.makePart("text", { text: message.content })] : []),
+    ...(messageText(message.content) ? [Prompt.makePart("text", { text: messageText(message.content) })] : []),
     ...(message.toolCalls ?? []).map((call) => Prompt.makePart("tool-call", { id: call.id, name: call.name, params: JSON.parse(call.arguments), providerExecuted: false }))
   ] })]
 }
 
-export const importSchema = (schema: unknown, options: SchemaRepresentation.FromJsonSchemaOptions = DEFAULT_SCHEMA_IMPORT_OPTIONS) => Schema.toEncoded(SchemaRepresentation.fromJsonSchemaDocument(JsonSchema.fromSchemaDraft07(Schema.decodeUnknownSync(jsonObject)(schema)), options))
+const mediaTypeOf = (source: string): string => /^data:([^;,]+)[;,]/i.exec(source)?.[1] ?? "image/*"
 
+const messageText = (content: string | null): string => content ?? ""
+
+export const importSchema = (schema: unknown, options: SchemaRepresentation.FromJsonSchemaOptions = DEFAULT_SCHEMA_IMPORT_OPTIONS) => Schema.toEncoded(SchemaRepresentation.fromJsonSchemaDocument(JsonSchema.fromSchemaDraft07(Schema.decodeUnknownSync(jsonObject)(schema)), options))

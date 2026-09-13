@@ -13,6 +13,7 @@ import type { CompactionPolicy } from "../component/compaction"
 import type { CodePolicy } from "@clavia/tardigrade-code/execution/reactor"
 import type { WorkspacePolicy } from "@clavia/tardigrade-code/package/workspace"
 import type { ModelRef } from "../inference/reference"
+import type { MessageContent } from "@clavia/tardigrade-core/interaction/provider-message"
 
 
 // AgentR lists the agent runtime services; components add their own requirements (core/component.ts, ComponentRequirements).
@@ -37,13 +38,21 @@ export interface AgentPolicy {
 export const receive = <R, T = unknown>(
   a: Actor<R>,
   // `output` declares the turn's result contract, which outputOf reads as T (src/output/contract.ts, output; src/boundary.ts, outputOf).
-  message: {
+  message: ({
     readonly id: string
     readonly text: string
+    readonly content?: never
     readonly input?: unknown
     readonly model?: ModelRef
     readonly output?: OutputContract<T>
-  }
+  } | {
+    readonly id: string
+    readonly content: MessageContent
+    readonly text?: never
+    readonly input?: unknown
+    readonly model?: ModelRef
+    readonly output?: OutputContract<T>
+  })
 ): Effect.Effect<void, never, EventLog | R> =>
   Effect.gen(function* () {
     const log = yield* EventLog
@@ -54,7 +63,8 @@ export const receive = <R, T = unknown>(
     yield* send(a, {
       type: "MessageReceived",
       id: message.id,
-      text: message.text,
+      ...(message.text === undefined ? {} : { text: message.text }),
+      ...(message.content === undefined ? {} : { content: message.content }),
       ...(message.input === undefined ? {} : { input: message.input }),
       ...(message.model === undefined ? {} : { model: message.model }),
       ...(message.output === undefined ? {} : { output: { name: message.output.name, schema: message.output.schema } }),
