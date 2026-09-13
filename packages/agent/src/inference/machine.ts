@@ -40,6 +40,9 @@ import {
   type OutputContract
 } from "../output/contract"
 import { modelRefOf, type ModelRef } from "./reference"
+import { estimateTokens } from "../component/compaction"
+import { resolvedContextPolicyOf } from "../component/context"
+import { renderMessages } from "../projection/messages"
 import {
   applyModelPolicy,
   DEFAULT_MODEL_POLICY,
@@ -445,9 +448,28 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             ...epochStamp(input.epoch),
             at
           })
-          yield* events.append([mark])
           const actualRender = { ...derived.renderAfter(mark), ...(preparedContext === undefined ? {} : { context: preparedContext }) }
           const trajectory = input.trajectory()
+          const contextPolicy = preparedContext ?? resolvedContextPolicyOf(actualRender.context ?? {})
+          const messages = renderMessages(trajectory, contextPolicy)
+          const hasImages = messages.some((message) =>
+            Array.isArray(message.content) && message.content.some((part) => part.type === "input_image")
+          )
+          const estimatedTokens = hasImages ? estimateTokens(trajectory, contextPolicy, selected) : 0
+          if (hasImages && estimatedTokens > contextPolicy.contextWindowTokens) {
+            yield* events.append([turnFailed({
+              error: `the rendered input is estimated at ${estimatedTokens} tokens, above the ${contextPolicy.contextWindowTokens}-token context window`,
+              cause: "inference_error",
+              attempts: 0,
+              attemptKey: input.attempt,
+              policy: { contextWindowTokens: contextPolicy.contextWindowTokens, imageTokens: contextPolicy.imageTokens, estimatedTokens },
+              turn: input.turn,
+              ...epochStamp(input.epoch),
+              at
+            })])
+            return []
+          }
+          yield* events.append([mark])
           let partialOutput = ""
           let partialPersisted = false
           const persistPartialOutput = () => {
