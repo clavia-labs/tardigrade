@@ -1,4 +1,4 @@
-import { Context, Data, Effect, Layer, Schema } from "effect"
+import { Context, Data, Effect, Layer, Schema, SchemaIssue } from "effect"
 import { FileSystem } from "effect/FileSystem"
 import { ModelCatalogMetadata, type ModelCatalog } from "./catalog/schema"
 import { modelProvidersOf, modelSettingsOf, type ModelConfig } from "./config"
@@ -39,7 +39,7 @@ export class ModelLockError extends Data.TaggedError("ModelLockError")<{
   readonly cause?: unknown
 }> {}
 
-export const modelLockErrorOf = (cause: unknown): ModelLockError => new ModelLockError({
+export const modelLockErrorOf = (cause: unknown): ModelLockError => cause instanceof ModelLockError ? cause : new ModelLockError({
   message: cause instanceof Error ? cause.message : String(cause), cause
 })
 
@@ -48,23 +48,69 @@ export class ModelLock extends Context.Service<ModelLock, ModelLockData>()("tard
 
 export const emptyModelLock = (): ModelLockData => ({ schema: MODEL_LOCK_SCHEMA, providers: {}, models: [] })
 
-// modelLockOf validates complete definitions and unique provider/model coordinates (lock.test.ts).
-export const modelLockOf = (value: unknown): ModelLockData => {
-  const lock = Schema.decodeUnknownSync(LockSchema, { onExcessProperty: "error" })(value)
-  modelProvidersOf(lock.providers)
-  const coordinates = new Set<string>()
-  for (const model of lock.models) {
-    const key = JSON.stringify([model.provider, model.model_id])
-    if (coordinates.has(key)) throw new Error(`duplicate model ${model.provider}/${model.model_id}`)
-    coordinates.add(key)
-    const provider = lock.providers[model.provider]
-    if (provider === undefined) throw new Error(`model ${model.provider}/${model.model_id} references an absent provider`)
-    modelSettingsOf(provider.protocol, { [model.model_id]: { options: model.options } })
-    if (model.source !== undefined && !["https:", "http:"].includes(new URL(model.source).protocol)) {
-      throw new Error(`model ${model.provider}/${model.model_id} source must be an HTTP(S) registry URL`)
-    }
+const recordOf = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+
+const schemaMessage = (cause: Schema.SchemaError, value: unknown): string =>
+  SchemaIssue.makeFormatterStandardSchemaV1()(cause.issue).issues.map((issue) => {
+    const path = (issue.path ?? []).map((entry) => typeof entry === "object" ? entry.key : entry)
+    const models = recordOf(value)?.models
+    const model = path[0] === "models" && typeof path[1] === "number" && Array.isArray(models) ? recordOf(models[path[1]]) : undefined
+    const coordinate = typeof model?.provider === "string" && typeof model.model_id === "string" ? ` (model ${model.provider}/${model.model_id})` : ""
+    return `${path.map((key) => `[${JSON.stringify(key)}]`).join("") || "root"}${coordinate}: ${issue.message}`
+  }).join("\n")
+
+const requireHttpUrl = (value: string, field: string): void => {
+  let url: URL
+  try { url = new URL(value) } catch {
+    throw new Error(`${field} must be an absolute HTTP(S) URL`)
   }
-  return lock
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`${field} must be an absolute HTTP(S) URL`)
+}
+
+// modelLockOf validates complete definitions and reports their paths and coordinates (lock.test.ts).
+export const modelLockOf = (value: unknown, path = MODEL_LOCK_FILE): ModelLockData => {
+  try {
+    const version = recordOf(value)?.schema
+    if (version === 1) throw new Error("schema 1 is unsupported. Run `tdg setup` to migrate saved definitions offline, or `tdg models lock` to migrate and refresh")
+    if (typeof version === "number" && version !== MODEL_LOCK_SCHEMA) throw new Error(`unsupported schema ${version}; this runtime supports schema ${MODEL_LOCK_SCHEMA}`)
+    const lock = Schema.decodeUnknownSync(LockSchema, { onExcessProperty: "error" })(value)
+    for (const [id, provider] of Object.entries(lock.providers)) {
+      const field = `providers[${JSON.stringify(id)}]`
+      requireHttpUrl(provider.baseUrl, `${field}.baseUrl`)
+      try { modelProvidersOf({ [id]: provider }) } catch (cause) {
+        throw new Error(`${field}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
+      }
+    }
+    const coordinates = new Map<string, number>()
+    for (const [index, model] of lock.models.entries()) {
+      const key = JSON.stringify([model.provider, model.model_id])
+      const field = `models[${index}]`
+      const modelName = `model ${model.provider}/${model.model_id}`
+      const previous = coordinates.get(key)
+      if (previous !== undefined) throw new Error(`${field}: duplicate ${modelName}; first declared at models[${previous}]`)
+      coordinates.set(key, index)
+      const provider = lock.providers[model.provider]
+      if (provider === undefined) throw new Error(`${field}.provider (${modelName}) references an absent provider; add providers[${JSON.stringify(model.provider)}]`)
+      try { modelSettingsOf(provider.protocol, { [model.model_id]: { options: model.options } }) } catch (cause) {
+        throw new Error(`${field}.options (${modelName}): ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
+      }
+      if (model.source !== undefined) requireHttpUrl(model.source, `${field}.source (${modelName})`)
+    }
+    return lock
+  } catch (cause) {
+    const detail = Schema.isSchemaError(cause) ? schemaMessage(cause, value) : cause instanceof Error ? cause.message : String(cause)
+    throw new ModelLockError({ message: `${path} is invalid: ${detail}`, cause })
+  }
+}
+
+// parseModelLock includes the source path in JSON syntax and definition errors (lock.test.ts).
+export const parseModelLock = (raw: string, path = MODEL_LOCK_FILE): ModelLockData => {
+  let value: unknown
+  try { value = JSON.parse(raw) } catch (cause) {
+    throw new ModelLockError({ message: `${path} is invalid JSON: ${cause instanceof Error ? cause.message : String(cause)}`, cause })
+  }
+  return modelLockOf(value, path)
 }
 
 // layerModelLock validates an in-memory definition without reading a file (lock.test.ts).
@@ -75,7 +121,7 @@ export const layerModelLock = (value: unknown): Layer.Layer<ModelLock, ModelLock
 export const layerFileModelLock = (path: string): Layer.Layer<ModelLock, ModelLockError, FileSystem> =>
   Layer.effect(ModelLock)(Effect.gen(function*() {
     const raw = yield* (yield* FileSystem).readFileString(path).pipe(Effect.mapError(modelLockErrorOf))
-    return yield* Effect.try({ try: () => modelLockOf(JSON.parse(raw)), catch: modelLockErrorOf })
+    return yield* Effect.try({ try: () => parseModelLock(raw, path), catch: modelLockErrorOf })
   }))
 
 // lockedProvidersOf projects lock entries into the inference binding's connection shape (lock.test.ts).
@@ -92,15 +138,15 @@ export const lockedProvidersOf = (lock: ModelLockData): ModelConfig["providers"]
 export const modelConfigForPolicy = (policy: ModelPolicy, lock: ModelLockData): ModelConfig => {
   const selected = modelPolicyOf({ allow: policy.allow, ...(policy.default === undefined ? {} : { default: policy.default }) })
   const required = [
-    ...(selected.default === undefined ? [] : [selected.default]),
-    ...(selected.allow === "*" ? [] : selected.allow.flatMap((entry) => {
-      if (!lock.models.some((model) => model.provider === entry.provider)) throw new Error(`allowed provider ${entry.provider} is absent from models.lock.json`)
-      return entry.model_ids === "*" ? [] : entry.model_ids.map((model_id) => ({ provider: entry.provider, model_id }))
+    ...(selected.default === undefined ? [] : [{ ...selected.default, field: "models.default" }]),
+    ...(selected.allow === "*" ? [] : selected.allow.flatMap((entry, index) => {
+      if (!lock.models.some((model) => model.provider === entry.provider)) throw new Error(`models.allow[${index}]: allowed provider ${entry.provider} is absent from models.lock.json`)
+      return entry.model_ids === "*" ? [] : entry.model_ids.map((model_id, modelIndex) => ({ provider: entry.provider, model_id, field: `models.allow[${index}].model_ids[${modelIndex}]` }))
     }))
   ]
   for (const ref of required) {
     if (!lock.models.some((model) => model.provider === ref.provider && model.model_id === ref.model_id)) {
-      throw new Error(`model ${ref.provider}/${ref.model_id} is absent from models.lock.json`)
+      throw new Error(`${ref.field}: model ${ref.provider}/${ref.model_id} is absent from models.lock.json`)
     }
   }
   return { ...selected, providers: lockedProvidersOf(lock) }

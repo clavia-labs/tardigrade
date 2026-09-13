@@ -66,11 +66,7 @@ export type DeploymentModelScope = ModelScope
 export { modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
 
 // modelScopeFrom validates the model lock supplied to a Worker (test/actor.workers.ts).
-export const modelScopeFrom = (value: unknown): DeploymentModelScope => {
-  try { return modelLockOf(value) } catch (cause) {
-    throw new Error("models.lock.json is invalid; run `tdg models lock`", { cause })
-  }
-}
+export const modelScopeFrom = (value: unknown): DeploymentModelScope => modelLockOf(value)
 
 export const deployed = (name: string): boolean => mountedActor?.actor.name === name
 export const directory = cloudflareDirectory(deployed)

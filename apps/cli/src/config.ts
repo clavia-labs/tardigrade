@@ -1,4 +1,4 @@
-import { MODEL_LOCK_FILE, modelLockOf, lockedProvidersOf, type ModelLockData } from "@clavia/tardigrade-model/lock"
+import { MODEL_LOCK_FILE, ModelLockError, modelLockOf, lockedProvidersOf, type ModelLockData } from "@clavia/tardigrade-model/lock"
 import { migrateModelLock } from "@clavia/tardigrade-model/migration"
 import { modelConfigOf } from "@clavia/tardigrade-model/config"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
@@ -110,20 +110,21 @@ export const readProjectConfig = (
         ? cause
         : new ProjectFileError({ message: String(cause), cause })
     })
-    const foundLock = yield* Effect.result((yield* FileSystem).readFileString(join(dirname(path), MODEL_LOCK_FILE)))
+    const lockPath = join(dirname(path), MODEL_LOCK_FILE)
+    const foundLock = yield* Effect.result((yield* FileSystem).readFileString(lockPath))
     if (Result.isFailure(foundLock)) {
       if (foundLock.failure.reason._tag === "NotFound") return project
       return yield* foundLock.failure
     }
     return yield* Effect.try({
       try: () => {
-        const raw = JSON.parse(foundLock.success)
-        const modelLock = raw.schema === 1
+        const raw: unknown = JSON.parse(foundLock.success)
+        const modelLock = typeof raw === "object" && raw !== null && "schema" in raw && raw.schema === 1
           ? migrateModelLock(raw, project.models, resolve(undefined, env["TARDIGRADE_MODEL_CATALOG_URL"], project.modelRegistry) ?? DEFAULT_MODEL_CATALOG_URL)
-          : modelLockOf(raw)
+          : modelLockOf(raw, lockPath)
         return { ...project, modelLock, models: { ...project.models, providers: lockedProvidersOf(modelLock) } }
       },
-      catch: (cause) => new ProjectFileError({ message: String(cause), cause })
+      catch: (cause) => new ProjectFileError({ message: cause instanceof ModelLockError ? cause.message : `${lockPath} is invalid${cause instanceof SyntaxError ? " JSON" : ""}: ${cause instanceof Error ? cause.message : String(cause)}`, cause })
     })
   })
 

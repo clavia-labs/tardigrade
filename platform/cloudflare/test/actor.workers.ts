@@ -155,8 +155,8 @@ describe("cloudflare actor", () => {
     }
     await expect(modelCatalogForConfig({ ...config, default: { provider: "openai", model_id: "changed" } }, scope))
       .rejects.toThrow("absent")
-    expect(() => modelScopeFrom({ schema: 1, catalog: snapshot })).toThrow("models.lock.json is invalid")
-    expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
+    expect(() => modelScopeFrom({ schema: 1, catalog: snapshot })).toThrow("Run `tdg setup` to migrate saved definitions offline")
+    expect(() => modelScopeFrom({ ...scope, models: [{ ...scope.models[0], source: "oops" }] })).toThrow("models[0].source (model openai/gpt-test) must be an absolute HTTP(S) URL")
     const previousModel = mountedActor!.model
     let configured = false
     Object.assign(mountedActor!, workerModelServices({ model: { providerLayer: (options) => {

@@ -199,6 +199,22 @@ describe("the config file", () => {
     expect(project.models).toEqual({ allow: "*", providers: {} })
   })
 
+  test("lock errors preserve the source path and field through CLI configuration", async () => {
+    await mkdir(join(home, "config"))
+    await writeFile(join(home, "config", "custom.jsonc"), "{}")
+    const lockPath = join(home, "config", "models.lock.json")
+    for (const [raw, message] of [
+      ["{", `${lockPath} is invalid JSON:`],
+      ["null", `${lockPath} is invalid: root: Expected object`],
+      ['{"schema":2,"providers":{},"models":[{"provider":"local","model_id":"qwen"}]}', '["models"][0]["contextWindowTokens"] (model local/qwen): Missing key']
+    ]) {
+      await writeFile(lockPath, raw!)
+      const error = await Effect.runPromise(readProjectConfig(home, { TARDIGRADE_CONFIG_PATH: "config/custom.jsonc" }).pipe(Effect.provide(BunFileSystem.layer), Effect.flip))
+      expect(error.message).toContain(lockPath)
+      expect(error.message).toContain(message!)
+    }
+  })
+
   test("the file is the third source for the remote, and a flag beats both", async () => {
     await put(JSON.stringify({ url: "https://file.example.com", token: "file-token" }))
     const file = await read({ HOME: home })

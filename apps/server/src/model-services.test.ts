@@ -73,18 +73,18 @@ test("Bun model services reject missing explicit configuration before catalog lo
   }
 })
 
-test("Bun rejects missing and stale locks without a registry fallback", async () => {
+test("Bun rejects missing and invalid locks without a registry fallback", async () => {
   const directory = await mkdtemp(join(tmpdir(), "model-services-"))
   try {
     const configFile = join(directory, "wrangler.jsonc")
     const models = { allow: "*", default: { provider: "local", model_id: "qwen" } }
     await writeFile(configFile, JSON.stringify({ vars: { TARDIGRADE_CONFIG: { models } } }))
-    await expect(bunModelServices({ configFile, env: {} })).rejects.toThrow()
+    await expect(bunModelServices({ configFile, env: {} })).rejects.toThrow("models.lock.json")
     const lockFile = join(directory, "custom.lock.json")
     await writeFile(lockFile, JSON.stringify({ schema: 2, providers: {}, models: [] }))
     await expect(bunModelServices({ configFile, lockFile, env: {} })).rejects.toThrow("absent")
     await writeFile(lockFile, "{")
-    await expect(bunModelServices({ configFile, lockFile, env: {} })).rejects.toThrow()
+    await expect(bunModelServices({ configFile, lockFile, env: {} })).rejects.toThrow(`${lockFile} is invalid JSON:`)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
