@@ -21,5 +21,15 @@
       "The model does not account for every Worker or Durable Object hop."
     ]
   },
-  "documentation": "https://developers.cloudflare.com/workers/observability/errors/#loop-limit"
+  "documentation": "https://developers.cloudflare.com/workers/observability/errors/#loop-limit",
+  "green": {
+    "version": "0dfbd41f-8f93-4483-8db1-e0fb7281831d",
+    "status": 200,
+    "result": {
+      "executions": 20,
+      "packageCalls": 60,
+      "callbackIngress": 0,
+      "resultMarkers": 60
+    }
+  }
 }

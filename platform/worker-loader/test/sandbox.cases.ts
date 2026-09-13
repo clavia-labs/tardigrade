@@ -14,7 +14,7 @@ export interface IsolatedCallbackTransportResult {
   readonly resultMarkers: number
 }
 
-export interface ModeledDistinctExecutionBudget {
+interface ModeledDistinctExecutionBudget {
   readonly maxDistinctExecutions: number
   readonly initialBudget: number
 }

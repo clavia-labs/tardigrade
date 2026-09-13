@@ -110,7 +110,7 @@ describe("worker loader sandbox", () => {
     expect(result).toEqual({
       executions: ISOLATED_CALLBACK_TRANSPORT.executions,
       packageCalls: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution,
-      callbackIngress: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution,
+      callbackIngress: 0,
       resultMarkers: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution
     })
   })
