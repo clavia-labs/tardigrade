@@ -98,21 +98,34 @@ const messageEntriesFrom = (
     batches.set(key, calls)
   }
   const emitted = new Set<string>()
-  let pendingText: string | null = null
+  const pendingText = new Map<unknown, string>()
+  const closed = new Set<unknown>()
+  let currentTurn: unknown
   const continuations = new Map(projected.filter((event) => event.type === "ModelReturned" && event.continuation !== undefined)
     .map((event) => [responseKeyOf(event, event.callId), event.continuation as ProviderContinuation]))
   const continuationOf = (event: Event, id: unknown) => {
     const continuation = id === undefined ? undefined : continuations.get(responseKeyOf(event, id))
     return continuation === undefined ? {} : { continuation }
   }
-  for (const event of projected.slice(from)) {
+  for (const [index, event] of projected.entries()) {
+    if (event.type === "MessageReceived") currentTurn = event.id
+    if (index < from) continue
+    // turn falls back to the preceding ingress for historical events (request.test.ts).
+    const turn = event.turn ?? currentTurn
     const value = event as Record<string, unknown>
     switch (event.type) {
       case "MessageReceived":
+      case "TurnResumed":
+        pendingText.delete(turn)
+        closed.delete(turn)
+        if (event.type === "TurnResumed") break
         push(event, userMessageOf(event, resolved))
         break
+      case "ModelCalled":
+        pendingText.delete(turn)
+        break
       case "TextReturned":
-        pendingText = String(value.text ?? "")
+        if (!closed.has(turn)) pendingText.set(turn, String(value.text ?? ""))
         break
       case "ToolCalled": {
         const key = responses.keys.get(event)
@@ -120,11 +133,11 @@ const messageEntriesFrom = (
         if (key !== undefined) emitted.add(key)
         push(event, {
           role: "assistant",
-          content: pendingText,
+          content: pendingText.get(turn) ?? null,
           ...continuationOf(event, value.responseId),
           toolCalls: key === undefined ? [callOf(event)] : batches.get(key)!
         })
-        pendingText = null
+        pendingText.delete(turn)
         break
       }
       case "ToolReturned": {
@@ -146,17 +159,23 @@ const messageEntriesFrom = (
         break
       }
       case "TurnCompleted":
+        pendingText.delete(turn)
+        closed.add(turn)
         push(event, { role: "assistant", content: String(value.output ?? ""), ...continuationOf(event, value.attemptKey) })
         break
       case "TurnFailed":
+        pendingText.delete(turn)
+        closed.add(turn)
         push(event, { role: "assistant", content: `the turn failed: ${upcastError(value.error).message}` })
         break
       case "TurnCancelled": {
         const reason = String(value.reason ?? "")
+        closed.add(turn)
         push(event, {
           role: "assistant",
-          content: reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}`
+          content: pendingText.get(turn) ?? (reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}`)
         })
+        pendingText.delete(turn)
         break
       }
       default:
