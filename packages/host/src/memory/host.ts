@@ -1,9 +1,10 @@
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import type { HostPorts, ThreadEnv } from "../ports"
 import { threadExecutions } from "../execution"
 import { commitDelivery } from "../delivery"
 import { Effect, Layer } from "effect"
 import { ThreadAllocator, reserveRootThread, type ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
-import { instanceThreadAllocator, registeredThreadAllocator, memoryThreadDirectory, initializingThreadAllocator, type ThreadAllocationPolicy } from "../allocation"
+import { instanceThreadAllocator, registeredThreadAllocator, memoryThreadDirectory, initializingThreadAllocator, durableThreadInitializer, type ThreadInitializer, type ThreadAllocationPolicy } from "../allocation"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark, type AppendOptions, type AppendResult } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
@@ -47,6 +48,7 @@ type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
 // binds HostPorts. A missing LanguageModel is a type error.
 export type HostOptions<R> = {
   readonly allocation?: ThreadAllocationPolicy
+  readonly initializeThread?: ThreadInitializer
   readonly initializeRoot?: (target: ThreadAddress, at: number) => Promise<void>
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly actorName?: string
@@ -159,6 +161,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     if (target.actor !== actorName || target.instance !== actorInstance) {
       throw new Error("root initialization requires the owning host")
     }
+    await initializeThread?.(target, { kind: "root", coordinate: target })
     const created = threadCreatedForDelivery(read(target.thread), target, undefined)
     if (created?.parent !== undefined) throw new Error("a child thread cannot be recreated as a root")
     if (created === undefined) {
@@ -166,7 +169,12 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
       driver.mark(target.thread)
     }
   }
-  const initializedAllocator = initializingThreadAllocator(allocator, options.initializeRoot ?? initializeRoot)
+  const initialized = new Set<string>()
+  const initializeThread = options.initializeThread === undefined ? undefined : durableThreadInitializer(options.initializeThread, {
+    completed: async (target) => initialized.has(JSON.stringify(target)),
+    complete: async (target) => { initialized.add(JSON.stringify(target)) }
+  })
+  const initializedAllocator = initializingThreadAllocator(allocator, options.initializeRoot ?? initializeRoot, initializeThread)
 
   const commitAt = async (
     target: ThreadAddress,
@@ -176,6 +184,9 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     call?: unknown
   ): Promise<void> => {
     const thread = threadOf(formatThreadAddress(target))
+    await initializeThread?.(target, lineage === undefined
+      ? { kind: "root", coordinate: target }
+      : { kind: "child", parent: lineage.parent, child: childKeyOf(target.thread) })
     const result = await Effect.runPromise(commitDelivery({ target, event, lineage, link, call, keyOf: options.keyOf }, {
       read: Effect.sync(() => read(thread)),
       head: Effect.sync(() => read(thread).length),

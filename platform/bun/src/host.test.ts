@@ -223,9 +223,9 @@ describe("the bun host", () => {
     ])
     expect(await first.actorThreads()).toEqual({
       cursor: 2,
-      threads: [{ thread: "alpha", allocationKey: expect.any(String), depth: 0, state: "registered" }]
+      threads: [{ thread: "alpha", allocation: { kind: "root", coordinate: { actor: "bun", instance: "default", thread: "alpha" } }, allocationKey: expect.any(String), depth: 0, state: "registered" }]
     })
-    expect(await first.actorThread("alpha")).toEqual({ thread: "alpha", allocationKey: expect.any(String), depth: 0, state: "registered" })
+    expect(await first.actorThread("alpha")).toEqual({ thread: "alpha", allocation: { kind: "root", coordinate: { actor: "bun", instance: "default", thread: "alpha" } }, allocationKey: expect.any(String), depth: 0, state: "registered" })
     await first.close()
 
     const reopened = await createBunHost(options(path))
