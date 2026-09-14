@@ -2,6 +2,7 @@ import { Context, Duration, Effect, Layer, Stream, type Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { isForkRefused, resolveForkCheckpoint, type ForkRefused } from "@clavia/tardigrade-host/fork"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
 
@@ -20,8 +21,7 @@ import {
   type ThreadAdded,
   type ThreadsSnapshot,
   type ProjectionDeclaration,
-  type ThreadNode
-} from "@clavia/tardigrade-client/contract"
+  type ThreadNode, ThreadOccupied, forkCheckpointOf } from "@clavia/tardigrade-client/contract"
 import { methodHandlers } from "./methods"
 import { catalogHandlers, type CatalogDiscovery } from "./models"
 import { Threads, type ActorThreads } from "./threads"
@@ -101,6 +101,14 @@ const flatten = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary>
 
 const logsOf = (entries: ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>) =>
   new Map(entries.map((entry) => [entry.id, entry.events] as const))
+
+// forkProblemOf maps a fork refusal to its problem document (packages/host/src/fork.ts, ForkRefusal).
+const forkProblemOf = (refused: ForkRefused) =>
+  refused.refusal === "unknown-source"
+    ? UnknownThread.of(refused.message)
+    : refused.refusal === "occupied"
+      ? ThreadOccupied.of(refused.message)
+      : InvalidRequest.of(refused.message)
 
 const frameOf = (seq: number, event: unknown): string => `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`
 
@@ -406,6 +414,21 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
         if (query.actor !== undefined && query.actor !== (service.actorName ?? RESERVED_ACTOR)) return yield* Effect.fail(InvalidRequest.of("Allocation target actor does not match this deployment."))
         const threads = yield* service.ensure(params.id)
         return yield* threads.allocateRoot(payload.name, payload)
+      }))
+      // The edge resolves an event id to a row against the source log it already read, so the host takes a row (packages/core/src/log/fork.ts, checkpointSeqOf). Refusals map by kind; anything else stays a defect.
+      .handle("forkThread", ({ params, payload }) => Effect.gen(function* () {
+        const threads = yield* actorOf(yield* Threads, params.id)
+        const source = yield* logOf(threads.events, params.thread)
+        const seq = yield* Effect.try({
+          try: () => resolveForkCheckpoint(source, forkCheckpointOf(payload)),
+          catch: (failure) => InvalidRequest.of(failure instanceof Error ? failure.message : String(failure))
+        })
+        const coordinate = yield* threads.forkThread(params.thread, seq, payload.name).pipe(
+          Effect.catchDefect((defect) => isForkRefused(defect)
+            ? Effect.fail(forkProblemOf(defect))
+            : Effect.die(defect))
+        )
+        return { ...coordinate, seq }
       }))
       // The body is the declared payload, decoded before this runs: a body that is not one is
       // refused by the declaration and rendered as a problem document (contract.ts,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { childCreated, childLineageOf, isThreadCreated, sameThreadLineage, threadCreated, threadCreatedForDelivery, threadCreatedOf, threadKeys } from "./relations"
+import { childCreated, childInvocationsOf, childLineageOf, invocationLinked, isInvocationLinked, isThreadCreated, openChildInvocationsOf, sameThreadLineage, threadCreated, threadCreatedForDelivery, threadCreatedOf, threadKeys } from "./relations"
+import { formatThreadAddress } from "../transport/endpoint"
 
 describe("thread creation", () => {
   test("depth ceilings survive creation and cannot change on redelivery", () => {
@@ -80,8 +81,44 @@ describe("thread creation", () => {
     expect(threadCreatedOf(events)).toBeUndefined()
   })
 
+  test("a fork fact keys once per destination log", () => {
+    expect(threadKeys.keyOf({ type: "ThreadForked", source: { actor: "agent", instance: "main", thread: "root" }, at: 40 })).toBe("thread:forked")
+  })
+
   test("invalid depth and time are refused", () => {
     expect(isThreadCreated({ type: "ThreadCreated", address: { actor: "agent", instance: "main", thread: "x" }, depth: -1, at: 1 } as Event)).toBe(false)
     expect(isThreadCreated({ type: "ThreadCreated", address: { actor: "agent", instance: "main", thread: "x" }, depth: 0, at: Number.NaN } as Event)).toBe(false)
+  })
+})
+
+describe("child invocations", () => {
+  const worker1 = formatThreadAddress({ actor: "agent", instance: "main", thread: "worker-1" })
+  const worker2 = formatThreadAddress({ actor: "agent", instance: "main", thread: "worker-2" })
+  const worker9 = formatThreadAddress({ actor: "agent", instance: "main", thread: "worker-9" })
+  const parent = { method: "message", id: "m1", epoch: 0 }
+  const first = invocationLinked({ parent, child: { invocation: { method: "message", id: "c1", epoch: 0 } }, target: worker1, at: 2 })
+  const second = invocationLinked({ parent, child: { invocation: { method: "message", id: "c2", epoch: 0 } }, target: worker2, at: 3 })
+  const firstSettled = { type: "ResponseReceived", id: "c1.reply", from: worker1, method: "message", call: "c1", status: "completed", at: 4 } as Event
+  const secondTimedOut = { type: "CallTimedOut", target: worker2, method: "message", call: "c2", timeoutMs: 10, deadlineAt: 13, at: 14 } as Event
+
+  test("creation is the edge and settlement is a terminal for the edge's coordinate", () => {
+    const events = [first, second]
+    expect(childInvocationsOf(events)).toEqual([first, second])
+    expect(openChildInvocationsOf(events)).toEqual([first, second])
+    expect(openChildInvocationsOf([...events, firstSettled])).toEqual([second])
+    expect(openChildInvocationsOf([...events, firstSettled, secondTimedOut])).toEqual([])
+  })
+
+  test("a terminal for another coordinate settles nothing", () => {
+    const otherCall = { ...firstSettled, call: "c9" } as Event
+    const otherThread = { ...firstSettled, from: worker9 } as Event
+    const otherEpoch = { ...firstSettled, epoch: 1 } as Event
+    expect(openChildInvocationsOf([first, otherCall, otherThread, otherEpoch])).toEqual([first])
+  })
+
+  test("a malformed edge is not a child invocation", () => {
+    expect(isInvocationLinked({ type: "InvocationLinked", target: "[not, an, address", child: { invocation: parent }, at: 1 } as Event)).toBe(false)
+    expect(isInvocationLinked({ type: "InvocationLinked", target: worker1, at: 1 } as Event)).toBe(false)
+    expect(isInvocationLinked(first)).toBe(true)
   })
 })

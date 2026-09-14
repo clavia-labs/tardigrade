@@ -24,7 +24,7 @@ export const initializingThreadAllocator = (
 ): typeof ThreadAllocator.Service => ({
   allocate: (request) => Effect.gen(function* () {
     const target = yield* allocateThread(request).pipe(Effect.provideService(ThreadAllocator, allocator))
-    if (request.kind === "root") {
+    if (request.kind === "root" && request.initialization !== "caller") {
       const at = yield* Clock.currentTimeMillis
       yield* Effect.promise(() => initialize(target, at))
     }
@@ -79,6 +79,7 @@ export const threadAllocationRecord = (
   const parent = request.kind === "child" ? request.parent.thread : undefined
   return { thread: target.thread, event: {
     type: "ThreadRequested", thread: target.thread, allocationKey: key,
+    ...(request.kind === "root" && request.initialization !== undefined ? { initialization: request.initialization } : {}),
     ...(parent === undefined ? {} : { parentThread: parent }),
     depth: parent === undefined ? 0 : (records.find((record) => record.thread === parent)?.depth ?? 0) + 1,
     at

@@ -8,7 +8,7 @@ import { actorCall } from "./invoke"
 import { EventLog, withWatermark } from "../log"
 import { Router } from "../transport/router"
 import { Self } from "../runtime/context"
-import { InvocationScope, InvocationFailed, InvocationCancelled } from "./execution"
+import { InvocationScope, InvocationWasDetached, InvocationFailed, InvocationCancelled } from "./execution"
 import { ThreadAllocator } from "../actor/allocation"
 import { formatThreadAddress } from "../transport/endpoint"
 import type { Event } from "../event"
@@ -106,4 +106,22 @@ test("sibling transition owners isolate the same nested invocation key", () => {
   if (plan.kind !== "intent") throw new Error("expected invocation plan")
   expect(plan.events(plan.input, 1).find((event) => event.type === "InvocationLinked"))
     .toMatchObject({ owner: firstOwner, parent: parent.invocation })
+})
+
+test("a detached method wait yields a typed outcome without sending or appending", async () => {
+  const call = actorCall([], { parent, key: "review", target: reference, method: "research", input: { topic: "energy" } })
+  const result = await Effect.runPromise(reference.methods.research({ topic: "energy" }, { key: "review" }).pipe(
+    Effect.provide(Layer.mergeAll(
+      Layer.succeed(InvocationScope, { context: { invocation: parent.invocation }, signal: new AbortController().signal }),
+      Layer.succeed(Self, parent.target),
+      Layer.succeed(EventLog, withWatermark({
+        read: Effect.succeed([{ type: "InvocationDetached", direction: "outgoing", reference: call.reference, at: 1 }]),
+        append: () => Effect.die("unexpected append")
+      })),
+      Layer.succeed(Router, { send: () => Effect.die("unexpected send") })
+    )),
+    Effect.catchTag("InvocationWasDetached", (failure) => Effect.succeed(failure))
+  ))
+  expect(result).toBeInstanceOf(InvocationWasDetached)
+  expect(result).toMatchObject({ reference: call.reference })
 })

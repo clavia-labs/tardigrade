@@ -2,6 +2,7 @@
   "extends": "../tsconfig.base.json",
   "include": [
     "actor",
+    "host",
     "inference"
   ]
 }

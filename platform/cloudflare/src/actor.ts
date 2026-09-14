@@ -1,5 +1,7 @@
 import type { TreeBounds } from "@clavia/tardigrade-client/contract"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { FORK_EXPECTED_HEAD, forkBatchFor, forkOutcomeOf, forkRootAllocation, isForkRefused, resolveForkCheckpoint, type ForkRefusal } from "@clavia/tardigrade-host/fork"
+import type { ForkCheckpoint } from "@clavia/tardigrade-core/log"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadObjectNameOf } from "./transport/directory"
 import { DurableObject } from "cloudflare:workers"
@@ -49,7 +51,7 @@ const actorSupervisorOf = (
         act: (request) => Effect.gen(function* () {
           const registration = yield* Effect.promise(async () => {
             const stub = env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, request.thread))
-            if (request.parentThread === undefined) {
+            if (request.parentThread === undefined && request.initialization !== "caller") {
               await stub.init(identity.actor, identity.instance, request.thread)
               await stub.initializeRoot()
               return {}
@@ -241,6 +243,32 @@ export class ActorDO extends DurableObject<Env> {
     const target = await this.allocateThread({ kind: "root", coordinate: { ...identity, thread: name ?? "" }, ...key })
     await this.initializeRootThread(target.thread)
     return target
+  }
+
+  // forkThread copies source rows 1..seq onto a runnable root. Refusals return as data because a thrown class does not survive the RPC boundary (transport/http.ts).
+  async forkThread(source: string, checkpoint: ForkCheckpoint, name?: string): Promise<
+    | { readonly ok: true; readonly coordinate: ThreadAddress; readonly seq: number }
+    | { readonly ok: false; readonly refusal: ForkRefusal; readonly message: string }
+  > {
+    try {
+      const identity = this.identity()
+      const sourceEntry = (await this.threads()).find((entry) => entry.thread === source && entry.state === "registered")
+      const sourceEvents = sourceEntry === undefined
+        ? []
+        : await this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, source)).events(source)
+      const seq = resolveForkCheckpoint(sourceEvents, checkpoint)
+      const dest = await this.allocateThread(forkRootAllocation(identity, name))
+      const batch = forkBatchFor(sourceEvents, { source: { ...identity, thread: source }, seq, dest: dest.thread }, Date.now())
+      const destStub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, dest.thread))
+      await destStub.init(identity.actor, identity.instance, dest.thread)
+      const result = await destStub.appendAt(batch, FORK_EXPECTED_HEAD)
+      if (result.appended === 0) forkOutcomeOf(await destStub.events(dest.thread), batch, dest.thread)
+      await this.request({ type: "ThreadRequested", thread: dest.thread, depth: 0, at: Date.now() })
+      return { ok: true, coordinate: dest, seq }
+    } catch (failure) {
+      if (isForkRefused(failure)) return { ok: false, refusal: failure.refusal, message: failure.message }
+      throw failure
+    }
   }
 
   async allocateThread(request: ThreadAllocation): Promise<ThreadAddress> {

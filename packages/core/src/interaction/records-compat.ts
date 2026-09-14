@@ -1,8 +1,11 @@
+import type { Link } from "../transport/link"
 import type { Event } from "../event"
-import { formatThreadAddress, parseThreadAddress } from "../transport/endpoint"
+import { formatThreadAddress, parseThreadAddress, isThreadAddress, type ThreadAddress } from "../transport/endpoint"
 import type { ResponseReceived, CallTimedOut, CallDispatched, CancellationDispatched } from "./events"
 
-import { invocationCoordinateKey, type InvocationCoordinate } from "./invocation"
+import { invocationCoordinateKey, type InvocationCoordinate, type InvocationRef } from "./invocation"
+
+import { invocationDetachedOf } from "./detach"
 
 type RecordedCall = Event & { readonly id: string; readonly reference?: InvocationCoordinate }
 
@@ -25,6 +28,8 @@ export const outgoingReference = (plan: { readonly reference?: InvocationCoordin
 
 // terminalInvocationRefOf reads the invocation owned by a terminal, including recorded legacy replies.
 export const terminalInvocationRefOf = (event: Event): InvocationCoordinate | undefined => {
+  const detached = invocationDetachedOf(event)
+  if (detached?.direction === "outgoing") return detached.reference
   if (event.type !== "ResponseReceived" && event.type !== "CallTimedOut") return undefined
   const terminal = event as ResponseReceived | CallTimedOut
   const address = terminal.type === "ResponseReceived" ? terminal.from : terminal.target
@@ -67,4 +72,27 @@ export const recordedDispatchOf = (event: Event): RecordedDispatch | undefined =
     ...outgoingReference(record), call, method, target: record.target,
     ...(epoch === 0 ? {} : { epoch }), timeoutMs: record.timeoutMs, deadlineAt: record.deadlineAt
   } }
+}
+
+export interface AcceptedCall {
+  readonly owner: Event
+  readonly id: string
+  readonly invocation?: InvocationRef
+  readonly link: Link<unknown, ThreadAddress>
+}
+
+// acceptedCallOf reads the accepted reply link and its recorded invocation, retaining legacy call IDs (respond.test.ts, log/fork.test.ts).
+export const acceptedCallOf = (event: Event): AcceptedCall | undefined => {
+  const candidate = event as { readonly id?: unknown; readonly call?: unknown; readonly link?: unknown }
+  const context = typeof candidate.call === "object" && candidate.call !== null
+    ? candidate.call as { readonly invocation?: unknown }
+    : undefined
+  const invocation = typeof context?.invocation === "object" && context.invocation !== null
+    ? context.invocation as InvocationRef
+    : undefined
+  const id = typeof invocation?.id === "string" ? invocation.id : candidate.id
+  if (typeof id !== "string" || typeof candidate.link !== "object" || candidate.link === null ||
+    !("source" in candidate.link) || !("target" in candidate.link) || !isThreadAddress(candidate.link.target)) return undefined
+  return { owner: event, id, ...(invocation === undefined ? {} : { invocation }),
+    link: candidate.link as Link<unknown, ThreadAddress> }
 }
