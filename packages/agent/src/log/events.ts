@@ -1,10 +1,17 @@
+import { RetrySchedule } from "../inference/retry"
+import { ModelError, encodeModelError, unknownModelError } from "../inference/error"
+import { AiError } from "effect/unstable/ai"
+import { upcastUsage } from "./response-upcast"
 import { Schema } from "effect"
 import { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
-import type { Usage } from "../inference/usage"
+import { ModelPricing, type Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
+import { ProviderContinuation } from "../inference/continuation"
+import { ModelUsage, ModelResponse, ModelFinish } from "../inference/response"
+export { ModelResponse } from "../inference/response"
 
 // The agent's domain events compose with core actor input and control events. The model responds
 // by acting: its recorded decision is the consequence event it emits, and the prose it emits
@@ -21,11 +28,7 @@ export { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-me
 export { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
 export { cancellationRequested } from "@clavia/tardigrade-core/interaction/cancellation"
 
-// Endpoint is who served one attempt, recorded whether or not the endpoint reported any spend.
-// `provider` and `model` are the configuration's own effective coordinates, so a replay reads
-// which model supplied a native guarantee even when no usage came back; `routedProvider` and
-// `routedModel` are the ones a router named on the wire, which supersede the configured pair as
-// the observed truth (packages/model/src/model.ts, endpointOf).
+// Endpoint records configured model identity and optional routing evidence (inference/usage.test.ts).
 export const Endpoint = Schema.Struct({
   provider: Schema.optional(Schema.String),
   model: Schema.String,
@@ -69,17 +72,19 @@ export const ToolReturned = Schema.Struct({
   type: Schema.Literal("ToolReturned"),
   callId: Schema.String,
   result: Schema.Unknown,
+  isFailure: Schema.optional(Schema.Boolean),
   at: Schema.Finite
 })
 
 // ModelCalled records the attempt before inference; an interrupted attempt can remain unanswered (runtime/turn.test.ts).
 export const ModelCalled = Schema.Struct({
   type: Schema.Literal("ModelCalled"),
+  pricing: Schema.optional(ModelPricing),
+  retryIndex: Schema.optional(Schema.Int),
   callId: Schema.String,
   // model is the concrete selection for this provider effect. It remains optional for earlier logs.
   model: Schema.optional(ModelRef),
-  // The occurrence: distinct per physical attempt, the dedup key's scope. callId stays the
-  // provider idempotency key, shared across retries of one logical attempt.
+  // ordinal identifies each physical attempt; callId is reused only for unanswered crash recovery (inference/retry.test.ts).
   ordinal: Schema.optional(Schema.Finite),
   // The output policy this attempt ran under, when the turn declared a contract. Recorded on the
   // ask, so a replay reads which policy produced which response.
@@ -89,15 +94,33 @@ export const ModelCalled = Schema.Struct({
   at: Schema.Finite
 })
 
+export const TurnError = Schema.Struct({
+  message: Schema.String,
+  code: Schema.optional(Schema.String),
+  statusCode: Schema.optional(Schema.Finite),
+  isRetryable: Schema.optional(Schema.Boolean),
+  details: Schema.optional(Schema.Json)
+})
+export type TurnError = typeof TurnError.Type
+
 // ModelReturned settles a model attempt and owns its response usage (runtime/batches.test.ts).
 export const ModelReturned = Schema.Struct({
   type: Schema.Literal("ModelReturned"),
+  retry: Schema.optional(RetrySchedule),
   callId: Schema.String,
   ordinal: Schema.Finite,
   outcome: Schema.Literals(["returned", "failed"]),
-  usage: Schema.Unknown,
+  reasoning: Schema.optional(Schema.String),
+  continuation: Schema.optional(ProviderContinuation),
+  usage: ModelUsage,
+  legacyUsage: Schema.optional(Schema.Unknown),
+  finish: Schema.optional(ModelFinish),
+  reportedCostUsd: Schema.optional(Schema.Finite),
   endpoint: Schema.optional(Endpoint),
-  error: Schema.optional(Schema.String),
+  text: Schema.optional(Schema.String),
+  response: Schema.optional(ModelResponse),
+  error: Schema.optional(ModelError),
+  legacyError: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.String,
   at: Schema.Finite
@@ -146,6 +169,7 @@ export const TURN_FAILURE_CAUSES = [
   "inference_attempts_exhausted",
   "refused",
   "truncated",
+  "output_limit",
   "output_unsupported",
   "output_contract_violation",
   "output_validation_failed",
@@ -211,7 +235,7 @@ export const OutputRepaired = Schema.Struct({
 // TurnFailed is the failure terminal for one execution epoch.
 export const TurnFailed = Schema.Struct({
   type: Schema.Literal("TurnFailed"),
-  error: Schema.String,
+  error: TurnError,
   // Present only on the fail a live attempt answered; the give-up terminal carries none.
   usage: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Finite),
@@ -390,13 +414,20 @@ export interface AttemptEndpoint {
 // declared one must state it: the reactor records it and reads it back on replay, and it refuses
 // to invent one (inference/machine.ts, completionOf).
 type Served = {
-  readonly usage?: Usage
+  readonly response?: ModelResponse
+  readonly finish?: ModelFinish
+  readonly reportedCostUsd?: number
+  readonly reasoning?: string
+  readonly continuation?: import("../inference/continuation").ProviderContinuation
+  // usage accepts historical custom bindings; modelReturned stores ModelUsage.
+  readonly usage?: ModelUsage | Usage
   readonly endpoint?: AttemptEndpoint
   readonly mode?: import("../output/contract").OutputMode
 }
 
 // ToolCall identifies one requested tool operation within a model response.
 export interface ToolCall {
+  readonly validationError?: string
   readonly callId: string
   readonly name: string
   readonly arguments: unknown
@@ -407,7 +438,10 @@ export type Action =
   | ({ readonly kind: "complete"; readonly output: string } & Served)
   | ({
       readonly kind: "fail"
-      readonly error: string
+      readonly retryable?: boolean
+      readonly retryAfterMs?: number
+      readonly text?: string
+      readonly error: AiError.AiError | TurnError | string
       readonly failure?: {
         readonly cause: TurnFailureCause
         readonly attempts: number
@@ -486,7 +520,7 @@ export const toolCalled = (
   } & EpochStamp
 ): Event => ({ type: "ToolCalled", ...fields }) as Event
 
-export const toolReturned = (fields: { readonly callId: string; readonly result: unknown } & Stamp): Event =>
+export const toolReturned = (fields: { readonly callId: string; readonly result: unknown; readonly isFailure?: boolean } & Stamp): Event =>
   ({ type: "ToolReturned", ...fields }) as Event
 
 export const modelCalled = (
@@ -494,6 +528,8 @@ export const modelCalled = (
     readonly callId: string
     readonly model?: ModelRefType
     readonly ordinal?: number
+    readonly pricing?: import("../inference/usage").ModelPricing
+    readonly retryIndex?: number
     readonly output?: {
       readonly contract: string
       readonly fingerprint: string
@@ -507,11 +543,19 @@ export const modelReturned = (
     readonly ordinal: number
     readonly turn: string
     readonly outcome: "returned" | "failed"
+    readonly retry?: RetrySchedule
     readonly usage: unknown
     readonly endpoint?: unknown
-    readonly error?: string
+    readonly error?: AiError.AiError | TurnError | string
+    readonly text?: string
+    readonly response?: ModelResponse
+    readonly finish?: ModelFinish
+    readonly reportedCostUsd?: number
   } & EpochStamp
-): Event => ({ type: "ModelReturned", ...fields }) as Event
+): Event => ({ type: "ModelReturned", ...fields, usage: upcastUsage(fields.usage),
+  ...(fields.error === undefined ? {} : { error: encodeModelError(unknownModelError(fields.error)) }),
+  ...(!Schema.is(ModelUsage)(fields.usage) && Object.keys(fields.usage ?? {}).length > 0 ? { legacyUsage: fields.usage } : {})
+}) as Event
 
 export const textReturned = (
   fields: { readonly text: string } & EpochStamp
@@ -561,7 +605,7 @@ export const outputRepaired = (
 
 export const turnFailed = (
   fields: {
-    readonly error: string
+    readonly error: TurnError | string
     readonly cause?: TurnFailureCause
     readonly attempts?: number
     readonly attemptKey?: string
@@ -569,7 +613,7 @@ export const turnFailed = (
     readonly endpoint?: unknown
   } & EpochStamp
 ): Event =>
-  ({ type: "TurnFailed", ...fields }) as Event
+  ({ type: "TurnFailed", ...fields, error: typeof fields.error === "string" ? { message: fields.error } : fields.error }) as Event
 
 export const turnCancelled = (
   fields: {

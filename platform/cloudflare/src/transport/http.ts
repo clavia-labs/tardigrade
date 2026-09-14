@@ -1,16 +1,18 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
+import { ForkRequest, forkCheckpointOf, UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ModelPolicy } from "@clavia/tardigrade-agent"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
-import type { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog-availability"
+import type { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrade-http/methods"
 import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-http/models"
 import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
+import { layerApiDocs, UNAUTHENTICATED_PATHS } from "@clavia/tardigrade-http/docs"
+import { WorkerApi, workerRoutes } from "./contract"
 import type { Env } from "../env"
 import type { CloudflareDirectory } from "./directory"
 
@@ -42,6 +44,9 @@ interface CloudflareHttpOptions {
   readonly modelPolicyFrom: (env: Env) => ModelPolicy
   readonly directory: CloudflareDirectory
 }
+
+// FORK_REFUSAL_STATUS maps a fork refusal to its HTTP status (packages/host/src/fork.ts, ForkRefusal).
+const FORK_REFUSAL_STATUS = { "unknown-source": 404, checkpoint: 400, occupied: 409 } as const
 
 // cloudflareHttp adapts HTTP requests to the mounted host's methods and directory.
 export const cloudflareHttp = ({
@@ -82,13 +87,13 @@ export const cloudflareHttp = ({
   })
 
   const routes = [
-    HttpRouter.route("GET", "/healthz", Effect.gen(function* () {
+    HttpRouter.route(workerRoutes.healthz.method, workerRoutes.healthz.path, Effect.gen(function* () {
       return json({ status: "ready", actor: actorName() })
     })),
-    HttpRouter.route("GET", "/v1/metadata", workerRoute((_request, _env) =>
+    HttpRouter.route(workerRoutes.metadata.method, workerRoutes.metadata.path, workerRoute((_request, _env) =>
       Effect.succeed(json({ name: actorName(), storage: { kind: "durable-object" } }))
     )),
-    HttpRouter.route("PUT", "/v1/actors/:id", workerRoute((_request, env) =>
+    HttpRouter.route(workerRoutes.ensureActor.method, workerRoutes.ensureActor.path, workerRoute((_request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const instance = params.id ?? ""
@@ -98,7 +103,7 @@ export const cloudflareHttp = ({
         return json({ actor: instance, definition: actorName() })
       })
     )),
-    HttpRouter.route("GET", "/v1/actors/:id", workerRoute((_request, env) =>
+    HttpRouter.route(workerRoutes.actor.method, workerRoutes.actor.path, workerRoute((_request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const instance = params.id ?? ""
@@ -109,7 +114,7 @@ export const cloudflareHttp = ({
           : json({ actor: instance, definition: actorName() })
       })
     )),
-    HttpRouter.route("POST", "/v1/actors/:id/threads", workerRoute((request, env) =>
+    HttpRouter.route(workerRoutes.allocateRoot.method, workerRoutes.allocateRoot.path, workerRoute((request, env) =>
       Effect.gen(function* () {
         const selection = invocationQueryOf(request)
         if ("error" in selection) return json({ error: selection.error }, 400)
@@ -124,7 +129,25 @@ export const cloudflareHttp = ({
         return json(coordinate)
       })
     )),
-    HttpRouter.route("GET", "/v1/actors/:id/threads", workerRoute((request, env) =>
+    HttpRouter.route(workerRoutes.forkThread.method, workerRoutes.forkThread.path, workerRoute((request, env) =>
+      Effect.gen(function* () {
+        const params = yield* HttpRouter.params
+        const instance = params.id ?? ""
+        const thread = params.thread ?? ""
+        if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+        const payload = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
+        if (!Schema.is(ForkRequest)(payload)) {
+          return json({ error: "the body needs a checkpoint, { seq } at or above one or { event } naming an event id, and an optional nonempty name" }, 400)
+        }
+        const directory = yield* Effect.promise(() => actorStub(env, actorName(), instance, false))
+        if (directory === undefined) return json({ error: "unknown actor" }, 404)
+        const outcome = yield* Effect.promise(async () => directory.forkThread(thread, forkCheckpointOf(payload), payload.name))
+        return outcome.ok
+          ? json({ ...outcome.coordinate, seq: outcome.seq })
+          : json({ error: outcome.message }, FORK_REFUSAL_STATUS[outcome.refusal])
+      })
+    )),
+    HttpRouter.route(workerRoutes.list.method, workerRoutes.list.path, workerRoute((request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const instance = params.id ?? ""
@@ -138,7 +161,7 @@ export const cloudflareHttp = ({
         return json(tree)
       })
     )),
-    HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/events", workerRoute((request, env) =>
+    HttpRouter.route(workerRoutes.append.method, workerRoutes.append.path, workerRoute((request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const actor = actorName()
@@ -156,7 +179,7 @@ export const cloudflareHttp = ({
         return json({ actor: instance, thread }, 202)
       })
     )),
-    HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/events", workerRoute((request, env) =>
+    HttpRouter.route(workerRoutes.events.method, workerRoutes.events.path, workerRoute((request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const actor = actorName()
@@ -185,12 +208,13 @@ export const cloudflareHttp = ({
 
   const { handler } = HttpRouter.toWebHandler(Layer.mergeAll(
     HttpRouter.addAll(routes),
+    layerApiDocs(WorkerApi),
     HttpApiBuilder.layer(CatalogApi).pipe(Layer.provide(layerCatalogHandlers), Layer.provide(layerRequestProblems)),
     HttpApiBuilder.layer(MethodApi).pipe(Layer.provide(layerMethodHandlers), Layer.provide(layerRequestProblems)),
     HttpRouter.middleware((effect) => Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest
       const path = new URL(request.url, "http://worker").pathname
-      if (["/healthz", "/v1/providers", "/v1/models"].includes(path)) return yield* effect
+      if (UNAUTHENTICATED_PATHS.includes(path)) return yield* effect
       return guard(request, yield* WorkerEnv) ?? (yield* effect)
     }), { global: true })
   ).pipe(Layer.provide(HttpServer.layerServices)), { disableLogger: true })

@@ -1,0 +1,17 @@
+{
+  "name": "tardigrade-inference-test",
+  "main": "fixture.worker.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACTORS", "class_name": "ActorDO" },
+      { "name": "THREADS", "class_name": "ThreadDO" }
+    ]
+  },
+  "d1_databases": [
+    { "binding": "CATALOG_DB", "database_name": "tardigrade-catalog", "migrations_dir": "../migrations" }
+  ],
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO"] }]
+}

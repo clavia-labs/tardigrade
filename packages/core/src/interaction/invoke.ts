@@ -1,3 +1,4 @@
+import { isThreadForked } from "../log/fork"
 import { ownerKey, type OwnerRef } from "../runtime/context"
 import type { CallDispatched, CallPlanned, CallSkipped, CancellationResult, CallTimedOut } from "./events"
 import { Clock, Effect, Schema } from "effect"
@@ -17,9 +18,8 @@ import { targetCoordinate, targetMethods, type ThreadTarget } from "../actor/tar
 import { decodeActorInvocationContext, type ActorInvocationContext, InvocationRef, sameInvocation, decodeInvocationCoordinate, invocationIdForKey, invocationCoordinateKey, invocationCoordinateOf, type InvocationCoordinate } from "./invocation"
 
 import type { ActorMethodCancellation, ActorMethodDeclaration, ActorMethodInput, ActorMethodOutput, ActorMethods } from "../actor/method"
-import type { ActorMethodState } from "./state"
 
-import { invocationTerminalOf, invocationResultOf } from "./result"
+import { invocationTerminalOf, invocationResultOf, type ActorCallState } from "./result"
 import { sendInvocation } from "./send"
 import { invocationTimeoutOf, prepareInvocation } from "./prepare"
 import { outgoingKey, outgoingMatches, outgoingReference } from "./records-compat"
@@ -71,7 +71,7 @@ export interface ActorCall<Output, R = never> {
   readonly invocation: InvocationRef
   readonly context?: ActorInvocationContext
   readonly target: ReturnType<typeof targetCoordinate>
-  readonly state: ActorMethodState<Output>
+  readonly state: ActorCallState<Output>
   readonly transitions: ReadonlyArray<Transition<never, R>>
 }
 
@@ -106,6 +106,21 @@ const firstMismatch = (
   ...checks: ReadonlyArray<readonly [mismatch: boolean, message: string]>
 ): string | undefined => checks.find(([mismatch]) => mismatch)?.[1]
 
+// recordedCallForKey preserves inherited identities while new keys use the current parent (invoke.test.ts).
+const recordedCallForKey = (
+  log: ReadonlyArray<Event>,
+  parent: InvocationCoordinate,
+  key: string
+): CallPlanned | CallDispatched | undefined => {
+  const candidates = new Set([invocationIdForKey(parent, key)])
+  for (const event of log) {
+    if (isThreadForked(event)) candidates.add(invocationIdForKey({ target: event.source, invocation: parent.invocation }, key))
+  }
+  return log.find((event): event is CallPlanned | CallDispatched =>
+    (event.type === "CallPlanned" || event.type === "CallDispatched") &&
+    typeof event.id === "string" && candidates.has(event.id))
+}
+
 // actorCall projects a replay-safe outgoing method invocation and its current terminal state.
 export const actorCall = <
   Methods extends ActorMethods,
@@ -116,19 +131,17 @@ export const actorCall = <
   transitionScope?: { readonly context: TransitionContext; readonly tag: string }
 ): ActorCallFor<Methods[Name], ActorMethodOutput<Methods[Name]>, Router | Self> => {
   const parent = request.parent === undefined ? undefined : decodeInvocationCoordinate(request.parent)
+  const key = request.owner?.type === "transition" ? JSON.stringify([ownerKey(request.owner), request.key!]) : request.key!
+  const recorded = parent === undefined ? undefined : recordedCallForKey(log, parent, key)
   const options = parent === undefined ? { ...request, id: request.id! } : {
     ...request,
-    id: invocationIdForKey(parent, request.owner?.type === "transition"
-      ? JSON.stringify([ownerKey(request.owner), request.key!]) : request.key!),
+    id: recorded?.id ?? invocationIdForKey(parent, key),
     context: request.context ?? { invocation: parent.invocation }
   }
   if (parent !== undefined) {
     if (options.context === undefined || !sameInvocation(options.context.invocation, parent.invocation)) {
       throw new Error("idempotency parent does not match the caller invocation context")
     }
-    const recorded = log.find((event) =>
-      (event.type === "CallPlanned" || event.type === "CallDispatched") && event.id === options.id
-    ) as CallPlanned | CallDispatched | undefined
     if (recorded !== undefined) {
       const drift = firstMismatch(
         [recorded.target !== formatThreadAddress(targetCoordinate(options.target)), "target does not match the recorded call"],
@@ -183,7 +196,7 @@ export const actorCall = <
       id: options.id,
       method: options.method,
       target: targetCoordinate(options.target),
-      state: invocationResultOf(response, declaration.output) as ActorMethodState<ActorMethodOutput<Methods[Name]>>,
+      state: invocationResultOf(response, declaration.output) as ActorCallState<ActorMethodOutput<Methods[Name]>>,
       transitions: []
     })
   }

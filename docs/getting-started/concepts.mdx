@@ -55,6 +55,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
     <h2>Components</h2>
     <p>A component is a named projection. Its output contains a view for its parent and the transitions that are enabled in the current state.</p>
     <p>Components are pure. Given the same state, they produce the same output without performing external work. Components can contain other components, which lets an actor combine inference, tools, budgets, compaction, permissions, and output policies.</p>
+    <p>Effects that call an LLM receive Effect’s <code>LanguageModel</code> service from the host. Shared model utilities collect streams, enforce supplied request timeouts, and encode provider errors. Each component owns its prompts and interpretation: inference derives tool requests and turn outcomes, while compaction accepts a summary and records its checkpoint. The model package has no dependency on the agent package.</p>
   </div>
 
   <ConceptInterface>
@@ -93,7 +94,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <div className="compaction-example-copy">
     <h3>Example: compaction</h3>
-    <p>The compaction component tracks the model context as events arrive. With a 128k window and the default `fireRatio: 0.8`, 104k tokens crosses the threshold and enables an effect that summarizes the older span. The effect appends `CompactionCompleted`. Later model requests use its summary with a 64k-token tail, while the full event log remains available. Set `fireRatio` and `keepRatio` on `compaction()` to change these thresholds.</p>
+    <p>Before an inference request, compaction checks the active model's context window from model metadata. With a 128k window and the default `triggerRatio: 0.8`, 104k tokens crosses the threshold and triggers a summary of the older span. The effect appends `CompactionCompleted`. Later model requests use its summary with a 64k-token tail, while the full event log remains available. Set `triggerRatio` and `retainRatio` on `compaction()` to change these thresholds.</p>
   </div>
 
   <div className="component-diagram-frame">

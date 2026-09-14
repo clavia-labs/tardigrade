@@ -1,19 +1,39 @@
+import { LanguageModel, Response } from "effect/unstable/ai"
+import { CurrentModel } from "@clavia/tardigrade-model/settings"
+import type { ModelRef } from "@clavia/tardigrade-model/reference"
+import { unknownModelError } from "@clavia/tardigrade-model/error"
+import { renderMessages } from "../projection/messages"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Ref } from "effect"
+import { Effect, Layer, Ref, Stream } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { actorFromProjections, Self, send } from "@clavia/tardigrade-core/runtime"
+import { actorFromProjections, Self, settleActor } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection } from "@clavia/tardigrade-core/transition"
-import { Infer } from "../inference/contract"
+
 import { composeKeys } from "@clavia/tardigrade-core/log"
 import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
-import { agentKeys } from "../log/events"
+import { agentKeys, type Action } from "../log/events"
+
+const summaryLayer = (respond: (prompt: string, model: ModelRef | undefined) => Effect.Effect<Action>) => Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+  generateText: () => Effect.die("Use streaming in this fixture"),
+  streamText: request => Stream.unwrap(Effect.gen(function* () {
+    const model = yield* CurrentModel
+    const prompt = request.prompt.content.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.flatMap(part => part.type === "text" ? [part.text] : [])).join("\n")
+    const action = yield* respond(prompt, model)
+    if (action.kind === "fail") return Stream.fail(unknownModelError(action.error))
+    const text = action.kind === "complete" ? action.output : action.text ?? ""
+    const parts: Response.StreamPartEncoded[] = [Response.makePart("text-start", { id: "summary" }), Response.makePart("text-delta", { id: "summary", delta: text }), Response.makePart("text-end", { id: "summary" })]
+    if (action.kind === "calls") for (const call of action.calls) parts.push(Response.makePart("tool-call", { id: call.callId, name: call.name, params: call.arguments, providerExecuted: false }))
+    parts.push(Response.makePart("finish", { reason: "stop", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) }))
+    return Stream.fromIterable(parts)
+  }))
+}))
 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)
 import {
   checkpointOf,
-  compaction,
+  compactionWithWindow as compaction,
   compactionReactor,
   contextPolicyOf,
   estimateTokens,
@@ -24,13 +44,13 @@ import {
 
 // Compaction is a pure machine: a guard fires at a resolved tool round when the rendered suffix
 // passes FIRE tokens, the pass summarizes down to a KEEP-token tail, and the checkpoint binds by
-// event identity. The summarizer is the ordinary Infer seam, stubbed here. The size measure is
+// event identity. The summarizer receives native LanguageModel parts from this fixture. The size measure is
 // rendered chars over four.
 
 const head: Event = { type: "MessageReceived", id: "m0", text: "extract the covenants", at: 0 }
 const TEST_POLICY = { contextWindowTokens: 20_000, fireRatio: 0.8, keepRatio: 0.2 }
-const TEST_CONTEXT = contextPolicyOf(TEST_POLICY)
-const reactor = compactionReactor(TEST_POLICY)
+const TEST_CONTEXT = contextPolicyOf(TEST_POLICY, TEST_POLICY.contextWindowTokens)
+const reactor = compactionReactor(TEST_POLICY, TEST_POLICY.contextWindowTokens)
 
 // One resolved tool round inside the open turn, sized so a dozen rounds cross the token budget.
 const round = (i: number, turn = "m0"): Event[] => [
@@ -46,7 +66,7 @@ const openTurn = (rounds: number): Event[] => {
 
 describe("the compaction measure and guard", () => {
   test("the incremental quotient agrees with complete replay at every prefix", () => {
-    const component = compaction(TEST_POLICY)
+    const component = compaction(TEST_POLICY, TEST_POLICY.contextWindowTokens)
     const projection = component.machine
     let state = projection.initial()
     const log: Event[] = []
@@ -60,9 +80,10 @@ describe("the compaction measure and guard", () => {
 
   test("the measure counts what a render sends: capped results, skipped threads", () => {
     const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big])).toBe(Math.ceil(TEST_CONTEXT.resultRenderCap / 4))
+    expect(estimateTokens([big])).toBe(Math.ceil(renderMessages([big])[0]!.content!.length / 4))
     const thread: Event = { type: "CodeSettled", execId: "c", result: 1, at: 2 } as Event
     expect(estimateTokens([thread])).toBe(0)
+    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(Math.ceil(renderMessages([big], { resultRenderCap: 40 })[0]!.content!.length / 4))
   })
 
   test("the guard fires inside an open turn once a resolved round passes FIRE", () => {
@@ -79,25 +100,8 @@ describe("the compaction measure and guard", () => {
     expect(reactor(awaiting)).toHaveLength(0)
   })
 
-  test("the policy is the consumer's: a raised FIRE holds the guard, a lowered one fires early", () => {
-    expect(compactionReactor({ contextWindowTokens: 1_250_000 })(openTurn(16))).toHaveLength(0)
-    expect(compactionReactor({ contextWindowTokens: 125 })(openTurn(2))).toHaveLength(1)
-    // The measure moves with the render cap, because one policy states both.
-    const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(10)
-  })
-
-  test("the selected model resolves both hysteresis lines from one window", () => {
-    const policy = contextPolicyOf(
-      { contextWindowTokens: (model) => model?.model_id === "large" ? 1_000_000 : 100_000 },
-      { provider: "test", model_id: "large" }
-    )
-    expect(policy.fireTokens).toBe(800_000)
-    expect(policy.keepTokens).toBe(500_000)
-  })
-
   test("the keep line must remain below the fire line", () => {
-    expect(() => contextPolicyOf({ keepRatio: 0.9, fireRatio: 0.8 })).toThrow("keepRatio must be less than fireRatio")
+    expect(() => contextPolicyOf({ keepRatio: 0.9, fireRatio: 0.8 }, 100)).toThrow("retainRatio must be less than triggerRatio")
   })
 
   test("the guard is pure: the fold runs with the clock and randomness rigged to throw", () => {
@@ -119,12 +123,11 @@ describe("the compaction measure and guard", () => {
 })
 
 describe("the compaction pass", () => {
-  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> = TEST_POLICY) => {
+  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> & { contextWindowTokens: number } = TEST_POLICY, outcome: Action = { kind: "complete", output: "covenants 1 through 13 extracted" }) => {
     const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
-    let model: unknown
-    const actor = actorFromProjections<Infer | EventLog | Self>({
-      transitions: [completeTransitionProjection(compactionReactor(policy))],
+    const actor = actorFromProjections<import("effect/unstable/ai").LanguageModel.LanguageModel | EventLog | Self>({
+      transitions: [completeTransitionProjection(compactionReactor(policy, policy.contextWindowTokens))],
       keyOf: agentActorKeys
     })
     const layers = Layer.mergeAll(
@@ -135,20 +138,37 @@ describe("the compaction pass", () => {
           read: Ref.get(ref)
         })
       ),
-      Layer.succeed(Infer, {
-        react: ({ trajectory, model: selected }: { trajectory: ReadonlyArray<Event>; model?: unknown }) => {
-          briefed = String((trajectory[0] as { text?: unknown }).text ?? "")
-          model = selected
-          return Effect.succeed({ kind: "complete" as const, output: "covenants 1 through 13 extracted" })
-        }
+      summaryLayer((prompt) => {
+          briefed = prompt
+          return Effect.succeed(outcome)
       }),
       Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
     )
-    await Effect.runPromise(
-      send(actor, { type: "CompactionFired", at: 999 }).pipe(Effect.provide(layers)) as Effect.Effect<void>
+    const exit = await Effect.runPromiseExit(
+      settleActor(actor).pipe(Effect.provide(layers)) as Effect.Effect<void>
     )
-    return { log: await Effect.runPromise(Ref.get(ref)), briefed: () => briefed, model: () => model }
+    return { log: await Effect.runPromise(Ref.get(ref)), exit, briefed: () => briefed }
   }
+
+  test.each([
+    { kind: "fail", error: "provider unavailable" },
+    { kind: "calls", calls: [{ callId: "unexpected", name: "read", arguments: {} }] },
+    { kind: "complete", output: "   " }
+  ] satisfies Action[])("an unusable summary preserves history until successful recovery: %j", async (outcome) => {
+    const initial = openTurn(16)
+    const failed = await run(initial, TEST_POLICY, outcome)
+    expect(failed.exit._tag).toBe("Failure")
+    expect(failed.log.filter((event) => event.type === "CompactionCompleted")).toEqual([])
+    expect(checkpointOf(failed.log)).toEqual(checkpointOf(initial))
+    expect(renderMessages(failed.log)).toEqual(renderMessages(initial))
+    expect(reactor(failed.log).map((transition) => transition.key)).toEqual(reactor(initial).map((transition) => transition.key))
+    const recovered = await run(failed.log)
+    expect(recovered.exit._tag).toBe("Success")
+    expect(recovered.log.filter((event) => event.type === "CompactionCompleted")).toHaveLength(1)
+    expect(keepFromIndex(recovered.log, checkpointOf(recovered.log).keepFrom)).toBeGreaterThan(0)
+    expect(recovered.briefed()).toContain("run 1")
+    expect(recovered.log.slice(0, initial.length)).toEqual(initial)
+  })
 
   test("a fire summarizes and checkpoints down to a KEEP-token tail, mid-turn", async () => {
     const { log, briefed } = await run(openTurn(16))
@@ -165,17 +185,6 @@ describe("the compaction pass", () => {
     expect(estimateTokens(suffixOf(log))).toBeLessThanOrEqual(TEST_CONTEXT.keepTokens + 2 * roundTokens)
     expect(briefed()).toContain("extract the covenants")
     expect(briefed()).toContain("run 1")
-  })
-
-  test("a pass can select its model", async () => {
-    const selected = { provider: "test", model_id: "compact" } as const
-    const { log, model } = await run(openTurn(16), { ...TEST_POLICY, model: selected })
-    expect(model()).toEqual(selected)
-    expect(log.find((event) => event.type === "CompactionCompleted")).toMatchObject({ model: selected })
-  })
-
-  test("the cut lands on a boundary: a kept tail opens with a call, its return beside it", async () => {
-    const { log } = await run(openTurn(16))
     const suffix = suffixOf(log)
     expect(suffix[0]!.type).toBe("ToolCalled")
     const callId = String((suffix[0] as { callId?: unknown }).callId)
@@ -227,9 +236,9 @@ describe("a projected repair is invisible to compaction as well as to the render
   })
 
   test("the incremental quotient agrees while a completion hides its correction exchange", () => {
-    const policy = { contextWindowTokens: 125 }
-    const complete = compactionReactor(policy)
-    const component = compaction(policy)
+    const policy = { contextWindowTokens: 125, fireRatio: 0.8 }
+    const complete = compactionReactor(policy, 125)
+    const component = compaction(policy, policy.contextWindowTokens)
     const projection = component.machine
     const events: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },
@@ -271,11 +280,9 @@ describe("a projected repair is invisible to compaction as well as to the render
       })).pipe(
         Effect.provide(
           Layer.mergeAll(
-            Layer.succeed(Infer, {
-              react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
-                briefs.push(String((trajectory[0] as { text?: unknown }).text))
+            summaryLayer((prompt) => {
+                briefs.push(prompt)
                 return Effect.succeed({ kind: "complete" as const, output: "summarized" })
-              }
             }),
             Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
           )

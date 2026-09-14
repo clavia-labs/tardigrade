@@ -72,7 +72,7 @@ Convert each structured result to `output({ name, schema })`. Send that contract
 
 Keep the baseline provider and model when the Tardigrade binding supports their transport. The built-in binding accepts OpenAI Responses, OpenAI-compatible chat completions, Anthropic Messages, and Bedrock Converse. Run `tdg setup` to write the first private provider connection and default model together. Once that baseline exists, use `tdg setup provider` or `tdg setup default` when the migration changes one concern. The server resolves model metadata from its catalog snapshot.
 
-List every existing model option and confirm that the selected binding represents it. A custom transport or required option belongs in an application-owned `Infer` layer and custom host. Do not silently drop a temperature, provider option, retry bound, output guarantee, or timeout that affects behavior.
+List every model option and check that the selected provider represents it. Supply custom providers through Effect's `LanguageModel` service. Libraries with another model interface need a bridge to that service. Configure request limits through `maxOutputTokens`, `timeout`, and `retry`. Keep provider options, output guarantees, and model identity explicit.
 
 ## Move the application boundary
 
@@ -182,7 +182,7 @@ Validate the import before cutover:
 
 Run the same representative task once with Tardigrade. Use the same model, settings, input, data, and timer boundary as the baseline. Check semantic output parity before comparing efficiency.
 
-Use `usageIn(events, turn)` or the recorded attempt usage to total Tardigrade input and output tokens. Each usage stamp keeps normalized cache-read, cache-write, and reasoning counts when the provider supplies them. Each `providerReports` entry keeps one physical request's unconventional fields unchanged under `providerSpecific`, including reports from retried requests. The field contains the provider object directly when the request produced one report and an array when it produced several. `reportedCostUsd` keeps the provider figure, and `estimatedCostUsd` keeps an independent projection from the configured price table. `costUsd` remains the provider figure when available and otherwise uses the table estimate. Measure latency from request delivery through the terminal event.
+Use `usageIn(events, turn)` or the recorded attempt usage to total Tardigrade input and output tokens. Each usage stamp keeps normalized cache-read, cache-write, and reasoning counts when the provider supplies them. Each `providerReports` entry keeps one physical request's unconventional fields unchanged under `providerSpecific`, including reports from retried requests. `providerReports` is always an array, including when there is only one report. `reportedCostUsd` keeps the provider figure, and `estimatedCostUsd` keeps an independent projection from the configured price table. `costUsd` remains the provider figure when available and otherwise uses the table estimate. Measure latency from request delivery through the terminal event.
 
 A price table needs `cachedPromptUsdPerToken` or `cacheWritePromptUsdPerToken` when the matching usage bucket is greater than zero. Tardigrade leaves the estimate unknown when a reported cache bucket has no declared rate. Calling `priced` with a complete new table recomputes `estimatedCostUsd`; a table that cannot price the usage preserves a recorded estimate.
 

@@ -29,7 +29,7 @@
     "TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS": "10000",
     "TARDIGRADE_CONFIG": {
       "models": {
-        "allow": [{ "provider": "openrouter", "model_ids": ["openai/gpt-6-astra"] }],
+        "allow": [{ "provider": "openrouter", "model_ids": ["openai/gpt-5.6-sol"] }],
         "providers": {
           "openrouter": {
             "baseUrl": "https://openrouter.ai/api/v1",
@@ -39,7 +39,7 @@
         },
         "default": {
           "provider": "openrouter",
-          "model_id": "openai/gpt-6-astra"
+          "model_id": "openai/gpt-5.6-sol"
         }
       }
     }

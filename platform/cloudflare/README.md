@@ -4,17 +4,16 @@ Run Tardigrade actors on Cloudflare Workers and SQLite Durable Objects. The Work
 
 ## Worker entry point
 
-`tdg init` generates the entry point and deployment configuration. `tdg setup` configures a model provider and writes `models.lock.json`.
+`tdg init` generates the entry point and deployment configuration. `tdg setup` configures a model provider and writes `models.lock.json`. The provider-layer import must match the configured provider protocol. This example uses an OpenAI-compatible Chat Completions provider.
 
 ```ts
 import definition from "./actor"
 import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
-import { modelAdapters } from "tardie/model/adapter"
-import { openAICompatibleAdapter } from "tardie/model/openai"
+import { providerLayer } from "tardie/model/providers/openai-compat"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
-  adapters: modelAdapters(openAICompatibleAdapter),
+  model: { providerLayer },
   scope: modelScopeFrom(modelLock)
 })
 
@@ -25,9 +24,9 @@ export const { ActorDO, ThreadDO } = host
 export default { fetch: http.fetch }
 ```
 
-`workerModelServices` selects the model adapters and catalog snapshot. `defineWorkerHost` registers the actor and exposes its Durable Object classes. `workerHttp` supplies the HTTP handler. Cloudflare calls `fetch` when a request arrives and creates object instances when they are addressed. The entry point registers one actor definition per module.
+`workerModelServices` connects the configured providers to Effect AI and the catalog snapshot. `defineWorkerHost` registers the actor and exposes its Durable Object classes. `workerHttp` supplies the HTTP handler. Cloudflare calls `fetch` when a request arrives and creates object instances when they are addressed. The entry point registers one actor definition per module.
 
-An actor that does not use model inference can omit `services`. Register the adapters required by your configured providers; `modelAdapters` accepts several adapters.
+An actor that does not use model inference can omit `services`. The Worker entry point supplies its provider layer through `model.providerLayer`.
 
 ## Runtime and storage
 
@@ -57,7 +56,9 @@ Point `wrangler.jsonc` at your Worker entry point and declare these bindings:
 
 Declare `ActorDO` and `ThreadDO` as SQLite classes in the Durable Object migrations. The generated project includes the bindings and [catalog migration](migrations/0001_catalog.sql). Follow the [Cloudflare setup guide](../../docs/platforms/cloudflare.mdx#configure) to create the catalog database, apply its migration, and set provider secrets. The same guide covers [local verification](../../docs/platforms/cloudflare.mdx#verify-locally).
 
-`/healthz`, `/v1/providers`, and `/v1/models` are public. Other API routes require `Authorization: Bearer <TARDIGRADE_TOKEN>`. Missing server authentication returns `503`; an incorrect token returns `401`.
+`/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` are public. Other API routes require `Authorization: Bearer <TARDIGRADE_TOKEN>`. Missing server authentication returns `503`; an incorrect token returns `401`.
+
+`workerHttp(host)` serves a Scalar API reference at `/docs` and its OpenAPI document at `/openapi.json`. The document describes the routes mounted by the Worker. `GET /v1/methods` supplies the actor methods' input and output schemas.
 
 See the [actor guide](../../docs/getting-started/actors.mdx) for thread allocation and method calls.
 

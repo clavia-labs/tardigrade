@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { Console, Effect, Layer } from "effect"
+import { Cause, Console, Effect, Layer, Option, Queue, Terminal } from "effect"
 import { Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
 import { makeActorClient } from "@clavia/tardigrade-client"
@@ -11,7 +11,7 @@ import { Cli } from "./services"
 const repository = new URL("../../../", import.meta.url).pathname
 const namespaces: Readonly<Record<string, string>> = {
   core: "packages/core/src/index.ts", agent: "packages/agent/src/index.ts", code: "packages/code/src/index.ts",
-  http: "packages/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/model.ts", server: "apps/server/src/index.ts"
+  http: "packages/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/index.ts", server: "apps/server/src/index.ts"
 }
 
 // bundleServer resolves the public package namespaces against their publish sources.
@@ -50,11 +50,12 @@ const eventually = async (check: () => Promise<boolean>, timeout = 10_000) => {
   throw new Error("quickstart condition did not complete before its deadline")
 }
 
-test("init, serve, discover, call, inspect, cancel, and restart a generated quickstart", async () => {
+test.each(["registry", "custom", "interactive"] as const)("generated quickstart lifecycle with %s models", async (source) => {
   const root = await mkdtemp(join(repository, ".cli-flow-"))
   let modelCalls = 0
   let hold = false
   const model = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request): Promise<Response> {
+    if (new URL(request.url).pathname === "/catalog" && source !== "registry") return new Response("offline", { status: 503 })
     if (new URL(request.url).pathname === "/catalog") return Response.json({ fixture: {
       id: "fixture", name: "Fixture", api: `${model.url}v1`, env: ["FIXTURE_KEY"], models: {
         test: { id: "test", name: "Test", tool_call: true, limit: { context: 32_000, output: 4096 }, modalities: { input: ["text"], output: ["text"] } }
@@ -65,8 +66,8 @@ test("init, serve, discover, call, inspect, cancel, and restart a generated quic
     if (!body.messages.some((message) => message.role === "tool")) return new Response([
       { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "weather", type: "function", function: { name: "get_weather", arguments: "{}" } }] } }] },
       { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
-    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } })
-    return new Response('data: {"choices":[{"delta":{"content":"Hello from the fixture."},"index":0}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
+    ].map((event) => `data: ${JSON.stringify({ id: "chat-fixture", model: "test", created: 1, ...event })}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } })
+    return new Response('data: {"id":"chat-fixture","model":"test","created":1,"choices":[{"delta":{"content":"Hello from the fixture."},"index":0}]}\n\ndata: {"id":"chat-fixture","model":"test","created":1,"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
   } })
   const reservation = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() })
   const port = reservation.port!
@@ -100,7 +101,53 @@ test("init, serve, discover, call, inspect, cancel, and restart a generated quic
   }
   const stop = async () => { child?.kill("SIGTERM"); if (child) expect(await child.exited).toBe(0); child = undefined }
   try {
-    await run("init", "tardie-agent", "--provider", "fixture", "--provider-config", JSON.stringify({ protocol: "openai-chat-completions", baseUrl: `${model.url}v1`, env: ["FIXTURE_KEY"] }), "--default-model", "test", "--json")
+    if (source === "interactive") {
+      const key = (name: string, text?: string): Terminal.UserInput => ({ input: Option.fromUndefinedOr(text), key: { name, ctrl: false, meta: false, shift: false } })
+      const typing = (text: string) => [...text].map((letter) => key(letter, letter))
+      const enter = key("return")
+      const inputs = [
+        { ...key("u"), key: { ...key("u").key, ctrl: true } }, ...typing("tardie-agent"), enter,
+        key("up"), enter,
+        ...typing("fixture"), enter,
+        key("down"), enter,
+        ...typing(`${model.url}v1`), enter,
+        ...typing("FIXTURE_KEY"), enter,
+        ...typing("fixture-secret"), enter,
+        ...typing("test"), enter,
+        ...typing("0"), enter, key("backspace"), ...typing("32000"), enter,
+        ...typing("4096"), enter,
+        key("y", "y")
+      ]
+      let transcript = ""
+      const queue = await Effect.runPromise(Queue.make<Terminal.UserInput, Cause.Done>())
+      await Effect.runPromise(Queue.offerAll(queue, inputs))
+      const terminal = Terminal.make({
+        columns: Effect.succeed(100), rows: Effect.succeed(40), readInput: Effect.succeed(queue),
+        readLine: Effect.die("prompts must consume key events"),
+        display: (text) => Effect.sync(() => { transcript += text })
+      })
+      const descriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true })
+      try {
+        await Command.runWith(tdg, { version: "test", renderErrors: false })(["init"]).pipe(
+          Effect.provideService(Terminal.Terminal, terminal),
+          Effect.provide(Layer.mergeAll(BunServices.layer, Layer.succeed(Cli, {
+            cwd, env, openClient: makeActorClient, fetch: globalThis.fetch,
+            installProject: bundleServer, mintId: () => crypto.randomUUID()
+          }))), Effect.runPromise
+        )
+      } finally {
+        if (descriptor === undefined) Reflect.deleteProperty(process.stdin, "isTTY")
+        else Object.defineProperty(process.stdin, "isTTY", descriptor)
+      }
+      for (const prompt of ["Actor name", "Which model provider?", "Provider name", "Which protocol", "Base URL", "Credential environment variable", "Default model ID", "Context window", "Maximum output", "support tool calls"]) {
+        expect(transcript).toContain(prompt)
+      }
+      expect(transcript).not.toContain("fixture-secret")
+      expect(transcript).toContain("Enter a positive safe integer")
+    } else {
+      await run("init", "tardie-agent", "--provider", "fixture", "--provider-config", JSON.stringify({ protocol: "openai-chat-completions", baseUrl: `${model.url}v1`, env: ["FIXTURE_KEY"], ...(source === "custom" ? { models: { test: { metadata: { contextWindowTokens: 32000, maxOutputTokens: 4096, toolCall: true } } } } : {}) }), "--default-model", "test", "--json")
+    }
     cwd = join(root, "tardie-agent")
     expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("defineWorkerHost")
     await run("lint", "actor.ts", "--json")
@@ -176,3 +223,13 @@ test("init, serve, discover, call, inspect, cancel, and restart a generated quic
     await rm(root, { recursive: true, force: true })
   }
 }, 60_000)
+
+test("the generated server resolver supports the public model entry", async () => {
+  const directory = await mkdtemp("/tmp/tardie-model-entry-")
+  try {
+    await writeFile(join(directory, "server.ts"), 'import { modelLayer } from "tardie/model"; export { modelLayer }\n')
+    await bundleServer(directory)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

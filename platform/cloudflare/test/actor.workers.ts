@@ -1,17 +1,19 @@
+import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
-import { Infer } from "@clavia/tardigrade-agent"
+
 import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog-store"
+import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog/repository"
 import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
 import {
   createWorker,
+  workerModelServices,
   cloudflareWorker,
   backgroundTaskOwnerOf,
   DEFAULT_BACKGROUND_TASK_OWNER,
@@ -21,7 +23,8 @@ import {
   type ActorThreadNode,
   type Env
 } from "../src/worker"
-import { modelAdapters } from "@clavia/tardigrade-model/adapter"
+import { providerLayer } from "@clavia/tardigrade-model/providers/openai-compat"
+import { ModelSelection } from "@clavia/tardigrade-model/settings"
 import { modelLayer, modelsFrom, mountedActor } from "../src/assembly"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
@@ -158,8 +161,29 @@ describe("cloudflare actor", () => {
       .rejects.toThrow("does not match model configuration")
     expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
-    const binding = await Effect.runPromise(Infer.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, config), scope.catalog, modelAdapters())
+    const previousModel = mountedActor!.model
+    let configured = false
+    Object.assign(mountedActor!, workerModelServices({ model: { providerLayer: (options) => {
+      expect(options.model.config).toMatchObject({ max_output_tokens: 1234 })
+      return providerLayer(options)
+    }, configure: (selected) => {
+      configured = true
+      expect(selected.model_id).toBe("gpt-test")
+      return { maxOutputTokens: 1234, timeout: { idleMs: 12345 } }
+    } } }))
+    try {
+      const settings = await Effect.runPromise(Effect.gen(function* () {
+        const selection = yield* ModelSelection
+        return yield* selection.settings!()
+      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, config), scope.catalog))))
+      expect(configured).toBe(true)
+      expect(settings.policy).toMatchObject({ maxOutputTokens: 1234, timeout: { idleMs: 12345 } })
+    } finally {
+      if (previousModel === undefined) delete mountedActor!.model
+      else mountedActor!.model = previousModel
+    }
+    const binding = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
+      modelLayer(modelsFrom(env as Env, config), scope.catalog)
     )))
     expect(binding.resolve()).toMatchObject({
       model: config.default,
@@ -169,8 +193,8 @@ describe("cloudflare actor", () => {
       models: { allow: [{ provider: "openai", model_ids: ["gpt-test"] }] }
     })
     expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
-    const restricted = await Effect.runPromise(Infer.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog, modelAdapters())
+    const restricted = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
+      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog)
     )))
     expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
   })
@@ -656,6 +680,48 @@ describe("cloudflare actor", () => {
     expect(catalogTables).toEqual([])
   })
 
+  test("public API docs describe only mounted Worker routes", async () => {
+    const page = await SELF.fetch("http://test/docs")
+    expect(page.status).toBe(200)
+    expect(page.headers.get("content-type")).toContain("text/html")
+    const html = await page.text()
+    expect(html).toContain("Scalar")
+    expect(html).toContain("--scalar-background-1: #f3f0e4")
+
+    const response = await SELF.fetch("http://test/openapi.json")
+    expect(response.status).toBe(200)
+    const spec = await response.json() as { paths: Record<string, Record<string, { responses: Record<string, unknown> }>>; components: { schemas: Record<string, unknown> } }
+    expect(Object.keys(spec.paths).sort()).toEqual([
+      "/healthz", "/v1/metadata", "/v1/providers", "/v1/models", "/v1/methods",
+      "/v1/actors/{id}", "/v1/actors/{id}/threads", "/v1/actors/{id}/threads/{thread}/events",
+      "/v1/actors/{id}/threads/{thread}/fork",
+      "/v1/actors/{id}/threads/{thread}/methods/{method}",
+      "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}",
+      "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellation"
+    ].sort())
+    expect(spec.paths["/healthz"]?.get?.responses["200"]).toMatchObject({
+      content: { "application/json": { schema: { properties: { status: { enum: ["ready"] }, actor: { type: "string" } } } } }
+    })
+    expect(spec.components.schemas.WorkerThreadTree).toMatchObject({
+      properties: { id: { type: "string" }, children: { type: "array" } }
+    })
+    expect(spec.paths["/v1/actors/{id}/threads/{thread}/events"]?.post?.responses).toHaveProperty("202")
+    for (const [path, method, statuses] of [
+      ["/healthz", "get", ["200"]],
+      ["/v1/metadata", "get", ["200", "401", "503"]],
+      ["/v1/actors/{id}", "put", ["200", "400", "401", "503"]],
+      ["/v1/actors/{id}", "get", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads", "post", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads", "get", ["200", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/fork", "post", ["200", "400", "401", "404", "409", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/events", "post", ["202", "400", "401", "404", "503"]],
+      ["/v1/actors/{id}/threads/{thread}/events", "get", ["200", "400", "401", "404", "500", "503"]]
+    ] as const) {
+      expect(Object.keys(spec.paths[path]![method]!.responses).sort()).toEqual(statuses)
+    }
+    expect((await SELF.fetch("http://test/v1/methods")).status).toBe(401)
+  })
+
   test("a mounted actor exposes durable methods", async () => {
     const refused = await SELF.fetch("http://test/v1/methods")
     expect(refused.status).toBe(401)
@@ -895,6 +961,83 @@ describe("cloudflare actor", () => {
       .toEqual(["first-secret", "second-secret"])
   })
 
+  test("HTTP forks a prefix through the event codec onto a runnable dest", async () => {
+    const secret = "classified-fork-secret"
+    await createThread("fork-src")
+    const appended = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/methods/echo/calls/m1", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ text: secret })
+    })
+    expect(appended.status).toBe(202)
+    const forked = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ event: "m1", name: "fork-dst" })
+    })
+    expect(forked.status).toBe(200)
+    expect(await forked.json()).toEqual({ actor: "echo", instance: "main", thread: "fork-dst", seq: 2 })
+    await expect.poll(async () => (await threadStub("fork-dst").events("fork-dst")).map((event) => event.type))
+      .toEqual(["ThreadCreated", "EchoRequested", "ThreadForked", "EchoCompleted"])
+    const visible = await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })
+    const rows = await visible.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly id?: string; readonly text?: string; readonly source?: unknown } }>
+    expect(rows.map((row) => row.event.type)).toEqual(["ThreadCreated", "EchoRequested", "ThreadForked", "EchoCompleted"])
+    expect(rows[1]?.event).toMatchObject({ type: "EchoRequested", id: "m1", text: secret })
+    expect(rows[2]?.event).toMatchObject({ type: "ThreadForked", source: { actor: "echo", instance: "main", thread: "fork-src" } })
+    const raw = await runInDurableObject(threadStub("fork-dst"), (_instance, state) =>
+      state.storage.sql.exec<{ readonly event: string }>("SELECT event FROM events ORDER BY seq").toArray()
+    )
+    expect(raw.every((row) => !row.event.includes(secret))).toBe(true)
+    expect(raw.every((row) => {
+      const encrypted = JSON.parse(row.event) as { readonly iv?: unknown; readonly ciphertext?: unknown }
+      return typeof encrypted.iv === "string" && typeof encrypted.ciphertext === "string"
+    })).toBe(true)
+    const unknown = await SELF.fetch("http://test/v1/actors/main/threads/ghost/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ seq: 1 })
+    })
+    expect(unknown.status).toBe(404)
+    const missing = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ seq: 99, name: "missing" })
+    })
+    expect(missing.status).toBe(400)
+    const again = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ seq: 2, name: "fork-dst" })
+    })
+    expect(again.status).toBe(200)
+    expect((await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })).json()).resolves.toHaveLength(4)
+    const secondRequest = { method: "POST", headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ seq: 3, name: "fork-second" }) }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect((await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/fork", secondRequest)).status).toBe(200)
+    }
+    const secondEvents = await threadStub("fork-second").events("fork-second")
+    expect(secondEvents.filter((event) => event.type === "ThreadForked").map((event) => event.destination))
+      .toEqual(["fork-dst", "fork-second"])
+    const occupied = await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/fork", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ seq: 2, name: "fork-src" })
+    })
+    expect(occupied.status).toBe(409)
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
+  test("a Thread DO commits an expected-head append once under concurrency", async () => {
+    await createThread("fork-race")
+    const stub = threadStub("fork-race")
+    const row = { type: "MessageReceived", id: "race", text: "x", at: 1 } as Event
+    const results = await Promise.all([1, 2, 3, 4].map(() => stub.appendAt([row, { ...row, id: "race-2" }], 1)))
+    expect(results.filter((result) => result.appended === 2)).toHaveLength(1)
+    expect(results.filter((result) => result.appended === 0)).toHaveLength(3)
+    expect(results.every((result) => result.head === 3)).toBe(true)
+    expect(await stub.events("fork-race")).toHaveLength(3)
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
   test("opaque child addresses execute and round-trip through the public API", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
@@ -924,6 +1067,23 @@ describe("cloudflare actor", () => {
     expect(rows[0]?.event.address).toEqual(target)
     const native = (env as Env).THREADS.getByName(JSON.stringify(["echo", "main", target.thread]))
     expect((await native.events(target.thread))[0]).toMatchObject({ address: target })
+  })
+
+  test("supervisor recovery leaves a reserved fork empty until publication", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    const source = await directory.createThread("fork-reservation-source")
+    const target = await directory.allocateThread({ kind: "root", coordinate: { ...source, thread: "fork-reservation-dest" }, initialization: "caller" })
+    const stub = (env as Env).THREADS.getByName(JSON.stringify(["echo", "main", target.thread]))
+    await stub.init("echo", "main", target.thread)
+    await runInDurableObject(directory, (instance) => instance.alarm())
+    expect(await stub.events(target.thread)).toEqual([])
+    expect((await directory.threadTree()).some((node) => node.id === target.thread)).toBe(false)
+    const result = await directory.forkThread(source.thread, { seq: 1 }, target.thread)
+    expect(result).toMatchObject({ ok: true, coordinate: target })
+    expect((await stub.events(target.thread)).map((event) => event.type)).toEqual(["ThreadCreated", "ThreadForked"])
+    expect((await directory.threadTree()).some((node) => node.id === target.thread)).toBe(true)
+    expect(await directory.forkThread(source.thread, { seq: 1 }, target.thread)).toEqual(result)
   })
 
   test("a child request reserves its name and registers after delivery with its placement", async () => {

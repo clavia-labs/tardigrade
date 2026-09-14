@@ -1,0 +1,188 @@
+---
+title: Comparing Tardigrade
+description: Compare Tardigrade with handwritten agent loops, Pi, oh-my-pi, Vercel AI SDK, and Temporal.
+route: /docs/comparisons
+section: Start Here
+sectionOrder: 1
+order: 3
+---
+
+Tardigrade is a framework for building your own agent harness. A harness is the code around a model. It controls available tools, manages the conversation, applies limits, and handles recovery. You choose its behavior and run it [locally](/docs/platforms/bun) or on a [cloud host](/docs/platforms/cloudflare).
+
+A coding assistant shows why this structure helps. Its harness lets a model read files, edit source, and run tests. It runs each requested tool, adds its result to the conversation, and asks the model again.
+
+## From a handwritten loop to Tardigrade
+
+Here is the first version of a coding assistant. The `model` and `runTool` names are illustrative application helpers:
+
+```ts
+const fixTest = async (request: string) => {
+  const messages = [{ role: "user", content: request }]
+
+  while (true) {
+    const response = await model.generate({
+      messages,
+      tools: [readFiles, editSource, runTests]
+    })
+    messages.push(response)
+
+    if (response.toolCalls.length === 0) return response.text
+
+    for (const call of response.toolCalls) {
+      messages.push(await runTool(call))
+    }
+  }
+}
+```
+
+The assistant reads the failing test, finds the source file, edits it, and runs the test. The code remains easy to understand.
+
+The assistant can keep trying edits without fixing the test, so you give it a limit of 20 tool calls. Imagine that the assistant has used 18 calls when a test prints thousands of lines. The application summarizes older messages to make room for that output. The summary replaces several old tool calls, though the assistant still has two calls left.
+
+The application can store the summary and remaining allowance together. Its harness must define that saved state, restore it after a restart, and keep it consistent with tool results. Later, the assistant edits a file and stops before it saves the result. Recovery must also decide whether that edit finished and whether a retry is safe.
+
+Tardigrade stores messages, model responses, tool requests, and tool results as an event history. Each behavior reads the facts that it needs from this history. The budget counts all 18 calls, even after older calls leave the model conversation. The saved summary controls what the model sees without deleting the original events.
+
+A component is a reusable part of your harness that handles one behavior. This assistant combines the built-in `budget` and `compaction` components:
+
+```ts
+import { actor } from "tardie/core"
+import {
+  agentMessageMethod,
+  budget,
+  compaction,
+  infer,
+  outputValidateOnce,
+  system
+} from "tardie/agent"
+import { repositoryTools } from "./tools"
+
+// repositoryTools uses tool() with the application's read, edit, and test bindings.
+export default actor({
+  name: "test-fixer",
+  methods: { message: agentMessageMethod },
+  components: [infer([
+    system("Fix the failing test and explain the change."),
+    budget([repositoryTools], { limit: 20 }),
+    compaction({ triggerRatio: 0.8, retainRatio: 0.5 }),
+    outputValidateOnce
+  ])]
+})
+```
+
+`compaction` summarizes older messages when the model context becomes too large. `infer` makes the next model call with the selected conversation and available tools. The budget keeps the two remaining calls across summaries and restarts. If the model attempts a 21st call, the budget records exhaustion and removes the repository tools.
+
+The host, the process that runs your harness, provides recovery from the saved event history. If a test result is recorded, a restart continues from that result. If the result is missing, the host can run the unfinished work again.
+
+The event history is the source of truth for work that Tardigrade recorded as complete. It cannot prove whether an unrecorded external call took effect. If an edit finishes before its result is recorded, a retry can repeat it. An idempotency key is a request ID that lets an external system recognize a repeated operation. Application tools need such a key or another safe retry design when repetition can cause harm.
+
+Composition helps when several reusable rules shape one run. Procedural code remains natural for a small loop with simple recovery.
+
+## Compared with Pi and oh-my-pi
+
+[Pi](https://github.com/earendil-works/pi) provides a coding agent with extensions. Extensions register tools and commands, handle lifecycle events, and change the session's active tools. [oh-my-pi](https://github.com/can1357/oh-my-pi) supplies a ready-to-use coding harness with file editing, search, language services, debugging, subagents, and approvals. You can use oh-my-pi directly or embed it through [`createAgentSession`](https://github.com/can1357/oh-my-pi/blob/main/docs/sdk.md).
+
+Consider an extension with plan and execute modes. Plan mode offers read and search tools. Execute mode adds the edit tool. The mode must remain correct after the user resumes a session or moves to another branch.
+
+Pi's [plan-mode example](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/plan-mode/index.ts) stores mode in a variable and saves snapshots with `appendEntry`. It restores that variable during session events, then applies the matching active-tool list. A smaller extension for these three tools looks like this:
+
+```ts expanded
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
+
+export default function modeExtension(pi: ExtensionAPI) {
+  let mode = "plan"
+
+  const applyMode = () => {
+    pi.setActiveTools(
+      mode === "execute"
+        ? ["read", "grep", "edit"]
+        : ["read", "grep"]
+    )
+  }
+
+  const restore = (ctx: ExtensionContext) => {
+    mode = "plan"
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (
+        entry.type === "custom" &&
+        entry.customType === "edit-mode" &&
+        (entry.data === "plan" || entry.data === "execute")
+      ) {
+        mode = entry.data
+      }
+    }
+    applyMode()
+  }
+
+  pi.registerCommand("mode", {
+    description: "Toggle plan and execute mode",
+    handler: async () => {
+      mode = mode === "plan" ? "execute" : "plan"
+      pi.appendEntry("edit-mode", mode)
+      applyMode()
+    }
+  })
+
+  pi.on("session_start", (_, ctx) => restore(ctx))
+  pi.on("session_tree", (_, ctx) => restore(ctx))
+}
+```
+
+This example sets the whole active-tool list. Suppose a second extension removes `edit` after the agent uses its tool budget. Switching this example into execute mode puts `edit` back. To enforce both rules, the extensions need a shared decision about which tools are available.
+
+Pi provides [tool selection and interception APIs](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md) to implement that coordination. Its plan-mode example saves the current tool list and keeps tools outside the group it controls. A `tool_call` handler can also block a call. Extension authors can share helper functions that combine rules and restore state.
+
+oh-my-pi uses the same explicit style for extension state. Its [state guide](https://github.com/can1357/oh-my-pi/blob/main/docs/extensions.md#session-and-state-patterns) shows `appendEntry`, branch scans, and session hooks. Its [plan-mode example](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/examples/extensions/plan-mode.ts) restores its variables and active tools when a session starts. Its [tool-selection example](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/examples/extensions/tools.ts) also restores state after branching and tree navigation. oh-my-pi [saves sessions](https://github.com/can1357/oh-my-pi/blob/main/docs/session.md) for resume, branches, and forks.
+
+Tardigrade makes state management functional. Each recorded event goes through `step`, which returns the next state. `output` calculates values such as whether editing is allowed. These functions are pure: the same inputs give the same outputs, without file edits or API calls.
+
+This component reads the application's `ModeChanged` events and returns a `canEdit` flag:
+
+```ts
+import { component, deriveComponent } from "tardie/core"
+
+const editMode = component({
+  name: "edit-mode",
+  initial: () => false,
+  step: (canEdit, event) =>
+    event.type === "ModeChanged"
+      ? event.mode === "execute"
+      : canEdit,
+  output: (canEdit) => ({
+    view: { canEdit },
+    transitions: []
+  })
+})
+
+const history = [{ type: "ModeChanged", mode: "execute" }]
+
+deriveComponent(editMode, []).view
+// { canEdit: false }
+
+deriveComponent(editMode, history).view
+// { canEdit: true }
+```
+
+This component returns a policy value. A surrounding tool component uses `canEdit` to decide whether it offers the edit tool. That tool component can stay inside the earlier `budget([...], { limit: 20 })` wrapper. Changing modes then leaves each offered tool call subject to the recorded budget.
+
+After a restart, Tardigrade replays the saved events through `editMode` and gets `{ canEdit: true }` again. A branch before `ModeChanged` gets `{ canEdit: false }`. The component author writes the state update once. The runtime applies that same function during live execution and recovery. The component tree declares how mode and budget combine.
+
+Pi and oh-my-pi fit developers who want a coding agent to extend or embed. Tardigrade fits developers who want to build their own harness from components whose state the runtime can reconstruct.
+
+## Compared with Vercel AI SDK
+
+Vercel AI SDK provides TypeScript APIs for model calls, tools, streaming, and agents. Its [`ToolLoopAgent`](https://ai-sdk.dev/docs/reference/ai-sdk-core/tool-loop-agent) runs a reusable loop of model calls and tool calls in memory. `stopWhen`, `prepareStep`, and `activeTools` control steps, models, tools, and context. The SDK also supports [tool approval](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#tool-execution-approval).
+
+AI SDK also has a first-party durable option. [`WorkflowAgent`](https://vercel.com/changelog/ai-sdk-7) runs on Vercel Workflow and saves tool work as retryable workflow steps. Its [workflow integration](https://vercel.com/kb/guide/ai-gateway-and-ai-sdk#build-durable-agents-with-the-workflow-sdk) supports durable waits for approval.
+
+With AI SDK, a callback such as `prepareStep` can change the available tools before each model call. With Tardigrade, a component such as `budget` handles that rule using recorded tool calls. AI SDK fits applications that want its model and streaming APIs, with a loop they customize through callbacks. Tardigrade fits developers who want to package those behaviors as components and combine them into their own harness.
+
+## Compared with Temporal
+
+[Temporal](https://docs.temporal.io/ai) is a durable execution platform that supports agents, human interaction, and dynamic workflows. A Temporal Workflow is a function that describes steps, branches, and waits. API calls and other external work usually run in Activities, whose results enter the workflow history. After a restart, Temporal runs the workflow code again and supplies those saved results. During this replay, the code must [schedule the same work for the same recorded events](https://docs.temporal.io/workflow-definition#deterministic-constraints).
+
+Activities must [tolerate retries](https://docs.temporal.io/activity-definition#idempotency), such as by using a request ID that the external service recognizes. Both systems need care around an external operation that finishes before its result reaches the log.
+
+Durable history supports recovery in both systems. The difference is how you express the program that uses it. A Temporal developer writes a workflow function and moves external work into Activities. A Tardigrade developer composes components that decide what work comes next from shared history. Those components can also describe programs with no model calls.
+
+Temporal fits a process that reads clearly as steps, branches, and waits. Tardigrade fits many agent policies that react to the same evolving history. Read [Concepts](/docs/concepts) for Tardigrade's component model, or start with the [Quickstart](/docs/quickstart).

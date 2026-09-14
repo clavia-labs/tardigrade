@@ -6,7 +6,7 @@ import {
   modelCatalogScopeOf,
   type ModelCatalogRepositoryService,
   type ModelCatalogScope
-} from "@clavia/tardigrade-model/catalog-store"
+} from "@clavia/tardigrade-model/catalog/repository"
 
 // DEFAULT_MODEL_CATALOG_WRITE_BATCH_SIZE bounds the prepared statements sent in one D1 batch.
 export const DEFAULT_MODEL_CATALOG_WRITE_BATCH_SIZE = 100

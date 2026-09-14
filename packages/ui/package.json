@@ -4,7 +4,9 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "exports": {
     "./contract.css": "./src/contract.css",
     "./consumer.css": "./src/themes/consumer.css",

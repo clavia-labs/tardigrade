@@ -1,3 +1,4 @@
+import { upcastError } from "../log/upcast"
 import { Schema } from "effect"
 import { MessageReceived, messageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -108,7 +109,7 @@ export const agentMessageMethod = actorMethod({
           return { status: "completed" as const, output: String(terminal.output ?? ""), ...(data === undefined ? {} : { data }) }
         }
         if (terminal.type === "TurnFailed") {
-          return { status: "failed" as const, error: String(terminal.error ?? "turn failed"), ...(data === undefined ? {} : { data }) }
+          return { status: "failed" as const, error: upcastError(terminal.error ?? "turn failed").message, ...(data === undefined ? {} : { data }) }
         }
         if (terminal.type === "TurnCancelled") {
           return {

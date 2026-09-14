@@ -5,7 +5,8 @@ import { send, type ActorSource as Actor } from "@clavia/tardigrade-core/runtime
 import type { Router } from "@clavia/tardigrade-core/transport/router"
 import type { Self } from "@clavia/tardigrade-core/runtime"
 import type { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
-import type { Infer, InferPolicy } from "../inference/contract"
+import type { InferPolicy } from "../inference/contract"
+import type { LanguageModel } from "effect/unstable/ai"
 import type { OutputContract } from "../output/contract"
 import type { BudgetPolicy } from "../component/budget"
 import type { CompactionPolicy } from "../component/compaction"
@@ -13,14 +14,9 @@ import type { CodePolicy } from "@clavia/tardigrade-code/execution/reactor"
 import type { WorkspacePolicy } from "@clavia/tardigrade-code/package/workspace"
 import type { ModelRef } from "../inference/reference"
 
-export { Infer } from "../inference/contract"
 
-// AgentR is the infer root's needs: Infer for the model, EventLog for settle, Router and Self for
-// communication, and
-// KeyValueStore for the spill store code mode writes bounded results to
-// (packages/code/src/spill.ts). Components add their own on top (core/component.ts,
-// ComponentRequirements).
-export type AgentR = Infer | EventLog | Router | Self | ThreadAllocator | KeyValueStore.KeyValueStore
+// AgentR lists the agent runtime services; components add their own requirements (core/component.ts, ComponentRequirements).
+export type AgentR = LanguageModel.LanguageModel | EventLog | Router | Self | ThreadAllocator | KeyValueStore.KeyValueStore
 
 // AgentPolicy is every policy value an assembled agent applies, one field per part that applies
 // one, so a caller sets a single number without listing reactors. Each field is itself partial

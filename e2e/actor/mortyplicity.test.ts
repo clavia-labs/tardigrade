@@ -294,7 +294,7 @@ const mindFor = (missions: ReadonlyMap<string, Mission>, jitter: ReadonlyArray<n
     return action({ kind: "complete", output: JSON.stringify({ key: mission.key, status: "escaped" }) })
   }
 
-test("Rick and Morty survive generated portal, budget, permission, human, and scheduling chaos", async () => {
+test.each([1, 2, 3, 4])("Rick and Morty survive generated portal, budget, permission, human, and scheduling chaos (batch %i)", async () => {
   await fc.assert(fc.asyncProperty(universe, async (generated) => {
     const missions = generated.missions.map((mission, index): Mission => ({
       ...mission,
@@ -506,7 +506,12 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
       expect(created.parent).toEqual(threadAddressOf("mem", "main", ROOT_THREAD))
     }
     expect(scenario.host.resting()).toBe(true)
-  }), { numRuns: 40 })
+  }), {
+    numRuns: 10,
+    timeout: 10_000,
+    interruptAfterTimeLimit: 45_000,
+    markInterruptAsFailure: true
+  })
 }, 60_000)
 
 const cancelForegroundMortys = async ({ children, headroom, schedule }: {

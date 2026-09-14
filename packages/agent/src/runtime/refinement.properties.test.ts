@@ -17,6 +17,7 @@ import { budget } from "../component/budget"
 import { codeMode } from "../component/code"
 import {
   compaction,
+  compactionWithWindow,
   compactionReactor,
   contextPolicyOf,
   type CompactionPolicy
@@ -268,7 +269,7 @@ describe("agent projection refinement", () => {
   })
 
   test("compaction refines its complete-history reactor", () => {
-    const policy: Partial<CompactionPolicy> = {
+    const policy: Partial<CompactionPolicy> & { contextWindowTokens: number } = {
       model: MODEL,
       contextWindowTokens: 80,
       fireRatio: 0.5,
@@ -277,15 +278,15 @@ describe("agent projection refinement", () => {
       resultRenderCap: 80
     }
     const result = fc.check(fc.property(historyArbitrary, (log) => {
-      const incremental = compaction(policy) as Component<AgentView, unknown>
+      const incremental = compactionWithWindow(policy, policy.contextWindowTokens) as Component<AgentView, unknown>
       const complete: CompleteComponentProjection<AgentView, unknown> = {
         derive: (prefix) => {
           return {
             view: {
               ...AGENT_VIEW_ALGEBRA.empty,
-              context: [{ component: "compaction", policy: contextPolicyOf(policy, MODEL) }]
+              context: [{ component: "compaction", policy: contextPolicyOf(policy, policy.contextWindowTokens) }]
             },
-            transitions: compactionReactor(policy)(prefix)
+            transitions: compactionReactor(policy, policy.contextWindowTokens)(prefix)
           }
         }
       }

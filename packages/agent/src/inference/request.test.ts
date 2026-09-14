@@ -63,20 +63,22 @@ describe("renderMessages", () => {
     // A queued mid-turn message shifts every raw index by one once the projection excludes it. An
     // index checkpoint would slice the render one event late and open it with a dangling tool
     // result; the identity finds ToolCalled c2 wherever the projection put it.
+    const continuation = { protocol: "effect", provider: "test", model: "test", endpoint: "", payload: { content: [] } }
     const raw: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "draft the addendum", at: 0 },
       { type: "ModelCalled", callId: "m1/infer/0", ordinal: 1, turn: "m1", at: 1 },
       { type: "ToolCalled", callId: "c1", name: "execute", arguments: { code: "read" }, turn: "m1", at: 2 },
       { type: "ToolReturned", callId: "c1", result: { ok: 1 }, turn: "m1", at: 3 },
       { type: "MessageReceived", id: "m2", text: "queued follow-up", at: 4 },
-      { type: "ToolCalled", callId: "c2", name: "execute", arguments: { code: "write" }, turn: "m1", at: 5 },
+      { type: "ModelReturned", callId: "response2", turn: "m1", continuation, at: 5 },
+      { type: "ToolCalled", responseId: "response2", callId: "c2", name: "execute", arguments: { code: "write" }, turn: "m1", at: 5 },
       { type: "ToolReturned", callId: "c2", result: { ok: 2 }, turn: "m1", at: 6 },
       { type: "CompactionCompleted", keepFrom: `c:${JSON.stringify(["m1", "c2"])}`, summary: "read the base contract", at: 7 }
     ]
     const messages = renderMessages(trajectoryOf(raw))
     expect(messages[0]).toMatchObject({ role: "user", content: "draft the addendum" }) // the open head, verbatim
     expect(String(messages[1]!.content)).toContain("read the base contract")
-    expect(messages[2]).toMatchObject({ role: "assistant", toolCalls: [{ id: "c2", name: "execute" }] })
+    expect(messages[2]).toMatchObject({ role: "assistant", continuation, toolCalls: [{ id: "c2", name: "execute" }] })
     expect(messages[3]).toMatchObject({ role: "tool", toolCallId: "c2" })
     expect(messages).toHaveLength(4)
   })
@@ -150,7 +152,7 @@ describe("modelRequest tool and prompt policy", () => {
 
   // A mounted fallback is a policy for a call native output cannot serve, and it stays dormant
   // otherwise: its instruction rides the output request rather than the base prompt, so the
-  // binding decides whether the model ever reads it (packages/model/src/output/contract.ts, outputSystemFor).
+  // binding decides whether the model ever reads it (packages/agent/src/inference/model/output.ts, outputSystemFor).
   test("a mounted fallback rides the request, and adds nothing to the base prompt", () => {
     const bare = modelRequest(head([], true), CODE)
     const repaired = renderOf([codeMode(), outputRepairFor({ attempts: 1 })], head([], true))
@@ -194,7 +196,7 @@ describe("modelRequest tool and prompt policy", () => {
 
   // A declaration nobody can serve rides the request as a verdict rather than as an absence: a
   // request with no output reads as a turn that wanted prose, and this one wanted something else
-  // (output.ts, DeclaredOutput; packages/model/src/output/contract.ts, outputPreflight).
+  // (output.ts, DeclaredOutput; packages/agent/src/inference/model/output.ts, outputPreflight).
   test("an output declaration that is not a contract rides the request as invalid", () => {
     const raw: Event[] = [{ type: "MessageReceived", id: "m1", text: "go", output: { type: "object" }, at: 0 }]
     const req = modelRequest(raw, CODE)

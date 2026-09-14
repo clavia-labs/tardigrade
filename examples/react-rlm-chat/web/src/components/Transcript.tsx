@@ -1,3 +1,4 @@
+import { upcastError } from "@clavia/tardigrade-agent/log/upcast"
 import { Button } from "@base-ui/react/button"
 import { CaretRight, CircleNotch, Code, Package as PackageIcon } from "@phosphor-icons/react"
 import { Worm } from "lucide-react"
@@ -16,7 +17,8 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
   const messages = rows.filter(({ event }) =>
     event.type === "MessageReceived" || event.type === "ToolCalled" || event.type === "ChildCreated" ||
     (event.type === "PackageCalled" && !value(event, "name")?.startsWith("agents.")) ||
-    event.type === "TurnCompleted" || event.type === "TurnFailed"
+    event.type === "TurnCompleted" || event.type === "TurnFailed" ||
+    (event.type === "ModelReturned" && typeof event.reasoning === "string" && event.reasoning.trim().length > 0)
   )
   const toolsReturned = new Set(rows
     .filter(({ event }) => event.type === "ToolReturned")
@@ -54,6 +56,12 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
     <section className="messages" aria-live="polite">
       {messages.length === 0 ? <p className="empty">{empty}</p> : null}
       {visible.map(({ event, seq }, index) => {
+        if (event.type === "ModelReturned") return (
+          <details className="tool-call reasoning" key={seq}>
+            <summary><CaretRight className="tool-caret" /><span>Reasoning</span></summary>
+            <div className="reasoning-content"><MarkdownMessage>{String(event.reasoning)}</MarkdownMessage></div>
+          </details>
+        )
         if (event.type === "ChildCreated") {
           if (visible[index - 1]?.event.type === "ChildCreated") return null
           const group: Array<EventRow> = []
@@ -127,7 +135,7 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
           >
             {event.type === "TurnCompleted"
               ? <MarkdownMessage>{value(event, "output") ?? ""}</MarkdownMessage>
-              : value(event, event.type === "MessageReceived" ? "text" : "error")}
+              : event.type === "MessageReceived" ? value(event, "text") : upcastError(event.error).message}
           </article>
         )
       })}

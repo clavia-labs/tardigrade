@@ -1,3 +1,4 @@
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { actor } from "@clavia/tardigrade-core/actor"
 import { describe, expect, test } from "bun:test"
@@ -14,7 +15,7 @@ import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { Self } from "@clavia/tardigrade-core/runtime"
 import { legacyComponent } from "@clavia/tardigrade-core/component"
-import { Infer, receive } from "./turn"
+import { receive } from "./turn"
 import { modelRequest } from "../inference/request"
 import { NativeOutputSupport, type InferRequest } from "../inference/contract"
 import { turnFailed } from "../log/events"
@@ -123,7 +124,7 @@ return { jd_record_id: record.id, hits: found.hits }`
 
 // The model: write the code once, then complete after reading the return.
 const codeThenComplete = (count: { calls: number }) =>
-  Layer.succeed(Infer, {
+  testInferenceLayer( {
     react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
       count.calls += 1
       const returned = trajectory.some((e) => e.type === "ToolReturned")
@@ -149,7 +150,7 @@ test("a model response and its consequences share one append", async () => {
       read: Effect.succeed(history),
       append: (events) => Effect.sync(() => { appends.push(events); history.push(...events) })
     })),
-    Layer.succeed(Infer, { react: () => Effect.succeed(history.some((event) => event.type === "ToolCalled")
+    testInferenceLayer( { react: () => Effect.succeed(history.some((event) => event.type === "ToolCalled")
       ? { kind: "complete" as const, output: "done" }
       : { kind: "calls" as const, text: "Reading both", calls: [
           { callId: "a", name: "read", arguments: {} },
@@ -277,7 +278,7 @@ describe("the agent with execute as the only tool", () => {
     const layers = Layer.mergeAll(
     KeyValueStore.layerMemory,
     memoryLog(),
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
           count.calls += 1
           const returned = trajectory.find((e) => e.type === "ToolReturned")
@@ -311,7 +312,7 @@ describe("the agent with execute as the only tool", () => {
       { type: "MessageReceived", id: "m1", text: "first ask", at: 1 },
       { type: "MessageReceived", id: "m2", text: "second ask", at: 2 }
     ]
-    const echoHead = Layer.succeed(Infer, {
+    const echoHead = testInferenceLayer( {
       react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
         let text = ""
         for (const e of trajectory) if (e.type === "MessageReceived") text = String((e as { text?: unknown }).text)
@@ -363,7 +364,7 @@ describe("the agent with execute as the only tool", () => {
     const layers = Layer.mergeAll(
     KeyValueStore.layerMemory,
     memoryLog(),
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: () => {
           count.calls += 1
           return Effect.succeed({ kind: "complete" as const, output: "ok" })
@@ -396,7 +397,7 @@ describe("the agent with execute as the only tool", () => {
     const layers = Layer.mergeAll(
       KeyValueStore.layerMemory,
       memoryLog(),
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: () => Effect.succeed({ kind: "complete" as const, output: "ok", usage: spent })
       }),
       jsSandbox,
@@ -418,21 +419,23 @@ describe("the agent with execute as the only tool", () => {
     ])
     expect(events.find((e) => e.type === "ModelReturned")).toMatchObject({
       turn: "m1",
-      usage: spent
+      usage: { inputTokens: { total: 10 }, outputTokens: { total: 4 } },
+      reportedCostUsd: spent.costUsd,
+      response: { modelId: spent.model }
     })
   })
 
-  test("provider retry exhaustion records a resumable failure with its policy", async () => {
-    const retry = { throttleRetryDelaysMs: [100], stream: { firstChunkMs: 1, idleMs: 2, totalMs: 3 } }
+  test("provider retry exhaustion records each attempt without persisting configuration", async () => {
     const layers = Layer.mergeAll(
       KeyValueStore.layerMemory,
       memoryLog(),
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
+        policy: () => Effect.succeed({ maxOutputTokens: 100, timeout: { firstChunkMs: 90_000, idleMs: 90_000 }, retry: { backoffMs: [0], maxRetryAfterMs: 30_000, retryAfterJitterMs: 0 } }),
         react: () =>
           Effect.succeed({
             kind: "fail" as const,
-            error: "model inference retries exhausted after 2 attempts: timeout",
-            failure: { cause: "inference_attempts_exhausted" as const, attempts: 2, policy: retry }
+            error: "provider is busy",
+            retryable: true
           })
       }),
       jsSandbox,
@@ -448,12 +451,12 @@ describe("the agent with execute as the only tool", () => {
 
     expect(events.find((event) => event.type === "TurnFailed")).toMatchObject({
       turn: "m1",
-      cause: "inference_attempts_exhausted",
-      attempts: 2,
-      attemptKey: "m1/infer/0",
-      policy: retry
+      cause: "inference_error",
+      attempts: 1,
+      attemptKey: "m1/infer/1"
     })
-    expect(events.find((event) => event.type === "ModelReturned")).toMatchObject({ outcome: "failed", usage: {}, callId: "m1/infer/0" })
+    expect(events.filter((event) => event.type === "ModelReturned")).toHaveLength(2)
+    expect(events.filter((event) => event.type === "ModelCalled").every((event) => event.policy === undefined)).toBe(true)
   })
 })
 
@@ -499,7 +502,8 @@ describe("a turn that declares an output contract", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
+        output: { guarantee: "native", withTools: true },
         react: () => Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: NATIVE_MODE })
       }),
       jsSandbox,
@@ -532,7 +536,8 @@ describe("a turn that declares an output contract", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
+        output: { guarantee: "native", withTools: true },
         react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) =>
           Effect.succeed(
             trajectory.some((e) => e.type === "ToolReturned")
@@ -556,11 +561,11 @@ describe("a turn that declares an output contract", () => {
     expect(outputOf(SCOUT, events, "m1")).toEqual(GOOD_ANSWER)
   })
 
-  test("a tool call under a declared contract must report its effective mode", async () => {
+  test("a native contract without endpoint capability fails before requesting tools", async () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: () =>
           Effect.succeed({ kind: "calls" as const, calls: [{ callId: "c1", name: "execute", arguments: { code: "return 1" } }] as const })
       }),
@@ -575,7 +580,7 @@ describe("a turn that declares an output contract", () => {
       layers
     )
     expect(events.some((event) => event.type === "ToolCalled")).toBe(false)
-    expect(events.find((event) => event.type === "TurnFailed")).toMatchObject({ cause: "inference_error" })
+    expect(events.find((event) => event.type === "TurnFailed")).toMatchObject({ cause: "output_unsupported" })
   })
 
   test("the native implementation never asks again: a missed contract is the provider's violation", async () => {
@@ -583,7 +588,8 @@ describe("a turn that declares an output contract", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
+        output: { guarantee: "native", withTools: true },
         react: () => {
           asked += 1
           return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: NATIVE_MODE })
@@ -601,9 +607,9 @@ describe("a turn that declares an output contract", () => {
     )
     expect(asked).toBe(1)
     expect(events.some((e) => e.type === "OutputRejected")).toBe(false)
-    const failed = events.find((e) => e.type === "TurnFailed") as { error?: string; cause?: string; policy?: unknown }
+    const failed = events.find((e) => e.type === "TurnFailed") as { error?: { message: string }; cause?: string; policy?: unknown }
     expect(failed.cause).toBe("output_contract_violation")
-    expect(failed.error).toContain("aspects")
+    expect(failed.error?.message).toContain("aspects")
     expect(failed.policy).toMatchObject({ kind: "native", name: "native" })
   })
 
@@ -611,7 +617,8 @@ describe("a turn that declares an output contract", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: "here are the aspects", mode: NATIVE_MODE }) }),
+      testInferenceLayer( {
+        output: { guarantee: "native", withTools: true }, react: () => Effect.succeed({ kind: "complete" as const, output: "here are the aspects", mode: NATIVE_MODE }) }),
       jsSandbox,
       noRouter
     )
@@ -623,7 +630,7 @@ describe("a turn that declares an output contract", () => {
       layers
     )
     expect(events.find((e) => e.type === "TurnFailed")).toMatchObject({ cause: "output_contract_violation" })
-    expect((events.find((e) => e.type === "TurnFailed") as { error?: string }).error).toContain("not JSON")
+    expect((events.find((e) => e.type === "TurnFailed") as { error?: { message: string } }).error?.message).toContain("not JSON")
   })
 })
 
@@ -633,7 +640,7 @@ describe("the repair implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: (request: InferRequest) => {
           const trajectory = request.trajectory
           // The correction is a real message, so the model reads why it was refused.
@@ -685,7 +692,7 @@ describe("the repair implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: (request: InferRequest) => {
           rendered.push(modelRequest(request.trajectory, request, request.context ?? {}).messages)
           const owed = request.trajectory.some((e) => e.type === "OutputRejected" && !completedTurns(request.trajectory).has(String((e as { turn?: unknown }).turn)))
@@ -724,7 +731,7 @@ describe("the repair implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }, key?: string) => {
           keys.push(key)
           return Effect.succeed(
@@ -752,7 +759,7 @@ describe("the repair implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: () => {
           asked += 1
           return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: REPAIR_TWO })
@@ -768,9 +775,9 @@ describe("the repair implementation", () => {
       }),
       layers
     )
-    const failed = events.find((e) => e.type === "TurnFailed") as { error?: string; cause?: string; policy?: { attempts?: number } }
+    const failed = events.find((e) => e.type === "TurnFailed") as { error?: { message: string }; cause?: string; policy?: { attempts?: number } }
     expect(failed.cause).toBe("output_repairs_exhausted")
-    expect(failed.error).toContain("after 2 corrections")
+    expect(failed.error?.message).toContain("after 2 corrections")
     expect(failed.policy?.attempts).toBe(2)
     // Bounded by the mounted policy: the corrections are spent, not repeated forever.
     expect(asked).toBe(3)
@@ -782,7 +789,7 @@ describe("the repair implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: () => {
           asked += 1
           return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: repairFallback({ attempts: 0 }) })
@@ -825,7 +832,7 @@ describe("the repair implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(seeded),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: () => {
           asked += 1
           return Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: REPAIR_TWO })
@@ -878,7 +885,7 @@ describe("the repair implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(seeded),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: () => {
           asked += 1
           return Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: REPAIR_TWO })
@@ -954,7 +961,7 @@ describe("the mind on a native surface", () => {
       memoryLog(),
       noRouter,
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
           const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
           return Effect.succeed(
@@ -995,7 +1002,7 @@ describe("the validate-once implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: (request: InferRequest) => {
           asked += 1
           // The fallback carries its own instruction, and the base prompt stays what it would be
@@ -1017,18 +1024,18 @@ describe("the validate-once implementation", () => {
     )
     expect(asked).toBe(1)
     expect(events.some((e) => e.type === "OutputRejected")).toBe(false)
-    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: string }
+    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: { message: string } }
     // Its own class: a local decision to stop, told apart from a provider breaking a promise it
     // made and from a correction loop spending its bound (src/events.ts, TURN_FAILURE_CAUSES).
     expect(failed.cause).toBe("output_validation_failed")
-    expect(failed.error).toContain("aspects")
+    expect(failed.error?.message).toContain("aspects")
   })
 
   test("a conforming response completes the turn like any other", async () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: VALIDATE_ONCE_FALLBACK }) }),
+      testInferenceLayer( { react: () => Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: VALIDATE_ONCE_FALLBACK }) }),
       jsSandbox,
       noRouter
     )
@@ -1112,7 +1119,7 @@ describe("a domain-specific implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: (request: InferRequest) => {
           prompts.push(modelRequest(request.trajectory, request, request.context ?? {}).messages)
           return Effect.succeed(
@@ -1151,7 +1158,7 @@ describe("a domain-specific implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: () => {
           asked += 1
           return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: HOUSE_STYLE })
@@ -1189,7 +1196,7 @@ describe("a domain-specific implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: HOUSE_STYLE }) }),
+      testInferenceLayer( { react: () => Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: HOUSE_STYLE }) }),
       jsSandbox,
       noRouter
     )
@@ -1201,8 +1208,8 @@ describe("a domain-specific implementation", () => {
       }),
       layers
     )
-    const failed = events.find((e) => e.type === "TurnFailed") as { error?: string; cause?: string }
-    expect(failed.error).toBe("the house style was not met")
+    const failed = events.find((e) => e.type === "TurnFailed") as { error?: { message: string }; cause?: string }
+    expect(failed.error?.message).toBe("the house style was not met")
     expect(failed.cause).toBe("output_validation_failed")
     expect(events.filter((e) => e.type === "OutputRejected")).toHaveLength(2)
   })
@@ -1214,7 +1221,7 @@ describe("a declaration nobody can serve", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
         react: () => {
           asked += 1
           return Effect.succeed({ kind: "complete" as const, output: "{}" })
@@ -1242,8 +1249,8 @@ describe("a declaration nobody can serve", () => {
       layers
     )
     expect(asked).toBe(0)
-    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: string }
+    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: { message: string } }
     expect(failed.cause).toBe("output_unsupported")
-    expect(failed.error).toContain("required must list every property")
+    expect(failed.error?.message).toContain("required must list every property")
   })
 })

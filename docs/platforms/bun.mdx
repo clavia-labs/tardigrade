@@ -33,14 +33,11 @@ An actor that requires an application Effect service can merge its layer with th
 import { Layer } from "effect"
 import { createBunHost } from "tardie/bun"
 import { bunModelServices } from "tardie/server/model-services"
-import { modelAdapters } from "tardie/model/adapter"
-import { openAICompatibleAdapter } from "tardie/model/openai"
 import { AppConfig } from "./application"
 import definition from "./actor"
 
 const { config, layers, api } = await bunModelServices({
-  env: process.env,
-  adapters: modelAdapters(openAICompatibleAdapter)
+  env: process.env
 })
 const host = await createBunHost({
   actor: definition,
@@ -53,7 +50,7 @@ const host = await createBunHost({
 })
 ```
 
-The factory receives the thread ID and actor instance ID as separate arguments. `AppConfig` is an application-owned Effect service with `thread` and `instance` fields. Register the adapter for your configured provider protocol. Pass `api` to `serve(host, { port: config.port, api })` to expose model discovery and live inference output. Close the HTTP server before the host during shutdown. See the [Actors guide](/docs/actors#serve-over-http) for the HTTP lifecycle.
+The factory receives the thread ID and actor instance ID as separate arguments. `AppConfig` is an application-owned Effect service with `thread` and `instance` fields. The model services select the provider implementation from the configured protocol. Pass `api` to `serve(host, { port: config.port, api })` to expose model discovery and live inference output. Close the HTTP server before the host during shutdown. See the [Actors guide](/docs/actors#serve-over-http) for the HTTP lifecycle.
 
 ## Storage
 

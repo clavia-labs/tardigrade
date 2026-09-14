@@ -49,6 +49,7 @@ describe("summaryOf", () => {
     [{ type: "BlockedOn", callId: "survey.0", awaiting: "survey.0.reply", at }, "awaiting survey.0.reply"],
     [{ type: "TurnCompleted", output: "the answer", at }, "the answer"],
     [{ type: "TurnFailed", error: "no mind", cause: "inference_error", at }, "inference_error · no mind"],
+    [{ type: "TurnFailed", error: { message: "no mind", code: "InvalidRequestError" }, cause: "inference_error", at }, "inference_error · no mind"],
     [{ type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at }, "m1 · epoch 0 to 1"],
     [{ type: "ResponseDelivered", method: "message", call: "m1", revision: "completed", at }, "message · m1 · completed"],
     [{ type: "BudgetExhausted", budget: 40, used: 41, at }, "used 41 of 40"],

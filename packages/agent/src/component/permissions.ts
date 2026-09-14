@@ -64,6 +64,7 @@ const guardedTool = <R>(tool: AgentTool<R>, options: PermissionsOptions): AgentT
       ...(subject.timeoutMs === undefined ? {} : { timeoutMs: subject.timeoutMs })
     }, { context: pending.context, tag: "permission" })
     if (call.transitions.length > 0) return call.transitions
+    if (call.state.status === "detached") return [answer({ error: "Permission request detached" })]
     if (call.state.status === "pending") return []
     if (call.state.status === "failed") {
       return [answer({ error: `Permission authority failed: ${call.state.error}` })]

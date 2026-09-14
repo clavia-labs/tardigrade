@@ -196,9 +196,17 @@ const withFileIcons = (node: ReactNode): ReactNode => {
     if (fileIndex === -1) return node
     const file = children[fileIndex] as ReactElement<{ readonly children?: ReactNode }>
     const name = textFrom(file.props.children)
+    const description = children.slice(fileIndex + 1).filter((child) => !isValidElement(child) || child.type !== "ul")
+    const nestedLists = children.slice(fileIndex + 1).filter((child) => isValidElement(child) && child.type === "ul")
     return cloneElement(node, undefined,
-      cloneElement(file, undefined, <><FileIcon kind={fileIconKindOf(name)} />{file.props.children}</>),
-      <span className="docs-filesystem-description">{children.slice(fileIndex + 1)}</span>
+      <div className="docs-filesystem-row">
+        <FileIcon kind={fileIconKindOf(name)} />
+        <div className="docs-filesystem-entry">
+          {file}
+          {textFrom(description).trim() ? <span className="docs-filesystem-description">{description}</span> : null}
+        </div>
+      </div>,
+      withFileIcons(nestedLists)
     )
   }
   return cloneElement(node, undefined, withFileIcons(node.props.children))

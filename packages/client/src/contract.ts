@@ -4,6 +4,7 @@ import { Event } from "@clavia/tardigrade-core/log/event"
 import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
 import { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
+import { ForkSeq } from "@clavia/tardigrade-core/log"
 
 // V1_PREFIX prefixes every versioned route.
 export const V1_PREFIX = "/v1"
@@ -76,8 +77,33 @@ export const ModelCatalogUnavailable = problemKind("model-catalog-unavailable", 
 // ResumeRefused reports a turn that the client cannot resume.
 export const ResumeRefused = problemKind("resume-refused", "Resume Refused", 409)
 
+// ThreadOccupied reports a fork destination that already holds a log other than this fork.
+export const ThreadOccupied = problemKind("thread-occupied", "Thread Occupied", 409)
+
 // InvocationSettled reports that cancellation cannot change a completed or failed invocation.
 export const InvocationSettled = problemKind("invocation-settled", "Invocation Settled", 409)
+
+// ForkRequest is the fork body: exactly one of seq (a 1-based source row) or event (an event id the server resolves to its last row), plus an optional destination name. HttpApi payload typing cannot carry a schema union, so the shape is one struct with a refinement (packages/core/src/log/fork.ts, ForkCheckpoint).
+const exactlyOneCheckpoint = <A extends { readonly seq?: number | undefined; readonly event?: string | undefined }>(value: A): value is A =>
+  (value.seq === undefined) !== (value.event === undefined)
+
+export const ForkRequest = Schema.Struct({
+  seq: Schema.optionalKey(ForkSeq),
+  event: Schema.optionalKey(Schema.NonEmptyString),
+  name: Schema.optionalKey(Schema.NonEmptyString)
+}).pipe(
+  Schema.refine(exactlyOneCheckpoint, { message: "exactly one of seq or event is required" }),
+  Schema.annotate({ identifier: "ForkRequest" })
+)
+export type ForkRequest = typeof ForkRequest.Type
+
+// forkCheckpointOf reads the checkpoint a decoded ForkRequest names.
+export const forkCheckpointOf = (request: ForkRequest): { readonly seq: number } | { readonly event: string } =>
+  request.seq !== undefined ? { seq: request.seq } : { event: request.event! }
+
+// ForkedThread is the fork reply: the destination coordinate and the source row the copy stopped at.
+export const ForkedThread = Schema.Struct({ ...ThreadCoordinate.fields, seq: Schema.Int }).annotate({ identifier: "ForkedThread" })
+export type ForkedThread = typeof ForkedThread.Type
 
 // RequestPart names the request locations validated by HttpApi.
 export type RequestPart = "Params" | "Query" | "Payload" | "Headers"
@@ -293,142 +319,9 @@ export const ActorInstanceSummary = Schema.Struct({
 
 export type ActorInstanceSummary = typeof ActorInstanceSummary.Type
 
-const ModelCatalogRate = Schema.Finite.pipe(
-  Schema.check(Schema.makeFilter((value: number) => value >= 0, { title: "non-negative" }))
-)
-
-const ModelTokenCount = Schema.Int.pipe(
-  Schema.check(Schema.makeFilter((value: number) => value > 0, { title: "positive" }))
-)
-
-export const ModelCatalogPricing = Schema.Struct({
-  promptUsdPerToken: ModelCatalogRate,
-  completionUsdPerToken: ModelCatalogRate,
-  cachedPromptUsdPerToken: Schema.optionalKey(ModelCatalogRate),
-  cacheWritePromptUsdPerToken: Schema.optionalKey(ModelCatalogRate)
-}).annotate({ identifier: "ModelCatalogPricing" })
-
-export const ModelCatalogMetadata = Schema.Struct({
-  contextWindowTokens: Schema.optionalKey(ModelTokenCount),
-  maxOutputTokens: Schema.optionalKey(ModelTokenCount),
-  pricing: Schema.optionalKey(ModelCatalogPricing),
-  toolCall: Schema.optionalKey(Schema.Boolean),
-  structuredOutput: Schema.optionalKey(Schema.Boolean),
-  inputModalities: Schema.optionalKey(Schema.Array(Schema.String)),
-  outputModalities: Schema.optionalKey(Schema.Array(Schema.String))
-}).annotate({ identifier: "ModelCatalogMetadata" })
-
-export const ModelCatalogModel = Schema.Struct({
-  id: Schema.NonEmptyString,
-  name: Schema.optionalKey(Schema.String),
-  metadata: ModelCatalogMetadata
-}).annotate({ identifier: "ModelCatalogModel" })
-
-export const ModelCatalogProvider = Schema.Struct({
-  id: Schema.NonEmptyString,
-  name: Schema.NonEmptyString,
-  api: Schema.optionalKey(Schema.String),
-  npm: Schema.optionalKey(Schema.String),
-  env: Schema.Array(Schema.String),
-  models: Schema.Array(ModelCatalogModel)
-}).annotate({ identifier: "ModelCatalogProvider" })
-
-// ModelCatalog describes the public provider and model snapshot.
-export const ModelCatalog = Schema.Struct({
-  source: Schema.Literal("models.dev"),
-  revision: Schema.NonEmptyString,
-  refreshedAt: Schema.Finite,
-  status: Schema.Literals(["fresh", "cached"]),
-  providers: Schema.Array(ModelCatalogProvider)
-}).annotate({ identifier: "ModelCatalog" })
-
-export type ModelCatalog = typeof ModelCatalog.Type
-
-export const ModelPolicySummary = Schema.Struct({
-  default: Schema.optionalKey(Schema.Struct({
-    provider: Schema.NonEmptyString,
-    model_id: Schema.NonEmptyString
-  })),
-  allow: Schema.Union([
-    Schema.Literal("*"),
-    Schema.Array(Schema.Struct({
-      provider: Schema.NonEmptyString,
-      model_ids: Schema.Union([Schema.Literal("*"), Schema.Array(Schema.NonEmptyString)])
-    }))
-  ])
-}).annotate({ identifier: "ModelPolicySummary" })
-
-export type ModelPolicySummary = typeof ModelPolicySummary.Type
-
-const CatalogPageFields = {
-  revision: Schema.NonEmptyString,
-  status: Schema.Literals(["fresh", "cached"]),
-  refreshed_at: Schema.Finite,
-  policy: ModelPolicySummary,
-  total: Schema.Int,
-  limit: Schema.Int,
-  next_cursor: Schema.optionalKey(Schema.String)
-}
-
-export const ProviderAvailability = Schema.Union([
-  Schema.Struct({ status: Schema.Literal("available") }),
-  Schema.Struct({
-    status: Schema.Literal("unavailable"),
-    reason: Schema.Literals(["not_configured", "credential_missing"])
-  })
-]).annotate({ identifier: "ProviderAvailability" })
-
-export type ProviderAvailability = typeof ProviderAvailability.Type
-
-export const CATALOG_AVAILABILITY_FILTERS = ["all", "available"] as const
-export type CatalogAvailabilityFilter = typeof CATALOG_AVAILABILITY_FILTERS[number]
-
-export const ProviderCatalogItem = Schema.Struct({
-  id: Schema.NonEmptyString,
-  name: Schema.NonEmptyString,
-  availability: ProviderAvailability,
-  protocol: Schema.optionalKey(Schema.String),
-  baseUrl: Schema.optionalKey(Schema.String),
-  env: Schema.Array(Schema.String),
-  required: Schema.Array(Schema.String),
-  optional: Schema.Array(Schema.String)
-}).annotate({ identifier: "ProviderCatalogItem" })
-
-export const ProviderCatalogPage = Schema.Struct({
-  ...CatalogPageFields,
-  items: Schema.Array(ProviderCatalogItem)
-}).annotate({ identifier: "ProviderCatalogPage" })
-
-export type ProviderCatalogPage = typeof ProviderCatalogPage.Type
-
-export const ModelCatalogItem = Schema.Struct({
-  provider: Schema.NonEmptyString,
-  id: Schema.NonEmptyString,
-  name: Schema.optionalKey(Schema.String),
-  metadata: ModelCatalogMetadata
-}).annotate({ identifier: "ModelCatalogItem" })
-
-export const ModelCatalogPage = Schema.Struct({
-  ...CatalogPageFields,
-  items: Schema.Array(ModelCatalogItem)
-}).annotate({ identifier: "ModelCatalogPage" })
-
-export type ModelCatalogPage = typeof ModelCatalogPage.Type
-
-export const MODEL_CATALOG_PRICE_SORTS = [
-  "promptUsdPerToken",
-  "completionUsdPerToken",
-  "cachedPromptUsdPerToken",
-  "cacheWritePromptUsdPerToken"
-] as const
-
-export type ModelCatalogPriceSort = typeof MODEL_CATALOG_PRICE_SORTS[number]
-
-export const MODEL_CATALOG_SORT_ORDERS = ["asc", "desc"] as const
-export type ModelCatalogSortOrder = typeof MODEL_CATALOG_SORT_ORDERS[number]
-
-export const MODEL_CATALOG_UNPRICED_ORDERS = ["first", "last"] as const
-export type ModelCatalogUnpricedOrder = typeof MODEL_CATALOG_UNPRICED_ORDERS[number]
+import { CATALOG_AVAILABILITY_FILTERS, ProviderCatalogPage, ModelCatalogPage, MODEL_CATALOG_PRICE_SORTS, MODEL_CATALOG_SORT_ORDERS, MODEL_CATALOG_UNPRICED_ORDERS } from "@clavia/tardigrade-model/catalog/schema"
+export { ModelCatalogPricing, ModelCatalogMetadata, ModelCatalogModel, ModelCatalogProvider, ModelCatalog, ModelPolicySummary, ProviderAvailability, CATALOG_AVAILABILITY_FILTERS, ProviderCatalogItem, ProviderCatalogPage, ModelCatalogItem, ModelCatalogPage, MODEL_CATALOG_PRICE_SORTS, MODEL_CATALOG_SORT_ORDERS, MODEL_CATALOG_UNPRICED_ORDERS } from "@clavia/tardigrade-model/catalog/schema"
+export type { CatalogAvailabilityFilter, ModelCatalogPriceSort, ModelCatalogSortOrder, ModelCatalogUnpricedOrder } from "@clavia/tardigrade-model/catalog/schema"
 
 export const ActorArtifact = Schema.Struct({
   manifest: Schema.Struct({
@@ -484,6 +377,13 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
     payload: Schema.Struct({ name: Schema.optionalKey(Schema.NonEmptyString), key: Schema.optionalKey(Schema.NonEmptyString), parent: Schema.optionalKey(Schema.NonEmptyString) }),
     success: ThreadCoordinate,
     error: [InvalidRequest.schema]
+  }),
+  // forkThread copies source rows 1..seq onto a new root. The body names the checkpoint by row or by event id; the reply carries the row that was used (packages/core/src/log/fork.ts).
+  HttpApiEndpoint.post("forkThread", "/v1/actors/:id/threads/:thread/fork", {
+    params: RuntimeThreadParams,
+    payload: ForkRequest,
+    success: ForkedThread,
+    error: [InvalidRequest.schema, UnknownActor.schema, UnknownThread.schema, ThreadOccupied.schema]
   }),
   HttpApiEndpoint.post("append", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,

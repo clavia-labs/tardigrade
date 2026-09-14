@@ -1,9 +1,10 @@
 import type { OwnerRef } from "../runtime/context"
 import { Schema } from "effect"
-import { formatThreadAddress, isThreadAddress, ThreadAddress, type ThreadAddress as ThreadAddressType } from "../transport/endpoint"
+import { formatThreadAddress, isThreadAddress, parseThreadAddress, ThreadAddress, type ThreadAddress as ThreadAddressType } from "../transport/endpoint"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { KeyFragment } from "../log/keys"
-import { InvocationRef, type ActorInvocationContext } from "./invocation"
+import { InvocationRef, invocationCoordinateOf, type ActorInvocationContext } from "./invocation"
+import { invocationTerminalOf } from "./result"
 
 export const ThreadDepth = Schema.Int.pipe(
   Schema.check(Schema.makeFilter((value: number) => value >= 0, { title: "at or above zero" }))
@@ -155,6 +156,7 @@ export const threadKeys: KeyFragment = {
   prefixes: ["thread:"],
   keyOf: (event) => {
     if (event.type === "ThreadCreated") return "thread:created"
+    if (event.type === "ThreadForked") return typeof event.destination === "string" ? `thread:forked:${event.destination}` : "thread:forked"
     if (event.type !== "ChildCreated") return undefined
     const callId = typeof event.callId === "string" ? event.callId : undefined
     if (callId === undefined) return undefined
@@ -183,3 +185,26 @@ export const invocationLinked = (fields: {
   readonly lineage?: ThreadLineage
   readonly at: number
 }): InvocationLinked => ({ type: "InvocationLinked", ...fields, owner: fields.owner ?? { type: "invocation", ref: fields.parent } })
+
+// isInvocationLinked reports a parent-child edge with a parseable target and a child invocation ref.
+export const isInvocationLinked = (event: Event): event is InvocationLinked => {
+  if (event.type !== "InvocationLinked") return false
+  const value = event as { readonly target?: unknown; readonly child?: { readonly invocation?: unknown } }
+  if (typeof value.target !== "string" || value.child?.invocation === undefined) return false
+  try {
+    parseThreadAddress(value.target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// childInvocationsOf returns the durable parent-child edges recorded in events (relations.test.ts).
+export const childInvocationsOf = (events: ReadonlyArray<Event>): ReadonlyArray<InvocationLinked> =>
+  events.filter(isInvocationLinked)
+
+// openChildInvocationsOf returns linked children without a received, timed out, or detached call terminal (detach.test.ts).
+export const openChildInvocationsOf = (events: ReadonlyArray<Event>): ReadonlyArray<InvocationLinked> =>
+  childInvocationsOf(events).filter((link) =>
+    invocationTerminalOf(events, invocationCoordinateOf(parseThreadAddress(link.target), link.child.invocation)) === undefined
+  )

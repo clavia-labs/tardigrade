@@ -1,3 +1,4 @@
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { Effect, Layer, Schema } from "effect"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { KeyValueStore } from "effect/unstable/persistence"
@@ -8,12 +9,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
 import { createHost, type Host, type HostOptions, type ThreadEnv } from "@clavia/tardigrade-host/host"
-import {
-  Infer,
-  NativeOutputSupport,
-  type AgentR,
-  type InferRequest
-} from "tardie"
+import { NativeOutputSupport, type AgentR, type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
 export const ROOT_THREAD = "ag.root"
@@ -64,7 +60,8 @@ export const actorScenario = (
     Layer.mergeAll(
       KeyValueStore.layerMemory,
       jsSandboxFor({}),
-      Layer.succeed(Infer, {
+      testInferenceLayer( {
+        output: { guarantee: "native", withTools: true },
         react: (request: InferRequest, key?: string) => Effect.promise(() => mind(request, key))
       }),
       Layer.succeed(NativeOutputSupport, { withTools: true })

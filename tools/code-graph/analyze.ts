@@ -100,6 +100,7 @@ export const boundaryViolations = (nodes: readonly GraphNode[], edges: readonly 
   const ruleOf = (from: { id: string; layer: string }, to: { id: string; layer: string }): string | undefined => {
     if (from.id === to.id) return undefined
     if (from.layer === "core" && to.layer !== "core") return "core-only"
+    if (from.layer === "model" && to.layer !== "model") return "model-independent"
     if (from.layer === "host" && !["core", "host"].includes(to.layer)) return "host-inward"
     if (from.id.startsWith("packages/") && from.layer !== "facade" && ["platform", "app"].includes(to.layer)) return "shared-portable"
     if (from.layer === "platform" && to.layer === "app") return "platform-no-apps"

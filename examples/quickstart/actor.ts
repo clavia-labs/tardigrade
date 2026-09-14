@@ -13,7 +13,7 @@ const weather = tool({
   spec: {
     name: "get_weather",
     description: "Get the current weather for a city",
-    inputSchema: { type: "object" }
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
   },
   run: () => Effect.succeed({ temperature: 21 })
 })

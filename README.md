@@ -28,7 +28,7 @@ We took inspiration from React. React derives its component tree and declared ef
 - **Strongly typed, built on Effect.** Typed services and Layers make each component's dependencies explicit. A missing service fails during compile.
 - **Crash proof.** A durable host derives unfinished work from the stored log.
 - **Serverless.** All you need is a durable store, no process has to stay alive. Any new invocation reads the log, runs the transitions it owes, and settles.
-- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with state forked from any checkpoint.
+- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with state forked from any checkpoint. Copy a thread's rows onto a new root with `tdg thread fork` or `host.forkThread`.
 
 ## Quickstart
 
@@ -53,7 +53,7 @@ tdg thread create --name quickstart
 tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickstart
 ```
 
-The API listens at [localhost:4242](http://localhost:4242) by default.
+The API listens at [localhost:4242](http://localhost:4242) by default. View the interactive API reference at [localhost:4242/docs](http://localhost:4242/docs).
 
 <img alt="An actor serving API requests from its generated Bun development server" src="docs/assets/dev-server.png">
 
@@ -175,7 +175,7 @@ const releaseAnalyst = actor({
 
 - `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless its `infer` options narrow it with `models`.
 
-- `compaction()` uses the selected model's catalog window. It summarizes at 80 percent and retains a 50 percent tail. Pass `fireRatio` and `keepRatio` to change those values. Each checkpoint records the policy it applied.
+- `compaction()` uses the active model's context window from model metadata. It summarizes at 80 percent and retains a 50 percent tail. Pass `triggerRatio` and `retainRatio` to change those values. Set `model` on `compaction()` to select a summarizer; omission uses the host default. The summarizer does not change the conversation budget. Each checkpoint records the policy it applied.
 
 - `codeMode([...components])` exposes its packages through one `execute` tool.
 
@@ -196,17 +196,14 @@ Each action and result becomes an event that every component can interpret.
 <details>
 <summary>Bind a model and durable SQLite host</summary>
 
-The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment. This example registers the adapter for OpenAI Responses and compatible chat completions; use the adapter for your configured protocol.
+The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment. The model services select the provider implementation from the configured protocol.
 
 ```ts
 import { createBunHost } from "tardie/bun"
-import { modelAdapters } from "tardie/model/adapter"
-import { openAICompatibleAdapter } from "tardie/model/openai"
 import { bunModelServices } from "tardie/server/model-services"
 
 const { layers } = await bunModelServices({
-  env: process.env,
-  adapters: modelAdapters(openAICompatibleAdapter)
+  env: process.env
 })
 
 const host = await createBunHost({

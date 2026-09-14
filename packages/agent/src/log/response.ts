@@ -25,3 +25,11 @@ export const responsesOf = (events: ReadonlyArray<Event>): {
   }
   return { keys, firstCalls, returnedAttempts }
 }
+
+// hasUnansweredToolCall reports whether an event slice still awaits a tool result.
+export const hasUnansweredToolCall = (events: ReadonlyArray<Event>): boolean => {
+  const answered = new Set(
+    events.filter((event) => event.type === "ToolReturned").map((event) => String(event.callId))
+  )
+  return events.some((event) => event.type === "ToolCalled" && !answered.has(String(event.callId)))
+}

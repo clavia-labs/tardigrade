@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { responsesOf } from "./response"
+import { responseKeyOf } from "./upcast"
+import { hasUnansweredToolCall, responsesOf } from "./response"
 
 test.each(["current", "legacy", "singleton"])("response readers preserve %s history", (format) => {
   const calls: Event[] = [0, 1].map((index) => ({
@@ -31,4 +32,17 @@ test("response counts distinguish retries, rejections and old consequences", () 
   const responses = responsesOf(calls)
   expect(responses.keys.get(calls[0]!)).not.toBe(responses.keys.get(calls[1]!))
   expect(responses.firstCalls.get(calls[1]!)).toBe(calls[1]!)
+})
+
+test("response identity includes turn and epoch", () => {
+  const event = { type: "ModelReturned", turn: "turn", epoch: 2, callId: "response", at: 0 } as Event
+  expect(responseKeyOf(event, "response")).toBe('["turn",2,"response"]')
+  expect(responseKeyOf({ ...event, turn: "other" }, "response")).not.toBe(responseKeyOf(event, "response"))
+  expect(responseKeyOf({ ...event, epoch: 3 }, "response")).not.toBe(responseKeyOf(event, "response"))
+})
+
+test("unanswered tool calls close when their result arrives", () => {
+  const called = { type: "ToolCalled", callId: "call", at: 0 } as Event
+  expect(hasUnansweredToolCall([called])).toBe(true)
+  expect(hasUnansweredToolCall([called, { type: "ToolReturned", callId: "call", result: null, at: 1 } as Event])).toBe(false)
 })

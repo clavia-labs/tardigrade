@@ -1,6 +1,8 @@
+import type { LanguageModel } from "effect/unstable/ai"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { Effect, Layer } from "effect"
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
-import { Infer, type InferRequest } from "tardie"
+import { type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { layerConfig, readConfig } from "@clavia/tardigrade-server/config"
@@ -78,7 +80,7 @@ const scripted = ({ trajectory }: InferRequest): Action => {
 
 const testModel = { provider: "test", model_id: "scripted" } as const
 
-const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
+const layerScripted: Layer.Layer<LanguageModel.LanguageModel> = testInferenceLayer({
   resolve: (model = testModel) => ({ model, models: { default: model, allow: "*" } }),
   react: (request: InferRequest) => Effect.succeed(scripted(request))
 })

@@ -21,8 +21,8 @@ test("the embeddable invocation schema retains nested constraints", () => {
   expect(invocationCoordinateJsonSchema).toMatchObject({
     required: ["target", "invocation"],
     properties: {
-      target: { required: ["actor", "instance", "thread"], properties: { instance: { type: "string", allOf: [{ pattern: "^[\\s\\S]+$" }] } } },
-      invocation: { required: ["method", "id", "epoch"], properties: { epoch: { type: "integer", allOf: [{ minimum: 0 }] } } }
+      target: { required: ["actor", "instance", "thread"], properties: { instance: { type: "string", pattern: "^[\\s\\S]+$" } } },
+      invocation: { required: ["method", "id", "epoch"], properties: { epoch: { type: "integer", minimum: 0 } } }
     }
   })
   expect(JSON.stringify(invocationCoordinateJsonSchema)).not.toContain('"$ref"')

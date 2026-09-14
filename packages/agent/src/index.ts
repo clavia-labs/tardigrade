@@ -9,7 +9,6 @@ export { agentMethods } from "./actor/methods"
 export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
 export { PermissionRequestInput, PermissionDecision, requestPermissionMethod } from "./actor/permission"
 export {
-  Infer,
   NativeOutputSupport,
   DEFAULT_INFER_POLICY,
   type InferPolicy,
@@ -111,15 +110,13 @@ export {
   DEFAULT_COMPACTION_POLICY,
   resolvedContextPolicyOf,
   type CompactionPolicy,
-  type ContextPolicy,
-  type ContextWindowTokens
+  type ContextPolicy
 } from "./component/compaction"
 export { agentKeys, outputRepaired, outputRetryRequested, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./log/events"
 export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./runtime/resume"
 export {
   usageIn,
   usageOf,
-  usageFrom,
   priced,
   costOf,
   sumUsage,
