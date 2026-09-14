@@ -1,3 +1,4 @@
+import { resolveMessageObjects } from "./objects"
 import { historyOf, importSchema } from "./prompt"
 import { actionOf, responseEvidence, errorOf } from "./response"
 import { withModelRequest } from "@clavia/tardigrade-model/stream/invocation"
@@ -46,7 +47,8 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
         parameters: importSchema(spec.inputSchema, options.schemaImport),
         failureMode: "return"
       })))
-      const history = yield* Effect.try(() => historyOf(req.messages, { provider: providerId, protocol, model: endpoint.model }))
+      const objects = yield* resolveMessageObjects(req.messages)
+      const history = yield* Effect.try(() => historyOf(req.messages, { provider: providerId, protocol, model: endpoint.model }, objects))
       const response = yield* Effect.gen(function* () {
         const maxOutputTokens = policy.maxOutputTokens
         observed = []

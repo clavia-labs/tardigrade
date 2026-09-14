@@ -323,18 +323,18 @@ describe("actor methods", () => {
     expect(budget?.cancellable).toBe(false)
     expect(message?.inputSchema.$ref).toBe("#/$defs/AgentMessageInput")
     expect(message?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
-      type: "object",
-      required: ["text"],
-      properties: {
-        model: {
-          type: "object",
-          required: ["provider", "model_id"],
+      anyOf: [
+        { type: "object", required: ["content"], properties: { content: { type: "array" } } },
+        {
+          type: "object", required: ["text"],
           properties: {
-            provider: { type: "string" },
-            model_id: { type: "string" }
+            model: {
+              type: "object", required: ["provider", "model_id"],
+              properties: { provider: { type: "string" }, model_id: { type: "string" } }
+            }
           }
         }
-      }
+      ]
     })
     expect(message?.outputSchema).toMatchObject({ type: "string" })
     expect(budget?.inputSchema.$ref).toBe("#/$defs/BudgetRequestInput")

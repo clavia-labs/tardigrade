@@ -12,6 +12,8 @@ export interface ContextPolicy {
   readonly messageRenderCap: number
   // Chars of one tool result the render sends; past it the result truncates.
   readonly resultRenderCap: number
+  // fileTokens is the per-attachment estimate used to choose compaction cuts (compaction.test.ts).
+  readonly fileTokens: number
   // Selected model context window used to derive the hysteresis lines.
   readonly contextWindowTokens: number
   // Fraction of the selected model window that fires compaction.
@@ -30,6 +32,8 @@ export interface ContextPolicy {
 export interface CompactionPolicy {
   readonly messageRenderCap: number
   readonly resultRenderCap: number
+  // fileTokens is the per-attachment estimate used to choose compaction cuts (compaction.test.ts).
+  readonly fileTokens: number
   readonly triggerRatio?: number
   readonly retainRatio?: number
   /** @deprecated Use triggerRatio. */
@@ -46,6 +50,7 @@ const defaultRatios = { triggerRatio: 0.8, retainRatio: 0.5 }
 export const DEFAULT_COMPACTION_POLICY: Required<Omit<CompactionPolicy, "model">> = {
   messageRenderCap: 12_000,
   resultRenderCap: 6_000,
+  fileTokens: 1_200,
   ...defaultRatios,
   fireRatio: defaultRatios.triggerRatio,
   keepRatio: defaultRatios.retainRatio,
@@ -88,6 +93,7 @@ export const contextPolicyOf = (
       policy.resultRenderCap ?? DEFAULT_COMPACTION_POLICY.resultRenderCap,
       "resultRenderCap"
     ),
+    fileTokens: positive(policy.fileTokens ?? DEFAULT_COMPACTION_POLICY.fileTokens, "fileTokens"),
     contextWindowTokens,
     fireRatio,
     keepRatio,
@@ -107,6 +113,7 @@ export const resolvedContextPolicyOf = (policy: Partial<ContextPolicy> = {}): Co
   return {
     messageRenderCap: policy.messageRenderCap ?? defaults.messageRenderCap,
     resultRenderCap: policy.resultRenderCap ?? defaults.resultRenderCap,
+    fileTokens: positive(policy.fileTokens ?? defaults.fileTokens, "fileTokens"),
     contextWindowTokens: policy.contextWindowTokens ?? defaults.contextWindowTokens,
     fireRatio: policy.fireRatio ?? defaults.fireRatio,
     keepRatio: policy.keepRatio ?? defaults.keepRatio,

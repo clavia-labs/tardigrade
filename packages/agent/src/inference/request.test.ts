@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
+import type { MessageContent, MessageContentPart } from "../log/message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/execution/turns"
 import { modelRequest } from "./request"
@@ -23,10 +24,15 @@ const budgetedCode = (log: ReadonlyArray<Event>) => renderOf([budget([codeMode()
 // The request is a pure projection of the trajectory: the message conversation, and the tool and
 // prompt policy. Both live in the domain, so they test without a provider.
 
+const reportFile: MessageContentPart = {
+  type: "file", mediaType: "application/pdf", filename: "q1.pdf",
+  object: { algorithm: "sha256", digest: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+}
+
 describe("renderMessages", () => {
   test("the projection matches complete replay at every prefix", () => {
     const events: ReadonlyArray<Event> = [
-      { type: "MessageReceived", id: "m1", text: "inspect it", at: 0 },
+      { type: "MessageReceived", id: "m1", content: [{ type: "text", text: "inspect it" }, reportFile], at: 0 },
       { type: "TextReturned", text: "checking", turn: "m1", at: 1 },
       { type: "ToolCalled", callId: "c1", name: "execute", arguments: { code: "return 1" }, turn: "m1", at: 1 },
       { type: "ToolReturned", callId: "c1", result: { value: 1 }, turn: "m1", at: 2 },
@@ -38,6 +44,44 @@ describe("renderMessages", () => {
       state = projection.step(state, events[index]!)
       expect(projection.output(state)).toEqual(renderMessages(events.slice(0, index + 1)))
     }
+  })
+
+  test("preserves attachment order while sharing the text cap across parts", () => {
+    const content: MessageContent = [
+      { type: "text", text: "abcdef" }, reportFile,
+      { type: "text", text: "ghijkl" }, reportFile,
+      { type: "text", text: "mn" }
+    ]
+    const event = { type: "MessageReceived", id: "files", content, at: 0 }
+    const before = JSON.stringify(event)
+    expect(renderMessages([event], { messageRenderCap: 8 })).toEqual([{
+      role: "user",
+      content: [
+        { type: "text", text: "abcdef" }, reportFile,
+        { type: "text", text: "gh…[truncated at 8 of 14 chars]" }, reportFile,
+        { type: "text", text: "" }
+      ]
+    }])
+    expect(renderMessages([event], { messageRenderCap: 14 })).toEqual([{ role: "user", content }])
+    expect(JSON.stringify(event)).toBe(before)
+  })
+
+  test("keeps active request attachments across a checkpoint while dropping summarized older messages", () => {
+    const active: MessageContent = [{ type: "text", text: "work on this" }, reportFile]
+    const events: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "old", content: [reportFile], at: 0 },
+      { type: "TurnCompleted", turn: "old", output: "done", at: 1 },
+      { type: "MessageReceived", id: "active", content: active, at: 2 },
+      { type: "ToolCalled", callId: "c1", name: "execute", arguments: {}, turn: "active", at: 3 },
+      { type: "ToolReturned", callId: "c1", result: "ok", turn: "active", at: 4 },
+      { type: "CompactionCompleted", keepFrom: `c:${JSON.stringify(["active", "c1"])}`, summary: "Earlier work", at: 5 }
+    ]
+    const messages = renderMessages(events)
+    expect(messages.filter((message) => message.role === "user")).toEqual([
+      { role: "user", content: active },
+      { role: "user", content: "Summary of earlier work:\nEarlier work" }
+    ])
+    expect(events[0]).toMatchObject({ content: [reportFile] })
   })
 
   test("a full turn renders as user, assistant tool call, tool result", () => {

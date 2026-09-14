@@ -1,6 +1,5 @@
 import { upcastError } from "../log/upcast"
 import { Schema } from "effect"
-import { MessageReceived, messageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { actorMethod, durableInputProjection } from "@clavia/tardigrade-core/actor/method"
 import { type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
@@ -13,23 +12,31 @@ import {
   turnTerminalAtFrom
 } from "@clavia/tardigrade-code/execution/turn-projection"
 import { ModelRef } from "../inference/reference"
-import { ModelPolicy } from "../inference/access"
+import { AgentMessageReceived, MessageContent } from "../log/message"
+export { AgentMessageReceived } from "../log/message"
 import { turnCancelled, turnFailed } from "../log/events"
 
-export const AgentMessageInput = Schema.Struct({
-  text: Schema.String,
+const inputFields = {
   input: Schema.optionalKey(Schema.Unknown),
   model: Schema.optionalKey(ModelRef)
-}).annotate({ identifier: "AgentMessageInput" })
+}
+
+// AgentMessageInput accepts stored attachments or legacy text (message.test.ts).
+export const AgentMessageInput = Schema.Union([
+  Schema.Struct({
+    ...inputFields,
+    content: MessageContent,
+    text: Schema.optionalKey(Schema.Never)
+  }),
+  Schema.Struct({
+    ...inputFields,
+    /** @deprecated Use content with a text part. */
+    text: Schema.String,
+    content: Schema.optionalKey(Schema.Never)
+  })
+]).annotate({ identifier: "AgentMessageInput" })
 
 export type AgentMessageInput = typeof AgentMessageInput.Type
-
-// AgentMessageReceived is the durable input contract interpreted by the message method.
-export const AgentMessageReceived = Schema.Struct({
-  ...MessageReceived.fields,
-  model: Schema.optional(ModelRef),
-  models: Schema.optional(ModelPolicy)
-}).annotate({ identifier: "AgentMessageReceived" })
 
 const turnOf = (event: Event): string => String((event as { readonly id?: unknown }).id)
 
@@ -86,9 +93,10 @@ export const agentMessageMethod = actorMethod({
       })
     })
   },
-  event: ({ invocation, input, at }) => messageReceived({
+  event: ({ invocation, input, at }) => ({
+    type: "MessageReceived",
     id: invocation.id,
-    text: input.text,
+    ...(input.content === undefined ? { text: input.text } : { content: input.content }),
     ...(invocation.epoch === 0 ? {} : { epoch: invocation.epoch }),
     ...(input.input === undefined ? {} : { input: input.input }),
     ...(input.model === undefined ? {} : { model: input.model }),
