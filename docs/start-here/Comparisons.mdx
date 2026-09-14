@@ -86,7 +86,7 @@ Consider an extension with plan and execute modes. Plan mode offers read and sea
 
 Pi's [plan-mode example](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/plan-mode/index.ts) stores mode in a variable and saves snapshots with `appendEntry`. It restores that variable during session events, then applies the matching active-tool list. A smaller extension for these three tools looks like this:
 
-```ts
+```ts expanded
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 
 export default function modeExtension(pi: ExtensionAPI) {
