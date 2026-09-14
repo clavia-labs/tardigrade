@@ -160,7 +160,7 @@ export const modelLayerWith = (
       )
     }
     const authority = intersectModelPolicies([config.model, configured])
-    return { ...authority, ...(config.model.default === undefined ? {} : { default: config.model.default }) }
+    return { ...authority, ...(config.model.fallback === undefined ? {} : { fallback: config.model.fallback }), ...(config.model.default === undefined ? {} : { default: config.model.default }) }
   }
   const selection = Layer.succeed(ModelSelection, {
     resolve: (reference) => {

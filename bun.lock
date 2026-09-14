@@ -106,7 +106,7 @@
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
-        "@tardie/ai-bedrock": "0.0.6",
+        "@tardie/ai-bedrock": "0.0.7",
         "effect": "4.0.0-rc.115",
         "fast-check": "^4.9.0",
         "tardie": "workspace:*",
@@ -251,13 +251,13 @@
       "devDependencies": {
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
-        "@tardie/ai-bedrock": "0.0.6",
+        "@tardie/ai-bedrock": "0.0.7",
         "fast-check": "^4.9.0",
       },
       "peerDependencies": {
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
-        "@tardie/ai-bedrock": "0.0.6",
+        "@tardie/ai-bedrock": "0.0.7",
       },
       "optionalPeers": [
         "@smithy/fetch-http-handler",
@@ -911,7 +911,7 @@
 
     "@tardie/ai-anthropic": ["@tardie/ai-anthropic@4.0.0-rc.113-clavia.5", "", { "dependencies": { "@tardie/ai": "0.0.4" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-hwHvhg2H59gjo50E5NtsVv7aX9x1ap9re/JGPSWFwqSu5uLtURq020TE9RHKuFcN9t3pSKB0oWEFLWTocQSAAw=="],
 
-    "@tardie/ai-bedrock": ["@tardie/ai-bedrock@0.0.6", "", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0", "@tardie/ai": "0.0.4" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-E0bwOkKYQ8MgST1fiY/BixeJI6JiVJ4xiahvCD/ysyIM79fLx5QCP9E5LOQzzYpwkCu8GV60GnLdBBYxpDk6Yg=="],
+    "@tardie/ai-bedrock": ["@tardie/ai-bedrock@0.0.7", "", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0", "@tardie/ai": "0.0.4" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-3utHIIPEO/MEE3Rct0bdwIsMkxhCiuISfLuqSsI5OO8wdVc34Eae+414p5OVTpfv0Fof8rfr32O+peDPd9NNYw=="],
 
     "@tardie/ai-openai": ["@tardie/ai-openai@4.0.0-rc.113-clavia.6", "", { "dependencies": { "@tardie/ai": "0.0.4" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-S0gAgq2nfGwSXcLD0T5ho77X47fD7KYLZChRyfckcztk8abtuyn5afxPdlqiFgIfbf1ldHXUECkTEPsyct7vbw=="],
 
