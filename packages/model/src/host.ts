@@ -16,10 +16,12 @@ import type { ReportedCostReader } from "./usage"
 import type { OutputCapability } from "./output"
 import type { RequestOptions } from "./stream/request"
 import { inferenceLayer } from "./services"
+import type { CostReader } from "./settings"
 
 export interface ModelSettings extends RequestOptions {
   readonly openrouter?: Parameters<typeof OpenRouterLanguageModel.layer>[0]["config"]
   readonly reportedCostUsd?: ReportedCostReader
+  readonly cost?: CostReader
   readonly openai?: Parameters<typeof OpenAiLanguageModel.layer>[0]["config"]
   readonly bedrock?: BedrockModelConfig
   readonly compat?: Parameters<typeof CompatLanguageModel.layer>[0]["config"]

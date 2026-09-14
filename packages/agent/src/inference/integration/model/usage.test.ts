@@ -34,7 +34,7 @@ for (const outcome of ["success", "refused", "truncated", "trailing-data", "unre
       const chunks = events.map((event, sequence_number) => new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify({ sequence_number, ...event })}\n\n`))
       return new Response(new ReadableStream({ pull(controller) { const chunk = chunks.shift(); if (chunk === undefined) controller.close(); else controller.enqueue(chunk) } }), { headers: { "content-type": "text/event-stream" } })
     }, { preconnect: globalThis.fetch.preconnect })
-    const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, maxOutputTokens: 100, reportedCostUsd: (finish) => { const cost = finish.metadata.openai?.usage?.cost; return typeof cost === "number" ? cost : undefined }, pricing, retry: { backoffMs: outcome === "exhausted" ? [] : [0] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
+    const binding = inferenceLayer({ provider: "openai", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "gpt-5" }, maxOutputTokens: 100, reportedCostUsd: (finish) => { const cost = finish.metadata.openai?.usage?.cost; return typeof cost === "number" ? cost : undefined }, cost: (finish) => { const cost = finish.metadata.openai?.usage?.cost; return typeof cost === "number" ? { costUsd: cost, costSource: "provider", reportedCostUsd: cost, estimatedCostUsd: 24.3 } : {} }, pricing, retry: { backoffMs: outcome === "exhausted" ? [] : [0] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
     const action = await Effect.runPromise(Effect.gen(function* () {
       const infer = yield* inferenceClient
       return yield* durableReact(infer, { identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] })
@@ -49,6 +49,7 @@ for (const outcome of ["success", "refused", "truncated", "trailing-data", "unre
     expect(action.usage).toMatchObject({ inputTokens: { total: 10 }, outputTokens: { total: 5 } })
     expect(action.finish?.metadata).toMatchObject({ openai: { usage: { custom_metric: "kept" } } })
     expect(action.reportedCostUsd).toBe(0.25)
+    expect(action.cost).toEqual({ costUsd: 0.25, costSource: "provider", reportedCostUsd: 0.25, estimatedCostUsd: 24.3 })
     expect(action.usage).not.toHaveProperty("costUsd")
     expect(action.usage).not.toHaveProperty("estimatedCostUsd")
     const accounting = usageIn([
@@ -61,6 +62,7 @@ for (const outcome of ["success", "refused", "truncated", "trailing-data", "unre
         usage: action.usage ?? {},
         endpoint: action.endpoint,
         ...(action.reportedCostUsd === undefined ? {} : { reportedCostUsd: action.reportedCostUsd }),
+        ...(action.cost === undefined ? {} : { cost: action.cost }),
         at: 1
       })
     ], "m1")
