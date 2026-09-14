@@ -166,7 +166,7 @@ const runConversation = async (targets: ReadonlyArray<ResolvedLiveTarget>, lifec
       const failure = (await events()).findLast((event) => event.type === "ModelReturned" && event.turn === `m${index + 1}` && event.error !== undefined)?.error?.reason
       if (stage.mode === "recall" && stage.target.protocol === "bedrock-converse") {
         assert.equal(await status(path), "failed")
-        assert.equal(failure?._tag, "InvalidRequestError")
+        assert.equal(failure?._tag, "InvalidUserInputError")
         assert.match(failure?.description ?? "", /tool history/)
         assert.equal(requests, requestCount, "Unsupported tool history must fail before transport")
         assert.equal(toolExecutions, 0)
