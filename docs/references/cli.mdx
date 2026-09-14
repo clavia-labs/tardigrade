@@ -113,6 +113,18 @@ bun run dev
 
 ## Discover providers and models
 
+If your model is absent from the catalog, the interactive prompt asks for its context window, optional output limit, and tool support. Setup saves these values in the provider's model settings in `wrangler.jsonc` and includes them in `models.lock.json`.
+
+To create a project with a custom model, include `models` in the provider configuration:
+
+```sh
+tdg init tardie-agent \
+  --provider localhost \
+  --provider-config '{"protocol":"openai-chat-completions","baseUrl":"http://localhost:8080/v1","env":["API_KEY"],"models":{"qwen-local":{"metadata":{"contextWindowTokens":32768,"toolCall":true}}}}' \
+  --default-model qwen-local
+cd tardie-agent
+```
+
 Initialization and setup use [models.dev](https://models.dev) for the searchable provider and model catalog. The first interactive run saves the validated public catalog in `.tardigrade/models.json`. Later runs can use that snapshot. The Bun server refreshes the same cache when it starts and keeps the resolved snapshot in memory.
 
 Inspect provider requirements and search models through a running server:

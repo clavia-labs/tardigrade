@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.27.0](https://github.com/clavia-labs/tardigrade/compare/v0.26.0...v0.27.0) (2026-09-13)
+
+
+### Features
+
+* **http:** share API docs ([#449](https://github.com/clavia-labs/tardigrade/issues/449)) ([db19130](https://github.com/clavia-labs/tardigrade/commit/db19130a0e4b0f7c8b871b3c6e6b4c0d6b2cbfa1))
+
+
+### Bug Fixes
+
+* **cli:** accept custom model definitions ([#456](https://github.com/clavia-labs/tardigrade/issues/456)) ([4e59436](https://github.com/clavia-labs/tardigrade/commit/4e59436ea63a3780bc5b12bcc21011e21422b5c8))
+* **compaction:** use model capacity ([#446](https://github.com/clavia-labs/tardigrade/issues/446)) ([ab5aa8b](https://github.com/clavia-labs/tardigrade/commit/ab5aa8b74703b3d1e0271fbbe4eab35da336ec71))
+* **model:** recover unknown tools ([#455](https://github.com/clavia-labs/tardigrade/issues/455)) ([456adac](https://github.com/clavia-labs/tardigrade/commit/456adac693a701b1d6e127bfa17fe606ae6212c4))
+* **worker-loader:** avoid callback reentry ([#453](https://github.com/clavia-labs/tardigrade/issues/453)) ([391e3af](https://github.com/clavia-labs/tardigrade/commit/391e3afc2917a994fa9aab3c655a2882fe46648b))
+
 ## [0.26.0](https://github.com/clavia-labs/tardigrade/compare/v0.25.0...v0.26.0) (2026-09-13)
 
 

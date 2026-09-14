@@ -30,10 +30,6 @@ import {
   type SetupAnswers
 } from "./setup"
 
-// `tdg setup` against a home directory this file owns. The prompts are the one part a test cannot
-// drive, so the module splits at the answers: everything after them is a value, and the key's whole
-// journey from answer to file is checked here.
-
 const KEY = "sk-do-not-print-me"
 
 const answers: SetupAnswers = {
@@ -395,5 +391,17 @@ describe("what setup prints", () => {
     expect(summary).toContain(projectConfigPathIn(root))
     expect(summary).toContain(celldConfigPath)
     expect(summary.match(/default openai\/a-model/g)).toHaveLength(1)
+  })
+})
+
+
+test("provider updates preserve custom model definitions", async () => {
+  const first = { ...answers, models: { local: { metadata: { contextWindowTokens: 32768, toolCall: true } } } }
+  await write(first)
+  await Effect.runPromise(writeProviderSetup(root, [{ ...answers, models: { another: { metadata: { contextWindowTokens: 8192 } } } }]).pipe(Effect.provide(BunFileSystem.layer)))
+  const document = parse(await readFile(join(root, "wrangler.jsonc"), "utf8"))
+  expect(document.vars.TARDIGRADE_CONFIG.models.providers.openai.models).toEqual({
+    local: { metadata: { contextWindowTokens: 32768, toolCall: true } },
+    another: { metadata: { contextWindowTokens: 8192 } }
   })
 })

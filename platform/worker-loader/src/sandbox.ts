@@ -1,3 +1,4 @@
+import type { WorkerEntrypoint } from "cloudflare:workers"
 import { Effect, Layer } from "effect"
 import type {
   Ambient,
@@ -119,8 +120,9 @@ const response = (value) => new Response(JSON.stringify(value), {
 `
 
 const CAPABILITY_HARNESS_SOURCE = `${HARNESS_PREAMBLE}
-export default {
-  async fetch(_request, env) {
+import { WorkerEntrypoint } from "cloudflare:workers";
+export default class extends WorkerEntrypoint {
+  async run(input, callBatch) {
     let ordinal = 0;
     let scheduled = false;
     let pending = [];
@@ -133,10 +135,7 @@ export default {
         pending = [];
         scheduled = false;
         try {
-          const outcomes = await env.BRIDGE.sandboxCallBatch(
-            env.INPUT.execution,
-            batch.map((entry) => entry.call)
-          );
+          const outcomes = await callBatch(batch.map((entry) => entry.call));
           for (let i = 0; i < batch.length; i++) {
             const outcome = outcomes[i];
             if (outcome === undefined) batch[i].reject(new Error("sandbox bridge omitted a call outcome"));
@@ -149,25 +148,25 @@ export default {
     });
     const lines = [];
     const logs = () => lines.length === 0 ? {} : { logs: lines };
-    const console = consoleShim(lines, env.INPUT.logCapBytes);
-    const ambient = env.INPUT.ambient === undefined ? {} : ambientShims(env.INPUT.ambient);
-    const args = env.INPUT.names.map((name) => {
+    const console = consoleShim(lines, input.logCapBytes);
+    const ambient = input.ambient === undefined ? {} : ambientShims(input.ambient);
+    const args = input.names.map((name) => {
       if (name === "console") return console;
       if (name === "Date" && ambient.Date !== undefined) return ambient.Date;
       if (name === "Math" && ambient.Math !== undefined) return ambient.Math;
-      const methods = env.INPUT.packages[name];
+      const methods = input.packages[name];
       if (methods !== undefined) {
         return Object.fromEntries(methods.map((method) => [
           method,
           (args) => call(name, method, args)
         ]));
       }
-      return env.INPUT.values[name];
+      return input.values[name];
     });
     try {
-      return response({ result: await body(...args), ...logs() });
+      return JSON.stringify({ result: await body(...args), ...logs() });
     } catch (error) {
-      return response({ error: String(error), ...logs() });
+      return JSON.stringify({ error: String(error), ...logs() });
     }
   }
 };
@@ -298,11 +297,29 @@ const disposeWorker = async (worker: WorkerStub): Promise<void> => {
 
 const discardBody = (response: Response): Promise<ArrayBuffer> => response.arrayBuffer()
 
-export const workerLoaderSandboxServiceFor = (
+interface SandboxEntrypoint extends WorkerEntrypoint {
+  run(
+    input: ReturnType<typeof sandboxInput>,
+    callBatch: (calls: ReadonlyArray<SandboxBridgeCall>) => Promise<ReadonlyArray<SandboxCallOutcome>>
+  ): Promise<string>
+}
+
+export function workerLoaderSandboxServiceFor(
+  loader: WorkerLoader,
+  policy?: Partial<WorkerLoaderSandboxPolicy>
+): SandboxService
+/** @deprecated Pass policy directly; the bridge factory is no longer invoked. */
+export function workerLoaderSandboxServiceFor(
   loader: WorkerLoader,
   bridgeFor: SandboxBridgeFactory,
-  policy: Partial<WorkerLoaderSandboxPolicy> = {}
-): SandboxService => {
+  policy?: Partial<WorkerLoaderSandboxPolicy>
+): SandboxService
+export function workerLoaderSandboxServiceFor(
+  loader: WorkerLoader,
+  policyOrBridge: Partial<WorkerLoaderSandboxPolicy> | SandboxBridgeFactory = {},
+  legacyPolicy: Partial<WorkerLoaderSandboxPolicy> = {}
+): SandboxService {
+  const policy = typeof policyOrBridge === "function" ? legacyPolicy : policyOrBridge
   const resolved: WorkerLoaderSandboxPolicy = {
     logCapBytes: policy.logCapBytes ?? DEFAULT_WORKER_LOADER_SANDBOX_POLICY.logCapBytes,
     compatibilityDate: policy.compatibilityDate ?? DEFAULT_WORKER_LOADER_SANDBOX_POLICY.compatibilityDate,
@@ -363,9 +380,7 @@ export const workerLoaderSandboxServiceFor = (
             }
           }
         }
-        const bridge = bridgeFor(call)
-        try {
-          const worker = loader.load({
+        const worker = loader.load({
           compatibilityDate: resolved.compatibilityDate,
           compatibilityFlags: [...resolved.compatibilityFlags],
           mainModule: "index.js",
@@ -373,25 +388,30 @@ export const workerLoaderSandboxServiceFor = (
             "index.js": CAPABILITY_HARNESS_SOURCE,
             "body.js": bodySource(names, code)
           },
-          env: {
-            BRIDGE: bridge.binding,
-            INPUT: { ...input, execution: bridge.execution }
-          },
           globalOutbound: resolved.globalOutbound,
           ...(resolved.limits === undefined ? {} : { limits: resolved.limits })
         })
-          try {
-            const response = await worker.getEntrypoint().fetch(request())
-            if (!response.ok) {
-              await discardBody(response)
-              return { error: `sandbox returned HTTP ${response.status}` }
-            }
-            return await response.json() as SandboxResult
-          } finally {
-            await disposeWorker(worker)
-          }
+        let active = true
+        let abort = () => {}
+        const interrupted = new Promise<never>((_, reject) => {
+          abort = () => reject(signal.reason)
+          signal.addEventListener("abort", abort, { once: true })
+        })
+        try {
+          signal.throwIfAborted()
+          const result = await Promise.race([
+            worker.getEntrypoint<SandboxEntrypoint>().run(input, async (calls) => {
+              signal.throwIfAborted()
+              if (!active) throw new Error("sandbox execution is closed")
+              return Promise.all(calls.map((entry) => call(entry.ordinal, entry.packageName, entry.method, entry.args)))
+            }),
+            interrupted
+          ])
+          return JSON.parse(result) as SandboxResult
         } finally {
-          bridge.close()
+          active = false
+          signal.removeEventListener("abort", abort)
+          await disposeWorker(worker)
         }
       } catch (error) {
         return { error: String(error) }
@@ -400,8 +420,21 @@ export const workerLoaderSandboxServiceFor = (
   }
 }
 
-export const layerWorkerLoaderSandbox = (
+export function layerWorkerLoaderSandbox(
+  loader: WorkerLoader,
+  policy?: Partial<WorkerLoaderSandboxPolicy>
+): Layer.Layer<never>
+/** @deprecated Pass policy directly; the bridge factory is no longer invoked. */
+export function layerWorkerLoaderSandbox(
   loader: WorkerLoader,
   bridgeFor: SandboxBridgeFactory,
-  policy: Partial<WorkerLoaderSandboxPolicy> = {}
-): Layer.Layer<never> => Layer.succeed(Sandbox)(workerLoaderSandboxServiceFor(loader, bridgeFor, policy))
+  policy?: Partial<WorkerLoaderSandboxPolicy>
+): Layer.Layer<never>
+export function layerWorkerLoaderSandbox(
+  loader: WorkerLoader,
+  policyOrBridge: Partial<WorkerLoaderSandboxPolicy> | SandboxBridgeFactory = {},
+  legacyPolicy: Partial<WorkerLoaderSandboxPolicy> = {}
+): Layer.Layer<never> {
+  const policy = typeof policyOrBridge === "function" ? legacyPolicy : policyOrBridge
+  return Layer.succeed(Sandbox)(workerLoaderSandboxServiceFor(loader, policy))
+}

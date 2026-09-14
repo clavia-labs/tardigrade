@@ -44,10 +44,10 @@
     "fast-check": "^4.9.0",
     "@clavia/tardigrade-host": "workspace:*",
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
-    "@tardie/ai-openai": "4.0.0-rc.113-clavia.4",
-    "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.4",
-    "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.3",
-    "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.1"
+    "@tardie/ai-openai": "4.0.0-rc.113-clavia.5",
+    "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.5",
+    "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.4",
+    "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.2"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
