@@ -156,7 +156,7 @@ export const threadKeys: KeyFragment = {
   prefixes: ["thread:"],
   keyOf: (event) => {
     if (event.type === "ThreadCreated") return "thread:created"
-    if (event.type === "ThreadForked") return "thread:forked"
+    if (event.type === "ThreadForked") return typeof event.destination === "string" ? `thread:forked:${event.destination}` : "thread:forked"
     if (event.type !== "ChildCreated") return undefined
     const callId = typeof event.callId === "string" ? event.callId : undefined
     if (callId === undefined) return undefined
@@ -203,7 +203,7 @@ export const isInvocationLinked = (event: Event): event is InvocationLinked => {
 export const childInvocationsOf = (events: ReadonlyArray<Event>): ReadonlyArray<InvocationLinked> =>
   events.filter(isInvocationLinked)
 
-// openChildInvocationsOf returns the linked children whose invocation has no terminal in events. Creation is the edge; settlement is a ResponseReceived or CallTimedOut for the edge's coordinate (result.ts, invocationTerminalOf). A prefix cut here waits forever on them (log/fork.test.ts).
+// openChildInvocationsOf returns linked children without a received, timed out, or detached call terminal (detach.test.ts).
 export const openChildInvocationsOf = (events: ReadonlyArray<Event>): ReadonlyArray<InvocationLinked> =>
   childInvocationsOf(events).filter((link) =>
     invocationTerminalOf(events, invocationCoordinateOf(parseThreadAddress(link.target), link.child.invocation)) === undefined

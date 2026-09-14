@@ -133,7 +133,10 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
     allocate,
     forkThread: async (instance, request) => {
       active()
-      return (await instanceOf(options.actor.name, instance)).forkThread(request)
+      const host = await instanceOf(options.actor.name, instance)
+      const dest = await host.forkThread(request)
+      host.schedule()
+      return dest
     },
     submit: async (coordinate, name, input, call) => {
       active()

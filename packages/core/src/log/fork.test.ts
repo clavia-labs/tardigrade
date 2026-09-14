@@ -40,20 +40,20 @@ describe("checkpointSeqOf", () => {
 
 describe("forkBatchOf", () => {
   test("the batch drops the source identity and ends with the fork fact", () => {
-    const batch = forkBatchOf(source, 2, root, 40)
-    expect(batch).toEqual([first, { type: "ThreadForked", source: root, at: 40 }])
+    const batch = forkBatchOf(source, 2, root, "experiment", 40)
+    expect(batch).toEqual([first, { type: "ThreadForked", source: root, destination: "experiment", at: 40 }])
     expect(isThreadForked(batch.at(-1))).toBe(true)
   })
 
   test("the fork fact position is the boundary", () => {
-    const batch = forkBatchOf(source, 3, root, 40)
+    const batch = forkBatchOf(source, 3, root, "experiment", 40)
     const dest = [destCreated, ...batch]
     const marker = dest.findIndex(isThreadForked)
     expect(marker).toBe(3)
     expect(dest.slice(1, marker)).toEqual([first, second])
   })
 
-  test("a prefix with an open child invocation is refused and the child is named", () => {
+  test("a prefix detaches pending child invocations and preserves received responses", () => {
     const linked = invocationLinked({
       parent: { method: "message", id: "m1", epoch: 0 },
       child: { invocation: { method: "message", id: "c1", epoch: 0 } },
@@ -64,15 +64,18 @@ describe("forkBatchOf", () => {
       type: "ResponseReceived", id: "c1.reply", from: worker1, method: "message", call: "c1", status: "completed", at: 4
     } as Event
     const withOpen = [created, first, linked]
-    expect(() => forkBatchOf(withOpen, 3, root, 40)).toThrow(`leaves 1 child invocation open: ${worker1} message/c1`)
-    expect(forkBatchOf([...withOpen, settled], 4, root, 40).map((event) => event.type)).toEqual([
+    expect(forkBatchOf(withOpen, 3, root, "experiment", 40).at(-1)).toMatchObject({
+      type: "InvocationDetached", direction: "outgoing",
+      reference: { target: { ...root, thread: "worker-1" }, invocation: linked.child.invocation }
+    })
+    expect(forkBatchOf([...withOpen, settled], 4, root, "experiment", 40).map((event) => event.type)).toEqual([
       "MessageReceived", "InvocationLinked", "ResponseReceived", "ThreadForked"
     ])
-    expect(forkBatchOf(withOpen, 2, root, 40).map((event) => event.type)).toEqual(["MessageReceived", "ThreadForked"])
+    expect(forkBatchOf(withOpen, 2, root, "experiment", 40).map((event) => event.type)).toEqual(["MessageReceived", "ThreadForked"])
   })
 
   test("a source without a leading ThreadCreated is copied whole", () => {
-    expect(forkBatchOf([first, second], 2, root, 40).map((event) => event.type)).toEqual([
+    expect(forkBatchOf([first, second], 2, root, "experiment", 40).map((event) => event.type)).toEqual([
       "MessageReceived", "MessageReceived", "ThreadForked"
     ])
   })
@@ -80,10 +83,10 @@ describe("forkBatchOf", () => {
 
 describe("matchingFork", () => {
   test("a destination holding the same batch matches, another source or length does not", () => {
-    const batch = forkBatchOf(source, 2, root, 40)
+    const batch = forkBatchOf(source, 2, root, "experiment", 40)
     expect(matchingFork([destCreated, ...batch], batch)).toBe(true)
-    expect(matchingFork([destCreated, ...batch], forkBatchOf(source, 3, root, 40))).toBe(false)
-    expect(matchingFork([destCreated, ...forkBatchOf(source, 2, { ...root, thread: "other" }, 40)], batch)).toBe(false)
+    expect(matchingFork([destCreated, ...batch], forkBatchOf(source, 3, root, "experiment", 40))).toBe(false)
+    expect(matchingFork([destCreated, ...forkBatchOf(source, 2, { ...root, thread: "other" }, "experiment", 40)], batch)).toBe(false)
     expect(matchingFork([destCreated], batch)).toBe(false)
     expect(matchingFork([destCreated, first], batch)).toBe(false)
   })
@@ -92,6 +95,21 @@ describe("matchingFork", () => {
 describe("isThreadForked", () => {
   test("a stored row with a string source is not a fork fact", () => {
     expect(isThreadForked({ type: "ThreadForked", source: "root", at: 1 } as Event)).toBe(false)
-    expect(isThreadForked(threadForked({ source: root, at: 1 }))).toBe(true)
+    expect(isThreadForked(threadForked({ source: root, destination: "experiment", at: 1 }))).toBe(true)
   })
+})
+
+test("fork publication detaches an unlinked planned call before it can dispatch", () => {
+  const reference = { target: { ...root, thread: "worker" }, invocation: { method: "work", id: "pending", epoch: 0 } }
+  const planned: Event = { type: "CallPlanned", reference, id: "pending", method: "work", target: formatThreadAddress(reference.target),
+    context: { invocation: reference.invocation }, input: {}, timeoutMs: 100, at: 1 }
+  const batch = forkBatchOf([created, planned], 2, root, "experiment", 2)
+  expect(batch.at(-1)).toEqual({ type: "InvocationDetached", direction: "outgoing", reference, at: 2 })
+  expect(matchingFork([destCreated, ...batch], batch)).toBe(true)
+  expect(matchingFork([destCreated, ...batch], forkBatchOf([created, planned], 2, root, "other", 3))).toBe(false)
+})
+
+test("fork publication refuses a legacy reply link without an invocation identity", () => {
+  const accepted: Event = { type: "Asked", id: "legacy", link: { source: { ...root, thread: "caller" }, target: root }, at: 1 }
+  expect(() => forkBatchOf([created, accepted], 2, root, "experiment", 2)).toThrow("without an invocation identity")
 })

@@ -2,7 +2,7 @@ import type { ThreadCoordinate } from "./coordinate"
 
 import type { Effect } from "effect"
 import type { ActorMethods, ActorMethodInput, ActorMethodOutput } from "./method"
-import { invokeMethod, type InvocationOptions, type InvocationFailed, type InvocationCancelled, type InvocationScope } from "../interaction/execution"
+import { invokeMethod, type InvocationOptions, type InvocationWasDetached, type InvocationFailed, type InvocationCancelled, type InvocationScope } from "../interaction/execution"
 import type { EventLog } from "../log"
 import type { Router } from "../transport/router"
 import type { Self } from "../runtime/reconciler"
@@ -14,7 +14,7 @@ import { targetCoordinate, targetMethods, callableThread, type CallableThread, t
 export type ThreadRef<Methods extends ActorMethods> = CallableThread<Methods, {
   readonly [Name in keyof Methods]: (
     input: ActorMethodInput<Methods[Name]>, options: InvocationOptions
-  ) => Effect.Effect<ActorMethodOutput<Methods[Name]>, InvocationFailed | InvocationCancelled, InvocationScope | EventLog | Router | Self>
+  ) => Effect.Effect<ActorMethodOutput<Methods[Name]>, InvocationFailed | InvocationCancelled | InvocationWasDetached, InvocationScope | EventLog | Router | Self>
 }>
 
 // bindThreadMethods exposes declared methods as replayable calls on a thread reference.

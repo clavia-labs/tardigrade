@@ -4,6 +4,8 @@ import type { ResponseReceived, CallTimedOut, CallDispatched, CancellationDispat
 
 import { invocationCoordinateKey, type InvocationCoordinate } from "./invocation"
 
+import { invocationDetachedOf } from "./detach"
+
 type RecordedCall = Event & { readonly id: string; readonly reference?: InvocationCoordinate }
 
 // outgoingKey preserves the key format of recorded calls without an invocation reference.
@@ -25,6 +27,8 @@ export const outgoingReference = (plan: { readonly reference?: InvocationCoordin
 
 // terminalInvocationRefOf reads the invocation owned by a terminal, including recorded legacy replies.
 export const terminalInvocationRefOf = (event: Event): InvocationCoordinate | undefined => {
+  const detached = invocationDetachedOf(event)
+  if (detached?.direction === "outgoing") return detached.reference
   if (event.type !== "ResponseReceived" && event.type !== "CallTimedOut") return undefined
   const terminal = event as ResponseReceived | CallTimedOut
   const address = terminal.type === "ResponseReceived" ? terminal.from : terminal.target

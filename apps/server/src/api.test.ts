@@ -417,8 +417,13 @@ describe("actor methods", () => {
       const forked = await forkedRoot(base)
       expect(forked.status).toBe(200)
       expect(await forked.json()).toMatchObject({ instance: "main", thread: "experiment", seq: 2 })
+      const completed = await until("fork computation", async () => {
+        const state = await turnOf(base, "experiment", "m1")
+        return state?.status === "completed" ? state : undefined
+      })
+      expect(completed).toMatchObject({ status: "completed", output: "ok: one" })
       const dest = await (await get(base, "/v1/actors/main/threads/experiment/events")).json() as ReadonlyArray<EventRow>
-      expect(dest.map((row) => row.event.id ?? row.event.type)).toEqual(["ThreadCreated", "m1", "ThreadForked"])
+      expect(dest.slice(0, 3).map((row) => row.event.id ?? row.event.type)).toEqual(["ThreadCreated", "m1", "ThreadForked"])
       expect(dest[2]).toMatchObject({ event: { source: { instance: "main", thread: "root" } } })
       expect((await post(base, "/v1/actors/main/threads/experiment/events", { type: "MessageReceived", id: "alt", text: "branch" })).status).toBe(202)
       const source = await (await get(base, "/v1/actors/main/threads/root/events")).json() as ReadonlyArray<EventRow>
@@ -442,10 +447,15 @@ describe("actor methods", () => {
   test("a repeated named fork returns the existing destination", async () => {
     await serving(async (base) => {
       expect((await forkedRoot(base)).status).toBe(200)
+      await until("fork computation", async () => {
+        const state = await turnOf(base, "experiment", "m1")
+        return state?.status === "completed" ? state : undefined
+      })
+      const before = await (await get(base, "/v1/actors/main/threads/experiment/events")).json()
       const again = await post(base, "/v1/actors/main/threads/root/fork", { seq: 2, name: "experiment" })
       expect(again.status).toBe(200)
       expect(await again.json()).toMatchObject({ thread: "experiment", seq: 2 })
-      expect(await (await get(base, "/v1/actors/main/threads/experiment/events")).json()).toHaveLength(3)
+      expect(await (await get(base, "/v1/actors/main/threads/experiment/events")).json()).toEqual(before)
     })
   })
 

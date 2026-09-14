@@ -308,6 +308,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     }, Date.now())
     const result = append(dest.thread, batch, { expectedHead: FORK_EXPECTED_HEAD })
     if (result.appended === 0) forkOutcomeOf(read(dest.thread), batch, dest.thread)
+    driver.mark(dest.thread)
     return dest
   }
 

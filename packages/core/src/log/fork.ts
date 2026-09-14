@@ -1,12 +1,14 @@
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { isThreadCreated, openChildInvocationsOf, sameThreadAddress } from "../interaction/relations"
+import { isThreadCreated, sameThreadAddress } from "../interaction/relations"
+import { forkDetachmentsOf } from "../interaction/fork-boundary"
 import { ThreadAddress } from "../transport/endpoint"
 
 // ThreadForked records that the rows before it were copied from a source thread. Its own row position is the fork boundary: rows copied = its seq - 1 (fork.test.ts).
 export const ThreadForked = Schema.Struct({
   type: Schema.Literal("ThreadForked"),
   source: ThreadAddress,
+  destination: Schema.optional(Schema.NonEmptyString),
   at: Schema.Finite
 })
 
@@ -15,6 +17,7 @@ export type ThreadForked = typeof ThreadForked.Type
 // threadForked constructs a validated fork fact.
 export const threadForked = (fields: {
   readonly source: ThreadAddress
+  readonly destination: string
   readonly at: number
 }): ThreadForked => Schema.decodeSync(ThreadForked)({ type: "ThreadForked", ...fields })
 
@@ -52,26 +55,24 @@ export const prefixOf = (events: ReadonlyArray<Event>, seq: number): ReadonlyArr
   return events.slice(0, seq)
 }
 
-// forkBatchOf returns the destination append batch: the source prefix without the source's ThreadCreated, then ThreadForked. A prefix with an open child invocation is refused, because the destination would wait forever on a reply addressed to the source (relations.ts, openChildInvocationsOf; fork.test.ts).
+// forkBatchOf copies a prefix and closes its pending interaction boundaries in one append batch (fork.test.ts).
 export const forkBatchOf = (
   sourceEvents: ReadonlyArray<Event>,
   seq: number,
   source: ThreadAddress,
+  destination: string,
   at: number
 ): ReadonlyArray<Event> => {
   const prefix = prefixOf(sourceEvents, seq)
-  const open = openChildInvocationsOf(prefix)
-  if (open.length > 0) {
-    const named = open.map((link) => `${link.target} ${link.child.invocation.method}/${link.child.invocation.id}`).join(", ")
-    throw new Error(`checkpoint ${seq} leaves ${open.length} child invocation${open.length === 1 ? "" : "s"} open: ${named}`)
-  }
   const history = isThreadCreated(prefix[0]) ? prefix.slice(1) : prefix
-  return [...history, threadForked({ source, at })]
+  return [...history, threadForked({ source, destination, at }), ...forkDetachmentsOf(prefix, at)]
 }
 
-// matchingFork reports whether dest already holds this batch: a ThreadForked from the same source at the row the batch would place it. The destination's own ThreadCreated occupies row 1, so the marker sits at index batch.length (fork.test.ts).
+// matchingFork identifies the requested publication at its copied-prefix boundary (fork.test.ts).
 export const matchingFork = (destEvents: ReadonlyArray<Event>, batch: ReadonlyArray<Event>): boolean => {
-  const expected = batch.at(-1)
-  const recorded = destEvents[batch.length]
-  return isThreadForked(expected) && isThreadForked(recorded) && sameThreadAddress(recorded.source, expected.source)
+  const boundary = batch.findLastIndex(isThreadForked)
+  const expected = batch[boundary]
+  const recorded = destEvents[boundary + 1]
+  return isThreadForked(expected) && isThreadForked(recorded) &&
+    recorded.destination === expected.destination && sameThreadAddress(recorded.source, expected.source)
 }

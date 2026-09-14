@@ -410,3 +410,24 @@ describe("actorCall", () => {
     })).toThrow("actor call \"inspect-1\" drifted: input does not match the recorded call")
   })
 })
+
+test("fork replay preserves recorded call identities and scopes new keys to the fork", () => {
+  const parent = { target: source, invocation: { method: "review", id: "run", epoch: 0 } }
+  const options = { parent, key: "existing", target, method: "inspect" as const, input: { value: "work" } }
+  const original = actorCall([], options)
+  const transition = original.transitions[0]!
+  if (transition.kind !== "intent") throw new Error("expected plan")
+  const history: Event[] = [...transition.events(transition.input, 0),
+    { type: "ThreadForked", source, destination: "experiment", at: 1 },
+    { type: "InvocationDetached", direction: "outgoing", reference: original.reference, at: 1 }
+  ]
+  const forkOptions = { ...options, parent: { ...parent, target: { ...source, thread: "experiment" } } }
+  const replay = actorCall(history, forkOptions)
+  expect(replay.reference).toEqual(original.reference)
+  expect(replay.state.status).toBe("detached")
+  expect(replay.transitions).toEqual([])
+  const fresh = actorCall(history, { ...forkOptions, key: "new" })
+  expect(fresh.reference).toEqual(actorCall([], { ...forkOptions, key: "new" }).reference)
+  expect(fresh.reference).not.toEqual(actorCall([], { ...options, key: "new" }).reference)
+  expect(() => actorCall(history, { ...forkOptions, input: { value: "changed" } })).toThrow("drifted")
+})

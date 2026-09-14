@@ -961,13 +961,13 @@ describe("cloudflare actor", () => {
       .toEqual(["first-secret", "second-secret"])
   })
 
-  test("HTTP forks a prefix through the event codec onto a quiet dest", async () => {
+  test("HTTP forks a prefix through the event codec onto a runnable dest", async () => {
     const secret = "classified-fork-secret"
     await createThread("fork-src")
-    const appended = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/events", {
-      method: "POST",
+    const appended = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/methods/echo/calls/m1", {
+      method: "PUT",
       headers: { ...authorization, "content-type": "application/json" },
-      body: JSON.stringify({ type: "MessageReceived", id: "m1", text: secret })
+      body: JSON.stringify({ text: secret })
     })
     expect(appended.status).toBe(202)
     const forked = await SELF.fetch("http://test/v1/actors/main/threads/fork-src/fork", {
@@ -977,10 +977,12 @@ describe("cloudflare actor", () => {
     })
     expect(forked.status).toBe(200)
     expect(await forked.json()).toEqual({ actor: "echo", instance: "main", thread: "fork-dst", seq: 2 })
+    await expect.poll(async () => (await threadStub("fork-dst").events("fork-dst")).map((event) => event.type))
+      .toEqual(["ThreadCreated", "EchoRequested", "ThreadForked", "EchoCompleted"])
     const visible = await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })
     const rows = await visible.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly id?: string; readonly text?: string; readonly source?: unknown } }>
-    expect(rows.map((row) => row.event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
-    expect(rows[1]?.event).toMatchObject({ type: "MessageReceived", id: "m1", text: secret })
+    expect(rows.map((row) => row.event.type)).toEqual(["ThreadCreated", "EchoRequested", "ThreadForked", "EchoCompleted"])
+    expect(rows[1]?.event).toMatchObject({ type: "EchoRequested", id: "m1", text: secret })
     expect(rows[2]?.event).toMatchObject({ type: "ThreadForked", source: { actor: "echo", instance: "main", thread: "fork-src" } })
     const raw = await runInDurableObject(threadStub("fork-dst"), (_instance, state) =>
       state.storage.sql.exec<{ readonly event: string }>("SELECT event FROM events ORDER BY seq").toArray()
@@ -1008,7 +1010,15 @@ describe("cloudflare actor", () => {
       body: JSON.stringify({ seq: 2, name: "fork-dst" })
     })
     expect(again.status).toBe(200)
-    expect((await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })).json()).resolves.toHaveLength(3)
+    expect((await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })).json()).resolves.toHaveLength(4)
+    const secondRequest = { method: "POST", headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ seq: 3, name: "fork-second" }) }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect((await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/fork", secondRequest)).status).toBe(200)
+    }
+    const secondEvents = await threadStub("fork-second").events("fork-second")
+    expect(secondEvents.filter((event) => event.type === "ThreadForked").map((event) => event.destination))
+      .toEqual(["fork-dst", "fork-second"])
     const occupied = await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/fork", {
       method: "POST",
       headers: { ...authorization, "content-type": "application/json" },

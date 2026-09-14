@@ -289,11 +289,13 @@ export class ThreadDO extends DurableObject<Env> {
     return true
   }
 
-  // appendAt commits a batch only at the expected head and does not drive. The fork's check-and-copy is atomic here because this object runs one request at a time (packages/host/src/fork.ts, FORK_EXPECTED_HEAD).
+  // appendAt stages the complete fork batch before arming recovery and driving it (packages/core/tla/interaction/Fork.tla, AtomicPublication).
   async appendAt(events: ReadonlyArray<Event>, expectedHead: number): Promise<{ readonly appended: number; readonly head: number }> {
     if (!this.initialized()) throw new Error("Thread DO has not been initialized")
     const host = await this.host()
-    return host.appendAt(events, expectedHead)
+    let result = { appended: 0, head: 0 }
+    await this.accept(host, async () => { result = await host.appendAt(events, expectedHead) })
+    return result
   }
 
   private validateDelivery(envelope: ActorEnvelope): void {

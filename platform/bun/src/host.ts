@@ -662,6 +662,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     const destRuntime = await runtimeOf(dest.thread)
     const result = await destRuntime.runtime.runPromise(destRuntime.store.append(batch, { expectedHead: FORK_EXPECTED_HEAD }))
     if (result.appended === 0) forkOutcomeOf(await destRuntime.runtime.runPromise(destRuntime.store.read), batch, dest.thread)
+    driver.mark(dest.thread)
     return dest
   }
 

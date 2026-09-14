@@ -1,3 +1,4 @@
+import { isThreadForked } from "../log/fork"
 import { ownerKey, type OwnerRef } from "../runtime/context"
 import type { CallDispatched, CallPlanned, CallSkipped, CancellationResult, CallTimedOut } from "./events"
 import { Clock, Effect, Schema } from "effect"
@@ -17,9 +18,8 @@ import { targetCoordinate, targetMethods, type ThreadTarget } from "../actor/tar
 import { decodeActorInvocationContext, type ActorInvocationContext, InvocationRef, sameInvocation, decodeInvocationCoordinate, invocationIdForKey, invocationCoordinateKey, invocationCoordinateOf, type InvocationCoordinate } from "./invocation"
 
 import type { ActorMethodCancellation, ActorMethodDeclaration, ActorMethodInput, ActorMethodOutput, ActorMethods } from "../actor/method"
-import type { ActorMethodState } from "./state"
 
-import { invocationTerminalOf, invocationResultOf } from "./result"
+import { invocationTerminalOf, invocationResultOf, type ActorCallState } from "./result"
 import { sendInvocation } from "./send"
 import { invocationTimeoutOf, prepareInvocation } from "./prepare"
 import { outgoingKey, outgoingMatches, outgoingReference } from "./records-compat"
@@ -71,7 +71,7 @@ export interface ActorCall<Output, R = never> {
   readonly invocation: InvocationRef
   readonly context?: ActorInvocationContext
   readonly target: ReturnType<typeof targetCoordinate>
-  readonly state: ActorMethodState<Output>
+  readonly state: ActorCallState<Output>
   readonly transitions: ReadonlyArray<Transition<never, R>>
 }
 
@@ -123,6 +123,11 @@ export const actorCall = <
     context: request.context ?? { invocation: parent.invocation }
   }
   if (parent !== undefined) {
+    const key = request.owner?.type === "transition" ? JSON.stringify([ownerKey(request.owner), request.key!]) : request.key!
+    const inherited = new Set(log.filter(isThreadForked).map((fork) => invocationIdForKey({ target: fork.source, invocation: parent.invocation }, key)))
+    const recordedCall = log.find((event) => (event.type === "CallPlanned" || event.type === "CallDispatched") &&
+      typeof event.id === "string" && (event.id === options.id || inherited.has(event.id)))
+    if (recordedCall !== undefined) options.id = String(recordedCall.id)
     if (options.context === undefined || !sameInvocation(options.context.invocation, parent.invocation)) {
       throw new Error("idempotency parent does not match the caller invocation context")
     }
@@ -183,7 +188,7 @@ export const actorCall = <
       id: options.id,
       method: options.method,
       target: targetCoordinate(options.target),
-      state: invocationResultOf(response, declaration.output) as ActorMethodState<ActorMethodOutput<Methods[Name]>>,
+      state: invocationResultOf(response, declaration.output) as ActorCallState<ActorMethodOutput<Methods[Name]>>,
       transitions: []
     })
   }

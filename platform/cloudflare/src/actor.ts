@@ -245,7 +245,7 @@ export class ActorDO extends DurableObject<Env> {
     return target
   }
 
-  // forkThread copies source rows 1..seq onto a new root without driving it. Refusals return as data because a thrown class does not survive the RPC boundary (transport/http.ts).
+  // forkThread copies source rows 1..seq onto a runnable root. Refusals return as data because a thrown class does not survive the RPC boundary (transport/http.ts).
   async forkThread(source: string, checkpoint: ForkCheckpoint, name?: string): Promise<
     | { readonly ok: true; readonly coordinate: ThreadAddress; readonly seq: number }
     | { readonly ok: false; readonly refusal: ForkRefusal; readonly message: string }

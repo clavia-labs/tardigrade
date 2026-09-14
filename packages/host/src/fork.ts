@@ -50,7 +50,7 @@ export const forkBatchFor = (
     throw new ForkRefused("checkpoint", "a fork cannot target its source thread")
   }
   try {
-    return forkBatchOf(sourceEvents, request.seq, request.source, at)
+    return forkBatchOf(sourceEvents, request.seq, request.source, request.dest, at)
   } catch (failure) {
     throw new ForkRefused("checkpoint", failure instanceof Error ? failure.message : String(failure))
   }

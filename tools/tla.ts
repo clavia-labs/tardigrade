@@ -40,6 +40,18 @@ const counterexample = (
 ): CounterexampleCheck => ({ directory, module, config, outcome: "counterexample", evidence })
 
 export const checks: ReadonlyArray<Check> = [
+  pass("interaction", "Fork", "Fork.cfg"),
+  pass("interaction", "Fork", "ForkLive.cfg"),
+  pass("interaction", "Fork", "ForkTree.cfg"),
+  pass("interaction", "Fork", "ForkTreeLive.cfg"),
+  pass("interaction", "Fork", "ForkChain.cfg"),
+  pass("interaction", "Fork", "ForkChainLive.cfg"),
+  counterexample("interaction", "Fork", "ForkTreeMixedReachable.cfg", "Invariant NoMixedFork is violated"),
+  counterexample("interaction", "Fork", "ForkTreeCrossDelivery.cfg", "Invariant OriginalObligations is violated"),
+  counterexample("interaction", "Fork", "ForkNoIncomingDetach.cfg", "Invariant ReplyIsolation is violated"),
+  counterexample("interaction", "Fork", "ForkNoOutgoingDetach.cfg", "Invariant WaitIsolation is violated"),
+  counterexample("interaction", "Fork", "ForkEarlyPublish.cfg", "Invariant AtomicPublication is violated"),
+  counterexample("interaction", "Fork", "ForkVolatileDetach.cfg", "Invariant AtomicPublication is violated"),
   pass("runtime", "OperationOwnership", "OperationOwnership.cfg"),
   pass("runtime", "OperationOwnership", "OperationOwnershipLive.cfg"),
   counterexample("runtime", "OperationOwnership", "OperationOwnershipBareIds.cfg", "Invariant ExactResolution is violated"),
