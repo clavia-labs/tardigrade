@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
+import type { MessageContent } from "../log/message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
 import { cancellationStateOf } from "@clavia/tardigrade-core/interaction/state"
@@ -42,6 +43,18 @@ describe("agentMessageMethod", () => {
       model: { provider: "openai", model_id: "gpt-5.6" },
       at: 2
     })
+    const content: MessageContent = [
+      { type: "text", text: "Read this report" },
+      {
+        type: "file", mediaType: "application/pdf", filename: "q1.pdf",
+        object: { algorithm: "sha256", digest: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+      }
+    ]
+    expect(agentMessageMethod.eventOf({
+      invocation: { method: "message", id: "m-files", epoch: 2 },
+      input: { content },
+      at: 42
+    })).toEqual({ type: "MessageReceived", id: "m-files", epoch: 2, content, at: 42 })
     expect(agentMethods).toEqual({ message: agentMessageMethod, requestBudget: requestBudgetMethod })
   })
 

@@ -1,12 +1,15 @@
 import { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, type ContextPolicy, type CompactionPolicy, DEFAULT_COMPACTION_POLICY } from "./context"
 export { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, suffixOf, DEFAULT_COMPACTION_POLICY, type ContextPolicy, type CompactionPolicy } from "./context"
 import { replayOf } from "../inference/model/continuation"
+import { MessageContent, type MessageContentPart } from "../log/message"
+import { resolveMessageObjects } from "../inference/model/objects"
+import { historyOf } from "../inference/model/prompt"
 import { renderMessageEntries } from "../projection/messages"
 import { upcastError } from "../log/upcast"
 import { hasUnansweredToolCall, responsesOf } from "../log/response"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
-import { Clock, Effect, HashSet } from "effect"
+import { Clock, Effect, HashSet, Schema } from "effect"
 import { Self, type Transition } from "@clavia/tardigrade-core/runtime"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import { compactionCompleted } from "../log/events"
@@ -24,7 +27,7 @@ import {
   transcriptProjection,
   type TranscriptProjectionState
 } from "../projection/transcript"
-import { LanguageModel } from "effect/unstable/ai"
+import { LanguageModel, Prompt } from "effect/unstable/ai"
 import { summarize } from "./compaction/model"
 import { BindingSettings, ModelSelection, modelSettingsFor } from "@clavia/tardigrade-model/settings"
 import { modelRefOf, type ModelRef } from "../inference/reference"
@@ -71,15 +74,17 @@ const renderedWeights = (events: ReadonlyArray<Event>, policy: ContextPolicy, mo
   for (const { event, message } of renderMessageEntries(events, policy)) {
     const continuation = message.continuation
     const replay = continuation === undefined ? undefined : replayOf(continuation, model === undefined ? continuation : { ...continuation, provider: model.provider, model: model.model_id })
+    const contentChars = typeof message.content === "string" ? message.content.length
+      : message.content?.reduce((sum, part) => sum + (part.type === "text" ? part.text.length : policy.fileTokens * 4), 0) ?? 0
     const chars = replay === undefined
-      ? (message.content?.length ?? 0) + (message.toolCalls ?? []).reduce((sum, call) => sum + call.arguments.length, 0)
+      ? contentChars + (message.toolCalls ?? []).reduce((sum, call) => sum + call.arguments.length, 0)
       : JSON.stringify(continuation!.payload).length
     weights.set(event, (weights.get(event) ?? 0) + chars)
   }
   return weights
 }
 
-// estimateTokens estimates projected context as characters over four (compaction.properties.test.ts).
+// estimateTokens combines text characters over four with the configured per-file estimate (compaction.test.ts).
 export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}, model = selectedModelOf(events)): number =>
   Math.ceil([...renderedWeights(events, resolvedContextPolicyOf(policy), model).values()].reduce((sum, weight) => sum + weight, 0) / 4)
 
@@ -213,33 +218,52 @@ const compactionTransition = (
         ...(model === undefined ? {} : { model }),
         contextWindowTokens: resolved.contextWindowTokens,
         fireTokens: resolved.fireTokens,
-        keepTokens: resolved.keepTokens
+        keepTokens: resolved.keepTokens,
+        fileTokens: resolved.fileTokens
       },
       act: (input) =>
         Effect.gen(function* () {
           const self = yield* Self
           const at = yield* Clock.currentTimeMillis
-          const lines = input.span.map((e) => lineOf(e, resolved)).filter((l): l is string => l !== null)
-          if (lines.length === 0) {
+          const content: MessageContentPart[] = []
+          for (const event of input.span) {
+            if (event.type === "MessageReceived" && event.content !== undefined) {
+              const parts = yield* Schema.decodeUnknownEffect(MessageContent)(event.content).pipe(Effect.orDie)
+              content.push({ type: "text", text: "user:\n" }, ...parts, { type: "text", text: "\n" })
+            } else {
+              const line = lineOf(event, resolved)
+              if (line !== null) content.push({ type: "text", text: line + "\n" })
+            }
+          }
+          if (content.length === 0) {
             return [compactionCompleted({
               keepFrom: input.keepFrom,
               summary: input.summary,
               contextWindowTokens: input.contextWindowTokens,
               fireTokens: input.fireTokens,
               keepTokens: input.keepTokens,
+              fileTokens: input.fileTokens,
               at
             })]
           }
-          const brief = [
-            "Summarize this agent history in a compact paragraph. Keep every fact a future turn could need: names, ids, decisions, unfinished work.",
-            input.summary === "" ? "" : `Summary so far: ${input.summary}`,
-            lines.join("\n")
-          ].join("\n\n")
+          const brief = [{
+            role: "user" as const,
+            content: [
+              { type: "text" as const, text: "Summarize this agent history in a compact paragraph. Keep every fact a future turn could need: names, ids, decisions, unfinished work. Preserve relevant facts from attached files.\n\n" },
+              ...(input.summary === "" ? [] : [{ type: "text" as const, text: `Summary so far: ${input.summary}\n\n` }]),
+              ...content
+            ]
+          }]
           // A summarize attempt offers no tools: the only sane action is a completion.
           const selection = yield* ModelSelection
           const summaryModel = selection.resolve?.(input.model).model ?? input.model
-          const summary = yield* summarize(brief, { ...self, turn: `compact-${input.keepFrom}` }, summaryModel).pipe(
-            Effect.provideService(BindingSettings, yield* modelSettingsFor(summaryModel)),
+          const settings = yield* modelSettingsFor(summaryModel)
+          const objects = yield* resolveMessageObjects(brief).pipe(Effect.orDie)
+          const prompt = Prompt.fromMessages(historyOf(brief, {
+            provider: settings.provider, protocol: settings.protocol, model: settings.model
+          }, objects))
+          const summary = yield* summarize(prompt, { ...self, turn: `compact-${input.keepFrom}` }, summaryModel).pipe(
+            Effect.provideService(BindingSettings, settings),
             Effect.orDie
           )
           return [compactionCompleted({
@@ -248,6 +272,7 @@ const compactionTransition = (
             contextWindowTokens: input.contextWindowTokens,
             fireTokens: input.fireTokens,
             keepTokens: input.keepTokens,
+            fileTokens: input.fileTokens,
             ...(summaryModel === undefined ? {} : { model: summaryModel }),
             at
           })]

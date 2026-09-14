@@ -2,3 +2,4 @@ export { createBunHost, createHost, type Host, type HostOptions, type HostStorag
 export { serve, DEFAULT_HOST_IDLE_TIMEOUT_SECONDS, DEFAULT_HOST_PORT, DEFAULT_HOST_HOSTNAME, type ServeOptions } from "./serve"
 export type { ClientThread, CallOptions } from "@clavia/tardigrade-core/actor/client"
 export { threadSupervisor, requestThreadMethod, ThreadRequest, type ThreadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
+export { objectStorageFromSqlite } from "./object-storage"
