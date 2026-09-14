@@ -384,3 +384,22 @@ describe("the router membrane", () => {
     await expect(host.forkThread({ source: "root", seq: 1, name: "root" })).rejects.toThrow("cannot target its source")
   })
 })
+
+
+test("memory delivery waits for setup and allocation reuses its completion", async () => {
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let attempts = 0
+  const host = createHost({ actorName: "test", actorInstance: "main", actorFor: () => undefined,
+    initializeThread: async () => { attempts++; started.resolve(); await release.promise }
+  })
+  const target = { actor: "test", instance: "main", thread: "root" }
+  const delivered = host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "work", at: 1 })
+  await started.promise
+  expect(host.read("root")).toEqual([])
+  release.resolve()
+  await delivered
+  expect(host.read("root").some((event) => event.type === "MessageReceived")).toBe(true)
+  await host.allocate({ kind: "root", coordinate: target })
+  expect(attempts).toBe(1)
+})

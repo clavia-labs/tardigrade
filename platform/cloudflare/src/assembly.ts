@@ -11,7 +11,7 @@ import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState }
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
 import { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-model/config"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
-import { type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
+import { type ThreadInitializer, type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
 import { type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
 import type { CommitObserver } from "@clavia/tardigrade-host/commit"
 import { type WorkerLoaderSandboxTransport } from "@clavia/tardigrade-worker-loader/sandbox"
@@ -258,6 +258,7 @@ export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
 
 interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
   readonly model?: ModelIntegrationOptions
+  readonly initializeThread?: ThreadInitializer
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly allocation?: ThreadAllocationPolicy
   readonly modelScope?: DeploymentModelScope
