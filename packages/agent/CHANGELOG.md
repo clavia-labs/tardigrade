@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.28.0](https://github.com/clavia-labs/tardigrade/compare/v0.27.0...v0.28.0) (2026-09-14)
+
+
+### Features
+
+* **host:** fork thread log from checkpoint ([#435](https://github.com/clavia-labs/tardigrade/issues/435)) ([1c53872](https://github.com/clavia-labs/tardigrade/commit/1c5387249bc23f21ea00adbc480d4119fa5d5621))
+* **inference:** add model fallback ([#466](https://github.com/clavia-labs/tardigrade/issues/466)) ([4529404](https://github.com/clavia-labs/tardigrade/commit/452940429fe062204bcf070dd3dc3bf83c2497ae))
+
+
+### Bug Fixes
+
+* **agent:** retain text-epoch pairing ([#430](https://github.com/clavia-labs/tardigrade/issues/430)) ([2e20039](https://github.com/clavia-labs/tardigrade/commit/2e200391cab175c3da0f0f5c2c9eee9a985e34d6))
+* **model:** update Bedrock adapter ([#465](https://github.com/clavia-labs/tardigrade/issues/465)) ([f3fa681](https://github.com/clavia-labs/tardigrade/commit/f3fa681a542dc6f6154bb61dbf26505adf3409cc))
+* **model:** update provider packages ([#461](https://github.com/clavia-labs/tardigrade/issues/461)) ([641f242](https://github.com/clavia-labs/tardigrade/commit/641f242b8ce5585c3f2423d9ffcda7d8a491bc1a))
+* **sandbox:** stream replay input ([#426](https://github.com/clavia-labs/tardigrade/issues/426)) ([1c25de4](https://github.com/clavia-labs/tardigrade/commit/1c25de45ad474f627ff955f4707d7d31e7b38b1e))
+
 ## [0.27.0](https://github.com/clavia-labs/tardigrade/compare/v0.26.0...v0.27.0) (2026-09-13)
 
 
