@@ -53,7 +53,7 @@ export type CallState =
   | { readonly status: "timed-out"; readonly timeout: CallTimedOut }
   | { readonly status: "detached"; readonly detachment: InvocationDetached }
 
-// reduceCallState preserves the first terminal for the exact outgoing invocation (detach.test.ts).
+// reduceCallState preserves the first terminal for the exact outgoing invocation (detach.properties.test.ts).
 export const reduceCallState = (state: CallState, event: Event, reference: InvocationCoordinate): CallState => {
   if (state.status !== "pending") return state
   if (!matchesCallTerminal(event, invocationCoordinateKey(reference))) return state

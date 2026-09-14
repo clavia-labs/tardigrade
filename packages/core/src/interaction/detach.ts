@@ -34,7 +34,7 @@ export type ReplyState =
   | { readonly status: "sent"; readonly delivery: ResponseDelivered }
   | { readonly status: "detached"; readonly detachment: InvocationDetached }
 
-// reduceReplyState preserves the first terminal for the accepted invocation (detach.test.ts).
+// reduceReplyState preserves the first terminal for the accepted invocation (detach.properties.test.ts).
 export const reduceReplyState = (state: ReplyState, event: Event, reference: InvocationCoordinate): ReplyState => {
   if (state.status !== "pending") return state
   const detached = invocationDetachedOf(event)

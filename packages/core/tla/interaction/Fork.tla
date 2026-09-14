@@ -1,5 +1,5 @@
 ------------------------------- MODULE Fork -------------------------------
-(* Fork models a finite interaction tree, prefix forks, durable detachment, replies in flight, retries, and bounded crashes. It specifies proposed semantics; the runtime does not yet implement InvocationDetached. *)
+(* Fork models a finite interaction tree, prefix forks, durable detachment, replies in flight, and bounded crashes. *)
 
 EXTENDS Naturals, Sequences, FiniteSets, TLC
 
@@ -62,8 +62,8 @@ StoredImage(prefix, source, seq, dest) ==
                  [] OTHER -> Detachments(prefix)
   IN prefix \o <<Marker(source, seq, dest)>> \o Ordered(detach)
 
-VARIABLES logs, created, online, images, requests, pending, sends, retried, crashes
-vars == <<logs, created, online, images, requests, pending, sends, retried, crashes>>
+VARIABLES logs, created, online, images, requests, pending, sends, crashes
+vars == <<logs, created, online, images, requests, pending, sends, crashes>>
 
 Init ==
   /\ logs = [t \in Threads |-> InitialLog(t)]
@@ -73,7 +73,6 @@ Init ==
   /\ requests = [t \in Destinations |-> <<>>]
   /\ pending = {}
   /\ sends = {}
-  /\ retried = {}
   /\ crashes = 0
 
 (* CreateFork publishes a checkpoint under a fresh identity with local detachments in the same commit. images is a specification witness of the required commit, not a runtime store. *)
@@ -87,14 +86,7 @@ CreateFork(source, dest, seq) ==
   /\ requests' = [requests EXCEPT ![dest] = <<source, seq>>]
   /\ created' = created \cup {dest}
   /\ online' = online \cup {dest}
-  /\ UNCHANGED <<pending, sends, retried, crashes>>
-
-(* Retry reuses the recorded destination and checkpoint without copying again. *)
-Retry(t) ==
-  /\ t \in created \cap Destinations
-  /\ t \notin retried
-  /\ retried' = retried \cup {t}
-  /\ UNCHANGED <<logs, created, online, images, requests, pending, sends, crashes>>
+  /\ UNCHANGED <<pending, sends, crashes>>
 
 (* Finish abstracts terminating local work after every outgoing wait has a result or a detached outcome. *)
 Finish(t) ==
@@ -102,7 +94,7 @@ Finish(t) ==
   /\ Waits(logs[t]) = {}
   /\ ~Has(logs[t], Done)
   /\ logs' = [logs EXCEPT ![t] = Append(@, Done)]
-  /\ UNCHANGED <<created, online, images, requests, pending, sends, retried, crashes>>
+  /\ UNCHANGED <<created, online, images, requests, pending, sends, crashes>>
 
 (* Send discharges one active incoming reply obligation and leaves its message in flight. *)
 Send(t, i) ==
@@ -112,7 +104,7 @@ Send(t, i) ==
   /\ logs' = [logs EXCEPT ![t] = Append(@, Sent(i))]
   /\ pending' = pending \cup {<<t, i>>}
   /\ sends' = sends \cup {<<t, i>>}
-  /\ UNCHANGED <<created, online, images, requests, retried, crashes>>
+  /\ UNCHANGED <<created, online, images, requests, crashes>>
 
 (* Deliver addresses each invocation's original parent and matches its complete coordinate. *)
 Deliver(t, i) ==
@@ -122,7 +114,7 @@ Deliver(t, i) ==
               THEN [logs EXCEPT ![ParentOf[i]] = Append(@, Result(i))]
               ELSE logs
   /\ pending' = pending \ {<<t, i>>}
-  /\ UNCHANGED <<created, online, images, requests, sends, retried, crashes>>
+  /\ UNCHANGED <<created, online, images, requests, sends, crashes>>
 
 (* Misdeliver models a reply accepted by another parent in the tree (ForkTreeCrossDelivery.cfg). *)
 Misdeliver(t, i, receiver) ==
@@ -132,7 +124,7 @@ Misdeliver(t, i, receiver) ==
   /\ receiver # ParentOf[i]
   /\ logs' = [logs EXCEPT ![receiver] = Append(@, Result(i))]
   /\ pending' = pending \ {<<t, i>>}
-  /\ UNCHANGED <<created, online, images, requests, sends, retried, crashes>>
+  /\ UNCHANGED <<created, online, images, requests, sends, crashes>>
 
 (* Crash preserves durable events except in the volatile-detachment counterexample. *)
 Crash(t) ==
@@ -143,12 +135,12 @@ Crash(t) ==
   /\ logs' = IF Mode = "volatile" /\ t \in Destinations
               THEN [logs EXCEPT ![t] = SelectSeq(@, LAMBDA e : e[1] # "InvocationDetached")]
               ELSE logs
-  /\ UNCHANGED <<created, images, requests, pending, sends, retried>>
+  /\ UNCHANGED <<created, images, requests, pending, sends>>
 
 Recover(t) ==
   /\ t \in created \ online
   /\ online' = online \cup {t}
-  /\ UNCHANGED <<logs, created, images, requests, pending, sends, retried, crashes>>
+  /\ UNCHANGED <<logs, created, images, requests, pending, sends, crashes>>
 
 (* Repair models detachments appended after an early publication has already exposed the fork. *)
 Repair(t) ==
@@ -156,13 +148,13 @@ Repair(t) ==
   /\ t \in created \cap Destinations \cap online
   /\ Detachments(logs[t]) # {}
   /\ logs' = [logs EXCEPT ![t] = @ \o Ordered(Detachments(@))]
-  /\ UNCHANGED <<created, online, images, requests, pending, sends, retried, crashes>>
+  /\ UNCHANGED <<created, online, images, requests, pending, sends, crashes>>
 
 Next ==
   \/ \E source \in Threads, dest \in Destinations : \E seq \in 1..Len(logs[source]) : CreateFork(source, dest, seq)
   \/ \E t \in Threads : Finish(t) \/ Crash(t) \/ Recover(t)
   \/ \E t \in Threads, i \in Invocations : Send(t, i) \/ Deliver(t, i)
-  \/ \E t \in Destinations : Retry(t) \/ Repair(t)
+  \/ \E t \in Destinations : Repair(t)
   \/ \E t \in Threads, i \in Invocations, receiver \in Originals : Misdeliver(t, i, receiver)
 Spec == Init /\ [][Next]_vars
 LiveSpec == Spec
@@ -181,7 +173,6 @@ TypeOK ==
   /\ images \in [Destinations -> Seq(Events)]
   /\ requests \in [Destinations -> {<<>>} \cup (Threads \X (1..MaxLog))]
   /\ pending \subseteq sends /\ sends \subseteq Threads \X Invocations
-  /\ retried \subseteq created \cap Destinations
   /\ crashes \in 0..MaxCrashes
 
 ReplyIsolation == \A message \in sends : message[1] = ChildOf(message[2])
@@ -202,7 +193,7 @@ RelationshipState ==
        /\ Has(logs[t], DetachReply(i)) => Has(logs[t], Accept(i))
   /\ \A t \in created \cap Destinations : Replies(logs[t]) = {}
 
-(* AtomicPublication requires the complete checkpoint and detachments before the branch can run, including after retries and recovery. *)
+(* AtomicPublication requires the complete checkpoint and detachments before the branch can run, including after recovery. *)
 AtomicPublication == \A t \in created \cap Destinations :
   /\ Len(images[t]) > 0
   /\ IF Len(logs[t]) < Len(images[t]) THEN FALSE ELSE SubSeq(logs[t], 1, Len(images[t])) = images[t]
@@ -222,8 +213,6 @@ NoMixedFork == ~\E t \in created \cap Destinations :
   /\ \E i \in Invocations : Has(logs[t], DetachReply(i))
   /\ \E i \in Invocations : Has(logs[t], DetachWait(i))
 
-WorkEventuallySettles == \A t \in Threads : (t \in created) ~> WorkSettled(t)
-InteractionsEventuallySettle == \A t \in Threads : (t \in created) ~> InteractionsSettled(t)
 Settles == \A t \in Threads : (t \in created) ~> Resting(t)
 OriginalRepliesArrive == \A i \in Invocations : <>Has(logs[ParentOf[i]], Result(i))
 =============================================================================

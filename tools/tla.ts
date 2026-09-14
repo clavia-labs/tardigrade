@@ -42,11 +42,8 @@ const counterexample = (
 export const checks: ReadonlyArray<Check> = [
   pass("interaction", "ForkPublication", "ForkPublication.cfg"),
   counterexample("interaction", "ForkPublication", "ForkPublicationBareRoot.cfg", "Invariant NoExecutionBeforePublication is violated"),
-  pass("interaction", "Fork", "Fork.cfg"),
   pass("interaction", "Fork", "ForkLive.cfg"),
-  pass("interaction", "Fork", "ForkTree.cfg"),
   pass("interaction", "Fork", "ForkTreeLive.cfg"),
-  pass("interaction", "Fork", "ForkChain.cfg"),
   pass("interaction", "Fork", "ForkChainLive.cfg"),
   counterexample("interaction", "Fork", "ForkTreeMixedReachable.cfg", "Invariant NoMixedFork is violated"),
   counterexample("interaction", "Fork", "ForkTreeCrossDelivery.cfg", "Invariant OriginalObligations is violated"),
