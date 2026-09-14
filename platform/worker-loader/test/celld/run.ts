@@ -153,7 +153,8 @@ const main = async (): Promise<void> => {
         { ordinal: 0, value: 3 },
         { ordinal: 1, value: 6 },
         { ordinal: 2, value: 5 }
-      ]
+      ],
+      largeReplay: { result: { result: 2_400_000 }, calls: Array.from({ length: 12 }, (_, index) => index) }
     }
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error(`unexpected Celld result: ${JSON.stringify(actual)}`)
