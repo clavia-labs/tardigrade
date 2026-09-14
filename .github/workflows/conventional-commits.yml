@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
-      - name: Reject AI co-author trailers
+      - name: Reject AI commit attribution
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -31,6 +31,11 @@ jobs:
           set -euo pipefail
           shopt -s nocasematch
           while IFS= read -r sha; do
+            author=$(git show -s --format='%an <%ae>' "${sha}")
+            if [[ ${author} =~ (^|[^[:alnum:]_])(claude|cursor|codex)([^[:alnum:]_]|$) ]]; then
+              echo "::error title=Prohibited author::Commit ${sha} is authored by ${author}"
+              exit 1
+            fi
             while IFS= read -r trailer; do
               key=${trailer%%:*}
               value=${trailer#*:}
