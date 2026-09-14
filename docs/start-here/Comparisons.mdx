@@ -1,6 +1,6 @@
 ---
 title: Comparing Tardigrade
-description: Compare Tardigrade with handwritten agent loops, oh-my-pi, Vercel AI SDK, and Temporal.
+description: Compare Tardigrade with handwritten agent loops, Pi, oh-my-pi, Vercel AI SDK, and Temporal.
 route: /docs/comparisons
 section: Start Here
 sectionOrder: 1
@@ -78,23 +78,96 @@ The event history is the source of truth for work that Tardigrade recorded as co
 
 Composition helps when several reusable rules shape one run. Procedural code remains natural for a small loop with simple recovery.
 
-## The jQuery-to-React analogy
+## Compared with Pi and oh-my-pi
 
-A small jQuery interface often starts with event handlers that directly change document elements. As the interface gains states, each handler must update the affected buttons, messages, and panels. A missed update can leave the screen inconsistent.
+[Pi](https://github.com/earendil-works/pi) provides a coding agent with extensions. Extensions register tools and commands, handle lifecycle events, and change the session's active tools. [oh-my-pi](https://github.com/can1357/oh-my-pi) supplies a ready-to-use coding harness with file editing, search, language services, debugging, subagents, and approvals. You can use oh-my-pi directly or embed it through [`createAgentSession`](https://github.com/can1357/oh-my-pi/blob/main/docs/sdk.md).
 
-[React derives the interface from current state](https://react.dev/learn/reacting-to-input-with-state). A component says which controls exist for `running`, `waitingForApproval`, or `finished`. React updates the document from that description. This changed how developers organize interface code, even though [jQuery manipulation methods](https://api.jquery.com/category/manipulation/) remain useful.
+Consider an extension with plan and execute modes. Plan mode offers read and search tools. Execute mode adds the edit tool. The mode must remain correct after the user resumes a session or moves to another branch.
 
-Tardigrade applies a similar idea to agent behavior. Each component reads the recorded facts that affect it. The budget component controls which tools the model can use. The compaction component controls which messages the model receives. These components stay aligned because they read the same history.
+Pi's [plan-mode example](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/plan-mode/index.ts) stores mode in a variable and saves snapshots with `appendEntry`. It restores that variable during session events, then applies the matching active-tool list. A smaller extension for these three tools looks like this:
 
-The analogy ends at the authoring model. React does not make browser work durable. Tardigrade recovery comes from the host and its saved event history.
+```ts
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 
-## Compared with oh-my-pi
+export default function modeExtension(pi: ExtensionAPI) {
+  let mode = "plan"
 
-[oh-my-pi](https://github.com/can1357/oh-my-pi) supplies a ready-to-use coding harness and product. It includes file editing, search, shell commands that can run project tests, language services, debugging, subagents, and approvals. You can use it directly or embed it through [`createAgentSession`](https://github.com/can1357/oh-my-pi/blob/main/docs/sdk.md). Its [extension API](https://github.com/can1357/oh-my-pi/blob/main/docs/extensions.md) adds tools, commands, providers, and lifecycle handlers.
+  const applyMode = () => {
+    pi.setActiveTools(
+      mode === "execute"
+        ? ["read", "grep", "edit"]
+        : ["read", "grep"]
+    )
+  }
 
-oh-my-pi also [saves its sessions](https://github.com/can1357/oh-my-pi/blob/main/docs/session.md). You can resume a conversation or branch from an earlier point to try another approach.
+  const restore = (ctx: ExtensionContext) => {
+    mode = "plan"
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (
+        entry.type === "custom" &&
+        entry.customType === "edit-mode" &&
+        (entry.data === "plan" || entry.data === "execute")
+      ) {
+        mode = entry.data
+      }
+    }
+    applyMode()
+  }
 
-The practical difference is what you are building. oh-my-pi gives you a coding agent to customize through its SDK and extensions. Tardigrade helps you author your own harness from reusable components, then run it locally or in the cloud. oh-my-pi fits when its coding product matches your task. Tardigrade fits when your application needs its own model loop, tools, policies, and recovery behavior.
+  pi.registerCommand("mode", {
+    description: "Toggle plan and execute mode",
+    handler: async () => {
+      mode = mode === "plan" ? "execute" : "plan"
+      pi.appendEntry("edit-mode", mode)
+      applyMode()
+    }
+  })
+
+  pi.on("session_start", (_, ctx) => restore(ctx))
+  pi.on("session_tree", (_, ctx) => restore(ctx))
+}
+```
+
+This example sets the whole active-tool list. Suppose a second extension removes `edit` after the agent uses its tool budget. Switching this example into execute mode puts `edit` back. To enforce both rules, the extensions need a shared decision about which tools are available.
+
+Pi provides [tool selection and interception APIs](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md) to implement that coordination. Its plan-mode example saves the current tool list and keeps tools outside the group it controls. A `tool_call` handler can also block a call. Extension authors can share helper functions that combine rules and restore state.
+
+oh-my-pi uses the same explicit style for extension state. Its [state guide](https://github.com/can1357/oh-my-pi/blob/main/docs/extensions.md#session-and-state-patterns) shows `appendEntry`, branch scans, and session hooks. Its [plan-mode example](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/examples/extensions/plan-mode.ts) restores its variables and active tools when a session starts. Its [tool-selection example](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/examples/extensions/tools.ts) also restores state after branching and tree navigation. oh-my-pi [saves sessions](https://github.com/can1357/oh-my-pi/blob/main/docs/session.md) for resume, branches, and forks.
+
+Tardigrade makes state management functional. Each recorded event goes through `step`, which returns the next state. `output` calculates values such as whether editing is allowed. These functions are pure: the same inputs give the same outputs, without file edits or API calls.
+
+This component reads the application's `ModeChanged` events and returns a `canEdit` flag:
+
+```ts
+import { component, deriveComponent } from "tardie/core"
+
+const editMode = component({
+  name: "edit-mode",
+  initial: () => false,
+  step: (canEdit, event) =>
+    event.type === "ModeChanged"
+      ? event.mode === "execute"
+      : canEdit,
+  output: (canEdit) => ({
+    view: { canEdit },
+    transitions: []
+  })
+})
+
+const history = [{ type: "ModeChanged", mode: "execute" }]
+
+deriveComponent(editMode, []).view
+// { canEdit: false }
+
+deriveComponent(editMode, history).view
+// { canEdit: true }
+```
+
+This component returns a policy value. A surrounding tool component uses `canEdit` to decide whether it offers the edit tool. That tool component can stay inside the earlier `budget([...], { limit: 20 })` wrapper. Changing modes then leaves each offered tool call subject to the recorded budget.
+
+After a restart, Tardigrade replays the saved events through `editMode` and gets `{ canEdit: true }` again. A branch before `ModeChanged` gets `{ canEdit: false }`. The component author writes the state update once. The runtime applies that same function during live execution and recovery. The component tree declares how mode and budget combine.
+
+Pi and oh-my-pi fit developers who want a coding agent to extend or embed. Tardigrade fits developers who want to build their own harness from components whose state the runtime can reconstruct.
 
 ## Compared with Vercel AI SDK
 
