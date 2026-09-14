@@ -1,6 +1,6 @@
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
-import { env, runInDurableObject, SELF } from "cloudflare:test"
+import { env, runInDurableObject, evictDurableObject, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 
@@ -1458,3 +1458,38 @@ test("rejects remounting without replacing the actor", () => {
     expect(mountedActor).toBe(original)
   }
 })
+
+
+test("thread initialization blocks registration and survives Durable Object eviction", async () => {
+  const directory = (env as Env).ACTORS.getByName(JSON.stringify(["echo", "initialization"]))
+  const previous = mountedActor!.initializeThread
+  try {
+    await directory.init("echo", "initialization")
+    const created = await runInDurableObject(directory, async (instance) => {
+      let attempts = 0
+      let fail = true
+      mountedActor!.initializeThread = async () => {
+        attempts++
+        if (fail) throw new Error("setup unavailable")
+      }
+      await expect(instance.createThread("main")).rejects.toThrow("setup unavailable")
+      await expect(instance.alarm()).rejects.toThrow("setup unavailable")
+      expect(await instance.threadTree()).toEqual([])
+      fail = false
+      const root = await instance.createThread("main")
+      const child = await instance.createThread("worker", { parent: "main" })
+      expect(attempts).toBe(4)
+      expect((await instance.threadTree()).map((node) => node.id)).toContain(root.thread)
+      return { root, child }
+    })
+    await evictDurableObject(directory)
+    await runInDurableObject(directory, async (instance) => {
+      mountedActor!.initializeThread = async () => { throw new Error("completed setup ran again") }
+      expect(await instance.createThread("main")).toEqual(created.root)
+      expect(await instance.createThread("worker", { parent: "main" })).toEqual(created.child)
+    })
+  } finally {
+    if (previous === undefined) delete mountedActor!.initializeThread
+    else mountedActor!.initializeThread = previous
+  }
+}, WORKER_INTEGRATION_TIMEOUT_MILLIS)

@@ -1,7 +1,7 @@
 import { Clock, Effect, Schema } from "effect"
-import { ThreadCoordinate, threadIdOf } from "@clavia/tardigrade-core/actor/coordinate"
+import { ThreadCoordinate, threadIdOf, childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { allocateThread, ThreadAllocator, type ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
-import { actorThreadsOf, type ThreadRequested } from "@clavia/tardigrade-core/actor/events"
+import { actorThreadsOf, type ActorThreadRecord, type ThreadRequested } from "@clavia/tardigrade-core/actor/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 
 // instanceThreadAllocator rejects assignments outside the owning actor instance.
@@ -17,14 +17,54 @@ export const instanceThreadAllocator = (
   }
 })
 
-// initializingThreadAllocator makes root allocation await host initialization (e2e/actor/developer-flow.test.ts).
+// ThreadInitializer prepares an assigned thread before allocation returns; retries may repeat its effects (allocation.test.ts).
+export type ThreadInitializer = (target: ThreadCoordinate, request: ThreadAllocation) => Promise<void>
+
+// threadInitializationRequestOf retains the recorded allocation across recovery; older directories use their thread lineage.
+export const threadInitializationRequestOf = (target: ThreadCoordinate, record?: Pick<ActorThreadRecord, "allocation" | "parentThread" | "initialization">): ThreadAllocation =>
+  record?.allocation ?? (record?.parentThread === undefined
+    ? { kind: "root", coordinate: target, ...(record?.initialization === undefined ? {} : { initialization: record.initialization }) }
+    : { kind: "child", parent: { ...target, thread: record.parentThread }, child: childKeyOf(target.thread) })
+
+// ThreadInitializationStore persists successful setup independently of a host activation.
+export interface ThreadInitializationStore {
+  readonly completed: (target: ThreadCoordinate) => Promise<boolean>
+  readonly complete: (target: ThreadCoordinate) => Promise<void>
+}
+
+// durableThreadInitializer skips committed setup and shares concurrent attempts within one host; interrupted commits can repeat setup (allocation.test.ts).
+export const durableThreadInitializer = (
+  initialize: ThreadInitializer,
+  store: ThreadInitializationStore
+): ThreadInitializer => {
+  const pending = new Map<string, Promise<void>>()
+  return (target, request) => {
+    const key = JSON.stringify([target.actor, target.instance, target.thread])
+    const existing = pending.get(key)
+    if (existing !== undefined) return existing
+    const attempt = Promise.resolve().then(async () => {
+      if (await store.completed(target)) return
+      await initialize(target, request)
+      await store.complete(target)
+    }).finally(() => { pending.delete(key) })
+    pending.set(key, attempt)
+    return attempt
+  }
+}
+
+// initializingThreadAllocator awaits setup before publishing roots or returning children; caller-owned roots bypass setup (allocation.test.ts).
 export const initializingThreadAllocator = (
   allocator: typeof ThreadAllocator.Service,
-  initialize: (target: ThreadCoordinate, at: number) => Promise<void>
+  initialize: (target: ThreadCoordinate, at: number) => Promise<void>,
+  initializeThread?: ThreadInitializer
 ): typeof ThreadAllocator.Service => ({
   allocate: (request) => Effect.gen(function* () {
     const target = yield* allocateThread(request).pipe(Effect.provideService(ThreadAllocator, allocator))
-    if (request.kind === "root" && request.initialization !== "caller") {
+    if (request.kind === "root" && request.initialization === "caller") return target
+    if (initializeThread !== undefined) {
+      yield* Effect.promise(() => initializeThread(target, request))
+    }
+    if (request.kind === "root") {
       const at = yield* Clock.currentTimeMillis
       yield* Effect.promise(() => initialize(target, at))
     }
@@ -78,7 +118,7 @@ export const threadAllocationRecord = (
   if (current !== undefined) return { thread: current.thread }
   const parent = request.kind === "child" ? request.parent.thread : undefined
   return { thread: target.thread, event: {
-    type: "ThreadRequested", thread: target.thread, allocationKey: key,
+    type: "ThreadRequested", thread: target.thread, allocationKey: key, allocation: request,
     ...(request.kind === "root" && request.initialization !== undefined ? { initialization: request.initialization } : {}),
     ...(parent === undefined ? {} : { parentThread: parent }),
     depth: parent === undefined ? 0 : (records.find((record) => record.thread === parent)?.depth ?? 0) + 1,

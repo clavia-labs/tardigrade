@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import fc from "fast-check"
 import { Effect } from "effect"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
-import { registeredThreadAllocator, memoryThreadDirectory, initializingThreadAllocator, threadSlug } from "./allocation"
+import { registeredThreadAllocator, memoryThreadDirectory, initializingThreadAllocator, durableThreadInitializer, threadSlug } from "./allocation"
 import type { ThreadAllocation, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 
 const parent = { actor: "tardie", instance: "rick", thread: "main" }
@@ -89,8 +89,92 @@ test("caller-owned root initialization survives allocator normalization without 
     requests.push(request)
     return parent
   }) }
-  const service = initializingThreadAllocator(allocator, async () => { throw new Error("caller owns initialization") })
+  const unexpected = async () => { throw new Error("caller owns initialization") }
+  const service = initializingThreadAllocator(allocator, unexpected, unexpected)
   const request = { kind: "root" as const, coordinate: parent, initialization: "caller" as const }
   expect(await Effect.runPromise(service.allocate(request))).toEqual(parent)
   expect(requests).toEqual([request])
+})
+
+
+test.each(["root", "child"] as const)("%s allocation waits for setup and retries a failed setup at the same coordinate", async (kind) => {
+  const store = memoryThreadDirectory()
+  const request: ThreadAllocation = kind === "root" ? { kind, coordinate: parent } : child("researcher")
+  const started = Promise.withResolvers<void>()
+  const setup = Promise.withResolvers<void>()
+  const attempts: string[] = []
+  let published = false
+  let returned = false
+  const allocator = initializingThreadAllocator(registeredThreadAllocator(store), async () => { published = true }, async (target) => {
+    attempts.push(target.thread)
+    started.resolve()
+    await setup.promise
+  })
+  const pending = Effect.runPromise(allocator.allocate(request)).then(
+    () => { returned = true; return undefined },
+    (error: unknown) => error
+  )
+  await started.promise
+  expect(returned).toBe(false)
+  expect(published).toBe(false)
+  setup.reject(new Error("setup failed"))
+  expect(await pending).toBeInstanceOf(Error)
+  expect(published).toBe(false)
+
+  const recovered = initializingThreadAllocator(registeredThreadAllocator(store), async () => { published = true }, async (target) => {
+    attempts.push(target.thread)
+  })
+  const target = await Effect.runPromise(recovered.allocate(request))
+  expect(attempts).toEqual([target.thread, target.thread])
+  expect(published).toBe(kind === "root")
+})
+
+
+test("setup completion survives a new host wrapper and concurrent callers share setup", async () => {
+  const completed = new Set<string>()
+  const store = {
+    completed: async (target: typeof parent) => completed.has(JSON.stringify(target)),
+    complete: async (target: typeof parent) => { completed.add(JSON.stringify(target)) }
+  }
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let attempts = 0
+  const initialize = async () => { attempts++; started.resolve(); await release.promise }
+  const tracked = durableThreadInitializer(initialize, store)
+  const request: ThreadAllocation = { kind: "root", coordinate: parent }
+  const first = tracked(parent, request)
+  await started.promise
+  const second = tracked(parent, request)
+  expect(attempts).toBe(1)
+  expect(completed.size).toBe(0)
+  release.resolve()
+  await Promise.all([first, second])
+  await durableThreadInitializer(initialize, store)(parent, request)
+  expect(attempts).toBe(1)
+  const other = { ...parent, instance: "other" }
+  await tracked(other, { kind: "root", coordinate: other })
+  expect(attempts).toBe(2)
+})
+
+test.each(["setup", "commit"])("a failed %s leaves initialization retryable", async (failure) => {
+  let completed = false
+  let attempts = 0
+  let fail = true
+  const tracked = durableThreadInitializer(async () => {
+    attempts++
+    if (fail && failure === "setup") throw new Error("setup unavailable")
+  }, {
+    completed: async () => completed,
+    complete: async () => {
+      if (fail && failure === "commit") throw new Error("commit unavailable")
+      completed = true
+    }
+  })
+  const request: ThreadAllocation = { kind: "root", coordinate: parent }
+  await expect(tracked(parent, request)).rejects.toThrow(`${failure} unavailable`)
+  expect(completed).toBe(false)
+  fail = false
+  await tracked(parent, request)
+  expect(completed).toBe(true)
+  expect(attempts).toBe(2)
 })

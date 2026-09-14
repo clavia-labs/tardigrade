@@ -1,8 +1,10 @@
 import type { Event } from "@clavia/tardigrade-core/event"
+import type { ThreadAllocation } from "./allocation"
 import type { ChildPlacement } from "../interaction/relations"
 
 export interface ThreadRequested extends Event {
   readonly type: "ThreadRequested"
+  readonly allocation?: ThreadAllocation
   readonly allocationKey?: string
   readonly initialization?: "caller"
   readonly thread: string
@@ -19,9 +21,16 @@ export interface ThreadRegistered extends Event {
   readonly at: number
 }
 
-export type ActorEvent = ThreadRequested | ThreadRegistered
+export interface ThreadInitialized extends Event {
+  readonly type: "ThreadInitialized"
+  readonly thread: string
+  readonly at: number
+}
+
+export type ActorEvent = ThreadRequested | ThreadRegistered | ThreadInitialized
 
 export interface ActorThreadRecord {
+  readonly allocation?: ThreadAllocation
   readonly allocationKey?: string
   readonly initialization?: "caller"
   readonly thread: string
@@ -33,6 +42,7 @@ export interface ActorThreadRecord {
 
 export const actorEventKeyOf = (event: Event): string | undefined => {
   if (event.type === "ThreadRequested" && typeof event.thread === "string") return `thread:requested:${event.thread}`
+  if (event.type === "ThreadInitialized" && typeof event.thread === "string") return `thread:initialized:${event.thread}`
   if (event.type === "ThreadRegistered" && typeof event.thread === "string") return `thread:registered:${event.thread}`
   return undefined
 }
@@ -40,15 +50,17 @@ export const actorEventKeyOf = (event: Event): string | undefined => {
 export const actorEventsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ActorEvent> =>
   events.flatMap((event): ReadonlyArray<ActorEvent> => {
     if (typeof event.thread !== "string") return []
-    return event.type === "ThreadRequested" || event.type === "ThreadRegistered" ? [event as ActorEvent] : []
+    return event.type === "ThreadRequested" || event.type === "ThreadRegistered" || event.type === "ThreadInitialized" ? [event as ActorEvent] : []
   })
 
 export const actorThreadsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ActorThreadRecord> => {
   const entries = new Map<string, ActorThreadRecord>()
   for (const event of actorEventsOf(events)) {
+    if (event.type === "ThreadInitialized") continue
     const current = entries.get(event.thread)
     if (event.type === "ThreadRequested") {
       entries.set(event.thread, {
+        ...(event.allocation === undefined ? {} : { allocation: event.allocation }),
         ...(event.allocationKey === undefined ? {} : { allocationKey: event.allocationKey }),
         ...(event.initialization === undefined ? {} : { initialization: event.initialization }),
         thread: event.thread,

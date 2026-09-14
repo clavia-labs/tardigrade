@@ -14,7 +14,7 @@ import { type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope
 import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { actorEventsOf, actorEventKeyOf, actorThreadsOf, type ActorThreadRecord, type ThreadRequested } from "@clavia/tardigrade-core/actor"
 import { ThreadAllocator, allocateThread } from "@clavia/tardigrade-core/actor/allocation"
-import { registeredThreadAllocator } from "@clavia/tardigrade-host/allocation"
+import { registeredThreadAllocator, durableThreadInitializer, threadInitializationRequestOf, type ThreadInitializer } from "@clavia/tardigrade-host/allocation"
 import { sqlThreadDirectory } from "@clavia/tardigrade-host/allocation-sql"
 import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
@@ -38,7 +38,8 @@ const registeredKeyOf = (thread: string): string => `thread:registered:${thread}
 
 const actorSupervisorOf = (
   env: Env,
-  identity: { readonly actor: string; readonly instance: string }
+  identity: { readonly actor: string; readonly instance: string },
+  initialize: (request: ThreadRequested) => Promise<void>
 ) => actorFromProjections({
   transitions: [completeTransitionProjection((events) => {
     const actorEvents = actorEventsOf(events)
@@ -50,6 +51,7 @@ const actorSupervisorOf = (
         input: event,
         act: (request) => Effect.gen(function* () {
           const registration = yield* Effect.promise(async () => {
+            await initialize(request)
             const stub = env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, request.thread))
             if (request.parentThread === undefined && request.initialization !== "caller") {
               await stub.init(identity.actor, identity.instance, request.thread)
@@ -126,6 +128,7 @@ const threadTreeOf = (
 
 // ActorDO reconciles one actor instance from its durable event log.
 export class ActorDO extends DurableObject<Env> {
+  private initializeThread: ThreadInitializer | undefined
   private schema: Promise<void> | undefined
   private eventStore: Promise<CloudflareEventStore> | undefined
   private actorName: string | undefined
@@ -188,7 +191,10 @@ export class ActorDO extends DurableObject<Env> {
   }
 
   private async resting(): Promise<boolean> {
-    return restingActor(actorSupervisorOf(this.env, this.identity()), await this.events())
+    return restingActor(actorSupervisorOf(this.env, this.identity(), (record) => {
+      const target = { ...this.identity(), thread: record.thread }
+      return this.ensureInitialized(target, threadInitializationRequestOf(target, record))
+    }), await this.events())
   }
 
   private async synchronizeAlarm(): Promise<void> {
@@ -211,7 +217,7 @@ export class ActorDO extends DurableObject<Env> {
     const identity = this.identity()
     const store = await this.store()
     await this.database.runPromise(
-      settleActor(actorSupervisorOf(this.env, identity)).pipe(
+      settleActor(actorSupervisorOf(this.env, identity, (record) => this.ensureInitialized({ ...identity, thread: record.thread }, threadInitializationRequestOf({ ...identity, thread: record.thread }, record)))).pipe(
         Effect.provideService(EventLog, eventLogFrom(store))
       )
     )
@@ -271,6 +277,16 @@ export class ActorDO extends DurableObject<Env> {
     }
   }
 
+  private async ensureInitialized(target: ThreadAddress, request: ThreadAllocation): Promise<void> {
+    if (request.kind === "root" && request.initialization === "caller") return
+    if (mountedActor?.initializeThread === undefined) return
+    this.initializeThread ??= durableThreadInitializer(mountedActor.initializeThread, {
+      completed: async (coordinate) => (await this.database.runPromise((await this.store()).read)).some((event) => event.type === "ThreadInitialized" && event.thread === coordinate.thread),
+      complete: async (coordinate) => { await this.database.runPromise((await this.store()).append([{ type: "ThreadInitialized", thread: coordinate.thread, at: Date.now() }])) }
+    })
+    await this.initializeThread(target, request)
+  }
+
   async allocateThread(request: ThreadAllocation): Promise<ThreadAddress> {
     const identity = this.identity()
     const scope = request.kind === "root" ? request.coordinate : request.parent
@@ -289,6 +305,7 @@ export class ActorDO extends DurableObject<Env> {
     )))
     const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
     if (at !== null) await this.ctx.storage.setAlarm(at)
+    await this.ensureInitialized(target, request)
     return target
   }
 
@@ -298,6 +315,7 @@ export class ActorDO extends DurableObject<Env> {
     if (existing !== undefined && existing.parentThread !== undefined) {
       throw new Error("a child thread cannot be recreated as a root")
     }
+    await this.ensureInitialized({ ...identity, thread }, threadInitializationRequestOf({ ...identity, thread }, existing))
     const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, thread))
     await stub.init(identity.actor, identity.instance, thread)
     await stub.initializeRoot()
@@ -329,6 +347,7 @@ export class ActorDO extends DurableObject<Env> {
     )) {
       throw new Error("a child thread already has different lineage")
     }
+    await this.ensureInitialized(target, threadInitializationRequestOf(target, existing ?? { parentThread: lineage.parent.thread }))
     const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, target.thread))
     await stub.init(identity.actor, identity.instance, target.thread)
     // deliverChild crosses a delivery to a child thread that is already registered as a plain
