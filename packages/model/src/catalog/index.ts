@@ -1,3 +1,4 @@
+import { canonicalModelConfig, type ModelConfig } from "../config"
 import { Context, Effect, Layer, Schema } from "effect"
 import {
   ModelCatalog as ModelCatalogSchema,
@@ -10,6 +11,37 @@ import {
   modelCatalogScopeOf,
   type ModelCatalogScope
 } from "./repository"
+
+// modelCatalogWithConfiguredModels merges authored metadata before model selection (custom.test.ts).
+export const modelCatalogWithConfiguredModels = async (config: ModelConfig, snapshot?: ModelCatalog): Promise<ModelCatalog | undefined> => {
+  const providers = new Map((snapshot?.providers ?? []).map((provider) => [provider.id, provider]))
+  let changed = false
+  for (const [id, connection] of Object.entries(config.providers)) {
+    const original = providers.get(id)
+    const models = new Map((original?.models ?? []).map((model) => [model.id, model]))
+    for (const [model_id, settings] of Object.entries(connection.models ?? {})) {
+      if (settings.metadata === undefined) continue
+      const existing = models.get(model_id)
+      const metadata = { ...existing?.metadata, ...settings.metadata }
+      if (metadata.contextWindowTokens === undefined) continue
+      models.set(model_id, { ...existing, id: model_id, metadata })
+      changed = true
+    }
+    if (models.size > 0) providers.set(id, {
+      ...(original ?? { id, name: id, api: connection.baseUrl, env: connection.env }), models: [...models.values()]
+    })
+  }
+  if (!changed) return snapshot
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalModelConfig(config)))
+  const revision = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+  return {
+    source: snapshot === undefined ? "custom" : "mixed",
+    revision: `${snapshot?.revision ?? "custom"}:${revision}`,
+    refreshedAt: snapshot?.refreshedAt ?? 0,
+    status: snapshot?.status ?? "cached",
+    providers: [...providers.values()]
+  }
+}
 
 export interface ModelCatalogState {
   readonly snapshot?: ModelCatalog

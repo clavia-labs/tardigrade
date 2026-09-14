@@ -403,6 +403,62 @@ describe("actor methods", () => {
     })
   })
 
+  // forkedRoot seeds a root with two messages and forks it through the first onto "experiment".
+  const forkedRoot = async (base: string) => {
+    expect((await post(base, "/v1/actors/main/threads", { name: "root" })).status).toBe(200)
+    for (const [id, text] of [["m1", "one"], ["m2", "two"]] as const) {
+      expect((await post(base, "/v1/actors/main/threads/root/events", { type: "MessageReceived", id, text })).status).toBe(202)
+    }
+    return post(base, "/v1/actors/main/threads/root/fork", { event: "m1", name: "experiment" })
+  }
+
+  test("HTTP forks a prefix onto a named dest and keeps the source log", async () => {
+    await serving(async (base) => {
+      const forked = await forkedRoot(base)
+      expect(forked.status).toBe(200)
+      expect(await forked.json()).toMatchObject({ instance: "main", thread: "experiment", seq: 2 })
+      const completed = await until("fork computation", async () => {
+        const state = await turnOf(base, "experiment", "m1")
+        return state?.status === "completed" ? state : undefined
+      })
+      expect(completed).toMatchObject({ status: "completed", output: "ok: one" })
+      const dest = await (await get(base, "/v1/actors/main/threads/experiment/events")).json() as ReadonlyArray<EventRow>
+      expect(dest.slice(0, 3).map((row) => row.event.id ?? row.event.type)).toEqual(["ThreadCreated", "m1", "ThreadForked"])
+      expect(dest[2]).toMatchObject({ event: { source: { instance: "main", thread: "root" } } })
+      expect((await post(base, "/v1/actors/main/threads/experiment/events", { type: "MessageReceived", id: "alt", text: "branch" })).status).toBe(202)
+      const source = await (await get(base, "/v1/actors/main/threads/root/events")).json() as ReadonlyArray<EventRow>
+      expect(source.some((row) => row.event.id === "alt")).toBe(false)
+    })
+  })
+
+  test("a fork refusal maps to its status", async () => {
+    await serving(async (base) => {
+      expect((await forkedRoot(base)).status).toBe(200)
+      expect((await post(base, "/v1/actors/main/threads/ghost/fork", { seq: 1 })).status).toBe(404)
+      for (const body of [{ seq: 99 }, { event: "nope" }, { seq: 0 }, { seq: 1, event: "m1" }, {}]) {
+        expect((await post(base, "/v1/actors/main/threads/root/fork", body)).status).toBe(400)
+      }
+      const occupied = await post(base, "/v1/actors/main/threads/experiment/fork", { seq: 2, name: "root" })
+      expect(occupied.status).toBe(409)
+      expect(await occupied.json()).toMatchObject({ title: "Thread Occupied" })
+    })
+  })
+
+  test("a repeated named fork returns the existing destination", async () => {
+    await serving(async (base) => {
+      expect((await forkedRoot(base)).status).toBe(200)
+      await until("fork computation", async () => {
+        const state = await turnOf(base, "experiment", "m1")
+        return state?.status === "completed" ? state : undefined
+      })
+      const before = await (await get(base, "/v1/actors/main/threads/experiment/events")).json()
+      const again = await post(base, "/v1/actors/main/threads/root/fork", { seq: 2, name: "experiment" })
+      expect(again.status).toBe(200)
+      expect(await again.json()).toMatchObject({ thread: "experiment", seq: 2 })
+      expect(await (await get(base, "/v1/actors/main/threads/experiment/events")).json()).toEqual(before)
+    })
+  })
+
   test("putting the same call URL is absorbed", async () => {
     const read = await serving(async (base) => {
       await callMessage(base, "alpha", "m1", "hello")
@@ -745,6 +801,7 @@ describe("the event stream", () => {
     const actorThreads: ActorThreads = {
       statusOf: () => "settled",
       allocateRoot: () => Effect.die(new Error("unexpected allocation")),
+      forkThread: () => Effect.die(new Error("unexpected fork")),
       methods: {},
       storage: { kind: "memory" },
       append: () => Effect.void,

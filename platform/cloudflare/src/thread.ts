@@ -10,8 +10,7 @@ import { directoryRoute } from "@clavia/tardigrade-core/transport/router"
 import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
-import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
-import { layerWorkerLoaderSandbox, type SandboxBridgeCall, type SandboxBridgeLease, type WorkerLoaderSandboxLimits } from "@clavia/tardigrade-worker-loader/sandbox"
+import { layerWorkerLoaderSandbox, type WorkerLoaderSandboxLimits } from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareThreadSchema } from "./storage"
 import { createCloudflareThreadHost, type CloudflareThreadHost } from "./host"
@@ -28,10 +27,6 @@ export class ThreadDO extends DurableObject<Env> {
   private threadId: string | undefined
   private readonly alarmPolicy: AlarmPolicy
   private readonly backgroundTaskOwner: BackgroundTaskOwner
-  private readonly sandboxCalls = new Map<
-    string,
-    (ordinal: number, packageName: string, method: string, args: unknown) => Promise<SandboxCallOutcome>
-  >()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -107,15 +102,6 @@ export class ThreadDO extends DurableObject<Env> {
     return this.threadId ?? this.identity().thread
   }
 
-  async sandboxCallBatch(
-    execution: string,
-    calls: ReadonlyArray<SandboxBridgeCall>
-  ): Promise<ReadonlyArray<SandboxCallOutcome>> {
-    const call = this.sandboxCalls.get(execution)
-    if (call === undefined) throw new Error(`sandbox execution ${JSON.stringify(execution)} is unavailable`)
-    return Promise.all(calls.map((entry) => call(entry.ordinal, entry.packageName, entry.method, entry.args)))
-  }
-
   private async openHost(): Promise<CloudflareThreadHost> {
     const modelConfig = mountedActor !== undefined && mountedActor.modelScope === undefined
       ? undefined
@@ -142,21 +128,8 @@ export class ThreadDO extends DurableObject<Env> {
       ...(sandboxCpuMs === undefined ? {} : { cpuMs: sandboxCpuMs }),
       ...(sandboxSubRequests === undefined ? {} : { subRequests: sandboxSubRequests })
     }
-    const durableObjectName = this.ctx.id.name
-    if (durableObjectName === undefined) throw new Error("Thread DO requires a named Durable Object")
     const sandboxLayer = layerWorkerLoaderSandbox(
       this.env.LOADER,
-      (call): SandboxBridgeLease => {
-        const execution = crypto.randomUUID()
-        this.sandboxCalls.set(execution, call)
-        return {
-          binding: this.env.THREADS.getByName(durableObjectName),
-          execution,
-          close: () => {
-            this.sandboxCalls.delete(execution)
-          }
-        }
-      },
       {
         transport: sandboxTransportOf(this.env.TARDIGRADE_SANDBOX_TRANSPORT),
         ...(this.env.TARDIGRADE_SANDBOX_LOG_CAP_BYTES === undefined
@@ -287,6 +260,15 @@ export class ThreadDO extends DurableObject<Env> {
     const host = await this.host()
     await this.accept(host, () => host.stageRoot(stamped))
     return true
+  }
+
+  // appendAt stages the complete fork batch before arming recovery and driving it (packages/core/tla/interaction/Fork.tla, AtomicPublication).
+  async appendAt(events: ReadonlyArray<Event>, expectedHead: number): Promise<{ readonly appended: number; readonly head: number }> {
+    if (!this.initialized()) throw new Error("Thread DO has not been initialized")
+    const host = await this.host()
+    let result = { appended: 0, head: 0 }
+    await this.accept(host, async () => { result = await host.appendAt(events, expectedHead) })
+    return result
   }
 
   private validateDelivery(envelope: ActorEnvelope): void {

@@ -4,7 +4,7 @@ import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self } from "@clavia/tardigrade-core/runtime"
 import { type ActorInvocationContext } from "@clavia/tardigrade-core/interaction/invocation"
 import { EventLog } from "@clavia/tardigrade-core/log"
-import { type ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
+import { type ActorCallState } from "@clavia/tardigrade-core/interaction/result"
 import { InvocationCoordinate, invocationCoordinateOf, invocationCoordinateJsonSchema, invocationLinked, invocationCoordinateKey, invocationResponseId, invocationTerminalOf, invocationResultOf, prepareInvocation, sendInvocation } from "@clavia/tardigrade-core/interaction"
 import { agentMessageMethod } from "../actor/message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -579,6 +579,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           const id = reference.invocation.id
           const reply = childResultOf(events, reference)
           if (reply !== undefined) {
+            if (reply.status === "detached") return shape(reply, undefined)
             const output = contractOf(reply.data, id)
             if (output.contractError !== undefined) return { error: output.contractError }
             return shape(reply, output.contract)
@@ -649,9 +650,10 @@ const childResultOf = (events: ReadonlyArray<Event>, reference: InvocationCoordi
 
 // shape decodes successful output against its contract and reports validation failures (agents.test.ts, "a reply invalid under A but valid under B still fails as A").
 const shape = (
-  state: Exclude<ActorMethodState<string>, { readonly status: "pending" }>,
+  state: Exclude<ActorCallState<string>, { readonly status: "pending" }>,
   contract: OutputContract | undefined
 ): unknown => {
+  if (state.status === "detached") return { error: "invocation detached", status: "detached" }
   if (state.status === "failed") return { error: state.error.replace(/^error: /, "") }
   if (state.status === "cancelled") return { error: state.reason === undefined ? "cancelled" : `cancelled: ${state.reason}` }
   if (contract === undefined) return { output: state.output }

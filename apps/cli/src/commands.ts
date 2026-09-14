@@ -1,3 +1,4 @@
+import { modelConfigOf } from "@clavia/tardigrade-model/config"
 import { Clock, Console, Effect, Layer, Option } from "effect"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
@@ -32,6 +33,7 @@ import {
   defaultSetupJson,
   defaultSetupSummary,
   providerAnswersFrom,
+  providerConfigWithAnswers,
   providerSetupJson,
   providerSetupSummary,
   readSetupEnv,
@@ -262,17 +264,14 @@ const configuredModels = (
   current: ModelConfig,
   providers: ReadonlyArray<ProviderAnswers>,
   selected: ModelConfig["default"] = current.default
-): ModelConfig => ({
+): ModelConfig => modelConfigOf({
   allow: current.allow,
   ...(selected === undefined ? {} : { default: selected }),
   providers: {
     ...current.providers,
-    ...Object.fromEntries(providers.map((provider) => [provider.provider, {
-      baseUrl: provider.baseUrl,
-      protocol: provider.protocol,
-      env: provider.env,
-      ...(provider.region === undefined ? {} : { region: provider.region })
-    }]))
+    ...Object.fromEntries(providers.map((provider) => [
+      provider.provider, providerConfigWithAnswers(current.providers[provider.provider], provider)
+    ]))
   }
 })
 
@@ -370,19 +369,24 @@ export const setupDefaultCommand = Command.make("default", {
     try: () => defaultModelFrom({ provider: stated(flags.provider), model: stated(flags.model) }),
     catch: userErrorOf
   })
-  const selected = declared ?? (canAsk()
+  const selected: { readonly provider: string; readonly model_id: string; readonly models?: ProviderAnswers["models"] } = declared ?? (canAsk()
     ? yield* Effect.mapError(setupDefaultPrompt(Object.keys(project.models.providers), {
       ...setupPromptOptionsIn(cli.cwd, cli.env),
+      providers: project.models.providers,
       ...(project.models.default === undefined ? {} : { current: project.models.default })
     }), userErrorOf)
     : yield* userErrorOf(NON_INTERACTIVE_DEFAULT_SETUP))
   if (project.models.providers[selected.provider] === undefined) {
     return yield* userErrorOf(`provider ${JSON.stringify(selected.provider)} is not configured; run \`tdg setup provider\``)
   }
+  const updates: ReadonlyArray<ProviderAnswers> = selected.models === undefined ? [] : [{
+    ...project.models.providers[selected.provider]!, provider: selected.provider, models: selected.models
+  }]
+  const reference = { provider: selected.provider, model_id: selected.model_id }
   const [files, modelLock] = yield* writeSetupWithLock(
     cli,
-    configuredModels(project.models, [], selected),
-    Effect.mapError(writeDefaultSetup(cli.cwd, selected, cli.env), userErrorOf)
+    configuredModels(project.models, updates, reference),
+    Effect.mapError(updates.length === 0 ? writeDefaultSetup(cli.cwd, reference, cli.env) : writeSetupPlan(cli.cwd, { providers: updates, default: reference }, cli.env), userErrorOf)
   )
   yield* Console.log(setupOutput(flags.json, defaultSetupJson(files, selected), defaultSetupSummary(files, selected), modelLock))
 })).pipe(
@@ -787,9 +791,46 @@ export const threadCreateCommand = Command.make("create", {
   yield* Console.log(flags.json ? jsonOf(coordinate) : coordinate.thread)
 })).pipe(Command.withDescription("Allocate a root thread and print its assigned identity."))
 
+// threadForkCommand names the checkpoint by row or by event id, never both (commands.test.ts, "fork").
+export const threadForkCommand = Command.make("fork", {
+  thread: Argument.String("thread").pipe(Argument.withDescription("The source thread whose rows are copied")),
+  seq: Flag.Int("seq").pipe(
+    Flag.withDescription("The source row to copy through, 1-based."),
+    Flag.optional
+  ),
+  event: Flag.String("event").pipe(
+    Flag.withDescription("The id of the source event to copy through. A repeated id, such as a callId, names its last row."),
+    Flag.optional
+  ),
+  name: Flag.String("name").pipe(
+    Flag.withDescription("The destination root name. Omit to generate an assigned identity."),
+    Flag.optional
+  ),
+  ...remote
+}, (flags) => Effect.gen(function*() {
+  const seq = Option.getOrUndefined(flags.seq)
+  const event = stated(flags.event)
+  if ((seq === undefined) === (event === undefined)) {
+    return yield* CliError.UserError.make({
+      cause: new Error("checkpoint"),
+      userMessage: "Pass exactly one of --seq <row> or --event <id>."
+    })
+  }
+  const checkpoint = seq === undefined ? { event: event! } : { seq }
+  const client = yield* clientOf(flags)
+  const forked = yield* call(() => client.forkThread(flags.actor, flags.thread, checkpoint, stated(flags.name)))
+  yield* Console.log(flags.json ? jsonOf(forked) : forked.thread)
+})).pipe(
+  Command.withDescription("Copy a thread's rows through a checkpoint onto a new root."),
+  Command.withExamples([
+    { command: "tdg thread fork root --event m1 --name experiment", description: "Fork root through event m1 onto experiment" },
+    { command: "tdg thread fork root --seq 2 --json", description: "Fork root through row 2 and print the coordinate" }
+  ])
+)
+
 export const threadCommand = Command.make("thread").pipe(
   Command.withDescription("Allocate actor threads."),
-  Command.withSubcommands([threadCreateCommand])
+  Command.withSubcommands([threadCreateCommand, threadForkCommand])
 )
 
 export const callCommand = Command.make("call", {

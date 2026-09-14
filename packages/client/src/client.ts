@@ -6,6 +6,8 @@ import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest, HttpCl
 import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
 import type { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
+import type { ForkCheckpoint } from "@clavia/tardigrade-core/log"
+import type { ForkedThread } from "./contract"
 import { httpCallOf } from "./invocation-compat"
 import type {
   ActorMethodCancellation,
@@ -198,6 +200,8 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   // platform requires nothing but `type` (contract.ts, Append).
   readonly append: (actor: string, thread: string, event: Append) => Promise<Accepted>
   readonly allocateRoot: (actor: string, name?: string) => Promise<ThreadCoordinate>
+  // forkThread copies source rows through a checkpoint onto a new root and returns the destination with the row used (packages/core/src/log/fork.ts).
+  readonly forkThread: (actor: string, thread: string, checkpoint: ForkCheckpoint, name?: string) => Promise<ForkedThread>
   // methods lists the mounted actor's callable interface and JSON Schema documents.
   readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
   // call commits one declared method call and returns its durable handle.
@@ -403,6 +407,13 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
       run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,
     allocateRoot: (actor, name) => run(api.threads.allocateRoot({ query: {}, params: { id: actor }, payload: name === undefined ? {} : { name } })),
+    forkThread: (actor, thread, checkpoint, name) => run(api.threads.forkThread({
+      params: { id: actor, thread },
+      payload: {
+        ...("seq" in checkpoint ? { seq: checkpoint.seq } : { event: checkpoint.event }),
+        ...(name === undefined ? {} : { name })
+      }
+    })),
     methods: () => run(api.methods.methods({})),
     call: async (actor, thread, name, call) => {
       const accepted = await run(api.methods.invokeMethod({

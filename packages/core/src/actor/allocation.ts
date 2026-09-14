@@ -96,9 +96,9 @@ export interface ChildThreadRequest {
   readonly child: ChildKey
 }
 
-// ThreadAllocation identifies a root name or a parent-scoped child name for host assignment.
+// ThreadAllocation identifies a root name or a parent-scoped child name for host assignment. Caller initialization reserves the root without publishing its initial log (packages/host/src/allocation.test.ts).
 export type ThreadAllocation =
-  | { readonly kind: "root"; readonly coordinate: ThreadCoordinate; readonly key?: string }
+  | { readonly kind: "root"; readonly coordinate: ThreadCoordinate; readonly key?: string; readonly initialization?: "caller" }
   | ({ readonly kind: "child" } & ChildThreadRequest)
 
 // ThreadAllocator assigns roots and children within a shared actor-instance namespace.
@@ -112,7 +112,8 @@ export class ThreadAllocator extends Context.Service<ThreadAllocator, {
 export const allocateThread = (request: ThreadAllocation) => Effect.gen(function* () {
   const parent = yield* Schema.decodeEffect(ThreadCoordinate)(request.kind === "root" ? request.coordinate : request.parent).pipe(Effect.orDie)
   const key = request.key === undefined ? {} : { key: yield* Schema.decodeEffect(Schema.NonEmptyString)(request.key).pipe(Effect.orDie) }
-  const normalized: ThreadAllocation = request.kind === "root" ? { kind: "root", coordinate: parent, ...key }
+  const normalized: ThreadAllocation = request.kind === "root" ? { kind: "root", coordinate: parent, ...key,
+    ...(request.initialization === undefined ? {} : { initialization: request.initialization }) }
     : { kind: "child", parent, child: childKeyOf(request.child), ...key }
   const allocator = yield* ThreadAllocator
   const target = yield* allocator.allocate(normalized).pipe(

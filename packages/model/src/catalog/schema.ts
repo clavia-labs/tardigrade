@@ -42,7 +42,7 @@ export const ModelCatalogProvider = Schema.Struct({
 
 // ModelCatalog describes the public provider and model snapshot.
 export const ModelCatalog = Schema.Struct({
-  source: Schema.Literal("models.dev"),
+  source: Schema.Literals(["models.dev", "custom", "mixed"]),
   revision: Schema.NonEmptyString,
   refreshedAt: Schema.Finite,
   status: Schema.Literals(["fresh", "cached"]),

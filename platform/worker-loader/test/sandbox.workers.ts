@@ -2,15 +2,13 @@ import { env } from "cloudflare:test"
 import { Effect } from "effect"
 import { describe, expect, test } from "vitest"
 import { sandboxReturned } from "@clavia/tardigrade-code/sandbox/service"
-import { workerLoaderSandboxServiceFor, type SandboxBridgeFactory } from "../src/sandbox"
+import { workerLoaderSandboxServiceFor } from "../src/sandbox"
 import type { Env } from "./fixture.worker"
-import { replaySequenceWith } from "./sandbox.cases"
-
-const bridgeFor: SandboxBridgeFactory = (_call) => ({
-  binding: (env as Env).BRIDGE.getByName("sandbox-test"),
-  execution: "unused",
-  close: () => undefined
-})
+import {
+  ISOLATED_CALLBACK_TRANSPORT,
+  sandboxSequenceWith,
+  type IsolatedCallbackTransportResult
+} from "./sandbox.cases"
 
 const mapLoaderInput = (map: (input: unknown) => unknown): WorkerLoader => ({
   load: (worker: WorkerLoaderWorkerCode) => {
@@ -43,7 +41,7 @@ const reverseRecordedOrder = (value: unknown): unknown => {
 
 describe("worker loader sandbox", () => {
   test("runs generated code with deterministic ambient values", async () => {
-    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor)
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER)
     const result = await Effect.runPromise(sandbox.run(
       `const [left, right] = await Promise.all([Promise.resolve(5), Promise.resolve(13)])
       console.log("totals", left, right)
@@ -60,7 +58,7 @@ describe("worker loader sandbox", () => {
   })
 
   test("cuts captured output at the configured cap", async () => {
-    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor, { logCapBytes: 3 })
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, { logCapBytes: 3 })
     const result = await Effect.runPromise(sandbox.run(
       `console.log("four")
       console.log("later")
@@ -74,7 +72,7 @@ describe("worker loader sandbox", () => {
   })
 
   test("blocks ambient network access", async () => {
-    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor)
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER)
     const result = await Effect.runPromise(sandbox.run(
       `try {
         await fetch("https://example.com")
@@ -88,7 +86,7 @@ describe("worker loader sandbox", () => {
   })
 
   test("replays sequential and concurrent package calls", async () => {
-    const { result, observed } = await replaySequenceWith((env as Env).LOADER)
+    const { result, observed } = await sandboxSequenceWith((env as Env).LOADER)
 
     expect(result).toEqual({ result: [12, 10] })
     expect(observed).toEqual([
@@ -98,8 +96,33 @@ describe("worker loader sandbox", () => {
     ])
   })
 
+  /*
+   * The fixture model captures the observed remote limit absent from local workerd.
+   * At 3367407, local workerd completed 20 executions and 60 namespace callbacks;
+   * Cloudflare rejected execution 15 after 42 callbacks with a subrequest depth error.
+   * The budget of 14 models this fixture, not Cloudflare's complete hop accounting.
+   * With direct callbacks, both runtimes completed 20 executions and 60 package calls
+   * with zero namespace callbacks; the remote run had this model disabled.
+   * https://developers.cloudflare.com/workers/observability/errors/#loop-limit
+   */
+  test.each([
+    { name: "native runtime", options: {} },
+    { name: "modeled remote limit", options: { modeledExecutionLimit: 14 } }
+  ])("avoids durable object reentry with $name", async ({ name, options }) => {
+    const result: IsolatedCallbackTransportResult = await (env as Env).BRIDGE
+      .getByName(name)
+      .runIsolatedCallbackTransport(options)
+
+    expect(result).toEqual({
+      executions: ISOLATED_CALLBACK_TRANSPORT.executions,
+      packageCalls: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution,
+      callbackIngress: 0,
+      resultMarkers: ISOLATED_CALLBACK_TRANSPORT.executions * ISOLATED_CALLBACK_TRANSPORT.callsPerExecution
+    })
+  })
+
   test("replay ignores object member order across the loader boundary", async () => {
-    const sandbox = workerLoaderSandboxServiceFor(mapLoaderInput(reorderObjectKeys), bridgeFor, { transport: "replay" })
+    const sandbox = workerLoaderSandboxServiceFor(mapLoaderInput(reorderObjectKeys), { transport: "replay" })
     const result = await Effect.runPromise(sandbox.run(
       `return await tools.inspect({
         tool: "list_deployments",
@@ -119,7 +142,7 @@ describe("worker loader sandbox", () => {
   })
 
   test("replay keeps argument array order significant", async () => {
-    const sandbox = workerLoaderSandboxServiceFor(mapLoaderInput(reverseRecordedOrder), bridgeFor, { transport: "replay" })
+    const sandbox = workerLoaderSandboxServiceFor(mapLoaderInput(reverseRecordedOrder), { transport: "replay" })
     const result = await Effect.runPromise(sandbox.run(
       `return await tools.inspect({ order: ["newest", "oldest"] })`,
       { tools: { inspect: async (input) => sandboxReturned(input) } }
