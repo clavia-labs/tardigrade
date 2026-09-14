@@ -1,120 +1,115 @@
 ---
 title: Comparing Tardigrade
-description: Compare Tardigrade with handwritten agent loops, Vercel AI SDK, and Temporal.
+description: Compare Tardigrade with handwritten agent loops, oh-my-pi, Vercel AI SDK, and Temporal.
 route: /docs/comparisons
 section: Start Here
 sectionOrder: 1
 order: 3
 ---
 
-Agent code grows as you add tool limits, approvals, conversation summaries, child agents, and crash recovery. Tardigrade lets each concern live in a component. An event history records messages, model responses, tool requests, and tool results.
+Tardigrade is a framework for building your own agent harness. A harness is the code around a model. It controls available tools, manages the conversation, applies limits, and handles recovery. You choose its behavior and run it [locally](/docs/platforms/bun) or on a [cloud host](/docs/platforms/cloudflare).
 
-Components read that history and produce the current view and enabled transitions. For an agent, the combined view can contain prompts and tools. Enabled transitions are work that is ready to run. A host stores the events, executes the work, and records its results.
+A coding assistant shows why this structure helps. Its harness lets a model read files, edit source, and run tests. It runs each requested tool, adds its result to the conversation, and asks the model again.
 
-## Compared with a handwritten agent
+## From a handwritten loop to Tardigrade
 
-A handwritten loop is often the clearest place to start. This illustrative community-garden assistant gives the model three tool calls, then removes its tools:
+Here is the first version of a coding assistant. The `model` and `runTool` names are illustrative application helpers:
 
 ```ts
-const runGardenAssistant = async (request: string) => {
-  let remainingCalls = 3
+const fixTest = async (request: string) => {
   const messages = [{ role: "user", content: request }]
 
   while (true) {
-    const tools = remainingCalls > 0
-      ? [soilStatus, scheduleWatering]
-      : []
-    const response = await model.generate({ messages, tools })
+    const response = await model.generate({
+      messages,
+      tools: [readFiles, editSource, runTests]
+    })
     messages.push(response)
 
     if (response.toolCalls.length === 0) return response.text
 
     for (const call of response.toolCalls) {
-      if (remainingCalls === 0) {
-        messages.push(deniedToolResult(call))
-      } else {
-        remainingCalls -= 1
-        messages.push(await runTool(call))
-      }
+      messages.push(await runTool(call))
     }
   }
 }
 ```
 
-The `model`, `runTool`, and `deniedToolResult` names are illustrative helpers. This small loop is readable. More mutable conditions add coordination work. Approval state, compaction, child agents, retries, and recovery all affect the same control flow. The application must also store enough information to resume safely after a crash.
+The assistant reads the failing test, finds the source file, edits it, and runs the test. The code remains easy to understand.
 
-Tardigrade expresses the tool limit as a component around the tools:
+The assistant can keep trying edits without fixing the test, so you give it a limit of 20 tool calls. Imagine that the assistant has used 18 calls when a test prints thousands of lines. The application summarizes older messages to make room for that output. The summary replaces several old tool calls, though the assistant still has two calls left.
+
+The application can store the summary and remaining allowance together. Its harness must define that saved state, restore it after a restart, and keep it consistent with tool results. Later, the assistant edits a file and stops before it saves the result. Recovery must also decide whether that edit finished and whether a retry is safe.
+
+Tardigrade stores messages, model responses, tool requests, and tool results as an event history. Each behavior reads the facts that it needs from this history. The budget counts all 18 calls, even after older calls leave the model conversation. The saved summary controls what the model sees without deleting the original events.
+
+A component is a reusable part of your harness that handles one behavior. This assistant combines the built-in `budget` and `compaction` components:
 
 ```ts
 import { actor } from "tardie/core"
 import {
   agentMessageMethod,
   budget,
+  compaction,
   infer,
   outputValidateOnce,
   system
 } from "tardie/agent"
+import { repositoryTools } from "./tools"
 
-// soilStatus and scheduleWatering are tools created with tool().
+// repositoryTools uses tool() with the application's read, edit, and test bindings.
 export default actor({
-  name: "garden-assistant",
+  name: "test-fixer",
   methods: { message: agentMessageMethod },
   components: [infer([
-    system("Help the community garden plan its watering."),
-    budget([soilStatus, scheduleWatering], { limit: 3 }),
+    system("Fix the failing test and explain the change."),
+    budget([repositoryTools], { limit: 20 }),
+    compaction({ triggerRatio: 0.8, retainRatio: 0.5 }),
     outputValidateOnce
   ])]
 })
 ```
 
-The `budget` component derives its state from recorded grants and tool calls. It admits calls in recorded order up to the limit. An extra call records budget exhaustion and withdraws the garden tools. The inference component then asks the model to finish with the information it has. The same history produces the same budget decision after recovery.
+`compaction` summarizes older messages when the model context becomes too large. `infer` makes the next model call with the selected conversation and available tools. The budget keeps the two remaining calls across summaries and restarts. If the model attempts a 21st call, the budget records exhaustion and removes the repository tools.
 
-This style pays off when several policies affect the agent loop. A short, stable loop with few policies can remain easier to read as procedural code.
+The host, the process that runs your harness, provides recovery from the saved event history. If a test result is recorded, a restart continues from that result. If the result is missing, the host can run the unfinished work again.
+
+The event history is the source of truth for work that Tardigrade recorded as complete. It cannot prove whether an unrecorded external call took effect. If an edit finishes before its result is recorded, a retry can repeat it. An idempotency key is a request ID that lets an external system recognize a repeated operation. Application tools need such a key or another safe retry design when repetition can cause harm.
+
+Composition helps when several reusable rules shape one run. Procedural code remains natural for a small loop with simple recovery.
 
 ## The jQuery-to-React analogy
 
-[jQuery manipulation methods](https://api.jquery.com/category/manipulation/) tell the browser how to change the current document. An approval control can use a direct sequence of updates:
+A small jQuery interface often starts with event handlers that directly change document elements. As the interface gains states, each handler must update the affected buttons, messages, and panels. A missed update can leave the screen inconsistent.
 
-```js
-if (approved) {
-  $("#schedule").show()
-} else {
-  $("#schedule").hide()
-}
-```
+[React derives the interface from current state](https://react.dev/learn/reacting-to-input-with-state). A component says which controls exist for `running`, `waitingForApproval`, or `finished`. React updates the document from that description. This changed how developers organize interface code, even though [jQuery manipulation methods](https://api.jquery.com/category/manipulation/) remain useful.
 
-[React describes the interface from state](https://react.dev/learn/reacting-to-input-with-state). React then reconciles that description with the document:
+Tardigrade applies a similar idea to agent behavior. Each component reads the recorded facts that affect it. The budget component controls which tools the model can use. The compaction component controls which messages the model receives. These components stay aligned because they read the same history.
 
-```tsx
-function ScheduleControl({ approved }) {
-  return approved ? <button id="schedule">Schedule watering</button> : null
-}
-```
+The analogy ends at the authoring model. React does not make browser work durable. Tardigrade recovery comes from the host and its saved event history.
 
-Tardigrade makes a similar authoring change for behavior. A component describes its current view and enabled work from projected event state. The runtime reconciles the enabled work and appends the outcome. This analogy concerns authoring and composition. React does not make browser state durable. Tardigrade durability comes from its host, event log, and execution rules.
+## Compared with oh-my-pi
+
+[oh-my-pi](https://github.com/can1357/oh-my-pi) supplies a ready-to-use coding harness and product. It includes file editing, search, shell commands that can run project tests, language services, debugging, subagents, and approvals. You can use it directly or embed it through [`createAgentSession`](https://github.com/can1357/oh-my-pi/blob/main/docs/sdk.md). Its [extension API](https://github.com/can1357/oh-my-pi/blob/main/docs/extensions.md) adds tools, commands, providers, and lifecycle handlers.
+
+oh-my-pi also [saves its sessions](https://github.com/can1357/oh-my-pi/blob/main/docs/session.md). You can resume a conversation or branch from an earlier point to try another approach.
+
+The practical difference is what you are building. oh-my-pi gives you a coding agent to customize through its SDK and extensions. Tardigrade helps you author your own harness from reusable components, then run it locally or in the cloud. oh-my-pi fits when its coding product matches your task. Tardigrade fits when your application needs its own model loop, tools, policies, and recovery behavior.
 
 ## Compared with Vercel AI SDK
 
-Vercel AI SDK provides TypeScript APIs for model calls, tools, streaming, and agents. Its [`ToolLoopAgent`](https://ai-sdk.dev/docs/reference/ai-sdk-core/tool-loop-agent) runs a reusable loop of model calls and tool calls in memory. Step controls such as `stopWhen`, `prepareStep`, and `activeTools` support dynamic policies. The SDK also supports [tool approval](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#tool-execution-approval).
+Vercel AI SDK provides TypeScript APIs for model calls, tools, streaming, and agents. Its [`ToolLoopAgent`](https://ai-sdk.dev/docs/reference/ai-sdk-core/tool-loop-agent) runs a reusable loop of model calls and tool calls in memory. `stopWhen`, `prepareStep`, and `activeTools` control steps, models, tools, and context. The SDK also supports [tool approval](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#tool-execution-approval).
 
-AI SDK also supports durable execution through [`WorkflowAgent`](https://vercel.com/changelog/ai-sdk-7). It runs on Vercel Workflow and checkpoints tool work as persisted, retryable steps. Its [workflow integration](https://vercel.com/kb/guide/ai-gateway-and-ai-sdk#build-durable-agents-with-the-workflow-sdk) supports durable waits for approval.
+AI SDK also has a first-party durable option. [`WorkflowAgent`](https://vercel.com/changelog/ai-sdk-7) runs on Vercel Workflow and saves tool work as retryable workflow steps. Its [workflow integration](https://vercel.com/kb/guide/ai-gateway-and-ai-sdk#build-durable-agents-with-the-workflow-sdk) supports durable waits for approval.
 
-The main difference is the code that you write. AI SDK centers agent configuration and callbacks around its loop. Tardigrade centers components that derive views and transitions from event history. Choose AI SDK when its direct generation and loop APIs fit your application. Choose Tardigrade when independent behavior policies need to compose, replay, and evolve around the same agent history.
+With AI SDK, a callback such as `prepareStep` can change the available tools before each model call. With Tardigrade, a component such as `budget` handles that rule using recorded tool calls. AI SDK fits applications that want its model and streaming APIs, with a loop they customize through callbacks. Tardigrade fits developers who want to package those behaviors as components and combine them into their own harness.
 
 ## Compared with Temporal
 
-[Temporal](https://docs.temporal.io/ai) is a durable execution platform that supports agents, human interaction, and dynamic workflows. A Temporal Workflow uses normal workflow code for durable control flow. Temporal replays that code and [matches its commands to event history](https://docs.temporal.io/workflow-definition#deterministic-constraints) to reconstruct state. Activities perform external work. Their operations must [tolerate retries](https://docs.temporal.io/activity-definition#idempotency), for example by reusing a request ID that the external service recognizes.
+[Temporal](https://docs.temporal.io/ai) is a durable execution platform that supports agents, human interaction, and dynamic workflows. A Temporal Workflow is a function that describes steps, branches, and waits. API calls and other external work usually run in Activities, whose results enter the workflow history. After a restart, Temporal runs the workflow code again and supplies those saved results. During this replay, the code must [schedule the same work for the same recorded events](https://docs.temporal.io/workflow-definition#deterministic-constraints).
 
-Tardigrade and Temporal both use durable history. Their authoring models differ. Temporal authors usually write procedural workflow code and place external operations in Activities. Tardigrade authors describe state changes and compose component views and transitions. Its reconciler decides which recorded work remains enabled.
+Activities must [tolerate retries](https://docs.temporal.io/activity-definition#idempotency), such as by using a request ID that the external service recognizes. Both systems need care around an external operation that finishes before its result reaches the log.
 
-Temporal is a natural fit for explicit business processes, long waits, and steps that read clearly as procedural orchestration. Tardigrade is a natural fit when an agent harness has many reusable behaviors that react to shared history. Temporal can also host dynamic agent loops, while Tardigrade can express general event-driven workflows.
+Durable history supports recovery in both systems. The difference is how you express the program that uses it. A Temporal developer writes a workflow function and moves external work into Activities. A Tardigrade developer composes components that decide what work comes next from shared history. Those components can also describe programs with no model calls.
 
-## Core components and agent components
-
-The component model lives in `tardie/core`. It defines events, projections, transitions, actors, and typed methods without requiring a language model. A projection derives state or a value from events. The `tardie/agent` entry point adds components for inference, tools, budgets, compaction, permissions, and output handling.
-
-Effect supplies typed services and programs for external work. A Tardigrade component can declare an Effect as a transition. The host records the returned events after the Effect completes. It does not checkpoint each line or persist local JavaScript variables inside that Effect.
-
-The host uses a stable transition identity to avoid repeating recorded completions. A crash can still occur after an external service accepts a call and before the result event commits. An idempotency key is a request ID that lets the service recognize a repeated operation. For example, the watering service can use that ID to prevent a retry from scheduling the same job twice.
-
-Read [Concepts](/docs/concepts) for the component model, or start with the [Quickstart](/docs/quickstart) to run an agent.
+Temporal fits a process that reads clearly as steps, branches, and waits. Tardigrade fits many agent policies that react to the same evolving history. Read [Concepts](/docs/concepts) for Tardigrade's component model, or start with the [Quickstart](/docs/quickstart).
