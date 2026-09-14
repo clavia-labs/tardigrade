@@ -262,16 +262,18 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
     policyError = error instanceof Error ? error.message : String(error)
   }
   const died = diedAttempts(slice, epoch)
-  const latestResponse = slice.findLast((event) => event.type === "ModelReturned" && Number(event.epoch ?? 0) === epoch)
-  const pendingRetry = latestResponse !== undefined && Schema.is(RetrySchedule)(latestResponse.retry) ? latestResponse.retry : undefined
-  const lastMark = slice.findLast((event) => event.type === "ModelCalled" && Number(event.epoch ?? 0) === epoch)
-  const switched = slice.findLast((event) => event.type === "ModelReturned" && Number(event.epoch ?? 0) === epoch && Schema.is(RetrySchedule)(event.retry) && event.retry.model !== undefined)
-  const switchModel = switched !== undefined && Schema.is(RetrySchedule)(switched.retry) ? switched.retry.model : undefined
-  const model = (died > 0 ? modelRefOf(lastMark?.model) : pendingRetry?.model) ??
-    (pendingRetry !== undefined ? modelRefOf(lastMark?.model) : undefined) ?? switchModel ?? selectedModelOf(head, models.default)
-  const attempted = slice.filter((event) => Number(event.epoch ?? 0) === epoch).flatMap((event) => {
-    const reference = event.type === "ModelCalled" ? modelRefOf(event.model)
-      : event.type === "ModelReturned" && Schema.is(RetrySchedule)(event.retry) ? event.retry.model : undefined
+  const epochAttempts = slice.flatMap((event) => Number(event.epoch ?? 0) === epoch ? [{
+    event,
+    model: event.type === "ModelCalled" ? modelRefOf(event.model) : undefined,
+    retry: event.type === "ModelReturned" && Schema.is(RetrySchedule)(event.retry) ? event.retry : undefined
+  }] : [])
+  const pendingRetry = epochAttempts.findLast(({ event }) => event.type === "ModelReturned")?.retry
+  const lastMark = epochAttempts.findLast(({ event }) => event.type === "ModelCalled")
+  const switchModel = epochAttempts.findLast(({ retry }) => retry?.model !== undefined)?.retry?.model
+  const model = (died > 0 ? lastMark?.model : pendingRetry?.model) ??
+    (pendingRetry !== undefined ? lastMark?.model : undefined) ?? switchModel ?? selectedModelOf(head, models.default)
+  const attempted = epochAttempts.flatMap(({ model, retry }) => {
+    const reference = model ?? retry?.model
     return reference === undefined ? [] : [reference]
   })
   const marks = slice.filter((e) => e.type === "ModelCalled").length
@@ -361,7 +363,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
         epoch,
         attempt,
         ordinal: marks,
-        retryIndex: pendingRetry?.index ?? (died > 0 ? Number(lastMark?.retryIndex ?? 0) : 0),
+        retryIndex: pendingRetry?.index ?? (died > 0 ? Number(lastMark?.event.retryIndex ?? 0) : 0),
         dueAt: pendingRetry?.dueAt,
         trajectory: derived.trajectory,
         model,
