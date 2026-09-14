@@ -22,8 +22,6 @@ import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/start-here/Wel
 import welcomeMarkdown from "@docs/start-here/Welcome.mdx?doc-source"
 import Why, { frontmatter as whyFrontmatter } from "@docs/start-here/Why.mdx"
 import whyMarkdown from "@docs/start-here/Why.mdx?doc-source"
-import Comparisons, { frontmatter as comparisonsFrontmatter } from "@docs/start-here/Comparisons.mdx"
-import comparisonsMarkdown from "@docs/start-here/Comparisons.mdx?doc-source"
 
 type DocFrontmatter = {
   readonly title: string
@@ -56,7 +54,6 @@ type DocModule = {
 const modules: ReadonlyArray<DocModule> = [
   { default: Welcome, frontmatter: welcomeFrontmatter, markdown: welcomeMarkdown, source: "start-here/Welcome.mdx" },
   { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "start-here/Why.mdx" },
-  { default: Comparisons, frontmatter: comparisonsFrontmatter, markdown: comparisonsMarkdown, source: "start-here/Comparisons.mdx" },
   { default: Quickstart, frontmatter: quickstartFrontmatter, markdown: quickstartMarkdown, source: "getting-started/quickstart.mdx" },
   { default: Concepts, frontmatter: conceptsFrontmatter, markdown: conceptsMarkdown, source: "getting-started/concepts.mdx" },
   { default: Actors, frontmatter: actorsFrontmatter, markdown: actorsMarkdown, source: "getting-started/actors.mdx" },
