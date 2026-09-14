@@ -1,7 +1,9 @@
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
-import { Effect, ManagedRuntime, Schema } from "effect"
+import { Effect, Layer, ManagedRuntime, Schema, Stream } from "effect"
+import { LanguageModel, Response } from "effect/unstable/ai"
+import { agentMethods, infer, nativeOutput, NativeOutputSupport } from "@clavia/tardigrade-agent"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -1423,7 +1425,6 @@ describe("cloudflare actor", () => {
 
 })
 
-
 test("HTTP allocation preserves unnamed keys and creates nested children", async () => {
   await createThread("sdk-parent")
   const allocate = async (input: { readonly name?: string; readonly key?: string; readonly parent?: string }) => {
@@ -1447,7 +1448,6 @@ test("HTTP allocation preserves unnamed keys and creates nested children", async
   expect(await methodState(grandchild.thread, "sdk-nested")).toMatchObject({ status: "completed" })
 }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
-
 test("rejects remounting without replacing the actor", () => {
   const original = mountedActor
   expect(original).toBeDefined()
@@ -1458,3 +1458,65 @@ test("rejects remounting without replacing the actor", () => {
     expect(mountedActor).toBe(original)
   }
 })
+
+test("a cancelled Cloudflare inference journals its streamed partial before the terminal", async () => {
+  await runInDurableObject(threadStub("partial-cancel"), async (_instance, state) => {
+    const { promise: started, resolve: markStarted } = Promise.withResolvers<void>()
+    const config = {
+      default: { provider: "openai", model_id: "gpt-test" },
+      allow: "*" as const,
+      providers: { openai: { baseUrl: "https://api.openai.test/v1", protocol: "openai-chat-completions" as const, env: ["OPENAI_API_KEY"] } }
+    }
+    const catalog: ModelCatalog = {
+      source: "models.dev", revision: "partial-cancel", refreshedAt: 1, status: "cached",
+      providers: [{ id: "openai", name: "OpenAI", env: ["OPENAI_API_KEY"], models: [{ id: "gpt-test", metadata: { contextWindowTokens: 32_000 } }] }]
+    }
+    const previousModel = mountedActor!.model
+    Object.assign(mountedActor!, workerModelServices({ model: { providerLayer: () =>
+      Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+        generateText: () => Effect.die("Use streaming in this fixture"),
+        streamText: () => Stream.concat(
+          Stream.make(
+            Response.makePart("text-start", { id: "partial" }),
+            Response.makePart("text-delta", { id: "partial", delta: "stopped partial" })
+          ),
+          Stream.fromEffect(Effect.sync(markStarted).pipe(Effect.andThen(Effect.never)))
+        )
+      }))
+    } }))
+    const definition = actor({
+      name: "echo", methods: agentMethods,
+      components: [infer([nativeOutput], { models: { default: config.default, allow: "*" } })]
+    })
+    try {
+      const host = await createCloudflareThreadHost({
+        storage: state.storage, actorName: "echo", actorInstance: "main", thread: "partial-cancel", actor: definition,
+        layers: Layer.mergeAll(
+          modelLayer(modelsFrom(env as Env, config), catalog),
+          Layer.succeed(NativeOutputSupport, { withTools: true })
+        ),
+        keyOf: actorRuntimeOf(definition).keyOf
+      })
+      try {
+        await host.commitRoot({ type: "MessageReceived", id: "message-1", text: "wait", at: 1 })
+        const driving = host.drive()
+        await started
+        await host.commitRoot({
+          type: "CancellationRequested", request: "cancel-1",
+          invocation: { method: "message", id: "message-1", epoch: 0 }, cause: "requested", at: 2
+        })
+        await driving
+        const log = await host.read()
+        const partial = log.findIndex((event) => event.type === "TextReturned" && event.turn === "message-1" && event.text === "stopped partial")
+        const terminal = log.findIndex((event) => event.type === "TurnCancelled" && event.turn === "message-1")
+        expect(partial).toBeGreaterThanOrEqual(0)
+        expect(terminal).toBeGreaterThan(partial)
+      } finally {
+        await host.close()
+      }
+    } finally {
+      if (previousModel === undefined) delete mountedActor!.model
+      else mountedActor!.model = previousModel
+    }
+  })
+}, WORKER_INTEGRATION_TIMEOUT_MILLIS)

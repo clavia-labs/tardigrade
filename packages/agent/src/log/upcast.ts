@@ -1,3 +1,4 @@
+import { actorInvocationContextFrom, InvocationRef, invocationKey } from "@clavia/tardigrade-core/interaction/invocation"
 import { upcastResponse } from "./response-upcast"
 import { Schema } from "effect"
 import { TurnError } from "./events"
@@ -17,12 +18,22 @@ export const upcastError = (error: unknown): TurnError => {
   return Schema.is(TurnError)(error) ? error : { message: String(error ?? "") }
 }
 
-// responseKeyOf identifies one model response within its turn epoch (response.test.ts).
-export const responseKeyOf = (event: Event, id: unknown): string =>
-  JSON.stringify([event.turn ?? null, event.epoch ?? 0, id])
+// invocationOf resolves runtime ownership before legacy turn stamps (response.test.ts).
+const invocationOf = (event: Event, legacyEpoch = 0): InvocationRef | undefined =>
+  event.invocationRef !== undefined ? Schema.decodeUnknownSync(InvocationRef)(event.invocationRef)
+    : actorInvocationContextFrom(event)?.invocation ?? (typeof event.turn === "string"
+      ? { method: "message", id: event.turn, epoch: Number(event.epoch ?? legacyEpoch) }
+      : undefined)
+
+const responseKey = (invocation: InvocationRef | undefined, id: unknown): string =>
+  JSON.stringify([invocation?.method ?? "message", invocation?.id ?? null, invocation?.epoch ?? 0, id])
+
+// responseKeyOf identifies one model response within its owning invocation (response.test.ts).
+export const responseKeyOf = (event: Event, id: unknown): string => responseKey(invocationOf(event), id)
 
 export interface ReadEvent {
   readonly event: Event
+  readonly invocation?: InvocationRef
   readonly responseKey?: string
   readonly advancesInference: boolean
 }
@@ -41,10 +52,28 @@ export const upcast = (events: ReadonlyArray<Event>): ReadHistory => {
   const responses = new Set(events.filter((event) => event.type === "ModelReturned").map((event) => responseKeyOf(event, event.callId)))
   const head = events.find((event) => event.type === "MessageReceived")
   const initial = events.some((event) => event.type === "BudgetGranted" && event.initial === true)
+  // Legacy text lacks response IDs or epochs; only this reader infers them from preceding marks (inference/request.test.ts).
+  const epochs = new Map<string, number>()
+  const activeResponses = new Map<string, unknown>()
   return {
-    entries: events.map((stored) => {
+    entries: events.map((stored, index) => {
       const event = upcastResponse(stored)
-      const response = event.type === "ToolCalled" ? event.responseId ?? event.batchId : undefined
+      const inherited = event.type === "TextReturned" && typeof event.turn === "string" ? epochs.get(event.turn) : undefined
+      const invocation = invocationOf(event, inherited)
+      if (invocation !== undefined && (event.invocationRef !== undefined || event.epoch !== undefined || actorInvocationContextFrom(event) !== undefined)) epochs.set(invocation.id, invocation.epoch)
+      const owner = invocation === undefined ? "legacy-unscoped" : invocationKey(invocation)
+      let response = event.responseId ?? event.batchId
+      if (event.type === "ModelCalled" || event.type === "ModelReturned") {
+        response = event.callId
+        activeResponses.set(owner, response)
+      } else if (event.type === "TextReturned") {
+        response ??= activeResponses.get(owner) ?? ["legacy-text", index]
+        activeResponses.set(owner, response)
+      } else if (event.type === "ToolCalled") {
+        response ??= activeResponses.get(owner)
+      } else if (event.type === "MessageReceived") {
+        activeResponses.delete("legacy-unscoped")
+      }
       const advancesInference = event.type === "ModelReturned"
         ? event.outcome === "returned"
         : event.type === "ToolCalled"
@@ -52,7 +81,8 @@ export const upcast = (events: ReadonlyArray<Event>): ReadHistory => {
           : event.type === "OutputRejected" && !responses.has(responseKeyOf(event, event.attempt))
       return {
         event: event.type === "TurnFailed" ? { ...event, error: upcastError(event.error) } : event,
-        ...(response === undefined ? {} : { responseKey: responseKeyOf(event, response) }),
+        ...(invocation === undefined ? {} : { invocation }),
+        ...(response === undefined ? {} : { responseKey: responseKey(invocation, response) }),
         advancesInference
       }
     }),
