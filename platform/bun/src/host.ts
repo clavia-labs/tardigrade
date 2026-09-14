@@ -9,6 +9,7 @@ import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, eventLogFrom, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
+import { FORK_EXPECTED_HEAD, forkBatchFor, forkOutcomeOf, forkRootAllocation, type ForkThreadRequest } from "@clavia/tardigrade-host/fork"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
@@ -85,6 +86,7 @@ export type BunHostOptions<R> = {
 export interface BunHost {
   readonly allocate: (request: ThreadAllocation) => Promise<ThreadAddress>
   readonly assignThread: (request: ThreadAllocation) => Promise<ThreadAddress>
+  readonly forkThread: (request: ForkThreadRequest) => Promise<ThreadAddress>
   readonly seed: (thread: string, events: ReadonlyArray<Event>) => Promise<void>
   readonly read: (thread: string) => Promise<ReadonlyArray<Event>>
   readonly readPage: (thread: string, mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
@@ -412,11 +414,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const currentHead = await runtime.runPromise(head)
       await runtime.runPromise(PubSub.publish(commits, currentHead))
     }
-    const append: ThreadEventStore["append"] = (events) => {
+    const append: ThreadEventStore["append"] = (events, options = {}) => {
       if (events.length === 0) return Effect.map(head, (current) => ({ appended: 0, head: current }))
       return sql.withTransaction(Effect.gen(function* () {
         const rows = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
         const currentHead = Number(rows[0]?.seq ?? 0)
+        if (options.expectedHead !== undefined && currentHead !== options.expectedHead) return { appended: 0, head: currentHead }
         let seq = currentHead + 1
         let appended = 0
         for (const event of events) {
@@ -516,7 +519,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     const threadRuntime = await runtimeOf(thread)
     const store: ThreadEventStore = {
       ...threadRuntime.store,
-      append: (events) => threadRuntime.store.append(events).pipe(Effect.tap((result) => {
+      append: (events, options) => threadRuntime.store.append(events, options).pipe(Effect.tap((result) => {
         if (result.appended === 0) return Effect.void
         const interrupted = Effect.sync(() => threadRuntime.interruptions.interrupt(events))
         return isFirstAppend(result)
@@ -639,6 +642,31 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     await drive()
   }
 
+  const initializeAllocatedRoot = options.initializeRoot ?? ((target: ThreadAddress, at: number) =>
+    Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true))
+  )
+
+  // forkThread publishes the destination identity and detached prefix before registration or scheduling (host.test.ts, "fork publication prevents startup execution on an incomplete destination").
+  const forkThread = async (request: ForkThreadRequest): Promise<ThreadAddress> => {
+    const sourceEvents = (await actorThread(request.source)) === undefined
+      ? []
+      : await (async () => { const runtime = await runtimeOf(request.source); return runtime.runtime.runPromise(runtime.store.read) })()
+    const dest = await Effect.runPromise(rawAllocator.allocate(
+      forkRootAllocation({ actor: actorName, instance: actorInstance }, request.name)
+    ))
+    const batch = forkBatchFor(sourceEvents, {
+      source: { actor: actorName, instance: actorInstance, thread: request.source },
+      seq: request.seq,
+      dest: dest.thread
+    }, Date.now())
+    const destRuntime = await runtimeOf(dest.thread)
+    const result = await destRuntime.runtime.runPromise(destRuntime.store.append(batch, { expectedHead: FORK_EXPECTED_HEAD }))
+    if (result.appended === 0) forkOutcomeOf(await destRuntime.runtime.runPromise(destRuntime.store.read), batch, dest.thread)
+    await register(dest.thread)
+    driver.mark(dest.thread)
+    return dest
+  }
+
   return {
     seed: async (thread, events) => { await appendTo(thread, events) },
     read: async (thread) => {
@@ -674,9 +702,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     threads,
     commitRoot: (address, event) => Effect.runPromise(commitEffect(parseThreadAddress(address), event, undefined)),
     assignThread: (request) => Effect.runPromise(localAllocator.allocate(request)),
-    allocate: (request) => Effect.runPromise(initializingThreadAllocator(rawAllocator, options.initializeRoot ?? ((target, at) =>
-      Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true))
-    )).allocate(request)),
+    allocate: (request) => Effect.runPromise(initializingThreadAllocator(rawAllocator, initializeAllocatedRoot).allocate(request)),
+    forkThread,
     initializeRoot: (target, at) => Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true)),
     wake: (thread) => { driver.mark(thread); return drive() },
     drive,

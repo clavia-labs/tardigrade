@@ -5,7 +5,7 @@ import { Effect, Layer } from "effect"
 import { ThreadAllocator, reserveRootThread, type ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { instanceThreadAllocator, registeredThreadAllocator, memoryThreadDirectory, initializingThreadAllocator, type ThreadAllocationPolicy } from "../allocation"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
+import { EventLog, withWatermark, type AppendOptions, type AppendResult } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
@@ -29,6 +29,7 @@ import { deadlocks, victimOf, type EdgesOf } from "../deadlock"
 import { providerTransportFrom, type Provider } from "../transport/provider"
 import { hostDrive, createThreadDriver, type DriverPolicy } from "../driver"
 import { threadCreated, threadCreatedForDelivery, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
+import { FORK_EXPECTED_HEAD, forkBatchFor, forkOutcomeOf, forkRootAllocation, type ForkThreadRequest } from "../fork"
 
 // A host runs the emergent graph: many threads, one router, one driver.
 // This is the default binding: in-process and volatile, semantics only.
@@ -76,6 +77,7 @@ export type HostOptions<R> = {
 export interface Host {
   readonly allocate: (request: ThreadAllocation) => Promise<ThreadAddress>
   readonly assignThread: (request: ThreadAllocation) => Promise<ThreadAddress>
+  readonly forkThread: (request: ForkThreadRequest) => Promise<ThreadAddress>
   readonly initializeRoot: (target: ThreadAddress, at: number) => Promise<void>
   // seed appends without waking the thread: test and bootstrap ingress.
   readonly seed: (thread: string, events: ReadonlyArray<Event>) => void
@@ -129,8 +131,11 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   // redelivery is absorbed. With keys deciding commitment (Actor.keyOf), the library tier
   // must keep the platform store's promise, or a re-parked attempt's BlockedOn lands twice
   // here and once there.
-  const append = (thread: string, events: ReadonlyArray<Event>): void => {
+  const append = (thread: string, events: ReadonlyArray<Event>, options: AppendOptions = {}): AppendResult => {
     const current = read(thread)
+    if (options.expectedHead !== undefined && current.length !== options.expectedHead) {
+      return { appended: 0, head: current.length }
+    }
     const recorded = new Set<string>()
     for (const e of current) {
       const key = storeKeyOf(e)
@@ -147,8 +152,9 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     }
     threads.set(thread, [...current, ...landing])
     interruptionsOf(thread).interrupt(landing)
+    return { appended: landing.length, head: current.length + landing.length }
   }
-  const seed = (thread: string, events: ReadonlyArray<Event>): void => append(thread, events)
+  const seed = (thread: string, events: ReadonlyArray<Event>): void => { append(thread, events) }
   const initializeRoot = async (target: ThreadAddress, at: number): Promise<void> => {
     if (target.actor !== actorName || target.instance !== actorInstance) {
       throw new Error("root initialization requires the owning host")
@@ -289,7 +295,25 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return drive()
   }
 
+  // forkThread publishes the destination identity and detached prefix at an empty log head (host.test.ts, "concurrent forks of one name land once").
+  const forkThread = async (request: ForkThreadRequest): Promise<ThreadAddress> => {
+    const sourceEvents = read(request.source)
+    const dest = await Effect.runPromise(allocator.allocate(
+      forkRootAllocation({ actor: actorName, instance: actorInstance }, request.name)
+    ))
+    const batch = forkBatchFor(sourceEvents, {
+      source: { actor: actorName, instance: actorInstance, thread: request.source },
+      seq: request.seq,
+      dest: dest.thread
+    }, Date.now())
+    const result = append(dest.thread, batch, { expectedHead: FORK_EXPECTED_HEAD })
+    if (result.appended === 0) forkOutcomeOf(read(dest.thread), batch, dest.thread)
+    driver.mark(dest.thread)
+    return dest
+  }
+
   return { seed, read, commit, commitRoot, initializeRoot, drive, wake, resting, router, self,
     allocate: (request) => Effect.runPromise(initializedAllocator.allocate(request)),
-    assignThread: (request) => Effect.runPromise(localAllocator.allocate(request)) }
+    assignThread: (request) => Effect.runPromise(localAllocator.allocate(request)),
+    forkThread }
 }

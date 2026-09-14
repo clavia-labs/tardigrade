@@ -262,6 +262,15 @@ export class ThreadDO extends DurableObject<Env> {
     return true
   }
 
+  // appendAt stages the complete fork batch before arming recovery and driving it (packages/core/tla/interaction/Fork.tla, AtomicPublication).
+  async appendAt(events: ReadonlyArray<Event>, expectedHead: number): Promise<{ readonly appended: number; readonly head: number }> {
+    if (!this.initialized()) throw new Error("Thread DO has not been initialized")
+    const host = await this.host()
+    let result = { appended: 0, head: 0 }
+    await this.accept(host, async () => { result = await host.appendAt(events, expectedHead) })
+    return result
+  }
+
   private validateDelivery(envelope: ActorEnvelope): void {
     if (envelope.link.target.actor !== this.name()) throw new Error("delivery target does not match actor definition")
     if (envelope.link.target.instance !== this.instance()) throw new Error("delivery target does not match actor instance")

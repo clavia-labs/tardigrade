@@ -17,6 +17,10 @@ export class InvocationFailed extends Data.TaggedError("InvocationFailed")<{
   readonly reason: string
 }> {}
 
+export class InvocationWasDetached extends Data.TaggedError("InvocationWasDetached")<{
+  readonly reference: InvocationCoordinate
+}> {}
+
 export class InvocationCancelled extends Data.TaggedError("InvocationCancelled")<{
   readonly reference: InvocationCoordinate
   readonly cause: "requested" | "deadline"
@@ -55,6 +59,7 @@ export const invokeMethod = <Methods extends ActorMethods, Name extends Extract<
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })
   })
   switch (call.state.status) {
+    case "detached": return yield* new InvocationWasDetached({ reference: call.reference })
     case "completed": return call.state.output as ActorMethodOutput<Methods[Name]>
     case "failed": return yield* new InvocationFailed({ reference: call.reference, reason: call.state.error })
     case "cancelled": return yield* new InvocationCancelled({

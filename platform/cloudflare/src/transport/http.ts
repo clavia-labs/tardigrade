@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
+import { ForkRequest, forkCheckpointOf, UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ModelPolicy } from "@clavia/tardigrade-agent"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
@@ -44,6 +44,9 @@ interface CloudflareHttpOptions {
   readonly modelPolicyFrom: (env: Env) => ModelPolicy
   readonly directory: CloudflareDirectory
 }
+
+// FORK_REFUSAL_STATUS maps a fork refusal to its HTTP status (packages/host/src/fork.ts, ForkRefusal).
+const FORK_REFUSAL_STATUS = { "unknown-source": 404, checkpoint: 400, occupied: 409 } as const
 
 // cloudflareHttp adapts HTTP requests to the mounted host's methods and directory.
 export const cloudflareHttp = ({
@@ -124,6 +127,24 @@ export const cloudflareHttp = ({
         if (directory === undefined) return json({ error: "unknown actor" }, 404)
         const coordinate = yield* Effect.promise(() => directory.createThread(payload.name, payload))
         return json(coordinate)
+      })
+    )),
+    HttpRouter.route(workerRoutes.forkThread.method, workerRoutes.forkThread.path, workerRoute((request, env) =>
+      Effect.gen(function* () {
+        const params = yield* HttpRouter.params
+        const instance = params.id ?? ""
+        const thread = params.thread ?? ""
+        if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+        const payload = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
+        if (!Schema.is(ForkRequest)(payload)) {
+          return json({ error: "the body needs a checkpoint, { seq } at or above one or { event } naming an event id, and an optional nonempty name" }, 400)
+        }
+        const directory = yield* Effect.promise(() => actorStub(env, actorName(), instance, false))
+        if (directory === undefined) return json({ error: "unknown actor" }, 404)
+        const outcome = yield* Effect.promise(async () => directory.forkThread(thread, forkCheckpointOf(payload), payload.name))
+        return outcome.ok
+          ? json({ ...outcome.coordinate, seq: outcome.seq })
+          : json({ error: outcome.message }, FORK_REFUSAL_STATUS[outcome.refusal])
       })
     )),
     HttpRouter.route(workerRoutes.list.method, workerRoutes.list.path, workerRoute((request, env) =>

@@ -9,7 +9,9 @@ import { Router } from "../transport/router"
 import { reverseLink, type Link } from "../transport/link"
 import { formatThreadAddress, isThreadAddress, isProviderEndpoint, type ThreadAddress, type ProviderEndpoint } from "../transport/endpoint"
 import { envelopeOf } from "./envelope"
-import { invocationResponseId, invocationKey, sameInvocation, type InvocationRef } from "./invocation"
+import { invocationResponseId, invocationKey, invocationCoordinateKey, type InvocationRef } from "./invocation"
+import { invocationDetachedOf, reduceReplyState, replyStateOf, type ReplyState } from "./detach"
+import { acceptedCallOf, type AcceptedCall } from "./records-compat"
 import { providerResponseOf } from "./provider-response"
 import { initialMethodStates, reduceMethodStates, type ActorMethodState } from "./state"
 import { type ActorMethodDeclaration, type ActorMethods } from "../actor/method"
@@ -59,19 +61,13 @@ const responseOf = (
   invocation
 })
 
-const delivered = (log: ReadonlyArray<Event>, response: ActorMethodResponse): boolean =>
-  log.some((event) =>
-    event.type === "ResponseDelivered" &&
-    sameInvocation({ method: String(event.method), id: String(event.call), epoch: (event as ResponseDelivered).epoch ?? 0 }, response.invocation)
-  )
-
 const linkedCalls = (
   log: ReadonlyArray<Event>,
   methods: ActorMethods
 ): ReadonlyArray<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress>; readonly owner: Event }> => {
   const calls: Array<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress>; readonly owner: Event }> = []
   for (const event of log) {
-    const call = responseCallOf(event)
+    const call = acceptedCallOf(event)
     if (call === undefined) continue
     for (const [name, method] of Object.entries(methods)) {
       if (call.invocation !== undefined && call.invocation.method !== name) continue
@@ -80,7 +76,7 @@ const linkedCalls = (
       const state = declaration.state(log, invocation)
       if (state === undefined || state.status === "pending") continue
       const response = responseOf(terminalOf(name, declaration, state), invocation)
-      if (!delivered(log, response)) calls.push({ response, link: call.link, owner: event })
+      if (replyStateOf(log, { target: call.link.target, invocation }).status === "pending") calls.push({ response, link: call.link, owner: event })
       break
     }
   }
@@ -114,37 +110,15 @@ export const methodResponseDerivation = (methods: ActorMethods): CompleteTransit
 export const methodResponseReactor = (methods: ActorMethods): CompleteTransitionDerivation<Router | Self> =>
   methodResponseDerivation(methods)
 
-interface IncrementalResponseCall {
-  readonly owner: Event
-  readonly id: string
-  readonly invocation?: InvocationRef
-  readonly link: Link<unknown, ThreadAddress>
-}
-
-const responseCallOf = (event: Event): IncrementalResponseCall | undefined => {
-  const candidate = event as { readonly id?: unknown; readonly call?: unknown; readonly link?: unknown }
-  const context = typeof candidate.call === "object" && candidate.call !== null
-    ? candidate.call as { readonly invocation?: unknown }
-    : undefined
-  const invocation = typeof context?.invocation === "object" && context.invocation !== null
-    ? context.invocation as InvocationRef
-    : undefined
-  const id = typeof invocation?.id === "string" ? invocation.id : candidate.id
-  if (typeof id !== "string" || typeof candidate.link !== "object" || candidate.link === null ||
-    !("source" in candidate.link) || !("target" in candidate.link) || !isThreadAddress(candidate.link.target)) return undefined
-  return { owner: event, id, ...(invocation === undefined ? {} : { invocation }),
-    link: candidate.link as Link<unknown, ThreadAddress> }
-}
-
 export interface MethodResponseProjectionState {
-  readonly calls: ReadonlyArray<IncrementalResponseCall>
-  readonly delivered: ReadonlySet<string>
+  readonly calls: ReadonlyArray<AcceptedCall>
+  readonly replies: ReadonlyMap<string, ReplyState>
 }
 
 // initialMethodResponseState constructs response delivery bookkeeping.
 export const initialMethodResponseState = (): MethodResponseProjectionState => ({
   calls: [],
-  delivered: new Set()
+  replies: new Map()
 })
 
 // reduceMethodResponseState advances response delivery bookkeeping with one event.
@@ -152,13 +126,23 @@ export const reduceMethodResponseState = (
   state: MethodResponseProjectionState,
   event: Event
 ): MethodResponseProjectionState => {
-  const delivered = new Set(state.delivered)
+  const replies = new Map(state.replies)
+  const detached = invocationDetachedOf(event)
+  if (detached?.direction === "incoming") {
+    const key = invocationCoordinateKey(detached.reference)
+    replies.set(key, reduceReplyState(replies.get(key) ?? { status: "pending" }, event, detached.reference))
+  }
   if (event.type === "ResponseDelivered") {
     const response = event as ResponseDelivered
-    delivered.add(invocationKey({ method: response.method, id: response.call, epoch: response.epoch ?? 0 }))
+    const invocation = { method: response.method, id: response.call, epoch: response.epoch ?? 0 }
+    for (const call of state.calls) {
+      const reference = { target: call.link.target, invocation }
+      const key = invocationCoordinateKey(reference)
+      replies.set(key, reduceReplyState(replies.get(key) ?? { status: "pending" }, event, reference))
+    }
   }
-  const accepted = responseCallOf(event)
-  return { calls: accepted === undefined ? state.calls : [...state.calls, accepted], delivered }
+  const accepted = acceptedCallOf(event)
+  return { calls: accepted === undefined ? state.calls : [...state.calls, accepted], replies }
 }
 
 // methodResponseTransitions derives the next terminal delivery from projected method views.
@@ -176,7 +160,8 @@ export const methodResponseTransitions = (
       if (call.invocation !== undefined && call.invocation.method !== name) continue
       const invocation = call.invocation ?? { method: name, id: call.id, epoch: 0 }
       const current = invocationStateOf(name, method, invocation)
-      if (current === undefined || current.status === "pending" || state.delivered.has(invocationKey(invocation))) continue
+      const reply = state.replies.get(invocationCoordinateKey({ target: call.link.target, invocation }))
+      if (current === undefined || current.status === "pending" || (reply !== undefined && reply.status !== "pending")) continue
       const response = responseOf(terminalOf(name, method, current), invocation)
       return [responseTransition(response, call.link, call.owner)]
     }

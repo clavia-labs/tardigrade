@@ -4,6 +4,7 @@ import { Event } from "@clavia/tardigrade-core/log/event"
 import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
 import { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
+import { ForkSeq } from "@clavia/tardigrade-core/log"
 
 // V1_PREFIX prefixes every versioned route.
 export const V1_PREFIX = "/v1"
@@ -76,8 +77,33 @@ export const ModelCatalogUnavailable = problemKind("model-catalog-unavailable", 
 // ResumeRefused reports a turn that the client cannot resume.
 export const ResumeRefused = problemKind("resume-refused", "Resume Refused", 409)
 
+// ThreadOccupied reports a fork destination that already holds a log other than this fork.
+export const ThreadOccupied = problemKind("thread-occupied", "Thread Occupied", 409)
+
 // InvocationSettled reports that cancellation cannot change a completed or failed invocation.
 export const InvocationSettled = problemKind("invocation-settled", "Invocation Settled", 409)
+
+// ForkRequest is the fork body: exactly one of seq (a 1-based source row) or event (an event id the server resolves to its last row), plus an optional destination name. HttpApi payload typing cannot carry a schema union, so the shape is one struct with a refinement (packages/core/src/log/fork.ts, ForkCheckpoint).
+const exactlyOneCheckpoint = <A extends { readonly seq?: number | undefined; readonly event?: string | undefined }>(value: A): value is A =>
+  (value.seq === undefined) !== (value.event === undefined)
+
+export const ForkRequest = Schema.Struct({
+  seq: Schema.optionalKey(ForkSeq),
+  event: Schema.optionalKey(Schema.NonEmptyString),
+  name: Schema.optionalKey(Schema.NonEmptyString)
+}).pipe(
+  Schema.refine(exactlyOneCheckpoint, { message: "exactly one of seq or event is required" }),
+  Schema.annotate({ identifier: "ForkRequest" })
+)
+export type ForkRequest = typeof ForkRequest.Type
+
+// forkCheckpointOf reads the checkpoint a decoded ForkRequest names.
+export const forkCheckpointOf = (request: ForkRequest): { readonly seq: number } | { readonly event: string } =>
+  request.seq !== undefined ? { seq: request.seq } : { event: request.event! }
+
+// ForkedThread is the fork reply: the destination coordinate and the source row the copy stopped at.
+export const ForkedThread = Schema.Struct({ ...ThreadCoordinate.fields, seq: Schema.Int }).annotate({ identifier: "ForkedThread" })
+export type ForkedThread = typeof ForkedThread.Type
 
 // RequestPart names the request locations validated by HttpApi.
 export type RequestPart = "Params" | "Query" | "Payload" | "Headers"
@@ -351,6 +377,13 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
     payload: Schema.Struct({ name: Schema.optionalKey(Schema.NonEmptyString), key: Schema.optionalKey(Schema.NonEmptyString), parent: Schema.optionalKey(Schema.NonEmptyString) }),
     success: ThreadCoordinate,
     error: [InvalidRequest.schema]
+  }),
+  // forkThread copies source rows 1..seq onto a new root. The body names the checkpoint by row or by event id; the reply carries the row that was used (packages/core/src/log/fork.ts).
+  HttpApiEndpoint.post("forkThread", "/v1/actors/:id/threads/:thread/fork", {
+    params: RuntimeThreadParams,
+    payload: ForkRequest,
+    success: ForkedThread,
+    error: [InvalidRequest.schema, UnknownActor.schema, UnknownThread.schema, ThreadOccupied.schema]
   }),
   HttpApiEndpoint.post("append", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
