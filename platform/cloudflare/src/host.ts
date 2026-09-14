@@ -236,7 +236,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     initializeRoot: (at) => Effect.runPromise(commitEffect(identity, threadCreated(identity, undefined, at), undefined, undefined, undefined, true, true)),
     appendAt: async (batch, expectedHead) => {
       const result = await Effect.runPromise(store.append(batch, { expectedHead }))
-      if (result.appended > 0) stagedHead = Math.max(stagedHead, result.head)
+      if (result.appended > 0) {
+        stagedHead = Math.max(stagedHead, result.head)
+        driver.mark(options.thread)
+      }
       return result
     },
     stageRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined, undefined, undefined, false)),

@@ -4,8 +4,7 @@ import { invocationCoordinateKey, type InvocationCoordinate } from "./invocation
 import { invocationDetached, replyStateOf } from "./detach"
 import { callStateOf } from "./result"
 import { childInvocationsOf } from "./relations"
-import { recordedDispatchOf } from "./records-compat"
-import { responseCallOf } from "./respond"
+import { acceptedCallOf, recordedDispatchOf } from "./records-compat"
 import type { CallPlanned } from "./events"
 
 // forkDetachmentsOf closes pending copied interactions using their original coordinates (log/fork.test.ts).
@@ -25,7 +24,7 @@ export const forkDetachmentsOf = (events: ReadonlyArray<Event>, at: number): Rea
       const plan = event as CallPlanned
       remember(outgoing, plan.reference ?? { target: parseThreadAddress(plan.target), invocation: plan.context.invocation })
     }
-    const call = responseCallOf(event)
+    const call = acceptedCallOf(event)
     if (call !== undefined) {
       if (call.invocation === undefined) throw new Error("cannot detach a legacy reply link without an invocation identity")
       remember(incoming, { target: call.link.target, invocation: call.invocation })

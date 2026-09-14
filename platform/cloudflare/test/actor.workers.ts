@@ -1069,6 +1069,23 @@ describe("cloudflare actor", () => {
     expect((await native.events(target.thread))[0]).toMatchObject({ address: target })
   })
 
+  test("supervisor recovery leaves a reserved fork empty until publication", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    const source = await directory.createThread("fork-reservation-source")
+    const target = await directory.allocateThread({ kind: "root", coordinate: { ...source, thread: "fork-reservation-dest" }, initialization: "caller" })
+    const stub = (env as Env).THREADS.getByName(JSON.stringify(["echo", "main", target.thread]))
+    await stub.init("echo", "main", target.thread)
+    await runInDurableObject(directory, (instance) => instance.alarm())
+    expect(await stub.events(target.thread)).toEqual([])
+    expect((await directory.threadTree()).some((node) => node.id === target.thread)).toBe(false)
+    const result = await directory.forkThread(source.thread, { seq: 1 }, target.thread)
+    expect(result).toMatchObject({ ok: true, coordinate: target })
+    expect((await stub.events(target.thread)).map((event) => event.type)).toEqual(["ThreadCreated", "ThreadForked"])
+    expect((await directory.threadTree()).some((node) => node.id === target.thread)).toBe(true)
+    expect(await directory.forkThread(source.thread, { seq: 1 }, target.thread)).toEqual(result)
+  })
+
   test("a child request reserves its name and registers after delivery with its placement", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")

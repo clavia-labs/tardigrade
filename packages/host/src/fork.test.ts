@@ -41,7 +41,8 @@ describe("resolveForkCheckpoint", () => {
 describe("forkOutcomeOf", () => {
   test("a destination holding the same batch is existing, anything else is occupied", () => {
     const batch = forkBatchFor([created, message], { source: root, seq: 2, dest: "experiment" }, 40)
-    expect(forkOutcomeOf([destCreated, ...batch], batch, "experiment")).toBe("existing")
+    expect(batch[0]).toMatchObject({ type: "ThreadCreated", address: { ...root, thread: "experiment" } })
+    expect(forkOutcomeOf(batch, batch, "experiment")).toBe("existing")
     expect(refusalOf(() => forkOutcomeOf([destCreated, message], batch, "experiment"))).toBe("occupied")
     expect(refusalOf(() => forkOutcomeOf([destCreated], batch, "experiment"))).toBe("occupied")
   })
@@ -50,6 +51,7 @@ describe("forkOutcomeOf", () => {
 test("forkRootAllocation names a dest or mints a retry key", () => {
   expect(forkRootAllocation({ actor: "mem", instance: "main" }, "experiment")).toEqual({
     kind: "root",
+    initialization: "caller",
     coordinate: { actor: "mem", instance: "main", thread: "experiment" }
   })
   const generated = forkRootAllocation({ actor: "mem", instance: "main" }, undefined)

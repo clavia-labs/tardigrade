@@ -646,12 +646,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true))
   )
 
-  // forkThread copies source rows 1..seq onto a new root. The copy commits only at the fresh root's head (host.test.ts, "concurrent forks of one name land once").
+  // forkThread publishes the destination identity and detached prefix before registration or scheduling (host.test.ts, "fork publication prevents startup execution on an incomplete destination").
   const forkThread = async (request: ForkThreadRequest): Promise<ThreadAddress> => {
     const sourceEvents = (await actorThread(request.source)) === undefined
       ? []
       : await (async () => { const runtime = await runtimeOf(request.source); return runtime.runtime.runPromise(runtime.store.read) })()
-    const dest = await Effect.runPromise(initializingThreadAllocator(rawAllocator, initializeAllocatedRoot).allocate(
+    const dest = await Effect.runPromise(rawAllocator.allocate(
       forkRootAllocation({ actor: actorName, instance: actorInstance }, request.name)
     ))
     const batch = forkBatchFor(sourceEvents, {
@@ -662,6 +662,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     const destRuntime = await runtimeOf(dest.thread)
     const result = await destRuntime.runtime.runPromise(destRuntime.store.append(batch, { expectedHead: FORK_EXPECTED_HEAD }))
     if (result.appended === 0) forkOutcomeOf(await destRuntime.runtime.runPromise(destRuntime.store.read), batch, dest.thread)
+    await register(dest.thread)
     driver.mark(dest.thread)
     return dest
   }

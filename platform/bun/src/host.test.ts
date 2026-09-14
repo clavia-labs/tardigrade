@@ -447,6 +447,82 @@ describe("the bun host", () => {
     await reopened.close()
   })
 
+  test("fork publication prevents startup execution on an incomplete destination", async () => {
+    const startup: Actor = {
+      projections: [completeTransitionProjection((events) => events.some((event) => event.type === "ThreadCreated")
+        ? [effect({ key: "boot:once", input: undefined, act: () => Effect.succeed([{ type: "Booted", at: 1 }]) })]
+        : [])],
+      keyOf: (event) => event.type === "Booted" ? "boot:once" : undefined
+    }
+    let host: BunHost
+    let premature: ReadonlyArray<Event> = []
+    let reserved = false
+    host = await createBunHost({
+      database: freshPath(),
+      actorFor: () => startup,
+      threadAllocator: { allocate: (request) => Effect.promise(async () => {
+        const target = await host.assignThread(request)
+        if (target.thread === "experiment") {
+          reserved = true
+          await host.drive()
+          await host.recover()
+          expect(await host.read(target.thread)).toEqual([])
+        }
+        return target
+      }) },
+      initializeRoot: async (target, at) => {
+        await host.commitRoot(formatThreadAddress(target), threadCreated(target, undefined, at))
+        if (target.thread === "experiment") {
+          await host.drive()
+          premature = (await host.read(target.thread)).filter((event) => event.type === "Booted")
+        }
+      }
+    })
+    try {
+      await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
+      const result = await host.forkThread({ source: "root", seq: 2, name: "experiment" }).then(
+        (coordinate) => ({ status: "published", coordinate }),
+        (error: unknown) => ({ status: "refused", error })
+      )
+      expect(reserved).toBe(true)
+      expect(premature).toEqual([])
+      expect(result).toMatchObject({ status: "published", coordinate: { thread: "experiment" } })
+      await host.drive()
+      expect((await host.read("experiment")).map((event) => event.type)).toEqual([
+        "ThreadCreated", "MessageReceived", "ThreadForked", "Booted"
+      ])
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("a fork reservation survives restart without exposing a runnable root", async () => {
+    const path = freshPath()
+    const first = await createBunHost({ database: path, actorFor: () => echo })
+    const request = { source: "root", seq: 2, name: "experiment" }
+    try {
+      await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
+      await first.assignThread({ kind: "root", coordinate: parseThreadAddress(first.self("experiment")), initialization: "caller" })
+      expect(await first.read("experiment")).toEqual([])
+    } finally {
+      await first.close()
+    }
+    const reopened = await createBunHost({ database: path, actorFor: () => echo })
+    try {
+      await reopened.recover()
+      expect(await reopened.read("experiment")).toEqual([])
+      expect(await reopened.threads()).not.toContain("experiment")
+      await reopened.forkThread(request)
+      await reopened.drive()
+      const published = await reopened.read("experiment")
+      expect(published.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked", "Done"])
+      await reopened.forkThread(request)
+      expect(await reopened.read("experiment")).toEqual(published)
+    } finally {
+      await reopened.close()
+    }
+  })
+
   test("concurrent forks of one name land once through sqlite", async () => {
     const host = await createBunHost({ database: freshPath(), actorFor: () => undefined })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 } as Event)

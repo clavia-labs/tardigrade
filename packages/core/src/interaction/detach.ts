@@ -16,8 +16,10 @@ export type InvocationDetached = typeof InvocationDetached.Type
 export const invocationDetached = (fields: Omit<InvocationDetached, "type">): InvocationDetached =>
   Schema.decodeSync(InvocationDetached)({ ...fields, type: "InvocationDetached" })
 
+const isInvocationDetached = Schema.is(InvocationDetached)
+
 export const invocationDetachedOf = (event: Event): InvocationDetached | undefined =>
-  Schema.is(InvocationDetached)(event) ? event : undefined
+  isInvocationDetached(event) ? event : undefined
 
 export const invocationDetachmentKeys: KeyFragment = {
   prefixes: ["mdetach:"],

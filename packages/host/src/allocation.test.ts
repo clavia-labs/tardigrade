@@ -3,7 +3,7 @@ import fc from "fast-check"
 import { Effect } from "effect"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { registeredThreadAllocator, memoryThreadDirectory, initializingThreadAllocator, threadSlug } from "./allocation"
-import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
+import type { ThreadAllocation, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 
 const parent = { actor: "tardie", instance: "rick", thread: "main" }
 const child = (name: string): ThreadAllocation => ({ kind: "child", parent, child: childKeyOf(name) })
@@ -81,4 +81,16 @@ test("root initialization finishes before allocation returns and failures propag
   await expect(Effect.runPromise(initializingThreadAllocator(allocator,
     () => Promise.reject(new Error("storage unavailable"))
   ).allocate({ kind: "root", coordinate: parent }))).rejects.toThrow("storage unavailable")
+})
+
+test("caller-owned root initialization survives allocator normalization without running startup", async () => {
+  const requests: ThreadAllocation[] = []
+  const allocator: typeof ThreadAllocator.Service = { allocate: (request) => Effect.sync(() => {
+    requests.push(request)
+    return parent
+  }) }
+  const service = initializingThreadAllocator(allocator, async () => { throw new Error("caller owns initialization") })
+  const request = { kind: "root" as const, coordinate: parent, initialization: "caller" as const }
+  expect(await Effect.runPromise(service.allocate(request))).toEqual(parent)
+  expect(requests).toEqual([request])
 })

@@ -4,6 +4,7 @@ import type { ChildPlacement } from "../interaction/relations"
 export interface ThreadRequested extends Event {
   readonly type: "ThreadRequested"
   readonly allocationKey?: string
+  readonly initialization?: "caller"
   readonly thread: string
   readonly parentThread?: string
   readonly depth: number
@@ -22,6 +23,7 @@ export type ActorEvent = ThreadRequested | ThreadRegistered
 
 export interface ActorThreadRecord {
   readonly allocationKey?: string
+  readonly initialization?: "caller"
   readonly thread: string
   readonly parentThread?: string
   readonly depth: number
@@ -48,6 +50,7 @@ export const actorThreadsOf = (events: ReadonlyArray<Event>): ReadonlyArray<Acto
     if (event.type === "ThreadRequested") {
       entries.set(event.thread, {
         ...(event.allocationKey === undefined ? {} : { allocationKey: event.allocationKey }),
+        ...(event.initialization === undefined ? {} : { initialization: event.initialization }),
         thread: event.thread,
         ...(event.parentThread === undefined ? {} : { parentThread: event.parentThread }),
         depth: event.depth,

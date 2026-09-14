@@ -11,6 +11,7 @@ import { formatThreadAddress, isThreadAddress, isProviderEndpoint, type ThreadAd
 import { envelopeOf } from "./envelope"
 import { invocationResponseId, invocationKey, invocationCoordinateKey, type InvocationRef } from "./invocation"
 import { invocationDetachedOf, reduceReplyState, replyStateOf, type ReplyState } from "./detach"
+import { acceptedCallOf, type AcceptedCall } from "./records-compat"
 import { providerResponseOf } from "./provider-response"
 import { initialMethodStates, reduceMethodStates, type ActorMethodState } from "./state"
 import { type ActorMethodDeclaration, type ActorMethods } from "../actor/method"
@@ -66,7 +67,7 @@ const linkedCalls = (
 ): ReadonlyArray<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress>; readonly owner: Event }> => {
   const calls: Array<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress>; readonly owner: Event }> = []
   for (const event of log) {
-    const call = responseCallOf(event)
+    const call = acceptedCallOf(event)
     if (call === undefined) continue
     for (const [name, method] of Object.entries(methods)) {
       if (call.invocation !== undefined && call.invocation.method !== name) continue
@@ -109,30 +110,8 @@ export const methodResponseDerivation = (methods: ActorMethods): CompleteTransit
 export const methodResponseReactor = (methods: ActorMethods): CompleteTransitionDerivation<Router | Self> =>
   methodResponseDerivation(methods)
 
-interface IncrementalResponseCall {
-  readonly owner: Event
-  readonly id: string
-  readonly invocation?: InvocationRef
-  readonly link: Link<unknown, ThreadAddress>
-}
-
-export const responseCallOf = (event: Event): IncrementalResponseCall | undefined => {
-  const candidate = event as { readonly id?: unknown; readonly call?: unknown; readonly link?: unknown }
-  const context = typeof candidate.call === "object" && candidate.call !== null
-    ? candidate.call as { readonly invocation?: unknown }
-    : undefined
-  const invocation = typeof context?.invocation === "object" && context.invocation !== null
-    ? context.invocation as InvocationRef
-    : undefined
-  const id = typeof invocation?.id === "string" ? invocation.id : candidate.id
-  if (typeof id !== "string" || typeof candidate.link !== "object" || candidate.link === null ||
-    !("source" in candidate.link) || !("target" in candidate.link) || !isThreadAddress(candidate.link.target)) return undefined
-  return { owner: event, id, ...(invocation === undefined ? {} : { invocation }),
-    link: candidate.link as Link<unknown, ThreadAddress> }
-}
-
 export interface MethodResponseProjectionState {
-  readonly calls: ReadonlyArray<IncrementalResponseCall>
+  readonly calls: ReadonlyArray<AcceptedCall>
   readonly replies: ReadonlyMap<string, ReplyState>
 }
 
@@ -162,7 +141,7 @@ export const reduceMethodResponseState = (
       replies.set(key, reduceReplyState(replies.get(key) ?? { status: "pending" }, event, reference))
     }
   }
-  const accepted = responseCallOf(event)
+  const accepted = acceptedCallOf(event)
   return { calls: accepted === undefined ? state.calls : [...state.calls, accepted], replies }
 }
 
@@ -181,7 +160,8 @@ export const methodResponseTransitions = (
       if (call.invocation !== undefined && call.invocation.method !== name) continue
       const invocation = call.invocation ?? { method: name, id: call.id, epoch: 0 }
       const current = invocationStateOf(name, method, invocation)
-      if (current === undefined || current.status === "pending" || (state.replies.get(invocationCoordinateKey({ target: call.link.target, invocation }))?.status ?? "pending") !== "pending") continue
+      const reply = state.replies.get(invocationCoordinateKey({ target: call.link.target, invocation }))
+      if (current === undefined || current.status === "pending" || (reply !== undefined && reply.status !== "pending")) continue
       const response = responseOf(terminalOf(name, method, current), invocation)
       return [responseTransition(response, call.link, call.owner)]
     }

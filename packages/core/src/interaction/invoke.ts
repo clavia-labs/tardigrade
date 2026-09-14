@@ -106,6 +106,21 @@ const firstMismatch = (
   ...checks: ReadonlyArray<readonly [mismatch: boolean, message: string]>
 ): string | undefined => checks.find(([mismatch]) => mismatch)?.[1]
 
+// recordedCallForKey preserves inherited identities while new keys use the current parent (invoke.test.ts).
+const recordedCallForKey = (
+  log: ReadonlyArray<Event>,
+  parent: InvocationCoordinate,
+  key: string
+): CallPlanned | CallDispatched | undefined => {
+  const candidates = new Set([invocationIdForKey(parent, key)])
+  for (const event of log) {
+    if (isThreadForked(event)) candidates.add(invocationIdForKey({ target: event.source, invocation: parent.invocation }, key))
+  }
+  return log.find((event): event is CallPlanned | CallDispatched =>
+    (event.type === "CallPlanned" || event.type === "CallDispatched") &&
+    typeof event.id === "string" && candidates.has(event.id))
+}
+
 // actorCall projects a replay-safe outgoing method invocation and its current terminal state.
 export const actorCall = <
   Methods extends ActorMethods,
@@ -116,24 +131,17 @@ export const actorCall = <
   transitionScope?: { readonly context: TransitionContext; readonly tag: string }
 ): ActorCallFor<Methods[Name], ActorMethodOutput<Methods[Name]>, Router | Self> => {
   const parent = request.parent === undefined ? undefined : decodeInvocationCoordinate(request.parent)
+  const key = request.owner?.type === "transition" ? JSON.stringify([ownerKey(request.owner), request.key!]) : request.key!
+  const recorded = parent === undefined ? undefined : recordedCallForKey(log, parent, key)
   const options = parent === undefined ? { ...request, id: request.id! } : {
     ...request,
-    id: invocationIdForKey(parent, request.owner?.type === "transition"
-      ? JSON.stringify([ownerKey(request.owner), request.key!]) : request.key!),
+    id: recorded?.id ?? invocationIdForKey(parent, key),
     context: request.context ?? { invocation: parent.invocation }
   }
   if (parent !== undefined) {
-    const key = request.owner?.type === "transition" ? JSON.stringify([ownerKey(request.owner), request.key!]) : request.key!
-    const inherited = new Set(log.filter(isThreadForked).map((fork) => invocationIdForKey({ target: fork.source, invocation: parent.invocation }, key)))
-    const recordedCall = log.find((event) => (event.type === "CallPlanned" || event.type === "CallDispatched") &&
-      typeof event.id === "string" && (event.id === options.id || inherited.has(event.id)))
-    if (recordedCall !== undefined) options.id = String(recordedCall.id)
     if (options.context === undefined || !sameInvocation(options.context.invocation, parent.invocation)) {
       throw new Error("idempotency parent does not match the caller invocation context")
     }
-    const recorded = log.find((event) =>
-      (event.type === "CallPlanned" || event.type === "CallDispatched") && event.id === options.id
-    ) as CallPlanned | CallDispatched | undefined
     if (recorded !== undefined) {
       const drift = firstMismatch(
         [recorded.target !== formatThreadAddress(targetCoordinate(options.target)), "target does not match the recorded call"],

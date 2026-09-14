@@ -295,10 +295,10 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return drive()
   }
 
-  // forkThread copies source rows 1..seq onto a new root. The copy commits only at the fresh root's head, so two concurrent forks of one name land once (host.test.ts, "concurrent forks of one name land once").
+  // forkThread publishes the destination identity and detached prefix at an empty log head (host.test.ts, "concurrent forks of one name land once").
   const forkThread = async (request: ForkThreadRequest): Promise<ThreadAddress> => {
     const sourceEvents = read(request.source)
-    const dest = await Effect.runPromise(initializedAllocator.allocate(
+    const dest = await Effect.runPromise(allocator.allocate(
       forkRootAllocation({ actor: actorName, instance: actorInstance }, request.name)
     ))
     const batch = forkBatchFor(sourceEvents, {

@@ -8,18 +8,25 @@ import type { ActorMethodState } from "./state"
 import { terminalInvocationRefOf } from "./records-compat"
 export { terminalInvocationRefOf } from "./records-compat"
 
-// invocationTerminalOf reads a terminal belonging to the exact target and invocation (result.test.ts).
+type CallTerminal = ResponseReceived | CallTimedOut | InvocationDetached
+
+const matchesCallTerminal = (event: Event, key: string): event is CallTerminal => {
+  const reference = terminalInvocationRefOf(event)
+  return reference !== undefined && invocationCoordinateKey(reference) === key
+}
+
+// invocationTerminalOf reads the first terminal belonging to the exact target and invocation (result.test.ts, detach.properties.test.ts).
 export const invocationTerminalOf = (
   events: ReadonlyArray<Event>,
   reference: InvocationCoordinate
-): ResponseReceived | CallTimedOut | InvocationDetached | undefined => events.find((event) => {
-  const terminal = terminalInvocationRefOf(event)
-  return terminal !== undefined && invocationCoordinateKey(terminal) === invocationCoordinateKey(reference)
-}) as ResponseReceived | CallTimedOut | InvocationDetached | undefined
+): CallTerminal | undefined => {
+  const key = invocationCoordinateKey(reference)
+  return events.find((event): event is CallTerminal => matchesCallTerminal(event, key))
+}
 
 // invocationResultOf decodes a matching terminal without discarding its output contract metadata.
 export const invocationResultOf = <Output>(
-  terminal: ResponseReceived | CallTimedOut | InvocationDetached,
+  terminal: CallTerminal,
   output: Schema.ConstraintDecoder<Output>
 ): ActorCallState<Output> => {
   if (terminal.type === "InvocationDetached") return { status: "detached", detachment: terminal }
@@ -49,11 +56,10 @@ export type CallState =
 // reduceCallState preserves the first terminal for the exact outgoing invocation (detach.test.ts).
 export const reduceCallState = (state: CallState, event: Event, reference: InvocationCoordinate): CallState => {
   if (state.status !== "pending") return state
-  const terminal = invocationTerminalOf([event], reference)
-  if (terminal === undefined) return state
-  if (terminal.type === "InvocationDetached") return { status: "detached", detachment: terminal }
-  if (terminal.type === "CallTimedOut") return { status: "timed-out", timeout: terminal }
-  return { status: "received", response: terminal }
+  if (!matchesCallTerminal(event, invocationCoordinateKey(reference))) return state
+  if (event.type === "InvocationDetached") return { status: "detached", detachment: event }
+  if (event.type === "CallTimedOut") return { status: "timed-out", timeout: event }
+  return { status: "received", response: event }
 }
 
 export const callStateOf = (events: ReadonlyArray<Event>, reference: InvocationCoordinate): CallState =>

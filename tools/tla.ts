@@ -40,6 +40,8 @@ const counterexample = (
 ): CounterexampleCheck => ({ directory, module, config, outcome: "counterexample", evidence })
 
 export const checks: ReadonlyArray<Check> = [
+  pass("interaction", "ForkPublication", "ForkPublication.cfg"),
+  counterexample("interaction", "ForkPublication", "ForkPublicationBareRoot.cfg", "Invariant NoExecutionBeforePublication is violated"),
   pass("interaction", "Fork", "Fork.cfg"),
   pass("interaction", "Fork", "ForkLive.cfg"),
   pass("interaction", "Fork", "ForkTree.cfg"),
