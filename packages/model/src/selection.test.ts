@@ -19,3 +19,11 @@ test.each([undefined, 0, -1, 0.5, Infinity, NaN])("missing or invalid catalog ca
     capacity === undefined ? "no context window" : "positive safe integer"
   )
 })
+
+test("configuration retains ordered fallbacks and rejects missing providers", () => {
+  const source = config()
+  const fallback = [{ provider: "test", model_id: "backup" }]
+  expect(modelConfigOf({ ...source, fallback }).fallback).toEqual(fallback)
+  expect(() => modelConfigOf({ ...source, fallback: [{ provider: "absent", model_id: "backup" }] })).toThrow("unconfigured provider")
+  expect(() => modelConfigOf({ ...source, fallback: {} })).toThrow("fallback must be an array")
+})

@@ -19,21 +19,25 @@ export type ModelAllow = "*" | ReadonlyArray<ModelSelector>
 // ModelPolicy carries resolved coordinate authority. Future rule languages lower into this selector form before composition, so intersection remains the authority boundary.
 export const ModelPolicy = Schema.Struct({
   default: Schema.optional(ModelRef),
+  fallback: Schema.optional(Schema.Array(ModelRef)),
   allow: ModelAllow
 })
 
 export interface ModelPolicy {
   readonly default?: ModelRefType
+  readonly fallback?: ReadonlyArray<ModelRefType>
   readonly allow: ModelAllow
 }
 
 export const ModelPolicyOverride = Schema.Struct({
   default: Schema.optional(ModelRef),
+  fallback: Schema.optional(Schema.Array(ModelRef)),
   allow: Schema.optional(ModelAllow)
 })
 
 export interface ModelPolicyOverride {
   readonly default?: ModelRefType
+  readonly fallback?: ReadonlyArray<ModelRefType>
   readonly allow?: ModelAllow
 }
 
@@ -104,19 +108,37 @@ export const modelAllowedBy = (policy: ModelPolicy, reference: ModelRefType): bo
     (selector.model_ids === "*" || selector.model_ids.includes(reference.model_id))
   )
 
+const fallbacksOf = (value: unknown): ReadonlyArray<ModelRefType> | undefined => {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) throw new Error("model policy fallback must be an array of { provider, model_id }")
+  return value.map((entry) => {
+    const model = modelRefOf(entry)
+    if (model === undefined) throw new Error("model policy fallback must contain { provider, model_id }")
+    return model
+  })
+}
+
+const validateFallbacks = (policy: ModelPolicy): void => {
+  for (const model of policy.fallback ?? []) {
+    if (!modelAllowedBy(policy, model)) throw new Error(`model policy fallback ${model.provider}/${model.model_id} is excluded by allow`)
+  }
+}
+
 // modelPolicyOf validates one policy and gives duplicate selectors a stable representation.
 export const modelPolicyOf = (value: unknown): ModelPolicy => {
   if (value === undefined) return DEFAULT_MODEL_POLICY
   const policy = recordOf(value)
   if (policy === undefined) throw new Error("model policy must be an object")
-  const unknown = Object.keys(policy).filter((field) => field !== "default" && field !== "allow")
+  const unknown = Object.keys(policy).filter((field) => field !== "default" && field !== "fallback" && field !== "allow")
   if (unknown.length > 0) throw new Error(`model policy contains unknown fields: ${unknown.join(", ")}`)
   if (!("allow" in policy)) throw new Error('model policy must declare allow as "*" or an array')
   const rawDefault = policy["default"]
   const selected = modelRefOf(rawDefault)
   if (rawDefault !== undefined && selected === undefined) throw new Error("model policy default must be { provider, model_id }")
   const allow = allowOf(policy["allow"], true)!
-  const normalized: ModelPolicy = { ...(selected === undefined ? {} : { default: selected }), allow }
+  const fallback = fallbacksOf(policy["fallback"])
+  const normalized: ModelPolicy = { ...(selected === undefined ? {} : { default: selected }), ...(fallback === undefined ? {} : { fallback }), allow }
+  validateFallbacks(normalized)
   if (selected !== undefined && !modelAllowedBy(normalized, selected)) {
     throw new Error(`model policy default ${selected.provider}/${selected.model_id} is excluded by allow`)
   }
@@ -128,19 +150,22 @@ export const modelPolicyOverrideOf = (value: unknown): ModelPolicyOverride => {
   if (value === undefined) return DEFAULT_MODEL_POLICY_OVERRIDE
   const policy = recordOf(value)
   if (policy === undefined) throw new Error("model policy override must be an object")
-  const unknown = Object.keys(policy).filter((field) => field !== "default" && field !== "allow")
+  const unknown = Object.keys(policy).filter((field) => field !== "default" && field !== "fallback" && field !== "allow")
   if (unknown.length > 0) throw new Error(`model policy override contains unknown fields: ${unknown.join(", ")}`)
   const rawDefault = policy["default"]
   const selected = modelRefOf(rawDefault)
   if (rawDefault !== undefined && selected === undefined) throw new Error("model policy override default must be { provider, model_id }")
   const allow = allowOf(policy["allow"], false)
+  const fallback = fallbacksOf(policy["fallback"])
   const normalized: ModelPolicyOverride = {
+    ...(fallback === undefined ? {} : { fallback }),
     ...(selected === undefined ? {} : { default: selected }),
     ...(allow === undefined ? {} : { allow })
   }
   if (selected !== undefined && allow !== undefined && !modelAllowedBy({ allow }, selected)) {
     throw new Error(`model policy override default ${selected.provider}/${selected.model_id} is excluded by allow`)
   }
+  validateFallbacks({ ...normalized, allow: allow ?? "*" })
   return normalized
 }
 
@@ -176,7 +201,10 @@ export const applyModelPolicy = (incoming: ModelPolicy, override: ModelPolicyOve
   if (selected !== undefined && !modelAllowedBy(authority, selected)) {
     throw new Error(`effective model policy excludes default ${selected.provider}/${selected.model_id}; supply an allowed default`)
   }
-  return { ...authority, ...(selected === undefined ? {} : { default: selected }) }
+  const fallback = override.fallback ?? incoming.fallback
+  const resolved = { ...authority, ...(selected === undefined ? {} : { default: selected }), ...(fallback === undefined ? {} : { fallback }) }
+  validateFallbacks(resolved)
+  return resolved
 }
 
 // modelPolicyScopeOf returns a stable cursor scope for a policy intersection.
