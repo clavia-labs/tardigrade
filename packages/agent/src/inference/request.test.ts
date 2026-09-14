@@ -59,40 +59,26 @@ describe("renderMessages", () => {
     expect(messages[2]).toMatchObject({ toolCallId: "call_1", content: '{"result":1}' })
   })
 
-  test("late text from a cancelled turn never becomes the next turn's tool preamble", () => {
-    const messages = renderMessages([
-      { type: "MessageReceived", id: "stopped", text: "start", at: 1 },
-      { type: "TurnCancelled", turn: "stopped", cause: "requested", at: 2 },
-      { type: "MessageReceived", id: "next", text: "continue", at: 3 },
-      { type: "TextReturned", text: "late stopped text", turn: "stopped", at: 4 },
-      { type: "ToolCalled", callId: "next-tool", name: "execute", arguments: {}, turn: "next", at: 5 }
-    ])
-    expect(messages[1]).toEqual({ role: "assistant", content: "late stopped text" })
-    expect(messages.at(-1)).toEqual({
-      role: "assistant",
-      content: null,
-      toolCalls: [{ id: "next-tool", name: "execute", arguments: "{}" }]
-    })
-  })
-
   test("a checkpoint survives the projection: identity anchors the same event in log and render", () => {
     // A queued mid-turn message shifts every raw index by one once the projection excludes it. An
     // index checkpoint would slice the render one event late and open it with a dangling tool
     // result; the identity finds ToolCalled c2 wherever the projection put it.
+    const continuation = { protocol: "effect", provider: "test", model: "test", endpoint: "", payload: { content: [] } }
     const raw: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "draft the addendum", at: 0 },
       { type: "ModelCalled", callId: "m1/infer/0", ordinal: 1, turn: "m1", at: 1 },
       { type: "ToolCalled", callId: "c1", name: "execute", arguments: { code: "read" }, turn: "m1", at: 2 },
       { type: "ToolReturned", callId: "c1", result: { ok: 1 }, turn: "m1", at: 3 },
       { type: "MessageReceived", id: "m2", text: "queued follow-up", at: 4 },
-      { type: "ToolCalled", callId: "c2", name: "execute", arguments: { code: "write" }, turn: "m1", at: 5 },
+      { type: "ModelReturned", callId: "response2", turn: "m1", continuation, at: 5 },
+      { type: "ToolCalled", responseId: "response2", callId: "c2", name: "execute", arguments: { code: "write" }, turn: "m1", at: 5 },
       { type: "ToolReturned", callId: "c2", result: { ok: 2 }, turn: "m1", at: 6 },
       { type: "CompactionCompleted", keepFrom: `c:${JSON.stringify(["m1", "c2"])}`, summary: "read the base contract", at: 7 }
     ]
     const messages = renderMessages(trajectoryOf(raw))
     expect(messages[0]).toMatchObject({ role: "user", content: "draft the addendum" }) // the open head, verbatim
     expect(String(messages[1]!.content)).toContain("read the base contract")
-    expect(messages[2]).toMatchObject({ role: "assistant", toolCalls: [{ id: "c2", name: "execute" }] })
+    expect(messages[2]).toMatchObject({ role: "assistant", continuation, toolCalls: [{ id: "c2", name: "execute" }] })
     expect(messages[3]).toMatchObject({ role: "tool", toolCallId: "c2" })
     expect(messages).toHaveLength(4)
   })

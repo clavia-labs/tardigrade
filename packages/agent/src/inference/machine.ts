@@ -345,10 +345,9 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
     }
   }
   // attempt advances after a recorded response and survives an unanswered crash (inference/retry.test.ts).
-  const invocation = { method: "message", id: turn, epoch }
   return [
     context.effect("infer", {
-      invocation,
+      invocation: { method: "message", id: turn, epoch },
       input: {
         turn,
         epoch,
@@ -446,7 +445,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             ...epochStamp(input.epoch),
             at
           })
-          yield* events.append([{ ...mark, invocationRef: invocation }])
+          yield* events.append([mark])
           const actualRender = { ...derived.renderAfter(mark), ...(preparedContext === undefined ? {} : { context: preparedContext }) }
           const trajectory = input.trajectory()
           let partialOutput = ""
@@ -455,9 +454,9 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             if (partialOutput === "" || partialPersisted) return Effect.void
             partialPersisted = true
             return Clock.currentTimeMillis.pipe(
-              Effect.flatMap((at) => events.append([{ ...textReturned({
-                text: partialOutput, responseId: input.attempt, turn: input.turn, ...epochStamp(input.epoch), at
-              }), invocationRef: invocation }])),
+              Effect.flatMap((at) => events.append([textReturned({
+                text: partialOutput, turn: input.turn, ...epochStamp(input.epoch), at
+              })])),
               Effect.asVoid
             )
           }
@@ -542,7 +541,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               ...(action.kind === "fail" ? { error: action.error, ...(action.text === undefined ? {} : { text: action.text }) } : {}), at: after
             }),
             ...(action.kind === "calls" && action.text !== undefined && action.text !== ""
-              ? [textReturned({ text: action.text, responseId: input.attempt, turn: input.turn, at: after })]
+              ? [textReturned({ text: action.text, turn: input.turn, at: after })]
               : []),
             ...repaired.map((event) => outputRepaired({
               replaced: String((event as { readonly attempt?: unknown }).attempt ?? ""),

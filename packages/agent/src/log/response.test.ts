@@ -36,7 +36,7 @@ test("response counts distinguish retries, rejections and old consequences", () 
 
 test("response identity includes turn and epoch", () => {
   const event = { type: "ModelReturned", turn: "turn", epoch: 2, callId: "response", at: 0 } as Event
-  expect(responseKeyOf(event, "response")).toBe('["message","turn",2,"response"]')
+  expect(responseKeyOf(event, "response")).toBe('["turn",2,"response"]')
   expect(responseKeyOf({ ...event, turn: "other" }, "response")).not.toBe(responseKeyOf(event, "response"))
   expect(responseKeyOf({ ...event, epoch: 3 }, "response")).not.toBe(responseKeyOf(event, "response"))
 })
@@ -45,22 +45,4 @@ test("unanswered tool calls close when their result arrives", () => {
   const called = { type: "ToolCalled", callId: "call", at: 0 } as Event
   expect(hasUnansweredToolCall([called])).toBe(true)
   expect(hasUnansweredToolCall([called, { type: "ToolReturned", callId: "call", result: null, at: 1 } as Event])).toBe(false)
-})
-
-test.each(["method", "id", "epoch", "responseId"])("response indexing isolates %s across interleaving", (field) => {
-  const invocationRef = { method: "message", id: "m", epoch: 1 }
-  const other = field === "responseId" ? invocationRef : { ...invocationRef, [field]: field === "epoch" ? 2 : "other" }
-  const legacy = { turn: "stale", epoch: 0 }
-  const text = { type: "TextReturned", text: "first response", responseId: "r1", invocationRef, ...legacy }
-  const calls = [
-    { type: "ToolCalled", callId: "foreign", responseId: field === "responseId" ? "r2" : "r1", invocationRef: other, ...legacy },
-    { type: "ToolCalled", callId: "first", responseId: "r1", invocationRef, ...legacy },
-    { type: "ToolCalled", callId: "sibling", responseId: "r1", invocationRef, ...legacy }
-  ]
-  const index = responsesOf([text, { type: "ModelReturned", callId: "r2", invocationRef }, ...calls])
-  expect(index.text.get(calls[0]!)).toBeUndefined()
-  expect(index.text.get(calls[1]!)).toBe("first response")
-  expect(index.text.get(calls[2]!)).toBeUndefined()
-  expect(index.keys.get(calls[0]!)).not.toBe(index.keys.get(calls[1]!))
-  expect(index.firstCalls.get(calls[2]!)).toBe(calls[1])
 })

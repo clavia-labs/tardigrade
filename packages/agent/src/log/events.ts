@@ -129,7 +129,6 @@ export const ModelReturned = Schema.Struct({
 // TextReturned journals model prose; its following action or cancellation determines whether inference finished (index.test.ts, "text outcomes derive from the log when cancelling during %s"). The final answer lives on TurnCompleted.output.
 export const TextReturned = Schema.Struct({
   type: Schema.Literal("TextReturned"),
-  responseId: Schema.optional(Schema.String),
   text: Schema.String,
   turn: Schema.optional(Schema.String),
   epoch: Schema.optional(Schema.Finite),
@@ -559,7 +558,7 @@ export const modelReturned = (
 }) as Event
 
 export const textReturned = (
-  fields: { readonly text: string; readonly responseId: string } & EpochStamp
+  fields: { readonly text: string } & EpochStamp
 ): Event => ({ type: "TextReturned", ...fields }) as Event
 
 export const turnCompleted = (

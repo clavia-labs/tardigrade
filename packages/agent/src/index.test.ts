@@ -250,10 +250,6 @@ describe("an assembled agent", () => {
       ...(stage === "inference" ? [{ text: "hello world", owner: 1, interrupted: true }] : [])
     ]
     expect(textOutcomes(log, "m1")).toEqual(expected)
-    for (const event of log.filter((event) => event.type === "TextReturned")) {
-      expect(event.responseId).toEqual(expect.any(String))
-      expect(event.invocationRef).toEqual({ method: "message", id: "m1", epoch: 0 })
-    }
     expect(log.filter((event) => event.type === "TextReturned").every((event) => !("partial" in event))).toBe(true)
     expect(textOutcomes(JSON.parse(JSON.stringify(log)), "m1")).toEqual(expected)
     expect(log.some((event) => event.type === "TurnCompleted")).toBe(false)

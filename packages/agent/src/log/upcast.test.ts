@@ -14,7 +14,7 @@ test.each(["current", "legacy"])("upcast reads %s batches without inventing resp
   const view = upcast(history)
   expect(view.entries.filter((entry) => entry.advancesInference)).toHaveLength(1)
   expect(view.entries.filter((entry) => entry.event.type === "ToolCalled").map((entry) => entry.responseKey))
-    .toEqual(['["message","turn",0,"response"]', '["message","turn",0,"response"]'])
+    .toEqual(['["turn",0,"response"]', '["turn",0,"response"]'])
   expect(view.entries.map((entry) => entry.event)).toEqual(history)
   view.entries.forEach((entry, index) => expect(entry.event).toBe(history[index]!))
   expect(JSON.stringify(history)).toBe(before)
@@ -47,16 +47,4 @@ test("upcast preserves structured model errors and reads historical strings", ()
     expect(entry?.event.legacyError).toEqual(error)
     expect(stored.error).toBe(error)
   }
-})
-
-test("legacy bookkeeping without an epoch does not reset resumed text ownership", () => {
-  const history = [
-    { type: "ModelReturned", turn: "m1", epoch: 2, callId: "resumed" },
-    { type: "BudgetGranted", turn: "m1", amount: 10 },
-    { type: "TextReturned", turn: "m1", text: "resumed preamble" }
-  ]
-  const entries = upcast(history).entries
-  expect(entries[2]?.invocation).toEqual({ method: "message", id: "m1", epoch: 2 })
-  expect(entries[2]?.responseKey).toBe(entries[0]?.responseKey)
-  expect(history[2]).not.toHaveProperty("epoch")
 })
