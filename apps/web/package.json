@@ -31,6 +31,7 @@
     "nitro": "^3.0.260610-beta",
     "rehype-highlight": "^7.0.2",
     "rehype-mdx-code-props": "^3.0.1",
+    "rehype-slug": "^6.0.0",
     "remark-frontmatter": "^5.0.0",
     "remark-mdx-frontmatter": "^5.2.0",
     "typescript": "7.0.2",

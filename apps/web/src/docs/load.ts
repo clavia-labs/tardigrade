@@ -1,3 +1,5 @@
+import Components, { frontmatter as componentsFrontmatter } from "@docs/getting-started/components.mdx"
+import componentsMarkdown from "@docs/getting-started/components.mdx?doc-source"
 import type { ComponentType } from "react"
 
 import Cli, { frontmatter as cliFrontmatter } from "@docs/references/cli.mdx"
@@ -52,6 +54,7 @@ type DocModule = {
 }
 
 const modules: ReadonlyArray<DocModule> = [
+  { default: Components, frontmatter: componentsFrontmatter, markdown: componentsMarkdown, source: "getting-started/components.mdx" },
   { default: Welcome, frontmatter: welcomeFrontmatter, markdown: welcomeMarkdown, source: "start-here/Welcome.mdx" },
   { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "start-here/Why.mdx" },
   { default: Quickstart, frontmatter: quickstartFrontmatter, markdown: quickstartMarkdown, source: "getting-started/quickstart.mdx" },
