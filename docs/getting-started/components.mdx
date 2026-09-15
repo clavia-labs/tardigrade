@@ -1,0 +1,286 @@
+---
+title: Components
+description: Build actor behavior from event projections and enabled transitions.
+hideDescription: true
+route: /docs/components
+section: Getting Started
+sectionOrder: 2
+order: 4
+---
+
+In Tardigrade, components are typed state machines that define the behaviors of your actor.
+
+On a high level, you could think of them as things that takes events as input and respond with an output. The output could be either another event, or an effect. And it varies based on the current state of the component, which is derived from the immutable event log.
+
+To get a better understanding, let's start with state machines.
+
+## State machines
+### Traffic lights
+
+State machines is a concept from computational mathematics. They describe a machine that can exist in a finite set of states, transitioning from one state to another in response to inputs. A traffic light is a simple example of a state machine.
+
+At any given point, a traffic light can exist only in one of three possible states: green, yellow, red. And there are specific rules that define how it transitions from one state to another.
+
+<TrafficLightDiagram />
+
+A simple traffic light could have the following state transition rules:
+
+1. When the light is green and its timer expires, it turns yellow.
+2. When the light is yellow and its timer expires, it turns red.
+3. When the light is red and its timer expires, it turns green.
+
+Mathematically, it could be described as:
+
+<Math expression="\text{next state} = \delta(\text{current state},\ \text{input})" />
+
+Here, δ (delta) is the transition function: it takes the current state and an input, then returns the next state. For our traffic light, giving it green and “timer expires” returns yellow.
+
+### Agents as state machines
+
+Just like traffic lights, we could also view agents as state machines. Take an example of a simple tool calling agent. It can exist in one of the following possible states: calling a model, calling a tool, settled.
+
+<AgentStateMachineDiagram />
+
+It has the following transition rules:
+
+1. When a message is received, the agent starts calling the model.
+2. When the model requests a tool call, the agent starts calling the tool.
+3. When the tool returns its result, the agent resumes calling the model.
+4. When the model produces a final answer, the turn completes and the agent becomes settled.
+
+### State explosion!
+
+As our agents get more complex, we'd sooon realise that we can't keep up with the current state anymore. A situation that frontend developers appropriately called state explosion. Consider the same tool calling agent with a budget. Its next action now depends on both its execution phase and whether its tool budget is available or exhausted.
+
+<StateExplosionDiagram />
+
+Add retries, permissions, and more tools, and the states and transitions soon multiply. How do we deal with this complexity?
+
+<StateComplexityIllustration />
+
+## Enter components
+
+How do we deal with the complexity of state explosion? The beauty of state machines is that they can compose with one another. Instead of viewing the agent or actor as a single state machine, we can compose it into multiple state machines! In Tardigrade, these units are called components. Each component is a state machine that responds to a particular event based on the current state.
+
+<ComponentCompositionDiagram />
+
+## Authoring components
+
+A simple agent loop calls a model, executes a tool, and feeds the result back. This example handles one tool call per response:
+
+```ts expanded
+async function agent(message) {
+  const messages = [{ role: "user", content: message }]
+
+  while (true) {
+    const response = await model.generate(messages)
+    messages.push(response.message)
+
+    if (response.toolCall === undefined) {
+      return response.text
+    }
+
+    const call = response.toolCall
+    const result = await tools[call.name](call.arguments)
+    messages.push({
+      role: "tool",
+      toolCallId: call.id,
+      content: result
+    })
+  }
+}
+```
+
+Adding budgets or permissions means extending this loop. In Tardigrade, the runtime owns the loop; components describe each behavior through projections and transitions.
+
+### Projection
+
+A projection derives state from events. For a ship, each `PositionUpdated` records a location and time. Replaying those events reconstructs its journey.
+
+<ShipPositionDiagram />
+
+The same log can yield location, distance, or elapsed time. Choose a projection below. Each is pure: the same events produce the same result.
+
+<ProjectionFlowDiagram />
+
+### Agent state as projection
+
+An agent projects its conversation, pending tools, and turn status. A user message enables inference; a tool call enables execution; its result enables inference again.
+
+<AgentTrajectoryDiagram />
+
+This example shows one turn, omitting model attempts and other metadata.
+
+### Transitions
+
+Transitions describe enabled work. The runtime processes them, appends the resulting events, and updates component state.
+
+- An **intent** proposes events through `context.intent`.
+- An **effect** declares external work through `context.effect`. Its `act` function returns events to record.
+
+Both declarations are pure. The runtime executes the external work.
+
+#### Define the state
+
+The weather component keeps pending calls with their event context. The context identifies the work each call owns.
+
+```ts
+import { component, type TransitionContext } from "tardie/core"
+
+type Call = {
+  callId: string
+  name: string
+  arguments: unknown
+  turn?: string
+}
+
+type Pending = {
+  call: Call
+  context: TransitionContext
+}
+```
+
+#### Name and initialize
+
+Give the component a name unique within its composition. `initial` starts with no pending calls.
+
+```ts
+name: "weather",
+initial: (): ReadonlyArray<Pending> => [],
+```
+
+#### Read events
+
+`step(pending, event, context)` adds weather calls to state. Keep the context alongside the call for declaring its effect later.
+
+```ts
+if (
+  event.type === "ToolCalled" &&
+  typeof event.callId === "string" &&
+  event.name === "weather"
+) {
+  return [...pending, {
+    context,
+    call: {
+      callId: event.callId,
+      name: event.name,
+      arguments: event.arguments,
+      ...(typeof event.turn === "string" ? { turn: event.turn } : {})
+    }
+  }]
+}
+```
+
+#### Declare work
+
+`output` exposes a view and declares a `fetch` effect for each pending call. The supplied `fetchWeather` returns weather data or an error result for the model. The runtime runs `act` and records its returned event.
+
+```ts
+output: (pending) => ({
+  view: { pendingCalls: pending.length },
+  transitions: pending.map(({ call, context }) =>
+    context.effect("fetch", {
+      input: call,
+      act: (input, { signal }) => Effect.gen(function* () {
+        const result = yield* fetchWeather(input, signal)
+        const at = yield* Clock.currentTimeMillis
+        return { type: "ToolReturned", ...input, result, at }
+      })
+    })
+  )
+})
+```
+
+`initial`, `step`, and `output` stay pure. External work belongs in `act`.
+
+#### Identify and complete work
+
+Retain the `context` from `step` to declare work owned by that event. The runtime derives its reference from the event sequence, component name, and operation tag:
+
+```text variant="diagram"
+ToolCalled at sequence 12
+└─ weather
+   └─ fetch → [12, "weather", "fetch"]
+
+ToolCalled at sequence 19
+└─ weather
+   └─ fetch → [19, "weather", "fetch"]
+```
+
+Tags identify operations within an event and component. Reuse the tag for retries; use a different tag for different work. Separate owning events can use the same tag.
+
+The runtime records the completion reference with `ToolReturned`. In `step`, match it to remove the completed call, even if another call reuses its call ID.
+
+```ts
+const remaining = pending.filter(
+  (item) => !item.context.matches("fetch", event)
+)
+return remaining.length === pending.length ? pending : remaining
+```
+
+#### Replay and retries
+
+Replay restores completed work from the log. An external action can run again if the process stops before recording its completion. Use idempotency when retries could duplicate its effects.
+
+#### Complete example
+
+The pieces together, with `Clock` and `Effect` for the external action:
+
+```ts expanded
+import { Clock, Effect } from "effect"
+import { component, type TransitionContext } from "tardie/core"
+
+type Call = {
+  callId: string
+  name: string
+  arguments: unknown
+  turn?: string
+}
+
+type Pending = {
+  call: Call
+  context: TransitionContext
+}
+
+const weatherTool = (
+  fetchWeather: (call: Call, signal: AbortSignal) => Effect.Effect<unknown>
+) => component({
+  name: "weather",
+  initial: (): ReadonlyArray<Pending> => [],
+  step: (pending, event, context) => {
+    if (
+      event.type === "ToolCalled" &&
+      typeof event.callId === "string" &&
+      event.name === "weather"
+    ) {
+      return [...pending, {
+        context,
+        call: {
+          callId: event.callId,
+          name: event.name,
+          arguments: event.arguments,
+          ...(typeof event.turn === "string" ? { turn: event.turn } : {})
+        }
+      }]
+    }
+
+    const remaining = pending.filter(
+      (item) => !item.context.matches("fetch", event)
+    )
+    return remaining.length === pending.length ? pending : remaining
+  },
+  output: (pending) => ({
+    view: { pendingCalls: pending.length },
+    transitions: pending.map(({ call, context }) =>
+      context.effect("fetch", {
+        input: call,
+        act: (input, { signal }) => Effect.gen(function* () {
+          const result = yield* fetchWeather(input, signal)
+          const at = yield* Clock.currentTimeMillis
+          return { type: "ToolReturned", ...input, result, at }
+        })
+      })
+    )
+  })
+})
+```
