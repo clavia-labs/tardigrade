@@ -8,16 +8,20 @@ sectionOrder: 2
 order: 4
 ---
 
-In Tardigrade, components are typed state machines that define the behaviors of your actor.
+In Tardigrade, a component is the smallest unit of an actor's behavior.
 
-On a high level, you could think of them as things that takes events as input and respond with an output. The output could be either another event, or an effect. And it varies based on the current state of the component, which is derived from the immutable event log.
+More specifically, a component is a state machine that takes events as input and produces an output based on its current state. Its current state is derived as a pure function of an append only event log. This build on ideas from [automata theory] and [event sourcing]
 
-To get a better understanding, let's start with state machines.
+<ComponentOverviewDiagram />
+
+The first few sections would go deeper into some concepts to build understanding. I would recommend fully going through them to build better intuitions. However, jump straight to [authoring components](#authoring-components) if you want to quickly get started.
+
+Let's start with state machines.
 
 ## State machines
-### Traffic lights
+### A simple state machine
 
-State machines is a concept from computational mathematics. They describe a machine that can exist in a finite set of states, transitioning from one state to another in response to inputs. A traffic light is a simple example of a state machine.
+[State machines](https://en.wikipedia.org/wiki/Finite-state_machine) is a concept from computational mathematics. They describe a thing that can exist in a finite set of states, transitioning from one state to another in response to inputs. A traffic light is a simple example of a state machine.
 
 At any given point, a traffic light can exist only in one of three possible states: green, yellow, red. And there are specific rules that define how it transitions from one state to another.
 
@@ -25,9 +29,9 @@ At any given point, a traffic light can exist only in one of three possible stat
 
 A simple traffic light could have the following state transition rules:
 
-1. When the light is green and its timer expires, it turns yellow.
-2. When the light is yellow and its timer expires, it turns red.
-3. When the light is red and its timer expires, it turns green.
+1. Green, timer expired → Yellow
+2. Yellow, timer expired → Red
+3. Red, timer expired → Green
 
 Mathematically, it could be described as:
 
@@ -43,14 +47,14 @@ Just like traffic lights, we could also view agents as state machines. Take an e
 
 It has the following transition rules:
 
-1. When a message is received, the agent starts calling the model.
-2. When the model requests a tool call, the agent starts calling the tool.
-3. When the tool returns its result, the agent resumes calling the model.
-4. When the model produces a final answer, the turn completes and the agent becomes settled.
+1. Message received → Calling model
+2. Calling model, tool called → Running tool
+3. Running tool, tool returned → Calling model
+4. Calling model, turn completed → Done
 
 ### State explosion!
 
-As our agents get more complex, we'd sooon realise that we can't keep up with the current state anymore. A situation that frontend developers appropriately called state explosion. Consider the same tool calling agent with a budget. Its next action now depends on both its execution phase and whether its tool budget is available or exhausted.
+As our agents get more complex, we'd sooon realise that we can't keep up with the current state anymore. A situation frontend developers know well as [state explosion](https://statecharts.dev/state-machine-state-explosion.html). Consider the same tool calling agent with a budget. Its next action now depends on both its execution phase and whether its tool budget is available or exhausted.
 
 <StateExplosionDiagram />
 
@@ -60,167 +64,150 @@ Add retries, permissions, and more tools, and the states and transitions soon mu
 
 ## Enter components
 
-How do we deal with the complexity of state explosion? The beauty of state machines is that they can compose with one another. Instead of viewing the agent or actor as a single state machine, we can compose it into multiple state machines! In Tardigrade, these units are called components. Each component is a state machine that responds to a particular event based on the current state.
+The beauty of state machines is that they can compose with one another.
+
+Instead of viewing the agent or actor as a single state machine, we can compose it into multiple state machines! In Tardigrade, these units are called components. Each component is a state machine that responds to a particular event based on the current state.
 
 <ComponentCompositionDiagram />
 
-## Authoring components
+We can compose whole agents this way too. One agent can use another through a tool. The called agent runs its own state machines, and its answer returns to the calling agent as a tool result.
 
-A simple agent loop calls a model, executes a tool, and feeds the result back. This example handles one tool call per response:
+<AgentCompositionDiagram />
 
-```ts expanded
-async function agent(message) {
-  const messages = [{ role: "user", content: message }]
+## The *state* in the state machine
 
-  while (true) {
-    const response = await model.generate(messages)
-    messages.push(response.message)
+If you've noticed, each component is at a particular state at any given point. To pause and resume an agent, we could simply take a snapshot of the individual component state at a given point and hydrate the components with it. However, this method is very lossy.
 
-    if (response.toolCall === undefined) {
-      return response.text
-    }
+We know the final position of the agent but we lose information about how it got there. How do we retain the complete history of an agent?
 
-    const call = response.toolCall
-    const result = await tools[call.name](call.arguments)
-    messages.push({
-      role: "tool",
-      toolCallId: call.id,
-      content: result
-    })
-  }
-}
-```
+<StateSnapshotDiagram />
 
-Adding budgets or permissions means extending this loop. In Tardigrade, the runtime owns the loop; components describe each behavior through projections and transitions.
+### State as a projection of the event log
 
-### Projection
+A state machine transitions to another state after receiving an event as an input. So we can store the entire history of an agent by storing every event in an append only log! The current state at any given point could then be derived using a projection over the log. This concept is called [event sourcing](https://martinfowler.com/eaaDev/EventSourcing.html).
 
-A projection derives state from events. For a ship, each `PositionUpdated` records a location and time. Replaying those events reconstructs its journey.
+Take an example of a ship that's delivering goods to islands. To track different aspects of the ship, one way would be to maintain a separate database for each aspect and updating its state as the ship moves across islands. This is the typical approach that looses the history of how we arrived at a particular state.
+
+For example, we could keep three tables in the same database, each storing one aspect of the ship's current state:
+
+<div className="ship-state-tables">
+<div className="ship-state-table">
+  <table>
+    <caption>Location</caption>
+    <thead><tr><th scope="col">Ship</th><th scope="col">Current island</th></tr></thead>
+    <tbody><tr><td>Tardie</td><td>Palm Island</td></tr></tbody>
+  </table>
+</div>
+
+<div className="ship-state-table">
+  <table>
+    <caption>Cargo</caption>
+    <thead><tr><th scope="col">Ship</th><th scope="col">Crates on board</th></tr></thead>
+    <tbody><tr><td>Tardie</td><td>40</td></tr></tbody>
+  </table>
+</div>
+
+<div className="ship-state-table">
+  <table>
+    <caption>Deliveries</caption>
+    <thead><tr><th scope="col">Ship</th><th scope="col">Crates delivered</th></tr></thead>
+    <tbody><tr><td>Tardie</td><td>60</td></tr></tbody>
+  </table>
+</div>
+</div>
+
+When the ship delivers another 10 crates, we update cargo to 30 and deliveries to 70. If we only keep these latest values, we cannot reconstruct the earlier stops or individual deliveries from them.
+
+With event sourcing, we would instead write events into a log as the ship moves across islands. For example, we can stamp an event called `PositionUpdated` recording location and time whenever the ship reaches an islands. I can get the exact path of the ship by replaying the events, and I can get the state at specific points in the jounrey by folding the logs.
 
 <ShipPositionDiagram />
 
-The same log can yield location, distance, or elapsed time. Choose a projection below. Each is pure: the same events produce the same result.
+The same log can yield location, distance, or elapsed time. Each projection is pure: the same events produce the same result.
 
 <ProjectionFlowDiagram />
 
 ### Agent state as projection
 
-An agent projects its conversation, pending tools, and turn status. A user message enables inference; a tool call enables execution; its result enables inference again.
+Each component derives its state from the same event log. Inference tracks messages and tool calls, budget tracks usage, and permission tracks requests and decisions. The same history yields three different states. Here, the turn has completed, the tool call has spent the last of the budget, and its permission has been cleared.
 
-<AgentTrajectoryDiagram />
+<AgentProjectionDiagram />
 
-This example shows one turn, omitting model attempts and other metadata.
+## Authoring components
 
-### Transitions
+Now that we've learnt the concepts, it's time to get our hands dirty, it's time to author a Tardigrade component. We'll start with a custom tool that lets a model search its own event log and those of its child agents.
 
-Transitions describe enabled work. The runtime processes them, appends the resulting events, and updates component state.
+The shape of a Tardigrade component looks like this:
 
-- An **intent** proposes events through `context.intent`.
-- An **effect** declares external work through `context.effect`. Its `act` function returns events to record.
+<ComponentAnatomyDiagram />
 
-Both declarations are pure. The runtime executes the external work.
+For our search tool, the behavior looks like this:
 
-#### Define the state
+<SearchToolStateDiagram />
 
-The weather component keeps pending calls with their event context. The context identifies the work each call owns.
+### Initial state
 
-```ts
-import { component, type TransitionContext } from "tardie/core"
-
-type Call = {
-  callId: string
-  name: string
-  arguments: unknown
-  turn?: string
-}
-
-type Pending = {
-  call: Call
-  context: TransitionContext
-}
-```
-
-#### Name and initialize
-
-Give the component a name unique within its composition. `initial` starts with no pending calls.
+`initial` defines the component's state before it has processed any events. Our search tool starts with no pending requests, so its initial state is an empty list.
 
 ```ts
-name: "weather",
-initial: (): ReadonlyArray<Pending> => [],
+initial: () => [],
 ```
 
-#### Read events
+### Updating state
 
-`step(pending, event, context)` adds weather calls to state. Keep the context alongside the call for declaring its effect later.
+`step` receives the current state, an event, and a `context` supplied by the runtime. It returns the next state. For our search tool, a `ToolCalled` event adds a pending search request. When that request completes, we remove it. Unrelated events leave the state unchanged.
+
+The context links work to the event that caused it. We save it with each request, use `context.effect("search", ...)` to declare its search, and use `context.matches("search", event)` to recognize its completion and remove the right request.
 
 ```ts
-if (
-  event.type === "ToolCalled" &&
-  typeof event.callId === "string" &&
-  event.name === "weather"
-) {
-  return [...pending, {
-    context,
-    call: {
-      callId: event.callId,
-      name: event.name,
-      arguments: event.arguments,
-      ...(typeof event.turn === "string" ? { turn: event.turn } : {})
-    }
-  }]
-}
+step: (pending, event, context) => {
+  if (
+    event.type === "ToolCalled" &&
+    event.name === "search_logs" &&
+    typeof event.callId === "string"
+  ) {
+    return [...pending, {
+      context,
+      call: {
+        callId: event.callId,
+        name: event.name,
+        arguments: event.arguments,
+        ...(typeof event.turn === "string" ? { turn: event.turn } : {})
+      }
+    }]
+  }
+
+  const remaining = pending.filter(
+    (request) => !request.context.matches("search", event)
+  )
+  return remaining.length === pending.length ? pending : remaining
+},
 ```
 
-#### Declare work
+`step` only updates state; the search itself is declared through `output`, which we'll define next.
 
-`output` exposes a view and declares a `fetch` effect for each pending call. The supplied `fetchWeather` returns weather data or an error result for the model. The runtime runs `act` and records its returned event.
+### Output
+
+`output` reads the current state and returns a `view` and `transitions`. The view shares information with other components. Transitions describe work the runtime can perform, either proposing events through an intent or running external work through an effect.
+
+Our search tool exposes the number of pending requests and declares a search effect for each one.
 
 ```ts
 output: (pending) => ({
   view: { pendingCalls: pending.length },
   transitions: pending.map(({ call, context }) =>
-    context.effect("fetch", {
+    context.effect("search", {
       input: call,
       act: (input, { signal }) => Effect.gen(function* () {
-        const result = yield* fetchWeather(input, signal)
+        const result = yield* searchLogs(input, signal)
         const at = yield* Clock.currentTimeMillis
         return { type: "ToolReturned", ...input, result, at }
       })
     })
   )
-})
+}),
 ```
 
-`initial`, `step`, and `output` stay pure. External work belongs in `act`.
-
-#### Identify and complete work
-
-Retain the `context` from `step` to declare work owned by that event. The runtime derives its reference from the event sequence, component name, and operation tag:
-
-```text variant="diagram"
-ToolCalled at sequence 12
-└─ weather
-   └─ fetch → [12, "weather", "fetch"]
-
-ToolCalled at sequence 19
-└─ weather
-   └─ fetch → [19, "weather", "fetch"]
-```
-
-Tags identify operations within an event and component. Reuse the tag for retries; use a different tag for different work. Separate owning events can use the same tag.
-
-The runtime records the completion reference with `ToolReturned`. In `step`, match it to remove the completed call, even if another call reuses its call ID.
-
-```ts
-const remaining = pending.filter(
-  (item) => !item.context.matches("fetch", event)
-)
-return remaining.length === pending.length ? pending : remaining
-```
-
-#### Replay and retries
-
-Replay restores completed work from the log. An external action can run again if the process stops before recording its completion. Use idempotency when retries could duplicate its effects.
+Here, `searchLogs` is a function we supply to search the agent's own log and its child agents' logs. `output` declares the effect; the runtime runs `act` and records its `ToolReturned` event. That event flows back through `step`, which removes the completed request. With no pending requests, the component outputs no search effects.
 
 #### Complete example
 
@@ -242,16 +229,16 @@ type Pending = {
   context: TransitionContext
 }
 
-const weatherTool = (
-  fetchWeather: (call: Call, signal: AbortSignal) => Effect.Effect<unknown>
+const searchTool = (
+  searchLogs: (call: Call, signal: AbortSignal) => Effect.Effect<unknown>
 ) => component({
-  name: "weather",
+  name: "search_logs",
   initial: (): ReadonlyArray<Pending> => [],
   step: (pending, event, context) => {
     if (
       event.type === "ToolCalled" &&
       typeof event.callId === "string" &&
-      event.name === "weather"
+      event.name === "search_logs"
     ) {
       return [...pending, {
         context,
@@ -265,17 +252,17 @@ const weatherTool = (
     }
 
     const remaining = pending.filter(
-      (item) => !item.context.matches("fetch", event)
+      (item) => !item.context.matches("search", event)
     )
     return remaining.length === pending.length ? pending : remaining
   },
   output: (pending) => ({
     view: { pendingCalls: pending.length },
     transitions: pending.map(({ call, context }) =>
-      context.effect("fetch", {
+      context.effect("search", {
         input: call,
         act: (input, { signal }) => Effect.gen(function* () {
-          const result = yield* fetchWeather(input, signal)
+          const result = yield* searchLogs(input, signal)
           const at = yield* Clock.currentTimeMillis
           return { type: "ToolReturned", ...input, result, at }
         })

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import { nitro } from "nitro/vite"
 import rehypeHighlight from "rehype-highlight"
 import rehypeMdxCodeProps from "rehype-mdx-code-props"
+import rehypeSlug from "rehype-slug"
 import { defineConfig, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
 import remarkFrontmatter from "remark-frontmatter"
@@ -35,7 +36,7 @@ export default defineConfig({
       enforce: "pre",
       ...mdx({
         providerImportSource: "@mdx-js/react",
-        rehypePlugins: [[rehypeHighlight, { detect: false, plainText: ["curl", "text", "txt"] }], rehypeMdxCodeProps],
+        rehypePlugins: [rehypeSlug, [rehypeHighlight, { detect: false, plainText: ["curl", "text", "txt"] }], rehypeMdxCodeProps],
         remarkPlugins: [remarkFrontmatter, [remarkMdxFrontmatter, { name: "frontmatter" }]]
       })
     },

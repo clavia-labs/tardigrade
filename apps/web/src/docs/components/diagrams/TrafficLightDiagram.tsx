@@ -11,6 +11,9 @@ export const TrafficLightDiagram = (): ReactElement => {
   const grainId = useId()
   const [current, setCurrent] = useState(0)
   const state = states[current]!
+  // nextIndex is the only state one timer tick away; clicking it advances the light.
+  const nextIndex = (current + 1) % states.length
+  const advance = () => setCurrent(nextIndex)
   return (
     <figure className="traffic-machine" aria-label="A traffic light state machine">
       <div className="traffic-machine-body">
@@ -55,30 +58,32 @@ export const TrafficLightDiagram = (): ReactElement => {
             </g>
         </g>
       </svg>
-          <button className="traffic-advance" type="button" onClick={() => setCurrent((value) => (value + 1) % states.length)}>Advance timer <span aria-hidden="true">→</span></button>
         </div>
         <div className="traffic-cycle">
           <span className="ship-projection-label">State machine</span>
-          <svg viewBox="0 0 340 260" role="img" aria-label={`Green transitions to yellow, yellow to red, and red to green when the timer expires. The current state is ${state.name}.`}>
+          <svg viewBox="0 0 340 260" role="img" aria-label={`Each time the timer expired, green moved to yellow, yellow to red, and red to green. The current state is ${state.name}.`}>
             <g className="traffic-cycle-links">
-              <path d="M94 60H244m-8-5 8 5-8 5" />
-              <path d="m260 89-70 88m1-10-1 10 10-3" />
-              <path d="m150 177-70-88m0 10 0-10 10 3" />
+              <path data-active={current === 0} d="M94 60H244m-8-5 8 5-8 5" />
+              <path data-active={current === 1} d="m260 89-70 88m1-10-1 10 10-3" />
+              <path data-active={current === 2} d="m150 177-70-88m0 10 0-10 10 3" />
             </g>
             <g className="traffic-cycle-labels">
-              <text x="170" y="43">timer expires</text>
-              <text x="276" y="143">timer expires</text>
-              <text x="64" y="143">timer expires</text>
+              <text x="170" y="43">timer expired</text>
+              <text x="276" y="143">timer expired</text>
+              <text x="64" y="143">timer expired</text>
             </g>
-            {states.map((item, index) => (
-              <g key={item.name} transform={`translate(${[60, 280, 170][index]} ${index === 2 ? 205 : 60})`} className="traffic-cycle-node" data-current={current === index}>
+            {states.map((item, index) => {
+              const open = index === nextIndex
+              return <g key={item.name} transform={`translate(${[60, 280, 170][index]} ${index === 2 ? 205 : 60})`} className="traffic-cycle-node" data-current={current === index} data-reachable={open} role="button" tabIndex={open ? 0 : -1} aria-disabled={!open} aria-label={open ? `${item.name}: timer expired` : `${item.name} (not reachable now)`} onClick={() => { if (open) advance() }} onKeyDown={(event) => { if (open && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); advance() } }}>
+                {open && <circle className="agent-state-halo" r="40" />}
                 <circle r="33" />
                 <text y="4">{item.name}</text>
               </g>
-            ))}
+            })}
           </svg>
         </div>
       </div>
+      <figcaption className="agent-state-prompt" aria-live="polite">The light is {state.name.toLowerCase()}. The timer expired: click {states[nextIndex]!.name}.</figcaption>
     </figure>
   )
 }

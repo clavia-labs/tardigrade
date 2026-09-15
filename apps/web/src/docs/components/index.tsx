@@ -1,3 +1,9 @@
+import { SearchToolStateDiagram } from "./diagrams/SearchToolStateDiagram"
+import { ComponentAnatomyDiagram } from "./diagrams/ComponentAnatomyDiagram"
+import { ComponentOverviewDiagram } from "./diagrams/ComponentOverviewDiagram"
+import { AgentProjectionDiagram } from "./diagrams/AgentProjectionDiagram"
+import { StateSnapshotDiagram } from "./diagrams/StateSnapshotDiagram"
+import { AgentCompositionDiagram } from "./diagrams/AgentCompositionDiagram"
 import { ComponentCompositionDiagram } from "./diagrams/ComponentCompositionDiagram"
 import { StateComplexityIllustration } from "./diagrams/StateComplexityIllustration"
 import { StateExplosionDiagram } from "./diagrams/StateExplosionDiagram"
@@ -259,6 +265,12 @@ const Link = ({ href, ...props }: ComponentPropsWithoutRef<"a">): ReactElement =
 }
 
 export const mdxComponents = {
+  SearchToolStateDiagram,
+  ComponentAnatomyDiagram,
+  ComponentOverviewDiagram,
+  AgentProjectionDiagram,
+  StateSnapshotDiagram,
+  AgentCompositionDiagram,
   ComponentCompositionDiagram,
   StateComplexityIllustration,
   StateExplosionDiagram,
