@@ -42,3 +42,4 @@ export {
   type CloudflareEventKeyIndex,
   type CloudflareThreadStorePolicy
 } from "./storage"
+export { DEFAULT_R2_OBJECT_PREFIX, objectStorageFromR2 } from "./object-storage/r2"

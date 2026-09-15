@@ -3,7 +3,7 @@ import { ModelError, encodeModelError, unknownModelError } from "../inference/er
 import { AiError } from "effect/unstable/ai"
 import { upcastUsage } from "./response-upcast"
 import { Schema } from "effect"
-import { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
+import { AgentMessageReceived } from "./message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
@@ -370,7 +370,7 @@ export const BudgetDenied = Schema.Struct({
 })
 
 export const AgentEvent = Schema.Union([
-  MessageReceived,
+  AgentMessageReceived,
   ModelCalled,
   ModelReturned,
   TextReturned,
@@ -674,6 +674,7 @@ export const compactionCompleted = (
     readonly contextWindowTokens: number
     readonly fireTokens: number
     readonly keepTokens: number
+    readonly fileTokens?: number
     readonly model?: ModelRefType
     readonly at: number
   }

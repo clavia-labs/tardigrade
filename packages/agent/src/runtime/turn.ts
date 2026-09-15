@@ -1,4 +1,4 @@
-import { Clock, Effect } from "effect"
+import { Clock, Effect, Schema } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { send, type ActorSource as Actor } from "@clavia/tardigrade-core/runtime"
@@ -12,7 +12,7 @@ import type { BudgetPolicy } from "../component/budget"
 import type { CompactionPolicy } from "../component/compaction"
 import type { CodePolicy } from "@clavia/tardigrade-code/execution/reactor"
 import type { WorkspacePolicy } from "@clavia/tardigrade-code/package/workspace"
-import type { ModelRef } from "../inference/reference"
+import { AgentMessageInput } from "../actor/message"
 
 
 // AgentR lists the agent runtime services; components add their own requirements (core/component.ts, ComponentRequirements).
@@ -37,11 +37,8 @@ export interface AgentPolicy {
 export const receive = <R, T = unknown>(
   a: Actor<R>,
   // `output` declares the turn's result contract, which outputOf reads as T (src/output/contract.ts, output; src/boundary.ts, outputOf).
-  message: {
+  message: AgentMessageInput & {
     readonly id: string
-    readonly text: string
-    readonly input?: unknown
-    readonly model?: ModelRef
     readonly output?: OutputContract<T>
   }
 ): Effect.Effect<void, never, EventLog | R> =>
@@ -50,13 +47,14 @@ export const receive = <R, T = unknown>(
     const events = yield* log.read
     const seen = events.some((e) => e.type === "MessageReceived" && (e as { id?: unknown }).id === message.id)
     if (seen) return
+    const input = yield* Schema.decodeUnknownEffect(AgentMessageInput)(message).pipe(Effect.orDie)
     const at = yield* Clock.currentTimeMillis
     yield* send(a, {
       type: "MessageReceived",
       id: message.id,
-      text: message.text,
-      ...(message.input === undefined ? {} : { input: message.input }),
-      ...(message.model === undefined ? {} : { model: message.model }),
+      ...(input.content === undefined ? { text: input.text } : { content: input.content }),
+      ...(input.input === undefined ? {} : { input: input.input }),
+      ...(input.model === undefined ? {} : { model: input.model }),
       ...(message.output === undefined ? {} : { output: { name: message.output.name, schema: message.output.schema } }),
       at
     })

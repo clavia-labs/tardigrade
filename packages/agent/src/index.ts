@@ -1,3 +1,7 @@
+export { AgentMessageReceived, MessageContent, MessageContentPart } from "./log/message"
+export { makeObjectStorage, ObjectReadConcurrency, DEFAULT_OBJECT_READ_CONCURRENCY, ObjectStorage, ObjectStorageError } from "./object/storage"
+export { DEFAULT_OBJECT_STORAGE_PREFIX, objectStorageFromKeyValueStore } from "./object/key-value"
+export { ObjectRef, objectRefOf } from "./object/reference"
 export { type AgentPolicy, type AgentR, receive } from "./runtime/turn"
 export {
   ACTOR_ARTIFACT_VERSION,

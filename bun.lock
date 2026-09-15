@@ -284,6 +284,7 @@
       "name": "@clavia/tardigrade-bun",
       "version": "0.0.1",
       "dependencies": {
+        "@clavia/tardigrade-agent": "workspace:*",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
