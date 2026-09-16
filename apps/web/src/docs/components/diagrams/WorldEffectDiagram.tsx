@@ -2,7 +2,7 @@ import { type ReactElement } from "react"
 
 export const WorldEffectDiagram = (): ReactElement => (
   <figure className="component-overview" aria-label="Describing an effect is separate from executing its I/O">
-    <svg viewBox="0 0 592 410" role="img" aria-label="Describe: build and compose an Effect value without performing I/O. Execute: the runtime runs that description and calls the model, producing a response and interacting with the world. World in and world out are a conceptual model of that interaction.">
+    <svg viewBox="0 0 592 410" role="img" aria-label="Describe: a Tardigrade component produces an Effect value without performing I/O. Execute: the runtime runs that description and calls the model, producing a response and interacting with the world. World in and world out are a conceptual model of that interaction.">
       <g className="component-overview-globe">
         {[72, 520].map((x) => (
           <g key={x}>
@@ -16,20 +16,25 @@ export const WorldEffectDiagram = (): ReactElement => (
         ))}
       </g>
       <g className="component-overview-box">
-        <rect x="191" y="48" width="210" height="86" />
-        <text x="296" y="78">Effect value</text>
+        <rect x="24" y="48" width="170" height="86" />
+        <text x="109" y="78">Tardigrade</text>
+        <text x="109" y="105">component</text>
+        <rect x="330" y="48" width="238" height="86" />
+        <text x="449" y="78">Effect value</text>
         <rect x="191" y="255" width="210" height="80" />
         <text x="296" y="283">Runtime</text>
       </g>
       <g className="composition-links component-overview-links">
-        <path d="M296 144V245m-5-8 5 8 5-8" />
+        <path d="M204 91H320m-8-5 8 5-8 5" />
+        <path d="M449 144V158H296V245m-5-8 5 8 5-8" />
         <path d="M124 295H181m-8-5 8 5-8 5" />
         <path d="M411 295H468m-8-5 8 5-8 5" />
         <path d="M371 255V223H443m-8-5 8 5-8 5" />
       </g>
       <path d="M24 179H272M320 179H568" fill="none" stroke="var(--hair)" strokeDasharray="4 5" />
       <g className="component-overview-labels" textAnchor="middle">
-        <text x="296" y="107">description of a model call</text>
+        <text x="262" y="78">produces</text>
+        <text x="449" y="107">description of a model call</text>
         <text x="296" y="312">calls the model</text>
         <text x="72" y="364">World in</text>
         <text x="520" y="364">World out</text>
