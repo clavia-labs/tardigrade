@@ -9,6 +9,11 @@ import { objectStorageFromSqlite } from "../src/object-storage/sqlite"
 const bucket = (env as Env & { OBJECTS: R2Bucket }).OBJECTS
 const open = (prefix: string) => Effect.runPromise(ObjectStorage.pipe(Effect.provide(objectStorageFromR2(bucket, { prefix }))))
 
+const expectBytesEqual = (actual: Uint8Array, expected: Uint8Array) => {
+  expect(actual.byteLength).toBe(expected.byteLength)
+  expect(actual.every((byte, index) => byte === expected[index])).toBe(true)
+}
+
 const trackReads = () => {
   let reads = 0
   return {
@@ -25,7 +30,7 @@ test("local SQLite retains objects without R2 or eviction and rejects oversized 
     const reference = yield* storage.put(bytes)
     expect(yield* storage.put(new Uint8Array(bytes.length + 1)).pipe(Effect.flip)).toMatchObject({ reason: "TooLarge", actualBytes: bytes.length + 1, maxObjectBytes: bytes.length })
     for (let i = 0; i < 4; i++) yield* storage.put(new Uint8Array(bytes.length).fill(i))
-    expect(yield* storage.get(reference)).toEqual(bytes)
+    expectBytesEqual(yield* storage.get(reference), bytes)
     return reference
   }).pipe(Effect.provide(objectStorageFromSqlite(state.storage)))))
   await evictDurableObject(stub)
@@ -33,7 +38,7 @@ test("local SQLite retains objects without R2 or eviction and rejects oversized 
     expect(() => objectStorageFromSqlite(state.storage, { maxObjectBytes: CLOUDFLARE_OBJECT_CACHE_CAPABILITIES.maxObjectBytes + 1 })).toThrow("Cloudflare SQLite object limit")
     await Effect.runPromise(Effect.gen(function* () {
       const storage = yield* ObjectStorage
-      expect(yield* storage.get(ref)).toEqual(bytes)
+      expectBytesEqual(yield* storage.get(ref), bytes)
       expect(yield* storage.put(new Uint8Array(5)).pipe(Effect.flip)).toMatchObject({ reason: "TooLarge", maxObjectBytes: 4 })
     }).pipe(Effect.provide(objectStorageFromSqlite(state.storage, { maxObjectBytes: 4 }))))
   })
@@ -119,7 +124,7 @@ test("DO cache exposes its row capacity and refuses unsupported policy before us
       const storage = yield* ObjectStorage
       const bytes = new Uint8Array(maxCachedObjectBytes).fill(3)
       const ref = yield* storage.put(bytes)
-      expect(yield* storage.get(ref)).toEqual(bytes)
+      expectBytesEqual(yield* storage.get(ref), bytes)
       expect(tracked.reads()).toBe(0)
     }).pipe(Effect.provide(objectStorageFromR2(tracked.bucket, { prefix: "capacity/", cache }))))
   })
