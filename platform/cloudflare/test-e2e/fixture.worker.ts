@@ -6,7 +6,7 @@ import type { Env } from "../src/env"
 
 const host: WorkerHost<Env & { OBJECTS: R2Bucket }> = defineWorkerHost(definition, { layersFor: ({ env, storage }: CloudflareWorkerLayerContext<Env & { OBJECTS: R2Bucket }>) => Layer.merge(
   modelLayer("https://provider.test"),
-  objectStorageFromR2(env.OBJECTS, { cache: { storage, namespace: "OBJECTS" } })
+  objectStorageFromR2(env.OBJECTS, { cache: { storage, bucketNamespace: "OBJECTS" } })
 ) })
 export const { ActorDO, ThreadDO } = host
 export default workerHttp(host)

@@ -69,7 +69,7 @@ test("DO cache admits bounded objects, survives eviction, and isolates backing n
   const prefix = "cached/"
   const policy = { maxCachedObjectBytes: 16, maxCacheBytes: 32 }
   const reference = await runInDurableObject(stub, async (_instance, state) => {
-    const cache = { storage: state.storage, namespace: "objects-bucket", ...policy }
+    const cache = { storage: state.storage, bucketNamespace: "objects-bucket", ...policy }
     const tracked = trackReads()
     const layer = objectStorageFromR2(tracked.bucket, { prefix, cache })
     return Effect.runPromise(Effect.gen(function* () {
@@ -89,7 +89,7 @@ test("DO cache admits bounded objects, survives eviction, and isolates backing n
   await evictDurableObject(stub)
   await runInDurableObject(stub, async (_instance, state) => {
     const tracked = trackReads()
-    const cache = { storage: state.storage, namespace: "objects-bucket", ...policy }
+    const cache = { storage: state.storage, bucketNamespace: "objects-bucket", ...policy }
     await Effect.runPromise(Effect.gen(function* () {
       const storage = yield* ObjectStorage
       expect(yield* storage.get(reference)).toEqual(new Uint8Array(policy.maxCachedObjectBytes).fill(7))
@@ -97,7 +97,7 @@ test("DO cache admits bounded objects, survives eviction, and isolates backing n
     }).pipe(Effect.provide(objectStorageFromR2(tracked.bucket, { prefix, cache }))))
     for (const isolated of [
       { prefix: "other-prefix/", cache },
-      { prefix, cache: { ...cache, namespace: "other-bucket" } }
+      { prefix, cache: { ...cache, bucketNamespace: "other-bucket" } }
     ]) {
       const emptyBucket = { put: bucket.put.bind(bucket), get: () => Promise.resolve(null) }
       const failure = await Effect.runPromise(Effect.gen(function* () {
@@ -112,7 +112,7 @@ test("DO cache exposes its row capacity and refuses unsupported policy before us
   const stub = (env as Env).THREADS.getByName("object-cache-capacity")
   await runInDurableObject(stub, async (_instance, state) => {
     const maxCachedObjectBytes = CLOUDFLARE_OBJECT_CACHE_CAPABILITIES.maxObjectBytes
-    const cache = { storage: state.storage, namespace: "capacity", maxCachedObjectBytes }
+    const cache = { storage: state.storage, bucketNamespace: "capacity", maxCachedObjectBytes }
     const tracked = trackReads()
     expect(() => objectStorageFromR2(bucket, { cache: { ...cache, maxCachedObjectBytes: maxCachedObjectBytes + 1 } })).toThrow("host object cache limit")
     await Effect.runPromise(Effect.gen(function* () {
