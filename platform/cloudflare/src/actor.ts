@@ -1,11 +1,13 @@
 import type { TreeBounds } from "@clavia/tardigrade-client/contract"
+import { CommitSignal, streamPolicyOf } from "./transport/stream"
+import { actorThreadsTail } from "@clavia/tardigrade-http/sse"
 import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { forkBatchFor, forkRootAllocation, isForkRefused, resolveForkCheckpoint, type ForkRefusal } from "@clavia/tardigrade-host/fork"
 import type { ForkCheckpoint } from "@clavia/tardigrade-core/log"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadObjectNameOf } from "./transport/directory"
 import { DurableObject } from "cloudflare:workers"
-import { Clock, Effect, Layer, ManagedRuntime, Schema } from "effect"
+import { Clock, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { publicThreadId } from "@clavia/tardigrade-host/thread-compat"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -97,6 +99,7 @@ const threadTreeOf = (
 
 // ActorDO reconciles one actor instance from its durable event log.
 export class ActorDO extends DurableObject<Env> {
+  private readonly commits = new CommitSignal()
   private creation: Promise<ReturnType<typeof hostThreadAllocator>> | undefined
   private definition: ThreadSupervisor | undefined
   private readiness: ReturnType<typeof threadSupervisorDriver> | undefined
@@ -186,6 +189,7 @@ export class ActorDO extends DurableObject<Env> {
     await this.allocator()
     await this.readiness!.drive()
     await this.ctx.storage.sync()
+    this.commits.notify(await this.database.runPromise((await this.store()).head))
   }
 
   async createThread(name?: string, options: { readonly key?: string; readonly parent?: string } = {}): Promise<ThreadAddress> {
@@ -292,13 +296,34 @@ export class ActorDO extends DurableObject<Env> {
   }
 
   async allocateThread(request: ThreadAllocation): Promise<ThreadAddress> {
-    return Effect.runPromise((await this.allocator()).allocate(request))
+    try {
+      return await Effect.runPromise((await this.allocator()).allocate(request))
+    } finally {
+      await this.ctx.storage.sync()
+      this.commits.notify(await this.database.runPromise((await this.store()).head))
+    }
   }
 
   async ensureThreadReady(thread: string, request?: ThreadAllocation): Promise<void> {
     const target = { ...this.identity(), thread }
     const record = (await this.threads()).find((entry) => entry.thread === thread)
     await Effect.runPromise((await this.allocator()).ensure(target, request ?? threadRequestOf(target, record)))
+    await this.ctx.storage.sync()
+    this.commits.notify(await this.database.runPromise((await this.store()).head))
+  }
+
+  async threadStream(after?: number): Promise<ReadableStream<Uint8Array>> {
+    const store = await this.store()
+    const policy = streamPolicyOf(mountedActor?.streaming)
+    return Stream.toReadableStream(actorThreadsTail({
+      actorThreads: Effect.promise(async () => {
+        const events = await this.events()
+        return { cursor: events.length, threads: actorThreadsOf(events) }
+      }),
+      actorEventsPage: (cursor, limit) => Effect.promise(() => this.database.runPromise(store.readPage(cursor, limit))),
+      actorThread: (thread) => Effect.promise(async () => (await this.threads()).find((record) => record.thread === thread)),
+      awaitActorHead: this.commits.awaitHead
+    }, after, policy.pageSize, policy.heartbeatMillis))
   }
 
   async isThreadReady(thread: string): Promise<boolean> {

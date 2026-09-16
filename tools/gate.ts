@@ -84,10 +84,11 @@ const tasks: ReadonlyArray<Task> = [
   { id: "test:app-web", cwd: appPkg("web"), cmd: ["bun", "test"] },
   { id: "test:example-react-rlm-chat-web", cwd: examplePkg("web"), cmd: ["bun", "test"] },
   { id: "test:e2e", cwd: e2e, cmd: ["bun", "test"] },
+  { id: "test:example-react-rlm-chat-server", cwd: examplePkg("server"), cmd: ["bun", "test"] },
+  { id: "test:example-react-rlm-chat-workers", cwd: examplePkg("server"), cmd: ["bun", "run", "test:workers"] },
   { id: "bundle:model-providers", cmd: ["bun", "run", "tools/model-provider-bundles.ts"] },
   { id: "bundle:platform-cloudflare", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "bundle"] },
   ...bundled.map((name) => ({ id: `build:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "build"] })),
-  { id: "build:example-react-rlm-chat-web", cwd: examplePkg("web"), cmd: ["bun", "run", "build"] },
   // Knip checks the complete graph, the shipped graph, cycles, and tsconfig discovery as separate views.
   { id: "knip", cmd: ["bun", "run", "knip"] },
   { id: "knip:production", cmd: ["bun", "--bun", "node_modules/.bin/knip", "--production", "--no-progress", "--treat-config-hints-as-errors", "--treat-tag-hints-as-errors"] },

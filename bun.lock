@@ -117,11 +117,14 @@
     "examples/react-rlm-chat/server": {
       "name": "@clavia/tardigrade-react-rlm-chat-server",
       "dependencies": {
+        "effect": "4.0.0-rc.115",
         "tardie": "workspace:*",
       },
       "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "^0.20.1",
         "@cloudflare/workers-types": "^5.20260804.1",
         "typescript": "^7.0.2",
+        "vitest": "^4.1.10",
         "wrangler": "^4.119.0",
       },
     },
@@ -133,6 +136,7 @@
         "@clavia/tardigrade-ui": "workspace:*",
         "@phosphor-icons/react": "^2.1.10",
         "@tanstack/react-query": "^5.102.8",
+        "effect": "4.0.0-rc.115",
         "lucide-react": "^1.40.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",

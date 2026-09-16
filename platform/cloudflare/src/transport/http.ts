@@ -12,9 +12,11 @@ import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrad
 import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-http/models"
 import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
 import { layerApiDocs, UNAUTHENTICATED_PATHS } from "@clavia/tardigrade-http/docs"
+import { streamCursorOf } from "@clavia/tardigrade-http/sse"
 import { WorkerApi, workerRoutes } from "./contract"
 import type { Env } from "../env"
 import type { CloudflareDirectory } from "./directory"
+import type { ActorThreadNode } from "../actor"
 
 // treeBoundsOf validates optional subtree, depth, and node limits (test/actor.workers.ts).
 const treeBoundsOf = (
@@ -35,8 +37,10 @@ const treeBoundsOf = (
 }
 
 export const DEFAULT_CLOUDFLARE_EVENT_LIMIT = 200
+export const DEFAULT_CLOUDFLARE_AUTHENTICATION = "bearer" as const
 
 interface CloudflareHttpOptions {
+  readonly authentication?: () => "bearer" | "none"
   readonly actorName: () => string
   readonly methodsOf: (name: string) => ActorMethods | undefined
   readonly publicCatalog: (env: Env) => Promise<ModelCatalogState>
@@ -50,7 +54,8 @@ const FORK_REFUSAL_STATUS = { "unknown-source": 404, checkpoint: 400, occupied: 
 
 // cloudflareHttp adapts HTTP requests to the mounted host's methods and directory.
 export const cloudflareHttp = ({
-  actorName, methodsOf, publicCatalog, providerAvailabilityFrom, modelPolicyFrom, directory
+  actorName, methodsOf, publicCatalog, providerAvailabilityFrom, modelPolicyFrom, directory,
+  authentication = () => DEFAULT_CLOUDFLARE_AUTHENTICATION
 }: CloudflareHttpOptions): ExportedHandler<Env> => {
   const { actorStub, threadStub } = directory
   class WorkerEnv extends Context.Service<WorkerEnv, Env>()("tardigrade/cloudflare/WorkerEnv") {}
@@ -70,6 +75,7 @@ export const cloudflareHttp = ({
     env.TARDIGRADE_TOKEN !== undefined && request.headers.authorization === `Bearer ${env.TARDIGRADE_TOKEN}`
 
   const guard = (request: HttpServerRequest.HttpServerRequest, env: Env) => {
+    if (authentication() === "none") return undefined
     if (env.TARDIGRADE_TOKEN === undefined) return json({ error: "authentication is not configured" }, 503)
     if (!authorized(request, env)) return json({ error: "unauthorized" }, 401)
     return undefined
@@ -87,6 +93,35 @@ export const cloudflareHttp = ({
   })
 
   const routes = [
+    ...(["events", "inference", "threads"] as const).map((kind) => HttpRouter.route(
+      "GET",
+      kind === "threads" ? "/v1/actors/:id/threads/stream" : `/v1/actors/:id/threads/:thread/${kind}/stream`,
+      workerRoute((request, env) => Effect.gen(function* () {
+        const params = yield* HttpRouter.params
+        const instance = params.id ?? ""
+        if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+        const url = new URL(request.url, "http://worker")
+        const cursor = streamCursorOf(url.searchParams.get("after") ?? undefined, request.headers["last-event-id"])
+        if ("invalid" in cursor) return json({ error: "stream cursor must be a non-negative safe integer" }, 400)
+        const after = cursor.from
+        let body: ReadableStream<Uint8Array>
+        if (kind === "threads") {
+          const stub = yield* Effect.promise(() => actorStub(env, actorName(), instance, false))
+          if (stub === undefined) return json({ error: "unknown actor" }, 404)
+          body = yield* Effect.promise(() => stub.threadStream(after))
+        } else {
+          const target = yield* Effect.promise(() => threadStub(env, actorName(), instance, params.thread ?? ""))
+          if (target === undefined) return json({ error: "unknown thread" }, 404)
+          const stream = yield* Effect.promise(() => kind === "events" ? target.stub.eventStream(after ?? 0) : target.stub.inferenceStream())
+          if (stream === undefined) return json({ error: "unknown thread" }, 404)
+          body = stream
+        }
+        return HttpServerResponse.raw(body, {
+          contentType: "text/event-stream",
+          headers: { "cache-control": "no-cache" }
+        })
+      }))
+    )),
     HttpRouter.route(workerRoutes.healthz.method, workerRoutes.healthz.path, Effect.gen(function* () {
       return json({ status: "ready", actor: actorName() })
     })),
@@ -158,7 +193,14 @@ export const cloudflareHttp = ({
         if ("error" in selected) return json({ error: selected.error }, 400)
         const tree = yield* Effect.promise(() => stub.threadTree(selected.bounds))
         if (tree === undefined) return json({ error: "unknown thread" }, 404)
-        return json(tree)
+        const flatten = (nodes: ReadonlyArray<ActorThreadNode>): ReadonlyArray<ActorThreadNode> =>
+          nodes.flatMap((node) => [node, ...flatten(node.children)])
+        const summaries = yield* Effect.forEach(flatten(tree), (node) => Effect.promise(async () => {
+          const target = await threadStub(env, actorName(), instance, node.id)
+          if (target === undefined) throw new Error("registered thread is missing its Durable Object")
+          return target.stub.summary()
+        }))
+        return json(summaries)
       })
     )),
     HttpRouter.route(workerRoutes.append.method, workerRoutes.append.path, workerRoute((request, env) =>

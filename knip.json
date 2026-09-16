@@ -26,6 +26,7 @@
       ]
     },
     "examples/react-rlm-chat/server": {
+      "entry": ["*.test.ts", "*.workers.ts"],
       "project": [
         "*.ts"
       ]

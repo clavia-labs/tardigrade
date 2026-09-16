@@ -2,8 +2,10 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "tardigrade-react-rlm-chat",
   "main": "worker.ts",
-  "compatibility_date": "2026-09-04",
+  "compatibility_date": "2026-08-08",
   "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "../web/dist", "not_found_handling": "single-page-application", "run_worker_first": ["/v1/*", "/healthz", "/openapi.json"] },
+  "r2_buckets": [{ "binding": "OBJECTS", "bucket_name": "tardigrade-react-rlm-chat-objects" }],
   "durable_objects": {
     "bindings": [
       { "name": "ACTORS", "class_name": "ActorDO" },
@@ -20,6 +22,7 @@
   "observability": { "enabled": true },
   "limits": { "cpu_ms": 300000 },
   "vars": {
+    "CHAT_MAX_UPLOAD_BYTES": "10000000",
     "TARDIGRADE_ALARM_DELAY_MILLIS": "120000",
     "TARDIGRADE_COMPACTION_FIRE_RATIO": "0.8",
     "TARDIGRADE_COMPACTION_KEEP_RATIO": "0.5",

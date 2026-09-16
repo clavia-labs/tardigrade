@@ -1,10 +1,15 @@
 import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { eventTail, inferenceTail } from "@clavia/tardigrade-http/sse"
+import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
+import { summaryOf, type ThreadSummary } from "@clavia/tardigrade-http/projections"
+import { publicThreadId } from "@clavia/tardigrade-host/thread-compat"
+import { CommitSignal, streamPolicyOf } from "./transport/stream"
 import { cloudflareRpcTransport } from "./transport/rpc"
 import { actorObjectNameOf } from "./transport/directory"
 import { forkOutcomeOf } from "@clavia/tardigrade-host/fork"
 import { validateDelivery } from "@clavia/tardigrade-host/delivery"
 import { DurableObject } from "cloudflare:workers"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Schema, Stream } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -12,7 +17,7 @@ import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { directoryRoute } from "@clavia/tardigrade-core/transport/router"
 import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
+import { actorRuntimeOf, restingActor } from "@clavia/tardigrade-core/runtime"
 import { layerWorkerLoaderSandbox, type WorkerLoaderSandboxLimits } from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareThreadSchema } from "./storage"
@@ -22,6 +27,8 @@ import { DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, type BackgroundTaskOwner, DEFAULT_B
 
 // ThreadDO runs one thread over one SQLite-backed Durable Object.
 export class ThreadDO extends DurableObject<Env> {
+  private readonly commits = new CommitSignal()
+  private readonly inference = makeInferenceStream()
   private schema: Promise<void> | undefined
   private runtime: Promise<CloudflareThreadHost> | undefined
   private driving: Promise<void> | undefined
@@ -179,11 +186,15 @@ export class ThreadDO extends DurableObject<Env> {
       actorInstance,
       thread: currentThread,
       actor: selectedAssembly,
+      onPublish: (head) => this.commits.notify(head),
       ...(commitObserver === undefined ? {} : { commitObserver }),
       retainCommitTask: (task: Promise<void>) => retainBackgroundTask(this.ctx, this.backgroundTaskOwner, task),
       layers: (() => {
         const observer = mountedActor?.inferenceObserverFor?.(layerContext)
-        const framework = Layer.mergeAll(modelLayer(models, modelScope, observer), FetchHttpClient.layer, sandboxLayer)
+        const framework = Layer.mergeAll(modelLayer(models, modelScope, {
+          ...observer,
+          onDelta: (delta) => Effect.andThen(this.inference.observer.onDelta(delta), observer?.onDelta(delta) ?? Effect.void)
+        }), FetchHttpClient.layer, sandboxLayer)
         const application = mountedActor?.layersFor?.(layerContext)
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       })(),
@@ -363,6 +374,33 @@ export class ThreadDO extends DurableObject<Env> {
   async status(): Promise<{ readonly status: "resting" | "driving"; readonly dirty: number }> {
     const host = await this.host()
     return { status: await host.resting() ? "resting" : "driving", dirty: host.work() }
+  }
+
+  async summary(): Promise<ThreadSummary> {
+    const events = await (await this.host()).read()
+    const parent = threadCreatedOf(events)?.parent
+    return summaryOf(
+      publicThreadId(this.thread()), events,
+      (log) => restingActor(assemblyOf(this.name())!, log) ? "settled" : "running",
+      parent === undefined ? undefined : publicThreadId(parent.thread)
+    )
+  }
+
+  async eventStream(after: number): Promise<ReadableStream<Uint8Array> | undefined> {
+    const host = await this.host()
+    const first = await host.readPage(0, 1)
+    if (threadCreatedOf(first.map((row) => row.event)) === undefined) return undefined
+    const policy = streamPolicyOf(mountedActor?.streaming)
+    return Stream.toReadableStream(eventTail(
+      (_thread, cursor, limit) => Effect.promise(() => host.readPage(cursor, limit)),
+      (_thread, cursor) => this.commits.awaitHead(cursor),
+      this.thread(), after, policy.pageSize, policy.heartbeatMillis
+    ))
+  }
+
+  inferenceStream(): ReadableStream<Uint8Array> {
+    const policy = streamPolicyOf(mountedActor?.streaming)
+    return Stream.toReadableStream(inferenceTail(this.inference, this.instance(), this.thread(), policy.heartbeatMillis, policy.inferenceBufferCapacity))
   }
 
   async alarm(): Promise<void> {

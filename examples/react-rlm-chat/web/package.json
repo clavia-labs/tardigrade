@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "effect": "4.0.0-rc.115",
     "@base-ui/react": "^1.7.0",
     "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-ui": "workspace:*",

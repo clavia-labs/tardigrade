@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:cloudflare": "bun run --cwd server dev:cloudflare",
     "build": "bun run --cwd web build",
     "dev": "bun run --filter '@clavia/tardigrade-react-rlm-chat-*' --parallel dev",
     "dev:server": "bun run --cwd server dev",

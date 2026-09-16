@@ -312,39 +312,54 @@ describe("cloudflare actor", () => {
     })
   })
 
-  test("commit observers see only published durable heads", async () => {
+  test("durable publication does not wait for application observers and excludes staged heads", async () => {
     const commits = await runInDurableObject(threadStub("ag.commit-observer"), async (_instance, state) => {
       const seen: Array<number> = []
+      const published: Array<number> = []
       let observed = () => {}
       const firstObserved = new Promise<void>((resolve) => { observed = resolve })
+      const blocked = Promise.withResolvers<void>()
       const host = await createCloudflareThreadHost({
         storage: state.storage,
         actorName: "echo",
         actorInstance: "main",
         thread: "ag.commit-observer",
         actor: actorFromProjections({ transitions: [], keyOf: () => undefined }),
+        onPublish: (head) => { published.push(head) },
         commitObserver: {
-          onCommit: ({ head }) => Effect.sync(() => {
+          onCommit: ({ head }) => Effect.gen(function* () {
             seen.push(head)
-            if (head === 2) observed()
+            if (head === 2) {
+              observed()
+              yield* Effect.promise(() => blocked.promise)
+            }
           })
         },
         retainCommitTask: (task) => state.waitUntil(task)
       })
 
-      await host.appendAt([threadCreated(host.identity, undefined, 0)], 0)
-      await host.commitRoot({ type: "MessageReceived", id: "first", at: 1 })
-      await firstObserved
-      await host.stageRoot({ type: "MessageReceived", id: "second", at: 2 })
-      await state.storage.sync()
-      expect(seen.at(-1)).toBe(2)
-      expect(seen.every((head) => head <= 2)).toBe(true)
-      host.publishStaged()
-      await host.close()
+      try {
+        await host.appendAt([threadCreated(host.identity, undefined, 0)], 0)
+        await host.commitRoot({ type: "MessageReceived", id: "first", at: 1 })
+        await firstObserved
+        await host.commitRoot({ type: "MessageReceived", id: "second", at: 2 })
+        expect(published.at(-1)).toBe(3)
+        expect((await host.readPage(2, 1))[0]?.event).toMatchObject({ id: "second" })
+        expect(seen.at(-1)).toBe(2)
+        await host.stageRoot({ type: "MessageReceived", id: "third", at: 3 })
+        await state.storage.sync()
+        expect(published.at(-1)).toBe(3)
+        host.publishStaged()
+        expect(published.at(-1)).toBe(4)
+        expect(seen.at(-1)).toBe(2)
+      } finally {
+        blocked.resolve()
+        await host.close()
+      }
       return seen
     })
 
-    expect(commits.at(-1)).toBe(3)
+    expect(commits.at(-1)).toBe(4)
   })
 
   test("incremental commits decode only the creation record and new tail", async () => {
@@ -766,8 +781,8 @@ describe("cloudflare actor", () => {
     expect(spec.paths["/healthz"]?.get?.responses["200"]).toMatchObject({
       content: { "application/json": { schema: { properties: { status: { enum: ["ready"] }, actor: { type: "string" } } } } }
     })
-    expect(spec.components.schemas.WorkerThreadTree).toMatchObject({
-      properties: { id: { type: "string" }, children: { type: "array" } }
+    expect(spec.components.schemas.ThreadSummary).toMatchObject({
+      properties: { id: { type: "string" }, events: { type: "number" }, status: { type: "string" } }
     })
     expect(spec.paths["/v1/actors/{id}/threads/{thread}/events"]?.post?.responses).toHaveProperty("202")
     for (const [path, method, statuses] of [
@@ -865,7 +880,8 @@ describe("cloudflare actor", () => {
     expect(await health.json()).toEqual({ status: "ready", actor: "echo" })
     const threads = await SELF.fetch("http://test/v1/actors/main/threads", { headers: authorization })
     expect(threads.status).toBe(200)
-    expect(await threads.json()).toEqual([{ id: "root", depth: 0, children: [] }])
+    expect(await threads.json()).toEqual([{ id: "root", depth: 0, events: 3, lastAt: expect.any(Number), status: "settled" }])
+    expect(await client.list("main")).toEqual([{ id: "root", depth: 0, events: 3, lastAt: expect.any(Number), status: "settled" }])
     expect(await client.methods()).toEqual([expect.objectContaining({ name: "echo" })])
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
@@ -1365,26 +1381,22 @@ describe("cloudflare actor", () => {
   })
 
   test("the threads route carries the bounds and refuses what cannot count", async () => {
-    await claimTree("tree-route", [
-      ["wide-root", undefined, 0],
-      ["leaf-1", "wide-root", 1],
-      ["leaf-2", "wide-root", 1],
-      ["deep-0", undefined, 0],
-      ["deep-1", "deep-0", 1],
-      ["deep-2", "deep-1", 2]
-    ])
+    const client = makeActorClient({ baseUrl: "http://test", token: "workers-test-token", fetch: (input, init) => SELF.fetch(input, init) })
+    const directory = (env as Env).ACTORS.getByName(JSON.stringify(["echo", "tree-route"]))
+    await directory.init("echo", "tree-route")
+    const wide = await directory.createThread("wide-root")
+    const leaf1 = await directory.createThread("leaf-1", { parent: wide.thread })
+    const leaf2 = await directory.createThread("leaf-2", { parent: wide.thread })
+    const deep = await directory.createThread("deep-0")
+    const deep1 = await directory.createThread("deep-1", { parent: deep.thread })
+    const deep2 = await directory.createThread("deep-2", { parent: deep1.thread })
     const read = async (query: string) =>
       await SELF.fetch(`http://test/v1/actors/tree-route/threads${query}`, { headers: authorization })
-    const routeTree = async (query: string) =>
-      (await (await read(query)).json()) as ReadonlyArray<ActorThreadNode>
-    const depthOne = await routeTree("?maxDepth=1")
-    expect(depthOne.find((node) => node.id === "deep-0")?.children.map((node) => node.id)).toEqual(["deep-1"])
-    expect(depthOne.find((node) => node.id === "deep-0")?.children[0]?.children).toEqual([])
-    expect(depthOne.find((node) => node.id === "wide-root")?.children.map((node) => node.id))
-      .toEqual(["leaf-1", "leaf-2"])
-    const rooted = await routeTree("?root=wide-root")
-    expect(rooted.map((node) => node.id)).toEqual(["wide-root"])
-    expect(rooted[0]!.children.map((node) => node.id)).toEqual(["leaf-1", "leaf-2"])
+    const depthOne = await client.list("tree-route", { maxDepth: 1 })
+    expect(depthOne.map((node) => node.id)).toEqual([deep.thread, deep1.thread, wide.thread, leaf1.thread, leaf2.thread])
+    expect(depthOne.some((node) => node.id === deep2.thread)).toBe(false)
+    const rooted = await client.list("tree-route", { root: wide.thread })
+    expect(rooted.map((node) => node.id)).toEqual([wide.thread, leaf1.thread, leaf2.thread])
     expect((await read("?root=ghost")).status).toBe(404)
     expect((await read("?maxDepth=-1")).status).toBe(400)
     expect((await read("?maxNodes=0")).status).toBe(400)
@@ -1522,6 +1534,16 @@ test("HTTP allocation preserves unnamed keys and creates nested children", async
   expect(accepted.headers.get("Location")).toContain("/calls/sdk-nested?")
   expect((await SELF.fetch(new URL(accepted.headers.get("Location")!, "http://test"), { headers: authorization })).status).toBe(200)
   expect(await methodState(grandchild.thread, "sdk-nested")).toMatchObject({ status: "completed" })
+  const client = makeActorClient({ baseUrl: "http://test", token: "workers-test-token", fetch: (input, init) => SELF.fetch(input, init) })
+  const listed = await client.list("main", { root: "sdk-parent" })
+  expect(listed.map(({ id, parent, depth }) => ({ id, parent, depth }))).toEqual([
+    { id: "sdk-parent", parent: undefined, depth: 0 },
+    { id: child.thread, parent: "sdk-parent", depth: 1 },
+    { id: grandchild.thread, parent: child.thread, depth: 2 }
+  ])
+  expect(listed.at(-1)).toMatchObject({ events: 3, status: "settled", lastAt: expect.any(Number) })
+  expect((await client.list("main", { root: "sdk-parent", maxDepth: 1 })).map(({ id }) => id)).toEqual(["sdk-parent", child.thread])
+  expect((await client.list("main", { root: "sdk-parent", maxNodes: 1 })).map(({ id }) => id)).toEqual(["sdk-parent"])
 }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
 

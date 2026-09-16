@@ -7,6 +7,8 @@ import type { Event, EventRow } from "@clavia/tardigrade-client"
 
 import { childThread, pendingChildCount, toolContent, toolTitle, value, waitingForResponse } from "../events"
 import { MarkdownMessage } from "./MarkdownMessage"
+import { Schema } from "effect"
+import { MessageContent } from "tardie/agent"
 
 export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
   readonly empty: string
@@ -135,7 +137,10 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
           >
             {event.type === "TurnCompleted"
               ? <MarkdownMessage>{value(event, "output") ?? ""}</MarkdownMessage>
-              : event.type === "MessageReceived" ? value(event, "text") : upcastError(event.error).message}
+              : event.type === "MessageReceived" ? (Schema.is(MessageContent)(event.content)
+                ? event.content.map((part, index) => part.type === "text" ? <span key={index}>{part.text}</span>
+                  : <span className="message-attachment" key={index}><PackageIcon aria-hidden="true" />{part.filename ?? part.mediaType}</span>)
+                : value(event, "text")) : upcastError(event.error).message}
           </article>
         )
       })}

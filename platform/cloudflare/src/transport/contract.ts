@@ -1,15 +1,7 @@
 import type { HttpRouter } from "effect/unstable/http"
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
-import { actorsGroup, methodsGroup, modelsGroup, runtimeGroup, threadsGroup, ActorThread } from "@clavia/tardigrade-client/contract"
-import { ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
-import type { ActorThreadNode } from "../actor"
-
-const ThreadTree = Schema.Struct({
-  ...ActorThread.fields,
-  placement: Schema.optionalKey(ChildPlacement),
-  children: Schema.Array(Schema.suspend((): Schema.Codec<ActorThreadNode> => ThreadTree))
-}).annotate({ identifier: "WorkerThreadTree" })
+import { actorsGroup, methodsGroup, modelsGroup, runtimeGroup, threadsGroup } from "@clavia/tardigrade-client/contract"
 
 const WorkerActor = Schema.Struct({ actor: Schema.String, definition: Schema.String })
 
@@ -37,7 +29,7 @@ const workerGroup = HttpApiGroup.make("worker").add(
   workerEndpoint(actorsGroup.endpoints.actor, [400, 404], [WorkerActor]),
   workerEndpoint(threadsGroup.endpoints.allocateRoot, [400, 404]),
   workerEndpoint(threadsGroup.endpoints.forkThread, [400, 404, 409]),
-  workerEndpoint(threadsGroup.endpoints.list, [400, 404], [Schema.Array(ThreadTree)]),
+  workerEndpoint(threadsGroup.endpoints.list, [400, 404]),
   workerEndpoint(threadsGroup.endpoints.append, [400, 404]),
   workerEndpoint(threadsGroup.endpoints.events, [400, 404, 500])
 )
