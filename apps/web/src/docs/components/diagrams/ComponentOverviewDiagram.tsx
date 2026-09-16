@@ -1,37 +1,42 @@
-import { useId, type ReactElement } from "react"
+import { type ReactElement } from "react"
 
-export const ComponentOverviewDiagram = (): ReactElement => {
-  const clip = useId()
-  return (
-    <figure className="component-overview" aria-label="A component takes events from the world and acts on it through effects">
-      <svg viewBox="-72 0 592 240" role="img" aria-label="A component sits beside the world. Events flow from the world into the component. Effects flow from the component into the world. A loop on the component shows an event the component appends for itself.">
-        <defs><clipPath id={clip}><circle cx="400" cy="120" r="90" /></clipPath></defs>
-        <g className="component-overview-box"><rect x="30" y="80" width="180" height="80" /><text x="120" y="125">Component</text></g>
-        <g className="component-overview-globe">
-          <circle className="globe-sphere" cx="400" cy="120" r="90" />
-          <g className="globe-grid" clipPath={`url(#${clip})`}>
-            <ellipse cx="400" cy="120" rx="22" ry="90" />
-            <ellipse cx="400" cy="120" rx="43" ry="90" />
-            <ellipse cx="400" cy="120" rx="64" ry="90" />
-            <ellipse cx="400" cy="120" rx="80" ry="90" />
-            <ellipse cx="400" cy="75" rx="73" ry="14" />
-            <ellipse cx="400" cy="98" rx="86" ry="16" />
-            <ellipse cx="400" cy="120" rx="90" ry="17" />
-            <ellipse cx="400" cy="142" rx="86" ry="16" />
-            <ellipse cx="400" cy="165" rx="73" ry="14" />
-          </g>
+export const ComponentOverviewDiagram = (): ReactElement => (
+  <figure className="component-overview component-overview-loop" aria-label="A component interacts with the world through effects and events">
+    <svg viewBox="0 -35 800 345" role="img" aria-label="The component derives state and describes the next action as an Effect value. Both are on the pure side of a dashed boundary. Across the boundary, the runtime executes the description and performs I/O against the world. The result is recorded as an event and returns to the component.">
+      <path d="M496 0V133M496 157V249" fill="none" stroke="var(--faint)" strokeWidth="1" strokeDasharray="4 5" opacity="0.65" />
+      <g className="component-overview-globe">
+        <circle className="globe-sphere" cx="728" cy="145" r="44" />
+        <g className="globe-grid">
+          <ellipse cx="728" cy="145" rx="17" ry="44" />
+          <ellipse cx="728" cy="145" rx="32" ry="44" />
+          <ellipse cx="728" cy="145" rx="44" ry="15" />
         </g>
-        <g className="composition-links component-overview-links">
-          <path d="M304 96H220m8-5-8 5 8 5" />
-          <path d="M218 144h86m-8-5 8 5-8 5" />
-          <path d="M30 100H-12V140H22m-8-5 8 5-8 5" />
-        </g>
-        <g className="component-overview-labels">
-          <text x="262" y="86" textAnchor="middle">event</text>
-          <text x="262" y="162" textAnchor="middle">effect</text>
-          <text x="-20" y="124" textAnchor="end">event</text>
-        </g>
-      </svg>
-    </figure>
-  )
-}
+      </g>
+      <g className="component-overview-box">
+        <rect x="24" y="92" width="232" height="106" />
+        <text x="140" y="122">Component</text>
+        <rect x="326" y="112" width="140" height="66" />
+        <text x="396" y="150">Call model</text>
+      </g>
+      <g className="composition-links component-overview-links">
+        <path d="M140 42V82m-5-8 5 8 5-8" />
+        <path d="M266 145H316m-8-5 8 5-8 5" />
+        <path d="M476 145H674m-8-5 8 5-8 5" />
+        <path d="M728 199V261H140V208m-5 8 5-8 5 8" />
+      </g>
+      <g className="component-overview-labels" textAnchor="middle">
+        <text x="484" y="18" textAnchor="end">Pure</text>
+        <text x="508" y="18" textAnchor="start">Effectful</text>
+        <text x="140" y="27">Event</text>
+        <text x="140" y="151">derive state</text>
+        <text x="140" y="173">describe next action</text>
+        <text x="396" y="96">Effect value</text>
+        <text x="396" y="204">description</text>
+        <text x="593" y="122">runtime executes</text>
+        <text x="593" y="175">I/O</text>
+        <text x="728" y="82">World</text>
+        <text x="434" y="287">result recorded as an event</text>
+      </g>
+    </svg>
+  </figure>
+)

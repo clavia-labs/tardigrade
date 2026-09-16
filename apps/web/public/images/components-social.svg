@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f8f7f0" />
+  <style>
+    .component-overview-box rect { fill: #edf1ff; stroke: #2448ff; stroke-width: 1.4; }
+    .component-overview-box text { fill: #2448ff; font: 15px monospace; text-anchor: middle; }
+    .component-overview-labels { fill: #526177; font: 12px monospace; }
+    .composition-links { fill: none; stroke: #2448ff; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    .globe-sphere { fill: #f3f4f0; stroke: #2448ff; stroke-width: 1.2; }
+    .globe-grid { fill: none; stroke: #2448ff; stroke-width: .7; opacity: .42; }
+  </style>
+  <text x="64" y="106" fill="#151923" font-family="Arial, sans-serif" font-size="64" font-weight="600">Components</text>
+  <text x="1136" y="104" text-anchor="end" fill="#526177" font-family="Arial, sans-serif" font-size="26">Tardigrade</text>
+  <g transform="translate(64 186) scale(1.34)">
+    <path d="M496 0V133M496 157V249" fill="none" stroke="#8490a1" stroke-width="1" stroke-dasharray="4 5" opacity="0.65"></path><g class="component-overview-globe"><circle class="globe-sphere" cx="728" cy="145" r="44"></circle><g class="globe-grid"><ellipse cx="728" cy="145" rx="17" ry="44"></ellipse><ellipse cx="728" cy="145" rx="32" ry="44"></ellipse><ellipse cx="728" cy="145" rx="44" ry="15"></ellipse></g></g><g class="component-overview-box"><rect x="24" y="92" width="232" height="106"></rect><text x="140" y="122">Component</text><rect x="326" y="112" width="140" height="66"></rect><text x="396" y="150">Call model</text></g><g class="composition-links component-overview-links"><path d="M140 42V82m-5-8 5 8 5-8"></path><path d="M266 145H316m-8-5 8 5-8 5"></path><path d="M476 145H674m-8-5 8 5-8 5"></path><path d="M728 199V261H140V208m-5 8 5-8 5 8"></path></g><g class="component-overview-labels" text-anchor="middle"><text x="484" y="18" text-anchor="end">Pure</text><text x="508" y="18" text-anchor="start">Effectful</text><text x="140" y="27">Event</text><text x="140" y="151">derive state</text><text x="140" y="173">describe next action</text><text x="396" y="96">Effect value</text><text x="396" y="204">description</text><text x="593" y="122">runtime executes</text><text x="593" y="175">I/O</text><text x="728" y="82">World</text><text x="434" y="287">result recorded as an event</text></g>
+  </g>
+</svg>
