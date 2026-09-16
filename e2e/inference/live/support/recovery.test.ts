@@ -32,7 +32,7 @@ test("HTTP live contracts preserve history through tool evolution, restart, and 
   expect(models).toEqual([...Array(10).fill(target.model), "other-model", "other-model", target.model])
 }, 15_000)
 
-test("Converse lifecycle preserves tool history and durably rejects disabled tools", async () => {
+test("Converse lifecycle preserves tool history and recalls results with tools disabled", async () => {
   const models: Array<string | undefined> = []
   const configured: ResolvedLiveTarget = { ...target, protocol: "bedrock-converse", region: "us-east-1", behaviors: [...target.behaviors, "reasoning"] }
   const outcome = await runLifecycle([configured, { ...configured, id: "other", model: "other-model" }], { bedrockSend: async (input) => {
@@ -40,8 +40,8 @@ test("Converse lifecycle preserves tool history and durably rejects disabled too
     const result = input.messages?.at(-1)?.content?.at(-1)?.toolResult
     const nonce = JSON.stringify(input.messages).match(/[0-9a-f]{8}-[0-9a-f-]{27}/g)?.at(-1)
     const selected = input.toolConfig?.tools?.[0]?.toolSpec
-    const param = JSON.stringify(selected?.inputSchema).includes("priorNonce") ? "priorNonce" : selected?.name === "check_nonce" ? "nonce" : undefined
-    const events: ConverseStreamOutput[] = result === undefined ? [
+    const param = JSON.stringify(selected?.inputSchema)?.includes("priorNonce") ? "priorNonce" : selected?.name === "check_nonce" ? "nonce" : undefined
+    const events: ConverseStreamOutput[] = result === undefined && selected !== undefined ? [
       { messageStart: { role: "assistant" } },
       { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: "Check" } } } },
       { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: `signed-${input.modelId}-${models.length}` } } } },
@@ -58,8 +58,8 @@ test("Converse lifecycle preserves tool history and durably rejects disabled too
     ]
     return { $metadata: {}, stream: (async function* () { yield* events; yield { metadata: { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }, metrics: { latencyMs: 1 } } } })() }
   } })
-  expect(outcome).toEqual({ turns: 4, requests: 6 })
-  expect(models).toEqual([target.model, target.model, target.model, target.model, "other-model", "other-model"])
+  expect(outcome).toEqual({ turns: 4, requests: 7 })
+  expect(models).toEqual([target.model, target.model, target.model, target.model, "other-model", "other-model", target.model])
 })
 
 test("cleanup releases remaining acquisitions after a closer fails", async () => {
