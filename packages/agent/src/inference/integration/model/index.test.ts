@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { durableReact } from "../../../testing/durable-inference"
 import type { ProviderContinuation } from "@clavia/tardigrade-agent/inference/continuation"
@@ -68,6 +69,7 @@ for (const provider of ["openai", "anthropic", "openai-compat"] as const) {
     )) })
     const host = makeHost()
     readHistory = () => host.read("root")
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Read three files", ...(declaredOutput ? { output: { name: "answer", schema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"], additionalProperties: false } } } : {}), at: 1 })
     await host.drive()
     const history = host.read("root")
@@ -260,6 +262,7 @@ for (const outcome of ["stop", "tool_calls", "content_filter", "length", "interr
     const binding = inferenceLayer({ provider: "openai-compat", providerId: "gateway", endpoint: "https://fixture.invalid", client: { apiKey: Redacted.make("test") }, model: { model: "requested-model" }, retry: { backoffMs: [] } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))
     const definition = actor({ name: "evidence", methods: agentMethods, components: [infer([outputValidateOnce, tool({ spec: { name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }, run: () => Effect.succeed("done") })], { models: { default: { provider: "gateway", model_id: "requested-model" }, allow: "*" } })] })
     const host = createHost({ actorName: "evidence", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, binding) })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Read", budget: 1, at: 1 })
     await host.drive()
     const recorded = host.read("root").find((event) => event.type === "ModelReturned")!

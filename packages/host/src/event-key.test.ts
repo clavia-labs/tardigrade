@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { component, transitionProjectionOf, type TransitionContext } from "@clavia/tardigrade-core/component"
 import { expect, test } from "bun:test"
 import { hostEventKeyOf, requireDeliveryKey } from "./event-key"
@@ -39,6 +40,7 @@ test("host storage deduplicates runtime completions within each owning log", asy
   const runtime = { projections: [transitionProjectionOf(worker)], keyOf: () => undefined }
   const host = createHost({ actorFor: () => runtime })
   for (const thread of ["a", "b"]) {
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self(thread)) })
     await host.commitRoot(host.self(thread), requested)
     await host.wake(thread)
     const events = host.read(thread)

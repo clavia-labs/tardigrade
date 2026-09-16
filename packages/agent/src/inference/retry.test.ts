@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { testInferenceLayer, type TestInference } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { Clock, Effect, Layer } from "effect"
@@ -29,6 +30,7 @@ test.each([false, true])("physical attempts commit separately and recovery uses 
       ? { kind: "fail" as const, retryable: true, error: { message: "busy", isRetryable: true }, usage: { inputTokens: { total: 100 }, outputTokens: { total: 20 } } }
       : { kind: "complete" as const, output: "done", usage: { inputTokens: { total: 100 }, outputTokens: { total: 30 } } }
   }) })
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
   await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Hello", at: 1 })
   await host.drive()
   const log = JSON.parse(JSON.stringify(host.read("root"))) as ReturnType<typeof host.read>

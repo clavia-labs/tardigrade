@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import fc from "fast-check"
 import { describe, expect, test } from "bun:test"
@@ -50,6 +51,7 @@ const setup = (
     host,
     read: () => host.read(ROOT),
     start: async () => {
+      await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self(ROOT)) })
       await host.commitRoot(host.self(ROOT), { type: "MessageReceived", id: TURN, text: "Read the files", at: 1 })
       await host.drive()
     }

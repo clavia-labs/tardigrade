@@ -88,9 +88,9 @@ export interface Host {
   // seed appends without waking the thread: test and bootstrap ingress.
   readonly seed: (thread: string, events: ReadonlyArray<Event>) => void
   readonly read: (thread: string) => ReadonlyArray<Event>
-  // commit persists one addressed envelope, including child creation lineage when present.
+  // commit persists one addressed envelope to an allocated, ready thread (thread-supervisor.test.ts).
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
-  // commitRoot injects an unlinked root event and marks its thread owed a visit.
+  // commitRoot persists an unlinked event to an allocated, ready thread (thread-supervisor.test.ts).
   readonly commitRoot: (address: string, event: Event) => Promise<void>
   // wake marks a thread owed a visit and drives: what a binding's backup
   // alarm does, and what tests do after seeding a thread by hand.
@@ -129,6 +129,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
 
   const read = (thread: string): ReadonlyArray<Event> => threads.get(thread) ?? []
   const supervisorEvents: Event[] = []
+  const readyThreads = new Set<string>()
   const definition = options.supervisor ?? threadSupervisor()
   const actorDirectories = new Map([[JSON.stringify([actorName, actorInstance]), supervisorEvents]])
   const assignments = memoryThreadDirectory((target, existingRoot, request) => {
@@ -177,9 +178,8 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   ): Promise<void> => {
     const thread = threadOf(formatThreadAddress(target))
     validateDelivery({ target, event, lineage, link, call, keyOf: options.keyOf }, read(thread))
-    await prepare(target, lineage === undefined ? { kind: "root", coordinate: target }
-      : { kind: "child", parent: lineage.parent, child: childKeyOf(target.thread),
-        ...(lineage.maxDepth === undefined ? {} : { maxDepth: lineage.maxDepth }), ...(lineage.placement === undefined ? {} : { placement: lineage.placement }) })
+    if (target.actor !== actorName || target.instance !== actorInstance) throw new Error("delivery target does not match actor instance")
+    if (!readyThreads.has(thread)) throw new Error("thread is not ready; allocate it before delivery")
     const result = await Effect.runPromise(commitDelivery({ target, event, lineage, link, call, keyOf: options.keyOf }, {
       read: Effect.sync(() => read(thread)),
       head: Effect.sync(() => read(thread).length),
@@ -233,6 +233,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
         const key = threadSupervisorKeyOf(definition, event)
         if (key !== undefined && keys.has(key)) continue
         supervisorEvents.push(event)
+        if (event.type === "ThreadRegistered") readyThreads.add(String(event.thread))
         if (key !== undefined) keys.add(key)
       }
     })

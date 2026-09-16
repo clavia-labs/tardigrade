@@ -132,6 +132,7 @@ test.each(["memory", "sqlite"] as const)("the developer flow allocates scoped th
     }
     const rick = hosts.get("rick")!
     const morty = hosts.get("morty")!
+    await rick.allocate({ kind: "root", coordinate: { actor: "tardie", instance: "rick", thread: "caller" } })
     await rick.commitRoot(rick.self("caller"), prepareInvocation({
       reference: { target: { actor: "tardie", instance: "rick", thread: "caller" }, invocation: { method: "run", id: "start", epoch: 0 } },
       method: run, input: {}, at: Date.now()

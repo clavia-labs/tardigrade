@@ -15,10 +15,10 @@ import type { InferDelta } from "./inference/observer"
 import { boundaryOf } from "./output/boundary"
 import { resumeTurn } from "./runtime/resume"
 import { agentsPackage } from "./packages/agents"
-import { threadCreated, threadCreatedOf, type ChildCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { threadCreatedOf, type ChildCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { linkOf } from "@clavia/tardigrade-core/transport/link"
 import { methodEnvelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
-import { threadAddressOf } from "@clavia/tardigrade-core/transport/endpoint"
+import { parseThreadAddress, threadAddressOf } from "@clavia/tardigrade-core/transport/endpoint"
 import { agentMethods, budget, codeMode, compaction, infer, nativeOutput, tool, type AgentComponent } from "./index"
 import type { AgentR } from "./runtime/turn"
 
@@ -84,6 +84,7 @@ const hosted = (
   }
   const run = async (brief: string): Promise<Settled> => {
     const id = `run-${n++}`
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self(ROOT_THREAD)) })
     await host.commitRoot(host.self(ROOT_THREAD), { type: "MessageReceived", id, text: brief, at: n } as Event)
     await host.drive()
     return settled(id)
@@ -157,6 +158,7 @@ describe("an assembled agent", () => {
       await held
       return { kind: "complete", output: "late" }
     })
+    await mind.host.allocate({ kind: "root", coordinate: parseThreadAddress(mind.host.self(ROOT_THREAD)) })
     await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
       type: "MessageReceived",
       id: "m1",
@@ -215,6 +217,7 @@ describe("an assembled agent", () => {
   }
 
   const cancelAfter = async (mind: ReturnType<typeof rlm>, started: Promise<void>) => {
+    await mind.host.allocate({ kind: "root", coordinate: parseThreadAddress(mind.host.self(ROOT_THREAD)) })
     await mind.host.commitRoot(mind.host.self(ROOT_THREAD), { type: "MessageReceived", id: "m1", text: "wait", at: 1 } as Event)
     const driving = mind.host.drive()
     await started
@@ -312,6 +315,7 @@ describe("an assembled agent", () => {
       throw new Error("a queued cancelled invocation must not infer")
     })
     const target = threadAddressOf("mem", "main", ROOT_THREAD)
+    await mind.host.allocate({ kind: "root", coordinate: target })
     await mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
       type: "MessageReceived",
       id: "m1",
@@ -321,7 +325,7 @@ describe("an assembled agent", () => {
     const cancellationMethod = cancellationMethodFor(agentMethods)
     for (const [index, id] of ["x1", "x2"].entries()) {
       const source = threadAddressOf("mem", "main", `caller-${index + 1}`)
-      mind.host.seed(source.thread, [threadCreated(source, undefined, 1)])
+      await mind.host.allocate({ kind: "root", coordinate: source })
       await mind.host.commit(methodEnvelopeOf(
         linkOf(source, target),
         { invocation: { method: CANCELLATION_CONTROL_METHOD, id, epoch: 0 } },

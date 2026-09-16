@@ -3,8 +3,6 @@ import { cloudflareRpcTransport } from "./transport/rpc"
 import { actorObjectNameOf } from "./transport/directory"
 import { forkOutcomeOf } from "@clavia/tardigrade-host/fork"
 import { validateDelivery } from "@clavia/tardigrade-host/delivery"
-import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
-import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { DurableObject } from "cloudflare:workers"
 import { Effect, Layer, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -226,12 +224,12 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   // accept stages the work and recovery alarm, crosses their commit turn, and starts reconciliation in that order (tla/DurableExecution.tla, CoveredBeforeDrive).
-  private async accept(host: CloudflareThreadHost, stage: () => Promise<void>, request?: ThreadAllocation): Promise<void> {
-    {
+  private async accept(host: CloudflareThreadHost, stage: () => Promise<void>): Promise<void> {
+    if (await this.ctx.storage.get<boolean>("threadReady") !== true) {
       const identity = this.identity()
-      const owner = await directory.actorStub(this.env, identity.actor, identity.instance, true)
-      if (owner === undefined) throw new Error("allocation actor is not deployed")
-      await owner.ensureThreadReady(identity.thread, request)
+      const owner = await directory.actorStub(this.env, identity.actor, identity.instance, false)
+      if (owner === undefined || !await owner.isThreadReady(identity.thread)) throw new Error("thread is not ready; allocate it before delivery")
+      await this.ctx.storage.put("threadReady", true)
     }
     const current = await this.ctx.storage.getAlarm()
     await stage()
@@ -309,6 +307,7 @@ export class ThreadDO extends DurableObject<Env> {
     const host = await this.host()
     const created = threadCreatedOf(await host.read())
     if (created === undefined) return undefined
+    await this.ctx.storage.put("threadReady", true)
     await this.arm()
     await this.commitTurn()
     host.publishStaged()
@@ -317,15 +316,12 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   async deliver(envelope: ActorEnvelope): Promise<void> {
+    if (!this.initialized()) throw new Error("thread is not ready; allocate it before delivery")
     this.validateDelivery(envelope)
     const host = await this.host()
     validateDelivery({ target: envelope.link.target, event: envelope.event, link: envelope.link, call: envelope.call, lineage: envelope.lineage,
       keyOf: actorRuntimeOf(assemblyOf(this.name())!).keyOf }, await host.read())
-    const request: ThreadAllocation | undefined = envelope.lineage === undefined ? undefined
-      : { kind: "child", parent: envelope.lineage.parent, child: childKeyOf(this.thread()),
-        ...(envelope.lineage.maxDepth === undefined ? {} : { maxDepth: envelope.lineage.maxDepth }),
-        ...(envelope.lineage.placement === undefined ? {} : { placement: envelope.lineage.placement }) }
-    await this.accept(host, () => host.stage(envelope), request)
+    await this.accept(host, () => host.stage(envelope))
   }
 
   async events(thread: string): Promise<ReadonlyArray<Event>> {

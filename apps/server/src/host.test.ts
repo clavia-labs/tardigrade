@@ -195,6 +195,9 @@ describe("the threads service", () => {
 
     await running(
       (threads) => Effect.gen(function*() {
+        const instance = yield* threads.ensure("main")
+        yield* instance.allocateRoot("alpha")
+        yield* instance.allocateRoot("beta")
         yield* Effect.all([
           threads.append("main", "alpha", brief("a")),
           threads.append("main", "beta", brief("b"))
@@ -236,6 +239,9 @@ describe("the threads service", () => {
             event: { type: "MessageReceived", id: "m1", text: "first", at: 42 }
           }
         ]
+        const instance = yield* threads.ensure("main")
+        yield* instance.allocateRoot("alpha")
+        yield* instance.allocateRoot("beta")
         yield* ingress.commit(envelopes)
         const gauge = yield* DriverGauge
         const committed = {
@@ -267,6 +273,7 @@ describe("the threads service", () => {
   test("an appended brief drives to a completed turn", async () => {
     const types = await running((threads) =>
       Effect.gen(function*() {
+        yield* (yield* threads.ensure("main")).allocateRoot("alpha")
         yield* threads.append("main", "alpha", brief("m1"))
         yield* threads.settled("main")
         const gauge = yield* DriverGauge
@@ -281,6 +288,9 @@ describe("the threads service", () => {
   test("list names every thread thread with its log", async () => {
     const listed = await running((threads) =>
       Effect.gen(function*() {
+        const instance = yield* threads.ensure("main")
+        yield* instance.allocateRoot("alpha")
+        yield* instance.allocateRoot("beta")
         yield* threads.append("main", "alpha", brief("m1"))
         yield* threads.append("main", "beta", brief("m2"))
         yield* threads.settled("main")
@@ -297,6 +307,7 @@ describe("the threads service", () => {
   test("an appended event keeps the time it states", async () => {
     const stamps = await running((threads) =>
       Effect.gen(function*() {
+        yield* (yield* threads.ensure("main")).allocateRoot("alpha")
         yield* threads.append("main", "alpha", { type: "MessageReceived", id: "m1", text: "hello", at: 4242 })
         yield* threads.settled("main")
         const log = yield* threads.events("main", "alpha")
@@ -309,6 +320,7 @@ describe("the threads service", () => {
   test("redelivering one message id is absorbed", async () => {
     const counts = await running((threads) =>
       Effect.gen(function*() {
+        yield* (yield* threads.ensure("main")).allocateRoot("alpha")
         yield* threads.append("main", "alpha", brief("m1"))
         yield* threads.settled("main")
         const before = (yield* threads.events("main", "alpha")).length

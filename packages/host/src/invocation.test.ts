@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { Effect, Schema } from "effect"
 import { defineActor, threadTarget, bindThreadMethods, allocateChildThread, allocateRootThread, legacyComponent } from "@clavia/tardigrade-core/actor"
 import { legacyActorMethod } from "@clavia/tardigrade-core/actor/method-compat"
@@ -42,6 +43,7 @@ test("unnamed allocation positions separate actions and invocation coordinates a
       actorFor: (thread) => thread === "caller" ? actor : undefined,
       keyOf: actorRuntimeOf(actor).keyOf,
       threadAllocator: registeredThreadAllocator(assignments) })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("caller")) })
     await host.commitRoot(host.self("caller"), { type: "MessageReceived", id: "start", at: 0 })
     await host.drive()
     return host.read("caller").filter((event) => event.type === "Allocated").map((event) => event.threads as string[])
@@ -115,7 +117,8 @@ for (const placement of ["existing", "child", "root"] as const) test(`typed call
     driver: { maxConcurrentThreads: 1 }
   })
   let host = open()
-  if (placement === "existing") await host.commitRoot(host.self("worker"), { type: "MessageReceived", id: "ready", at: Date.now() })
+  if (placement === "existing") await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("worker")) })
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
   const event = prepareInvocation({
     reference: { target: { actor: "test", instance: "main", thread: "root" }, invocation: { method: "summarize", id: "summary", epoch: 0 } },
     method: summarize, input: {}, at: Date.now()

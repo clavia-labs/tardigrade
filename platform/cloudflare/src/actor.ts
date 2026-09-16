@@ -301,7 +301,11 @@ export class ActorDO extends DurableObject<Env> {
     await Effect.runPromise((await this.allocator()).ensure(target, request ?? threadRequestOf(target, record)))
   }
 
-  // deliverChild records creation after the child log and actor supervisor accept the request (tla/ThreadCreation.tla, CreatedHasAccepted).
+  async isThreadReady(thread: string): Promise<boolean> {
+    return (await this.threads()).some((entry) => entry.thread === thread && entry.state === "registered")
+  }
+
+  // deliverChild validates child lineage before delivery to a registered thread (test/actor.workers.ts).
   async deliverChild(envelope: ActorEnvelope): Promise<void> {
     const identity = this.identity()
     const target = envelope.link.target
@@ -318,16 +322,15 @@ export class ActorDO extends DurableObject<Env> {
     if (parent === undefined || parent.state !== "registered") throw new Error("a child thread requires a registered parent")
     if (lineage.depth !== Number(parent.depth) + 1) throw new Error("a child thread depth must follow its parent")
     const existing = threads.find((entry) => entry.thread === target.thread)
+    if (existing?.state !== "registered") throw new Error("thread is not ready; allocate it before delivery")
     const placement = lineage.placement ?? mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT
-    if (existing !== undefined && (
+    if (
       existing.parentThread !== lineage.parent.thread ||
       Number(existing.depth) !== lineage.depth ||
-      ((existing.state === "registered" || existing.placement !== undefined) && (existing.placement ?? null) !== placement)
-    )) {
+      (existing.placement ?? null) !== placement
+    ) {
       throw new Error("a child thread already has different lineage")
     }
-    await this.ensureThreadReady(target.thread, { kind: "child", parent: lineage.parent, child: childKeyOf(target.thread), placement,
-      ...(lineage.maxDepth === undefined ? {} : { maxDepth: lineage.maxDepth }) })
     const stub = this.env.THREADS.getByName(threadObjectNameOf(target.actor, target.instance, target.thread))
     await stub.deliver(envelope)
   }

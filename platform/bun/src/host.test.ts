@@ -155,6 +155,42 @@ const deadlineHost = (path: string, alarm: ManualAlarmScheduler) => createBunHos
 const eventsOf = (events: ReadonlyArray<Event>, type: string) => events.filter((event) => event.type === type)
 
 describe("the bun host", () => {
+  test("delivery rejects missing and unfinished threads and retains readiness after reopen", async () => {
+    const path = freshPath()
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let setups = 0
+    const open = () => createBunHost({ database: path, actorFor: () => undefined,
+      supervisor: threadSupervisor({ setup: () => Effect.promise(async () => {
+        setups++
+        started.resolve()
+        await release.promise
+      }) }) })
+    let host = await open()
+    const deliver = (id: string) => host.commitRoot(host.self("root"), { type: "MessageReceived", id, at: 1 })
+    try {
+      await expect(deliver("missing")).rejects.toThrow("allocate it before delivery")
+      expect(await host.actorThread("root")).toBeUndefined()
+      expect(await host.threads()).toEqual([])
+      expect(setups).toBe(0)
+      const allocation = host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
+      await started.promise
+      await expect(deliver("pending")).rejects.toThrow("allocate it before delivery")
+      expect((await host.read("root")).map((event) => event.type)).toEqual(["ThreadCreated"])
+      release.resolve()
+      await allocation
+      await deliver("ready")
+      await host.close()
+      host = await open()
+      await deliver("reopened")
+      expect(setups).toBe(1)
+      expect((await host.read("root")).filter((event) => event.type === "MessageReceived").map((event) => event.id)).toEqual(["ready", "reopened"])
+    } finally {
+      release.resolve()
+      await host.close()
+    }
+  })
+
   test("child allocation records its depth ceiling before delivery and survives recovery", async () => {
     const path = freshPath()
     let setups = 0
@@ -190,8 +226,9 @@ describe("the bun host", () => {
       }) }
     })
     try {
-      await expect(host.commitRoot(host.self("denied"), { type: "MessageReceived", id: "first", at: 1 })).rejects.toThrow("reservation refused")
+      await expect(host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("denied")) })).rejects.toThrow("reservation refused")
       expect(await host.read("denied")).toEqual([])
+      await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
       await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "first", at: 1 })
       await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "second", at: 2 })
       expect(requests).toEqual(["root", "root"])
@@ -223,6 +260,7 @@ describe("the bun host", () => {
     const first = await createBunHost(config)
     try {
       expect(first.self(address.thread)).toBe(wire)
+      await first.allocate({ kind: "root", coordinate: parseThreadAddress(wire) })
       await first.commitRoot(wire, { type: "MessageReceived", id: "m1", at: 1 } as Event)
       expect((await first.read(address.thread))[0]).toMatchObject({ type: "ThreadCreated", address })
     } finally { await first.close() }
@@ -237,6 +275,7 @@ describe("the bun host", () => {
     const first = await createBunHost(options(path))
     const waiting = first.awaitActorHead(0)
 
+    await first.allocate({ kind: "root", coordinate: parseThreadAddress("bun:default:alpha") })
     await first.commitRoot("bun:default:alpha", { type: "MessageReceived", id: "m1", at: 1 } as Event)
 
     expect(await waiting).toBeGreaterThan(0)
@@ -264,6 +303,7 @@ describe("the bun host", () => {
   test("recovery repairs actor events from a thread log", async () => {
     const path = freshPath()
     const first = await createBunHost(options(path))
+    await first.allocate({ kind: "root", coordinate: parseThreadAddress("bun:default:alpha") })
     await first.commitRoot("bun:default:alpha", { type: "MessageReceived", id: "m1", at: 1 } as Event)
     await first.close()
 
@@ -338,6 +378,7 @@ describe("the bun host", () => {
     })
     const waiting = h.awaitHead("followed", 0)
 
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("bun:default:followed") })
     await h.commitRoot("bun:default:followed", { type: "MessageReceived", id: "followed", at: 1 } as Event)
 
     expect(await waiting).toBeGreaterThanOrEqual(1)
@@ -383,6 +424,7 @@ describe("the bun host", () => {
       layersFor: () => Layer.succeed(Sandbox, jsSandboxService)
     })
 
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("bun:default:isolated") })
     await h.commitRoot("bun:default:isolated", { type: "MessageReceived", id: "isolated", at: 0 } as Event)
     await h.drive()
 
@@ -430,6 +472,7 @@ describe("the bun host", () => {
       driver: { maxConcurrentThreads: 2 }
     })
     for (const thread of ["a", "b", "c"]) {
+      await h.allocate({ kind: "root", coordinate: parseThreadAddress(`bun:default:${thread}`) })
       await h.commitRoot(`bun:default:${thread}`, { type: "MessageReceived", id: thread, at: 0 } as Event)
     }
 
@@ -456,6 +499,7 @@ describe("the bun host", () => {
 
   test("delivers, settles, and a keyed redelivery absorbs", async () => {
     const h = await createBunHost(options(freshPath()))
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("bun:default:echo") })
     await h.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
     expect((await h.read("echo")).map((e) => e.type)).toEqual(["ThreadCreated", "MessageReceived", "Done"])
@@ -479,6 +523,7 @@ describe("the bun host", () => {
   test("a reopened database keeps the log byte for byte", async () => {
     const path = freshPath()
     const first = await createBunHost(options(path))
+    await first.allocate({ kind: "root", coordinate: parseThreadAddress("bun:default:echo") })
     await first.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await first.drive()
     const before = await first.read("echo")
@@ -494,6 +539,7 @@ describe("the bun host", () => {
   test("forkThread copies a prefix through sqlite append and survives reopen", async () => {
     const path = freshPath()
     const first = await createBunHost({ database: path, actorFor: () => undefined })
+    await first.allocate({ kind: "root", coordinate: parseThreadAddress(first.self("root")) })
     await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "m1", at: 1 } as Event)
     await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "m2", at: 2 } as Event)
     const dest = await first.forkThread({ source: "root", seq: 2, name: "experiment" })
@@ -545,6 +591,7 @@ describe("the bun host", () => {
       }) })
     })
     try {
+      await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
       await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
       const result = await host.forkThread({ source: "root", seq: 2, name: "experiment" }).then(
         (coordinate) => ({ status: "published", coordinate }),
@@ -567,6 +614,7 @@ describe("the bun host", () => {
     const first = await createBunHost({ database: path, actorFor: () => echo })
     const request = { source: "root", seq: 2, name: "experiment" }
     try {
+      await first.allocate({ kind: "root", coordinate: parseThreadAddress(first.self("root")) })
       await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
       await first.reserveThread({ kind: "root", coordinate: parseThreadAddress(first.self("experiment")), fork: { source: parseThreadAddress(first.self("root")), seq: 2 } })
       expect(await first.read("experiment")).toEqual([])
@@ -591,6 +639,7 @@ describe("the bun host", () => {
 
   test("concurrent forks of one name land once through sqlite", async () => {
     const host = await createBunHost({ database: freshPath(), actorFor: () => undefined })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 } as Event)
     const results = await Promise.all([1, 2, 3, 4].map(() => host.forkThread({ source: "root", seq: 2, name: "experiment" })))
     expect(new Set(results.map((result) => result.thread))).toEqual(new Set(["experiment"]))
@@ -740,6 +789,7 @@ describe("the bun host", () => {
   test("threads names every thread the log holds", async () => {
     const h = await createBunHost(options(freshPath()))
     expect(await h.threads()).toEqual([])
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("bun:default:echo") })
     await h.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.seed("other", [created("other"), { type: "MessageReceived", id: "m2", text: "go", at: 2 } as Event])
     await h.drive()
@@ -829,6 +879,7 @@ describe("the bun host", () => {
     const parent = parseThreadAddress("bun:default:parent")
     await h.allocate({ kind: "root", coordinate: parent })
     const target = parseThreadAddress("bun:default:child")
+    await h.allocate({ kind: "child", parent, child: childKeyOf(target.thread), maxDepth: 2 })
     const first = envelopeOf(
       linkOf(parent, target),
       { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
@@ -984,6 +1035,7 @@ describe("telemetry seam", () => {
       })
     )
     const h = await createBunHost({ ...options(freshPath()), telemetry: capture })
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("bun:default:echo") })
     await h.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
     expect(names.some((s) => s.name === "commit" && s.type === "MessageReceived")).toBe(true)
@@ -999,6 +1051,7 @@ describe("telemetry seam", () => {
   test("fileTelemetry lands queryable rows: the fire carries its outcome and links to the commit", async () => {
     const path = join(dir, `spans-${n++}.ndjson`)
     const h = await createBunHost({ ...options(freshPath()), telemetry: fileTelemetry(path) })
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("bun:default:echo") })
     await h.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
     await h.close()
@@ -1207,6 +1260,7 @@ test("scheduled failures remain observable through settled", async () => {
     actorFor: () => ({ projections: [completeTransitionProjection(() => { throw new Error("broken projection") })], keyOf })
   })
   try {
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "scheduled", at: 0 })
     host.schedule()
     await expect(host.settled()).rejects.toThrow("broken projection")

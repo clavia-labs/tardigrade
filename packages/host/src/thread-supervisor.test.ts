@@ -10,34 +10,40 @@ import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { ThreadProvisioner, threadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 import { threadSupervisorDriver, threadSupervisorKeyOf } from "./thread-supervisor"
 import { createHost } from "./host"
-import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 
 const target = { actor: "test", instance: "main", thread: "root" }
 
-test("invalid child ceilings are refused before creation or setup", async () => {
+test("child allocation preserves valid lineage and refuses invalid requests without side effects", async () => {
   const setups: string[] = []
   const host = createHost({ actorName: "test", actorInstance: "main", actorFor: () => undefined,
-    supervisor: threadSupervisor({ setup: ({ target }) => Effect.sync(() => { setups.push(target.thread) }) })
+    supervisor: threadSupervisor({ setup: ({ target, request }) => Effect.sync(() => {
+      if (request.kind === "child") {
+        expect(host.read(target.thread)[0]).toMatchObject({ parent: request.parent, maxDepth: request.maxDepth })
+      }
+      setups.push(target.thread)
+    }) })
   })
-  host.seed(target.thread, [{ ...threadCreated(target, undefined, 0), maxDepth: 2 }])
+  host.seed(target.thread, [{ ...threadCreated(target, undefined, 0), maxDepth: 3 }])
   await host.allocate({ kind: "root", coordinate: target })
-  for (const maxDepth of [0, 3]) {
+  for (const maxDepth of [0, 4]) {
     await expect(host.allocate({ kind: "child", parent: target, child: childKeyOf("child"), maxDepth })).rejects.toThrow("invalid lineage")
     expect(host.read("child")).toEqual([])
   }
   expect(setups).toEqual([target.thread])
-  const child = await host.allocate({ kind: "child", parent: target, child: childKeyOf("child"), maxDepth: 1 })
-  expect(host.read(child.thread)[0]).toMatchObject({ depth: 1, maxDepth: 1 })
-})
-
-test("supervisor child creation inherits lineage before the first message", async () => {
-  const host = createHost({ actorName: "test", actorInstance: "main", actorFor: () => undefined,
-    supervisor: threadSupervisor()
-  })
-  await host.allocate({ kind: "root", coordinate: target })
-  const child = await host.allocate({ kind: "child", parent: target, child: childKeyOf("child") })
-  expect(host.read(child.thread)).toHaveLength(1)
-  expect(host.read(child.thread)[0]).toMatchObject({ type: "ThreadCreated", parent: target, depth: 1 })
+  for (const maxDepth of [undefined, 2]) {
+    const name = maxDepth === undefined ? "inherited" : "restricted"
+    const request = { kind: "child" as const, parent: target, child: childKeyOf(name),
+      ...(maxDepth === undefined ? {} : { maxDepth }) }
+    const child = await host.allocate(request)
+    const lineage = { parent: target, depth: 1, maxDepth: maxDepth ?? 3 }
+    expect(host.read(child.thread)).toEqual([expect.objectContaining({ type: "ThreadCreated", address: child, ...lineage })])
+    await host.commit({ link: { source: target, target: child }, lineage, event: { type: "MessageReceived", id: "m", at: 1 } })
+    const committed = host.read(child.thread)
+    expect(await host.allocate(request)).toEqual(child)
+    await expect(host.allocate({ ...request, maxDepth: maxDepth === undefined ? 2 : 3 })).rejects.toThrow("different lineage")
+    expect(host.read(child.thread)).toEqual(committed)
+    expect(setups.filter((thread) => thread === child.thread)).toEqual([child.thread])
+  }
 })
 
 test("typed supervisor requests share durable effect completion across concurrent callers and recovery", async () => {
@@ -82,49 +88,34 @@ test("typed supervisor requests share durable effect completion across concurren
   expect(attempts).toBe(2)
 })
 
-test("memory assignment and direct delivery await supervisor readiness", async () => {
+test("allocation gates delivery and reuses completed identity", async () => {
   const started = Promise.withResolvers<void>()
   const release = Promise.withResolvers<void>()
   let attempts = 0
   const host = createHost({ actorName: "test", actorInstance: "main", actorFor: () => undefined,
     supervisor: threadSupervisor({ setup: () => Effect.promise(async () => { attempts++; started.resolve(); await release.promise }) })
   })
+  await expect(host.commitRoot(host.self("root"), { type: "MessageReceived", id: "missing", at: 1 })).rejects.toThrow("allocate it before delivery")
+  expect(host.read("root")).toEqual([])
+  expect(attempts).toBe(0)
   let assigned = false
-  const allocation = host.assignThread({ kind: "root", coordinate: target }).then(() => { assigned = true })
+  const allocation = host.assignThread({ kind: "root", coordinate: { thread: "root", instance: "main", actor: "test" } }).then((coordinate) => {
+    assigned = true
+    return coordinate
+  })
   await started.promise
-  const delivery = host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "work", at: 1 })
+  const deliver = () => host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "work", at: 1 })
+  await expect(deliver()).rejects.toThrow("allocate it before delivery")
   expect(assigned).toBe(false)
   expect(host.read("root").map((event) => event.type)).toEqual(["ThreadCreated"])
   release.resolve()
-  await Promise.all([allocation, delivery])
+  expect(await allocation).toEqual(target)
+  await deliver()
+  const committed = host.read("root")
+  expect(await host.allocate({ kind: "root", coordinate: target })).toEqual(target)
+  expect(host.read("root")).toEqual(committed)
   expect(attempts).toBe(1)
   expect(host.read("root").some((event) => event.type === "MessageReceived")).toBe(true)
-})
-
-test("forks run setup after their complete initial log is published", async () => {
-  const calls: string[] = []
-  const host = createHost({ actorName: "test", actorInstance: "main", actorFor: () => undefined,
-    supervisor: threadSupervisor({ setup: (input) => Effect.sync(() => {
-      calls.push(input.target.thread)
-      if (input.request.kind === "root" && input.request.fork !== undefined) {
-        expect(host.read(input.target.thread).some((event) => event.type === "ThreadForked")).toBe(true)
-      }
-    }) })
-  })
-  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "work", at: 1 })
-  await host.forkThread({ source: "root", seq: 2, name: "fork" })
-  await host.forkThread({ source: "root", seq: 2, name: "fork" })
-  expect(calls).toEqual(["root", "fork"])
-})
-
-test("memory initialization completion is independent of coordinate property order", async () => {
-  let attempts = 0
-  const host = createHost({ actorName: "test", actorInstance: "main", actorFor: () => undefined,
-    supervisor: threadSupervisor({ setup: () => Effect.sync(() => { attempts++ }) })
-  })
-  await host.allocate({ kind: "root", coordinate: { thread: "root", instance: "main", actor: "test" } })
-  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "work", at: 1 })
-  expect(attempts).toBe(1)
 })
 
 test("every memory creation entry point consults the allocator before setup", async () => {
@@ -141,8 +132,6 @@ test("every memory creation entry point consults the allocator before setup", as
   for (const operation of [
     () => host.allocate(root),
     () => host.assignThread(root),
-    () => host.commitRoot(host.self(target.thread), { type: "MessageReceived", id: "m", at: 1 }),
-    () => host.commit({ link: { source: parent, target: child }, lineage, event: { type: "MessageReceived", id: "m", at: 1 } }),
     () => host.allocate({ kind: "child", parent, child: childKeyOf(child.thread), maxDepth: 2 })
   ]) {
     await expect(operation()).rejects.toThrow("allocation refused")
@@ -150,6 +139,8 @@ test("every memory creation entry point consults the allocator before setup", as
     expect(host.read(child.thread)).toEqual([])
     expect(setups).toBe(0)
   }
+  await expect(host.commitRoot(host.self(target.thread), { type: "MessageReceived", id: "m", at: 1 })).rejects.toThrow("allocate it before delivery")
+  await expect(host.commit({ link: { source: parent, target: child }, lineage, event: { type: "MessageReceived", id: "m", at: 1 } })).rejects.toThrow("allocate it before delivery")
   host.seed(target.thread, [threadCreated(target, undefined, 0)])
   await expect(host.forkThread({ source: target.thread, seq: 1, name: "fork" })).rejects.toThrow("allocation refused")
   expect(host.read(child.thread)).toEqual([])
@@ -157,41 +148,30 @@ test("every memory creation entry point consults the allocator before setup", as
   expect(setups).toBe(0)
 })
 
-test("child allocation retains the caller's depth ceiling before delivery", async () => {
-  const setups: ThreadAllocation[] = []
-  const host = createHost({ actorName: "test", actorInstance: "main", actorFor: () => undefined,
-    supervisor: threadSupervisor({ setup: ({ request }) => Effect.sync(() => { setups.push(request) }) })
-  })
-  await host.allocate({ kind: "root", coordinate: target })
-  const lineage = { parent: target, depth: 1, maxDepth: 2 }
-  const request = { kind: "child" as const, parent: target, child: childKeyOf("worker"), maxDepth: 2 }
-  const child = await host.allocate(request)
-  expect(host.read(child.thread)[0]).toMatchObject(lineage)
-  expect(setups[1]).toMatchObject({ parent: target, maxDepth: 2 })
-  await host.commit({ link: { source: target, target: child }, lineage, event: { type: "MessageReceived", id: "m", at: 1 } })
-  await expect(host.allocate({ ...request, maxDepth: 3 })).rejects.toThrow("different lineage")
-  expect(setups).toHaveLength(2)
-})
-
-test("fork setup retries without republishing and rejects a different checkpoint", async () => {
+test("fork setup sees complete history and recovery preserves the published log", async () => {
   let failed = true
-  let attempts = 0
+  const setupLogs: ReadonlyArray<Event>[] = []
   const host = createHost({ actorName: "test", actorInstance: "main", actorFor: () => undefined,
-    supervisor: threadSupervisor({ setup: ({ request }) => Effect.sync(() => {
+    supervisor: threadSupervisor({ setup: ({ target, request }) => Effect.sync(() => {
       if (request.kind !== "root" || request.fork === undefined) return
-      attempts++
+      setupLogs.push(host.read(target.thread))
       if (failed) throw new Error("setup failed")
     }) })
   })
+  await host.allocate({ kind: "root", coordinate: target })
   await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", at: 1 })
   const request = { source: "root", seq: 2, name: "fork" }
   await expect(host.forkThread(request)).rejects.toThrow("setup failed")
   const published = host.read("fork")
   expect(published.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
+  expect(published[1]).toEqual(host.read("root")[1])
+  expect(setupLogs).toEqual([published])
   failed = false
   await host.forkThread(request)
   await host.forkThread(request)
   expect(host.read("fork")).toEqual(published)
-  expect(attempts).toBe(2)
+  expect(setupLogs).toEqual([published, published])
   await expect(host.forkThread({ ...request, seq: 1 })).rejects.toThrow("already has a log that is not this fork")
+  expect(host.read("fork")).toEqual(published)
+  expect(setupLogs).toEqual([published, published])
 })

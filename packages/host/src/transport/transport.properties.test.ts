@@ -6,7 +6,6 @@ import { Router } from "@clavia/tardigrade-core/transport/router"
 import { threadAddressOf, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
 import { linkOf } from "@clavia/tardigrade-core/transport/link"
-import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { createHost } from "../host"
 
 interface GraphSpec {
@@ -36,7 +35,7 @@ describe("host communication over participant graphs", () => {
         const host = createHost({ actorName: "graph", actorFor: () => undefined })
         for (const participant of graph.participants) {
           const identity = identityOf(participant)
-          host.seed(identity.thread, [threadCreated(identity, undefined, 0)])
+          await host.allocate({ kind: "root", coordinate: identity })
         }
         const envelopes = graph.edges.map((edge, index) =>
           envelopeOf(

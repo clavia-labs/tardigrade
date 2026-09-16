@@ -65,11 +65,11 @@ const hasHoldEvent = (events: ReadonlyArray<Event>, type: string, id: string): b
 test("thread initialization blocks registration and survives Durable Object eviction", async () => {
   const directory = (env as Env).ACTORS.getByName(JSON.stringify(["echo", "initialization"]))
   const previous = mountedActor!.supervisor
+  let attempts = 0
+  let fail = true
   try {
     await directory.init("echo", "initialization")
-    const created = await runInDurableObject(directory, async (instance, state) => {
-      let attempts = 0
-      let fail = true
+    await runInDurableObject(directory, async (instance, state) => {
       mountedActor!.supervisor = threadSupervisor({ setup: () => Effect.sync(() => {
         attempts++
         if (fail) throw new Error("setup unavailable")
@@ -79,7 +79,14 @@ test("thread initialization blocks registration and survives Durable Object evic
       expect(await instance.threadTree()).toEqual([])
       const requested = state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray().map((row) => JSON.parse(row.event) as Event)
       expect(requested.map((event) => event.type)).toEqual(["ThreadRequested"])
-      fail = false
+    })
+    const pending = (env as Env).THREADS.getByName(JSON.stringify(["echo", "initialization", "main"]))
+    await runInDurableObject(pending, async (instance) => {
+      await expect(instance.append("main", { type: "MessageReceived", id: "pending", text: "hello", at: 1 })).rejects.toThrow("allocate it before delivery")
+      expect((await instance.events("main")).map((event) => event.type)).toEqual(["ThreadCreated"])
+    })
+    fail = false
+    const created = await runInDurableObject(directory, async (instance, state) => {
       const root = await instance.createThread("main")
       const child = await instance.createThread("worker", { parent: "main" })
       expect(attempts).toBe(4)
@@ -94,11 +101,29 @@ test("thread initialization blocks registration and survives Durable Object evic
       expect(await instance.createThread("main")).toEqual(created.root)
       expect(await instance.createThread("worker", { parent: "main" })).toEqual(created.child)
     })
+    const root = (env as Env).THREADS.getByName(JSON.stringify(["echo", "initialization", "main"]))
+    await evictDurableObject(root)
+    expect(await root.append("main", { type: "MessageReceived", id: "reopened", text: "hello", at: 2 })).toBe(true)
+    await runInDurableObject(root, (_instance, state) => state.storage.delete("threadReady"))
+    await evictDurableObject(root)
+    expect(await root.append("main", { type: "MessageReceived", id: "legacy", text: "hello", at: 3 })).toBe(true)
   } finally {
     if (previous === undefined) delete mountedActor!.supervisor
     else mountedActor!.supervisor = previous
   }
 }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
+test("delivery to an unknown Durable Object does not initialize a thread", async () => {
+  const target = { actor: "echo", instance: "main", thread: "unallocated" }
+  const stub = threadStub(target.thread)
+  await runInDurableObject(stub, async (instance) => {
+    await expect(instance.deliver({
+      link: { source: { provider: "test" }, target },
+      event: { type: "MessageReceived", id: "missing", text: "hello", at: 1 }
+    })).rejects.toThrow("allocate it before delivery")
+  })
+  expect(await stub.exists(target.actor, target.instance, target.thread)).toBe(false)
+})
 
 const hold = actorMethod({
   input: Schema.Struct({ text: Schema.String }),
@@ -1083,6 +1108,7 @@ describe("cloudflare actor", () => {
     await directory.createThread("ag.opaque-parent")
     const parent = { actor: "echo", instance: "main", thread: "ag.opaque-parent" }
     const target = { ...parent, thread: "thread_opaque-child" }
+    await directory.allocateThread({ kind: "child", parent, child: childKeyOf(target.thread) })
     await directory.deliverChild({
       link: { source: parent, target },
       event: { type: "MessageReceived", id: "opaque-brief", text: "hello", at: 1 },
@@ -1189,12 +1215,24 @@ describe("cloudflare actor", () => {
       children: []
     })
     expect(requestedTree.some((node) => node.id === "directory-child")).toBe(false)
+    await runInDurableObject(directory, async (instance) => expect(instance.deliverChild({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "directory-child-message", text: "hello", at: 2 },
+      lineage
+    })).rejects.toThrow("allocate it before delivery"))
+    await directory.ensureThreadReady(target.thread)
     await directory.deliverChild({
       link: { source: parent, target },
       event: { type: "MessageReceived", id: "directory-child-message", text: "hello", at: 2 },
       lineage
     })
     const fresh = { actor: "echo", instance: "main", thread: "ag.directory-fresh" }
+    await runInDurableObject(directory, async (instance) => expect(instance.deliverChild({
+      link: { source: parent, target: fresh },
+      event: { type: "MessageReceived", id: "directory-fresh-message", text: "hello", at: 3 },
+      lineage
+    })).rejects.toThrow("allocate it before delivery"))
+    await directory.allocateThread({ kind: "child", parent, child: childKeyOf(fresh.thread), maxDepth: lineage.maxDepth, placement: lineage.placement })
     await directory.deliverChild({
       link: { source: parent, target: fresh },
       event: { type: "MessageReceived", id: "directory-fresh-message", text: "hello", at: 3 },
@@ -1359,6 +1397,7 @@ describe("cloudflare actor", () => {
     await directory.createThread("ag.re-delivery-parent")
     const parent = { actor: "echo", instance: "main", thread: "ag.re-delivery-parent" }
     const target = { actor: "echo", instance: "main", thread: "ag.re-delivery-child" }
+    await directory.allocateThread({ kind: "child", parent, child: childKeyOf(target.thread) })
     const lineage = { parent, depth: 1, placement: "independent" as const }
     await directory.deliverChild({
       link: { source: parent, target },

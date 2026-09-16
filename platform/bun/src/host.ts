@@ -309,6 +309,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     ))
   const actorThread = async (thread: string): Promise<ActorThreadRecord | undefined> =>
     (await actorThreads()).threads.find((record) => record.thread === thread)
+  const readyThreads = new Set((await actorThreads()).threads.filter((record) => record.state === "registered").map((record) => record.thread))
   await directoryRuntime.runPromise(PubSub.publish(actorCommits, await actorHead()))
   const appendActorEvents = async (events: ReadonlyArray<Event>): Promise<void> => {
     const result = await directoryRuntime.runPromise(directorySql.withTransaction(Effect.gen(function*() {
@@ -326,6 +327,9 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       }
       return { appended: next > current, head: next }
     }).pipe(Effect.orDie)))
+    for (const event of events) {
+      if (event.type === "ThreadRegistered") readyThreads.add(String(event.thread))
+    }
     if (result.appended) await directoryRuntime.runPromise(PubSub.publish(actorCommits, result.head))
   }
   const prepare = async (target: ThreadAddress, request?: ThreadAllocation): Promise<void> => {
@@ -488,14 +492,16 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     call?: unknown
   ): Effect.Effect<void, never> => Effect.promise(async () => {
     const thread = threadOf(formatThreadAddress(target))
+    if (target.actor !== actorName || target.instance !== actorInstance) throw new Error("delivery target does not match actor instance")
+    if (!readyThreads.has(thread)) {
+      validateDelivery({ target, event, lineage, link, call, keyOf: options.keyOf }, [])
+      throw new Error("thread is not ready; allocate it before delivery")
+    }
     const threadRuntime = await runtimeOf(thread)
     validateDelivery({ target, event, lineage, link, call, keyOf: options.keyOf }, await threadRuntime.runtime.runPromise(threadRuntime.store.read))
-    await prepare(target, lineage === undefined ? { kind: "root", coordinate: target } : { kind: "child", parent: lineage.parent, child: childKeyOf(target.thread),
-      ...(lineage.maxDepth === undefined ? {} : { maxDepth: lineage.maxDepth }), ...(lineage.placement === undefined ? {} : { placement: lineage.placement }) })
     const result = await threadRuntime.runtime.runPromise(commitTracedDelivery({ target, event, lineage, link, call, keyOf: options.keyOf }, threadRuntime.store))
     if (result.appended > 0) {
       threadRuntime.interruptions.interrupt([event])
-      if (isFirstAppend(result)) await register(thread, lineage)
       driver.mark(thread)
     }
   }).pipe(Effect.orDie)

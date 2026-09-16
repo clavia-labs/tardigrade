@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
 import { expect, test } from "bun:test"
 import { Effect, Layer, Redacted } from "effect"
@@ -68,6 +69,7 @@ for (const provider of ["openai", "anthropic"] as const) {
     const executions: string[] = []
     const definition = actor({ name: "truncated-agent", methods: agentMethods, components: [infer([outputValidateOnce, tool({ spec, run: (_args, context) => Effect.sync(() => { executions.push(context.callId); return "contents" }) })], { models: { default: { provider, model_id: "fixture" }, allow: "*" } })] })
     const host = createHost({ actorName: "truncated-agent", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, layer) })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Read", at: 1 })
     await host.drive()
     const events = host.read("root")
