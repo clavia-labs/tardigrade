@@ -1,3 +1,4 @@
+export { threadSupervisor, requestThreadMethod, ThreadRequest, type ThreadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 export {
   ActorDO,
   ThreadDO,

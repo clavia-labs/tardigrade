@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import fc from "fast-check"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -75,6 +76,11 @@ const scenario = async (pick: HostOptions<Router>["pick"]) => {
     },
     ...(pick === undefined ? {} : { pick })
   })
+  for (const [root, child] of [["a", "c"], ["b", "d"]] as const) {
+    const parent = parseThreadAddress(host.self(root))
+    await host.allocate({ kind: "root", coordinate: parent })
+    await host.allocate({ kind: "child", parent, child: childKeyOf(child) })
+  }
   await host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
   await host.commitRoot("mem:main:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
   return host

@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { AiError } from "effect/unstable/ai"
@@ -30,6 +31,7 @@ test("fallback attempts are bounded, separately accounted, and recover at every 
       visited.push(request.model!.provider)
       return { kind: "fail", error: denied, retryable: transient, usage }
     }) }, { ...models, fallback: [primary, secondary, secondary, third, primary] })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "hello", at: 1 })
     await host.drive()
     const perModel = transient ? attempts : 1
@@ -66,6 +68,7 @@ test("a fallback remains selected through tools and crashes, and repeated candid
     expect(request.model).toEqual(secondary)
     return calls === 2 ? { kind: "calls", calls: [{ callId: "read-1", name: "read", arguments: {} }] } : { kind: "complete", output: "done" }
   }) }, { ...models, fallback: [primary, secondary, secondary] })
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
   await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "hello", at: 1 })
   await host.drive()
   expect(calls).toBe(3)
@@ -87,6 +90,7 @@ test("fallback authority is validated before any request and explicit empty list
   expect(() => modelPolicyOverrideOf({ ...models, allow: [{ provider: primary.provider, model_ids: "*" }] })).toThrow("fallback")
   expect(applyModelPolicy({ ...models, allow: "*" }, { fallback: [] }).fallback).toEqual([])
   const host = makeHost({ resolve: model => ({ model: model!, models: { allow: [{ provider: primary.provider, model_ids: "*" }] } }), react: () => Effect.die("must not request") })
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
   await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "hello", at: 1 })
   await host.drive()
   expect(host.read("root").filter(e => e.type === "ModelCalled")).toHaveLength(0)
@@ -106,6 +110,8 @@ test("local validation, refusal, truncation, and unknown failures do not trigger
 
 test("cancelled turns never execute a pending fallback", async () => {
   const host = makeHost({ react: () => Effect.die("cancelled request") })
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
+  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "hello", at: 1 })
   host.seed("root", [
     { type: "MessageReceived", id: "m", text: "hello", at: 1 },
     { type: "ModelCalled", callId: "m/infer/0", ordinal: 0, model: primary, turn: "m", at: 2 },

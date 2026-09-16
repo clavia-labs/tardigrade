@@ -109,9 +109,9 @@ test.each(["memory", "sqlite"] as const)("the developer flow allocates scoped th
         actorName: "tardie", actorInstance: instance,
         threadAllocator: { allocate: (request: ThreadAllocation) => Effect.promise(() => {
           const target = request.kind === "root" ? request.coordinate : request.parent
-          return hosts.get(target.instance)!.assignThread(request)
+          const owner = hosts.get(target.instance)!
+          return target.instance === instance ? owner.reserveThread(request) : owner.allocate(request)
         }) },
-        initializeRoot: (target: ThreadAddress, at: number) => hosts.get(target.instance)!.initializeRoot(target, at),
         actorFor: (thread: string) => thread === "caller" ? caller : tardie,
         keyOf: (event: Event) => methodIngressKeyOf(event) ?? actorRuntimeOf(caller).keyOf(event),
         driver: { maxConcurrentThreads: 1 },
@@ -132,6 +132,7 @@ test.each(["memory", "sqlite"] as const)("the developer flow allocates scoped th
     }
     const rick = hosts.get("rick")!
     const morty = hosts.get("morty")!
+    await rick.allocate({ kind: "root", coordinate: { actor: "tardie", instance: "rick", thread: "caller" } })
     await rick.commitRoot(rick.self("caller"), prepareInvocation({
       reference: { target: { actor: "tardie", instance: "rick", thread: "caller" }, invocation: { method: "run", id: "start", epoch: 0 } },
       method: run, input: {}, at: Date.now()

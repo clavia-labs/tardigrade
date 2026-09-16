@@ -1,30 +1,36 @@
 import type { TreeBounds } from "@clavia/tardigrade-client/contract"
-import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
-import { FORK_EXPECTED_HEAD, forkBatchFor, forkOutcomeOf, forkRootAllocation, isForkRefused, resolveForkCheckpoint, type ForkRefusal } from "@clavia/tardigrade-host/fork"
+import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
+import { forkBatchFor, forkRootAllocation, isForkRefused, resolveForkCheckpoint, type ForkRefusal } from "@clavia/tardigrade-host/fork"
 import type { ForkCheckpoint } from "@clavia/tardigrade-core/log"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadObjectNameOf } from "./transport/directory"
 import { DurableObject } from "cloudflare:workers"
-import { Clock, Effect, ManagedRuntime, Schema } from "effect"
+import { Clock, Effect, Layer, ManagedRuntime, Schema } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { publicThreadId } from "@clavia/tardigrade-host/thread-compat"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom } from "@clavia/tardigrade-core/log"
+import { eventLogFrom } from "@clavia/tardigrade-core/log"
 import { type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { actorEventsOf, actorEventKeyOf, actorThreadsOf, type ActorThreadRecord, type ThreadRequested } from "@clavia/tardigrade-core/actor"
+import { actorEventKeyOf, actorThreadsOf, type ActorThreadRecord } from "@clavia/tardigrade-core/actor"
+import { upcastThreadRequest } from "@clavia/tardigrade-core/actor/log/upcast"
 import { ThreadAllocator, allocateThread } from "@clavia/tardigrade-core/actor/allocation"
-import { registeredThreadAllocator } from "@clavia/tardigrade-host/allocation"
+import { registeredThreadAllocator, threadRequestOf } from "@clavia/tardigrade-host/allocation"
+import { threadSupervisorDriver, threadSupervisorKeyOf } from "@clavia/tardigrade-host/thread-supervisor"
+import { hostThreadAllocator } from "@clavia/tardigrade-host/allocation"
+import { ThreadProvisioner, threadCreationFor, threadSupervisor, threadAllocationKey, type ThreadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
+import { Router } from "@clavia/tardigrade-core/transport/router"
+import { Self } from "@clavia/tardigrade-core/runtime"
+import { isActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
+import { cloudflareRpcTransport } from "./transport/rpc"
 import { sqlThreadDirectory } from "@clavia/tardigrade-host/allocation-sql"
 import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
-import { effect, restingActor, settleActor } from "@clavia/tardigrade-core/runtime"
-import { actorFromProjections } from "@clavia/tardigrade-core/runtime"
-import { completeTransitionProjection } from "@clavia/tardigrade-core/transition"
+import { restingActor } from "@clavia/tardigrade-core/runtime"
 import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareActorSchema, CloudflareEventStore } from "./storage"
 import type { Env } from "./env"
-import { mountedActor, deployed, nonNegativeInteger } from "./assembly"
+import { mountedActor, deployed, nonNegativeInteger, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT } from "./assembly"
 
 export interface ActorThreadNode {
   readonly id: string
@@ -33,41 +39,6 @@ export interface ActorThreadNode {
   readonly placement?: ChildPlacement
   readonly children: ReadonlyArray<ActorThreadNode>
 }
-
-const registeredKeyOf = (thread: string): string => `thread:registered:${thread}`
-
-const actorSupervisorOf = (
-  env: Env,
-  identity: { readonly actor: string; readonly instance: string }
-) => actorFromProjections({
-  transitions: [completeTransitionProjection((events) => {
-    const actorEvents = actorEventsOf(events)
-    const registered = new Set(actorEvents.flatMap((event) => event.type === "ThreadRegistered" ? [event.thread] : []))
-    const registrations = actorEvents.flatMap((event) => {
-      if (event.type !== "ThreadRequested" || registered.has(event.thread)) return []
-      return [effect({
-        key: registeredKeyOf(event.thread),
-        input: event,
-        act: (request) => Effect.gen(function* () {
-          const registration = yield* Effect.promise(async () => {
-            const stub = env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, request.thread))
-            if (request.parentThread === undefined && request.initialization !== "caller") {
-              await stub.init(identity.actor, identity.instance, request.thread)
-              await stub.initializeRoot()
-              return {}
-            }
-            const created = await stub.commitCreation()
-            return created === undefined ? undefined : created.placement === undefined ? {} : { placement: created.placement }
-          })
-          if (registration === undefined) return []
-          return [{ type: "ThreadRegistered", thread: request.thread, ...registration, at: yield* Clock.currentTimeMillis }]
-        })
-      })]
-    })
-    return registrations
-  })],
-  keyOf: actorEventKeyOf
-})
 
 // threadTreeOf builds registered threads within the requested bounds; an unknown root returns undefined (test/actor.workers.ts).
 const threadTreeOf = (
@@ -126,6 +97,9 @@ const threadTreeOf = (
 
 // ActorDO reconciles one actor instance from its durable event log.
 export class ActorDO extends DurableObject<Env> {
+  private creation: Promise<ReturnType<typeof hostThreadAllocator>> | undefined
+  private definition: ThreadSupervisor | undefined
+  private readiness: ReturnType<typeof threadSupervisorDriver> | undefined
   private schema: Promise<void> | undefined
   private eventStore: Promise<CloudflareEventStore> | undefined
   private actorName: string | undefined
@@ -174,7 +148,7 @@ export class ActorDO extends DurableObject<Env> {
 
   private store(): Promise<CloudflareEventStore> {
     this.eventStore ??= this.database.runPromise(SqliteClient.SqliteClient).then(
-      (sql) => new CloudflareEventStore(sql, actorEventKeyOf)
+      (sql) => new CloudflareEventStore(sql, (event) => actorEventKeyOf(event) ?? threadSupervisorKeyOf(this.definition, event))
     )
     return this.eventStore
   }
@@ -188,7 +162,8 @@ export class ActorDO extends DurableObject<Env> {
   }
 
   private async resting(): Promise<boolean> {
-    return restingActor(actorSupervisorOf(this.env, this.identity()), await this.events())
+    await this.allocator()
+    return restingActor(this.definition!, await this.events())
   }
 
   private async synchronizeAlarm(): Promise<void> {
@@ -208,23 +183,9 @@ export class ActorDO extends DurableObject<Env> {
   }
 
   private async reconcile(): Promise<void> {
-    const identity = this.identity()
-    const store = await this.store()
-    await this.database.runPromise(
-      settleActor(actorSupervisorOf(this.env, identity)).pipe(
-        Effect.provideService(EventLog, eventLogFrom(store))
-      )
-    )
+    await this.allocator()
+    await this.readiness!.drive()
     await this.ctx.storage.sync()
-  }
-
-  private async request(event: ThreadRequested): Promise<void> {
-    await this.database.runPromise((await this.store()).append([event]))
-    const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
-    if (at !== null) await this.ctx.storage.setAlarm(at)
-    await scheduler.wait(0)
-    await this.reconcile()
-    await this.synchronizeAlarm()
   }
 
   async createThread(name?: string, options: { readonly key?: string; readonly parent?: string } = {}): Promise<ThreadAddress> {
@@ -234,15 +195,9 @@ export class ActorDO extends DurableObject<Env> {
     if (options.parent !== undefined) {
       const parent = (await this.threads()).find((entry) => entry.thread === options.parent && entry.state === "registered")
       if (parent === undefined) throw new Error("parent thread does not exist")
-      const source = { ...identity, thread: options.parent }
-      const target = await this.allocateThread({ kind: "child", parent: source, child: childKeyOf(name ?? "unnamed"), ...key })
-      const lineage = { parent: source, depth: Number(parent.depth) + 1 }
-      await this.deliverChild({ link: { source, target }, lineage, event: threadCreated(target, lineage, Date.now()) })
-      return target
+      return this.allocateThread({ kind: "child", parent: { ...identity, thread: options.parent }, child: childKeyOf(name ?? "unnamed"), ...key })
     }
-    const target = await this.allocateThread({ kind: "root", coordinate: { ...identity, thread: name ?? "" }, ...key })
-    await this.initializeRootThread(target.thread)
-    return target
+    return this.allocateThread({ kind: "root", coordinate: { ...identity, thread: name ?? "" }, ...key })
   }
 
   // forkThread copies source rows 1..seq onto a runnable root. Refusals return as data because a thrown class does not survive the RPC boundary (transport/http.ts).
@@ -257,13 +212,9 @@ export class ActorDO extends DurableObject<Env> {
         ? []
         : await this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, source)).events(source)
       const seq = resolveForkCheckpoint(sourceEvents, checkpoint)
-      const dest = await this.allocateThread(forkRootAllocation(identity, name))
-      const batch = forkBatchFor(sourceEvents, { source: { ...identity, thread: source }, seq, dest: dest.thread }, Date.now())
-      const destStub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, dest.thread))
-      await destStub.init(identity.actor, identity.instance, dest.thread)
-      const result = await destStub.appendAt(batch, FORK_EXPECTED_HEAD)
-      if (result.appended === 0) forkOutcomeOf(await destStub.events(dest.thread), batch, dest.thread)
-      await this.request({ type: "ThreadRequested", thread: dest.thread, depth: 0, at: Date.now() })
+      const sourceCoordinate = { ...identity, thread: source }
+      forkBatchFor(sourceEvents, { source: sourceCoordinate, seq, dest: name ?? "" }, Date.now())
+      const dest = await this.allocateThread(forkRootAllocation(identity, name, { source: sourceCoordinate, seq }))
       return { ok: true, coordinate: dest, seq }
     } catch (failure) {
       if (isForkRefused(failure)) return { ok: false, refusal: failure.refusal, message: failure.message }
@@ -271,16 +222,16 @@ export class ActorDO extends DurableObject<Env> {
     }
   }
 
-  async allocateThread(request: ThreadAllocation): Promise<ThreadAddress> {
+  private async reserveThread(request: ThreadAllocation): Promise<ThreadAddress> {
     const identity = this.identity()
     const scope = request.kind === "root" ? request.coordinate : request.parent
     if (scope.actor !== identity.actor || scope.instance !== identity.instance) throw new Error("allocation requires the owning actor directory")
     const sql = await this.database.runPromise(SqliteClient.SqliteClient)
     const store = sqlThreadDirectory(sql, "events", (target, existingRoot) =>
-      sql<{ parent: string | null }>`SELECT json_extract(event, '$.parentThread') AS parent FROM events
+      sql<{ event: string }>`SELECT event FROM events
         WHERE json_extract(event, '$.type') = 'ThreadRequested' AND json_extract(event, '$.thread') = ${target.thread}`.pipe(
-        Effect.map((rows) => rows.length > 0 && (!existingRoot || rows.some((row) => row.parent !== null))), Effect.orDie
-      ))
+        Effect.map((rows) => rows.length > 0 && (!existingRoot || rows.some((row) => upcastThreadRequest(JSON.parse(row.event)).parentThread !== undefined))), Effect.orDie
+      ), this.definition!.methods.requestThread)
     const target = await Effect.runPromise(allocateThread(request).pipe(Effect.provideService(
       ThreadAllocator, mountedActor?.threadAllocator ?? registeredThreadAllocator({
         get: (key) => Effect.promise(() => this.database.runPromise(store.get(key))),
@@ -289,22 +240,72 @@ export class ActorDO extends DurableObject<Env> {
     )))
     const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
     if (at !== null) await this.ctx.storage.setAlarm(at)
+    const assigned = await this.database.runPromise(store.claim(threadAllocationKey(request), target, request.kind === "root", request))
+    if (assigned !== target.thread) throw new Error("thread reservation conflicts with an existing assignment")
     return target
   }
 
-  async initializeRootThread(thread: string): Promise<void> {
-    const identity = this.identity()
-    const existing = (await this.threads()).find((entry) => entry.thread === thread)
-    if (existing !== undefined && existing.parentThread !== undefined) {
-      throw new Error("a child thread cannot be recreated as a root")
-    }
-    const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, thread))
-    await stub.init(identity.actor, identity.instance, thread)
-    await stub.initializeRoot()
-    await this.request({ type: "ThreadRequested", thread, depth: 0, at: Date.now() })
+  private allocator(): Promise<ReturnType<typeof hostThreadAllocator>> {
+    return this.creation ??= this.openAllocator()
   }
 
-  // deliverChild records creation after the child log and actor supervisor accept the request (tla/ThreadCreation.tla, CreatedHasAccepted).
+  private async openAllocator(): Promise<ReturnType<typeof hostThreadAllocator>> {
+    this.definition = mountedActor?.supervisor ?? threadSupervisor()
+    const store = await this.store()
+    const transport = cloudflareRpcTransport(this.env, { deployed, defaultChildPlacement: mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT })
+    this.readiness = threadSupervisorDriver(this.definition, eventLogFrom(store), Layer.succeed(ThreadProvisioner, {
+      create: (input) => Effect.flatMap(Clock.currentTimeMillis, (at) => Effect.promise(async () => {
+        const target = input.target
+        const stub = this.env.THREADS.getByName(threadObjectNameOf(target.actor, target.instance, target.thread))
+        await stub.init(target.actor, target.instance, target.thread)
+        if (input.request.kind === "root" && input.request.fork !== undefined) {
+          const fork = input.request.fork
+          const events = await this.env.THREADS.getByName(threadObjectNameOf(fork.source.actor, fork.source.instance, fork.source.thread)).events(fork.source.thread)
+          const batch = forkBatchFor(events, { source: fork.source, seq: fork.seq, dest: target.thread }, at)
+          return stub.provision(threadCreatedOf(batch)!, batch)
+        }
+        const parent = input.request.kind === "child" ? input.request.parent : undefined
+        const events = parent === undefined ? [] : await this.env.THREADS.getByName(threadObjectNameOf(parent.actor, parent.instance, parent.thread)).events(parent.thread)
+        return stub.provision(threadCreationFor(input, threadCreatedOf(events), mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, at))
+      })),
+      register: (created) => Effect.promise(async () => {
+        await this.env.THREADS.getByName(threadObjectNameOf(created.address.actor, created.address.instance, created.address.thread)).commitCreation()
+      })
+    }), (operation) => this.database.runPromise(operation.pipe(
+      Effect.provideService(Self, { ...this.identity(), thread: "" }),
+      Effect.provideService(Router, { send: (envelope) => isActorEnvelope(envelope)
+        ? transport.send(envelope.link.target, envelope)
+        : Effect.die(new Error("supervisor routing requires an actor envelope")) })
+    )))
+    const identity = this.identity()
+    return hostThreadAllocator({
+      read: async (target) => {
+        const stub = this.env.THREADS.getByName(threadObjectNameOf(target.actor, target.instance, target.thread))
+        return await stub.exists(target.actor, target.instance, target.thread) ? stub.events(target.thread) : []
+      },
+      placement: mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT,
+      supervisor: this.readiness,
+      owns: (target) => target.actor === identity.actor && target.instance === identity.instance,
+      record: async (target) => (await this.threads()).find((entry) => entry.thread === target.thread),
+      reserve: (request) => this.reserveThread(request)
+    })
+  }
+
+  async allocateThread(request: ThreadAllocation): Promise<ThreadAddress> {
+    return Effect.runPromise((await this.allocator()).allocate(request))
+  }
+
+  async ensureThreadReady(thread: string, request?: ThreadAllocation): Promise<void> {
+    const target = { ...this.identity(), thread }
+    const record = (await this.threads()).find((entry) => entry.thread === thread)
+    await Effect.runPromise((await this.allocator()).ensure(target, request ?? threadRequestOf(target, record)))
+  }
+
+  async isThreadReady(thread: string): Promise<boolean> {
+    return (await this.threads()).some((entry) => entry.thread === thread && entry.state === "registered")
+  }
+
+  // deliverChild validates child lineage before delivery to a registered thread (test/actor.workers.ts).
   async deliverChild(envelope: ActorEnvelope): Promise<void> {
     const identity = this.identity()
     const target = envelope.link.target
@@ -321,33 +322,17 @@ export class ActorDO extends DurableObject<Env> {
     if (parent === undefined || parent.state !== "registered") throw new Error("a child thread requires a registered parent")
     if (lineage.depth !== Number(parent.depth) + 1) throw new Error("a child thread depth must follow its parent")
     const existing = threads.find((entry) => entry.thread === target.thread)
-    const placement = lineage.placement ?? null
-    if (existing !== undefined && (
+    if (existing?.state !== "registered") throw new Error("thread is not ready; allocate it before delivery")
+    const placement = lineage.placement ?? mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT
+    if (
       existing.parentThread !== lineage.parent.thread ||
       Number(existing.depth) !== lineage.depth ||
-      ((existing.state === "registered" || existing.placement !== undefined) && (existing.placement ?? null) !== placement)
-    )) {
+      (existing.placement ?? null) !== placement
+    ) {
       throw new Error("a child thread already has different lineage")
     }
-    const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, target.thread))
-    await stub.init(identity.actor, identity.instance, target.thread)
-    // deliverChild crosses a delivery to a child thread that is already registered as a plain
-    // deliver. A staged creation would leave the message unwoken, because the duplicate
-    // creation request commits nothing to wake it (actor.workers.ts, "a re-delivery to a
-    // registered child delivers instead of recreating").
-    if (existing?.state === "registered") {
-      await stub.deliver(envelope)
-      return
-    }
-    await stub.stageCreation(envelope)
-    await this.request({
-      type: "ThreadRequested",
-      thread: target.thread,
-      parentThread: lineage.parent.thread,
-      depth: lineage.depth,
-      ...(placement === null ? {} : { placement }),
-      at: Date.now()
-    })
+    const stub = this.env.THREADS.getByName(threadObjectNameOf(target.actor, target.instance, target.thread))
+    await stub.deliver(envelope)
   }
 
   async threadTree(bounds: TreeBounds = {}): Promise<ReadonlyArray<ActorThreadNode> | undefined> {

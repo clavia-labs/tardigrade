@@ -9,8 +9,7 @@ import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
 import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/interaction/envelope"
-import { ThreadAllocator, reserveRootThread } from "@clavia/tardigrade-core/actor/allocation"
-import { initializingThreadAllocator } from "@clavia/tardigrade-host/allocation"
+import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { alarmFired, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
@@ -37,7 +36,6 @@ type LayersFor<R> = [Exclude<R, CloudflarePorts>] extends [never]
   : { readonly layers: CloudflareThreadEnv<R> }
 
 export type CloudflareThreadHostOptions<R> = {
-  readonly initializeRoot?: (target: ThreadAddress, at: number) => Promise<void>
   readonly storage: DurableObjectStorage
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly actorName: string
@@ -59,7 +57,6 @@ export interface CloudflareThreadHost {
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly commitRoot: (event: Event) => Promise<void>
-  readonly initializeRoot: (at: number) => Promise<void>
   // appendAt commits a batch only when the log head equals expectedHead, without driving (packages/core/src/log/service.ts, AppendOptions).
   readonly appendAt: (events: ReadonlyArray<Event>, expectedHead: number) => Promise<{ readonly appended: number; readonly head: number }>
   readonly stageRoot: (event: Event) => Promise<void>
@@ -102,7 +99,6 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     : new CommitDispatcher(options.commitObserver, options.retainCommitTask)
   let stagedHead = 0
   let creation: ReturnType<typeof threadCreated> | undefined
-  let creationLoaded = false
   const publish = (head: number): Effect.Effect<void> => Effect.sync(() => {
     commitDispatcher?.offer({ ...identity, head })
   })
@@ -115,31 +111,24 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     lineage: ThreadLineage | undefined,
     link?: Link<unknown, ThreadAddress>,
     call?: unknown,
-    flush = true,
-    allocated = false
+    flush = true
   ): Effect.Effect<void> => {
     const address = formatThreadAddress(target)
     return Effect.gen(function* () {
       if (!sameThreadAddress(target, identity)) {
         return yield* Effect.die(new Error(`delivery target ${address} does not match thread ${formatThreadAddress(identity)}`))
       }
-      const result = yield* commitTracedDelivery({ target, event, lineage, link, call, allocated, keyOf: options.keyOf }, {
+      const result = yield* commitTracedDelivery({ target, event, lineage, link, call, keyOf: options.keyOf }, {
         read: Effect.gen(function* () {
-          if (!creationLoaded) {
+          if (creation === undefined) {
             const first = yield* events.first
             creation = threadCreatedForDelivery(first === undefined ? [] : [first], target, lineage, link?.source)
-            creationLoaded = true
           }
           return creation === undefined ? [] : [creation]
         }),
         head: events.head,
-        append: (batch) => events.append(batch),
-        reserveRoot: reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, allocator), Effect.asVoid)
+        append: (batch) => events.append(batch)
       })
-      if (result.opened) {
-        const first = yield* events.first
-        creation = threadCreatedForDelivery(first === undefined ? [] : [first], target, lineage, link?.source)
-      }
       if (result.appended > 0) interruptions.interrupt([result.landed])
       if (result.appended > 0) driver.mark(options.thread)
       if (flush) yield* syncCommit(result)
@@ -181,15 +170,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     router,
     workspace,
     Layer.succeed(Self, identity),
-    Layer.succeed(ThreadAllocator, initializingThreadAllocator(
-      allocator,
-      options.initializeRoot ?? ((target, at) => {
-        if (target.actor !== identity.actor || target.instance !== identity.instance || target.thread !== identity.thread) {
-          return Promise.reject(new Error("root initialization requires the owning host"))
-        }
-        return Effect.runPromise(commitEffect(identity, threadCreated(identity, undefined, at), undefined, undefined, undefined, true, true))
-      })
-    ))
+    Layer.succeed(ThreadAllocator, allocator)
   )
   const layers = (options.layers ?? Layer.empty as unknown as CloudflareThreadEnv<R>)
     .pipe(Layer.provideMerge(ports)) as Layer.Layer<R | EventLog>
@@ -233,7 +214,6 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),
     commitRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined)),
-    initializeRoot: (at) => Effect.runPromise(commitEffect(identity, threadCreated(identity, undefined, at), undefined, undefined, undefined, true, true)),
     appendAt: async (batch, expectedHead) => {
       const result = await Effect.runPromise(store.append(batch, { expectedHead }))
       if (result.appended > 0) {

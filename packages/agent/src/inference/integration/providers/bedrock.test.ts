@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { actor } from "@clavia/tardigrade-core/actor"
 import { createHost } from "@clavia/tardigrade-host/host"
 import { agentMethods, infer, tool, outputValidateOnce } from "@clavia/tardigrade-agent"
@@ -135,6 +136,7 @@ test("Bedrock feeds unknown calls back while executing valid siblings once", asy
     }
   } })
   const host = createHost({ actorName: "recovery", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, layer.pipe(Layer.provide(FetchHttpClient.layer))) })
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
   await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Read", at: 1 })
   await host.drive()
   const history = host.read("root")

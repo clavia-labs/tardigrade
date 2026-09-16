@@ -1,5 +1,8 @@
 import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { cloudflareRpcTransport } from "./transport/rpc"
+import { actorObjectNameOf } from "./transport/directory"
+import { forkOutcomeOf } from "@clavia/tardigrade-host/fork"
+import { validateDelivery } from "@clavia/tardigrade-host/delivery"
 import { DurableObject } from "cloudflare:workers"
 import { Effect, Layer, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -58,8 +61,19 @@ export class ThreadDO extends DurableObject<Env> {
     if (identity.thread !== thread) throw new Error("thread does not match the Thread DO identity")
   }
 
-  async initializeRoot(): Promise<void> {
-    await (await this.host()).initializeRoot(Date.now())
+  // provision records an inactive identity without scheduling work until supervisor setup completes (test/actor.workers.ts).
+  async provision(created: ThreadCreated, initial: ReadonlyArray<Event> = [created]): Promise<ThreadCreated> {
+    const identity = this.identity()
+    if (created.address.actor !== identity.actor || created.address.instance !== identity.instance || created.address.thread !== identity.thread) {
+      throw new Error("creation address does not match the Thread DO identity")
+    }
+    const host = await this.host()
+    const result = await host.appendAt(initial, 0)
+    if (result.appended === 0 && initial.some((event) => event.type === "ThreadForked")) forkOutcomeOf(await host.read(), initial, identity.thread)
+    await this.ctx.storage.sync()
+    const recorded = threadCreatedOf(await host.read())
+    if (recorded === undefined) throw new Error("thread creation was not recorded")
+    return recorded
   }
 
   async exists(name: string, instance: string, thread: string): Promise<boolean> {
@@ -151,11 +165,6 @@ export class ThreadDO extends DurableObject<Env> {
     )
     const commitObserver = mountedActor?.commitObserverFor?.({ env: this.env, actorInstance, thread: currentThread })
     return createCloudflareThreadHost({
-      initializeRoot: async (target) => {
-        const supervisor = await directory.actorStub(this.env, target.actor, target.instance, true)
-        if (supervisor === undefined) throw new Error("root actor is not deployed")
-        await supervisor.initializeRootThread(target.thread)
-      },
       threadAllocator: {
         allocate: (request) => Effect.promise(async () => {
           const target = request.kind === "root" ? request.coordinate : request.parent
@@ -216,6 +225,12 @@ export class ThreadDO extends DurableObject<Env> {
 
   // accept stages the work and recovery alarm, crosses their commit turn, and starts reconciliation in that order (tla/DurableExecution.tla, CoveredBeforeDrive).
   private async accept(host: CloudflareThreadHost, stage: () => Promise<void>): Promise<void> {
+    if (await this.ctx.storage.get<boolean>("threadReady") !== true) {
+      const identity = this.identity()
+      const owner = await directory.actorStub(this.env, identity.actor, identity.instance, false)
+      if (owner === undefined || !await owner.isThreadReady(identity.thread)) throw new Error("thread is not ready; allocate it before delivery")
+      await this.ctx.storage.put("threadReady", true)
+    }
     const current = await this.ctx.storage.getAlarm()
     await stage()
     const at = scheduledAlarmAt(
@@ -258,6 +273,7 @@ export class ThreadDO extends DurableObject<Env> {
     }
     const stamped = event.at === undefined ? { ...event, at: Date.now() } : event
     const host = await this.host()
+    validateDelivery({ target: this.identity(), event: stamped, keyOf: actorRuntimeOf(assemblyOf(this.name())!).keyOf }, await host.read())
     await this.accept(host, () => host.stageRoot(stamped))
     return true
   }
@@ -286,18 +302,12 @@ export class ThreadDO extends DurableObject<Env> {
     }
   }
 
-  async stageCreation(envelope: ActorEnvelope): Promise<void> {
-    this.validateDelivery(envelope)
-    if (envelope.lineage === undefined) throw new Error("staged thread creation requires lineage")
-    await (await this.host()).stage(envelope)
-    await this.ctx.storage.sync()
-  }
-
   async commitCreation(): Promise<ThreadCreated | undefined> {
     if (!this.initialized()) return undefined
     const host = await this.host()
     const created = threadCreatedOf(await host.read())
     if (created === undefined) return undefined
+    await this.ctx.storage.put("threadReady", true)
     await this.arm()
     await this.commitTurn()
     host.publishStaged()
@@ -306,8 +316,11 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   async deliver(envelope: ActorEnvelope): Promise<void> {
+    if (!this.initialized()) throw new Error("thread is not ready; allocate it before delivery")
     this.validateDelivery(envelope)
     const host = await this.host()
+    validateDelivery({ target: envelope.link.target, event: envelope.event, link: envelope.link, call: envelope.call, lineage: envelope.lineage,
+      keyOf: actorRuntimeOf(assemblyOf(this.name())!).keyOf }, await host.read())
     await this.accept(host, () => host.stage(envelope))
   }
 
@@ -353,6 +366,10 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    {
+      const identity = this.identity()
+      await this.env.ACTORS.getByName(actorObjectNameOf(identity.actor, identity.instance)).ensureThreadReady(identity.thread)
+    }
     const at = Date.now()
     const host = await this.host()
     await this.arm()

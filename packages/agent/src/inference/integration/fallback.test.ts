@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { expect, test } from "bun:test"
 import { Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -24,6 +25,7 @@ for (const structured of [false, true]) test(`host fallback crosses the provider
   })
   const definition = actor({ name: "fallback", methods: agentMethods, components: [infer([nativeOutput])] })
   const host = createHost({ actorName: "fallback", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, layer, Layer.succeed(FetchHttpClient.Fetch, fetch), Layer.succeed(NativeOutputSupport, { withTools: true })) })
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
   await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "Hello", ...(structured ? { output: { name: "answer", schema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"], additionalProperties: false } } } : {}), at: 1 })
   await host.drive()
   expect(requested).toEqual(structured ? ["https://primary.invalid/v1/chat/completions"] : ["https://primary.invalid/v1/chat/completions", "https://secondary.invalid/v1/chat/completions"])

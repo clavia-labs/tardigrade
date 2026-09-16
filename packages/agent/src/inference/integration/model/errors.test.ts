@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { expect, test } from "bun:test"
 import { Layer, Redacted, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -18,6 +19,7 @@ for (const provider of ["openai", "anthropic", "openai-compat"] as const) {
       const definition = actor({ name: "errors", methods: agentMethods, components: [infer([outputValidateOnce], { models: { default: { provider, model_id: "fixture" }, allow: "*" } })] })
       const makeHost = () => createHost({ actorName: "errors", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, inferenceLayer({ provider, endpoint: "https://fixture.invalid", client: { apiUrl: "https://fixture.invalid", apiKey: Redacted.make("private-fixture-key") }, model: { model: "fixture" }, retry: { backoffMs: [0], retryAfterJitterMs: 0 } }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)))) })
       const host = makeHost()
+      await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
       await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Read", at: 1 })
       await host.drive()
       const log = JSON.parse(JSON.stringify(host.read("root")))

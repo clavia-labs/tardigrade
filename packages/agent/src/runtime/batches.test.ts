@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import fc from "fast-check"
 import { describe, expect, test } from "bun:test"
@@ -7,6 +8,7 @@ import { actor } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { createHost } from "@clavia/tardigrade-host/host"
+import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { agentMethods, budget, codeMode, infer, nativeOutput, tool } from "../index"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
 import { NativeOutputSupport, type InferRequest } from "../inference/contract"
@@ -43,11 +45,13 @@ const setup = (
       Layer.succeed(NativeOutputSupport, { withTools: true })
     )
   })
-  if (seed.length > 0) host.seed(ROOT, seed)
+  if (seed.length > 0) host.seed(ROOT, threadCreatedOf(seed) === undefined
+    ? [threadCreated({ actor: "batch-agent", instance: "main", thread: ROOT }, undefined, 0), ...seed] : seed)
   return {
     host,
     read: () => host.read(ROOT),
     start: async () => {
+      await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self(ROOT)) })
       await host.commitRoot(host.self(ROOT), { type: "MessageReceived", id: TURN, text: "Read the files", at: 1 })
       await host.drive()
     }
@@ -87,6 +91,7 @@ describe("tool batches", () => {
         const admitted: string[] = []
         const requested: string[] = []
         const history: Event[] = [
+          threadCreated({ actor: "batch-agent", instance: "main", thread: ROOT }, undefined, 0),
           { type: "MessageReceived", id: TURN, text: "work", at: 0 },
           { type: "BudgetGranted", initial: true, amount: initial, turn: TURN, at: 1 },
           { type: "ModelCalled", callId: "m1/infer/0", ordinal: 0, turn: TURN, at: 2 },

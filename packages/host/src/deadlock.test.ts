@@ -98,7 +98,9 @@ const brief: Event = { type: "MessageReceived", id: "brief", text: "go", at: 0 }
 describe("the deadlock sentinel", () => {
   test("without it, the knot rests forever, honestly", async () => {
     const h = knot(false)
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("mem:main:p") })
     await h.commitRoot("mem:main:p", brief)
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("mem:main:c") })
     await h.commitRoot("mem:main:c", brief)
     await h.drive()
     expect(h.resting()).toBe(true)
@@ -108,7 +110,9 @@ describe("the deadlock sentinel", () => {
 
   test("with it, one victim fails and the whole knot settles", async () => {
     const h = knot(true)
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("mem:main:p") })
     await h.commitRoot("mem:main:p", brief)
+    await h.allocate({ kind: "root", coordinate: parseThreadAddress("mem:main:c") })
     await h.commitRoot("mem:main:c", brief)
     await h.drive()
     expect(has(h.read("p"), "Settled")).toBe(true)

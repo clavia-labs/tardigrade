@@ -70,13 +70,16 @@ const playerProjection = (me: string, opponent: string): ErasedTransitionProject
     ]
   })
 
-const rally = () => {
+const rally = async () => {
   const host = createHost<Router>({
     actorFor: (thread) =>
       thread === "a" ? { projections: [playerProjection("a", "mem:main:b")], keyOf: rallyKeys }
       : thread === "b" ? { projections: [playerProjection("b", "mem:main:a")], keyOf: rallyKeys }
       : undefined
   })
+  const parent = parseThreadAddress(host.self("a"))
+  await host.allocate({ kind: "root", coordinate: parent })
+  await host.allocate({ kind: "child", parent, child: childKeyOf("b") })
   return host
 }
 
@@ -91,7 +94,7 @@ describe("the host", () => {
         allocations.push(request)
         return request.kind === "root" ? request.coordinate : target
       }) },
-      actorFor: () => ({ keyOf: () => undefined, projections: [completeTransitionProjection((events) =>
+      actorFor: (thread) => thread !== "root" ? undefined : ({ keyOf: () => undefined, projections: [completeTransitionProjection((events) =>
         events.some((event) => event.type === "Allocated") ? [] : [effect({
           key: "allocate", input: {},
           act: () => allocateChildThread({ parent, child: childKeyOf("step") }).pipe(
@@ -100,6 +103,7 @@ describe("the host", () => {
         })]
       )] })
     })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "Start", at: 1 })
     await host.drive()
     expect(host.read("root").find((event) => event.type === "Allocated")?.address).toEqual(target)
@@ -121,7 +125,7 @@ describe("the host", () => {
       actorFor: () => undefined,
       threadAllocator: { allocate: () => Effect.die(new Error("reserved by another creation")) }
     })
-    await expect(host.commitRoot(host.self("root"), { type: "Start", at: 1 })).rejects.toThrow("reserved by another creation")
+    await expect(host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })).rejects.toThrow("reserved by another creation")
     expect(host.read("root")).toEqual([])
   })
 
@@ -151,6 +155,7 @@ describe("the host", () => {
     }
     const host = createHost({ actorFor: () => actor })
 
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress("mem:main:root") })
     await host.commitRoot("mem:main:root", { type: "First", at: 1 } as Event)
     await host.drive()
     await host.commitRoot("mem:main:root", { type: "Second", at: 2 } as Event)
@@ -194,6 +199,7 @@ describe("the host", () => {
       })]
     }
     const host = createHost({ actorFor: () => actor, keyOf: actor.keyOf })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress("mem:main:root") })
     await host.commitRoot("mem:main:root", { type: "MessageReceived", id: "m1", at: 1 } as Event)
     const driving = host.drive()
     await started.promise
@@ -245,6 +251,7 @@ describe("the host", () => {
       keyOf: actor.keyOf
     })
     for (const thread of ["a", "b", "c"]) {
+      await host.allocate({ kind: "root", coordinate: parseThreadAddress(`mem:main:${thread}`) })
       await host.commitRoot(`mem:main:${thread}`, { type: "MessageReceived", id: thread, at: 0 } as Event)
     }
 
@@ -262,7 +269,7 @@ describe("the host", () => {
   })
 
   test("one serve drives the whole rally to quiescence", async () => {
-    const host = rally()
+    const host = await rally()
     await host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     expect(host.resting()).toBe(true)
@@ -273,7 +280,7 @@ describe("the host", () => {
   })
 
   test("redelivery is absorbed: same id, no second answer", async () => {
-    const host = rally()
+    const host = await rally()
     await host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     const before = host.read("a").length
@@ -283,17 +290,20 @@ describe("the host", () => {
   })
 
   test("a sink thread takes deliveries and owes nothing", async () => {
-    const host = rally()
+    const host = await rally()
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress("mem:main:reg") })
     await host.commitRoot("mem:main:reg", { type: "MessageReceived", id: "note", at: 1 } as Event)
     await host.drive()
     expect(host.read("reg").map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     expect(host.resting()).toBe(true)
   })
 
-  test("a child is created with its first delivery and keeps that lineage", async () => {
+  test("a child is allocated before delivery and keeps that lineage", async () => {
     const host = createHost({ actorFor: () => undefined })
     const parent = parseThreadAddress("mem:main:parent")
+    await host.allocate({ kind: "root", coordinate: parent })
     const target = parseThreadAddress("mem:main:child")
+    await host.allocate({ kind: "child", parent, child: childKeyOf(target.thread) })
     const first = envelopeOf(
       linkOf(parent, target),
       { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
@@ -302,7 +312,7 @@ describe("the host", () => {
     await host.commit(first)
     await host.commit(first)
     expect(host.read("child")).toEqual([
-      threadCreated(target, { parent, depth: 1 }, 7),
+      { ...threadCreated(target, { parent, depth: 1 }, 7), at: expect.any(Number) },
       { ...first.event, link: first.link }
     ])
     await expect(host.commit(envelopeOf(
@@ -331,12 +341,14 @@ describe("the router membrane", () => {
     await expect(host.commitRoot("mem:main:thread", { type: "Rogue", at: 1 } as never)).rejects.toThrow(
       'unkeyed cross-thread event "Rogue"'
     )
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress("mem:main:thread") })
     await host.commitRoot("mem:main:thread", { type: "Keyed", id: "k1", at: 1 } as never)
     expect(host.read("thread").map((event) => event.type)).toEqual(["ThreadCreated", "Keyed"])
   })
 
   test("forkThread copies a prefix onto a new root and records ThreadForked", async () => {
     const host = createHost({ actorFor: () => undefined })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m2", at: 2 })
     const dest = await host.forkThread({ source: "root", seq: 2, name: "experiment" })
@@ -362,6 +374,7 @@ describe("the router membrane", () => {
 
   test("concurrent forks of one name land once", async () => {
     const host = createHost({ actorFor: () => undefined })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
     const results = await Promise.all([1, 2, 3].map(() => host.forkThread({ source: "root", seq: 2, name: "experiment" })))
     expect(new Set(results.map((result) => result.thread))).toEqual(new Set(["experiment"]))
@@ -370,7 +383,9 @@ describe("the router membrane", () => {
 
   test("a fork onto a thread that holds another log is refused as occupied", async () => {
     const host = createHost({ actorFor: () => undefined })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("busy")) })
     await host.commitRoot(host.self("busy"), { type: "MessageReceived", id: "b1", at: 2 })
     await expect(host.forkThread({ source: "root", seq: 2, name: "busy" })).rejects.toThrow("already has a log that is not this fork")
     expect(host.read("busy")).toHaveLength(2)
@@ -379,6 +394,7 @@ describe("the router membrane", () => {
   test("forkThread refuses an unknown source and a missing checkpoint", async () => {
     const host = createHost({ actorFor: () => undefined })
     await expect(host.forkThread({ source: "ghost", seq: 1 })).rejects.toThrow("has ever existed")
+    await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
     await expect(host.forkThread({ source: "root", seq: 9 })).rejects.toThrow("outside the log (1..2)")
     await expect(host.forkThread({ source: "root", seq: 1, name: "root" })).rejects.toThrow("cannot target its source")

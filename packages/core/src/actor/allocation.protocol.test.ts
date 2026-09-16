@@ -1,10 +1,32 @@
 import { expect, test } from "bun:test"
-import { Effect } from "effect"
-import { allocateThread, allocateChildCoordinate as allocateChildThread, reserveRootThread, ThreadAllocator } from "./allocation"
+import { Effect, Schema } from "effect"
+import { allocateThread, allocateChildCoordinate as allocateChildThread, reserveRootThread, ThreadAllocator, ThreadAllocation } from "./allocation"
+import { ThreadRequest } from "./supervisor"
 import { childKeyOf } from "./coordinate"
 
 const parent = { actor: "worker", instance: "main", thread: "root" }
 const request = { parent, child: childKeyOf("step") }
+
+test("allocator and supervisor reject malformed creation inputs consistently", async () => {
+  const child = { kind: "child" as const, ...request }
+  const root = { kind: "root" as const, coordinate: parent }
+  const invalid = [
+    ...[-1, 1.5, Infinity, NaN].map((maxDepth) => ({ ...child, maxDepth })),
+    ...[-1, 1.5, Infinity, NaN].map((seq) => ({ ...root, fork: { source: parent, seq } })),
+    { ...root, key: "" },
+    { ...child, placement: "elsewhere" },
+    { ...root, fork: { source: { ...parent, instance: "" }, seq: 1 } }
+  ]
+  let assignments = 0
+  for (const input of invalid) {
+    expect(Schema.is(ThreadAllocation)(input)).toBe(false)
+    expect(Schema.is(ThreadRequest)({ target: parent, request: input })).toBe(false)
+    await expect(Effect.runPromise(allocateThread(input as ThreadAllocation).pipe(
+      Effect.provideService(ThreadAllocator, { allocate: () => Effect.sync(() => { assignments++; return parent }) })
+    ))).rejects.toThrow()
+  }
+  expect(assignments).toBe(0)
+})
 
 test("root names can resolve to host-assigned thread identities", async () => {
   const target = { ...parent, thread: "assigned-root" }

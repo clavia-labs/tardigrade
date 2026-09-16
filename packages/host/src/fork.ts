@@ -2,6 +2,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { checkpointSeqOf, forkBatchOf, matchingFork, type ForkCheckpoint } from "@clavia/tardigrade-core/log"
 import type { ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 
 // ForkThreadRequest copies source rows 1..seq onto a new root (fork.test.ts, host.test.ts).
 export interface ForkThreadRequest {
@@ -69,12 +70,10 @@ export const FORK_EXPECTED_HEAD = 0
 // forkRootAllocation is the root request host.forkThread passes to allocate. An unnamed destination mints a fresh key, so it is never idempotent (http-threads.ts).
 export const forkRootAllocation = (
   scope: { readonly actor: string; readonly instance: string },
-  name: string | undefined
-): {
-  readonly kind: "root"
-  readonly coordinate: ThreadAddress
-  readonly key?: string
-  readonly initialization: "caller"
-} => name === undefined
-  ? { kind: "root", coordinate: { ...scope, thread: "" }, key: crypto.randomUUID(), initialization: "caller" }
-  : { kind: "root", coordinate: { ...scope, thread: name }, initialization: "caller" }
+  name: string | undefined,
+  fork: { readonly source: ThreadAddress; readonly seq: number }
+): Extract<ThreadAllocation, { readonly kind: "root" }> => ({
+  kind: "root", coordinate: { ...scope, thread: name ?? "" },
+  ...(name === undefined ? { key: crypto.randomUUID() } : {}),
+  fork
+})
