@@ -1,4 +1,4 @@
-// DEFAULT_ALARM_DELAY_MILLIS is the recovery wake delay for work whose immediate drive does not settle.
+// DEFAULT_ALARM_DELAY_MILLIS is the watchdog delay for interrupted alarm execution.
 export const DEFAULT_ALARM_DELAY_MILLIS = 120_000
 
 export interface AlarmPolicy {

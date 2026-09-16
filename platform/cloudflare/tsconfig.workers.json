@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["node", "@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"]
   },
-  "include": ["test-e2e/**/*.ts", "test/objects.workers.ts", "test/fixture.worker.ts"]
+  "include": ["test-e2e/**/*.ts", "test/objects.workers.ts", "test/invocation-depth.workers.ts", "test/fixture.worker.ts"]
 }

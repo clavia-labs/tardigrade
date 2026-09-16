@@ -16,7 +16,8 @@ export const threadSupervisorDriver = (
   supervisor: ThreadSupervisor,
   log: typeof EventLog.Service,
   provisioner: Layer.Layer<ThreadProvisioner>,
-  run: <A>(operation: Effect.Effect<A, never, Router | Self>) => Promise<A>
+  run: <A>(operation: Effect.Effect<A, never, Router | Self>) => Promise<A>,
+  requestDrive?: () => Promise<void>
 ) => {
   const { drive } = hostDrive(() => run(settleActor(supervisor).pipe(
     Effect.provideService(EventLog, log), Effect.provide(provisioner)
@@ -29,7 +30,7 @@ export const threadSupervisorDriver = (
       const events = await run(log.read)
       const before = method.state(events, invocation)
       if (before === undefined) throw new Error("thread creation requires an allocation reservation")
-      if (before?.status !== "completed") await drive()
+      if (before?.status !== "completed") await (requestDrive ?? drive)()
       const state = method.state(await run(log.read), invocation)
       if (state?.status !== "completed") throw new Error(`thread ${target.thread} is not ready`)
       if (state.output !== target.thread) {

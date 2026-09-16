@@ -574,49 +574,6 @@ describe("cloudflare actor", () => {
     expect(retained).toEqual([task])
   })
 
-  test("an admission during a live drive joins that drive", async () => {
-    const observed = await runInDurableObject(threadStub("ag.drive-retention"), async (instance, state) => {
-      const dob = instance as unknown as {
-        init(name: string, actorInstance: string, thread: string): Promise<void>
-        kick(host: unknown): void
-        driving: Promise<void> | undefined
-      }
-      await dob.init("echo", "main", "ag.drive-retention")
-      const { promise: synchronizing, resolve: admitSynchronization } = Promise.withResolvers<void>()
-      const entered = Promise.withResolvers<void>()
-      let owed = 1
-      let drains = 0
-      let synchronizePasses = 0
-      const host = {
-        drive: async () => {
-          drains += 1
-          owed = 0
-        },
-        work: () => owed,
-        resting: async () => owed === 0,
-        nextMethodDeadline: async () => {
-          synchronizePasses += 1
-          if (synchronizePasses === 1) {
-            entered.resolve()
-            await synchronizing
-          }
-          return undefined
-        }
-      }
-      dob.kick(host)
-      await entered.promise
-      const live = dob.driving
-      owed = 2
-      dob.kick(host)
-      const joined = dob.driving === live
-      admitSynchronization()
-      await live
-      return { drains, joined, resting: dob.driving === undefined, standingAlarm: await state.storage.getAlarm() }
-    })
-
-    expect(observed).toEqual({ drains: 2, joined: true, resting: true, standingAlarm: null })
-  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
-
   test("an opaque actor instance ref retains its delimiter", async () => {
     const response = await SELF.fetch("http://test/v1/actors/tenant%3Awest", {
       method: "PUT",
@@ -898,8 +855,6 @@ describe("cloudflare actor", () => {
       state.storage.sql.exec<{ thread: string }>("SELECT json_extract(event, '$.thread') AS thread FROM events WHERE json_extract(event, '$.type') = 'ThreadRequested' AND json_extract(event, '$.allocationKey') IS NOT NULL").toArray())
     expect(rows.map((row) => row.thread)).toContain(results[0]!.thread)
     expect(rows.filter((row) => row.thread === results[0]!.thread)).toHaveLength(1)
-    expect(await runInDurableObject(directory, (_instance, state) => state.storage.getAlarm())).not.toBeNull()
-    await runInDurableObject(directory, (instance) => instance.alarm())
     expect((await directory.threadTree()).some((node) => node.id === results[0]!.thread)).toBe(true)
     const tables = await runInDurableObject(directory, (_instance, state) =>
       state.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").toArray())

@@ -72,7 +72,7 @@ Pass application hooks and policies to `defineWorkerHost(definition, options)`:
 | `storeFor` | Select event encoding and event-key indexing for each thread |
 | `inferenceObserverFor` | Receive transient model output through an application binding |
 | `defaultChildPlacement` | Set the supported child placement, `independent` |
-| `backgroundTaskOwner` | Keep work with the host or attach it to the request through `waitUntil` |
+| `backgroundTaskOwner` | Keep commit-observer tasks with the host or attach them to the request through `waitUntil` |
 
 The [option types](src/worker.ts) and [application hooks](src/assembly.ts) define the available overrides. The [Worker environment](src/env.ts) lists configuration bindings for authentication, model discovery, recovery alarms, and sandbox limits. Event encoding and key management are described by the [storage policies](src/storage.ts); [integration tests](test/actor.workers.ts) exercise application services, storage, routing, and recovery.
 

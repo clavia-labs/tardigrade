@@ -1,3 +1,4 @@
+import { AlarmScheduler } from "./alarm-scheduler"
 import type { TreeBounds } from "@clavia/tardigrade-client/contract"
 import { CommitSignal, streamPolicyOf } from "./transport/stream"
 import { actorThreadsTail } from "@clavia/tardigrade-http/sse"
@@ -29,7 +30,7 @@ import { sqlThreadDirectory } from "@clavia/tardigrade-host/allocation-sql"
 import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
 import { restingActor } from "@clavia/tardigrade-core/runtime"
-import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
+import { alarmPolicyOf, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareActorSchema, CloudflareEventStore } from "./storage"
 import type { Env } from "./env"
 import { mountedActor, deployed, nonNegativeInteger, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT } from "./assembly"
@@ -108,6 +109,7 @@ export class ActorDO extends DurableObject<Env> {
   private actorName: string | undefined
   private actorInstance: string | undefined
   private readonly database = ManagedRuntime.make(SqliteClient.layer({ storage: this.ctx.storage }))
+  private alarmScheduler: AlarmScheduler | undefined
   private readonly alarmPolicy: AlarmPolicy
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -167,6 +169,10 @@ export class ActorDO extends DurableObject<Env> {
   private async resting(): Promise<boolean> {
     await this.allocator()
     return restingActor(this.definition!, await this.events())
+  }
+
+  private scheduler(): AlarmScheduler {
+    return this.alarmScheduler ??= new AlarmScheduler(this.ctx.storage, this.alarmPolicy.recoveryDelayMillis)
   }
 
   private async synchronizeAlarm(): Promise<void> {
@@ -236,17 +242,17 @@ export class ActorDO extends DurableObject<Env> {
         WHERE json_extract(event, '$.type') = 'ThreadRequested' AND json_extract(event, '$.thread') = ${target.thread}`.pipe(
         Effect.map((rows) => rows.length > 0 && (!existingRoot || rows.some((row) => upcastThreadRequest(JSON.parse(row.event)).parentThread !== undefined))), Effect.orDie
       ), this.definition!.methods.requestThread)
-    const target = await Effect.runPromise(allocateThread(request).pipe(Effect.provideService(
-      ThreadAllocator, mountedActor?.threadAllocator ?? registeredThreadAllocator({
-        get: (key) => Effect.promise(() => this.database.runPromise(store.get(key))),
-        claim: (key, target, existingRoot, request) => Effect.promise(() => this.database.runPromise(store.claim(key, target, existingRoot, request)))
-      }, mountedActor?.allocation)
-    )))
-    const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
-    if (at !== null) await this.ctx.storage.setAlarm(at)
-    const assigned = await this.database.runPromise(store.claim(threadAllocationKey(request), target, request.kind === "root", request))
-    if (assigned !== target.thread) throw new Error("thread reservation conflicts with an existing assignment")
-    return target
+    return this.scheduler().admit(async () => {
+      const target = await Effect.runPromise(allocateThread(request).pipe(Effect.provideService(
+        ThreadAllocator, mountedActor?.threadAllocator ?? registeredThreadAllocator({
+          get: (key) => Effect.promise(() => this.database.runPromise(store.get(key))),
+          claim: (key, target, existingRoot, request) => Effect.promise(() => this.database.runPromise(store.claim(key, target, existingRoot, request)))
+        }, mountedActor?.allocation)
+      )))
+      const assigned = await this.database.runPromise(store.claim(threadAllocationKey(request), target, request.kind === "root", request))
+      if (assigned !== target.thread) throw new Error("thread reservation conflicts with an existing assignment")
+      return target
+    })
   }
 
   private allocator(): Promise<ReturnType<typeof hostThreadAllocator>> {
@@ -280,7 +286,7 @@ export class ActorDO extends DurableObject<Env> {
       Effect.provideService(Router, { send: (envelope) => isActorEnvelope(envelope)
         ? transport.send(envelope.link.target, envelope)
         : Effect.die(new Error("supervisor routing requires an actor envelope")) })
-    )))
+    )), () => this.scheduler().wakeAndWait())
     const identity = this.identity()
     return hostThreadAllocator({
       read: async (target) => {
@@ -366,10 +372,6 @@ export class ActorDO extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
-    if (at !== null) await this.ctx.storage.setAlarm(at)
-    await scheduler.wait(0)
-    await this.reconcile()
-    await this.synchronizeAlarm()
+    await this.scheduler().run(() => this.reconcile(), () => this.synchronizeAlarm())
   }
 }
