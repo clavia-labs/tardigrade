@@ -246,6 +246,7 @@ type CloudflareApplicationRequirements<R> = Exclude<R, CloudflareWorkerProvided>
 // CloudflareWorkerLayerContext exposes the Worker bindings and thread identity used to construct application services.
 export interface CloudflareWorkerLayerContext<WorkerEnv extends Env = Env> {
   readonly env: WorkerEnv
+  readonly storage: DurableObjectStorage
   readonly actorInstance: string
   readonly thread: string
 }

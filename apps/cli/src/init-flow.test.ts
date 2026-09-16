@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Cause, Console, Effect, Layer, Option, Queue, Terminal } from "effect"
 import { Command } from "effect/unstable/cli"
@@ -51,7 +51,9 @@ const eventually = async (check: () => Promise<boolean>, timeout = 10_000) => {
 }
 
 test.each(["registry", "custom", "interactive"] as const)("generated quickstart lifecycle with %s models", async (source) => {
-  const root = await mkdtemp(join(repository, ".cli-flow-"))
+  const fixtures = join(repository, ".cache", "cli-tests")
+  await mkdir(fixtures, { recursive: true })
+  const root = await mkdtemp(join(fixtures, "flow-"))
   let modelCalls = 0
   let hold = false
   const model = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request): Promise<Response> {

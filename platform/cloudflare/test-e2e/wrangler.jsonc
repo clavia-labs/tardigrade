@@ -1,5 +1,5 @@
 {
-  "name": "tardigrade-inference-test",
+  "name": "tardigrade-e2e-test",
   "main": "fixture.worker.ts",
   "compatibility_date": "2026-08-08",
   "compatibility_flags": ["nodejs_compat"],
@@ -13,5 +13,6 @@
     { "binding": "CATALOG_DB", "database_name": "tardigrade-catalog", "migrations_dir": "../migrations" }
   ],
   "worker_loaders": [{ "binding": "LOADER" }],
+  "r2_buckets": [{ "binding": "OBJECTS", "bucket_name": "inference-test-objects" }],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO"] }]
 }

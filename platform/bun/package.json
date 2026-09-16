@@ -30,6 +30,7 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
+    "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",

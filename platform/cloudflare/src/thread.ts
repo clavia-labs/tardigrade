@@ -163,7 +163,8 @@ export class ThreadDO extends DurableObject<Env> {
       isActorEnvelope,
       (envelope) => envelope.link.target
     )
-    const commitObserver = mountedActor?.commitObserverFor?.({ env: this.env, actorInstance, thread: currentThread })
+    const layerContext = { env: this.env, storage: this.ctx.storage, actorInstance, thread: currentThread }
+    const commitObserver = mountedActor?.commitObserverFor?.(layerContext)
     return createCloudflareThreadHost({
       threadAllocator: {
         allocate: (request) => Effect.promise(async () => {
@@ -181,14 +182,13 @@ export class ThreadDO extends DurableObject<Env> {
       ...(commitObserver === undefined ? {} : { commitObserver }),
       retainCommitTask: (task: Promise<void>) => retainBackgroundTask(this.ctx, this.backgroundTaskOwner, task),
       layers: (() => {
-        const thread = currentThread
-        const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, actorInstance, thread })
+        const observer = mountedActor?.inferenceObserverFor?.(layerContext)
         const framework = Layer.mergeAll(modelLayer(models, modelScope, observer), FetchHttpClient.layer, sandboxLayer)
-        const application = mountedActor?.layersFor?.({ env: this.env, actorInstance, thread })
+        const application = mountedActor?.layersFor?.(layerContext)
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       })(),
       routes: [independentRoute],
-      ...(mountedActor?.storeFor === undefined ? {} : { store: mountedActor.storeFor({ env: this.env, actorInstance, thread: currentThread }) }),
+      ...(mountedActor?.storeFor === undefined ? {} : { store: mountedActor.storeFor(layerContext) }),
       keyOf: actorRuntimeOf(selectedAssembly).keyOf
     })
   }

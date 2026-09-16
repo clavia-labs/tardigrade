@@ -1,3 +1,4 @@
+import type { AgentMessage } from "../projection/messages"
 import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { actor } from "@clavia/tardigrade-core/actor"
@@ -688,7 +689,7 @@ describe("the repair implementation", () => {
   })
 
   test("the correction is a rendered exchange, and a later turn reads the corrected value alone", async () => {
-    const rendered: Array<ReadonlyArray<{ readonly role: string; readonly content: string | null }>> = []
+    const rendered: Array<ReadonlyArray<AgentMessage>> = []
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
@@ -1115,7 +1116,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => legac
 
 describe("a domain-specific implementation", () => {
   test("the core records the rejection and waits; the component decides the feedback", async () => {
-    const prompts: Array<ReadonlyArray<{ readonly role: string; readonly content: string | null }>> = []
+    const prompts: Array<ReadonlyArray<AgentMessage>> = []
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,

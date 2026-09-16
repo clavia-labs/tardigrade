@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { Toolkit, type Response } from "effect/unstable/ai"
+import { Toolkit, type Prompt, type Response } from "effect/unstable/ai"
 import { collectResponse } from "@clavia/tardigrade-model/stream/collect"
 import { withModelRequest } from "@clavia/tardigrade-model/stream/invocation"
 import { BindingSettings } from "@clavia/tardigrade-model/settings"
@@ -8,7 +8,7 @@ import type { ModelRef } from "@clavia/tardigrade-model/reference"
 import { unknownModelError } from "@clavia/tardigrade-model/error"
 
 // summarize accepts a nonempty completed summary without tool calls (component/compaction.test.ts).
-export const summarize = (prompt: string, identity: InferenceIdentity, model?: ModelRef) => Effect.gen(function* () {
+export const summarize = (prompt: Prompt.RawInput, identity: InferenceIdentity, model?: ModelRef) => Effect.gen(function* () {
   const settings = yield* BindingSettings
   const response = yield* withModelRequest({ identity, model, key: identity.turn }, onPart =>
     collectResponse(prompt, Toolkit.make(), onPart, undefined, settings.policy.timeout)
