@@ -14,7 +14,8 @@ export {
   fetchPolicyOf,
   DEFAULT_FETCH_POLICY,
   DEFAULT_FETCH_BODY_CHARS,
-  type FetchPolicy
+  type FetchPolicy,
+  type FetchUrlPolicy
 } from "./package/fetch"
 export {
   CODE_VIEW_ALGEBRA,
