@@ -1,3 +1,4 @@
+import { AlarmScheduler } from "./alarm-scheduler"
 import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { eventTail, inferenceTail } from "@clavia/tardigrade-http/sse"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
@@ -19,7 +20,7 @@ import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/int
 import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { actorRuntimeOf, restingActor } from "@clavia/tardigrade-core/runtime"
 import { layerWorkerLoaderSandbox, type WorkerLoaderSandboxLimits } from "@clavia/tardigrade-worker-loader/sandbox"
-import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
+import { alarmPolicyOf, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareThreadSchema } from "./storage"
 import { createCloudflareThreadHost, type CloudflareThreadHost } from "./host"
 import type { Env } from "./env"
@@ -31,7 +32,7 @@ export class ThreadDO extends DurableObject<Env> {
   private readonly inference = makeInferenceStream()
   private schema: Promise<void> | undefined
   private runtime: Promise<CloudflareThreadHost> | undefined
-  private driving: Promise<void> | undefined
+  private alarmScheduler: AlarmScheduler | undefined
   private actorName: string | undefined
   private actorInstance: string | undefined
   private threadId: string | undefined
@@ -209,9 +210,8 @@ export class ThreadDO extends DurableObject<Env> {
     return this.runtime
   }
 
-  private async arm(): Promise<void> {
-    const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
-    if (at !== null) await this.ctx.storage.setAlarm(at)
+  private scheduler(): AlarmScheduler {
+    return this.alarmScheduler ??= new AlarmScheduler(this.ctx.storage, this.alarmPolicy.recoveryDelayMillis)
   }
 
   private async synchronizeAlarm(host: CloudflareThreadHost): Promise<void> {
@@ -230,50 +230,17 @@ export class ThreadDO extends DurableObject<Env> {
     }
   }
 
-  private async commitTurn(): Promise<void> {
-    await scheduler.wait(0)
-  }
-
-  // accept stages the work and recovery alarm, crosses their commit turn, and starts reconciliation in that order (tla/DurableExecution.tla, CoveredBeforeDrive).
+  // accept persists input and an immediate alarm before publishing (test/invocation-depth.workers.ts).
   private async accept(host: CloudflareThreadHost, stage: () => Promise<void>): Promise<void> {
-    if (await this.ctx.storage.get<boolean>("threadReady") !== true) {
-      const identity = this.identity()
-      const owner = await directory.actorStub(this.env, identity.actor, identity.instance, false)
-      if (owner === undefined || !await owner.isThreadReady(identity.thread)) throw new Error("thread is not ready; allocate it before delivery")
-      await this.ctx.storage.put("threadReady", true)
-    }
-    const current = await this.ctx.storage.getAlarm()
-    await stage()
-    const at = scheduledAlarmAt(
-      current,
-      false,
-      Date.now(),
-      this.alarmPolicy.recoveryDelayMillis,
-      await host.nextMethodDeadline()
-    )
-    if (at !== null && current !== at) await this.ctx.storage.setAlarm(at)
-    await this.commitTurn()
-    host.publishStaged()
-    this.kick(host)
-  }
-
-  // kick retains each admission's drive through synchronization and releases at rest (tla/ActiveDrive.tla, AdmissionRetained and JoinedWorkDrained).
-  private kick(host: CloudflareThreadHost): void {
-    if (this.driving === undefined) {
-      this.driving = Promise.resolve().then(async () => {
-        try {
-          do {
-            await host.drive()
-            await this.synchronizeAlarm(host)
-          } while (host.work() > 0)
-        } catch (cause) {
-          console.error("actor drive failed; the alarm remains armed", cause)
-        } finally {
-          this.driving = undefined
-        }
-      })
-    }
-    retainBackgroundTask(this.ctx, this.backgroundTaskOwner, this.driving)
+    await this.scheduler().admit(async () => {
+      if (await this.ctx.storage.get<boolean>("threadReady") !== true) {
+        const identity = this.identity()
+        const owner = await directory.actorStub(this.env, identity.actor, identity.instance, false)
+        if (owner === undefined || !await owner.isThreadReady(identity.thread)) throw new Error("thread is not ready; allocate it before delivery")
+        await this.ctx.storage.put("threadReady", true)
+      }
+      await stage()
+    }, () => host.publishStaged())
   }
 
   async append(thread: string, event: Event): Promise<boolean> {
@@ -289,7 +256,7 @@ export class ThreadDO extends DurableObject<Env> {
     return true
   }
 
-  // appendAt stages the complete fork batch before arming recovery and driving it (packages/core/tla/interaction/Fork.tla, AtomicPublication).
+  // appendAt admits the complete fork batch before alarm-driven execution (packages/core/tla/interaction/Fork.tla, AtomicPublication).
   async appendAt(events: ReadonlyArray<Event>, expectedHead: number): Promise<{ readonly appended: number; readonly head: number }> {
     if (!this.initialized()) throw new Error("Thread DO has not been initialized")
     const host = await this.host()
@@ -318,11 +285,10 @@ export class ThreadDO extends DurableObject<Env> {
     const host = await this.host()
     const created = threadCreatedOf(await host.read())
     if (created === undefined) return undefined
-    await this.ctx.storage.put("threadReady", true)
-    await this.arm()
-    await this.commitTurn()
-    host.publishStaged()
-    this.kick(host)
+    await this.scheduler().admit(
+      () => this.ctx.storage.put("threadReady", true),
+      () => host.publishStaged()
+    )
     return created
   }
 
@@ -404,16 +370,12 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    {
+    const host = await this.host()
+    await this.scheduler().run(async () => {
       const identity = this.identity()
       await this.env.ACTORS.getByName(actorObjectNameOf(identity.actor, identity.instance)).ensureThreadReady(identity.thread)
-    }
-    const at = Date.now()
-    const host = await this.host()
-    await this.arm()
-    await this.commitTurn()
-    await host.recordAlarm(at)
-    await host.recover()
-    await this.synchronizeAlarm(host)
+      await host.recordAlarm(Date.now())
+      await host.recover()
+    }, () => this.synchronizeAlarm(host))
   }
 }

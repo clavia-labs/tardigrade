@@ -72,4 +72,6 @@ Keep the internal listener on a trusted private network. Running nodes poll for 
 
 ## Execution model
 
-The generated manifest uses the `replay` sandbox transport and assigns background work to the `request`. Celld records package-call results, replays the deterministic actor body, and keeps reconciliation alive with `waitUntil`. Cloudflare uses `direct` transport and `host` ownership by default. See Celld's [Cloudflare compatibility](https://github.com/denoland/celld/blob/main/docs/cloudflare-compat.md) and [operations documentation](https://github.com/denoland/celld/blob/main/docs/README.md) for platform details.
+Celld and Cloudflare persist incoming work and an immediate alarm before acknowledging delivery. Alarm handlers run thread execution and supervisor setup in fresh invocations. Allocation waits for setup and registration to complete before returning a ready thread.
+
+The generated Celld manifest uses the `replay` sandbox transport and `request` ownership for background observer tasks. Cloudflare defaults to `direct` transport and `host` ownership. These settings do not change alarm-driven execution. See Celld's [Cloudflare compatibility](https://github.com/denoland/celld/blob/main/docs/cloudflare-compat.md) and [operations documentation](https://github.com/denoland/celld/blob/main/docs/README.md) for platform details.
