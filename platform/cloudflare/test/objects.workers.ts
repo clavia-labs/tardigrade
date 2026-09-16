@@ -1,7 +1,7 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
 import { Effect } from "effect"
-import { ObjectStorage, DEFAULT_MAX_CACHED_OBJECT_BYTES, DEFAULT_MAX_LOCAL_OBJECT_BYTES } from "@clavia/tardigrade-agent"
+import { ObjectStorage, DEFAULT_MAX_LOCAL_OBJECT_BYTES } from "@clavia/tardigrade-agent"
 import { CLOUDFLARE_OBJECT_CACHE_CAPABILITIES, objectStorageFromR2 } from "../src/object-storage/r2"
 import type { Env } from "../src/env"
 import { objectStorageFromSqlite } from "../src/object-storage/sqlite"
@@ -67,17 +67,18 @@ test("R2 reads reject bytes overwritten outside the content-addressed adapter", 
 test("DO cache admits bounded objects, survives eviction, and isolates backing namespaces", async () => {
   const stub = (env as Env).THREADS.getByName("object-cache-persistence")
   const prefix = "cached/"
+  const policy = { maxCachedObjectBytes: 16, maxCacheBytes: 32 }
   const reference = await runInDurableObject(stub, async (_instance, state) => {
-    const cache = { storage: state.storage, namespace: "objects-bucket" }
+    const cache = { storage: state.storage, namespace: "objects-bucket", ...policy }
     const tracked = trackReads()
     const layer = objectStorageFromR2(tracked.bucket, { prefix, cache })
     return Effect.runPromise(Effect.gen(function* () {
       const storage = yield* ObjectStorage
-      const bytes = new Uint8Array(DEFAULT_MAX_CACHED_OBJECT_BYTES).fill(7)
+      const bytes = new Uint8Array(policy.maxCachedObjectBytes).fill(7)
       const ref = yield* storage.put(bytes)
       expect(yield* storage.get(ref)).toEqual(bytes)
       expect(tracked.reads()).toBe(0)
-      const large = new Uint8Array(DEFAULT_MAX_CACHED_OBJECT_BYTES + 1).fill(8)
+      const large = new Uint8Array(policy.maxCachedObjectBytes + 1).fill(8)
       const largeRef = yield* storage.put(large)
       expect(yield* storage.get(largeRef)).toEqual(large)
       expect(yield* storage.get(largeRef)).toEqual(large)
@@ -88,10 +89,10 @@ test("DO cache admits bounded objects, survives eviction, and isolates backing n
   await evictDurableObject(stub)
   await runInDurableObject(stub, async (_instance, state) => {
     const tracked = trackReads()
-    const cache = { storage: state.storage, namespace: "objects-bucket" }
+    const cache = { storage: state.storage, namespace: "objects-bucket", ...policy }
     await Effect.runPromise(Effect.gen(function* () {
       const storage = yield* ObjectStorage
-      expect((yield* storage.get(reference)).byteLength).toBe(DEFAULT_MAX_CACHED_OBJECT_BYTES)
+      expect(yield* storage.get(reference)).toEqual(new Uint8Array(policy.maxCachedObjectBytes).fill(7))
       expect(tracked.reads()).toBe(0)
     }).pipe(Effect.provide(objectStorageFromR2(tracked.bucket, { prefix, cache }))))
     for (const isolated of [
