@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.29.0](https://github.com/clavia-labs/tardigrade/compare/v0.28.0...v0.29.0) (2026-09-16)
+
+
+### Features
+
+* **agent:** add durable file inputs ([#464](https://github.com/clavia-labs/tardigrade/issues/464)) ([66b480d](https://github.com/clavia-labs/tardigrade/commit/66b480d646fc4be97658dd94248464d6cab4f7ef))
+* **chat:** add Cloudflare attachments ([#474](https://github.com/clavia-labs/tardigrade/issues/474)) ([61edb7c](https://github.com/clavia-labs/tardigrade/commit/61edb7cf6ce64134d89d84aaeec315676516a2d2))
+* **core:** supervise thread creation ([#472](https://github.com/clavia-labs/tardigrade/issues/472)) ([de4934b](https://github.com/clavia-labs/tardigrade/commit/de4934bfb682ef9d2f7e7ca6ee7809e712816ace))
+
+
+### Bug Fixes
+
+* **cloudflare:** resume through alarms ([#475](https://github.com/clavia-labs/tardigrade/issues/475)) ([9630eaa](https://github.com/clavia-labs/tardigrade/commit/9630eaa3951b079f3e97232e6850403d68011e3f))
+* **model:** adopt adapter fixes ([#478](https://github.com/clavia-labs/tardigrade/issues/478)) ([64d10ed](https://github.com/clavia-labs/tardigrade/commit/64d10edbf49fbcc94d5aef3772d5e8dd862e04c5))
+
 ## [0.28.0](https://github.com/clavia-labs/tardigrade/compare/v0.27.0...v0.28.0) (2026-09-14)
 
 
