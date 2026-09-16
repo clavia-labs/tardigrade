@@ -2,11 +2,27 @@ import { expect, test } from "bun:test"
 import fc from "fast-check"
 import { Effect } from "effect"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
-import { registeredThreadAllocator, memoryThreadDirectory, initializingThreadAllocator, threadSlug } from "./allocation"
-import type { ThreadAllocation, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { registeredThreadAllocator, memoryThreadDirectory, threadSlug } from "./allocation"
+import { allocateThread, ThreadAllocator, type ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
+import type { Event } from "@clavia/tardigrade-core/event"
 
 const parent = { actor: "tardie", instance: "rick", thread: "main" }
 const child = (name: string): ThreadAllocation => ({ kind: "child", parent, child: childKeyOf(name) })
+
+test("assignments survive replay without requiring parent directory records", async () => {
+  const directories = new Map<string, Event[]>()
+  const open = (records: Map<string, Event[]>) => registeredThreadAllocator(memoryThreadDirectory(undefined, undefined, records))
+  const allocator = open(directories)
+  const request = { ...child("researcher"), key: "call-123" }
+  const assigned = await Effect.runPromise(allocator.allocate(request))
+  expect(await Effect.runPromise(allocator.allocate(request))).toEqual(assigned)
+  const unrelated = { kind: "root" as const, coordinate: { ...parent, thread: "unrelated" } }
+  expect(await Effect.runPromise(allocator.allocate(unrelated))).toEqual(unrelated.coordinate)
+  const recovered = open(new Map(JSON.parse(JSON.stringify([...directories]))))
+  expect(await Effect.runPromise(recovered.allocate(request))).toEqual(assigned)
+  expect(await Effect.runPromise(recovered.allocate(child("another")))).toEqual({ ...parent, thread: "another" })
+  await expect(Effect.runPromise(recovered.allocate({ kind: "root", coordinate: assigned }))).rejects.toThrow("already taken")
+})
 
 test("slugs use configurable words and a short random token", () => {
   expect(threadSlug()).toMatch(/^[a-z]+-[a-z]+-[a-z2-7]{4}$/)
@@ -70,27 +86,13 @@ test("distinct scopes and names separate trees at every depth", async () => {
   ))
 })
 
-test("root initialization finishes before allocation returns and failures propagate", async () => {
-  const allocator = registeredThreadAllocator(memoryThreadDirectory())
-  const initialized: string[] = []
-  const service = initializingThreadAllocator(allocator, async (target) => { initialized.push(target.thread) })
-  const target = await Effect.runPromise(service.allocate({ kind: "root", coordinate: parent }))
-  expect(initialized).toEqual([target.thread])
-  await Effect.runPromise(service.allocate(child("researcher")))
-  expect(initialized).toHaveLength(1)
-  await expect(Effect.runPromise(initializingThreadAllocator(allocator,
-    () => Promise.reject(new Error("storage unavailable"))
-  ).allocate({ kind: "root", coordinate: parent }))).rejects.toThrow("storage unavailable")
-})
-
-test("caller-owned root initialization survives allocator normalization without running startup", async () => {
+test("fork publication input survives allocator normalization", async () => {
   const requests: ThreadAllocation[] = []
   const allocator: typeof ThreadAllocator.Service = { allocate: (request) => Effect.sync(() => {
     requests.push(request)
     return parent
   }) }
-  const service = initializingThreadAllocator(allocator, async () => { throw new Error("caller owns initialization") })
-  const request = { kind: "root" as const, coordinate: parent, initialization: "caller" as const }
-  expect(await Effect.runPromise(service.allocate(request))).toEqual(parent)
+  const request = { kind: "root" as const, coordinate: parent, fork: { source: { ...parent, thread: "source" }, seq: 1 } }
+  expect(await Effect.runPromise(allocateThread(request).pipe(Effect.provideService(ThreadAllocator, allocator)))).toEqual(parent)
   expect(requests).toEqual([request])
 })

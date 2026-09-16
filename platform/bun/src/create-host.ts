@@ -16,13 +16,13 @@ import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
 import type { ForkThreadRequest } from "@clavia/tardigrade-host/fork"
 import { isActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
-import { threadCreated, threadCreatedOf, childLineageOf } from "@clavia/tardigrade-core/interaction/relations"
+import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { existingInvocation, prepareMethodInvocation } from "@clavia/tardigrade-host/invocation"
 import { bunInstances } from "./instances"
 import { createBunHost as createBunInstance, type BunHost, type BunHostOptions } from "./host"
 
-export type HostOptions<R, Methods extends ActorMethods> = Omit<BunHostOptions<R>, "database" | "actorName" | "actorInstance" | "actorFor" | "initializeRoot" | "layersFor" | "signal"> & {
+export type HostOptions<R, Methods extends ActorMethods> = Omit<BunHostOptions<R>, "database" | "actorName" | "actorInstance" | "actorFor" | "layersFor" | "signal"> & {
   readonly actor: Actor<R, Methods>
   readonly storage: string
   readonly storageLayout?: HostStorageLayout
@@ -81,9 +81,9 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
       actorName: options.actor.name, actorInstance: instance, actorFor: () => options.actor,
       threadAllocator: options.threadAllocator ?? { allocate: (request) => Effect.promise(async () => {
         const target = request.kind === "root" ? request.coordinate : request.parent
-        return (await instanceOf(target.actor, target.instance)).assignThread(request)
+        const owner = await instanceOf(target.actor, target.instance)
+        return target.instance === instance ? owner.reserveThread(request) : owner.allocate(request)
       }) },
-      initializeRoot: async (target, at) => (await instanceOf(target.actor, target.instance)).initializeRoot(target, at),
       routes: [...(options.routes ?? []), {
         transport: "host-instances",
         resolve: (envelope) => Effect.succeed(isActorEnvelope(envelope) && envelope.link.target.actor === options.actor.name && envelope.link.target.instance !== instance
@@ -101,13 +101,7 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
     active()
     const scope = request.kind === "root" ? request.coordinate : request.parent
     const host = await instanceOf(scope.actor, scope.instance)
-    if (request.kind === "root") return host.allocate(request)
-    const parent = threadCreatedOf(await host.read(request.parent.thread))
-    if (parent === undefined) throw new Error("parent thread does not exist")
-    const target = await host.allocate(request)
-    const lineage = childLineageOf(parent, options.defaultChildPlacement)
-    await host.commit({ link: { source: request.parent, target }, lineage, event: threadCreated(target, lineage, Date.now()) })
-    return target
+    return host.allocate(request)
   }
   const resolve: HostBackend["resolve"] = (target) => target.actor !== options.actor.name
     ? Effect.succeed(undefined as IngressActor | undefined)

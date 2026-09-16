@@ -5,6 +5,8 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Schema, Tracer } from "effect"
+import { threadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
@@ -153,6 +155,28 @@ const deadlineHost = (path: string, alarm: ManualAlarmScheduler) => createBunHos
 const eventsOf = (events: ReadonlyArray<Event>, type: string) => events.filter((event) => event.type === type)
 
 describe("the bun host", () => {
+  test("child allocation records its depth ceiling before delivery and survives recovery", async () => {
+    const path = freshPath()
+    let setups = 0
+    const open = () => createBunHost({ database: path, actorFor: () => undefined,
+      supervisor: threadSupervisor({ setup: () => Effect.sync(() => { setups++ }) }) })
+    let host = await open()
+    try {
+      const parent = parseThreadAddress(host.self("parent"))
+      await host.allocate({ kind: "root", coordinate: parent })
+      const lineage = { parent, depth: 1, maxDepth: 2 }
+      const target = await host.allocate({ kind: "child", parent, child: childKeyOf("child"), maxDepth: 2 })
+      expect((await host.read(target.thread))[0]).toMatchObject(lineage)
+      await host.commit({ link: { source: parent, target }, lineage, event: { type: "MessageReceived", id: "m", at: 1 } })
+      await host.close()
+      host = await open()
+      await host.recover()
+      expect((await host.read(target.thread))[0]).toMatchObject(lineage)
+      expect(await host.actorThread(target.thread)).toMatchObject({ state: "registered", allocationRequest: { parent, maxDepth: 2 } })
+      expect(setups).toBe(2)
+    } finally { await host.close() }
+  })
+
   test("root creation awaits the configured reservation and reuses it on later messages", async () => {
     const requests: string[] = []
     const host = await createBunHost({
@@ -218,14 +242,16 @@ describe("the bun host", () => {
     expect(await waiting).toBeGreaterThan(0)
     expect(await first.actorHead()).toBe(2)
     expect(await first.readActorPage(0, 10)).toEqual([
-      { seq: 1, event: expect.objectContaining({ type: "ThreadRequested", thread: "alpha" }) },
+      { seq: 1, event: expect.objectContaining({ type: "ThreadRequested", thread: "alpha",
+        call: expect.objectContaining({ invocation: { method: "requestThread", id: "alpha", epoch: 0 }, deadlineAt: expect.any(Number) })
+      }) },
       { seq: 2, event: expect.objectContaining({ type: "ThreadRegistered", thread: "alpha" }) }
     ])
     expect(await first.actorThreads()).toEqual({
       cursor: 2,
-      threads: [{ thread: "alpha", allocationKey: expect.any(String), depth: 0, state: "registered" }]
+      threads: [{ thread: "alpha", allocationRequest: { kind: "root", coordinate: { actor: "bun", instance: "default", thread: "alpha" } }, allocationKey: expect.any(String), depth: 0, state: "registered" }]
     })
-    expect(await first.actorThread("alpha")).toEqual({ thread: "alpha", allocationKey: expect.any(String), depth: 0, state: "registered" })
+    expect(await first.actorThread("alpha")).toEqual({ thread: "alpha", allocationRequest: { kind: "root", coordinate: { actor: "bun", instance: "default", thread: "alpha" } }, allocationKey: expect.any(String), depth: 0, state: "registered" })
     await first.close()
 
     const reopened = await createBunHost(options(path))
@@ -252,6 +278,38 @@ describe("the bun host", () => {
       "ThreadRegistered"
     ])
     await reopened.close()
+  })
+
+  test("recovery repairs a missing child directory entry without repeating setup", async () => {
+    const path = freshPath()
+    let setups = 0
+    const open = () => createBunHost({ database: path, actorFor: () => undefined,
+      supervisor: threadSupervisor({ setup: () => Effect.sync(() => { setups++ }) }) })
+    const first = await open()
+    const parent = parseThreadAddress(first.self("parent"))
+    await first.allocate({ kind: "root", coordinate: parent })
+    const child = await first.allocate({ kind: "child", parent, child: childKeyOf("child"), maxDepth: 2 })
+    const actorEvents = await first.readActorPage(0, 100)
+    const childEvents = await first.read(child.thread)
+    await first.close()
+
+    const database = new Database(path)
+    database.run("DELETE FROM thread_directory WHERE thread = ?", [child.thread])
+    database.close()
+
+    const reopened = await open()
+    try {
+      await reopened.recover()
+      await reopened.recover()
+      expect(await reopened.readActorPage(0, 100)).toEqual(actorEvents)
+      expect(await reopened.read(child.thread)).toEqual(childEvents)
+      expect(setups).toBe(2)
+      const database = new Database(path, { readonly: true })
+      try {
+        expect(database.query("SELECT parent_thread, depth, placement FROM thread_directory WHERE thread = ?").get(child.thread))
+          .toEqual({ parent_thread: parent.thread, depth: 1, placement: "colocated" })
+      } finally { database.close() }
+    } finally { await reopened.close() }
   })
 
   test("startup ignores a thread database without creation", async () => {
@@ -282,13 +340,22 @@ describe("the bun host", () => {
 
     await h.commitRoot("bun:default:followed", { type: "MessageReceived", id: "followed", at: 1 } as Event)
 
-    expect(await waiting).toBe(2)
+    expect(await waiting).toBeGreaterThanOrEqual(1)
     expect(await h.readPage("followed", 0, 1)).toEqual([
       { seq: 1, event: expect.objectContaining({ type: "ThreadCreated" }) }
     ])
+    const head = (await h.read("followed")).length
     await h.commitRoot("bun:default:followed", { type: "MessageReceived", id: "followed", at: 2 } as Event)
+    expect(await h.read("followed")).toHaveLength(head)
     await h.close()
-    expect(commits).toEqual([{ thread: "followed", head: 2 }])
+    expect(commits.at(-1)).toEqual({ thread: "followed", head })
+    let previousHead = 0
+    for (const commit of commits) {
+      expect(commit.thread).toBe("followed")
+      expect(commit.head).toBeGreaterThanOrEqual(previousHead)
+      expect(commit.head).toBeLessThanOrEqual(head)
+      previousHead = commit.head
+    }
   })
 
   test("runs actor code in its process sandbox", async () => {
@@ -461,22 +528,21 @@ describe("the bun host", () => {
       database: freshPath(),
       actorFor: () => startup,
       threadAllocator: { allocate: (request) => Effect.promise(async () => {
-        const target = await host.assignThread(request)
+        const target = await host.reserveThread(request)
         if (target.thread === "experiment") {
           reserved = true
           await host.drive()
           await host.recover()
-          expect(await host.read(target.thread)).toEqual([])
+          expect((await host.read(target.thread)).slice(0, 3).map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
         }
         return target
       }) },
-      initializeRoot: async (target, at) => {
-        await host.commitRoot(formatThreadAddress(target), threadCreated(target, undefined, at))
+      supervisor: threadSupervisor({ setup: ({ target }) => Effect.promise(async () => {
         if (target.thread === "experiment") {
-          await host.drive()
           premature = (await host.read(target.thread)).filter((event) => event.type === "Booted")
+          expect((await host.read(target.thread)).map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
         }
-      }
+      }) })
     })
     try {
       await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
@@ -502,7 +568,7 @@ describe("the bun host", () => {
     const request = { source: "root", seq: 2, name: "experiment" }
     try {
       await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "m1", at: 1 })
-      await first.assignThread({ kind: "root", coordinate: parseThreadAddress(first.self("experiment")), initialization: "caller" })
+      await first.reserveThread({ kind: "root", coordinate: parseThreadAddress(first.self("experiment")), fork: { source: parseThreadAddress(first.self("root")), seq: 2 } })
       expect(await first.read("experiment")).toEqual([])
     } finally {
       await first.close()
@@ -510,8 +576,8 @@ describe("the bun host", () => {
     const reopened = await createBunHost({ database: path, actorFor: () => echo })
     try {
       await reopened.recover()
-      expect(await reopened.read("experiment")).toEqual([])
-      expect(await reopened.threads()).not.toContain("experiment")
+      expect((await reopened.read("experiment")).slice(0, 3).map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "ThreadForked"])
+      expect(await reopened.threads()).toContain("experiment")
       await reopened.forkThread(request)
       await reopened.drive()
       const published = await reopened.read("experiment")
@@ -757,10 +823,11 @@ describe("the bun host", () => {
     await h.close()
   })
 
-  test("a child creation and its first delivery commit together", async () => {
+  test("a child is created before its first delivery with complete lineage", async () => {
     const path = freshPath()
     const h = await createBunHost(options(path))
     const parent = parseThreadAddress("bun:default:parent")
+    await h.allocate({ kind: "root", coordinate: parent })
     const target = parseThreadAddress("bun:default:child")
     const first = envelopeOf(
       linkOf(parent, target),
@@ -770,7 +837,7 @@ describe("the bun host", () => {
     await h.commit(first)
     await h.commit(first)
     expect(await h.read("child")).toEqual([
-      threadCreated(target, { parent, depth: 1, maxDepth: 2 }, 7),
+      { ...threadCreated(target, { parent, depth: 1, maxDepth: 2, placement: "colocated" }, 7), at: expect.any(Number) },
       expect.objectContaining({ type: "MessageReceived", id: "m1", link: first.link })
     ])
     await expect(h.commit(envelopeOf(

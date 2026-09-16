@@ -125,6 +125,17 @@ export const childLineageOf = (parent: ThreadCreated, placement?: ChildPlacement
   ...(placement === undefined ? {} : { placement })
 })
 
+// childLineageFor applies a requested ceiling within the parent's inherited limit (../actor/supervisor.test.ts; packages/host/src/thread-supervisor.test.ts).
+export const childLineageFor = (parent: ThreadCreated, options: { readonly maxDepth?: number; readonly placement?: ChildPlacement }): ThreadLineage => {
+  const maxDepth = options.maxDepth ?? parent.maxDepth
+  const lineage = childLineageOf(parent, options.placement)
+  if ((maxDepth !== undefined && (!Number.isSafeInteger(maxDepth) || maxDepth < lineage.depth)) ||
+    (parent.maxDepth !== undefined && maxDepth! > parent.maxDepth)) {
+    throw new Error("a child thread has invalid lineage")
+  }
+  return { ...lineage, ...(maxDepth === undefined ? {} : { maxDepth }) }
+}
+
 // threadCreated constructs the target's immutable creation record.
 export const threadCreated = (
   address: ThreadAddressType,

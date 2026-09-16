@@ -1,6 +1,8 @@
 import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
+import { threadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
-import { env, runInDurableObject, SELF } from "cloudflare:test"
+import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { env, runInDurableObject, evictDurableObject, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 
@@ -60,6 +62,44 @@ const methodState = async (thread: string, call: string): Promise<unknown> => {
 
 const hasHoldEvent = (events: ReadonlyArray<Event>, type: string, id: string): boolean =>
   events.some((event) => event.type === type && String((event as { readonly id?: unknown }).id) === id)
+test("thread initialization blocks registration and survives Durable Object eviction", async () => {
+  const directory = (env as Env).ACTORS.getByName(JSON.stringify(["echo", "initialization"]))
+  const previous = mountedActor!.supervisor
+  try {
+    await directory.init("echo", "initialization")
+    const created = await runInDurableObject(directory, async (instance, state) => {
+      let attempts = 0
+      let fail = true
+      mountedActor!.supervisor = threadSupervisor({ setup: () => Effect.sync(() => {
+        attempts++
+        if (fail) throw new Error("setup unavailable")
+      }) })
+      await expect(instance.createThread("main")).rejects.toThrow("setup unavailable")
+      await expect(instance.alarm()).rejects.toThrow("setup unavailable")
+      expect(await instance.threadTree()).toEqual([])
+      const requested = state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray().map((row) => JSON.parse(row.event) as Event)
+      expect(requested.map((event) => event.type)).toEqual(["ThreadRequested"])
+      fail = false
+      const root = await instance.createThread("main")
+      const child = await instance.createThread("worker", { parent: "main" })
+      expect(attempts).toBe(4)
+      expect((await instance.threadTree()).map((node) => node.id)).toContain(root.thread)
+      const registered = state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray().map((row) => JSON.parse(row.event) as Event)
+      expect(registered.map((event) => event.type)).toEqual(["ThreadRequested", "ThreadRegistered", "ThreadRequested", "ThreadRegistered"])
+      return { root, child }
+    })
+    await evictDurableObject(directory)
+    await runInDurableObject(directory, async (instance) => {
+      mountedActor!.supervisor = threadSupervisor({ setup: () => Effect.die(new Error("completed setup ran again")) })
+      expect(await instance.createThread("main")).toEqual(created.root)
+      expect(await instance.createThread("worker", { parent: "main" })).toEqual(created.child)
+    })
+  } finally {
+    if (previous === undefined) delete mountedActor!.supervisor
+    else mountedActor!.supervisor = previous
+  }
+}, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
 const hold = actorMethod({
   input: Schema.Struct({ text: Schema.String }),
   output: Schema.String,
@@ -97,8 +137,8 @@ const heldInvocation = (deadlineAt: number): Event => ({
   at: deadlineAt - 100
 })
 const eventsOf = (events: ReadonlyArray<Event>, type: string) => events.filter((event) => event.type === type)
-const deadlineThreadHost = (state: DurableObjectState, thread: string) =>
-  createCloudflareThreadHost({
+const deadlineThreadHost = async (state: DurableObjectState, thread: string) => {
+  const host = await createCloudflareThreadHost({
     storage: state.storage,
     actorName: "echo",
     actorInstance: "main",
@@ -106,6 +146,9 @@ const deadlineThreadHost = (state: DurableObjectState, thread: string) =>
     actor: holdDeadlineActor,
     keyOf: (event) => holdDeadlineRuntime.keyOf(event) ?? (event.type === "HoldCompleted" ? `hold-complete:${String(event.id)}` : undefined)
   })
+  await host.appendAt([threadCreated(host.identity, undefined, 0)], 0)
+  return host
+}
 
 beforeAll(async () => {
   const db = (env as Env).CATALOG_DB
@@ -199,31 +242,22 @@ describe("cloudflare actor", () => {
     expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
   })
 
-  test("root and staged creation await the host allocator before persistence", async () => {
+  test("low-level delivery requires provisioning before persistence", async () => {
     await runInDurableObject(threadStub("root-reservation"), async (_instance, state) => {
-      let allowed = false
-      const requests: string[] = []
       const host = await createCloudflareThreadHost({
         storage: state.storage, actorName: "echo", actorInstance: "main", thread: "root-reservation",
-        actor: actorFromProjections({ transitions: [], keyOf: () => undefined }),
-        threadAllocator: { allocate: (request) => Effect.promise(async () => {
-          await Promise.resolve()
-          requests.push(request.kind)
-          if (!allowed) throw new Error("reservation refused")
-          if (request.kind !== "root") throw new Error("unexpected child allocation")
-          return request.coordinate
-        }) }
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
       })
       try {
         const event = { type: "MessageReceived", id: "first", at: 1 }
-        await expect(host.commitRoot(event)).rejects.toThrow("reservation refused")
-        await expect(host.stageRoot(event)).rejects.toThrow("reservation refused")
+        await expect(host.commitRoot(event)).rejects.toThrow("delivery requires a created thread")
+        await expect(host.stageRoot(event)).rejects.toThrow("delivery requires a created thread")
         expect(await host.read()).toEqual([])
-        allowed = true
+        await host.appendAt([threadCreated(host.identity, undefined, 0)], 0)
         await host.stageRoot(event)
         await host.commitRoot({ ...event, id: "second", at: 2 })
-        expect(requests).toEqual(["root", "root", "root"])
         expect((await host.read()).filter((event) => event.type === "ThreadCreated")).toHaveLength(1)
+        expect((await host.read()).filter((event) => event.type === "MessageReceived").map((event) => event.id)).toEqual(["first", "second"])
       } finally {
         await host.close()
       }
@@ -273,17 +307,19 @@ describe("cloudflare actor", () => {
         retainCommitTask: (task) => state.waitUntil(task)
       })
 
+      await host.appendAt([threadCreated(host.identity, undefined, 0)], 0)
       await host.commitRoot({ type: "MessageReceived", id: "first", at: 1 })
       await firstObserved
       await host.stageRoot({ type: "MessageReceived", id: "second", at: 2 })
       await state.storage.sync()
-      expect(seen).toEqual([2])
+      expect(seen.at(-1)).toBe(2)
+      expect(seen.every((head) => head <= 2)).toBe(true)
       host.publishStaged()
       await host.close()
       return seen
     })
 
-    expect(commits).toEqual([2, 3])
+    expect(commits.at(-1)).toBe(3)
   })
 
   test("incremental commits decode only the creation record and new tail", async () => {
@@ -307,6 +343,7 @@ describe("cloudflare actor", () => {
         }
       })
 
+      await host.appendAt([threadCreated(host.identity, undefined, 0)], 0)
       await host.commitRoot({ type: "MessageReceived", id: "first", at: 1 })
       await host.drive()
       expect(await host.resting()).toBe(true)
@@ -349,6 +386,7 @@ describe("cloudflare actor", () => {
         thread: "ag.method-less-deadline",
         actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
       })
+      await host.appendAt([threadCreated(host.identity, undefined, 0)], 0)
       await host.commitRoot({
         type: "CallDispatched",
         id: "outgoing-1",
@@ -463,6 +501,7 @@ describe("cloudflare actor", () => {
       })
       let message = ""
       try {
+        await host.appendAt([threadCreated(target, { parent: source, depth: 1 }, 1)], 0)
         await host.commit({
           link: { source, target },
           event: { type: "MessageReceived", id: "creation-race", at: 2 },
@@ -1069,16 +1108,16 @@ describe("cloudflare actor", () => {
     expect((await native.events(target.thread))[0]).toMatchObject({ address: target })
   })
 
-  test("supervisor recovery leaves a reserved fork empty until publication", async () => {
+  test("supervisor recovery retains a fully published fork", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
     const source = await directory.createThread("fork-reservation-source")
-    const target = await directory.allocateThread({ kind: "root", coordinate: { ...source, thread: "fork-reservation-dest" }, initialization: "caller" })
+    const target = await directory.allocateThread({ kind: "root", coordinate: { ...source, thread: "fork-reservation-dest" }, fork: { source, seq: 1 } })
     const stub = (env as Env).THREADS.getByName(JSON.stringify(["echo", "main", target.thread]))
     await stub.init("echo", "main", target.thread)
     await runInDurableObject(directory, (instance) => instance.alarm())
-    expect(await stub.events(target.thread)).toEqual([])
-    expect((await directory.threadTree()).some((node) => node.id === target.thread)).toBe(false)
+    expect((await stub.events(target.thread)).map((event) => event.type)).toEqual(["ThreadCreated", "ThreadForked"])
+    expect((await directory.threadTree()).some((node) => node.id === target.thread)).toBe(true)
     const result = await directory.forkThread(source.thread, { seq: 1 }, target.thread)
     expect(result).toMatchObject({ ok: true, coordinate: target })
     expect((await stub.events(target.thread)).map((event) => event.type)).toEqual(["ThreadCreated", "ThreadForked"])
@@ -1086,7 +1125,7 @@ describe("cloudflare actor", () => {
     expect(await directory.forkThread(source.thread, { seq: 1 }, target.thread)).toEqual(result)
   })
 
-  test("a child request reserves its name and registers after delivery with its placement", async () => {
+  test("a child request creates and registers before delivery with its placement", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
     const parent = await directory.createThread("requested-parent")
@@ -1094,7 +1133,9 @@ describe("cloudflare actor", () => {
     const target = await directory.allocateThread(request)
     expect(target.thread).toBe("requested-child")
     await runInDurableObject(directory, (instance) => instance.alarm())
-    expect((await directory.threadTree()).find((node) => node.id === parent.thread)?.children).toEqual([])
+    expect((await directory.threadTree()).find((node) => node.id === parent.thread)?.children).toEqual([
+      expect.objectContaining({ id: target.thread, placement: "independent" })
+    ])
     await directory.createThread("requested-unrelated")
     await directory.deliverChild({
       link: { source: parent, target },
@@ -1131,8 +1172,9 @@ describe("cloudflare actor", () => {
          VALUES (
            (SELECT COALESCE(MAX(seq), 0) + 1 FROM events),
            'thread:requested:ag.directory-child',
-           '{"type":"ThreadRequested","thread":"ag.directory-child","parentThread":"ag.directory-parent","depth":1,"placement":"independent","at":1}'
-         )`
+           ?
+         )`, JSON.stringify({ type: "ThreadRequested", thread: target.thread, parentThread: parent.thread, depth: 1, placement: "independent", at: 1,
+          allocationRequest: { kind: "child", parent, child: target.thread, maxDepth: lineage.maxDepth, placement: lineage.placement } })
       )
       return state.storage.sql.exec<{
         key: string
@@ -1358,11 +1400,6 @@ describe("cloudflare actor", () => {
     const lineage = { parent, depth: 1, placement: "independent" as const }
     const child = threadStub("ag.recovery-child")
     await child.init("echo", "main", "ag.recovery-child")
-    await child.stageCreation({
-      link: { source: parent, target },
-      event: { type: "MessageReceived", id: "recovery-message", text: "hello", at: 4 },
-      lineage
-    })
     await runInDurableObject(directory, (_instance, state) => {
       state.storage.sql.exec(
         `INSERT INTO events (seq, key, event)
@@ -1374,6 +1411,7 @@ describe("cloudflare actor", () => {
       )
     })
     expect((await directory.threadTree()).some((node) => node.id === "recovery-child")).toBe(false)
+    await child.provision({ type: "ThreadCreated", address: target, ...lineage, at: 4 })
     await runInDurableObject(directory, (instance) => instance.alarm())
     expect((await directory.threadTree()).find((node) => node.id === "recovery-parent")).toEqual({
       id: "recovery-parent",

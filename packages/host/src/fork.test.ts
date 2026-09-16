@@ -49,12 +49,13 @@ describe("forkOutcomeOf", () => {
 })
 
 test("forkRootAllocation names a dest or mints a retry key", () => {
-  expect(forkRootAllocation({ actor: "mem", instance: "main" }, "experiment")).toEqual({
+  const fork = { source: { actor: "mem", instance: "main", thread: "root" }, seq: 1 }
+  expect(forkRootAllocation({ actor: "mem", instance: "main" }, "experiment", fork)).toEqual({
     kind: "root",
-    initialization: "caller",
+    fork,
     coordinate: { actor: "mem", instance: "main", thread: "experiment" }
   })
-  const generated = forkRootAllocation({ actor: "mem", instance: "main" }, undefined)
+  const generated = forkRootAllocation({ actor: "mem", instance: "main" }, undefined, fork)
   expect(generated.kind).toBe("root")
   expect(generated.coordinate.thread).toBe("")
   expect(generated.key).toEqual(expect.any(String))

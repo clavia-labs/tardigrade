@@ -1,8 +1,17 @@
+import { sameThreadAddress, threadCreatedOf, childLineageFor, type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
+import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor/events"
+import type { threadSupervisorDriver } from "./thread-supervisor"
+import { ForkRefused, forkBatchFor } from "./fork"
 import { Clock, Effect, Schema } from "effect"
 import { ThreadCoordinate, threadIdOf } from "@clavia/tardigrade-core/actor/coordinate"
-import { allocateThread, ThreadAllocator, type ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
-import { actorThreadsOf, type ThreadRequested } from "@clavia/tardigrade-core/actor/events"
+import { ThreadAllocator, ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
+import { actorEventsOf, type ThreadRequested } from "@clavia/tardigrade-core/actor/events"
+import { upcastThreadRequest } from "@clavia/tardigrade-core/actor/log/upcast"
 import type { Event } from "@clavia/tardigrade-core/event"
+import type { ActorMethodDeclaration } from "@clavia/tardigrade-core/actor/method"
+import { prepareInvocation } from "@clavia/tardigrade-core/interaction/prepare"
+import { threadAllocationKey } from "@clavia/tardigrade-core/actor/supervisor"
+export { threadAllocationKey, threadRequestOf } from "@clavia/tardigrade-core/actor/supervisor"
 
 // instanceThreadAllocator rejects assignments outside the owning actor instance.
 export const instanceThreadAllocator = (
@@ -15,21 +24,6 @@ export const instanceThreadAllocator = (
       ? allocator.allocate(request)
       : Effect.die(new Error("thread assignment requires the owning actor directory"))
   }
-})
-
-// initializingThreadAllocator makes root allocation await host initialization (e2e/actor/developer-flow.test.ts).
-export const initializingThreadAllocator = (
-  allocator: typeof ThreadAllocator.Service,
-  initialize: (target: ThreadCoordinate, at: number) => Promise<void>
-): typeof ThreadAllocator.Service => ({
-  allocate: (request) => Effect.gen(function* () {
-    const target = yield* allocateThread(request).pipe(Effect.provideService(ThreadAllocator, allocator))
-    if (request.kind === "root" && request.initialization !== "caller") {
-      const at = yield* Clock.currentTimeMillis
-      yield* Effect.promise(() => initialize(target, at))
-    }
-    return target
-  })
 })
 
 export const DEFAULT_THREAD_ADJECTIVES = ["quiet", "bright", "swift", "calm", "bold", "gentle", "keen", "warm"] as const
@@ -67,32 +61,24 @@ export interface ThreadAllocationStore {
 
 // threadAllocationRecord keeps allocation identity in the actor's thread record (allocation.test.ts).
 export const threadAllocationRecord = (
-  events: ReadonlyArray<Event>, request: ThreadAllocation, target: ThreadCoordinate, existingRoot: boolean, at: number
+  events: ReadonlyArray<Event>, request: ThreadAllocation, target: ThreadCoordinate, existingRoot: boolean, at: number,
+  method?: ActorMethodDeclaration
 ): { readonly thread: string; readonly event?: ThreadRequested } | undefined => {
   const key = threadAllocationKey(request)
-  const records = actorThreadsOf(events)
+  const records = actorEventsOf(events).filter((event) => event.type === "ThreadRequested")
   const assigned = records.find((record) => record.allocationKey === key)
   if (assigned !== undefined) return { thread: assigned.thread }
-  const current = records.find((record) => record.thread === target.thread)
-  if (current !== undefined && (current.allocationKey !== undefined || !existingRoot || current.parentThread !== undefined)) return undefined
+  const current = records.findLast((record) => record.thread === target.thread)
+  if (current !== undefined && (current.allocationKey !== undefined || !existingRoot || upcastThreadRequest(current).parentThread !== undefined)) return undefined
   if (current !== undefined) return { thread: current.thread }
-  const parent = request.kind === "child" ? request.parent.thread : undefined
-  return { thread: target.thread, event: {
-    type: "ThreadRequested", thread: target.thread, allocationKey: key,
-    ...(request.kind === "root" && request.initialization !== undefined ? { initialization: request.initialization } : {}),
-    ...(parent === undefined ? {} : { parentThread: parent }),
-    depth: parent === undefined ? 0 : (records.find((record) => record.thread === parent)?.depth ?? 0) + 1,
+  const event: ThreadRequested = {
+    type: "ThreadRequested", thread: target.thread, allocationKey: key, allocationRequest: request,
     at
-  } }
-}
-
-export const threadAllocationKey = (request: ThreadAllocation): string => {
-  const target = request.kind === "root" ? request.coordinate : request.parent
-  return JSON.stringify([
-    request.kind, target.actor, target.instance,
-    ...(request.kind === "child" ? [target.thread] : []),
-    request.key === undefined ? ["name", request.kind === "root" ? target.thread : request.child] : ["key", request.key]
-  ])
+  }
+  return { thread: target.thread, event: method === undefined ? event : { ...prepareInvocation({
+    reference: { target, invocation: { method: "requestThread", id: target.thread, epoch: 0 } },
+    method, input: { target, request }, at
+  }).event, ...event } }
 }
 
 // registeredThreadAllocator persists scoped assignments before returning them (allocation.test.ts; tla/Identity.tla, ThreadSeparation and RetryStable).
@@ -126,20 +112,91 @@ export const registeredThreadAllocator = (
 
 // memoryThreadDirectory retains actor thread records for the lifetime of an in-memory host.
 export const memoryThreadDirectory = (
-  occupied: (target: ThreadCoordinate, existingRoot: boolean) => boolean = () => false
+  occupied: (target: ThreadCoordinate, existingRoot: boolean, request: ThreadAllocation) => boolean = () => false,
+  method?: ActorMethodDeclaration,
+  directories = new Map<string, Event[]>()
 ): ThreadAllocationStore => {
-  const directories = new Map<string, Event[]>()
   return {
-    get: (key) => Effect.sync(() => [...directories.values()].flatMap(actorThreadsOf).find((record) => record.allocationKey === key)?.thread),
+    get: (key) => Effect.sync(() => [...directories.values()].flatMap(actorEventsOf).find((event) => event.type === "ThreadRequested" && event.allocationKey === key)?.thread),
     claim: (_key, target, existingRoot, request) => Effect.flatMap(Clock.currentTimeMillis, (at) => Effect.sync(() => {
       const scope = JSON.stringify([target.actor, target.instance])
       const events = directories.get(scope) ?? []
-      const record = threadAllocationRecord(events, request, target, existingRoot, at)
+      const record = threadAllocationRecord(events, request, target, existingRoot, at, method)
       if (record?.event === undefined) return record?.thread
-      if (occupied(target, existingRoot)) return undefined
+      if (occupied(target, existingRoot, request)) return undefined
       events.push(record.event)
       directories.set(scope, events)
       return record.thread
+    }))
+  }
+}
+
+// hostThreadAllocator routes allocation and implicit creation through reservation before supervisor execution (thread-supervisor.test.ts).
+export const hostThreadAllocator = (options: {
+  readonly reserve: (request: ThreadAllocation) => Promise<ThreadCoordinate>
+  readonly record: (target: ThreadCoordinate) => Promise<ActorThreadRecord | undefined>
+  readonly owns: (target: ThreadCoordinate) => boolean
+  readonly read: (target: ThreadCoordinate) => Promise<ReadonlyArray<Event>>
+  readonly placement?: ChildPlacement
+  readonly supervisor: ReturnType<typeof threadSupervisorDriver>
+}) => {
+  const finish = async (target: ThreadCoordinate, request: ThreadAllocation): Promise<ThreadCoordinate> => {
+    if (!options.owns(target)) return target
+    const record = await options.record(target)
+    if (record === undefined) throw new Error("thread creation requires an allocation reservation")
+    if (request.kind === "child") {
+      const original = record.allocationRequest
+      if (original?.kind === "root" || (original?.kind === "child" &&
+        (!sameThreadAddress(original.parent, request.parent) ||
+          (request.maxDepth !== undefined && request.maxDepth !== original.maxDepth) ||
+          (request.placement !== undefined && request.placement !== original.placement)))) {
+        throw new Error("a child thread already has different lineage")
+      }
+    }
+    if (request.kind === "root" && request.fork !== undefined) {
+      const original = record.allocationRequest
+      if (original?.kind !== "root" || original.fork === undefined ||
+        original.fork.seq !== request.fork.seq || !sameThreadAddress(original.fork.source, request.fork.source)) {
+        throw new ForkRefused("occupied", `thread ${JSON.stringify(target.thread)} already has a log that is not this fork`)
+      }
+    }
+    if (record.state === "registered") return target
+    return options.supervisor.ensureReady(target)
+  }
+  const ready = async (target: ThreadCoordinate): Promise<void> => {
+    if ((await options.record(target))?.state === "requested") await options.supervisor.ensureReady(target)
+  }
+  const complete = async (request: ThreadAllocation): Promise<ThreadAllocation> => {
+    if (request.kind === "root") {
+      if (request.fork !== undefined) {
+        if (request.fork.source.actor !== request.coordinate.actor || request.fork.source.instance !== request.coordinate.instance) {
+          throw new Error("a fork must preserve its actor instance")
+        }
+        await ready(request.fork.source)
+        forkBatchFor(await options.read(request.fork.source), { ...request.fork, dest: request.coordinate.thread }, 0)
+      }
+      return request
+    }
+    await ready(request.parent)
+    const parent = threadCreatedOf(await options.read(request.parent))
+    if (parent === undefined) throw new Error("a child thread requires a created parent")
+    const placement = request.placement ?? options.placement
+    const { maxDepth } = childLineageFor(parent, { ...request, ...(placement === undefined ? {} : { placement }) })
+    return { ...request, ...(maxDepth === undefined ? {} : { maxDepth }), ...(placement === undefined ? {} : { placement }) }
+  }
+  return {
+    allocate: (request: ThreadAllocation): Effect.Effect<ThreadCoordinate> => Effect.flatMap(Schema.decodeEffect(ThreadAllocation)(request).pipe(Effect.orDie), (request) => Effect.promise(async () => {
+      const scope = request.kind === "root" ? request.coordinate : request.parent
+      const input = options.owns(scope) ? await complete(request) : request
+      return finish(await options.reserve(input), input)
+    })),
+    ensure: (target: ThreadCoordinate, request: ThreadAllocation): Effect.Effect<ThreadCoordinate> => Effect.flatMap(Schema.decodeEffect(ThreadAllocation)(request).pipe(Effect.orDie), (request) => Effect.promise(async () => {
+      if (!options.owns(target)) throw new Error("thread creation requires the owning allocator")
+      if (await options.record(target) === undefined) {
+        const assigned = await options.reserve(await complete(request))
+        if (!sameThreadAddress(assigned, target)) throw new Error("thread reservation must preserve the delivery target")
+      }
+      return finish(target, request)
     }))
   }
 }

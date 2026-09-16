@@ -45,6 +45,7 @@ const registeredAllocator = (): typeof ThreadAllocator.Service => {
 const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
   const parent = threadAddressOf("property", "main", "ag.root")
   const host = createHost({ actorName: parent.actor, actorFor: () => undefined })
+  await host.allocate({ kind: "root", coordinate: parent })
   // The parent run every spawn reads its identity from: one open turn, one recorded call per plan.
   const parentLog: Event[] = [
     threadCreated(parent, undefined, 0),
@@ -215,7 +216,7 @@ describe("child creation protocol", () => {
         }
         for (const thread of [rootId, `${rootId}x`]) {
           let parent = threadAddressOf("property", "main", thread)
-          host.seed(thread, [threadCreated(parent, undefined, 0)])
+          await host.allocate({ kind: "root", coordinate: parent })
           for (let level = 0; level < depth; level++) parent = await dispatch(parent, level)
         }
         expect(targets.size).toBe(4 * depth)

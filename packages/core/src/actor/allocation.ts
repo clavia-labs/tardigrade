@@ -19,11 +19,12 @@
  */
 
 import { Context, Effect, Option, Schema } from "effect"
-import { childKeyOf, type ChildKey, ThreadCoordinate, threadCoordinateOf, actorCoordinateOf } from "./coordinate"
+import { childKeyOf, ChildKey, ThreadCoordinate, threadCoordinateOf, actorCoordinateOf } from "./coordinate"
 
 import type { ActorDefinition } from "./definition"
 import type { ActorMethods } from "./method"
 import { bindThreadMethods, targetCoordinate, type ThreadTarget, type ThreadRef } from "./reference"
+import { ChildPlacement, ThreadDepth } from "../interaction/relations"
 
 export interface RootThreadOptions {
   readonly instance: string // instantiation of an actor definition
@@ -90,16 +91,23 @@ export const allocateChildThread = <Methods extends ActorMethods>(
 })
 
 // ChildThreadRequest identifies a logical spawn within its parent's namespace.
-export interface ChildThreadRequest {
-  readonly key?: string
-  readonly parent: ThreadCoordinate
-  readonly child: ChildKey
-}
+export const ChildThreadRequest = Schema.Struct({
+  maxDepth: Schema.optionalKey(ThreadDepth),
+  placement: Schema.optionalKey(ChildPlacement),
+  key: Schema.optionalKey(Schema.NonEmptyString),
+  parent: ThreadCoordinate,
+  child: ChildKey
+})
+export type ChildThreadRequest = typeof ChildThreadRequest.Type
 
-// ThreadAllocation identifies a root name or a parent-scoped child name for host assignment. Caller initialization reserves the root without publishing its initial log (packages/host/src/allocation.test.ts).
-export type ThreadAllocation =
-  | { readonly kind: "root"; readonly coordinate: ThreadCoordinate; readonly key?: string; readonly initialization?: "caller" }
-  | ({ readonly kind: "child" } & ChildThreadRequest)
+// ThreadAllocation carries identity and initial log inputs for host creation (packages/host/src/thread-supervisor.test.ts).
+export const ThreadAllocation = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("root"), coordinate: ThreadCoordinate,
+    key: Schema.optionalKey(Schema.NonEmptyString),
+    fork: Schema.optionalKey(Schema.Struct({ source: ThreadCoordinate, seq: ThreadDepth })) }),
+  Schema.Struct({ kind: Schema.Literal("child"), ...ChildThreadRequest.fields })
+])
+export type ThreadAllocation = typeof ThreadAllocation.Type
 
 // ThreadAllocator assigns roots and children within a shared actor-instance namespace.
 // Implementations must preserve assignments across retries and restarts and separate distinct requests from each other and existing threads.
@@ -110,11 +118,8 @@ export class ThreadAllocator extends Context.Service<ThreadAllocator, {
 
 // allocateThread validates the host's assignment without prescribing its thread identity (allocation.test.ts).
 export const allocateThread = (request: ThreadAllocation) => Effect.gen(function* () {
-  const parent = yield* Schema.decodeEffect(ThreadCoordinate)(request.kind === "root" ? request.coordinate : request.parent).pipe(Effect.orDie)
-  const key = request.key === undefined ? {} : { key: yield* Schema.decodeEffect(Schema.NonEmptyString)(request.key).pipe(Effect.orDie) }
-  const normalized: ThreadAllocation = request.kind === "root" ? { kind: "root", coordinate: parent, ...key,
-    ...(request.initialization === undefined ? {} : { initialization: request.initialization }) }
-    : { kind: "child", parent, child: childKeyOf(request.child), ...key }
+  const normalized = yield* Schema.decodeEffect(ThreadAllocation)(request).pipe(Effect.orDie)
+  const parent = normalized.kind === "root" ? normalized.coordinate : normalized.parent
   const allocator = yield* ThreadAllocator
   const target = yield* allocator.allocate(normalized).pipe(
     Effect.flatMap(Schema.decodeEffect(ThreadCoordinate)), Effect.orDie

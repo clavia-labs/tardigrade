@@ -91,7 +91,7 @@ describe("the host", () => {
         allocations.push(request)
         return request.kind === "root" ? request.coordinate : target
       }) },
-      actorFor: () => ({ keyOf: () => undefined, projections: [completeTransitionProjection((events) =>
+      actorFor: (thread) => thread !== "root" ? undefined : ({ keyOf: () => undefined, projections: [completeTransitionProjection((events) =>
         events.some((event) => event.type === "Allocated") ? [] : [effect({
           key: "allocate", input: {},
           act: () => allocateChildThread({ parent, child: childKeyOf("step") }).pipe(
@@ -293,6 +293,7 @@ describe("the host", () => {
   test("a child is created with its first delivery and keeps that lineage", async () => {
     const host = createHost({ actorFor: () => undefined })
     const parent = parseThreadAddress("mem:main:parent")
+    await host.allocate({ kind: "root", coordinate: parent })
     const target = parseThreadAddress("mem:main:child")
     const first = envelopeOf(
       linkOf(parent, target),
@@ -302,7 +303,7 @@ describe("the host", () => {
     await host.commit(first)
     await host.commit(first)
     expect(host.read("child")).toEqual([
-      threadCreated(target, { parent, depth: 1 }, 7),
+      { ...threadCreated(target, { parent, depth: 1 }, 7), at: expect.any(Number) },
       { ...first.event, link: first.link }
     ])
     await expect(host.commit(envelopeOf(

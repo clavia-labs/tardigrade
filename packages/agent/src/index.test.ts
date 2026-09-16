@@ -355,7 +355,7 @@ describe("an assembled agent", () => {
       type: "ThreadCreated",
       address: { actor: "mem", instance: "main", thread: ROOT_THREAD },
       depth: 0,
-      at: 1
+      at: expect.any(Number)
     })
     const records = mind.host.read(ROOT_THREAD).filter((event): event is ChildCreated => event.type === "ChildCreated")
     expect(records).toMatchObject([

@@ -33,7 +33,7 @@ test("the actor directory retains root and child assignments across restarts", a
     expect(retries).toBe(2)
     const allocated = actorThreadsOf((await host.readActorPage(0, 100)).map((row) => row.event))
     expect(allocated).toHaveLength(3)
-    expect(allocated.find((record) => record.thread === root.thread)).toMatchObject({ allocationKey: threadAllocationKey(request), state: "requested" })
+    expect(allocated.find((record) => record.thread === root.thread)).toMatchObject({ allocationKey: threadAllocationKey(request), state: "registered" })
     await expect(host.assignThread({ ...request, coordinate: { ...request.coordinate, instance: "morty" } })).rejects.toThrow("owning actor directory")
     await host.close()
     host = await createBunHost({ ...options, allocation: { generate: () => { throw new Error("must read persisted assignment") } } })

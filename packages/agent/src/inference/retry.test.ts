@@ -72,6 +72,7 @@ for (const overdue of [false, true]) {
       expect(key).toBe("m1/infer/1")
       return { kind: "complete" as const, output: "done" }
     }) })
+    await host.allocate({ kind: "root", coordinate: { actor: "retry-test", instance: "main", thread: "root" } })
     host.seed("root", [
       { type: "MessageReceived", id: "m1", text: "Hello", at: 1 },
       { type: "ModelCalled", callId: "m1/infer/0", ordinal: 0, turn: "m1", policy, retryIndex: 0, model: { provider: "test", model_id: "fixture" }, at: 2 },
@@ -90,6 +91,7 @@ test("a crashed physical attempt reuses its idempotency key without restoring sa
     expect(request).not.toHaveProperty("policy")
     return { kind: "complete" as const, output: "done" }
   }) })
+  await host.allocate({ kind: "root", coordinate: { actor: "retry-test", instance: "main", thread: "root" } })
   host.seed("root", [
     { type: "MessageReceived", id: "m1", text: "Hello", at: 1 },
     { type: "ModelCalled", callId: "m1/infer/0", ordinal: 0, turn: "m1", policy, retryIndex: 0, model: { provider: "test", model_id: "fixture" }, at: 2 }

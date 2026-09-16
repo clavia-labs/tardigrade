@@ -106,6 +106,7 @@ test("local validation, refusal, truncation, and unknown failures do not trigger
 
 test("cancelled turns never execute a pending fallback", async () => {
   const host = makeHost({ react: () => Effect.die("cancelled request") })
+  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m", text: "hello", at: 1 })
   host.seed("root", [
     { type: "MessageReceived", id: "m", text: "hello", at: 1 },
     { type: "ModelCalled", callId: "m/infer/0", ordinal: 0, model: primary, turn: "m", at: 2 },
