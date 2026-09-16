@@ -1,5 +1,7 @@
 ---
 title: Components
+socialImage: /images/components-social.png
+socialImageAlt: A component derives state and describes a model call as an Effect value. The runtime executes it, and the result returns as an event.
 description: Build actor behavior from event projections and enabled transitions.
 hideDescription: true
 route: /docs/components
@@ -14,7 +16,7 @@ More specifically, a component is a state machine that takes events as input and
 
 <ComponentOverviewDiagram />
 
-The first few sections would go deeper into some concepts to build understanding. I would recommend fully going through them to build better intuitions. However, jump straight to [authoring components](#authoring-components) if you want to quickly get started.
+The first few sections would go deeper into the underlying concepts. I would recommend fully going through them to build better intuitions. However, jump straight to [authoring components](#authoring-components) if you want to quickly get started.
 
 Let's start with state machines.
 
@@ -37,6 +39,10 @@ Mathematically, it could be described as:
 
 <Math expression="\text{next state} = \delta(\text{current state},\ \text{input})" />
 
+For a traffic light, one of the transition could be written as:
+
+<Math expression="\text{yellow} = \delta(\text{green},\ \text{timer expired})" />
+
 Here, δ (delta) is the transition function: it takes the current state and an input, then returns the next state. For our traffic light, giving it green and “timer expires” returns yellow.
 
 ### Agents as state machines
@@ -47,14 +53,26 @@ Just like traffic lights, we could also view agents as state machines. Take an e
 
 It has the following transition rules:
 
-1. Message received → Calling model
-2. Calling model, tool called → Running tool
-3. Running tool, tool returned → Calling model
-4. Calling model, turn completed → Done
+1. Settled, message received → Calling model
+2. Calling model, tool called → Calling tool
+3. Calling tool, tool returned → Calling model
+4. Calling model, turn completed → Settled
+
+Mathematically, it could be described as:
+
+<Math expression="\text{Calling model} = \delta(\text{Settled},\ \text{message received})" />
+
+So long as we can write the agent states and the transition rules between states, we can describe an agent as a state machine.
+
+But calling a model involves I/O. How can that be pure? The transition computes the next state; the model call runs separately.
+
+[Effect](https://effect.website/docs/v4/getting-started/the-effect-type) represents side effects as values to compose and execute later, the idea behind an [IO monad](https://www.haskell.org/tutorial/io.html). Its `Effect<Success, Error, Requirements>` type makes the result, expected errors, and required services explicit. Type the world!
+
+<WorldEffectDiagram />
 
 ### State explosion!
 
-As our agents get more complex, we'd sooon realise that we can't keep up with the current state anymore. A situation frontend developers know well as [state explosion](https://statecharts.dev/state-machine-state-explosion.html). Consider the same tool calling agent with a budget. Its next action now depends on both its execution phase and whether its tool budget is available or exhausted.
+A tool calling agent is relatively simple to describe as a state machine. As our agents get more complex, we'd soon realise that it isn't practically possible to keep up with the current state and the transition rules anymore. A situation frontend developers know well as [state explosion](https://statecharts.dev/state-machine-state-explosion.html). Consider the same tool calling agent with a budget. Its next action now depends on both its execution phase and whether its tool budget is available or exhausted.
 
 <StateExplosionDiagram />
 
@@ -131,6 +149,12 @@ The same log can yield location, distance, or elapsed time. Each projection is p
 Each component derives its state from the same event log. Inference tracks messages and tool calls, budget tracks usage, and permission tracks requests and decisions. The same history yields three different states. Here, the turn has completed, the tool call has spent the last of the budget, and its permission has been cleared.
 
 <AgentProjectionDiagram />
+
+### Putting it together
+
+Summing it all up, a component reads the event log, derives its current state, and describes what to do next as an Effect. The runtime executes that Effect and records its result as another event. That event becomes part of the history from which the component derives its next state.
+
+<ComponentCycleDiagram />
 
 ## Authoring components
 

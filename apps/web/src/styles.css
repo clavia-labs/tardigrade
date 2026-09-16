@@ -1368,6 +1368,7 @@ h1 span { display: block; white-space: nowrap; }
 .component-anatomy-state rect { fill: var(--moss-wash); }
 .component-anatomy-box .component-anatomy-small { fill: var(--ink-2); font-size: 9px; }
 .component-overview { width: min(100%, 592px); margin: 32px auto; }
+.component-overview-loop { width: min(100%, 720px); }
 .component-overview svg { display: block; width: 100%; height: auto; }
 .component-overview-box rect { fill: var(--moss-wash); stroke: var(--moss); stroke-width: 1.4; }
 .component-overview-box text { fill: var(--moss-ink); font: 15px var(--mono); text-anchor: middle; }

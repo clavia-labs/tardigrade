@@ -1,6 +1,8 @@
 import { SearchToolStateDiagram } from "./diagrams/SearchToolStateDiagram"
 import { ComponentAnatomyDiagram } from "./diagrams/ComponentAnatomyDiagram"
 import { ComponentOverviewDiagram } from "./diagrams/ComponentOverviewDiagram"
+import { WorldEffectDiagram } from "./diagrams/WorldEffectDiagram"
+import { ComponentCycleDiagram } from "./diagrams/ComponentCycleDiagram"
 import { AgentProjectionDiagram } from "./diagrams/AgentProjectionDiagram"
 import { StateSnapshotDiagram } from "./diagrams/StateSnapshotDiagram"
 import { AgentCompositionDiagram } from "./diagrams/AgentCompositionDiagram"
@@ -268,6 +270,8 @@ export const mdxComponents = {
   SearchToolStateDiagram,
   ComponentAnatomyDiagram,
   ComponentOverviewDiagram,
+  WorldEffectDiagram,
+  ComponentCycleDiagram,
   AgentProjectionDiagram,
   StateSnapshotDiagram,
   AgentCompositionDiagram,
