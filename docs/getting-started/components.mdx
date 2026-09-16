@@ -62,11 +62,15 @@ Mathematically, it could be described as:
 
 <Math expression="\text{Calling model} = \delta(\text{Settled},\ \text{message received})" />
 
-So long as we can write the agent states and the transition rules between states, we can describe an agent as a state machine.
+If we can write the states and the transition rules between states, we can describe an agent as a state machine.
 
-But calling a model involves I/O. How can that be pure? The transition computes the next state; the model call runs separately.
+### A brief note on side effects
 
-[Effect](https://effect.website/docs/v4/getting-started/the-effect-type) represents side effects as values to compose and execute later, the idea behind an [IO monad](https://www.haskell.org/tutorial/io.html). Its `Effect<Success, Error, Requirements>` type makes the result, expected errors, and required services explicit. Type the world!
+I described components as pure functions over the event log. However, as you may have noticed in the example above, the output of a component is "calling a model". This is a side effect involving I/O. How can it be pure?
+
+The Haskell community addressed this with the [IO monad](https://www.haskell.org/tutorial/io.html), which represents I/O actions as values to compose and execute later. [Effect](https://effect.website/docs/v4/getting-started/the-effect-type) follows the same idea.
+
+Each Tardigrade component produces transitions that describe actions as Effect values. The runtime executes those actions. The `Effect<Success, Error, Requirements>` type makes the result, expected errors, and required services explicit. Type the world!
 
 <WorldEffectDiagram />
 
