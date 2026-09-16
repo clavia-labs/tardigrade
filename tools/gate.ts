@@ -77,7 +77,7 @@ const tasks: ReadonlyArray<Task> = [
   ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),
   { id: "test:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "test:workers"] },
-  { id: "test:platform-cloudflare:inference", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "vitest", "run", "--config", "vitest.inference.config.ts"] },
+  { id: "test:platform-cloudflare:e2e", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "vitest", "run", "--config", "vitest.e2e.config.ts"] },
   { id: "test:platform-worker-loader:workers", cwd: platformPkg("worker-loader"), cmd: ["bun", "run", "test:workers"] },
   ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
   { id: "test:app-web", cwd: appPkg("web"), cmd: ["bun", "test"] },

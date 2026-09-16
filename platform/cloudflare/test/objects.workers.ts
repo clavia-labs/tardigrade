@@ -1,11 +1,35 @@
-import { env } from "cloudflare:test"
+import { env, evictDurableObject, runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
 import { Effect } from "effect"
-import { ObjectStorage } from "@clavia/tardigrade-agent"
-import { objectStorageFromR2 } from "../src/object-storage/r2"
+import { ObjectStorage, DEFAULT_MAX_CACHED_OBJECT_BYTES, DEFAULT_MAX_LOCAL_OBJECT_BYTES } from "@clavia/tardigrade-agent"
+import { CLOUDFLARE_OBJECT_CACHE_CAPABILITIES, objectStorageFromR2 } from "../src/object-storage/r2"
+import type { Env } from "../src/env"
+import { objectStorageFromSqlite } from "../src/object-storage/sqlite"
 
 const bucket = env.OBJECTS as R2Bucket
 const open = (prefix: string) => Effect.runPromise(ObjectStorage.pipe(Effect.provide(objectStorageFromR2(bucket, { prefix }))))
+
+test("local SQLite retains objects without R2 or eviction and rejects oversized writes", async () => {
+  const stub = (env as Env).THREADS.getByName("local-objects")
+  const bytes = new Uint8Array(DEFAULT_MAX_LOCAL_OBJECT_BYTES).fill(4)
+  const ref = await runInDurableObject(stub, async (_instance, state) => Effect.runPromise(Effect.gen(function* () {
+    const storage = yield* ObjectStorage
+    const reference = yield* storage.put(bytes)
+    expect(yield* storage.put(new Uint8Array(bytes.length + 1)).pipe(Effect.flip)).toMatchObject({ reason: "TooLarge", actualBytes: bytes.length + 1, maxObjectBytes: bytes.length })
+    for (let i = 0; i < 4; i++) yield* storage.put(new Uint8Array(bytes.length).fill(i))
+    expect(yield* storage.get(reference)).toEqual(bytes)
+    return reference
+  }).pipe(Effect.provide(objectStorageFromSqlite(state.storage)))))
+  await evictDurableObject(stub)
+  await runInDurableObject(stub, async (_instance, state) => {
+    expect(() => objectStorageFromSqlite(state.storage, { maxObjectBytes: CLOUDFLARE_OBJECT_CACHE_CAPABILITIES.maxObjectBytes + 1 })).toThrow("Cloudflare SQLite object limit")
+    await Effect.runPromise(Effect.gen(function* () {
+      const storage = yield* ObjectStorage
+      expect(yield* storage.get(ref)).toEqual(bytes)
+      expect(yield* storage.put(new Uint8Array(5)).pipe(Effect.flip)).toMatchObject({ reason: "TooLarge", maxObjectBytes: 4 })
+    }).pipe(Effect.provide(objectStorageFromSqlite(state.storage, { maxObjectBytes: 4 }))))
+  })
+})
 
 test("R2-backed storage shares objects across service instances while isolating prefixes", async () => {
   const upload = await open("tenant-a/")
@@ -30,4 +54,61 @@ test("R2 reads reject bytes overwritten outside the content-addressed adapter", 
   await bucket.put(`corrupt/${reference.algorithm}:${reference.digest}`, new Uint8Array([9]))
   const error = await Effect.runPromise(storage.get(reference).pipe(Effect.flip))
   expect(error).toMatchObject({ reason: "Integrity", reference })
+})
+
+test("DO cache admits bounded objects, survives eviction, and isolates backing namespaces", async () => {
+  const stub = (env as Env).THREADS.getByName("object-cache-persistence")
+  const prefix = "cached/"
+  const reference = await runInDurableObject(stub, async (_instance, state) => {
+    const cache = { storage: state.storage, namespace: "objects-bucket" }
+    const layer = objectStorageFromR2(bucket, { prefix, cache })
+    return Effect.runPromise(Effect.gen(function* () {
+      const storage = yield* ObjectStorage
+      const bytes = new Uint8Array(DEFAULT_MAX_CACHED_OBJECT_BYTES).fill(7)
+      const ref = yield* storage.put(bytes)
+      expect(yield* storage.get(ref)).toEqual(bytes)
+      const large = new Uint8Array(DEFAULT_MAX_CACHED_OBJECT_BYTES + 1).fill(8)
+      const largeRef = yield* storage.put(large)
+      expect(yield* storage.get(largeRef)).toEqual(large)
+      expect(state.storage.sql.exec<{ size: number }>("SELECT length(bytes) AS size FROM object_cache").toArray()).toEqual([{ size: bytes.byteLength }])
+      return ref
+    }).pipe(Effect.provide(layer)))
+  })
+  await evictDurableObject(stub)
+  await runInDurableObject(stub, async (_instance, state) => {
+    let remoteReads = 0
+    const tracked = { put: bucket.put.bind(bucket), get: (...args: Parameters<R2Bucket["get"]>) => { remoteReads++; return bucket.get(...args) } }
+    const cache = { storage: state.storage, namespace: "objects-bucket" }
+    await Effect.runPromise(Effect.gen(function* () {
+      const storage = yield* ObjectStorage
+      expect((yield* storage.get(reference)).byteLength).toBe(DEFAULT_MAX_CACHED_OBJECT_BYTES)
+      expect(remoteReads).toBe(0)
+    }).pipe(Effect.provide(objectStorageFromR2(tracked, { prefix, cache }))))
+    for (const isolated of [
+      { prefix: "other-prefix/", cache },
+      { prefix, cache: { ...cache, namespace: "other-bucket" } }
+    ]) {
+      const emptyBucket = { put: bucket.put.bind(bucket), get: () => Promise.resolve(null) }
+      const failure = await Effect.runPromise(Effect.gen(function* () {
+        return yield* (yield* ObjectStorage).get(reference).pipe(Effect.flip)
+      }).pipe(Effect.provide(objectStorageFromR2(emptyBucket, isolated))))
+      expect(failure).toMatchObject({ reason: "Missing" })
+    }
+  })
+})
+
+test("DO cache exposes its row capacity and refuses unsupported policy before use", async () => {
+  const stub = (env as Env).THREADS.getByName("object-cache-capacity")
+  await runInDurableObject(stub, async (_instance, state) => {
+    const maxCachedObjectBytes = CLOUDFLARE_OBJECT_CACHE_CAPABILITIES.maxObjectBytes
+    const cache = { storage: state.storage, namespace: "capacity", maxCachedObjectBytes }
+    expect(() => objectStorageFromR2(bucket, { cache: { ...cache, maxCachedObjectBytes: maxCachedObjectBytes + 1 } })).toThrow("host object cache limit")
+    await Effect.runPromise(Effect.gen(function* () {
+      const storage = yield* ObjectStorage
+      const bytes = new Uint8Array(maxCachedObjectBytes).fill(3)
+      const ref = yield* storage.put(bytes)
+      expect(yield* storage.get(ref)).toEqual(bytes)
+      expect(state.storage.sql.exec<{ size: number }>("SELECT length(bytes) AS size FROM object_cache").one().size).toBe(maxCachedObjectBytes)
+    }).pipe(Effect.provide(objectStorageFromR2(bucket, { prefix: "capacity/", cache }))))
+  })
 })

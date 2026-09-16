@@ -3,10 +3,12 @@ import { objectKeyOf, objectRefOf, type ObjectRef } from "./reference"
 
 // ObjectStorageError distinguishes unavailable objects, integrity failures, and backend failures.
 export class ObjectStorageError extends Data.TaggedError("ObjectStorageError")<{
-  readonly reason: "Unavailable" | "Missing" | "Integrity" | "Read" | "Write"
+  readonly reason: "Unavailable" | "Missing" | "Integrity" | "Read" | "Write" | "TooLarge"
   readonly reference: ObjectRef
   readonly message: string
   readonly cause?: unknown
+  readonly maxObjectBytes?: number
+  readonly actualBytes?: number
 }> {}
 
 // ObjectStorage stores bytes by content identity and verifies retrieved content (key-value.test.ts).
