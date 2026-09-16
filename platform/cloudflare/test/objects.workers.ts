@@ -6,8 +6,16 @@ import { CLOUDFLARE_OBJECT_CACHE_CAPABILITIES, objectStorageFromR2 } from "../sr
 import type { Env } from "../src/env"
 import { objectStorageFromSqlite } from "../src/object-storage/sqlite"
 
-const bucket = env.OBJECTS as R2Bucket
+const bucket = (env as Env & { OBJECTS: R2Bucket }).OBJECTS
 const open = (prefix: string) => Effect.runPromise(ObjectStorage.pipe(Effect.provide(objectStorageFromR2(bucket, { prefix }))))
+
+const trackReads = () => {
+  let reads = 0
+  return {
+    bucket: { put: bucket.put.bind(bucket), get: (...args: Parameters<R2Bucket["get"]>) => { reads++; return bucket.get(...args) } },
+    reads: () => reads
+  }
+}
 
 test("local SQLite retains objects without R2 or eviction and rejects oversized writes", async () => {
   const stub = (env as Env).THREADS.getByName("local-objects")
@@ -61,29 +69,31 @@ test("DO cache admits bounded objects, survives eviction, and isolates backing n
   const prefix = "cached/"
   const reference = await runInDurableObject(stub, async (_instance, state) => {
     const cache = { storage: state.storage, namespace: "objects-bucket" }
-    const layer = objectStorageFromR2(bucket, { prefix, cache })
+    const tracked = trackReads()
+    const layer = objectStorageFromR2(tracked.bucket, { prefix, cache })
     return Effect.runPromise(Effect.gen(function* () {
       const storage = yield* ObjectStorage
       const bytes = new Uint8Array(DEFAULT_MAX_CACHED_OBJECT_BYTES).fill(7)
       const ref = yield* storage.put(bytes)
       expect(yield* storage.get(ref)).toEqual(bytes)
+      expect(tracked.reads()).toBe(0)
       const large = new Uint8Array(DEFAULT_MAX_CACHED_OBJECT_BYTES + 1).fill(8)
       const largeRef = yield* storage.put(large)
       expect(yield* storage.get(largeRef)).toEqual(large)
-      expect(state.storage.sql.exec<{ size: number }>("SELECT length(bytes) AS size FROM object_cache").toArray()).toEqual([{ size: bytes.byteLength }])
+      expect(yield* storage.get(largeRef)).toEqual(large)
+      expect(tracked.reads()).toBe(2)
       return ref
     }).pipe(Effect.provide(layer)))
   })
   await evictDurableObject(stub)
   await runInDurableObject(stub, async (_instance, state) => {
-    let remoteReads = 0
-    const tracked = { put: bucket.put.bind(bucket), get: (...args: Parameters<R2Bucket["get"]>) => { remoteReads++; return bucket.get(...args) } }
+    const tracked = trackReads()
     const cache = { storage: state.storage, namespace: "objects-bucket" }
     await Effect.runPromise(Effect.gen(function* () {
       const storage = yield* ObjectStorage
       expect((yield* storage.get(reference)).byteLength).toBe(DEFAULT_MAX_CACHED_OBJECT_BYTES)
-      expect(remoteReads).toBe(0)
-    }).pipe(Effect.provide(objectStorageFromR2(tracked, { prefix, cache }))))
+      expect(tracked.reads()).toBe(0)
+    }).pipe(Effect.provide(objectStorageFromR2(tracked.bucket, { prefix, cache }))))
     for (const isolated of [
       { prefix: "other-prefix/", cache },
       { prefix, cache: { ...cache, namespace: "other-bucket" } }
@@ -102,13 +112,14 @@ test("DO cache exposes its row capacity and refuses unsupported policy before us
   await runInDurableObject(stub, async (_instance, state) => {
     const maxCachedObjectBytes = CLOUDFLARE_OBJECT_CACHE_CAPABILITIES.maxObjectBytes
     const cache = { storage: state.storage, namespace: "capacity", maxCachedObjectBytes }
+    const tracked = trackReads()
     expect(() => objectStorageFromR2(bucket, { cache: { ...cache, maxCachedObjectBytes: maxCachedObjectBytes + 1 } })).toThrow("host object cache limit")
     await Effect.runPromise(Effect.gen(function* () {
       const storage = yield* ObjectStorage
       const bytes = new Uint8Array(maxCachedObjectBytes).fill(3)
       const ref = yield* storage.put(bytes)
       expect(yield* storage.get(ref)).toEqual(bytes)
-      expect(state.storage.sql.exec<{ size: number }>("SELECT length(bytes) AS size FROM object_cache").one().size).toBe(maxCachedObjectBytes)
-    }).pipe(Effect.provide(objectStorageFromR2(bucket, { prefix: "capacity/", cache }))))
+      expect(tracked.reads()).toBe(0)
+    }).pipe(Effect.provide(objectStorageFromR2(tracked.bucket, { prefix: "capacity/", cache }))))
   })
 })

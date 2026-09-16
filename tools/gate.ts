@@ -71,6 +71,7 @@ const tasks: ReadonlyArray<Task> = [
   { id: "typecheck:tools", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit"] },
   ...packages.map((name) => ({ id: `typecheck:${name}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...platforms.map((name) => ({ id: `typecheck:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "run", "typecheck"] })),
+  { id: "typecheck:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "tsc", "--noEmit", "-p", "tsconfig.workers.json"] },
   ...typecheckedApps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...examplePackages.map((name) => ({ id: `typecheck:example-react-rlm-chat-${name}`, cwd: examplePkg(name), cmd: ["bun", "run", "typecheck"] })),
   { id: "typecheck:e2e", cwd: e2e, cmd: ["bun", "run", "typecheck"] },

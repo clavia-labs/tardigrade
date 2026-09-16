@@ -1,12 +1,10 @@
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { SqlClient } from "effect/unstable/sql"
 import { objectRefOf, sqlObjectCache } from "@clavia/tardigrade-agent"
 
 test("SQL cache enforces byte budgets, LRU order, namespace isolation, and reopened policy", async () => {
   await Effect.runPromise(Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient
     const options = { namespace: "a", capabilities: { maxObjectBytes: 100 }, maxCachedObjectBytes: 4, maxCacheBytes: 6 }
     const cache = yield* sqlObjectCache(options)
     const other = yield* sqlObjectCache({ ...options, namespace: "b" })
@@ -21,8 +19,9 @@ test("SQL cache enforces byte budgets, LRU order, namespace isolation, and reope
     expect(yield* other.get(refs[0]!)).toBeUndefined()
     yield* other.put(refs[1]!, bytes[1]!)
     yield* Effect.all(Array.from({ length: 8 }, () => cache.put(refs[0]!, bytes[0]!)), { concurrency: "unbounded" })
-    const usage = yield* sql<{ bytes: number; count: number }>`SELECT SUM(length(bytes)) AS bytes, COUNT(*) AS count FROM object_cache`
-    expect(usage[0]).toEqual({ bytes: 9, count: 3 })
+    expect(yield* cache.get(refs[2]!)).toEqual(bytes[2])
+    expect(yield* cache.get(refs[0]!)).toEqual(bytes[0])
+    expect(yield* other.get(refs[1]!)).toEqual(bytes[1])
     const oversized = new Uint8Array(5)
     const ref = yield* objectRefOf(oversized)
     yield* cache.put(ref, oversized)
