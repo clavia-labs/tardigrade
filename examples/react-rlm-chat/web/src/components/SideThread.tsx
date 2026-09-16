@@ -5,15 +5,17 @@ import type { EventRow } from "@clavia/tardigrade-client"
 
 import { Composer } from "./Composer"
 import { Transcript } from "./Transcript"
+import type { UploadPolicy } from "../attachments"
 
-export const SideThread = ({ cancelling, error, loading, onCancel, onClose, onOpenThread, onSend, pending, rows, running, streamingText, thread }: {
+export const SideThread = ({ cancelling, error, loading, onCancel, onClose, onOpenThread, onSend, pending, rows, running, streamingText, thread, uploadPolicy }: {
   readonly cancelling: boolean
   readonly error: unknown
   readonly loading: boolean
   readonly onCancel: () => void
   readonly onClose: () => void
   readonly onOpenThread: (id: string) => void
-  readonly onSend: (text: string) => void
+  readonly onSend: (text: string, files: ReadonlyArray<File>) => Promise<unknown>
+  readonly uploadPolicy: UploadPolicy | undefined
   readonly pending: boolean
   readonly rows: ReadonlyArray<EventRow>
   readonly running: boolean
@@ -50,6 +52,7 @@ export const SideThread = ({ cancelling, error, loading, onCancel, onClose, onOp
       id="child-message"
       onCancel={onCancel}
       onSend={onSend}
+      uploadPolicy={uploadPolicy}
       pending={pending}
       placeholder="Message this subagent"
       running={running}

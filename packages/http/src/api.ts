@@ -3,8 +3,6 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { isForkRefused, resolveForkCheckpoint, type ForkRefused } from "@clavia/tardigrade-host/fork"
-import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
-import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
 
 import {
   Api,
@@ -17,15 +15,12 @@ import {
   UnknownProjection,
   UnknownThread,
   type ActorSummary,
-  type ActorThread,
-  type ThreadAdded,
-  type ThreadsSnapshot,
   type ProjectionDeclaration,
   type ThreadNode, ThreadOccupied, forkCheckpointOf } from "@clavia/tardigrade-client/contract"
 import { methodHandlers } from "./methods"
 import { catalogHandlers, type CatalogDiscovery } from "./models"
 import { Threads, type ActorThreads } from "./threads"
-import { publicThreadId, resolveThreadId } from "./thread-compat"
+import { resolveThreadId } from "./thread-compat"
 import type { InferenceStream } from "./inference-stream"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
@@ -37,16 +32,8 @@ import { treeOf, type ThreadSummary } from "./projections"
 // a cursor for the connection it serves and nothing else, so two processes reading the same log
 // answer the same way.
 
-// The page size of GET /v1/threads/:id/events when the caller states no `limit`
-// (docs/how-to/server.md, "Endpoints").
-export const DEFAULT_EVENT_LIMIT = 200
-
-// How long an idle tail waits before writing a comment frame. A proxy between the client and this
-// process closes a connection that says nothing, and a comment is the cheapest thing to say.
-export const DEFAULT_SSE_HEARTBEAT = Duration.seconds(5)
-
-// DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY bounds unread transient frames per browser connection.
-export const DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY = 64
+import { DEFAULT_EVENT_LIMIT, DEFAULT_SSE_HEARTBEAT, DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY, eventTail, actorThreadsTail, inferenceTail, streamCursorOf } from "./sse"
+export { DEFAULT_EVENT_LIMIT, DEFAULT_SSE_HEARTBEAT, DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY, openStreams } from "./sse"
 
 export type HttpProjections = Record<string, {
   readonly run: ProjectionDeclaration["run"]
@@ -70,14 +57,6 @@ const paramOf = (params: Readonly<Record<string, string | undefined>>, name: str
 
 const singleOf = (value: string | ReadonlyArray<string> | undefined): string | undefined =>
   value === undefined ? undefined : typeof value === "string" ? value : value[0]
-
-// A sequence number is a whole number at or above zero. The declared endpoints get this from their
-// query Schema (contract.ts, Seq); the stream is not a declared endpoint, so it reads its own.
-const integerOf = (raw: string | undefined): number | undefined => {
-  if (raw === undefined) return undefined
-  const trimmed = raw.trim()
-  return /^\d+$/.test(trimmed) ? Number(trimmed) : undefined
-}
 
 const unknownThreadDetail = (id: string) => `No thread named ${JSON.stringify(id)} has ever existed.`
 const unknownActorDetail = (id: string) => `No actor instance named ${JSON.stringify(id)} has ever existed.`
@@ -110,112 +89,13 @@ const forkProblemOf = (refused: ForkRefused) =>
       ? ThreadOccupied.of(refused.message)
       : InvalidRequest.of(refused.message)
 
-const frameOf = (seq: number, event: unknown): string => `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`
-
-// A comment frame: the client's parser drops it and the bytes keep the connection alive.
-const HEARTBEAT = ": tardigrade\n\n"
-
-const actorThreadOf = (record: ActorThreadRecord): ActorThread => ({
-  id: publicThreadId(record.thread),
-  ...(record.parentThread === undefined
-    ? {}
-    : { parent: publicThreadId(record.parentThread) }),
-  depth: record.depth
-})
-
-// openTails counts the SSE tails this process holds. A tail is a fiber that outlives its request
-// handler, so the count is what proves a disconnected client leaves nothing polling behind
-// (api.test.ts, "a reconnect replays from Last-Event-ID and then runs live, once each": the tail is
-// one while the client reads and zero once it aborts).
-let openTails = 0
-
-export const openStreams = (): number => openTails
-
-interface TailOptions {
-  readonly from: number
-  readonly limit: number
-  readonly heartbeat: Duration.Input
-  readonly initial?: Effect.Effect<readonly [string, number]>
-  readonly readPage: (cursor: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
-  readonly awaitHead: (cursor: number) => Effect.Effect<number>
-  readonly encodePage: (page: ReadonlyArray<ThreadEventRow>) => Effect.Effect<string>
-}
-
-const waitForHead = (
-  awaitHead: TailOptions["awaitHead"],
-  cursor: number,
-  heartbeat: Duration.Input
-) => Effect.race(
-  Effect.map(awaitHead(cursor), (target) => ({ kind: "commit" as const, target })),
-  Effect.as(Effect.sleep(heartbeat), { kind: "heartbeat" as const })
-)
-
-// resumableTail replays committed pages, waits at the head, and keeps an idle connection open.
-const resumableTail = (options: TailOptions): Stream.Stream<Uint8Array> => {
-  interface State {
-    readonly cursor: number
-    readonly waiting: boolean
-  }
-  const step = (state: State): Effect.Effect<readonly [string, State]> =>
-    Effect.gen(function*() {
-      let current = state
-      let target: number | undefined
-      for (;;) {
-        if (current.waiting) {
-          const wake = yield* waitForHead(options.awaitHead, current.cursor, options.heartbeat)
-          if (wake.kind === "heartbeat") return [HEARTBEAT, current] as const
-          target = wake.target
-          current = { ...current, waiting: false }
-        }
-        const page = yield* options.readPage(current.cursor, options.limit)
-        if (page.length > 0) {
-          const frames = yield* options.encodePage(page)
-          const cursor = page[page.length - 1]!.seq
-          return [frames === "" ? HEARTBEAT : frames, {
-            cursor,
-            waiting: target !== undefined && cursor >= target
-          }] as const
-        }
-        const wake = yield* waitForHead(options.awaitHead, current.cursor, options.heartbeat)
-        if (wake.kind === "heartbeat") return [HEARTBEAT, { ...current, waiting: true }] as const
-        target = wake.target
-      }
-    })
-  const framesFrom = (cursor: number) => Stream.unfold({ cursor, waiting: false } as State, step)
-  const frames = options.initial === undefined
-    ? framesFrom(options.from)
-    : Stream.unwrap(Effect.map(options.initial, ([frame, cursor]) =>
-      Stream.succeed(frame).pipe(Stream.concat(framesFrom(cursor)))))
-  return Stream.unwrap(
-    Effect.as(
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          openTails += 1
-        }),
-        () =>
-          Effect.sync(() => {
-            openTails -= 1
-          })
-      ),
-      Stream.encodeText(frames)
-    )
-  )
-}
-
 const streamCursor = Effect.gen(function*() {
   const query = yield* HttpServerRequest.ParsedSearchParams
-  const rawAfter = singleOf(query["after"])
-  const after = integerOf(rawAfter)
-  if (rawAfter !== undefined && after === undefined) {
-    return { problem: problemResponse(invalidRequest("Query", [unacceptableField("after")])) } as const
-  }
   const request = yield* HttpServerRequest.HttpServerRequest
-  const rawLastEventId = request.headers["last-event-id"]
-  const lastEventId = integerOf(rawLastEventId)
-  if (rawLastEventId !== undefined && lastEventId === undefined) {
-    return { problem: problemResponse(invalidRequest("Headers", [unacceptableField("last-event-id")])) } as const
-  }
-  return { from: lastEventId ?? after } as const
+  const cursor = streamCursorOf(singleOf(query["after"]), request.headers["last-event-id"])
+  return "invalid" in cursor
+    ? { problem: problemResponse(invalidRequest(cursor.invalid === "after" ? "Query" : "Headers", [unacceptableField(cursor.invalid)])) }
+    : cursor
 })
 
 const streamResponseOf = (body: Stream.Stream<Uint8Array>, signal?: AbortSignal) => {
@@ -233,58 +113,6 @@ const streamResponseOf = (body: Stream.Stream<Uint8Array>, signal?: AbortSignal)
   }))
 }
 
-// tail streams one thread with its durable sequence as both the page cursor and SSE id.
-const tail = (
-  readPage: ActorThreads["eventsPage"],
-  awaitHead: ActorThreads["awaitHead"],
-  id: string,
-  from: number,
-  limit: number,
-  heartbeat: Duration.Input
-): Stream.Stream<Uint8Array> => resumableTail({
-  from,
-  limit,
-  heartbeat,
-  readPage: (cursor, pageLimit) => readPage(id, cursor, pageLimit),
-  awaitHead: (cursor) => awaitHead(id, cursor),
-  encodePage: (page) => Effect.succeed(page.map(({ seq, event }) => frameOf(seq, event)).join(""))
-})
-
-const actorThreadsTail = (
-  threads: ActorThreads,
-  from: number | undefined,
-  limit: number,
-  heartbeat: Duration.Input
-): Stream.Stream<Uint8Array> => {
-  const initial = from === undefined
-    ? Effect.map(threads.actorThreads, ({ cursor, threads: records }) => [
-      frameOf(cursor, {
-        type: "ThreadsSnapshot",
-        threads: records.filter((record) => record.state === "registered").map(actorThreadOf)
-      } satisfies ThreadsSnapshot),
-      cursor
-    ] as const)
-    : undefined
-  return resumableTail({
-    from: from ?? 0,
-    limit,
-    heartbeat,
-    ...(initial === undefined ? {} : { initial }),
-    readPage: threads.actorEventsPage,
-    awaitHead: threads.awaitActorHead,
-    encodePage: (page) => Effect.map(
-      Effect.forEach(page, ({ seq, event }) => {
-        if (event.type !== "ThreadRegistered" || typeof event.thread !== "string") return Effect.succeed("")
-        return Effect.map(threads.actorThread(event.thread), (record) =>
-          record === undefined
-            ? ""
-            : frameOf(seq, { type: "ThreadAdded", thread: actorThreadOf(record) } satisfies ThreadAdded))
-      }),
-      (frames) => frames.join("")
-    )
-  })
-}
-
 // The stream stays an HttpRouter route rather than an HttpApi endpoint. HttpApi is
 // request-and-response shaped: an endpoint decodes a request, runs a handler, and encodes one
 // answer, while this route hands back a connection that outlives the handler and carries its own
@@ -300,8 +128,8 @@ const streamResponse = (
   const first = yield* threads.eventsPage(id, 0, 1)
   if (first.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
   const cursor = yield* streamCursor
-  if (cursor.problem !== undefined) return cursor.problem
-  return yield* streamResponseOf(tail(threads.eventsPage, threads.awaitHead, id, cursor.from ?? 0, limit, heartbeat), signal)
+  if ("problem" in cursor) return cursor.problem
+  return yield* streamResponseOf(eventTail(threads.eventsPage, threads.awaitHead, id, cursor.from ?? 0, limit, heartbeat), signal)
 })
 
 const actorThreadsStreamResponse = (
@@ -311,47 +139,8 @@ const actorThreadsStreamResponse = (
   signal?: AbortSignal
 ) => Effect.gen(function*() {
   const cursor = yield* streamCursor
-  if (cursor.problem !== undefined) return cursor.problem
+  if ("problem" in cursor) return cursor.problem
   return yield* streamResponseOf(actorThreadsTail(threads, cursor.from, limit, heartbeat), signal)
-})
-
-const inferenceStreamResponse = (
-  inference: InferenceStream,
-  actor: string,
-  thread: string,
-  heartbeat: Duration.Input,
-  bufferCapacity: number,
-  signal?: AbortSignal
-) => Effect.sync(() => {
-  const encoder = new TextEncoder()
-  let unsubscribe: (() => void) | undefined
-  let heartbeatTimer: ReturnType<typeof setInterval> | undefined
-  let stop: (() => void) | undefined
-  const cleanup = () => {
-    unsubscribe?.()
-    if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer)
-    if (stop !== undefined) signal?.removeEventListener("abort", stop)
-  }
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      stop = () => { cleanup(); controller.close() }
-      if (signal?.aborted) { stop(); return }
-      signal?.addEventListener("abort", stop, { once: true })
-      unsubscribe = inference.subscribe((delta) => {
-        if (delta.instance !== actor || delta.thread !== thread) return
-        if ((controller.desiredSize ?? 1) <= 0) return
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(delta)}\n\n`))
-      })
-      heartbeatTimer = setInterval(() => {
-        if ((controller.desiredSize ?? 1) > 0) controller.enqueue(encoder.encode(HEARTBEAT))
-      }, Duration.toMillis(heartbeat))
-    },
-    cancel: cleanup
-  }, { highWaterMark: bufferCapacity })
-  return HttpServerResponse.raw(body, {
-    contentType: "text/event-stream",
-    headers: { "cache-control": "no-cache" }
-  })
 })
 
 export const layerStream = (options: ApiOptions = {}) => {
@@ -388,14 +177,7 @@ export const layerStream = (options: ApiOptions = {}) => {
         const params = yield* HttpRouter.params
         const threads = yield* (yield* Threads).ensure(paramOf(params, "id"))
         const thread = yield* resolveThreadId(paramOf(params, "thread"), (thread) => Effect.map(threads.actorThread(thread), (record) => record !== undefined))
-        return yield* inferenceStreamResponse(
-          options.inference!,
-          paramOf(params, "id"),
-          thread,
-          heartbeat,
-          bufferCapacity,
-          options.streamShutdownSignal
-        )
+        return yield* streamResponseOf(inferenceTail(options.inference!, paramOf(params, "id"), thread, heartbeat, bufferCapacity), options.streamShutdownSignal)
       })
     )])
   )

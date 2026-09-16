@@ -7,6 +7,8 @@ import { allocateChatThread } from "../allocate-thread"
 import { activeMessageCall, mergeEvents, readEvents } from "../events"
 import { useStreamingText } from "../use-streaming-text"
 import { Composer } from "./Composer"
+import { messageWithFiles, readUploadPolicy } from "../attachments"
+import { apiUrl } from "../config"
 import { SideThread } from "./SideThread"
 import { ThreadSidebar } from "./ThreadSidebar"
 import { Transcript } from "./Transcript"
@@ -46,6 +48,7 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
   const [selectedChild, setSelectedChild] = useState<string | undefined>(undefined)
   const [streamVersion, setStreamVersion] = useState(0)
   const events = useQuery({ queryKey: eventsKey, queryFn: () => readEvents(thread) })
+  const uploads = useQuery({ queryKey: ["upload-policy"], queryFn: () => readUploadPolicy(apiUrl()), retry: false })
   const threads = useQuery({ queryKey: ["threads", actor], queryFn: () => client.list(actor) })
   const childEventsKey = ["events", actor, selectedChild] as const
   const childEvents = useQuery({
@@ -54,9 +57,9 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
     enabled: selectedChild !== undefined
   })
   const send = useMutation({
-    mutationFn: (text: string) => client.call(actor, thread, "message", {
+    mutationFn: async ({ text, files }: { text: string; files: ReadonlyArray<File> }) => client.call(actor, thread, "message", {
       id: crypto.randomUUID(),
-      input: { text }
+      input: await messageWithFiles(text, files, apiUrl(), uploads.data)
     }),
     onSuccess: async () => {
       await events.refetch()
@@ -65,8 +68,8 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
     }
   })
   const sendChild = useMutation({
-    mutationFn: ({ id, text }: { readonly id: string; readonly text: string }) =>
-      client.call(actor, id, "message", { id: crypto.randomUUID(), input: { text } }),
+    mutationFn: async ({ id, text, files }: { readonly id: string; readonly text: string; readonly files: ReadonlyArray<File> }) =>
+      client.call(actor, id, "message", { id: crypto.randomUUID(), input: await messageWithFiles(text, files, apiUrl(), uploads.data) }),
     onSuccess: async (_, { id }) => {
       await cache.invalidateQueries({ queryKey: ["events", actor, id] })
       await cache.invalidateQueries({ queryKey: ["threads", actor] })
@@ -136,7 +139,8 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
           onCancel={() => {
             if (activeRootCall !== undefined) cancel.mutate({ id: activeRootCall, target: thread })
           }}
-          onSend={(text) => send.mutate(text)}
+          onSend={(text, files) => send.mutateAsync({ text, files })}
+          uploadPolicy={uploads.data}
           pending={send.isPending || start.isPending}
           placeholder="Ask about the codebase"
           running={activeRootCall !== undefined}
@@ -155,7 +159,8 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
             if (activeChildCall !== undefined) cancel.mutate({ id: activeChildCall, target: selectedChild })
           }}
           onOpenThread={setSelectedChild}
-          onSend={(text) => sendChild.mutate({ id: selectedChild, text })}
+          onSend={(text, files) => sendChild.mutateAsync({ id: selectedChild, text, files })}
+          uploadPolicy={uploads.data}
           pending={sendChild.isPending}
           running={activeChildCall !== undefined}
           rows={childEvents.data ?? []}

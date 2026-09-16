@@ -47,6 +47,8 @@ export type CloudflareThreadHostOptions<R> = {
   readonly keyOf?: (event: Event) => string | undefined
   readonly store?: CloudflareThreadStorePolicy
   readonly commitObserver?: CommitObserver
+  // onPublish synchronously wakes local readers before asynchronous observer delivery (test/actor.workers.ts, durable publication).
+  readonly onPublish?: (head: number) => void
   readonly retainCommitTask?: (task: Promise<void>) => void
 } & LayersFor<R>
 
@@ -99,11 +101,12 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     : new CommitDispatcher(options.commitObserver, options.retainCommitTask)
   let stagedHead = 0
   let creation: ReturnType<typeof threadCreated> | undefined
-  const publish = (head: number): Effect.Effect<void> => Effect.sync(() => {
+  const publish = (head: number): void => {
+    options.onPublish?.(head)
     commitDispatcher?.offer({ ...identity, head })
-  })
+  }
   const syncCommit = (result: { readonly appended: number; readonly head: number }): Effect.Effect<void> =>
-    result.appended > 0 ? Effect.andThen(sync, publish(result.head)) : Effect.void
+    result.appended > 0 ? Effect.andThen(sync, Effect.sync(() => publish(result.head))) : Effect.void
 
   const commitEffect = (
     target: ThreadAddress,
@@ -227,7 +230,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
       if (stagedHead === 0) return
       const head = stagedHead
       stagedHead = 0
-      commitDispatcher?.offer({ ...identity, head })
+      publish(head)
     },
     drive,
     recover,

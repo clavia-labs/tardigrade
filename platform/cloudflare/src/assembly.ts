@@ -259,6 +259,8 @@ export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
 ) => CloudflareThreadStorePolicy
 
 interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
+  readonly streaming?: Partial<import("./transport/stream").CloudflareStreamPolicy>
+  readonly authentication?: "bearer" | "none"
   readonly supervisor?: ThreadSupervisor
   readonly model?: ModelIntegrationOptions
   readonly threadAllocator?: typeof ThreadAllocator.Service
