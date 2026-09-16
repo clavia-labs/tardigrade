@@ -11,6 +11,7 @@ import { ModelPricing, type Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
 import { ProviderContinuation } from "../inference/continuation"
 import { ModelUsage, ModelResponse, ModelFinish } from "../inference/response"
+import { CostEvidence } from "@clavia/tardigrade-model/settings"
 export { ModelResponse } from "../inference/response"
 
 // The agent's domain events compose with core actor input and control events. The model responds
@@ -89,6 +90,7 @@ export const ModelCalled = Schema.Struct({
   // The output policy this attempt ran under, when the turn declared a contract. Recorded on the
   // ask, so a replay reads which policy produced which response.
   output: Schema.optional(OutputPolicy),
+  admission: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
   at: Schema.Finite
@@ -116,6 +118,7 @@ export const ModelReturned = Schema.Struct({
   legacyUsage: Schema.optional(Schema.Unknown),
   finish: Schema.optional(ModelFinish),
   reportedCostUsd: Schema.optional(Schema.Finite),
+  cost: Schema.optional(CostEvidence),
   endpoint: Schema.optional(Endpoint),
   text: Schema.optional(Schema.String),
   response: Schema.optional(ModelResponse),
@@ -167,6 +170,7 @@ export const TURN_FAILURE_CAUSES = [
   "model",
   "inference_error",
   "inference_attempts_exhausted",
+  "inference_budget_exhausted",
   "refused",
   "truncated",
   "output_limit",
@@ -275,7 +279,8 @@ export const TurnResumed = Schema.Struct({
 export const BudgetExhausted = Schema.Struct({
   type: Schema.Literal("BudgetExhausted"),
   budget: Schema.Finite,
-  used: Schema.Finite,
+  used: Schema.NullOr(Schema.Finite),
+  policy: Schema.optional(Schema.Unknown),
   turn: Schema.optional(Schema.String),
   at: Schema.Finite
 })
@@ -350,8 +355,9 @@ export const PermissionRequestFailed = Schema.Struct({
 
 export const BudgetGranted = Schema.Struct({
   type: Schema.Literal("BudgetGranted"),
-  amount: Schema.Finite, // the tool calls added to this turn's budget
+  amount: Schema.Finite, // the demand units added to this turn's budget
   initial: Schema.optional(Schema.Boolean),
+  policy: Schema.optional(Schema.Unknown),
   // The BudgetRequested this grant answers. The dedup key reads it: a grant is summed into the
   // ceiling (component/budget.ts), so a redelivered grant landing twice would silently
   // double the budget; keyed by the request it answers, the store absorbs the repeat.
@@ -417,6 +423,7 @@ type Served = {
   readonly response?: ModelResponse
   readonly finish?: ModelFinish
   readonly reportedCostUsd?: number
+  readonly cost?: CostEvidence
   readonly reasoning?: string
   readonly continuation?: import("../inference/continuation").ProviderContinuation
   // usage accepts historical custom bindings; modelReturned stores ModelUsage.
@@ -551,6 +558,7 @@ export const modelReturned = (
     readonly response?: ModelResponse
     readonly finish?: ModelFinish
     readonly reportedCostUsd?: number
+    readonly cost?: CostEvidence
   } & EpochStamp
 ): Event => ({ type: "ModelReturned", ...fields, usage: upcastUsage(fields.usage),
   ...(fields.error === undefined ? {} : { error: encodeModelError(unknownModelError(fields.error)) }),
@@ -628,7 +636,7 @@ export const turnResumed = (fields: { readonly turn: string; readonly failedEpoc
   ({ type: "TurnResumed", ...fields }) as Event
 
 export const budgetExhausted = (
-  fields: { readonly budget: number; readonly used: number } & Stamp
+  fields: { readonly budget: number; readonly used: number | null; readonly policy?: unknown } & Stamp
 ): Event => ({ type: "BudgetExhausted", ...fields }) as Event
 
 export const budgetRequested = (
@@ -660,7 +668,7 @@ export const permissionRequestFailed = (
 ): Event => ({ type: "PermissionRequestFailed", ...fields }) as Event
 
 export const budgetGranted = (
-  fields: { readonly amount: number; readonly callId?: string; readonly initial?: boolean } & Stamp
+  fields: { readonly amount: number; readonly callId?: string; readonly initial?: boolean; readonly policy?: unknown } & Stamp
 ): Event => ({ type: "BudgetGranted", ...fields }) as Event
 
 export const budgetDenied = (

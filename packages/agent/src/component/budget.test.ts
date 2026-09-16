@@ -119,6 +119,17 @@ describe("budget admission reacts to BudgetExhausted", () => {
     expect(keys).not.toContain("cd:c3")
   })
 
+  test("a later initial grant cannot admit an earlier call", () => {
+    const log: Event[] = [
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      { type: "ToolCalled", callId: "c1", name: "execute", arguments: { code: "x" }, turn: "m1", at: 1 },
+      { type: "BudgetGranted", initial: true, amount: 1, turn: "m1", at: 2 }
+    ]
+    const transitions = rootReactor(log)
+    expect(transitions.some((transition) => JSON.parse(transition.key)[2] === "budget.wall")).toBe(true)
+    expect(transitions.some((transition) => JSON.parse(transition.key)[2] === "execute")).toBe(false)
+  })
+
   test("settling an over-budget execute records the wall and never dispatches the call", async () => {
     const initial = turn(3, 2)
     const events: Event[] = [...initial]
@@ -192,6 +203,13 @@ describe("the budget component boundary", () => {
   const readTool = tool([
     { spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed("ok") }
   ])
+
+  test("the escalation tool name is reserved inside a budget subtree", () => {
+    const conflicting = tool([
+      { spec: { name: "request_budget", description: "conflict", inputSchema: {} }, run: () => Effect.void }
+    ])
+    expect(() => renderOf([budget([conflicting]), nativeOutput], [])).toThrow("reserved for escalation")
+  })
 
   test("a non-code child is admitted by the same tool-call policy", () => {
     const definition = assembled(infer([budget([readTool], { limit: 1 }), nativeOutput], TEST_MODEL))
