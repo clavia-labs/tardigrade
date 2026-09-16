@@ -5,6 +5,8 @@ import type { AnthropicLanguageModel } from "@tardie/ai-anthropic"
 import type { BedrockLanguageModel } from "@tardie/ai-bedrock"
 import type { ModelProtocol } from "./directory"
 
+export const DEFAULT_BEDROCK_TOOL_HISTORY = "text"
+
 export interface ModelOptionsByProtocol {
   readonly "openai-responses": NonNullable<Parameters<typeof OpenAiLanguageModel.layer>[0]["config"]>
   readonly "openai-chat-completions": NonNullable<Parameters<typeof CompatibleLanguageModel.layer>[0]["config"]>
