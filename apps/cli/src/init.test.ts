@@ -13,7 +13,9 @@ afterEach(async () => {
 })
 
 const temporaryRoot = async (): Promise<string> => {
-  root = await mkdtemp(join(process.cwd(), ".tdg-init-test-"))
+  const fixtures = new URL("../../../.cache/cli-tests/", import.meta.url).pathname
+  await mkdir(fixtures, { recursive: true })
+  root = await mkdtemp(join(fixtures, "init-"))
   return root
 }
 
