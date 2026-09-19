@@ -155,6 +155,28 @@ const deadlineHost = (path: string, alarm: ManualAlarmScheduler) => createBunHos
 const eventsOf = (events: ReadonlyArray<Event>, type: string) => events.filter((event) => event.type === type)
 
 describe("the bun host", () => {
+  test("a refused delivery leaves the log unchanged and runs no derived work", async () => {
+    const path = freshPath()
+    let executed = 0
+    const configured = {
+      ...options(path),
+      actorFor: () => ({
+        projections: [completeTransitionProjection((events) => events.filter((event) => event.type === "MessageReceived").map((event) => effect({
+          key: `done:${String((event as { id?: unknown }).id)}`, input: undefined, act: () => Effect.sync(() => { executed++; return [] })
+        })))]
+      }),
+      eventAdmission: () => Effect.fail(new Error("event refused"))
+    } as BunHostOptions<never> & { readonly eventAdmission: (events: ReadonlyArray<Event>) => Effect.Effect<void, Error> }
+    const host = await createBunHost(configured)
+    try {
+      await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
+      await expect(host.commitRoot(host.self("root"), { type: "MessageReceived", id: "refused", at: 1 })).rejects.toThrow("event refused")
+      expect(await host.read("root")).toEqual([])
+      expect(executed).toBe(0)
+    } finally {
+      await host.close()
+    }
+  })
   test("delivery rejects missing and unfinished threads and retains readiness after reopen", async () => {
     const path = freshPath()
     const started = Promise.withResolvers<void>()
