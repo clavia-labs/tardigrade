@@ -21,16 +21,12 @@ export {
 /**
  * tardigradeBindings declares both host namespaces as alchemy Worker bindings.
  *
- * Pass the result under the worker's `bindings` prop. The host resolves its objects through `env.ACTORS` and `env.THREADS`, so the binding names are fixed and only the exported class names are overridable.
+ * The object keys are the env names the host reads; the factory argument is the class name the worker entry exports, per alchemy's DurableObject binding.
  */
 export const tardigradeBindings = (options: TardigradeBindingsOptions = {}) => {
   const names = tardigradeClassNames(options)
   return {
-    ACTORS: Cloudflare.DurableObject<ActorDO>(ACTORS_BINDING, {
-      className: names.actorClassName,
-    }),
-    THREADS: Cloudflare.DurableObject<ThreadDO>(THREADS_BINDING, {
-      className: names.threadClassName,
-    }),
+    ACTORS: Cloudflare.DurableObject<ActorDO>(names.actorClassName),
+    THREADS: Cloudflare.DurableObject<ThreadDO>(names.threadClassName),
   }
 }
