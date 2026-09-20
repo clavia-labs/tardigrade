@@ -1,0 +1,46 @@
+{
+  "name": "@clavia/tardigrade-alchemy",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "Alchemy binding for the tardigrade Cloudflare host.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "platform/alchemy"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-cloudflare": "workspace:*",
+    "effect": "4.0.0-rc.115"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "alchemy": "2.0.0-beta.77"
+  },
+  "peerDependencies": {
+    "alchemy": "2.0.0-beta.77"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}
