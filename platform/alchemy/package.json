@@ -34,10 +34,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260804.1",
-    "alchemy": "2.0.0-beta.77"
+    "alchemy": "2.0.0-beta.79"
   },
   "peerDependencies": {
-    "alchemy": "2.0.0-beta.77"
+    "alchemy": "2.0.0-beta.79"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
