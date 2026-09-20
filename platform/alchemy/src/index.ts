@@ -1,14 +1,9 @@
-import type { ActorDO } from "@clavia/tardigrade-cloudflare/actor"
-import type { ThreadDO } from "@clavia/tardigrade-cloudflare/thread"
 import * as Cloudflare from "alchemy/Cloudflare"
 
-import {
-  ACTORS_BINDING,
-  THREADS_BINDING,
-  tardigradeClassNames,
-  type TardigradeBindingsOptions,
-} from "./names"
+import { tardigradeBindingsWith } from "./bindings"
+import type { TardigradeBindingsOptions } from "./names"
 
+export { tardigradeBindingsWith, type DurableObjectBinding, type DurableObjectFactory } from "./bindings"
 export {
   ACTOR_CLASS,
   ACTORS_BINDING,
@@ -21,12 +16,7 @@ export {
 /**
  * tardigradeBindings declares both host namespaces as alchemy Worker bindings.
  *
- * The object keys are the env names the host reads; the factory argument is the class name the worker entry exports, per alchemy's DurableObject binding.
+ * The object keys are the env names the host reads. The factory argument is the class name the worker entry exports, which is what alchemy binds.
  */
-export const tardigradeBindings = (options: TardigradeBindingsOptions = {}) => {
-  const names = tardigradeClassNames(options)
-  return {
-    ACTORS: Cloudflare.DurableObject<ActorDO>(names.actorClassName),
-    THREADS: Cloudflare.DurableObject<ThreadDO>(names.threadClassName),
-  }
-}
+export const tardigradeBindings = (options: TardigradeBindingsOptions = {}) =>
+  tardigradeBindingsWith(Cloudflare, options)

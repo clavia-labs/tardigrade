@@ -26,6 +26,7 @@
   },
   "type": "module",
   "exports": {
+    ".": "./src/index.ts",
     "./*": "./src/*.ts"
   },
   "dependencies": {
