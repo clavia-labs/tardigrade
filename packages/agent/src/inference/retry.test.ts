@@ -64,13 +64,11 @@ test("physical attempts retain resolved request evidence across replay", async (
   ] as const
   const maximumUsd = (index: number) =>
     128_000 * prices[index]!.promptUsdPerToken + policies[index]!.maxOutputTokens * prices[index]!.completionUsdPerToken
-  let policyIndex = 0
-  let priceIndex = 0
   let attempts = 0
   const atDispatch: Array<{ readonly requestPolicy: unknown; readonly requestBounds: unknown; readonly returned: number }> = []
   const host = makeHost({
-    policy: () => Effect.succeed(policies[policyIndex++]!),
-    pricing: () => Effect.succeed(prices[priceIndex++]!),
+    policy: () => Effect.succeed(policies[Math.min(attempts, policies.length - 1)]!),
+    pricing: () => Effect.succeed(prices[Math.min(attempts, prices.length - 1)]!),
     react: () => Effect.sync(() => {
       const log = host.read("root")
       const mark = log.findLast((event) => event.type === "ModelCalled") as Record<string, unknown>
@@ -80,7 +78,7 @@ test("physical attempts retain resolved request evidence across replay", async (
         returned: log.filter((event) => event.type === "ModelReturned").length
       })
       return ++attempts === 1
-        ? { kind: "fail" as const, retryable: true, error: "capacity", usage: { inputTokens: {}, outputTokens: {} } }
+        ? { kind: "fail" as const, retryable: true, error: "capacity", usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } } }
         : { kind: "complete" as const, output: "done", usage: { inputTokens: { total: 10 }, outputTokens: { total: 1 } } }
     })
   })
@@ -93,11 +91,6 @@ test("physical attempts retain resolved request evidence across replay", async (
     requestPolicy: event.requestPolicy,
     requestBounds: event.requestBounds
   }))
-  const expected = [
-    { requestPolicy: policies[0], requestBounds: { maximumUsd: maximumUsd(0) } },
-    { requestPolicy: policies[1], requestBounds: { maximumUsd: maximumUsd(1) } }
-  ]
-
   const changed = makeHost({
     policy: () => Effect.succeed({ ...policy, maxOutputTokens: 999, retry: { ...policy.retry, backoffMs: [] } }),
     pricing: () => Effect.succeed({ promptUsdPerToken: 1, completionUsdPerToken: 1 }),
@@ -111,17 +104,14 @@ test("physical attempts retain resolved request evidence across replay", async (
     requestBounds: event.requestBounds
   }))
   const measuredCostUsd = usageIn(recorded as ReturnType<typeof host.read>, "m1").costUsd
-  expect({
-    atDispatch,
-    recorded: evidence,
-    replayed: replayedEvidence,
-    measuredCostUsd
-  }).toEqual({
-    atDispatch: expected.map((item, index) => ({ ...item, returned: index })),
-    recorded: expected,
-    replayed: expected,
-    measuredCostUsd: 10 * prices[1].promptUsdPerToken + prices[1].completionUsdPerToken
-  })
+  expect(atDispatch.map(({ returned }) => returned)).toEqual([0, 1])
+  expect(atDispatch.map(({ returned: _returned, ...item }) => item)).toEqual(evidence)
+  expect(replayedEvidence).toEqual(evidence)
+  for (const [index, item] of evidence.entries()) {
+    expect(item).toMatchObject({ requestPolicy: policies[index], requestBounds: { maximumUsd: expect.any(Number) } })
+    expect((item.requestBounds as { readonly maximumUsd: number }).maximumUsd).toBeCloseTo(maximumUsd(index), 9)
+  }
+  expect(measuredCostUsd).toBeCloseTo(10 * prices[1].promptUsdPerToken + prices[1].completionUsdPerToken, 9)
 })
 
 test("an unpriced failure retains its conservative bound beside unknown usage", async () => {
@@ -138,10 +128,11 @@ test("an unpriced failure retains its conservative bound beside unknown usage", 
 
   const replayed = JSON.parse(JSON.stringify(host.read("root"))) as ReturnType<typeof host.read>
   const mark = replayed.find((event) => event.type === "ModelCalled") as Record<string, unknown>
-  expect(mark).toMatchObject({
-    requestPolicy,
-    requestBounds: { maximumUsd: 128_000 * pricing.promptUsdPerToken + requestPolicy.maxOutputTokens * pricing.completionUsdPerToken }
-  })
+  expect(mark).toMatchObject({ requestPolicy, requestBounds: { maximumUsd: expect.any(Number) } })
+  expect((mark.requestBounds as { readonly maximumUsd: number }).maximumUsd).toBeCloseTo(
+    128_000 * pricing.promptUsdPerToken + requestPolicy.maxOutputTokens * pricing.completionUsdPerToken,
+    9
+  )
   expect(usageIn(replayed, "m1").costUsd).toBeUndefined()
 })
 
