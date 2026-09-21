@@ -23,6 +23,7 @@ test("root addresses isolate logs across actors, instances, and threads while re
       const wire = formatThreadAddress(address)
       const first: Event = { type: "MessageReceived", id: "same-call", text: wire, at: 1 }
       expect(host.self(thread)).toBe(wire)
+      await host.allocate({ kind: "root", coordinate: address })
       await host.commitRoot(wire, first)
       return { host, address, wire, first }
     })))

@@ -7,16 +7,22 @@ import type { Env } from "./fixture.worker"
 import {
   ISOLATED_CALLBACK_TRANSPORT,
   sandboxSequenceWith,
+  sandboxLargeReplayWith,
   type IsolatedCallbackTransportResult
 } from "./sandbox.cases"
 
 const mapLoaderInput = (map: (input: unknown) => unknown): WorkerLoader => ({
   load: (worker: WorkerLoaderWorkerCode) => {
-    const workerEnv = worker.env as Readonly<Record<string, unknown>>
-    return (env as Env).LOADER.load({
-      ...worker,
-      env: { ...workerEnv, INPUT: map(workerEnv["INPUT"]) }
-    })
+    const loaded = (env as Env).LOADER.load(worker)
+    return {
+      getEntrypoint: () => ({
+        fetch: async (request: Request) => loaded.getEntrypoint().fetch(new Request(request, {
+          method: "POST",
+          body: JSON.stringify(map(await request.json()))
+        }))
+      }),
+      [Symbol.dispose]: () => loaded[Symbol.dispose]?.()
+    }
   }
 }) as WorkerLoader
 
@@ -149,6 +155,12 @@ describe("worker loader sandbox", () => {
     ))
 
     expect(result.error).toBe("nondeterministic body: replayed call 0 changed")
+  })
+
+  test.each([2_000, 200_000])("replays twelve sequential tool results of %i bytes without duplicate calls", async (bytes) => {
+    const { result, calls } = await sandboxLargeReplayWith((env as Env).LOADER, bytes)
+    expect(result).toEqual({ result: 12 * bytes })
+    expect(calls).toEqual(Array.from({ length: 12 }, (_, index) => index))
   })
 
 })

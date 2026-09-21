@@ -56,3 +56,22 @@ export const sandboxSequenceWith = async (
   ))
   return { result, observed }
 }
+
+export const sandboxLargeReplayWith = async (loader: WorkerLoader, bytes: number) => {
+  const sandbox = workerLoaderSandboxServiceFor(loader, { transport: "replay" })
+  const text = "x".repeat(bytes)
+  const calls: number[] = []
+  const result = await Effect.runPromise(sandbox.run(
+    `let bytes = 0;
+    for (let index = 0; index < 12; index++) {
+      const result = await tools.read({ index });
+      bytes += result.length;
+    }
+    return bytes`,
+    { tools: { read: async (_input, ordinal) => {
+      calls.push(ordinal)
+      return sandboxReturned(text)
+    } } }
+  ))
+  return { result, calls }
+}

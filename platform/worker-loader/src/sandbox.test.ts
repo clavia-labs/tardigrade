@@ -108,11 +108,11 @@ describe("worker loader sandbox bridge", () => {
     const loader = {
       load: (worker: WorkerLoaderWorkerCode) => ({
         getEntrypoint: () => ({
-          fetch: async () => {
-            expect(worker.env).not.toHaveProperty("BRIDGE")
-            const input = (worker.env as { readonly INPUT: { readonly replay: ReadonlyArray<{
+          fetch: async (request: Request) => {
+            expect(worker.env).toBeUndefined()
+            const input = await request.json() as { readonly replay: ReadonlyArray<{
               readonly outcome: { readonly _tag: string; readonly result?: unknown }
-            }> } }).INPUT
+            }> }
             if (round++ === 0) {
               expect(input.replay).toEqual([])
               return Response.json({ calls: [
@@ -145,12 +145,12 @@ describe("worker loader sandbox bridge", () => {
   test("carries a parked call into the next replay", async () => {
     let round = 0
     const loader = {
-      load: (worker: WorkerLoaderWorkerCode) => ({
+      load: () => ({
         getEntrypoint: () => ({
-          fetch: async () => {
-            const replay = (worker.env as { readonly INPUT: { readonly replay: ReadonlyArray<{
+          fetch: async (request: Request) => {
+            const { replay } = await request.json() as { readonly replay: ReadonlyArray<{
               readonly outcome: { readonly _tag: string }
-            }> } }).INPUT.replay
+            }> }
             if (round++ === 0) {
               return Response.json({ calls: [
                 { ordinal: 0, packageName: "agents", method: "result", args: { thread: "child" } }

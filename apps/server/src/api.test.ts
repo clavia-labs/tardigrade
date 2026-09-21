@@ -323,18 +323,18 @@ describe("actor methods", () => {
     expect(budget?.cancellable).toBe(false)
     expect(message?.inputSchema.$ref).toBe("#/$defs/AgentMessageInput")
     expect(message?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
-      type: "object",
-      required: ["text"],
-      properties: {
-        model: {
-          type: "object",
-          required: ["provider", "model_id"],
+      anyOf: [
+        { type: "object", required: ["content"], properties: { content: { type: "array" } } },
+        {
+          type: "object", required: ["text"],
           properties: {
-            provider: { type: "string" },
-            model_id: { type: "string" }
+            model: {
+              type: "object", required: ["provider", "model_id"],
+              properties: { provider: { type: "string" }, model_id: { type: "string" } }
+            }
           }
         }
-      }
+      ]
     })
     expect(message?.outputSchema).toMatchObject({ type: "string" })
     expect(budget?.inputSchema.$ref).toBe("#/$defs/BudgetRequestInput")
@@ -965,10 +965,18 @@ describe("the event stream", () => {
       expect(response.status).toBe(200)
       expect(response.headers.get("content-type")).toContain("text/event-stream")
       const reader = response.body!.getReader()
-      const chunk = await reader.read()
-      expect(new TextDecoder().decode(chunk.value)).toContain(JSON.stringify(delta))
-      abort.abort()
-      await reader.cancel().catch(() => undefined)
+      try {
+        let text = ""
+        while (!text.includes(JSON.stringify(delta))) {
+          const chunk = await reader.read()
+          if (chunk.done) throw new Error("inference stream ended before its delta")
+          text += new TextDecoder().decode(chunk.value)
+        }
+        expect(text).not.toContain('"instance":"other"')
+      } finally {
+        abort.abort()
+        await reader.cancel().catch(() => undefined)
+      }
       await until("the inference subscriber to close", async () => inference.subscribers() === 0 ? true : undefined)
     })
   })

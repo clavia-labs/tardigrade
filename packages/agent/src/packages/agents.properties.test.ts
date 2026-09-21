@@ -26,25 +26,12 @@ const callPlan = fc.record({
 
 const plans = fc.uniqueArray(callPlan, { selector: (plan) => plan.callId, minLength: 1, maxLength: 7 })
 
-const registeredAllocator = (): typeof ThreadAllocator.Service => {
-  const assignments = new Map<string, ThreadAddress>()
-  return { allocate: (request) => Effect.sync(() => {
-    if (request.kind === "root") return request.coordinate
-    const { parent, child } = request
-    const key = JSON.stringify([parent.actor, parent.instance, parent.thread, child, request.key])
-    const existing = assignments.get(key)
-    if (existing !== undefined) return existing
-    const target = { ...parent, thread: `registered:${assignments.size}` }
-    assignments.set(key, target)
-    return target
-  }) }
-}
-
 // childProtocol runs the implementation against the transitions in Child.tla. The parent log is
 // durable across attempts, with finite failures before creation or on either side of delivery.
 const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
   const parent = threadAddressOf("property", "main", "ag.root")
   const host = createHost({ actorName: parent.actor, actorFor: () => undefined })
+  await host.allocate({ kind: "root", coordinate: parent })
   // The parent run every spawn reads its identity from: one open turn, one recorded call per plan.
   const parentLog: Event[] = [
     threadCreated(parent, undefined, 0),
@@ -98,7 +85,7 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
   const environment = Layer.mergeAll(
     router,
     Layer.succeed(Self, parent),
-    Layer.succeed(ThreadAllocator, registeredAllocator()),
+    Layer.succeed(ThreadAllocator, { allocate: (request) => Effect.promise(() => host.allocate(request)) }),
     Layer.succeed(EventLog, withWatermark({ append, read: Effect.succeed(parentLog) }))
   )
   const run = agentsPackage().methods.run!
@@ -162,7 +149,6 @@ describe("child creation protocol", () => {
         const host = createHost({ actorName: "property", actorFor: () => undefined })
         const targets = new Set<string>()
         const run = agentsPackage().methods.run!
-        const allocator = registeredAllocator()
         const dispatch = async (parent: ThreadAddress, level: number): Promise<ThreadAddress> => {
           const events: Event[] = [...host.read(parent.thread)]
           for (const event of events.filter((event) => event.type === "MessageReceived")) {
@@ -171,7 +157,7 @@ describe("child creation protocol", () => {
           let target: ThreadAddress | undefined
           const environment = Layer.mergeAll(
             Layer.succeed(Self, parent),
-            Layer.succeed(ThreadAllocator, allocator),
+            Layer.succeed(ThreadAllocator, { allocate: (request) => Effect.promise(() => host.allocate(request)) }),
             Layer.succeed(EventLog, withWatermark({
               read: Effect.succeed(events),
               append: (tail) => Effect.sync(() => {
@@ -215,7 +201,7 @@ describe("child creation protocol", () => {
         }
         for (const thread of [rootId, `${rootId}x`]) {
           let parent = threadAddressOf("property", "main", thread)
-          host.seed(thread, [threadCreated(parent, undefined, 0)])
+          await host.allocate({ kind: "root", coordinate: parent })
           for (let level = 0; level < depth; level++) parent = await dispatch(parent, level)
         }
         expect(targets.size).toBe(4 * depth)

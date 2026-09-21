@@ -276,6 +276,8 @@ const childClaimOf = (
       }
   const target = recorded?.address ?? (yield* allocateChildThread({
     parent: source, child: childKeyOf(name ?? "unnamed"),
+    ...(lineage.maxDepth === undefined ? {} : { maxDepth: lineage.maxDepth }),
+    ...(lineage.placement === undefined ? {} : { placement: lineage.placement }),
     ...(name === undefined ? { key: JSON.stringify([parentRunId, callId]) } : {})
   }))
   // clash rejects a derived address already claimed by another recorded child (agents.test.ts, "a derived address that names another child dies rather than delivering").

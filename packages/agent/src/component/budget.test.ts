@@ -119,17 +119,6 @@ describe("budget admission reacts to BudgetExhausted", () => {
     expect(keys).not.toContain("cd:c3")
   })
 
-  test("a later initial grant cannot admit an earlier call", () => {
-    const log: Event[] = [
-      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
-      { type: "ToolCalled", callId: "c1", name: "execute", arguments: { code: "x" }, turn: "m1", at: 1 },
-      { type: "BudgetGranted", initial: true, amount: 1, turn: "m1", at: 2 }
-    ]
-    const transitions = rootReactor(log)
-    expect(transitions.some((transition) => JSON.parse(transition.key)[2] === "budget.wall")).toBe(true)
-    expect(transitions.some((transition) => JSON.parse(transition.key)[2] === "execute")).toBe(false)
-  })
-
   test("settling an over-budget execute records the wall and never dispatches the call", async () => {
     const initial = turn(3, 2)
     const events: Event[] = [...initial]
@@ -158,6 +147,17 @@ describe("budget admission reacts to BudgetExhausted", () => {
     expect(events.some(
       (event) => event.type === "CodeDispatched" && String((event as { execId?: unknown }).execId) === "c3"
     )).toBe(false)
+  })
+
+  test("a later initial grant cannot admit an earlier call", () => {
+    const log: Event[] = [
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      { type: "ToolCalled", callId: "c1", name: "execute", arguments: { code: "x" }, turn: "m1", at: 1 },
+      { type: "BudgetGranted", initial: true, amount: 1, turn: "m1", at: 2 }
+    ]
+    const transitions = rootReactor(log)
+    expect(transitions.some((transition) => JSON.parse(transition.key)[2] === "budget.wall")).toBe(true)
+    expect(transitions.some((transition) => JSON.parse(transition.key)[2] === "execute")).toBe(false)
   })
 
   test("the wall records the applied limit and observed demand", async () => {

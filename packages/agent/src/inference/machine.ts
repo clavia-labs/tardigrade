@@ -4,7 +4,7 @@ import { upcastError } from "../log/upcast"
 import { hasUnansweredToolCall, responsesOf } from "../log/response"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
-import { RetrySchedule, retryDelayOf } from "./retry"
+import { RetrySchedule, retryDelayOf, canFallback } from "./retry"
 import { LanguageModel } from "effect/unstable/ai"
 import { react } from "./model/index"
 import { unknownModelError } from "./error"
@@ -78,13 +78,13 @@ const resolvedModelFor = (
     if (reference === undefined) {
       throw new ModelSelectionError("no model was selected; supply { provider, model_id } or configure a default")
     }
-    return { model: reference }
+    return { model: reference, models }
   }
   const allowed = applyModelPolicy(resolved.models ?? DEFAULT_MODEL_POLICY, models)
   if (!modelAllowedBy(allowed, resolved.model)) {
     throw new ModelSelectionError(`model ${resolved.model.provider}/${resolved.model.model_id} is excluded by the effective model policy`)
   }
-  return resolved
+  return { ...resolved, models: allowed }
 }
 
 const epochStamp = (epoch: number): { readonly epoch?: number } =>
@@ -262,10 +262,20 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
     policyError = error instanceof Error ? error.message : String(error)
   }
   const died = diedAttempts(slice, epoch)
-  const latestResponse = slice.findLast((event) => event.type === "ModelReturned" && Number(event.epoch ?? 0) === epoch)
-  const pendingRetry = latestResponse !== undefined && Schema.is(RetrySchedule)(latestResponse.retry) ? latestResponse.retry : undefined
-  const lastMark = slice.findLast((event) => event.type === "ModelCalled" && Number(event.epoch ?? 0) === epoch)
-  const model = ((died > 0 || pendingRetry !== undefined) ? modelRefOf(lastMark?.model) : undefined) ?? selectedModelOf(head, models.default)
+  const epochAttempts = slice.flatMap((event) => Number(event.epoch ?? 0) === epoch ? [{
+    event,
+    model: event.type === "ModelCalled" ? modelRefOf(event.model) : undefined,
+    retry: event.type === "ModelReturned" && Schema.is(RetrySchedule)(event.retry) ? event.retry : undefined
+  }] : [])
+  const pendingRetry = epochAttempts.findLast(({ event }) => event.type === "ModelReturned")?.retry
+  const lastMark = epochAttempts.findLast(({ event }) => event.type === "ModelCalled")
+  const switchModel = epochAttempts.findLast(({ retry }) => retry?.model !== undefined)?.retry?.model
+  const model = (died > 0 ? lastMark?.model : pendingRetry?.model) ??
+    (pendingRetry !== undefined ? lastMark?.model : undefined) ?? switchModel ?? selectedModelOf(head, models.default)
+  const attempted = epochAttempts.flatMap(({ model, retry }) => {
+    const reference = model ?? retry?.model
+    return reference === undefined ? [] : [reference]
+  })
   const marks = slice.filter((e) => e.type === "ModelCalled").length
   const modelFailures = derived.modelFailures
   // A rejected response is a spent logical attempt: the next ask must not reuse the idempotency
@@ -344,9 +354,6 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
       })
     }
   }
-  for (const admission of rendered.admission ?? []) {
-    if (admission.blocked !== undefined) return terminate(admission.blocked)
-  }
   // attempt advances after a recorded response and survives an unanswered crash (inference/retry.test.ts).
   return [
     context.effect("infer", {
@@ -356,7 +363,7 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
         epoch,
         attempt,
         ordinal: marks,
-        retryIndex: pendingRetry?.index ?? (died > 0 ? Number(lastMark?.retryIndex ?? 0) : 0),
+        retryIndex: pendingRetry?.index ?? (died > 0 ? Number(lastMark?.event.retryIndex ?? 0) : 0),
         dueAt: pendingRetry?.dueAt,
         trajectory: derived.trajectory,
         model,
@@ -373,7 +380,6 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
                 fingerprint: fingerprintOf(contract),
                 ...(fallback === undefined ? {} : { fallback })
               },
-        admission: rendered.admission?.flatMap(({ policy }) => policy === undefined ? [] : [policy]),
         contract
       },
       act: (input, { signal }) =>
@@ -445,7 +451,6 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
             retryIndex: input.retryIndex,
             ...(pricing === undefined ? {} : { pricing }),
             ...(input.stamp === undefined ? {} : { output: input.stamp }),
-            ...(input.admission === undefined ? {} : { admission: input.admission }),
             turn: input.turn,
             ...epochStamp(input.epoch),
             at
@@ -513,7 +518,11 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
           const delay = checked.kind === "fail" && checked.retryable === true && requestPolicy !== undefined
             ? retryDelayOf(requestPolicy, input.retryIndex, checked.retryAfterMs, yield* Random.next)
             : undefined
-          const retry = delay === undefined ? undefined : { dueAt: after + delay, index: input.retryIndex + 1 }
+          const nextModel = delay === undefined && canFallback(checked)
+            ? resolution.models?.fallback?.find((candidate) => ![...attempted, selected, ...(input.model === undefined ? [] : [input.model])].some((previous) => previous.provider === candidate.provider && previous.model_id === candidate.model_id))
+            : undefined
+          const retry = delay !== undefined ? { dueAt: after + delay, index: input.retryIndex + 1 }
+            : nextModel === undefined ? undefined : { dueAt: after, index: 0, model: nextModel }
           const consequences = retry === undefined ? consequencesOf(checked, {
             turn: input.turn,
             epoch: input.epoch,
@@ -543,7 +552,6 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
               ...(action.response === undefined ? {} : { response: action.response }),
               ...(action.finish === undefined ? {} : { finish: action.finish }),
               ...(action.reportedCostUsd === undefined ? {} : { reportedCostUsd: action.reportedCostUsd }),
-              ...(action.cost === undefined ? {} : { cost: action.cost }),
               ...(action.kind === "fail" ? { error: action.error, ...(action.text === undefined ? {} : { text: action.text }) } : {}), at: after
             }),
             ...(action.kind === "calls" && action.text !== undefined && action.text !== ""

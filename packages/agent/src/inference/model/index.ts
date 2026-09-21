@@ -1,3 +1,4 @@
+import { resolveMessageObjects } from "./objects"
 import { historyOf, importSchema } from "./prompt"
 import { actionOf, responseEvidence, errorOf } from "./response"
 import { withModelRequest } from "@clavia/tardigrade-model/stream/invocation"
@@ -23,7 +24,6 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
   if (signal?.aborted) return yield* Effect.interrupt
   return yield* withModelRequest({ identity: request.identity, model: request.model, observedModel: { provider: providerId, model_id: endpoint.model }, key, onDelta }, onPart => Effect.suspend(() => {
     let reportedCostUsd: number | undefined
-    let cost: ReturnType<NonNullable<typeof options.cost>>
     let observed: Response.AnyPart[] = []
     let modeEvidence: Pick<Action, "mode"> = {}
     return Effect.gen(function* () {
@@ -47,16 +47,14 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
         parameters: importSchema(spec.inputSchema, options.schemaImport),
         failureMode: "return"
       })))
-      const history = yield* Effect.try(() => historyOf(req.messages, { provider: providerId, protocol, model: endpoint.model }))
+      const objects = yield* resolveMessageObjects(req.messages)
+      const history = yield* Effect.try(() => historyOf(req.messages, { provider: providerId, protocol, model: endpoint.model }, objects))
       const response = yield* Effect.gen(function* () {
         const maxOutputTokens = policy.maxOutputTokens
         observed = []
         const result = yield* collectResponse(Prompt.setSystem(Prompt.fromMessages(history), system), Toolkit.make(...tools), (part) => {
           observed.push(part)
-          if (part.type === "finish") {
-            reportedCostUsd = options.reportedCostUsd?.(part)
-            cost = options.cost?.(part)
-          }
+          if (part.type === "finish") reportedCostUsd = options.reportedCostUsd?.(part)
           return onPart(part)
         }, responseFormat, policy.timeout)
         if (result.parts.some((part) => part.type === "finish" && part.reason === "length")) return yield* new StreamTruncated({ maxOutputTokens })
@@ -95,10 +93,6 @@ export const react = (request: InferRequest, key?: string, signal?: AbortSignal,
           failure: { cause: cause instanceof StreamTruncated ? "output_limit" : "inference_error", attempts: 1 }
         } satisfies Action
       })),
-      Effect.map((action): Action => ({
-        ...action,
-        ...(reportedCostUsd === undefined ? {} : { reportedCostUsd }),
-        ...(cost === undefined ? {} : { cost })
-      })))
+      Effect.map((action): Action => reportedCostUsd === undefined ? action : { ...action, reportedCostUsd }))
   }))
 })

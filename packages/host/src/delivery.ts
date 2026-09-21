@@ -3,7 +3,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import type { AppendResult } from "@clavia/tardigrade-core/log"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { receivedEventOf } from "@clavia/tardigrade-core/interaction"
-import { threadCreated, threadCreatedForDelivery, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
+import { threadCreatedForDelivery, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
 import { formatThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { requireDeliveryKey } from "./event-key"
@@ -14,7 +14,6 @@ export interface Delivery {
   readonly lineage?: ThreadLineage | undefined
   readonly link?: Link<unknown, ThreadAddress> | undefined
   readonly call?: unknown
-  readonly allocated?: boolean
   readonly keyOf?: ((event: Event) => string | undefined) | undefined
 }
 
@@ -22,30 +21,33 @@ export interface DeliveryStore {
   readonly read: Effect.Effect<ReadonlyArray<Event>>
   readonly head: Effect.Effect<number>
   readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<AppendResult>
-  readonly reserveRoot: Effect.Effect<void>
 }
 
-// commitDelivery validates lineage and commits thread creation with its first delivery (allocation.test.ts; platform/bun/src/host.test.ts; platform/cloudflare/test/actor.workers.ts).
-export const commitDelivery = (delivery: Delivery, store: DeliveryStore) => Effect.gen(function* () {
-  const { target, event, lineage, link, call, allocated = false } = delivery
-  const address = formatThreadAddress(target)
+// validateDelivery rejects invalid ingress before allocation creates a log (host.test.ts).
+export const validateDelivery = (delivery: Delivery, current: ReadonlyArray<Event>) => {
+  const { target, event, lineage, link, call } = delivery
   if (lineage !== undefined && (lineage.parent.actor !== target.actor || lineage.parent.instance !== target.instance)) {
-    return yield* Effect.die(new Error("a child thread must inherit its actor instance"))
+    throw new Error("a child thread must inherit its actor instance")
   }
-  if (!allocated) requireDeliveryKey(event, address, delivery.keyOf)
-  const current = yield* store.read
-  const created = threadCreatedForDelivery(current, target, lineage, link?.source)
-  if (allocated && created?.parent !== undefined) return yield* Effect.die(new Error("a child thread cannot be recreated as a root"))
+  requireDeliveryKey(event, formatThreadAddress(target), delivery.keyOf)
   const landed = receivedEventOf({ target, event, ...(link === undefined ? {} : { link }), ...(call === undefined ? {} : { call }) })
-  if (created === undefined && lineage === undefined && !allocated) yield* store.reserveRoot
-  if (landed.type === "MessageReceived" && current.some((candidate) => candidate.type === "MessageReceived" && String(candidate.id) === String(landed.id))) {
-    return { appended: 0, head: yield* store.head, landed, opened: false }
+  const created = threadCreatedForDelivery(current, target, lineage, link?.source)
+  if (created === undefined && (typeof event.at !== "number" || !Number.isFinite(event.at))) {
+    throw new Error(`first thread event "${event.type}" must carry a finite at`)
   }
-  const at = event.at
-  if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
-  const batch = allocated ? (created === undefined ? [landed] : []) : created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed]
-  const result = yield* store.append(batch)
-  return { ...result, landed, opened: created === undefined }
+  return { created, landed }
+}
+
+// commitDelivery appends validated messages to an existing thread without creating it (delivery.test.ts).
+export const commitDelivery = (delivery: Delivery, store: DeliveryStore) => Effect.gen(function* () {
+  const current = yield* store.read
+  const { created, landed } = validateDelivery(delivery, current)
+  if (created === undefined) return yield* Effect.die(new Error("delivery requires a created thread"))
+  if (landed.type === "MessageReceived" && current.some((candidate) => candidate.type === "MessageReceived" && String(candidate.id) === String(landed.id))) {
+    return { appended: 0, head: yield* store.head, landed }
+  }
+  const result = yield* store.append([landed])
+  return { ...result, landed }
 })
 
 // commitTracedDelivery carries the producer span into persisted events (platform/bun/src/host.test.ts).

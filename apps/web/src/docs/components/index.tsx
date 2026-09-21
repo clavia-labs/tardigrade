@@ -1,3 +1,19 @@
+import { SearchToolStateDiagram } from "./diagrams/SearchToolStateDiagram"
+import { ComponentAnatomyDiagram } from "./diagrams/ComponentAnatomyDiagram"
+import { ComponentOverviewDiagram } from "./diagrams/ComponentOverviewDiagram"
+import { WorldEffectDiagram } from "./diagrams/WorldEffectDiagram"
+import { ComponentCycleDiagram } from "./diagrams/ComponentCycleDiagram"
+import { AgentProjectionDiagram } from "./diagrams/AgentProjectionDiagram"
+import { StateSnapshotDiagram } from "./diagrams/StateSnapshotDiagram"
+import { AgentCompositionDiagram } from "./diagrams/AgentCompositionDiagram"
+import { ComponentCompositionDiagram } from "./diagrams/ComponentCompositionDiagram"
+import { StateComplexityIllustration } from "./diagrams/StateComplexityIllustration"
+import { StateExplosionDiagram } from "./diagrams/StateExplosionDiagram"
+import { AgentStateMachineDiagram } from "./diagrams/AgentStateMachineDiagram"
+import { TrafficLightDiagram } from "./diagrams/TrafficLightDiagram"
+import { ShipPositionDiagram } from "./diagrams/ShipPositionDiagram"
+import { ProjectionFlowDiagram } from "./diagrams/ProjectionFlowDiagram"
+import { AgentTrajectoryDiagram } from "./diagrams/AgentTrajectoryDiagram"
 import { Children, cloneElement, isValidElement, useLayoutEffect, useRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
 import { renderToString } from "katex"
 
@@ -251,6 +267,22 @@ const Link = ({ href, ...props }: ComponentPropsWithoutRef<"a">): ReactElement =
 }
 
 export const mdxComponents = {
+  SearchToolStateDiagram,
+  ComponentAnatomyDiagram,
+  ComponentOverviewDiagram,
+  WorldEffectDiagram,
+  ComponentCycleDiagram,
+  AgentProjectionDiagram,
+  StateSnapshotDiagram,
+  AgentCompositionDiagram,
+  ComponentCompositionDiagram,
+  StateComplexityIllustration,
+  StateExplosionDiagram,
+  AgentStateMachineDiagram,
+  TrafficLightDiagram,
+  ShipPositionDiagram,
+  ProjectionFlowDiagram,
+  AgentTrajectoryDiagram,
   ActorDiagram,
   ActorInstancesDiagram,
   ActorCommunicationDiagram,

@@ -3,6 +3,17 @@ import { renderToStaticMarkup } from "react-dom/server"
 import type { Event, EventRow } from "@clavia/tardigrade-client"
 import { Transcript } from "./Transcript"
 
+test("attachment messages preserve text, filenames, and file-only history", () => {
+  const file = { type: "file", filename: "chart.png", mediaType: "image/png", object: { algorithm: "sha256", digest: "a".repeat(64) } }
+  const rows = [{ seq: 1, event: { type: "MessageReceived", content: [{ type: "text", text: "Inspect" }, file] } },
+    { seq: 2, event: { type: "MessageReceived", content: [{ ...file, filename: "notes.pdf", mediaType: "application/pdf" }] } }] as EventRow[]
+  const html = renderToStaticMarkup(<Transcript empty="Empty" rows={rows} streamingText="" onOpenThread={() => {}} />)
+  expect(html).toContain("Inspect")
+  expect(html).toContain("chart.png")
+  expect(html).toContain("notes.pdf")
+  expect(html).not.toContain("a".repeat(64))
+})
+
 test("a recorded opaque child renders a subagent control", () => {
   const rows: EventRow[] = [{
     seq: 1,

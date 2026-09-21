@@ -4,15 +4,21 @@
   "type": "module",
   "scripts": {
     "build": "bun run ../../../apps/cli/src/main.ts build actor.ts",
-    "deploy:cloudflare": "wrangler deploy",
+    "deploy:cloudflare": "bun run --cwd ../web build && wrangler deploy",
+    "dev:cloudflare": "bun run --cwd ../web build && wrangler dev --port 8787",
     "dev": "bun run server.ts",
     "lint": "bun run ../../../apps/cli/src/main.ts lint actor.ts",
+    "test": "bun test",
+    "test:workers": "bun run --cwd ../web build && vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "effect": "4.0.0-rc.115",
     "tardie": "workspace:*"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "vitest": "^4.1.10",
     "@cloudflare/workers-types": "^5.20260804.1",
     "typescript": "^7.0.2",
     "wrangler": "^4.119.0"

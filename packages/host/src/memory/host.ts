@@ -1,9 +1,15 @@
 import type { HostPorts, ThreadEnv } from "../ports"
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
+import { threadSupervisorDriver, threadSupervisorKeyOf } from "../thread-supervisor"
+import { hostThreadAllocator } from "../allocation"
+import { ThreadProvisioner, threadSupervisor, threadAllocationKey, type ThreadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
+import { threadProvisioner } from "../thread-provisioner"
+import { actorThreadsOf } from "@clavia/tardigrade-core/actor/events"
 import { threadExecutions } from "../execution"
-import { commitDelivery } from "../delivery"
+import { commitDelivery, validateDelivery } from "../delivery"
 import { Effect, Layer } from "effect"
-import { ThreadAllocator, reserveRootThread, type ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
-import { instanceThreadAllocator, registeredThreadAllocator, memoryThreadDirectory, initializingThreadAllocator, type ThreadAllocationPolicy } from "../allocation"
+import { ThreadAllocator, allocateThread, type ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
+import { instanceThreadAllocator, registeredThreadAllocator, memoryThreadDirectory, type ThreadAllocationPolicy } from "../allocation"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark, type AppendOptions, type AppendResult } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
@@ -28,8 +34,8 @@ import {
 import { deadlocks, victimOf, type EdgesOf } from "../deadlock"
 import { providerTransportFrom, type Provider } from "../transport/provider"
 import { hostDrive, createThreadDriver, type DriverPolicy } from "../driver"
-import { threadCreated, threadCreatedForDelivery, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
-import { FORK_EXPECTED_HEAD, forkBatchFor, forkOutcomeOf, forkRootAllocation, type ForkThreadRequest } from "../fork"
+import { threadCreatedOf, sameThreadLineage, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
+import { forkBatchFor, forkRootAllocation, type ForkThreadRequest } from "../fork"
 
 // A host runs the emergent graph: many threads, one router, one driver.
 // This is the default binding: in-process and volatile, semantics only.
@@ -46,8 +52,8 @@ type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
 // and delivery still lands. layersFor supplies the rest of R; the host
 // binds HostPorts. A missing LanguageModel is a type error.
 export type HostOptions<R> = {
+  readonly supervisor?: ThreadSupervisor
   readonly allocation?: ThreadAllocationPolicy
-  readonly initializeRoot?: (target: ThreadAddress, at: number) => Promise<void>
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly actorName?: string
   readonly actorInstance?: string
@@ -77,14 +83,14 @@ export type HostOptions<R> = {
 export interface Host {
   readonly allocate: (request: ThreadAllocation) => Promise<ThreadAddress>
   readonly assignThread: (request: ThreadAllocation) => Promise<ThreadAddress>
+  readonly reserveThread: (request: ThreadAllocation) => Promise<ThreadAddress>
   readonly forkThread: (request: ForkThreadRequest) => Promise<ThreadAddress>
-  readonly initializeRoot: (target: ThreadAddress, at: number) => Promise<void>
   // seed appends without waking the thread: test and bootstrap ingress.
   readonly seed: (thread: string, events: ReadonlyArray<Event>) => void
   readonly read: (thread: string) => ReadonlyArray<Event>
-  // commit persists one addressed envelope, including child creation lineage when present.
+  // commit persists one addressed envelope to an allocated, ready thread (thread-supervisor.test.ts).
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
-  // commitRoot injects an unlinked root event and marks its thread owed a visit.
+  // commitRoot persists an unlinked event to an allocated, ready thread (thread-supervisor.test.ts).
   readonly commitRoot: (address: string, event: Event) => Promise<void>
   // wake marks a thread owed a visit and drives: what a binding's backup
   // alarm does, and what tests do after seeding a thread by hand.
@@ -122,11 +128,19 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     hostEventKeyOf(event, options.keyOf)
 
   const read = (thread: string): ReadonlyArray<Event> => threads.get(thread) ?? []
-  const localAllocator = instanceThreadAllocator({ actor: actorName, instance: actorInstance }, registeredThreadAllocator(memoryThreadDirectory((target, existingRoot) => {
+  const supervisorEvents: Event[] = []
+  const readyThreads = new Set<string>()
+  const definition = options.supervisor ?? threadSupervisor()
+  const actorDirectories = new Map([[JSON.stringify([actorName, actorInstance]), supervisorEvents]])
+  const assignments = memoryThreadDirectory((target, existingRoot, request) => {
     const events = read(target.thread)
+    const created = threadCreatedOf(events)
+    if (created !== undefined && request.kind === "child" && sameThreadLineage(created, { parent: request.parent, depth: created.depth,
+      ...(request.maxDepth === undefined ? {} : { maxDepth: request.maxDepth }), ...(request.placement === undefined ? {} : { placement: request.placement }) })) return false
     return events.length > 0 && (!existingRoot || events[0]?.parent !== undefined)
-  }), options.allocation))
-  const allocator = options.threadAllocator ?? localAllocator
+  }, definition.methods.requestThread, actorDirectories)
+  const localAllocator = instanceThreadAllocator({ actor: actorName, instance: actorInstance }, registeredThreadAllocator(assignments, options.allocation))
+  const prepare = (target: ThreadAddress, request: ThreadAllocation): Promise<ThreadAddress> => Effect.runPromise(allocator.ensure(target, request))
   // append implements guarantee 5 of the log port (packages/core/src/log/service.ts): a keyed
   // redelivery is absorbed. With keys deciding commitment (Actor.keyOf), the library tier
   // must keep the platform store's promise, or a re-parked attempt's BlockedOn lands twice
@@ -155,19 +169,6 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return { appended: landing.length, head: current.length + landing.length }
   }
   const seed = (thread: string, events: ReadonlyArray<Event>): void => { append(thread, events) }
-  const initializeRoot = async (target: ThreadAddress, at: number): Promise<void> => {
-    if (target.actor !== actorName || target.instance !== actorInstance) {
-      throw new Error("root initialization requires the owning host")
-    }
-    const created = threadCreatedForDelivery(read(target.thread), target, undefined)
-    if (created?.parent !== undefined) throw new Error("a child thread cannot be recreated as a root")
-    if (created === undefined) {
-      append(target.thread, [threadCreated(target, undefined, at)])
-      driver.mark(target.thread)
-    }
-  }
-  const initializedAllocator = initializingThreadAllocator(allocator, options.initializeRoot ?? initializeRoot)
-
   const commitAt = async (
     target: ThreadAddress,
     event: Event,
@@ -176,6 +177,9 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     call?: unknown
   ): Promise<void> => {
     const thread = threadOf(formatThreadAddress(target))
+    validateDelivery({ target, event, lineage, link, call, keyOf: options.keyOf }, read(thread))
+    if (target.actor !== actorName || target.instance !== actorInstance) throw new Error("delivery target does not match actor instance")
+    if (!readyThreads.has(thread)) throw new Error("thread is not ready; allocate it before delivery")
     const result = await Effect.runPromise(commitDelivery({ target, event, lineage, link, call, keyOf: options.keyOf }, {
       read: Effect.sync(() => read(thread)),
       head: Effect.sync(() => read(thread).length),
@@ -183,8 +187,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
         const before = read(thread).length
         append(thread, batch)
         return { appended: read(thread).length - before, head: read(thread).length }
-      }),
-      reserveRoot: reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, allocator), Effect.asVoid)
+      })
     }))
     if (result.appended > 0) driver.mark(thread)
   }
@@ -222,6 +225,39 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
 
   const self = (thread: string): string => formatThreadAddress({ actor: actorName, instance: actorInstance, thread })
 
+  const supervisor = threadSupervisorDriver(definition, withWatermark({
+    read: Effect.succeed(supervisorEvents),
+    append: (events) => Effect.sync(() => {
+      const keys = new Set(supervisorEvents.map((event) => threadSupervisorKeyOf(definition, event)))
+      for (const event of events) {
+        const key = threadSupervisorKeyOf(definition, event)
+        if (key !== undefined && keys.has(key)) continue
+        supervisorEvents.push(event)
+        if (event.type === "ThreadRegistered") readyThreads.add(String(event.thread))
+        if (key !== undefined) keys.add(key)
+      }
+    })
+  }), Layer.succeed(ThreadProvisioner, threadProvisioner({
+    read: (target) => Effect.sync(() => read(target.thread)),
+    append: (target, events, options) => Effect.sync(() => append(target.thread, events, options)),
+    register: (created) => Effect.sync(() => driver.mark(created.address.thread))
+  })), (operation) => Effect.runPromise(operation.pipe(
+    Effect.provide(router), Effect.provideService(Self, { actor: actorName, instance: actorInstance, thread: "" })
+  )))
+  const allocator = hostThreadAllocator({
+    supervisor,
+    read: async (target) => read(target.thread),
+    owns: (target) => target.actor === actorName && target.instance === actorInstance,
+    record: async (target) => actorThreadsOf(supervisorEvents).find((entry) => entry.thread === target.thread),
+    reserve: async (request) => {
+      const target = await Effect.runPromise(allocateThread(request).pipe(Effect.provideService(ThreadAllocator, options.threadAllocator ?? localAllocator)))
+      if (target.actor !== actorName || target.instance !== actorInstance) return target
+      const assigned = await Effect.runPromise(assignments.claim(threadAllocationKey(request), target, request.kind === "root", request))
+      if (assigned !== target.thread) throw new Error("thread reservation conflicts with an existing assignment")
+      return target
+    }
+  })
+
   const portsOf = (thread: string) =>
     Layer.mergeAll(
       Layer.succeed(
@@ -232,7 +268,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
         })
       ),
       router,
-      Layer.succeed(ThreadAllocator, initializedAllocator),
+      Layer.succeed(ThreadAllocator, allocator),
       Layer.succeed(EffectInterruptions, interruptionsOf(thread)),
       Layer.succeed(Self, parseThreadAddress(self(thread)))
     )
@@ -250,6 +286,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     serve: async (thread) => {
       const actor = options.actorFor(thread)
       if (actor === undefined) return
+      await supervisor.ensureReady(parseThreadAddress(self(thread)))
       await Effect.runPromise(
         executionOf(thread, actor).settle.pipe(Effect.provide(layersOf(thread)))
       )
@@ -290,7 +327,18 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return driver.resting()
   }
 
-  const wake = (thread: string): Promise<void> => {
+  const prepareRestored = async (thread: string, ancestors: ReadonlySet<string> = new Set()): Promise<void> => {
+    if (ancestors.has(thread)) throw new Error(`thread lineage contains a cycle at ${JSON.stringify(thread)}`)
+    const created = threadCreatedOf(read(thread))
+    if (created?.parent !== undefined) await prepareRestored(created.parent.thread, new Set([...ancestors, thread]))
+    if (created !== undefined) await prepare(created.address, created.parent === undefined
+      ? { kind: "root", coordinate: created.address }
+      : { kind: "child", parent: created.parent, child: childKeyOf(thread),
+        ...(created.maxDepth === undefined ? {} : { maxDepth: created.maxDepth }), ...(created.placement === undefined ? {} : { placement: created.placement }) })
+  }
+
+  const wake = async (thread: string): Promise<void> => {
+    await prepareRestored(thread)
     driver.mark(thread)
     return drive()
   }
@@ -298,22 +346,14 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   // forkThread publishes the destination identity and detached prefix at an empty log head (host.test.ts, "concurrent forks of one name land once").
   const forkThread = async (request: ForkThreadRequest): Promise<ThreadAddress> => {
     const sourceEvents = read(request.source)
-    const dest = await Effect.runPromise(allocator.allocate(
-      forkRootAllocation({ actor: actorName, instance: actorInstance }, request.name)
-    ))
-    const batch = forkBatchFor(sourceEvents, {
-      source: { actor: actorName, instance: actorInstance, thread: request.source },
-      seq: request.seq,
-      dest: dest.thread
-    }, Date.now())
-    const result = append(dest.thread, batch, { expectedHead: FORK_EXPECTED_HEAD })
-    if (result.appended === 0) forkOutcomeOf(read(dest.thread), batch, dest.thread)
-    driver.mark(dest.thread)
-    return dest
+    const source = { actor: actorName, instance: actorInstance, thread: request.source }
+    forkBatchFor(sourceEvents, { source, seq: request.seq, dest: request.name ?? "" }, Date.now())
+    return Effect.runPromise(allocator.allocate(forkRootAllocation(source, request.name, { source, seq: request.seq })))
   }
 
-  return { seed, read, commit, commitRoot, initializeRoot, drive, wake, resting, router, self,
-    allocate: (request) => Effect.runPromise(initializedAllocator.allocate(request)),
-    assignThread: (request) => Effect.runPromise(localAllocator.allocate(request)),
+  return { seed, read, commit, commitRoot, drive, wake, resting, router, self,
+    allocate: (request) => Effect.runPromise(allocator.allocate(request)),
+    assignThread: (request) => Effect.runPromise(allocator.allocate(request)),
+    reserveThread: (request) => Effect.runPromise(localAllocator.allocate(request)),
     forkThread }
 }

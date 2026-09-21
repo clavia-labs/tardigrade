@@ -1,16 +1,15 @@
 ------------------------ MODULE DurableExecution ------------------------
 (* Cloudflare's execution law for one accepted unit of actor work.
 
-   The handler stages the log append and its watchdog, crosses one event-loop
-   turn so both become durable, then starts the immediate drive. A reset can
-   erase staged writes, or cut a drive after the commit. The latter case keeps
+   The handler stages the log append and an immediate alarm, then synchronizes
+   storage before acknowledging admission. A reset can erase staged writes,
+   or cut an alarm drive after the commit. The latter case keeps
    the durable watchdog, whose alarm starts a fresh drive. The alarm handler
    replaces its consumed alarm with another committed watchdog before it runs
    recovery, so a reset during recovery has the same shape.
 
-   The model separates the event-loop commit from Promise microtasks. StageWork
-   and StageWatchdog are buffered writes. CommitTurn is the macrotask boundary
-   provided by scheduler.wait(0). StartImmediate cannot precede it.
+   StageWork and StageWatchdog are buffered writes. CommitTurn represents
+   storage.sync(). Normal execution starts only through Fire.
 
    DurableExecutionNoTurn.cfg lets the body start over buffered writes and
    violates CoveredBeforeDrive. DurableExecutionNoWatchdog.cfg commits and
@@ -58,7 +57,7 @@ StageWatchdog ==
   /\ stagedWatchdog' = TRUE
   /\ UNCHANGED <<stagedLog, log, watchdog, drive, done, deaths>>
 
-(* One macrotask turn commits the append and alarm together. *)
+(* Storage synchronization commits the append and alarm before acknowledgement. *)
 CommitTurn ==
   /\ stagedLog
   /\ stagedWatchdog
@@ -75,14 +74,6 @@ ResetBuffered ==
   /\ stagedLog' = FALSE
   /\ stagedWatchdog' = FALSE
   /\ UNCHANGED <<log, watchdog, drive, done, deaths>>
-
-StartImmediate ==
-  /\ log
-  /\ watchdog
-  /\ ~done
-  /\ drive = "idle"
-  /\ drive' = "immediate"
-  /\ UNCHANGED <<stagedLog, stagedWatchdog, log, watchdog, done, deaths>>
 
 (* Firing consumes the old alarm and commits its replacement before recovery. *)
 Fire ==
@@ -118,7 +109,7 @@ Die ==
   /\ UNCHANGED <<stagedLog, stagedWatchdog, log, watchdog, done>>
 
 Next == StageWork \/ StageWatchdog \/ CommitTurn \/ ResetBuffered \/
-        StartImmediate \/ Fire \/ Complete \/ ClearWatchdog \/ Die
+        Fire \/ Complete \/ ClearWatchdog \/ Die
 
 Spec == Init /\ [][Next]_vars
 
@@ -126,13 +117,14 @@ LiveSpec ==
   /\ Spec
   /\ WF_vars(StageWatchdog)
   /\ WF_vars(CommitTurn)
-  /\ WF_vars(StartImmediate)
   /\ WF_vars(Fire)
   /\ WF_vars(Complete)
   /\ WF_vars(ClearWatchdog)
 
 (* The body never runs over writes a hard kill could still erase. *)
 CoveredBeforeDrive == drive # "idle" => log /\ watchdog
+
+OnlyAlarmExecution == drive \in {"idle", "alarm"}
 
 (* Every durable, unfinished obligation has a live drive or durable wake. *)
 OwedHasWake == log /\ ~done => drive # "idle" \/ watchdog

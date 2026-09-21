@@ -7,6 +7,7 @@ import {
   defineWorkerHost,
   workerHttp,
   type CloudflareWorkerLayerContext,
+  type WorkerHost,
   type Env
 } from "../src/worker"
 import {
@@ -148,7 +149,7 @@ const echo = actorMethod({
   }
 })
 
-const host = defineWorkerHost(actor({
+const host: WorkerHost<FixtureEnv> = defineWorkerHost(actor({
   name: "echo",
   methods: { echo },
   components: [{ ...component({

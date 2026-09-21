@@ -1,4 +1,8 @@
-import { LanguageModel, Response } from "effect/unstable/ai"
+import { LanguageModel, Response, type Prompt } from "effect/unstable/ai"
+import { KeyValueStore } from "effect/unstable/persistence"
+import { ObjectStorage } from "../object/storage"
+import { objectStorageFromKeyValueStore } from "../object/key-value"
+import type { MessageContent } from "../log/message"
 import { CurrentModel } from "@clavia/tardigrade-model/settings"
 import type { ModelRef } from "@clavia/tardigrade-model/reference"
 import { unknownModelError } from "@clavia/tardigrade-model/error"
@@ -15,12 +19,12 @@ import { composeKeys } from "@clavia/tardigrade-core/log"
 import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
 import { agentKeys, type Action } from "../log/events"
 
-const summaryLayer = (respond: (prompt: string, model: ModelRef | undefined) => Effect.Effect<Action>) => Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+const summaryLayer = (respond: (prompt: string, model: ModelRef | undefined, native: Prompt.Prompt) => Effect.Effect<Action>) => Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
   generateText: () => Effect.die("Use streaming in this fixture"),
   streamText: request => Stream.unwrap(Effect.gen(function* () {
     const model = yield* CurrentModel
     const prompt = request.prompt.content.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.flatMap(part => part.type === "text" ? [part.text] : [])).join("\n")
-    const action = yield* respond(prompt, model)
+    const action = yield* respond(prompt, model, request.prompt)
     if (action.kind === "fail") return Stream.fail(unknownModelError(action.error))
     const text = action.kind === "complete" ? action.output : action.text ?? ""
     const parts: Response.StreamPartEncoded[] = [Response.makePart("text-start", { id: "summary" }), Response.makePart("text-delta", { id: "summary", delta: text }), Response.makePart("text-end", { id: "summary" })]
@@ -86,6 +90,16 @@ describe("the compaction measure and guard", () => {
     expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(Math.ceil(renderMessages([big], { resultRenderCap: 40 })[0]!.content!.length / 4))
   })
 
+  test("uses the consumer's file estimate alongside text without reading objects", () => {
+    const file = {
+      type: "file", mediaType: "application/pdf",
+      object: { algorithm: "sha256", digest: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+    }
+    const events = [{ type: "MessageReceived", id: "files", content: [{ type: "text", text: "Read" }, file, file], at: 0 }]
+    expect(estimateTokens(events, { fileTokens: 123 })).toBe(247)
+    expect(estimateTokens(events, contextPolicyOf({ fileTokens: 200 }, 20_000))).toBe(401)
+  })
+
   test("the guard fires inside an open turn once a resolved round passes FIRE", () => {
     expect(estimateTokens(suffixOf(openTurn(16)))).toBeGreaterThan(TEST_CONTEXT.fireTokens)
     expect(reactor(openTurn(16))).toHaveLength(1) // no reply anywhere, the turn is live
@@ -123,9 +137,10 @@ describe("the compaction measure and guard", () => {
 })
 
 describe("the compaction pass", () => {
-  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> & { contextWindowTokens: number } = TEST_POLICY, outcome: Action = { kind: "complete", output: "covenants 1 through 13 extracted" }) => {
+  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> & { contextWindowTokens: number } = TEST_POLICY, outcome: Action = { kind: "complete", output: "covenants 1 through 13 extracted" }, storage?: typeof ObjectStorage.Service) => {
     const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
+    let nativePrompt: Prompt.Prompt | undefined
     const actor = actorFromProjections<import("effect/unstable/ai").LanguageModel.LanguageModel | EventLog | Self>({
       transitions: [completeTransitionProjection(compactionReactor(policy, policy.contextWindowTokens))],
       keyOf: agentActorKeys
@@ -138,17 +153,74 @@ describe("the compaction pass", () => {
           read: Ref.get(ref)
         })
       ),
-      summaryLayer((prompt) => {
+      summaryLayer((prompt, _model, native) => {
+          nativePrompt = native
           briefed = prompt
           return Effect.succeed(outcome)
       }),
-      Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
+      Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" }),
+      storage === undefined ? Layer.empty : Layer.succeed(ObjectStorage, storage)
     )
     const exit = await Effect.runPromiseExit(
       settleActor(actor).pipe(Effect.provide(layers)) as Effect.Effect<void>
     )
-    return { log: await Effect.runPromise(Ref.get(ref)), exit, briefed: () => briefed }
+    return { log: await Effect.runPromise(Ref.get(ref)), exit, briefed: () => briefed, nativePrompt }
   }
+
+  for (const completed of [false, true]) {
+    test(`summarizer reads attachments before the checkpoint (completed turn: ${completed})`, async () => {
+      const storage = await Effect.runPromise(ObjectStorage.pipe(Effect.provide(
+        objectStorageFromKeyValueStore().pipe(Layer.provide(KeyValueStore.layerMemory))
+      )))
+      const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+      const object = await Effect.runPromise(storage.put(bytes))
+      const content: MessageContent = [
+        { type: "text", text: "Before image" },
+        { type: "file", mediaType: "image/png", filename: "chart.png", object },
+        { type: "text", text: "After image" }
+      ]
+      const initial: Event[] = [
+        { type: "MessageReceived", id: "m0", content, at: 0 }, ...openTurn(16).slice(1),
+        ...(completed ? [
+          { type: "TurnCompleted", turn: "m0", output: "finished", at: 99 },
+          { type: "MessageReceived", id: "m1", text: "next task", at: 100 }
+        ] : [])
+      ]
+      const result = await run(initial, TEST_POLICY, undefined, storage)
+      expect(result.exit._tag).toBe("Success")
+      const parts = result.nativePrompt?.content.flatMap<Prompt.Part>(message => typeof message.content === "string" ? [] : message.content) ?? []
+      const imageIndex = parts.findIndex(part => part.type === "file")
+      expect(imageIndex).toBeGreaterThan(0)
+      expect(parts[imageIndex - 1]).toMatchObject({ type: "text", text: "Before image" })
+      expect(parts[imageIndex]).toMatchObject({ type: "file", mediaType: "image/png", fileName: "chart.png", data: bytes })
+      expect(parts[imageIndex + 1]).toMatchObject({ type: "text", text: "After image" })
+      const activeFiles = renderMessages(result.log).flatMap(message =>
+        message.role === "user" && typeof message.content !== "string"
+          ? message.content.filter(part => part.type === "file") : [])
+      expect(activeFiles).toEqual(completed ? [] : [{ type: "file", mediaType: "image/png", filename: "chart.png", object }])
+      expect(result.log.slice(0, initial.length)).toEqual(initial)
+      expect(result.log.find(event => event.type === "CompactionCompleted")).toMatchObject({ fileTokens: TEST_CONTEXT.fileTokens })
+    })
+  }
+
+  test("a missing storage service leaves the cut intact for recovery", async () => {
+    const storage = await Effect.runPromise(ObjectStorage.pipe(Effect.provide(
+      objectStorageFromKeyValueStore().pipe(Layer.provide(KeyValueStore.layerMemory))
+    )))
+    const object = await Effect.runPromise(storage.put(new Uint8Array([1, 2, 3])))
+    const initial: Event[] = [
+      { type: "MessageReceived", id: "m0", content: [{ type: "file", mediaType: "image/png", object }], at: 0 },
+      ...openTurn(16).slice(1)
+    ]
+    const failed = await run(initial)
+    expect(failed.exit._tag).toBe("Failure")
+    expect(failed.nativePrompt).toBeUndefined()
+    expect(checkpointOf(failed.log)).toEqual(checkpointOf(initial))
+    expect(renderMessages(failed.log)).toEqual(renderMessages(initial))
+    const recovered = await run(failed.log, TEST_POLICY, undefined, storage)
+    expect(recovered.exit._tag).toBe("Success")
+    expect(recovered.log.filter(event => event.type === "CompactionCompleted")).toHaveLength(1)
+  })
 
   test.each([
     { kind: "fail", error: "provider unavailable" },

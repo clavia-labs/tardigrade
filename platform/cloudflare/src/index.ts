@@ -1,9 +1,13 @@
+export { threadSupervisor, requestThreadMethod, ThreadRequest, type ThreadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 export {
   ActorDO,
   ThreadDO,
   cloudflareWorker,
   createWorker,
   defineWorkerHost,
+  DEFAULT_CLOUDFLARE_AUTHENTICATION,
+  DEFAULT_CLOUDFLARE_STREAM_POLICY,
+  type CloudflareStreamPolicy,
   workerHttp,
   serveWorker,
   type WorkerHttp,
@@ -42,3 +46,6 @@ export {
   type CloudflareEventKeyIndex,
   type CloudflareThreadStorePolicy
 } from "./storage"
+export { DEFAULT_R2_OBJECT_PREFIX, CLOUDFLARE_SQLITE_MAX_ROW_BYTES, CLOUDFLARE_OBJECT_CACHE_CAPABILITIES, objectStorageFromR2, type R2ObjectCacheOptions } from "./object-storage/r2"
+export { objectStorageFromSqlite } from "./object-storage/sqlite"
+export { CLOUDFLARE_SQLITE_MAX_OBJECT_BYTES } from "./object-storage/limits"

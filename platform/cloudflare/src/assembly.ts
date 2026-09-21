@@ -12,6 +12,7 @@ import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/avail
 import { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-model/config"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
+import type { ThreadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 import { type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
 import type { CommitObserver } from "@clavia/tardigrade-host/commit"
 import { type WorkerLoaderSandboxTransport } from "@clavia/tardigrade-worker-loader/sandbox"
@@ -245,6 +246,7 @@ type CloudflareApplicationRequirements<R> = Exclude<R, CloudflareWorkerProvided>
 // CloudflareWorkerLayerContext exposes the Worker bindings and thread identity used to construct application services.
 export interface CloudflareWorkerLayerContext<WorkerEnv extends Env = Env> {
   readonly env: WorkerEnv
+  readonly storage: DurableObjectStorage
   readonly actorInstance: string
   readonly thread: string
 }
@@ -257,6 +259,9 @@ export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
 ) => CloudflareThreadStorePolicy
 
 interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
+  readonly streaming?: Partial<import("./transport/stream").CloudflareStreamPolicy>
+  readonly authentication?: "bearer" | "none"
+  readonly supervisor?: ThreadSupervisor
   readonly model?: ModelIntegrationOptions
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly allocation?: ThreadAllocationPolicy

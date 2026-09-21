@@ -1,14 +1,13 @@
 import type { Event } from "@clavia/tardigrade-core/event"
+import type { ThreadAllocation } from "./allocation"
 import type { ChildPlacement } from "../interaction/relations"
+import { upcastThreadRequest } from "./log/upcast"
 
 export interface ThreadRequested extends Event {
   readonly type: "ThreadRequested"
+  readonly allocationRequest?: ThreadAllocation
   readonly allocationKey?: string
-  readonly initialization?: "caller"
   readonly thread: string
-  readonly parentThread?: string
-  readonly depth: number
-  readonly placement?: ChildPlacement
   readonly at: number
 }
 
@@ -22,8 +21,8 @@ export interface ThreadRegistered extends Event {
 export type ActorEvent = ThreadRequested | ThreadRegistered
 
 export interface ActorThreadRecord {
+  readonly allocationRequest?: ThreadAllocation
   readonly allocationKey?: string
-  readonly initialization?: "caller"
   readonly thread: string
   readonly parentThread?: string
   readonly depth: number
@@ -48,13 +47,18 @@ export const actorThreadsOf = (events: ReadonlyArray<Event>): ReadonlyArray<Acto
   for (const event of actorEventsOf(events)) {
     const current = entries.get(event.thread)
     if (event.type === "ThreadRequested") {
+      const { parentThread, placement, depth } = upcastThreadRequest(event)
+      const parent = parentThread === undefined ? undefined : entries.get(parentThread)
+      if (parentThread !== undefined && parent === undefined && depth === undefined) {
+        throw new Error(`thread ${JSON.stringify(event.thread)} has no parent record ${JSON.stringify(parentThread)}`)
+      }
       entries.set(event.thread, {
+        ...(event.allocationRequest === undefined ? {} : { allocationRequest: event.allocationRequest }),
         ...(event.allocationKey === undefined ? {} : { allocationKey: event.allocationKey }),
-        ...(event.initialization === undefined ? {} : { initialization: event.initialization }),
         thread: event.thread,
-        ...(event.parentThread === undefined ? {} : { parentThread: event.parentThread }),
-        depth: event.depth,
-        ...(event.placement === undefined ? {} : { placement: event.placement }),
+        ...(parentThread === undefined ? {} : { parentThread }),
+        depth: depth ?? (parent === undefined ? 0 : parent.depth + 1),
+        ...(placement === undefined ? {} : { placement }),
         state: "requested"
       })
       continue

@@ -74,7 +74,7 @@ export const modelSettingsOf = (protocol: ModelProtocol, value: unknown): Record
 export const modelConfigOf = (value: unknown): ModelConfig => {
   const source = recordOf(value)
   if (source === undefined) throw new Error("provider connection configuration must be a JSON object")
-  const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "allow" && name !== "providers")
+  const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "fallback" && name !== "allow" && name !== "providers")
   if (unknownModelFields.length > 0) throw new Error(`models contains unknown fields: ${unknownModelFields.join(", ")}`)
   const providersSource = recordOf(source["providers"]) ?? {}
   const providers: Record<string, ModelProviderConfig<Schema.JsonObject>> = {}
@@ -121,6 +121,7 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
   if (configured && selected === undefined) throw new Error("models with providers must declare default { provider, model_id }")
   const policy = modelPolicyOf({
     ...(selected === undefined ? {} : { default: selected }),
+    ...(source["fallback"] === undefined ? {} : { fallback: source["fallback"] }),
     allow: source["allow"] ?? "*"
   })
   if (selected !== undefined && providers[selected.provider] === undefined) {
@@ -129,9 +130,11 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
   if (selected !== undefined && !modelAllowedBy(policy, selected)) {
     throw new Error(`models.default ${selected.provider}/${selected.model_id} is excluded by models.allow`)
   }
+  for (const model of policy.fallback ?? []) {
+    if (providers[model.provider] === undefined) throw new Error(`models.fallback names unconfigured provider ${JSON.stringify(model.provider)}`)
+  }
   return {
     ...policy,
     providers
   }
 }
-

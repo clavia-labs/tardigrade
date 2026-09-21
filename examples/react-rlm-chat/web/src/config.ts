@@ -8,4 +8,4 @@ export const actorInstance = (value: unknown = import.meta.env.VITE_ACTOR_ID): s
   configured(value) ?? DEFAULT_ACTOR_INSTANCE
 
 export const apiUrl = (value: unknown = import.meta.env.VITE_API_URL): string =>
-  configured(value) ?? DEFAULT_API_URL
+  configured(value) ?? (typeof location === "undefined" ? DEFAULT_API_URL : location.origin)

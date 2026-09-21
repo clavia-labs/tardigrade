@@ -1,3 +1,5 @@
+import { Schema } from "effect"
+import { MessageContent } from "../log/message"
 import { responseKeyOf, upcastError } from "../log/upcast"
 import type { ProviderContinuation } from "../inference/continuation"
 import { responsesOf } from "../log/response"
@@ -17,14 +19,17 @@ export interface AgentToolCall {
   readonly arguments: string
 }
 
-export interface AgentMessage {
+interface AgentMessageMetadata {
   readonly continuation?: ProviderContinuation
-  readonly role: "user" | "assistant" | "tool"
-  readonly content: string | null
   readonly toolCalls?: ReadonlyArray<AgentToolCall>
   readonly toolCallId?: string
   readonly isFailure?: boolean
 }
+
+export type AgentMessage = AgentMessageMetadata & (
+  | { readonly role: "user"; readonly content: string | MessageContent }
+  | { readonly role: "assistant" | "tool"; readonly content: string | null }
+)
 
 const feedbackFor = (
   rejection: Record<string, unknown>,
@@ -39,16 +44,32 @@ const feedbackFor = (
 
 const userMessageOf = (event: Event, policy: ContextPolicy): AgentMessage => {
   const value = event as Record<string, unknown>
+  const report = terminalReportOutcomeOf(value)
+  const reportText = report === undefined ? undefined
+    : `[Terminal report: ${report}. Your answer to this report stays in this thread and is not sent back to its sender.]\n`
+  if (value.content !== undefined) {
+    if (!Schema.is(MessageContent)(value.content)) return { role: "user", content: "[Invalid message content]" }
+    const total = value.content.reduce((sum, part) => sum + (part.type === "text" ? part.text.length : 0), 0)
+    let remaining = policy.messageRenderCap
+    let noticed = false
+    const content = value.content.map((part) => {
+      if (part.type === "file") return part
+      const kept = part.text.slice(0, remaining)
+      remaining -= kept.length
+      const notice = kept.length < part.text.length && !noticed
+        ? `…[truncated at ${policy.messageRenderCap} of ${total} chars]` : ""
+      if (notice !== "") noticed = true
+      return { ...part, text: kept + notice }
+    })
+    return { role: "user", content: reportText === undefined ? content : [{ type: "text", text: reportText }, ...content] }
+  }
   const text = String(value.text ?? "")
   const rendered = text.length > policy.messageRenderCap
     ? `${text.slice(0, policy.messageRenderCap)}…[truncated at ${policy.messageRenderCap} of ${text.length} chars; read the full message with logs.events on this facet, id ${String(value.id)}]`
     : text
-  const report = terminalReportOutcomeOf(value)
   return {
     role: "user",
-    content: report === undefined
-      ? rendered
-      : `[Terminal report: ${report}. Your answer to this report stays in this thread and is not sent back to its sender.]\n${rendered}`
+    content: reportText === undefined ? rendered : reportText + rendered
   }
 }
 
@@ -98,21 +119,34 @@ const messageEntriesFrom = (
     batches.set(key, calls)
   }
   const emitted = new Set<string>()
-  let pendingText: string | null = null
+  const pendingText = new Map<unknown, string>()
+  const closed = new Set<unknown>()
+  let currentTurn: unknown
   const continuations = new Map(projected.filter((event) => event.type === "ModelReturned" && event.continuation !== undefined)
     .map((event) => [responseKeyOf(event, event.callId), event.continuation as ProviderContinuation]))
   const continuationOf = (event: Event, id: unknown) => {
     const continuation = id === undefined ? undefined : continuations.get(responseKeyOf(event, id))
     return continuation === undefined ? {} : { continuation }
   }
-  for (const event of projected.slice(from)) {
+  for (const [index, event] of projected.entries()) {
+    if (event.type === "MessageReceived") currentTurn = event.id
+    if (index < from) continue
+    // turn falls back to the preceding ingress for historical events (request.test.ts).
+    const turn = event.turn ?? currentTurn
     const value = event as Record<string, unknown>
     switch (event.type) {
       case "MessageReceived":
+      case "TurnResumed":
+        pendingText.delete(turn)
+        closed.delete(turn)
+        if (event.type === "TurnResumed") break
         push(event, userMessageOf(event, resolved))
         break
+      case "ModelCalled":
+        pendingText.delete(turn)
+        break
       case "TextReturned":
-        pendingText = String(value.text ?? "")
+        if (!closed.has(turn)) pendingText.set(turn, String(value.text ?? ""))
         break
       case "ToolCalled": {
         const key = responses.keys.get(event)
@@ -120,11 +154,11 @@ const messageEntriesFrom = (
         if (key !== undefined) emitted.add(key)
         push(event, {
           role: "assistant",
-          content: pendingText,
+          content: pendingText.get(turn) ?? null,
           ...continuationOf(event, value.responseId),
           toolCalls: key === undefined ? [callOf(event)] : batches.get(key)!
         })
-        pendingText = null
+        pendingText.delete(turn)
         break
       }
       case "ToolReturned": {
@@ -146,17 +180,23 @@ const messageEntriesFrom = (
         break
       }
       case "TurnCompleted":
+        pendingText.delete(turn)
+        closed.add(turn)
         push(event, { role: "assistant", content: String(value.output ?? ""), ...continuationOf(event, value.attemptKey) })
         break
       case "TurnFailed":
+        pendingText.delete(turn)
+        closed.add(turn)
         push(event, { role: "assistant", content: `the turn failed: ${upcastError(value.error).message}` })
         break
       case "TurnCancelled": {
         const reason = String(value.reason ?? "")
+        closed.add(turn)
         push(event, {
           role: "assistant",
-          content: reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}`
+          content: pendingText.get(turn) ?? (reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}`)
         })
+        pendingText.delete(turn)
         break
       }
       default:

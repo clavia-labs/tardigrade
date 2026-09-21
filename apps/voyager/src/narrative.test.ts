@@ -53,7 +53,6 @@ describe("summaryOf", () => {
     [{ type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at }, "m1 · epoch 0 to 1"],
     [{ type: "ResponseDelivered", method: "message", call: "m1", revision: "completed", at }, "message · m1 · completed"],
     [{ type: "BudgetExhausted", budget: 40, used: 41, at }, "used 41 of 40"],
-    [{ type: "BudgetExhausted", budget: 40, used: null, at }, "used an unknown amount of 40"],
     [{ type: "BudgetRequested", callId: "b1", reason: "one more shard", amount: 10, at }, "asks 10 · one more shard"],
     [{ type: "BudgetGranted", amount: 10, at }, "granted 10"],
     [{ type: "BudgetDenied", reason: "the run is over budget", at }, "the run is over budget"],

@@ -165,9 +165,7 @@ export const summaryOf = (
     case "ResponseDelivered":
       return line([str(event.method), str(event.call), str(event.revision)], chars)
     case "BudgetExhausted":
-      return line([event.used === null
-        ? `used an unknown amount of ${String(num(event.budget))}`
-        : `used ${String(num(event.used))} of ${String(num(event.budget))}`], chars)
+      return line([`used ${String(num(event.used))} of ${String(num(event.budget))}`], chars)
     case "BudgetRequested":
       return line([`asks ${String(num(event.amount))}`, str(event.reason)], chars)
     case "BudgetGranted":

@@ -133,6 +133,72 @@ describe("sumUsage", () => {
 })
 
 describe("usageIn", () => {
+  const rateCard = { promptUsdPerToken: 0.0000025, completionUsdPerToken: 0.00001 }
+  const called = (ordinal: number): Event => ({
+    type: "ModelCalled",
+    callId: `m1/infer/${ordinal}`,
+    ordinal,
+    turn: "m1",
+    pricing: rateCard,
+    at: ordinal * 2 + 1
+  })
+  const returned = (
+    ordinal: number,
+    usage: { readonly inputTokens: Record<string, number>; readonly outputTokens: Record<string, number> },
+    error?: { readonly message: string; readonly code?: string; readonly statusCode?: number }
+  ): Event => ({
+    type: "ModelReturned",
+    callId: `m1/infer/${ordinal}`,
+    ordinal,
+    turn: "m1",
+    outcome: error === undefined ? "returned" : "failed",
+    usage,
+    ...(error === undefined ? {} : { error }),
+    at: ordinal * 2 + 2
+  }) as Event
+
+  test("measured attempts use their recorded rate card", () => {
+    const log = [
+      called(0),
+      returned(0, { inputTokens: { total: 6074 }, outputTokens: { total: 29 } })
+    ]
+    expect(usageIn(log, "m1").costUsd).toBeCloseTo(0.015475, 9)
+    expect(usageIn(log, "m1").costUsd).not.toBeCloseTo(2.95268, 9)
+  })
+
+  test("a classified capacity refusal records zero cost", () => {
+    const log = [
+      called(0),
+      returned(0, { inputTokens: {}, outputTokens: {} }, {
+        message: "We're currently processing too many requests. Please try again later.",
+        code: "rate_limit_exceeded",
+        statusCode: 429
+      })
+    ]
+    expect(usageIn(log, "m1")).toMatchObject({ costUsd: 0, costSource: "provider" })
+  })
+
+  test("capacity errors with measured usage retain their cost", () => {
+    const log = [
+      called(0),
+      returned(0, { inputTokens: { total: 6074 }, outputTokens: { total: 29 } }, {
+        message: "rate limited after output",
+        code: "rate_limit_exceeded",
+        statusCode: 429
+      })
+    ]
+    expect(usageIn(log, "m1").costUsd).toBeCloseTo(0.015475, 9)
+  })
+
+  test("an unpriced failure remains unknown across replay", () => {
+    const log = [
+      called(0),
+      returned(0, { inputTokens: {}, outputTokens: {} }, { message: "connection reset" })
+    ]
+    expect(usageIn(log, "m1").costUsd).toBeUndefined()
+    expect(usageIn(JSON.parse(JSON.stringify(log)) as ReadonlyArray<Event>, "m1")).toEqual(usageIn(log, "m1"))
+  })
+
   test("a turn sums the consequences' usage, and a died attempt invents nothing", () => {
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },

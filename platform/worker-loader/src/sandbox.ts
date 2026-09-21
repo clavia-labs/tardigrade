@@ -186,7 +186,8 @@ const sameCall = (left, right) =>
   canonicalJson(left.args) === canonicalJson(right.args);
 
 export default {
-  async fetch(_request, env) {
+  async fetch(request) {
+    const input = await request.json();
     let ordinal = 0;
     let scheduled = false;
     let pending = [];
@@ -195,7 +196,7 @@ export default {
     const never = () => new Promise(() => undefined);
     const call = (packageName, method, args) => {
       const requested = { ordinal: ordinal++, packageName, method, args };
-      const recorded = env.INPUT.replay[requested.ordinal];
+      const recorded = input.replay[requested.ordinal];
       if (recorded !== undefined) {
         if (!sameCall(recorded.call, requested)) {
           finishBoundary({ error: \`nondeterministic body: replayed call \${requested.ordinal} changed\` });
@@ -213,20 +214,20 @@ export default {
     };
     const lines = [];
     const logs = () => lines.length === 0 ? {} : { logs: lines };
-    const console = consoleShim(lines, env.INPUT.logCapBytes);
-    const ambient = env.INPUT.ambient === undefined ? {} : ambientShims(env.INPUT.ambient);
-    const args = env.INPUT.names.map((name) => {
+    const console = consoleShim(lines, input.logCapBytes);
+    const ambient = input.ambient === undefined ? {} : ambientShims(input.ambient);
+    const args = input.names.map((name) => {
       if (name === "console") return console;
       if (name === "Date" && ambient.Date !== undefined) return ambient.Date;
       if (name === "Math" && ambient.Math !== undefined) return ambient.Math;
-      const methods = env.INPUT.packages[name];
+      const methods = input.packages[name];
       if (methods !== undefined) {
         return Object.fromEntries(methods.map((method) => [
           method,
           (args) => call(name, method, args)
         ]));
       }
-      return env.INPUT.values[name];
+      return input.values[name];
     });
     const completed = (async () => {
       let outcome;
@@ -236,8 +237,8 @@ export default {
         outcome = { error: String(error) };
       }
       if (pending.length > 0) return { calls: pending };
-      if (ordinal !== env.INPUT.replay.length) {
-        return { error: "nondeterministic body: replay consumed " + ordinal + " of " + env.INPUT.replay.length + " calls" };
+      if (ordinal !== input.replay.length) {
+        return { error: "nondeterministic body: replay consumed " + ordinal + " of " + input.replay.length + " calls" };
       }
       return { ...outcome, ...logs() };
     })();
@@ -346,7 +347,6 @@ export function workerLoaderSandboxServiceFor(
           return implementation(args, ordinal)
         }
         const input = sandboxInput(bindings, ambient, resolved)
-        const request = () => new Request("https://sandbox.invalid/run", { method: "POST", signal })
         if (resolved.transport === "replay") {
           const replay: Array<SandboxReplayEntry> = []
           for (;;) {
@@ -358,12 +358,16 @@ export function workerLoaderSandboxServiceFor(
                 "index.js": REPLAY_HARNESS_SOURCE,
                 "body.js": bodySource(names, code)
               },
-              env: { INPUT: { ...input, replay } },
               globalOutbound: resolved.globalOutbound,
               ...(resolved.limits === undefined ? {} : { limits: resolved.limits })
             })
             try {
-              const response = await worker.getEntrypoint().fetch(request())
+              const response = await worker.getEntrypoint().fetch(new Request("https://sandbox.invalid/run", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ...input, replay }),
+                signal
+              }))
               if (!response.ok) {
                 await discardBody(response)
                 return { error: `sandbox returned HTTP ${response.status}` }

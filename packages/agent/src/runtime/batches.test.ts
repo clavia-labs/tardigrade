@@ -1,3 +1,4 @@
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
 import fc from "fast-check"
 import { describe, expect, test } from "bun:test"
@@ -7,7 +8,8 @@ import { actor } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { createHost } from "@clavia/tardigrade-host/host"
-import { agentMethods, budget, codeMode, infer, nativeOutput, spendUsd, tool } from "../index"
+import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
+import { agentMethods, budget, codeMode, infer, nativeOutput, tool } from "../index"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
 import { NativeOutputSupport, type InferRequest } from "../inference/contract"
 import { usageIn } from "../inference/usage"
@@ -18,8 +20,6 @@ import { boundaryOf } from "../output/boundary"
 import { cancellationRequested } from "@clavia/tardigrade-core/interaction/cancellation"
 import type { AgentComponent, InferOptions } from "./composition"
 import type { AgentR } from "./turn"
-import type { Projection } from "@clavia/tardigrade-core/projection"
-import type { RequestPolicy } from "../inference/retry"
 
 const MODEL = { models: { default: { provider: "test", model_id: "batch" }, allow: "*" } } as const
 const ROOT = "ag.root"
@@ -32,8 +32,7 @@ const setup = (
   components: ReadonlyArray<AgentComponent<never> | AgentComponent<AgentR>>,
   mind: (request: InferRequest, key?: string) => Action,
   options: InferOptions = {},
-  seed: ReadonlyArray<Event> = [],
-  requestPolicy?: RequestPolicy
+  seed: ReadonlyArray<Event> = []
 ) => {
   const assembled = actor({ name: "batch-agent", methods: agentMethods, components: [infer([...components, nativeOutput], { ...MODEL, ...options })] })
   const host = createHost<AgentR | NativeOutputSupport>({
@@ -42,18 +41,17 @@ const setup = (
     layersFor: () => Layer.mergeAll(
       KeyValueStore.layerMemory,
       jsSandboxFor({}),
-      testInferenceLayer({
-        react: (request, key) => Effect.sync(() => mind(request, key)),
-        ...(requestPolicy === undefined ? {} : { policy: () => Effect.succeed(requestPolicy) })
-      }),
+      testInferenceLayer( { react: (request, key) => Effect.sync(() => mind(request, key)) }),
       Layer.succeed(NativeOutputSupport, { withTools: true })
     )
   })
-  if (seed.length > 0) host.seed(ROOT, seed)
+  if (seed.length > 0) host.seed(ROOT, threadCreatedOf(seed) === undefined
+    ? [threadCreated({ actor: "batch-agent", instance: "main", thread: ROOT }, undefined, 0), ...seed] : seed)
   return {
     host,
     read: () => host.read(ROOT),
     start: async () => {
+      await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self(ROOT)) })
       await host.commitRoot(host.self(ROOT), { type: "MessageReceived", id: TURN, text: "Read the files", at: 1 })
       await host.drive()
     }
@@ -63,91 +61,6 @@ const setup = (
 const complete = (): Action => ({ kind: "complete", output: "done", usage: { promptTokens: 50, completionTokens: 5, costUsd: 0.005 } })
 
 describe("tool batches", () => {
-  test("model calls record the applied projection constraint", async () => {
-    const run = setup([budget(spendUsd, { limit: 0.5 })], complete)
-    await run.start()
-    expect(run.read().find((event) => event.type === "ModelCalled")).toMatchObject({
-      admission: [{ constraint: "spendUsd", limit: 0.5, observed: 0, onUnknown: "block", admitted: true }]
-    })
-  })
-
-  test("unknown admission is retained on a retried model call and replay", async () => {
-    const requestPolicy: RequestPolicy = {
-      maxOutputTokens: 100,
-      timeout: { firstChunkMs: 90_000, idleMs: 90_000 },
-      retry: { backoffMs: [0], maxRetryAfterMs: 1000, retryAfterJitterMs: 0 }
-    }
-    const history: Event[] = [
-      { type: "MessageReceived", id: TURN, text: "retry", at: 1 },
-      { type: "ModelCalled", callId: `${TURN}/infer/0`, ordinal: 0, turn: TURN, model: { provider: "test", model_id: "batch" }, at: 2 },
-      { type: "ModelReturned", callId: `${TURN}/infer/0`, ordinal: 0, turn: TURN, outcome: "failed", usage: {}, error: { message: "busy" }, retry: { index: 0, dueAt: 3 }, at: 3 }
-    ]
-    const drive = async () => {
-      const run = setup([budget(spendUsd, { limit: 0.5, onUnknown: "admit" })], complete, {}, history, requestPolicy)
-      await run.host.wake(ROOT)
-      await run.host.drive()
-      return run.read().filter((event) => event.type === "ModelCalled")[1]
-    }
-    const first = await drive()
-    const replayed = await drive()
-    expect(first).toMatchObject({ admission: [{ constraint: "spendUsd", observed: null, onUnknown: "admit", reason: "unknown", admitted: true }] })
-    expect(replayed?.admission).toEqual(first?.admission)
-  })
-
-  test("a custom action projection reserves weighted calls across a batch", async () => {
-    const weightedCalls: Projection<number, number> = {
-      initial: () => 0,
-      step: (used, event) => event.type === "ToolCalled"
-        ? used + Number((event.arguments as { weight?: unknown } | undefined)?.weight ?? 1)
-        : used,
-      output: (used) => used
-    }
-    const ran: string[] = []
-    const weightedSpec = { ...spec, inputSchema: { type: "object" } }
-    const run = setup([
-      budget([tool({ spec: weightedSpec, run: (_input, context) => Effect.sync(() => void ran.push(context.callId)) })], weightedCalls, {
-        limit: 3,
-        name: "weightedCalls"
-      })
-    ], (request) => request.trajectory.some((event) => event.type === "ToolCalled")
-      ? complete()
-      : batch(
-          { callId: "first", name: "read", arguments: { weight: 2 } },
-          { callId: "second", name: "read", arguments: { weight: 2 } }
-        ))
-    await run.start()
-    expect(ran).toEqual(["first"])
-    expect(run.read().find((event) => event.type === "BudgetExhausted")).toMatchObject({ budget: 3, used: 4 })
-  })
-
-  test("an unknown action wall records no invented demand and the effective granted limit", async () => {
-    const unknownAfterCall: Projection<boolean, number | undefined> = {
-      initial: () => false,
-      step: (called, event) => called || event.type === "ToolCalled",
-      output: (called) => called ? undefined : 0
-    }
-    const seed: Event[] = [
-      { type: "MessageReceived", id: TURN, text: "work", budget: 5, at: 0 },
-      { type: "BudgetGranted", amount: 2, turn: TURN, at: 1 },
-      { type: "ModelCalled", callId: `${TURN}/infer/0`, ordinal: 0, turn: TURN, at: 2 },
-      { type: "ModelReturned", callId: `${TURN}/infer/0`, ordinal: 0, turn: TURN, outcome: "returned", usage: {}, at: 3 },
-      { type: "ToolCalled", callId: "unknown", name: "read", arguments: {}, turn: TURN, at: 4 }
-    ]
-    const run = setup([
-      budget([tool({ spec, run: () => Effect.die("unknown demand must block") })], unknownAfterCall, {
-        limit: 3,
-        name: "unknownDemand"
-      })
-    ], complete, {}, seed)
-    await run.host.wake(ROOT)
-    await run.host.drive()
-    expect(run.read().find((event) => event.type === "BudgetExhausted")).toMatchObject({
-      budget: 7,
-      used: null,
-      policy: { constraint: "unknownDemand", limit: 7, observed: null, onUnknown: "block", reason: "unknown", admitted: false }
-    })
-  })
-
   test("generated starting allowances are recorded once before inference and survive restart", async () => {
     await fc.assert(fc.asyncProperty(fc.integer({ min: 1, max: 20 }), fc.integer({ min: 1, max: 20 }), async (limit, replacement) => {
       const components = (amount: number) => [budget([tool({ spec, run: () => Effect.void })], { limit: amount })]
@@ -178,6 +91,7 @@ describe("tool batches", () => {
         const admitted: string[] = []
         const requested: string[] = []
         const history: Event[] = [
+          threadCreated({ actor: "batch-agent", instance: "main", thread: ROOT }, undefined, 0),
           { type: "MessageReceived", id: TURN, text: "work", at: 0 },
           { type: "BudgetGranted", initial: true, amount: initial, turn: TURN, at: 1 },
           { type: "ModelCalled", callId: "m1/infer/0", ordinal: 0, turn: TURN, at: 2 },

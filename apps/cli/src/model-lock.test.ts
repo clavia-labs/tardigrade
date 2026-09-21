@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ModelConfig } from "@clavia/tardigrade-server/config"
 
@@ -50,7 +51,7 @@ afterEach(async () => {
 
 describe("model lock", () => {
   test("resolves only the deployment model scope", async () => {
-    root = await mkdtemp(join(process.cwd(), ".tdg-model-lock-test-"))
+    root = await mkdtemp(join(tmpdir(), "tdg-model-lock-test-"))
     const lock = await resolveModelLock(config, {
       sourceUrl: "https://models.dev/api.json",
       cachePath: join(root, "cache.json"),
@@ -70,7 +71,7 @@ describe("model lock", () => {
   })
 
   test("persists the lock and detects changed configuration", async () => {
-    root = await mkdtemp(join(process.cwd(), ".tdg-model-lock-test-"))
+    root = await mkdtemp(join(tmpdir(), "tdg-model-lock-test-"))
     const lock = {
       schema: 1 as const,
       configDigest: modelConfigDigest(config),
@@ -92,7 +93,7 @@ describe("model lock", () => {
 
 
 test("locks and reloads custom metadata without a registry", async () => {
-  root = await mkdtemp(join(process.cwd(), ".tdg-model-lock-test-"))
+  root = await mkdtemp(join(tmpdir(), "tdg-model-lock-test-"))
   const custom: ModelConfig = {
     allow: "*", default: { provider: "localhost", model_id: "local" },
     providers: { localhost: {

@@ -1,3 +1,5 @@
+import Components, { frontmatter as componentsFrontmatter } from "@docs/getting-started/components.mdx"
+import componentsMarkdown from "@docs/getting-started/components.mdx?doc-source"
 import type { ComponentType } from "react"
 
 import Cli, { frontmatter as cliFrontmatter } from "@docs/references/cli.mdx"
@@ -18,8 +20,6 @@ import Quickstart, { frontmatter as quickstartFrontmatter } from "@docs/getting-
 import quickstartMarkdown from "@docs/getting-started/quickstart.mdx?doc-source"
 import Sdk, { frontmatter as sdkFrontmatter } from "@docs/references/sdk.mdx"
 import sdkMarkdown from "@docs/references/sdk.mdx?doc-source"
-import Budgets, { frontmatter as budgetsFrontmatter } from "@docs/references/budgets.mdx"
-import budgetsMarkdown from "@docs/references/budgets.mdx?doc-source"
 import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/start-here/Welcome.mdx"
 import welcomeMarkdown from "@docs/start-here/Welcome.mdx?doc-source"
 import Why, { frontmatter as whyFrontmatter } from "@docs/start-here/Why.mdx"
@@ -54,6 +54,7 @@ type DocModule = {
 }
 
 const modules: ReadonlyArray<DocModule> = [
+  { default: Components, frontmatter: componentsFrontmatter, markdown: componentsMarkdown, source: "getting-started/components.mdx" },
   { default: Welcome, frontmatter: welcomeFrontmatter, markdown: welcomeMarkdown, source: "start-here/Welcome.mdx" },
   { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "start-here/Why.mdx" },
   { default: Quickstart, frontmatter: quickstartFrontmatter, markdown: quickstartMarkdown, source: "getting-started/quickstart.mdx" },
@@ -64,7 +65,6 @@ const modules: ReadonlyArray<DocModule> = [
   { default: Celld, frontmatter: celldFrontmatter, markdown: celldMarkdown, source: "platforms/celld.mdx" },
   { default: Cli, frontmatter: cliFrontmatter, markdown: cliMarkdown, source: "references/cli.mdx" },
   { default: Sdk, frontmatter: sdkFrontmatter, markdown: sdkMarkdown, source: "references/sdk.mdx" },
-  { default: Budgets, frontmatter: budgetsFrontmatter, markdown: budgetsMarkdown, source: "references/budgets.mdx" },
   { default: Rlm, frontmatter: rlmFrontmatter, markdown: rlmMarkdown, source: "examples/rlm.mdx" }
 ]
 
