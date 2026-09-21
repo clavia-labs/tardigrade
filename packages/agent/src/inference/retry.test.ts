@@ -53,6 +53,98 @@ test.each([false, true])("physical attempts commit separately and recovery uses 
   expect(resumed.read("root").filter((e) => e.type === "ModelReturned")).toHaveLength(5)
 })
 
+test("physical attempts retain resolved request evidence across replay", async () => {
+  const policies: ReadonlyArray<RequestPolicy> = [
+    { ...policy, maxOutputTokens: 111, retry: { ...policy.retry, backoffMs: [0] } },
+    { ...policy, maxOutputTokens: 222, retry: { ...policy.retry, backoffMs: [7, 9] } }
+  ]
+  const prices = [
+    { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 },
+    { promptUsdPerToken: 0.002, completionUsdPerToken: 0.004 }
+  ] as const
+  const maximumUsd = (index: number) =>
+    128_000 * prices[index]!.promptUsdPerToken + policies[index]!.maxOutputTokens * prices[index]!.completionUsdPerToken
+  let policyIndex = 0
+  let priceIndex = 0
+  let attempts = 0
+  const atDispatch: Array<{ readonly requestPolicy: unknown; readonly requestBounds: unknown; readonly returned: number }> = []
+  const host = makeHost({
+    policy: () => Effect.succeed(policies[policyIndex++]!),
+    pricing: () => Effect.succeed(prices[priceIndex++]!),
+    react: () => Effect.sync(() => {
+      const log = host.read("root")
+      const mark = log.findLast((event) => event.type === "ModelCalled") as Record<string, unknown>
+      atDispatch.push({
+        requestPolicy: mark.requestPolicy,
+        requestBounds: mark.requestBounds,
+        returned: log.filter((event) => event.type === "ModelReturned").length
+      })
+      return ++attempts === 1
+        ? { kind: "fail" as const, retryable: true, error: "capacity", usage: { inputTokens: {}, outputTokens: {} } }
+        : { kind: "complete" as const, output: "done", usage: { inputTokens: { total: 10 }, outputTokens: { total: 1 } } }
+    })
+  })
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
+  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Hello", at: 1 })
+  await host.drive()
+
+  const recorded = JSON.parse(JSON.stringify(host.read("root"))) as ReadonlyArray<Record<string, unknown>>
+  const evidence = recorded.filter((event) => event.type === "ModelCalled").map((event) => ({
+    requestPolicy: event.requestPolicy,
+    requestBounds: event.requestBounds
+  }))
+  const expected = [
+    { requestPolicy: policies[0], requestBounds: { maximumUsd: maximumUsd(0) } },
+    { requestPolicy: policies[1], requestBounds: { maximumUsd: maximumUsd(1) } }
+  ]
+
+  const changed = makeHost({
+    policy: () => Effect.succeed({ ...policy, maxOutputTokens: 999, retry: { ...policy.retry, backoffMs: [] } }),
+    pricing: () => Effect.succeed({ promptUsdPerToken: 1, completionUsdPerToken: 1 }),
+    react: () => Effect.die("a completed replay must not dispatch")
+  })
+  changed.seed("root", recorded as ReturnType<typeof host.read>)
+  await changed.wake("root")
+  await changed.drive()
+  const replayedEvidence = JSON.parse(JSON.stringify(changed.read("root"))).filter((event: Record<string, unknown>) => event.type === "ModelCalled").map((event: Record<string, unknown>) => ({
+    requestPolicy: event.requestPolicy,
+    requestBounds: event.requestBounds
+  }))
+  const measuredCostUsd = usageIn(recorded as ReturnType<typeof host.read>, "m1").costUsd
+  expect({
+    atDispatch,
+    recorded: evidence,
+    replayed: replayedEvidence,
+    measuredCostUsd
+  }).toEqual({
+    atDispatch: expected.map((item, index) => ({ ...item, returned: index })),
+    recorded: expected,
+    replayed: expected,
+    measuredCostUsd: 10 * prices[1].promptUsdPerToken + prices[1].completionUsdPerToken
+  })
+})
+
+test("an unpriced failure retains its conservative bound beside unknown usage", async () => {
+  const requestPolicy = { ...policy, maxOutputTokens: 45_268, retry: { ...policy.retry, backoffMs: [] } }
+  const pricing = { promptUsdPerToken: 0.0000025, completionUsdPerToken: 0.00001 }
+  const host = makeHost({
+    policy: () => Effect.succeed(requestPolicy),
+    pricing: () => Effect.succeed(pricing),
+    react: () => Effect.succeed({ kind: "fail", error: "connection reset", usage: { inputTokens: {}, outputTokens: {} } })
+  })
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
+  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Hello", at: 1 })
+  await host.drive()
+
+  const replayed = JSON.parse(JSON.stringify(host.read("root"))) as ReturnType<typeof host.read>
+  const mark = replayed.find((event) => event.type === "ModelCalled") as Record<string, unknown>
+  expect(mark).toMatchObject({
+    requestPolicy,
+    requestBounds: { maximumUsd: 128_000 * pricing.promptUsdPerToken + requestPolicy.maxOutputTokens * pricing.completionUsdPerToken }
+  })
+  expect(usageIn(replayed, "m1").costUsd).toBeUndefined()
+})
+
 test("retry delays obey the explicit provider wait limit independently of backoff", () => {
   fc.assert(fc.property(fc.integer({ min: 0, max: 1000 }), fc.integer({ min: 0, max: 1000 }), fc.double({ min: 0, max: 1, noNaN: true }), (base, minimum, random) => {
     const configured = { ...policy, retry: { backoffMs: [base], maxRetryAfterMs: 500, retryAfterJitterMs: 10 } }
