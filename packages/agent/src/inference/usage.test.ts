@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { Schema } from "effect"
+import { AiError } from "effect/unstable/ai"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { ModelReturned, modelReturned } from "../log/events"
 import { priced, sumUsage, usageIn, usageOf, ZERO_USAGE } from "./usage"
 
 const table = { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }
@@ -133,6 +136,83 @@ describe("sumUsage", () => {
 })
 
 describe("usageIn", () => {
+  const rateCard = { promptUsdPerToken: 0.0000025, completionUsdPerToken: 0.00001 }
+  const endpoint = { provider: "openai", model: "gpt-5.1", routedProvider: "openai", routedModel: "gpt-5.1" }
+  const called = (ordinal: number, pricing = rateCard): Event => ({
+    type: "ModelCalled",
+    callId: `m1/infer/${ordinal}`,
+    ordinal,
+    turn: "m1",
+    model: { provider: "openai", model_id: "gpt-5.1" },
+    pricing,
+    at: ordinal * 2 + 1
+  })
+  const returned = (
+    ordinal: number,
+    usage: { readonly inputTokens: Record<string, number>; readonly outputTokens: Record<string, number> },
+    error?: Parameters<typeof modelReturned>[0]["error"]
+  ): Event => modelReturned({
+    callId: `m1/infer/${ordinal}`,
+    ordinal,
+    turn: "m1",
+    outcome: error === undefined ? "returned" : "failed",
+    usage,
+    endpoint,
+    ...(error === undefined ? {} : { error }),
+    at: ordinal * 2 + 2
+  })
+  const capacityRefusal = AiError.make({
+    module: "OpenAiLanguageModel",
+    method: "streamText",
+    reason: AiError.RateLimitError.make({})
+  })
+
+  test("measured attempts use their recorded rate card", () => {
+    const log = [
+      called(0),
+      returned(0, { inputTokens: { total: 6074 }, outputTokens: { total: 29 } })
+    ]
+    expect(usageIn(log, "m1").costUsd).toBeCloseTo(0.015475, 9)
+  })
+
+  test("classified capacity refusals add no cost to later measured work", () => {
+    const first = returned(0, { inputTokens: {}, outputTokens: {} }, capacityRefusal)
+    expect(() => Schema.decodeUnknownSync(ModelReturned)(first)).not.toThrow()
+    const log = [
+      called(0), first,
+      called(1), returned(1, { inputTokens: {}, outputTokens: {} }, capacityRefusal),
+      called(2), returned(2, { inputTokens: { total: 6074 }, outputTokens: { total: 29 } })
+    ]
+    expect(usageIn(log, "m1").costUsd).toBeCloseTo(0.015475, 9)
+  })
+
+  test("a capacity error with measured usage retains its cost", () => {
+    const log = [
+      called(0),
+      returned(0, { inputTokens: { total: 6074 }, outputTokens: { total: 29 } }, capacityRefusal)
+    ]
+    expect(usageIn(log, "m1").costUsd).toBeCloseTo(0.015475, 9)
+  })
+
+  test("a capacity refusal beside an unpriced failure remains unknown", () => {
+    const log = [
+      called(0), returned(0, { inputTokens: {}, outputTokens: {} }, capacityRefusal),
+      called(1), returned(1, { inputTokens: {}, outputTokens: {} }, "connection reset")
+    ]
+    expect(usageIn(log, "m1").costUsd).toBeUndefined()
+    expect(usageIn(JSON.parse(JSON.stringify(log)) as ReadonlyArray<Event>, "m1")).toEqual(usageIn(log, "m1"))
+  })
+
+  test("each attempt uses its paired rate card", () => {
+    const firstRate = { promptUsdPerToken: 0.000001, completionUsdPerToken: 0.000002 }
+    const secondRate = { promptUsdPerToken: 0.000003, completionUsdPerToken: 0.000004 }
+    const log = [
+      called(0, firstRate), returned(0, { inputTokens: { total: 100 }, outputTokens: { total: 10 } }),
+      called(1, secondRate), returned(1, { inputTokens: { total: 200 }, outputTokens: { total: 20 } })
+    ]
+    expect(usageIn(log, "m1").costUsd).toBeCloseTo(0.0008, 9)
+  })
+
   test("a turn sums the consequences' usage, and a died attempt invents nothing", () => {
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },
