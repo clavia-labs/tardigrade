@@ -1,5 +1,5 @@
 import { canonicalModelConfig, type ModelConfig } from "../config"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Effect, Schema } from "effect"
 import {
   ModelCatalog as ModelCatalogSchema,
   type ModelCatalog
@@ -7,7 +7,7 @@ import {
 import { modelsDevCatalogOf, type ModelMetadata } from "./metadata"
 
 import {
-  ModelCatalogRepository,
+  ModelRegistry,
   modelCatalogScopeOf,
   type ModelCatalogScope
 } from "./repository"
@@ -48,12 +48,6 @@ export interface ModelCatalogState {
   readonly refreshError?: string
   readonly cacheError?: string
 }
-
-// ModelCatalogStore holds the snapshot resolved once when this server starts.
-export class ModelCatalogStore extends Context.Service<
-  ModelCatalogStore,
-  ModelCatalogState
->()("tardigrade/server/ModelCatalogStore") {}
 
 export const MODEL_CATALOG_LOAD_POLICIES = ["cache-first", "refresh"] as const
 export type ModelCatalogLoadPolicy = typeof MODEL_CATALOG_LOAD_POLICIES[number]
@@ -157,14 +151,14 @@ const refreshed = async (options: ModelCatalogLoadOptions): Promise<ModelCatalog
   return modelCatalogOf(JSON.parse(text) as unknown, revision, (options.now ?? Date.now)())
 }
 
-const cacheRead = (sourceUrl: string, scope: ModelCatalogScope | undefined) => Effect.flatMap(ModelCatalogRepository, (repository) =>
+const cacheRead = (sourceUrl: string, scope: ModelCatalogScope | undefined) => Effect.flatMap(ModelRegistry, (repository) =>
   (scope === undefined ? repository.read(sourceUrl) : repository.readScope(sourceUrl, scope)).pipe(Effect.match({
     onFailure: (error) => ({ cacheError: error.message }),
     onSuccess: (snapshot) => snapshot === undefined ? {} : { snapshot }
   })))
 
 // loadModelCatalog resolves one in-memory snapshot according to the stated source policy.
-export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effect<ModelCatalogState, never, ModelCatalogRepository> =>
+export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effect<ModelCatalogState, never, ModelRegistry> =>
   Effect.gen(function*() {
     let cached: ModelCatalogState | undefined
     if (options.policy === "cache-first") {
@@ -181,7 +175,7 @@ export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effec
     }))
 
     if (refreshedState._tag === "Success") {
-      const repository = yield* ModelCatalogRepository
+      const repository = yield* ModelRegistry
       const cacheError = yield* repository.write(options.sourceUrl, refreshedState.snapshot).pipe(Effect.match({
         onFailure: (error) => error.message,
         onSuccess: () => undefined
@@ -203,9 +197,3 @@ export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effec
       ...(cached.cacheError === undefined ? {} : { cacheError: cached.cacheError })
     }
   })
-
-export const layerModelCatalogValue = (snapshot: ModelCatalog): Layer.Layer<ModelCatalogStore> =>
-  Layer.succeed(ModelCatalogStore)({ snapshot })
-
-export const layerModelCatalogUnavailable: Layer.Layer<ModelCatalogStore> =
-  Layer.succeed(ModelCatalogStore)({ refreshError: "no validated model catalog is available" })

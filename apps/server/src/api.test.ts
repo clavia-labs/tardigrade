@@ -16,9 +16,9 @@ import { ACTOR_ARTIFACT_VERSION, type InferDelta, type InferRequest } from "tard
 import type { Action } from "tardie/log/events"
 
 import { openStreams } from "./api"
-import { layerModelCatalogValue } from "./catalog"
+import { ModelLock, modelLockService, type ModelLockData } from "@clavia/tardigrade-model/lock"
 import { layerConfig, readConfig } from "./config"
-import { type EventRow, type ModelCatalog } from "@clavia/tardigrade-client/contract"
+import { type EventRow } from "@clavia/tardigrade-client/contract"
 import { layerThreads, Threads, type ActorThreads } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import { layerGaugeResting } from "./driver-gauge"
@@ -87,37 +87,26 @@ const config = layerConfig(readConfig({
   }
 }))
 
-const catalog: ModelCatalog = {
-  source: "models.dev",
-  revision: "catalog-1",
-  refreshedAt: 1_700_000_000_000,
-  status: "fresh",
-  providers: [
-    {
-      id: "openai",
-      name: "OpenAI",
-      env: ["OPENAI_API_KEY"],
-      models: [
-        { id: "gpt-mini", metadata: { contextWindowTokens: 64_000, pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 } } },
-        { id: "gpt-test", metadata: { contextWindowTokens: 128_000, pricing: { promptUsdPerToken: 0.000_002, completionUsdPerToken: 0.000_003 } } }
-      ]
-    },
-    {
-      id: "anthropic",
-      name: "Anthropic",
-      env: ["ANTHROPIC_API_KEY"],
-      models: [{ id: "claude-test", metadata: { contextWindowTokens: 200_000 } }]
-    }
+const definitions: ModelLockData = {
+  schema: 2,
+  providers: {
+    openai: { baseUrl: "https://api.openai.com/v1", protocol: "openai-responses", env: ["OPENAI_API_KEY"] },
+    anthropic: { baseUrl: "https://api.anthropic.com", protocol: "anthropic-messages", env: ["ANTHROPIC_API_KEY"] }
+  },
+  models: [
+    { provider: "openai", model_id: "gpt-mini", contextWindowTokens: 64_000, pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 } },
+    { provider: "openai", model_id: "gpt-test", contextWindowTokens: 128_000, pricing: { promptUsdPerToken: 0.000_002, completionUsdPerToken: 0.000_003 } },
+    { provider: "anthropic", model_id: "claude-test", contextWindowTokens: 200_000 }
   ]
 }
-const catalogLayer = layerModelCatalogValue(catalog)
+const lockLayer = Layer.succeed(ModelLock, modelLockService(definitions, { default: testModel, allow: "*" }))
 const inference = makeInferenceStream()
 
 const app = (threadAllocator?: typeof ThreadAllocator.Service) => Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true, api: { inference } }), [
   BunHttpServer.layer({ port: 0, hostname: "127.0.0.1" }),
   config,
-  catalogLayer,
-  Layer.provide(layerThreads({ infer: layerScripted, ...(threadAllocator === undefined ? {} : { threadAllocator }) }), [config, catalogLayer])
+  lockLayer,
+  Layer.provide(layerThreads({ infer: layerScripted, ...(threadAllocator === undefined ? {} : { threadAllocator }) }), [config, lockLayer])
 ])
 
 // Boots the process and hands the body its base URL. The body is plain fetch, because a client of
@@ -232,7 +221,7 @@ describe("models", () => {
   test("provider discovery states connection requirements", async () => {
     const response = await serving(async (base) => await (await get(base, "/v1/providers?search=openai")).json())
     expect(response).toMatchObject({
-      revision: "catalog-1",
+      revision: expect.any(String),
       items: [{
         id: "openai",
         availability: { status: "available" },
@@ -262,7 +251,7 @@ describe("models", () => {
     expect(page.items.map((model) => model.id)).toEqual(["gpt-test", "gpt-mini", "claude-test"])
   })
 
-  test("the host model route includes unconfigured catalog providers", async () => {
+  test("the host model route includes locked providers without configured credentials", async () => {
     const page = await serving(async (base) => await (await get(base, "/v1/models?search=claude-test")).json()) as {
       readonly items: ReadonlyArray<{ readonly provider: string; readonly id: string; readonly metadata: unknown }>
     }
@@ -675,12 +664,12 @@ describe("actors", () => {
       TARDIGRADE_ACTORS: root,
       TARDIGRADE_ACTOR_DATA: actorData
     }))
-    const isolatedCatalog = layerModelCatalogValue(catalog)
+    const isolatedLock = lockLayer
     const isolatedApp = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
       BunHttpServer.layer({ port: 0, hostname: "127.0.0.1" }),
       isolatedConfig,
-      isolatedCatalog,
-      Layer.provide(layerThreads({ infer: layerScripted }), [isolatedConfig, isolatedCatalog])
+      isolatedLock,
+      Layer.provide(layerThreads({ infer: layerScripted }), [isolatedConfig, isolatedLock])
     ])
     const module = `export default { name: "reviewer", methods: {}, components: [], projections: [], keyOf: () => undefined }\n`
     const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
@@ -842,7 +831,7 @@ describe("the event stream", () => {
       disableLogger: true,
       disableListenLog: true,
       api: { heartbeat: Duration.millis(10) }
-    }), [BunHttpServer.layer({ port: 0, hostname: "127.0.0.1" }), config, catalogLayer, threads, ingress, layerGaugeResting])
+    }), [BunHttpServer.layer({ port: 0, hostname: "127.0.0.1" }), config, lockLayer, threads, ingress, layerGaugeResting])
 
     const verify = async (port: number) => {
       const abort = new AbortController()

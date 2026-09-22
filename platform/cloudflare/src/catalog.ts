@@ -1,17 +1,17 @@
 import { Effect, Layer, Schema } from "effect"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import {
-  ModelCatalogRepository,
-  ModelCatalogRepositoryError,
+  ModelRegistry,
+  ModelRegistryError,
   modelCatalogScopeOf,
-  type ModelCatalogRepositoryService,
+  type ModelRegistryService,
   type ModelCatalogScope
 } from "@clavia/tardigrade-model/catalog/repository"
 
 // DEFAULT_MODEL_CATALOG_WRITE_BATCH_SIZE bounds the prepared statements sent in one D1 batch.
 export const DEFAULT_MODEL_CATALOG_WRITE_BATCH_SIZE = 100
 
-export interface CloudflareModelCatalogRepositoryOptions {
+export interface CloudflareModelRegistryOptions {
   readonly writeBatchSize?: number
 }
 
@@ -37,8 +37,8 @@ interface ModelRow {
   readonly metadata_json: string
 }
 
-const repositoryError = (message: string, cause: unknown): ModelCatalogRepositoryError =>
-  new ModelCatalogRepositoryError({ message, cause })
+const repositoryError = (message: string, cause: unknown): ModelRegistryError =>
+  new ModelRegistryError({ message, cause })
 
 const batchSizeOf = (value: number | undefined): number => {
   const selected = value ?? DEFAULT_MODEL_CATALOG_WRITE_BATCH_SIZE
@@ -179,17 +179,17 @@ const writeStored = async (
   }
 }
 
-// layerCloudflareModelCatalogRepository stores validated catalog rows in the host's shared D1 binding.
-export const layerCloudflareModelCatalogRepository = (
+// layerCloudflareModelRegistry stores validated catalog rows in the host's shared D1 binding.
+export const layerCloudflareModelRegistry = (
   db: D1Database,
-  options: CloudflareModelCatalogRepositoryOptions = {}
-): Layer.Layer<ModelCatalogRepository> => {
+  options: CloudflareModelRegistryOptions = {}
+): Layer.Layer<ModelRegistry> => {
   const writeBatchSize = batchSizeOf(options.writeBatchSize)
   const read = (sourceUrl: string) => Effect.tryPromise({
     try: () => readStored(db, sourceUrl),
     catch: (cause) => repositoryError(`could not read model catalog snapshot for ${JSON.stringify(sourceUrl)}`, cause)
   })
-  return Layer.succeed(ModelCatalogRepository)({
+  return Layer.succeed(ModelRegistry)({
     read,
     readScope: (sourceUrl: string, scope: ModelCatalogScope) => Effect.tryPromise({
       try: async () => {
@@ -202,5 +202,5 @@ export const layerCloudflareModelCatalogRepository = (
       try: () => writeStored(db, sourceUrl, snapshot, writeBatchSize),
       catch: (cause) => repositoryError(`could not write model catalog snapshot for ${JSON.stringify(sourceUrl)}`, cause)
     })
-  } satisfies ModelCatalogRepositoryService)
+  } satisfies ModelRegistryService)
 }

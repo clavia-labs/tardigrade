@@ -3,7 +3,6 @@ import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
 
 import { layerConfig } from "./config"
-import { ModelCatalogStore } from "./catalog"
 import { bunModelServices } from "./model-services"
 import { layerThreads } from "./host"
 import { serve } from "./http"
@@ -17,9 +16,9 @@ assertSupportedBun()
 const services = await bunModelServices({ env: process.env })
 const { config, api } = services
 const configLayer = layerConfig(config)
-const catalog = Layer.succeed(ModelCatalogStore, services.catalog)
-const threads = Layer.provide(layerThreads({ infer: services.layers }), [configLayer, catalog])
+const lock = services.lock
+const threads = Layer.provide(layerThreads({ infer: services.layers }), [configLayer, lock])
 
-const main = Layer.provide(serve({ api }), [BunHttpServer.layer({ port: config.port }), configLayer, threads, catalog])
+const main = Layer.provide(serve({ api }), [BunHttpServer.layer({ port: config.port }), configLayer, threads, lock])
 
 BunRuntime.runMain(Layer.launch(main))

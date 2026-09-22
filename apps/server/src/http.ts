@@ -3,12 +3,14 @@ import { serve as serveHttp, layerApp as layerHttpApp } from "@clavia/tardigrade
 import { catalogDiscoveryOf } from "@clavia/tardigrade-http/models"
 import type { ApiOptions } from "@clavia/tardigrade-http/api"
 import { ServerConfig } from "./config"
-import { ModelCatalogStore } from "./catalog"
+import { ModelLock, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
 export * from "@clavia/tardigrade-http/http"
 
 const httpOptions = (options?: ApiOptions) => Effect.gen(function* () {
   const config = yield* ServerConfig
-  const catalog = yield* ModelCatalogStore
+  const { providers: _providers, ...policy } = config.model
+  const lock = yield* Effect.serviceOption(ModelLock)
+  const catalog = lock._tag === "None" ? {} : { snapshot: yield* Effect.promise(() => modelCatalogForConfig(policy, lock.value.definitions)) }
   return { token: config.token, catalog: catalogDiscoveryOf(catalog, config.model, config.modelCredentials), ...options }
 })
 

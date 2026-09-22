@@ -3,7 +3,7 @@ import { resolve } from "node:path"
 import { Effect, Layer } from "effect"
 import { BunFileSystem } from "@effect/platform-bun"
 import { loadModelCatalog, modelCatalogWithConfiguredModels } from "@clavia/tardigrade-server/catalog"
-import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
+import { layerFileModelRegistry } from "@clavia/tardigrade-server/catalog-repository"
 import { modelCatalogScopeOf } from "@clavia/tardigrade-server/catalog-store"
 import type { ModelConfig } from "@clavia/tardigrade-server/config"
 
@@ -35,7 +35,7 @@ export const resolveModelLock = async (
   })
   const state = explicit ? {} : await (async () => {
     if (options === undefined) throw new Error("model metadata is incomplete; supply explicit metadata or registry options")
-    const repository = layerFileModelCatalogRepository(options.cachePath).pipe(Layer.provide(BunFileSystem.layer))
+    const repository = layerFileModelRegistry(options.cachePath).pipe(Layer.provide(BunFileSystem.layer))
     return Effect.runPromise(loadModelCatalog({
       sourceUrl: options.sourceUrl,
       timeoutMillis: options.timeoutMillis,

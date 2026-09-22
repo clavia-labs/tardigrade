@@ -1,4 +1,4 @@
-import { ModelLock, modelLockService, modelCatalogForConfig, type ModelLockData } from "@clavia/tardigrade-model/lock"
+import { ModelLock, modelLockService, type ModelLockData } from "@clavia/tardigrade-model/lock"
 import { modelLayer } from "@clavia/tardigrade-model/host"
 import { Console, Context, Duration, Effect, Layer } from "effect"
 import { createServer } from "node:net"
@@ -6,7 +6,6 @@ import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 import type { Actor } from "tardie"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
-import { layerModelCatalogUnavailable, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
 import {
   layerActorThreads,
   layerThreads,
@@ -130,8 +129,6 @@ interface DevBaseOptions {
   readonly assets?: string | undefined
   // The model seam, which a test binds to a scripted mind (apps/server/src/host.ts, ThreadsOptions).
   readonly threads?: ThreadsOptions | undefined
-  // catalog supplies discovery metadata for an embedding or test.
-  readonly catalog?: Layer.Layer<ModelCatalogStore> | undefined
   // actorRefreshMillis is the visible debounce applied to local actor-root changes.
   readonly actorRefreshMillis?: number | undefined
   // shutdownMillis bounds graceful shutdown before open browser streams are closed.
@@ -177,13 +174,12 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
   const root = resolveAssets(options.assets)
   const config = layerConfig(options.config)
   const { providers: _providers, ...policy } = options.config.model
-  const catalog = options.catalog ?? (options.modelLock === undefined
-    ? layerModelCatalogUnavailable
-    : Layer.effect(ModelCatalogStore, Effect.promise(async () => ({ snapshot: await modelCatalogForConfig(policy, options.modelLock!) }))))
+  const modelLock = options.modelLock === undefined ? undefined : Layer.succeed(ModelLock, modelLockService(options.modelLock, policy))
+  const lock = modelLock ?? Layer.empty
   const inference = makeInferenceStream(options.threads?.inferenceObserver)
-  const threadOptions = { ...options.threads, ...(options.modelLock === undefined ? {} : {
+  const threadOptions = { ...options.threads, ...(modelLock === undefined ? {} : {
     infer: options.threads?.infer ?? modelLayer({ credentials: options.config.modelCredentials, observer: inference.observer }).pipe(
-      Layer.provideMerge(Layer.succeed(ModelLock, modelLockService(options.modelLock, policy)))
+      Layer.provideMerge(modelLock)
     )
   }) }
   const threads = Layer.provide(
@@ -198,7 +194,7 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
             ? {}
             : { layersFor: options.layersFor as ActorThreadLayersFor<ServerR> })
         }),
-    [config, catalog]
+    [config, lock]
   )
   // provideMerge rather than provide: the listening server stays visible in the layer's own
   // services, which is what lets a caller read the address it was given when it asked for port 0
@@ -212,7 +208,7 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
       port: options.config.port,
       hostname: DEV_HOST,
       gracefulShutdownTimeout: Duration.millis(shutdownMillis)
-    }), config, threads, catalog]
+    }), config, threads, lock]
   )
   if (options.onListen === undefined) return running
   return Layer.tap(running, (context) => {

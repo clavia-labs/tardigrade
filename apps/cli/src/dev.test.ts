@@ -13,7 +13,6 @@ import { BunServices } from "@effect/platform-bun"
 import { ACTOR_ARTIFACT_VERSION, type Actor } from "tardie"
 import type { Action } from "tardie/log/events"
 import { PROBLEM_CONTENT_TYPE } from "@clavia/tardigrade-client/contract"
-import { layerModelCatalogUnavailable } from "@clavia/tardigrade-server/catalog"
 import type { ServerR } from "@clavia/tardigrade-server/actor"
 import type { ActorThreadLayersFor } from "@clavia/tardigrade-server/host"
 
@@ -102,7 +101,6 @@ const booted = <A, R = ServerR>(
         }, env),
         assets: buildDirectory(),
         threads: { infer: layerScripted },
-        catalog: layerModelCatalogUnavailable,
         disableLogger: true,
         disableListenLog: true,
         ...options

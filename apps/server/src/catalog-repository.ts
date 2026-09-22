@@ -4,19 +4,19 @@ import { createHash, randomUUID } from "node:crypto"
 import { dirname } from "node:path"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import {
-  ModelCatalogRepository,
-  ModelCatalogRepositoryError,
+  ModelRegistry,
+  ModelRegistryError,
   modelCatalogScopeOf,
-  type ModelCatalogRepositoryService
+  type ModelRegistryService
 } from "./catalog-store"
 
-export { ModelCatalogRepository, ModelCatalogRepositoryError } from "./catalog-store"
+export { ModelRegistry, ModelRegistryError } from "./catalog-store"
 
 const sourceKeyOf = (sourceUrl: string): string =>
   `sha256:${createHash("sha256").update(sourceUrl).digest("hex")}`
 
-const repositoryError = (message: string, cause?: unknown): ModelCatalogRepositoryError =>
-  new ModelCatalogRepositoryError({ message, ...(cause === undefined ? {} : { cause }) })
+const repositoryError = (message: string, cause?: unknown): ModelRegistryError =>
+  new ModelRegistryError({ message, ...(cause === undefined ? {} : { cause }) })
 
 const decoded = (raw: string, sourceUrl: string): ModelCatalog | undefined => {
   const stored = JSON.parse(raw) as { readonly schema?: unknown; readonly sourceKey?: unknown; readonly snapshot?: unknown }
@@ -26,10 +26,10 @@ const decoded = (raw: string, sourceUrl: string): ModelCatalog | undefined => {
   return { ...snapshot, status: "cached" }
 }
 
-// layerFileModelCatalogRepository stores one snapshot as an atomic JSON file.
-export const layerFileModelCatalogRepository = (cachePath: string): Layer.Layer<ModelCatalogRepository, never, FileSystem> =>
+// layerFileModelRegistry stores one snapshot as an atomic JSON file.
+export const layerFileModelRegistry = (cachePath: string): Layer.Layer<ModelRegistry, never, FileSystem> =>
   Layer.effect(
-    ModelCatalogRepository,
+    ModelRegistry,
     Effect.gen(function*() {
       const fs = yield* FileSystem
       return {
@@ -69,6 +69,6 @@ export const layerFileModelCatalogRepository = (cachePath: string): Layer.Layer<
             Effect.ensuring(fs.remove(temporary).pipe(Effect.ignore))
           )
         }
-      } satisfies ModelCatalogRepositoryService
+      } satisfies ModelRegistryService
     })
   )

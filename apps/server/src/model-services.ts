@@ -42,13 +42,14 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const snapshot = { snapshot: await modelCatalogForConfig(policy, definitions) }
   const inference = makeInferenceStream()
   const binding = options.inference === undefined ? modelLayer({ credentials: config.modelCredentials, ...options.model, observer: inference.observer }) : options.inference(config, snapshot, inference.observer)
+  const lock = Layer.succeed(ModelLock, modelLockService(definitions, policy))
   const layers = Layer.mergeAll(
-    binding.pipe(Layer.provideMerge(Layer.succeed(ModelLock, modelLockService(definitions, policy)))),
+    binding.pipe(Layer.provideMerge(lock)),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer
   )
 
   const api = { inference, catalog: catalogDiscoveryOf(snapshot, config.model, config.modelCredentials) }
-  return { config, layers, api, catalog: snapshot }
+  return { config, layers, api, lock }
 }

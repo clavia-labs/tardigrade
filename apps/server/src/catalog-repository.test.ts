@@ -6,7 +6,7 @@ import { Effect, Layer } from "effect"
 import { BunFileSystem } from "@effect/platform-bun"
 
 import { modelCatalogOf } from "./catalog"
-import { layerFileModelCatalogRepository, ModelCatalogRepository } from "./catalog-repository"
+import { layerFileModelRegistry, ModelRegistry } from "./catalog-repository"
 
 let root = ""
 
@@ -25,9 +25,9 @@ describe("file model catalog repository", () => {
   test("writes atomically and reads only the matching source", async () => {
     root = await mkdtemp(join(tmpdir(), "tardigrade-catalog-repository-"))
     const path = join(root, ".tardigrade", "models.json")
-    const repository = layerFileModelCatalogRepository(path).pipe(Layer.provide(BunFileSystem.layer))
+    const repository = layerFileModelRegistry(path).pipe(Layer.provide(BunFileSystem.layer))
     const found = await Effect.runPromise(Effect.gen(function*() {
-      const store = yield* ModelCatalogRepository
+      const store = yield* ModelRegistry
       yield* store.write("https://models.dev/api.json", snapshot)
       return {
         matching: yield* store.read("https://models.dev/api.json"),

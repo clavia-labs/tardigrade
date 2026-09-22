@@ -33,7 +33,7 @@ import {
 
 import { builtInActor, type ServerR } from "./actor"
 import { ServerConfig, type ServerConfigValue } from "./config"
-import { ModelCatalogStore } from "./catalog"
+import { ModelLock, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
 import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { DriverGauge } from "./driver-gauge"
@@ -164,7 +164,7 @@ const mountedHost = async <R>(definition: Actor<R>, config: ServerConfigValue, t
 export const layerActorThreads = <R>(
   definition: Actor<R>,
   ...[options = {} as ActorThreadsOptions<R>]: ActorThreadsArguments<R>
-): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig | ModelCatalogStore> =>
+): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig> =>
   Layer.effectContext(Effect.gen(function*() {
     const config = yield* ServerConfig
     const host = yield* Effect.acquireRelease(
@@ -197,7 +197,9 @@ const manifestOf = async (directory: string): Promise<{ readonly manifest: Actor
 const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
-    const catalog = yield* ModelCatalogStore
+    const { providers: _providers, ...policy } = config.model
+    const lock = yield* Effect.serviceOption(ModelLock)
+    const catalog = lock._tag === "None" ? {} : { snapshot: yield* Effect.promise(() => modelCatalogForConfig(policy, lock.value.definitions)) }
     const thread = layerThread(options)
     const runtimes = new Map<string, LoadedActor>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
@@ -380,5 +382,5 @@ const make = (options: ThreadsOptions) =>
   })
 
 // layerThreads loads actor definitions and exposes their hosts to HTTP (host.test.ts).
-export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig | ModelCatalogStore> =>
+export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig> =>
   Layer.effectContext(make(options))

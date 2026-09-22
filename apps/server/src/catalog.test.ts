@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, type Layer } from "effect"
 
 import { loadModelCatalog, modelCatalogOf, type ModelCatalogLoadOptions } from "./catalog"
-import { layerMemoryModelCatalogRepository, type ModelCatalogRepository } from "./catalog-store"
+import { layerMemoryModelRegistry, type ModelRegistry } from "./catalog-store"
 
 const source = {
   openai: {
@@ -37,7 +37,7 @@ const answering = (body: unknown, headers: Record<string, string> = {}): typeof 
 
 const run = (
   effect: ReturnType<typeof loadModelCatalog>,
-  repository: Layer.Layer<ModelCatalogRepository>
+  repository: Layer.Layer<ModelRegistry>
 ) => Effect.runPromise(Effect.provide(effect, repository))
 
 describe("modelCatalogOf", () => {
@@ -77,7 +77,7 @@ describe("modelCatalogOf", () => {
 
 describe("loadModelCatalog", () => {
   test("cache-first fetches once and reuses the validated snapshot", async () => {
-    const repository = layerMemoryModelCatalogRepository()
+    const repository = layerMemoryModelRegistry()
     const loaded = await run(loadModelCatalog(options(answering(source, { etag: "catalog-7" }), "cache-first")), repository)
     expect(loaded.snapshot).toMatchObject({ revision: "catalog-7", status: "fresh" })
     const refused = (async () => { throw new Error("source should not be called") }) as unknown as typeof fetch
@@ -88,7 +88,7 @@ describe("loadModelCatalog", () => {
 
   test("cache-first reads only the actor model scope", async () => {
     const snapshot = modelCatalogOf(source, "catalog-scoped", 1)
-    const repository = layerMemoryModelCatalogRepository([["https://models.dev/api.json", snapshot]])
+    const repository = layerMemoryModelRegistry([["https://models.dev/api.json", snapshot]])
     const refused = (async () => { throw new Error("source should not be called") }) as unknown as typeof fetch
     const loaded = await run(loadModelCatalog({
       ...options(refused, "cache-first"),
@@ -101,7 +101,7 @@ describe("loadModelCatalog", () => {
   })
 
   test("a failed refresh serves the last valid snapshot", async () => {
-    const repository = layerMemoryModelCatalogRepository()
+    const repository = layerMemoryModelRegistry()
     await run(loadModelCatalog(options(answering(source, { etag: "catalog-7" }))), repository)
     const failed = (async () => { throw new Error("source unavailable") }) as unknown as typeof fetch
     const loaded = await run(loadModelCatalog(options(failed)), repository)
@@ -110,7 +110,7 @@ describe("loadModelCatalog", () => {
   })
 
   test("an invalid refresh cannot replace the last valid snapshot", async () => {
-    const repository = layerMemoryModelCatalogRepository()
+    const repository = layerMemoryModelRegistry()
     await run(loadModelCatalog(options(answering(source, { etag: "catalog-7" }))), repository)
     const loaded = await run(loadModelCatalog(options(answering({}, { etag: "catalog-8" }))), repository)
     expect(loaded.snapshot).toMatchObject({ revision: "catalog-7", status: "cached" })
@@ -120,7 +120,7 @@ describe("loadModelCatalog", () => {
 
   test("reports unavailable when neither source nor cache is valid", async () => {
     const failed = (async () => { throw new Error("source unavailable") }) as unknown as typeof fetch
-    const loaded = await run(loadModelCatalog(options(failed)), layerMemoryModelCatalogRepository())
+    const loaded = await run(loadModelCatalog(options(failed)), layerMemoryModelRegistry())
     expect(loaded.snapshot).toBeUndefined()
     expect(loaded.refreshError).toBe("source unavailable")
   })

@@ -12,7 +12,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog/repository"
+import { ModelRegistry } from "@clavia/tardigrade-model/catalog/repository"
 import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
 import {
@@ -30,7 +30,7 @@ import {
 import { providerLayer } from "@clavia/tardigrade-model/providers/openai-compat"
 import { ModelSelection } from "@clavia/tardigrade-model/settings"
 import { modelLayer, modelsFrom, mountedActor, modelConfigFrom, modelStateFrom, publicCatalog } from "../src/assembly"
-import { layerCloudflareModelCatalogRepository } from "../src/catalog"
+import { layerCloudflareModelRegistry } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
 import { plaintextEventCodec } from "../src/storage"
 
@@ -185,8 +185,8 @@ beforeAll(async () => {
     .filter((statement) => statement.length > 0)
     .map((statement) => db.prepare(statement))
   await db.batch(statements)
-  const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db))
-  const repository = await runtime.runPromise(ModelCatalogRepository)
+  const runtime = ManagedRuntime.make(layerCloudflareModelRegistry(db))
+  const repository = await runtime.runPromise(ModelRegistry)
   await Effect.runPromise(repository.write("https://models.test/catalog.json", {
     source: "models.dev",
     revision: "workers-catalog-test",
@@ -639,9 +639,9 @@ describe("cloudflare actor", () => {
         models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
       }]
     }
-    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env).CATALOG_DB))
+    const runtime = ManagedRuntime.make(layerCloudflareModelRegistry((env as Env).CATALOG_DB))
     try {
-      const repository = await runtime.runPromise(ModelCatalogRepository)
+      const repository = await runtime.runPromise(ModelRegistry)
       await Effect.runPromise(repository.write("https://models.test/catalog.json", snapshot))
       expect(await Effect.runPromise(repository.read("https://models.test/catalog.json"))).toEqual({
         ...snapshot,
@@ -675,9 +675,9 @@ describe("cloudflare actor", () => {
       }]
     }
     expect(new TextEncoder().encode(JSON.stringify(snapshot)).byteLength).toBeGreaterThan(4_425_714)
-    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env).CATALOG_DB))
+    const runtime = ManagedRuntime.make(layerCloudflareModelRegistry((env as Env).CATALOG_DB))
     try {
-      const repository = await runtime.runPromise(ModelCatalogRepository)
+      const repository = await runtime.runPromise(ModelRegistry)
       await Effect.runPromise(repository.write("https://models.test/large.json", snapshot))
       const stored = await Effect.runPromise(repository.readScope("https://models.test/large.json", {
         providers: ["bulk"],
@@ -708,9 +708,9 @@ describe("cloudflare actor", () => {
       }]
     })
     const db = (env as Env).CATALOG_DB
-    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db, { writeBatchSize: 1 }))
+    const runtime = ManagedRuntime.make(layerCloudflareModelRegistry(db, { writeBatchSize: 1 }))
     try {
-      const repository = await runtime.runPromise(ModelCatalogRepository)
+      const repository = await runtime.runPromise(ModelRegistry)
       await Effect.runPromise(repository.write(sourceUrl, catalog("old", "working")))
       await db.prepare(
         `CREATE TRIGGER refuse_catalog_generation BEFORE INSERT ON catalog_models

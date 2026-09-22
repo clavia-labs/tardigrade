@@ -13,7 +13,6 @@ import type { Action } from "tardie/log/events"
 import { layerConfig, readConfig, ServerConfig } from "./config"
 import { Threads, layerThreads, selectedModelFrom } from "./host"
 import { DriverGauge } from "./driver-gauge"
-import { layerModelCatalogUnavailable, type ModelCatalogStore } from "./catalog"
 
 // Every case here opens a real store on disk and drives a real host, so it competes with every
 // other task in a parallel gate run. Bun's default per-test budget is tuned for a pure function and
@@ -60,7 +59,6 @@ const running = <A, E>(
   options: {
     readonly infer?: Layer.Layer<LanguageModel.LanguageModel> | false
     readonly config?: Layer.Layer<ServerConfig>
-    readonly catalog?: Layer.Layer<ModelCatalogStore>
   } = {}
 ): Promise<A> =>
   Effect.gen(function*() {
@@ -70,7 +68,7 @@ const running = <A, E>(
     Effect.provide(Layer.provide(layerThreads({
       ...(options.infer === false ? {} : { infer: options.infer ?? layerScripted }),
       providers: [{ name: "test", send: () => Effect.void }]
-    }), [options.config ?? config, options.catalog ?? layerModelCatalogUnavailable])),
+    }), [options.config ?? config])),
     Effect.scoped,
     Effect.runPromise
   ) as Promise<A>
