@@ -2,8 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "n
 import { tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { rewriteComponentRuntimeImports } from "./publish-paths"
-import { INIT_TEMPLATES } from "../apps/cli/src/template"
+import { rewriteComponentRuntimeImports, stageInitTemplates } from "./publish-paths"
 
 type PkgJson = {
   readonly name: string
@@ -190,9 +189,7 @@ try {
   await Promise.all([
     cp(join(root, "LICENSE"), join(stage, "LICENSE")),
     cp(join(root, "README.md"), join(stage, "README.md")),
-    ...INIT_TEMPLATES.map((template) =>
-      cp(join(root, "examples", template), join(stage, STAGED_EXAMPLES, template), { recursive: true })
-    ),
+    stageInitTemplates(root, stage),
     ...packages.map(async (source) => {
       await cp(join(root, source.dir, "src"), join(stage, "src", source.namespace), {
         recursive: true,
