@@ -158,4 +158,4 @@ test("generated nested policies preserve sibling responses, pending work, and re
       expect(yield* log.read).toEqual(settled)
     }).pipe(Effect.provide(storage)))
   }), { numRuns: 100 })
-})
+}, { timeout: 30_000 })

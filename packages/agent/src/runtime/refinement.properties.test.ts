@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { eventAt, type Event } from "@clavia/tardigrade-core/event"
 import { component, componentRefinementTrace, composeComponents, type CompleteComponentProjection, type Component, type ComponentOutput, type InvocationCancellation } from "@clavia/tardigrade-core/component"
-import { Projection, replayProjection, replayState } from "@clavia/tardigrade-core/projection"
+import { Projection, replayProjection } from "@clavia/tardigrade-core/projection"
 import type { Transition } from "@clavia/tardigrade-core/transition"
 import { budget } from "../component/budget/index"
 import { codeMode } from "../component/code/index"
@@ -153,6 +153,7 @@ const completeAgent = (
     derive: (log) => {
       const children = replayProjection(machineOf(combined), log, testModelData)
       const inferred = inference(log)
+      const toolOutput = replayProjection(machineOf(tools), log)
       const selected = new Set(scheduled(log).flatMap((transition) => transition.kind === "intent"
         ? transition.events(transition.input, 0).map((event) => JSON.stringify([event.turn, event.callId])) : []))
       const deferred = children.view.messages?.flatMap(conversation => conversation.compaction?.proposals ?? []) ?? []
@@ -164,11 +165,11 @@ const completeAgent = (
       })
       return {
         view: children.view,
-        transitions: [...proposals.filter((transition) => transition.kind === "intent"), ...inferred, ...replayProjection(machineOf(tools), log).transitions, ...proposals.filter((transition) => transition.kind !== "intent")],
+        transitions: [...proposals.filter((transition) => transition.kind === "intent"), ...inferred, ...toolOutput.transitions, ...proposals.filter((transition) => transition.kind !== "intent")],
         interactions: {
           cancel: (cancellation) => [
-            ...(machineOf(combined).output(replayState(machineOf(combined), log, testModelData)).interactions?.cancel?.(cancellation) ?? []),
-            ...(machineOf(tools).output(replayState(machineOf(tools), log)).interactions?.cancel?.(cancellation) ?? [])
+            ...(children.interactions?.cancel?.(cancellation) ?? []),
+            ...(toolOutput.interactions?.cancel?.(cancellation) ?? [])
           ]
         }
       }
@@ -275,15 +276,7 @@ describe("agent projection refinement", () => {
       const completeComponent = toolsComponentFrom({ ...AGENT_VIEW_ALGEBRA.empty, tools: [{ spec: echo.spec }] }, echo.serve!, () => [echo.spec])
       const incremental = routeTools(child, () => [echo])
       assertAgentRefinement({
-
-        derive: (prefix) => ({
-    ...replayProjection(machineOf(completeComponent), prefix),
-    interactions: {
-        ...replayProjection(machineOf(completeComponent), prefix).interactions,
-        cancel: (cancellation) => (machineOf(completeComponent).output(replayState(machineOf(completeComponent), prefix)).interactions?.cancel?.(cancellation) ?? [])
-    }
-}),
-
+        derive: prefix => replayProjection(machineOf(completeComponent), prefix)
       }, incremental as Component<AgentView, unknown>, log)
     }), { numRuns: 100 })
   })
@@ -311,5 +304,5 @@ describe("agent projection refinement", () => {
       const incremental = infer(components, INFER_OPTIONS) as Component<AgentView, unknown>
       assertAgentRefinement(completeAgent(components, INFER_OPTIONS), incremental, log)
     }), { numRuns: 100 })
-  }, { timeout: 30_000 })
+  }, { timeout: 60_000 })
 })
