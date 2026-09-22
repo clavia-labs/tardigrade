@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.30.0](https://github.com/clavia-labs/tardigrade/compare/v0.29.0...v0.30.0) (2026-09-22)
+
+
+### Features
+
+* compose component interactions ([#489](https://github.com/clavia-labs/tardigrade/issues/489)) ([169d803](https://github.com/clavia-labs/tardigrade/commit/169d8034bd6ddfbba2894e4bd2cfc4c125cbf6a0))
+
+
+### Bug Fixes
+
+* **agent:** exclude failed attempt costs ([#495](https://github.com/clavia-labs/tardigrade/issues/495)) ([c4b7c47](https://github.com/clavia-labs/tardigrade/commit/c4b7c4728379d755995340385c0770ef717b45ff))
+* **agent:** preserve response evidence ([#488](https://github.com/clavia-labs/tardigrade/issues/488)) ([2801494](https://github.com/clavia-labs/tardigrade/commit/28014946cca6f241b2f0df06524e6a4ae7e9dc00))
+* **ci:** stabilize publish gate ([#491](https://github.com/clavia-labs/tardigrade/issues/491)) ([5f5a93b](https://github.com/clavia-labs/tardigrade/commit/5f5a93b85bd379d0a9dce837852d31eedb6cfc1b))
+* **model:** share locked definitions ([#494](https://github.com/clavia-labs/tardigrade/issues/494)) ([d8dd035](https://github.com/clavia-labs/tardigrade/commit/d8dd0352802661bd3ad5a5e376834929213c4862))
+
 ## [0.29.0](https://github.com/clavia-labs/tardigrade/compare/v0.28.0...v0.29.0) (2026-09-16)
 
 
