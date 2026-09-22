@@ -27,8 +27,8 @@ Code mode provides the environment. Packages expose fetch, workspace storage, an
 
 ```ts
 import { actor } from "tardie/core"
-import { agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode, compaction, infer, outputValidateOnce, system } from "tardie/agent"
-import { fetchPackage, workspacePackage } from "tardie/code"
+import { agentMethods, agents, budget, caller, escalate, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/agent"
+import { fetch, workspace } from "tardie/code"
 
 const instructions = system(
   "Investigate with code and delegate independent work."
@@ -40,17 +40,21 @@ const rlm = actor({
   components: [
     infer([
       instructions,
-      budget([
-        codeMode([
-          fetchPackage(),
-          agentsPackage(),
-          workspacePackage()
-        ])
-      ], { authority: caller() }),
-      compaction(),
+      escalate(
+        budget(codeMode([
+          fetch(),
+          agents(),
+          workspace()
+        ]), {
+          limit: 40,
+          usage: ({ calls }) => calls.length,
+          onExhausted: (reason, settle) => settle({ error: reason })
+        }),
+        { authority: caller(), requests: { decide: request => request.grant() } }
+      ),
+      compact(messages()),
       outputValidateOnce
-    ]),
-    budgetAuthority()
+    ])
   ]
 })
 ```

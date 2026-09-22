@@ -37,8 +37,6 @@ const runAgent = async (messages, policy: AgentPolicy) => {
     messages.push(response)
 
     if (response.toolCalls.length === 0) return response.text
-
-    // Check permissions, run tools, and append their results.
   }
   throw new Error("Turn limit reached")
 }
@@ -100,7 +98,7 @@ export const researcher = actor({
   methods: agentMethods,
   components: [infer([
     system("Research the given topic and cite your sources."),
-    compaction({
+    compact(messages(), {
       triggerRatio: 0.8,
       retainRatio: 0.5
     }),
@@ -114,19 +112,14 @@ Composition is possible because each component is defined as a typed state machi
 A component has the following interface:
 
 ```ts
-interface ComponentDefinition<State, View, Requirements = never> {
+import type { ComponentOutput, TransitionContext } from "tardie/core"
+import type { Event } from "tardie/core/event"
+
+interface ComponentDefinition<State, View, Requirements = never, Result = unknown> {
   readonly name: string
   readonly initial: () => State
-  readonly step: (state: State, event: Event) => State
-  readonly output: (state: State) => {
-    readonly view: View
-    readonly transitions: ReadonlyArray<Transition<never, Requirements>>
-  }
-  readonly cancelState?: (
-    state: State,
-    cancellation: InvocationCancellation
-  ) => ReadonlyArray<Transition<never, Requirements>>
-  readonly keys?: KeyFragment
+  readonly step: (state: Readonly<State>, event: Event, context: TransitionContext) => State
+  readonly output: (state: Readonly<State>) => ComponentOutput<View, Requirements, Result>
 }
 ```
 
