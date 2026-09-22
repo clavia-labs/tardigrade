@@ -1,4 +1,4 @@
-import { ModelLock, emptyModelLock } from "@clavia/tardigrade-model/lock"
+import { ModelLock, emptyModelLock, modelLockService } from "@clavia/tardigrade-model/lock"
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { AiError, LanguageModel, Response } from "effect/unstable/ai"
 import type { InferRequest, ModelResolution } from "../src/model/contract"
@@ -24,7 +24,7 @@ export interface TestInference {
 // testModelLock supplies a pure lookup for scripted model fixtures.
 export const testModelLock = (resolve: NonNullable<TestInference["resolve"]> = (model = { provider: "test", model_id: "fixture" }) => {
   return { model, contextWindowTokens: 128_000 }
-}): Context.Service.Shape<typeof ModelLock> => ({ definitions: emptyModelLock(), resolve })
+}): Context.Service.Shape<typeof ModelLock> => ({ ...modelLockService(emptyModelLock(), { allow: "*" }), resolve })
 export const testModelData = Context.make(ModelLock, testModelLock())
 export const testModelLockLayer = Layer.succeed(ModelLock, testModelLock())
 
@@ -66,7 +66,7 @@ export const testInferenceLayer = (script: TestInference): Layer.Layer<LanguageM
     }))
   } as typeof LanguageModel.LanguageModel.Service)
   return Layer.mergeAll(selection, model, Layer.succeed(ModelLock, {
-    definitions: emptyModelLock(),
+    ...modelLockService(emptyModelLock(), { allow: "*" }),
     resolve: script.resolve ?? ((model) => {
       if (model === undefined) throw new Error("no model was selected; supply { provider, model_id } or configure a default")
       return { model, contextWindowTokens: 128_000 }

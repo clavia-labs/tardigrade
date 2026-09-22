@@ -6,7 +6,7 @@ import { FetchHttpClient } from "effect/unstable/http"
 import { Prompt, Tool, Toolkit } from "effect/unstable/ai"
 import { collectResponse } from "@clavia/tardigrade-model/stream/collect"
 import { providerLayer } from "@clavia/tardigrade-model/providers/layer"
-import { modelLayer } from "@clavia/tardigrade-model/host"
+import { fixtureModelLayer as modelLayer } from "@clavia/tardigrade-model/testing/host"
 
 const toolkit = Toolkit.make(Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }), failureMode: "return" }))
 const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, prompt_tokens_details: { cached_tokens: 3 }, completion_tokens_details: { reasoning_tokens: 2 }, cost: 0.25 }

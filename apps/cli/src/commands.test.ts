@@ -19,7 +19,7 @@ import {
   type ThreadSummary
 } from "@clavia/tardigrade-client"
 
-import { NO_MODEL_NOTICE, problemLine, tdg } from "./commands"
+import { problemLine, tdg } from "./commands"
 import { Cli, type CliServices } from "./services"
 
 // The command tree, driven the way a shell drives it: real arguments through the real parser, over
@@ -339,7 +339,7 @@ describe("parsing", () => {
       const modelLock = JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8")) as Record<string, unknown>
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
-      expect(modelLock).toMatchObject({ schema: 1, catalog: { revision: "catalog-test" } })
+      expect(modelLock).toMatchObject({ schema: 2, models: expect.any(Array) })
       expect(configured.lines.join("\n")).toContain("models.lock.json")
     } finally {
       await rm(cwd, { recursive: true, force: true })
@@ -430,11 +430,6 @@ describe("parsing", () => {
     expect(help).toContain("--limit")
     expect(help).toContain("--types")
     expect(help).toContain("--json")
-    const devHelp = (await drive(["dev", "--no-open", "--help"])).lines.join("\n")
-    expect(devHelp).toContain("--open")
-    expect(devHelp).toContain("--no-open")
-    expect(devHelp).toContain("--min-port")
-    expect(devHelp).toContain("--max-concurrent-threads")
     const initHelp = (await drive(["init", "--help"])).lines.join("\n")
     expect(initHelp).toContain("--dir")
     expect(initHelp).toContain("--template")
@@ -547,8 +542,6 @@ describe("catalog discovery", () => {
       answers: {
         providers: {
           revision: "catalog-2",
-          status: "cached",
-          refreshed_at: 2,
           policy: {
             default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" },
             allow: "*"
@@ -881,26 +874,7 @@ describe("failures", () => {
   })
 })
 
-describe("dev asks only where someone can answer", () => {
-  test("an empty directory points to initialization", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "tdg-dev-empty-"))
-    try {
-      const ran = await drive(["dev", "--no-open"], { cwd })
-
-      expect(ran.failed).toBe(true)
-      expect(failureText(ran)).toContain("no Tardigrade project found")
-      expect(failureText(ran)).toContain("tdg init")
-      expect(failureText(ran)).toContain("tdg dev")
-    } finally {
-      await rm(cwd, { recursive: true, force: true })
-    }
-  })
-
-  // A boot inside CI, a container, or a script has nobody to answer a prompt, so it takes the
-  // notice and serves anyway. The terminal check is what separates the two (commands.ts, canAsk).
-  test("says what is missing when stdin is not a terminal", () => {
-    expect(process.stdin.isTTY).not.toBe(true)
-    expect(NO_MODEL_NOTICE).toContain("tdg setup")
-    expect(NO_MODEL_NOTICE).toContain("tdg setup")
-  })
+test("dev is no longer a CLI command", async () => {
+  const ran = await drive(["dev"])
+  expect(ran.failed).toBe(true)
 })

@@ -1,16 +1,16 @@
-import type { ModelLock } from "@clavia/tardigrade-model/lock"
+import { modelLockSourceOf, upgradeModelLock, type ModelLockSource } from "@clavia/tardigrade-model/lock-compat"
+import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
+import { lockedModelConfigOf, modelCatalogForConfig as lockedCatalogForConfig, ModelLock, modelLockService } from "@clavia/tardigrade-model/lock"
 import { cloudflareDirectory } from "./transport/directory"
-import { Effect, Schema } from "effect"
+import { Layer } from "effect"
 import { HttpClient } from "effect/unstable/http"
-import { type InferenceObserver, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
+import { type InferenceObserver } from "@clavia/tardigrade-agent"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
-import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { modelLayer as configuredModelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
-import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/catalog/metadata"
-import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
+import type { ModelCatalog, ModelListing, ModelListingState } from "@clavia/tardigrade-model/catalog/schema"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
-import { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-model/config"
+import { modelCredentialsFrom, modelConfigOf, type ModelConfig } from "@clavia/tardigrade-model/config"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
 import type { ThreadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
@@ -19,7 +19,6 @@ import type { CommitObserver } from "@clavia/tardigrade-host/commit"
 import { type WorkerLoaderSandboxTransport } from "@clavia/tardigrade-worker-loader/sandbox"
 import { type CloudflareThreadStorePolicy } from "./storage"
 import { type CloudflareThreadEnv, type CloudflarePorts } from "./host"
-import { layerCloudflareModelCatalogRepository } from "./catalog"
 import { structuredWorkerConfigOf } from "./config"
 import type { Env } from "./env"
 
@@ -65,157 +64,49 @@ export const EMPTY_MODEL_SCOPE: ModelCatalog = {
   providers: []
 }
 
-export interface DeploymentModelScope {
-  readonly configDigest: string
-  readonly catalog: ModelCatalog
+export type DeploymentModelScope = ModelLockSource
+export const modelScopeFrom = modelLockSourceOf
+
+// modelCatalogForConfig normalizes persisted locks before deriving discovery metadata (test/actor.workers.ts).
+export const modelCatalogForConfig = async (config: ModelConfig, scope: DeploymentModelScope): Promise<ModelListing> => {
+  const lock = await upgradeModelLock(scope, config)
+  const { providers: _providers, ...policy } = lockedModelConfigOf(config, lock)
+  return lockedCatalogForConfig(policy, lock)
 }
 
-// modelScopeFrom validates the catalog snapshot embedded in a deployment model lock.
-export const modelScopeFrom = (value: unknown): DeploymentModelScope => {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("schema" in value) ||
-    value.schema !== 1 ||
-    !("configDigest" in value) ||
-    typeof value.configDigest !== "string" ||
-    !("catalog" in value)
-  ) {
-    throw new Error("models.lock.json is invalid; run `tdg models lock`")
-  }
-  return { configDigest: value.configDigest, catalog: Schema.decodeUnknownSync(ModelCatalogSchema)(value.catalog) }
+// modelStateFrom obtains Worker inputs before shared lock resolution (test/actor.workers.ts).
+export const modelStateFrom = async (env: Env) => {
+  const models = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)?.["models"]
+  const scope = mountedActor?.modelScope
+  if (scope === undefined) return undefined
+  const lock = await upgradeModelLock(scope, models)
+  const model = lockedModelConfigOf(models, lock)
+  const { providers: _providers, ...policy } = model
+  const service = modelLockService(lock, policy)
+  return { model, lock: Layer.succeed(ModelLock, service), catalog: { snapshot: await service.listing() } }
 }
-
-const sha256 = async (value: string): Promise<string> => {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
-  return `sha256:${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`
-}
-
-// modelCatalogForConfig rejects a deployment lock resolved from different model configuration.
-export const modelCatalogForConfig = async (
-  config: ModelConfig,
-  scope: DeploymentModelScope
-): Promise<ModelCatalog> => {
-  if (scope.configDigest !== await sha256(canonicalModelConfig(config))) {
-    throw new Error("models.lock.json does not match model configuration; run `tdg models lock`")
-  }
-  return scope.catalog
-}
-
-// DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS bounds a catalog refresh.
-export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS = 10_000
-
-// DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY refreshes the interpreter catalog once per Thread DO activation.
-export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolicy = "refresh"
 
 export const deployed = (name: string): boolean => mountedActor?.actor.name === name
 export const directory = cloudflareDirectory(deployed)
 
-type CloudflareProvider = ModelProviderConfig & {
-  readonly apiKey: string
+export const modelsFrom = (env: Env, parsed: ModelConfig | undefined): ModelHostConfig => {
+  const model = parsed ?? modelConfigOf({ allow: "*" })
+  return { model, modelCredentials: modelCredentialsFrom(model, env as unknown as Readonly<Record<string, unknown>>) }
 }
 
-interface CloudflareModels extends ModelPolicy {
-  readonly default: ModelRef
-  readonly providers: Readonly<Record<string, CloudflareProvider>>
+export const modelListingFrom = async (env: Env) => {
+  const state = await modelStateFrom(env)
+  const { model, modelCredentials } = modelsFrom(env, state?.model)
+  return { ...state?.catalog, availability: providerAvailabilitiesOf(model, modelCredentials), policy: model }
 }
-
-const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<string>): string => {
-  if (names.length === 0) throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(provider)} must declare env`)
-  const values = workerEnv as unknown as Readonly<Record<string, unknown>>
-  for (const name of names) {
-    const value = values[name]
-    if (typeof value === "string" && value.trim().length > 0) return value.trim()
-  }
-  throw new Error(`provider ${JSON.stringify(provider)} needs a credential; set ${names.join(" or ")} as a Worker secret or variable`)
-}
-
-export const modelConfigFrom = (env: Env): ModelConfig | undefined => {
-  const rawModels = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)?.["models"]
-  return rawModels === undefined ? undefined : modelConfigOf(rawModels)
-}
-
-export const modelsFrom = (env: Env, parsed: ModelConfig | undefined): CloudflareModels | undefined => {
-  if (parsed === undefined) return undefined
-  if (parsed.default === undefined) {
-    throw new Error("TARDIGRADE_CONFIG.models must declare default { provider, model_id }")
-  }
-  const providers: Record<string, CloudflareProvider> = {}
-  for (const [name, provider] of Object.entries(parsed.providers)) {
-    providers[name] = {
-      ...provider,
-      apiKey: credentialFrom(env, name, provider.env)
-    }
-  }
-  return { default: parsed.default, allow: parsed.allow, providers }
-}
-
-export const providerAvailabilityFrom = (env: Env) => {
-  const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
-  const parsed = modelConfigOf(config?.["models"] ?? { allow: "*" })
-  const values = env as unknown as Readonly<Record<string, unknown>>
-  const credentials = Object.fromEntries(
-    Object.values(parsed.providers).flatMap((provider) => provider.env.flatMap((name) => {
-      const value = values[name]
-      return typeof value === "string" && value.trim().length > 0 ? [[name, value]] : []
-    }))
-  )
-  return providerAvailabilitiesOf(parsed, credentials)
-}
-
-export const modelPolicyFrom = (env: Env): ModelPolicy => {
-  const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
-  const parsed = modelConfigOf(config?.["models"] ?? { allow: "*" })
-  return { ...(parsed.default === undefined ? {} : { default: parsed.default }), allow: parsed.allow }
-}
-
-const hostModelConfig = (models: CloudflareModels | undefined) => ({
-  model: models ?? { allow: "*" as const, providers: {} },
-  modelCredentials: Object.fromEntries(Object.values(models?.providers ?? {}).flatMap((provider) =>
-    provider.env.map((name) => [name, provider.apiKey])))
-})
 
 export const modelLayer = (
-  models: CloudflareModels | undefined,
-  scope: ModelCatalog,
+  models: ModelHostConfig,
   observer?: InferenceObserver
-) => configuredModelLayer(hostModelConfig(models), { snapshot: scope }, { ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
+) => configuredModelLayer({ credentials: models.modelCredentials, ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
 
-const positiveInteger = (raw: string | undefined, fallback: number, name: string): number => {
-  if (raw === undefined) return fallback
-  const value = Number(raw)
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`)
-  return value
-}
-
-const modelCatalogLoadPolicyOf = (raw: string | undefined): ModelCatalogLoadPolicy => {
-  const selected = raw ?? DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY
-  if (selected === "cache-first" || selected === "refresh") return selected
-  throw new Error(`TARDIGRADE_MODEL_CATALOG_LOAD_POLICY must be "cache-first" or "refresh", got ${JSON.stringify(raw)}`)
-}
-
-const loadCloudflareCatalog = (env: Env): Promise<ModelCatalogState> => Effect.runPromise(loadModelCatalog({
-  sourceUrl: env.TARDIGRADE_MODEL_CATALOG_URL?.trim() || DEFAULT_MODEL_CATALOG_URL,
-  timeoutMillis: positiveInteger(
-    env.TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS,
-    DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS,
-    "TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS"
-  ),
-  policy: modelCatalogLoadPolicyOf(env.TARDIGRADE_MODEL_CATALOG_LOAD_POLICY)
-}).pipe(
-  Effect.provide(layerCloudflareModelCatalogRepository(env.CATALOG_DB)),
-  Effect.tap((catalog) => Effect.all([
-    catalog.refreshError === undefined ? Effect.void : Effect.logWarning(`model catalog refresh failed: ${catalog.refreshError}`),
-    catalog.cacheError === undefined ? Effect.void : Effect.logWarning(`model catalog cache failed: ${catalog.cacheError}`)
-  ], { discard: true }))
-))
-
-let publicCatalogState: Promise<ModelCatalogState> | undefined
-
-export const publicCatalog = (env: Env): Promise<ModelCatalogState> => {
-  publicCatalogState ??= loadCloudflareCatalog(env)
-  return publicCatalogState
-}
+export const publicCatalog = async (env: Env): Promise<ModelListingState> =>
+  (await modelStateFrom(env))?.catalog ?? {}
 
 export const nonNegativeInteger = (raw: string | undefined, fallback: number, name: string): number => {
   if (raw === undefined) return fallback

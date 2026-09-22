@@ -55,8 +55,10 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
   await mkdir(fixtures, { recursive: true })
   const root = await mkdtemp(join(fixtures, "flow-"))
   let modelCalls = 0
+  let catalogCalls = 0
   let hold = false
   const model = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request): Promise<Response> {
+    if (new URL(request.url).pathname === "/catalog") catalogCalls++
     if (new URL(request.url).pathname === "/catalog" && source !== "registry") return new Response("offline", { status: 503 })
     if (new URL(request.url).pathname === "/catalog") return Response.json({ fixture: {
       id: "fixture", name: "Fixture", api: `${model.url}v1`, env: ["FIXTURE_KEY"], models: {
@@ -154,7 +156,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
     expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("defineWorkerHost")
     await run("lint", "actor.ts", "--json")
     expect(JSON.parse(await run("build", join(cwd, "actor.ts"), "--out", join(cwd, "artifact"), "--json"))).toMatchObject({ manifest: { name: "tardie-agent" } })
-    expect(JSON.parse(await run("models", "lock", "--json"))).toMatchObject({ schema: 1 })
+    const catalogCallsAfterInit = catalogCalls
     await start()
     const cliProcess = Bun.spawn([process.execPath, join(repository, "apps/cli/src/main.ts"), "methods", "--url", url, "--token", "fixture-token", "--json"], { cwd, env, stdout: "pipe", stderr: "pipe" })
     const [cliOutput, cliError, cliCode] = await Promise.all([new Response(cliProcess.stdout).text(), new Response(cliProcess.stderr).text(), cliProcess.exited])
@@ -217,7 +219,9 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
     await start()
     expect(JSON.parse(await remote("call", "message", '{"text":"restart retry"}', "--thread", "main", "--id", "hello"))).toMatchObject({ status: "completed", output: completed.output })
     expect(modelCalls).toBe(calls + 1)
+    expect(catalogCalls).toBe(catalogCallsAfterInit)
     await stop()
+    expect(JSON.parse(await run("models", "lock", "--json"))).toMatchObject({ schema: 2 })
   } finally {
     child?.kill("SIGKILL")
     if (child) await child.exited

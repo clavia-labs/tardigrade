@@ -8,7 +8,6 @@ import { layerConfig, readConfig } from "./config"
 import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
 import { ServerApi } from "./api"
 import { Threads, type ActorThreads } from "./host"
-import { layerModelCatalogUnavailable } from "./catalog"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import { layerGaugeResting } from "./driver-gauge"
 
@@ -42,7 +41,6 @@ const serving = <A, E>(
         BunHttpServer.layerTest,
         layerConfig({ ...readConfig({}), token: options.token }),
         layerGaugeResting,
-        layerModelCatalogUnavailable,
         layerThreadsEmpty
       ])
     ),

@@ -1,6 +1,7 @@
+import { modelCredentialsFrom } from "./config"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import { ModelLock, layerModelLock, modelLockOf, modelLockService } from "./lock"
+import { ModelLock, lockedModelConfigOf, layerModelLock, modelLockOf, modelLockService } from "./lock"
 
 const definitions = {
   schema: 2,
@@ -34,4 +35,17 @@ test("lock lookup is isolated from later changes to its source definitions and p
   Object.assign(source.models[0]!, { contextWindowTokens: 1 })
   Object.assign(policy.default, { model_id: "large" })
   expect(lock.resolve()).toMatchObject({ model: { model_id: "small" }, contextWindowTokens: 1000 })
+})
+
+test("host resolution uses locked connections and only declared credentials", () => {
+  const lock = modelLockOf(definitions)
+  const policy = { default: { provider: "fixture", model_id: "small" }, allow: "*" }
+  const model = lockedModelConfigOf(policy, lock)
+  expect(lockedModelConfigOf({ ...policy, providers: { fixture: { baseUrl: "https://stale.invalid" } } }, lock)).toEqual(model)
+  expect(model.providers.fixture?.baseUrl).toBe("https://fixture.invalid")
+  expect(modelCredentialsFrom(model, { FIXTURE_KEY: " secret ", OTHER_KEY: "unrelated" })).toEqual({ FIXTURE_KEY: "secret" })
+  expect(modelCredentialsFrom(model, { FIXTURE_KEY: " " })).toEqual({})
+  expect(lockedModelConfigOf(undefined, lock).providers).toEqual(model.providers)
+  expect(() => lockedModelConfigOf("invalid", lock)).toThrow("models must be a JSON object")
+  expect(() => lockedModelConfigOf({ ...policy, default: { provider: "fixture", model_id: "absent" } }, lock)).toThrow("absent from models.lock.json")
 })

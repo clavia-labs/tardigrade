@@ -11,9 +11,8 @@ import { type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
 import { layerConfig, readConfig, ServerConfig } from "./config"
-import { Threads, layerThreads, selectedModelFrom } from "./host"
+import { Threads, layerThreads } from "./host"
 import { DriverGauge } from "./driver-gauge"
-import { layerModelCatalogUnavailable, type ModelCatalogStore } from "./catalog"
 
 // Every case here opens a real store on disk and drives a real host, so it competes with every
 // other task in a parallel gate run. Bun's default per-test budget is tuned for a pure function and
@@ -60,7 +59,6 @@ const running = <A, E>(
   options: {
     readonly infer?: Layer.Layer<LanguageModel.LanguageModel> | false
     readonly config?: Layer.Layer<ServerConfig>
-    readonly catalog?: Layer.Layer<ModelCatalogStore>
   } = {}
 ): Promise<A> =>
   Effect.gen(function*() {
@@ -70,7 +68,7 @@ const running = <A, E>(
     Effect.provide(Layer.provide(layerThreads({
       ...(options.infer === false ? {} : { infer: options.infer ?? layerScripted }),
       providers: [{ name: "test", send: () => Effect.void }]
-    }), [options.config ?? config, options.catalog ?? layerModelCatalogUnavailable])),
+    }), [options.config ?? config])),
     Effect.scoped,
     Effect.runPromise
   ) as Promise<A>
@@ -78,84 +76,6 @@ const running = <A, E>(
 // One brief, as the event it is. The platform requires only `type`; `id` and `text` are the
 // assembly's fields, and `id` is the key its own `keyOf` dedups on (packages/core/src/communication/message.ts).
 const brief = (id: string, text = "hello") => ({ type: "MessageReceived", id, text })
-
-describe("model selection", () => {
-  const model = {
-    default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" },
-    allow: "*" as const,
-    providers: {
-      openrouter: {
-        baseUrl: "https://openrouter.ai/api/v1",
-        protocol: "openai-chat-completions" as const,
-        env: ["OPENROUTER_API_KEY"]
-      }
-    }
-  }
-  const credentials = { OPENROUTER_API_KEY: "secret" }
-  const catalog = {
-    snapshot: {
-      source: "models.dev" as const,
-      revision: "catalog-1",
-      refreshedAt: 1,
-      status: "fresh" as const,
-      providers: [{
-        id: "openrouter",
-        name: "OpenRouter",
-        env: [],
-        models: [
-          { id: "anthropic/claude-sonnet-4-6", metadata: { contextWindowTokens: 200_000 } },
-          {
-            id: "openai/gpt-5.2",
-            metadata: {
-              contextWindowTokens: 400_000,
-              maxOutputTokens: 128_000,
-              pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 }
-            }
-          }
-        ]
-      }]
-    }
-  }
-
-  test("a connection can select any model in its catalog", () => {
-    expect(selectedModelFrom(model, credentials, catalog, {
-      provider: "openrouter",
-      model_id: "openai/gpt-5.2"
-    })).toMatchObject({
-      provider: "openrouter",
-      model_id: "openai/gpt-5.2",
-      contextWindowTokens: 400_000,
-      maxOutputTokens: 128_000,
-      pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
-      catalogRevision: "catalog-1"
-    })
-  })
-
-  test("a connection uses the first available named credential", () => {
-    expect(selectedModelFrom({
-      ...model,
-      providers: {
-        openrouter: { ...model.providers.openrouter!, env: ["PRIMARY_KEY", "OPENROUTER_API_KEY"] }
-      }
-    }, credentials, catalog)?.apiKey).toBe("secret")
-  })
-
-  test("a connection carries its configured region", () => {
-    expect(selectedModelFrom({
-      ...model,
-      providers: {
-        openrouter: { ...model.providers.openrouter!, region: "ap-southeast-1" }
-      }
-    }, credentials, catalog)?.region).toBe("ap-southeast-1")
-  })
-
-  test("an unknown model names the catalog revision", () => {
-    expect(() => selectedModelFrom(model, credentials, catalog, {
-      provider: "openrouter",
-      model_id: "missing"
-    })).toThrow("catalog revision \"catalog-1\"")
-  })
-})
 
 describe("the threads service", () => {
   test("retains the built-in actor methods", async () => {

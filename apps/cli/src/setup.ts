@@ -14,7 +14,7 @@ import {
   type ModelProtocol
 } from "@clavia/tardigrade-model/providers/directory"
 import { loadModelCatalog } from "@clavia/tardigrade-server/catalog"
-import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
+import { layerFileModelRegistry } from "@clavia/tardigrade-server/catalog-repository"
 import {
   TARDIGRADE_CONFIG_VAR,
   type Env,
@@ -241,7 +241,7 @@ export const modelsDevAt = async (
   const url = options.url ?? DEFAULT_MODEL_CATALOG_URL
   const selectionPolicy = options.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY
   if (options.cachePath !== undefined) {
-    const repository = layerFileModelCatalogRepository(options.cachePath).pipe(Layer.provide(BunFileSystem.layer))
+    const repository = layerFileModelRegistry(options.cachePath).pipe(Layer.provide(BunFileSystem.layer))
     const state = await Effect.runPromise(loadModelCatalog({
       sourceUrl: url,
       timeoutMillis,

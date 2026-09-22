@@ -6,7 +6,6 @@ import { type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { layerConfig, readConfig } from "@clavia/tardigrade-server/config"
-import { layerModelCatalogUnavailable } from "@clavia/tardigrade-server/catalog"
 import { layerThreads } from "@clavia/tardigrade-server/host"
 import { serve } from "@clavia/tardigrade-server/http"
 
@@ -89,12 +88,11 @@ const layerScripted: Layer.Layer<LanguageModel.LanguageModel> = testInferenceLay
 // loop wants: the forest on screen is the forest this session made.
 const config = layerConfig(readConfig({ TARDIGRADE_DB: ":memory:", PORT: String(FIXTURE_PORT) }))
 
-const threads = Layer.provide(layerThreads({ infer: layerScripted }), [config, layerModelCatalogUnavailable])
+const threads = Layer.provide(layerThreads({ infer: layerScripted }), [config])
 
 const app = Layer.provideMerge(serve({ disableLogger: true }), [
   BunHttpServer.layer({ port: FIXTURE_PORT }),
   config,
-  layerModelCatalogUnavailable,
   threads
 ])
 

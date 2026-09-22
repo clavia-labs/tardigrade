@@ -5,13 +5,7 @@ import { join } from "node:path"
 import { Effect } from "effect"
 import { BunFileSystem } from "@effect/platform-bun"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
-import {
-  DEFAULT_ACTORS,
-  DEFAULT_ACTOR_DATA,
-  DEFAULT_DB,
-  DEFAULT_MAX_CONCURRENT_THREADS,
-  DEFAULT_PORT
-} from "@clavia/tardigrade-server/config"
+import { readConfig } from "@clavia/tardigrade-server/config"
 
 import {
   configPathIn,
@@ -21,8 +15,7 @@ import {
   readFileConfig,
   readProjectConfig,
   resolve,
-  resolveRemote,
-  resolveServer
+  resolveRemote
 } from "./config"
 
 // Configuration resolves in one place, and the order is the whole of what these assert: a flag
@@ -51,56 +44,6 @@ describe("resolveRemote", () => {
       baseUrl: DEFAULT_BASE_URL,
       token: undefined
     })
-  })
-})
-
-describe("resolveServer", () => {
-  test("an empty environment is the server's own defaults", () => {
-    const config = resolveServer({}, {})
-    expect(config.port).toBe(DEFAULT_PORT)
-    expect(config.db).toBe(DEFAULT_DB)
-    expect(config.actors).toBe(DEFAULT_ACTORS)
-    expect(config.actorData).toBe(DEFAULT_ACTOR_DATA)
-    expect(config.maxConcurrentThreads).toBe(DEFAULT_MAX_CONCURRENT_THREADS)
-    expect(config.token).toBeUndefined()
-  })
-
-  test("the environment is the server's process surface", () => {
-    const config = resolveServer({}, {
-      PORT: "8080",
-      TARDIGRADE_DB: "runs.sqlite",
-      TARDIGRADE_MAX_CONCURRENT_THREADS: "6"
-    })
-    expect(config.port).toBe(8080)
-    expect(config.db).toBe("runs.sqlite")
-    expect(config.maxConcurrentThreads).toBe(6)
-    expect(config.model).toEqual({ allow: "*", providers: {} })
-  })
-
-  test("a flag beats the environment", () => {
-    const config = resolveServer(
-      { port: 9000, db: "other.sqlite", maxConcurrentThreads: 3 },
-      { PORT: "8080", TARDIGRADE_DB: "runs.sqlite", TARDIGRADE_MAX_CONCURRENT_THREADS: "2" }
-    )
-    expect(config.port).toBe(9000)
-    expect(config.db).toBe("other.sqlite")
-    expect(config.maxConcurrentThreads).toBe(3)
-  })
-
-  // `tdg dev` is the local command and binds loopback (dev.ts, DEV_HOST), so the token the server
-  // would gate on is dropped rather than carried: a server meant to be reachable by anyone else is
-  // the server run directly.
-  test("the token is dropped, so the local server is ungated", () => {
-    expect(resolveServer({}, { TARDIGRADE_TOKEN: "secret" }).token).toBeUndefined()
-  })
-
-  // The reader is the server's own, so a value it refuses is a value this command refuses.
-  test("a PORT that is not a port refuses to resolve", () => {
-    expect(() => resolveServer({}, { PORT: "http" })).toThrow()
-  })
-
-  test("a concurrency flag that cannot schedule a thread refuses to resolve", () => {
-    expect(() => resolveServer({ maxConcurrentThreads: 0 }, {})).toThrow("positive integer")
   })
 })
 
@@ -173,7 +116,7 @@ describe("the config file", () => {
         }
       }
     }`)
-    const resolved = resolveServer({}, { OPENAI_API_KEY: "environment-key" }, project)
+    const resolved = readConfig({ OPENAI_API_KEY: "environment-key" }, project)
     expect(resolved.model).toEqual({
       default: { provider: "openai", model_id: "file-model" },
       allow: "*",

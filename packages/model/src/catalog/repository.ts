@@ -1,19 +1,19 @@
-import { Context, Data, Effect, Layer } from "effect"
+import { Data, Effect } from "effect"
 import type { ModelCatalog } from "@clavia/tardigrade-model/catalog/schema"
 import { modelAllowedBy, type ModelPolicy } from "../access"
 
-export class ModelCatalogRepositoryError extends Data.TaggedError("ModelCatalogRepositoryError")<{
+export class ModelRegistryError extends Data.TaggedError("ModelRegistryError")<{
   readonly message: string
   readonly cause?: unknown
 }> {}
 
-export interface ModelCatalogRepositoryService {
-  readonly read: (sourceUrl: string) => Effect.Effect<ModelCatalog | undefined, ModelCatalogRepositoryError>
+export interface ModelRegistryCache {
+  readonly read: (sourceUrl: string) => Effect.Effect<ModelCatalog | undefined, ModelRegistryError>
   readonly readScope: (
     sourceUrl: string,
     scope: ModelCatalogScope
-  ) => Effect.Effect<ModelCatalog | undefined, ModelCatalogRepositoryError>
-  readonly write: (sourceUrl: string, snapshot: ModelCatalog) => Effect.Effect<void, ModelCatalogRepositoryError>
+  ) => Effect.Effect<ModelCatalog | undefined, ModelRegistryError>
+  readonly write: (sourceUrl: string, snapshot: ModelCatalog) => Effect.Effect<void, ModelRegistryError>
 }
 
 export interface ModelCatalogScope {
@@ -34,30 +34,4 @@ export const modelCatalogScopeOf = (snapshot: ModelCatalog, scope: ModelCatalogS
       return models.length === 0 ? [] : [{ ...provider, models }]
     })
   }
-}
-
-// ModelCatalogRepository persists validated snapshots across server and CLI process lifetimes.
-export class ModelCatalogRepository extends Context.Service<
-  ModelCatalogRepository,
-  ModelCatalogRepositoryService
->()("tardigrade/server/ModelCatalogRepository") {}
-
-// layerMemoryModelCatalogRepository keeps source-keyed snapshots for tests and embeddings.
-export const layerMemoryModelCatalogRepository = (
-  initial: ReadonlyArray<readonly [string, ModelCatalog]> = []
-): Layer.Layer<ModelCatalogRepository> => {
-  const snapshots = new Map(initial)
-  return Layer.succeed(ModelCatalogRepository)({
-    read: (sourceUrl) => Effect.succeed(
-      snapshots.get(sourceUrl) === undefined ? undefined : { ...snapshots.get(sourceUrl)!, status: "cached" }
-    ),
-    readScope: (sourceUrl, scope) => Effect.succeed(
-      snapshots.get(sourceUrl) === undefined
-        ? undefined
-        : modelCatalogScopeOf({ ...snapshots.get(sourceUrl)!, status: "cached" }, scope)
-    ),
-    write: (sourceUrl, snapshot) => Effect.sync(() => {
-      snapshots.set(sourceUrl, snapshot)
-    })
-  })
 }

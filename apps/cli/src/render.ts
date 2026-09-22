@@ -64,12 +64,11 @@ export const threadsTable = (threads: ReadonlyArray<ThreadSummary>): string =>
 
 const catalogFooter = (page: {
   readonly revision: string
-  readonly status: "fresh" | "cached"
   readonly total: number
   readonly limit: number
   readonly next_cursor?: string
 }): string => [
-  `${page.total} total, limit ${page.limit}, ${page.status}, revision ${page.revision}`,
+  `${page.total} total, limit ${page.limit}, revision ${page.revision}`,
   ...(page.next_cursor === undefined ? [] : [`next cursor ${page.next_cursor}`])
 ].join("\n")
 

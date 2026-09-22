@@ -1,20 +1,17 @@
-import { lockedModelState } from "./lock"
-import type { ModelPolicy } from "./access"
 import type { ModelCredentials } from "./config"
 import { failedProviderLayer, type ProviderLayer } from "./providers/layer"
 import { protocolOptionsOf } from "./providers/options"
 import { MODEL_PROTOCOLS, modelProviderModuleOf } from "./providers/directory"
 import type { ModelConfig as BedrockModelConfig } from "@tardie/ai-bedrock/BedrockLanguageModel"
 import { requestPolicyOf } from "./stream/request"
-import { Effect, Layer, Redacted } from "effect"
+import { Layer, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { type InferenceObserver } from "./stream/observer"
 import type { OpenRouterLanguageModel } from "@tardie/ai-openrouter"
 import type { OpenAiLanguageModel } from "@tardie/ai-openai"
 import type { OpenAiLanguageModel as CompatLanguageModel } from "@tardie/ai-openai-compat"
 import type { AnthropicLanguageModel } from "@tardie/ai-anthropic"
-import { modelLayerWith, type ModelHostConfig, type SelectedModel } from "./selection"
-import type { ModelCatalogState } from "./catalog/index"
+import { modelLayerWith, type SelectedModel } from "./selection"
 import type { ReportedCostReader } from "./usage"
 import type { OutputCapability } from "./output"
 import type { RequestOptions } from "./stream/request"
@@ -39,10 +36,14 @@ export interface ModelHostOptions extends ModelIntegrationOptions {
   readonly observer?: InferenceObserver
 }
 
-// modelLayer binds configured models through Effect while sharing host authority and catalog selection (host.test.ts).
-export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, options: ModelHostOptions = {}) => modelLayerWith(config, catalog, (selected) => {
+export interface ModelBindingOptions extends ModelHostOptions {
+  readonly credentials: ModelCredentials
+}
+
+// modelLayer derives provider execution from the supplied ModelLock (selection.test.ts).
+export const modelLayer = ({ credentials, ...options }: ModelBindingOptions) => modelLayerWith(credentials, (selected) => {
   try {
-    const configured = protocolOptionsOf(selected.protocol, config.model.providers[selected.provider]?.models?.[selected.model_id]?.options)
+    const configured = protocolOptionsOf(selected.protocol, selected.options)
     const overrides = options.configure?.(selected) ?? {}
     const openrouter = modelProviderModuleOf(selected.provider, selected.protocol) === "openrouter"
     const settings: ModelSettings = {
@@ -65,7 +66,7 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
       ...(options.observer === undefined ? {} : { observer: options.observer })
     }
     if (selected.protocol === "bedrock-converse") {
-      const region = selected.region ?? new URL(selected.baseUrl).pathname.split("/").filter(Boolean).at(-1)
+      const region = selected.region
       if (region === undefined) throw new Error("a Bedrock connection must declare its AWS region")
       const policy = requestPolicyOf(common)
       return inferenceLayer({ ...common, provider: "bedrock", gateway: { apiKey: selected.apiKey, bounds: policy.timeout }, model: { model: selected.model_id, ...(settings.bedrock === undefined ? {} : { config: settings.bedrock }) }, client: {
@@ -87,9 +88,4 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
   }
 }, MODEL_PROTOCOLS)
 
-export { MISSING_MODEL, modelIsConfigured, selectedModelFrom, modelLayerWith, type ModelHostConfig, type SelectedModel } from "./selection"
-
-// modelLayerFromLock binds provider execution from host-supplied definitions (lock.test.ts).
-export const modelLayerFromLock = (policy: ModelPolicy, credentials: ModelCredentials, options: ModelHostOptions = {}) =>
-  Layer.unwrap(Effect.map(lockedModelState(policy), ({ model, catalog }) =>
-    modelLayer({ model, modelCredentials: credentials }, catalog, options)))
+export { modelLayerWith, type SelectedModel } from "./selection"

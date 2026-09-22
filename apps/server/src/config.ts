@@ -1,4 +1,4 @@
-import { modelConfigOf, type ModelConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
+import { modelCredentialsFrom, modelConfigOf, type ModelConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
 export { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
 import { Context, Layer } from "effect"
 import {
@@ -126,33 +126,26 @@ const legacyModelError = (env: Env): Error | undefined => {
   )
 }
 
-// projectConfigOf reads runnable Tardigrade settings from a Wrangler manifest.
-export const projectConfigOf = (value: unknown): ProjectConfig => {
+// projectModelsOf reads model options from the host manifest (config.test.ts).
+export const projectModelsOf = (value: unknown): unknown => {
   const source = recordOf(value)
   if (source === undefined) throw new Error("project configuration must be a JSON object")
-  if (source["models"] !== undefined) {
-    throw new Error(`models must be nested under vars.${TARDIGRADE_CONFIG_VAR}`)
-  }
+  if (source["models"] !== undefined) throw new Error(`models must be nested under vars.${TARDIGRADE_CONFIG_VAR}`)
   const varsValue = source["vars"]
-  if (varsValue === undefined) return { models: modelConfigOf(DEFAULT_MODEL_POLICY) }
+  if (varsValue === undefined) return DEFAULT_MODEL_POLICY
   const vars = recordOf(varsValue)
   if (vars === undefined) throw new Error("vars must be a JSON object")
   const configValue = vars[TARDIGRADE_CONFIG_VAR]
-  if (configValue === undefined) return { models: modelConfigOf(DEFAULT_MODEL_POLICY) }
+  if (configValue === undefined) return DEFAULT_MODEL_POLICY
   const config = recordOf(configValue)
   if (config === undefined) throw new Error(`${TARDIGRADE_CONFIG_VAR} must be a JSON object`)
-  return { models: modelConfigOf(config["models"] ?? DEFAULT_MODEL_POLICY) }
+  return config["models"] ?? DEFAULT_MODEL_POLICY
 }
 
-const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {
-  const credentials: Record<string, string> = {}
-  for (const provider of Object.values(model.providers)) {
-    for (const name of provider.env) {
-      const value = text(env, name)
-      if (value !== undefined) credentials[name] = value
-    }
-  }
-  return credentials
+// projectConfigOf resolves runnable settings from a Wrangler manifest (config.test.ts).
+export const projectConfigOf = (value: unknown): ProjectConfig => {
+  const models = projectModelsOf(value)
+  return { models: modelConfigOf(models) }
 }
 
 const modelFrom = (env: Env, project: ProjectConfig): ModelConfig => {
