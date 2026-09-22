@@ -63,6 +63,16 @@ export const actionOf = (parts: ReadonlyArray<Response.AnyPart>, served: Pick<Ac
       : { kind: "complete", output: text, ...served } satisfies Action
 })
 
+// encodeEvidence drops optional provider diagnostics when they cannot be encoded.
+const encodeEvidence = <A, I>(schema: Schema.Codec<A, I>, part: A, fallback: () => A): I => {
+  const encode = (value: A): I => JSON.parse(Schema.encodeSync(Schema.fromJsonString(schema))(value)) as I
+  try {
+    return encode(part)
+  } catch {
+    return encode(fallback())
+  }
+}
+
 // responseEvidence extracts model prose, readable reasoning, and response metadata for Action.
 export const responseEvidence = (parts: ReadonlyArray<Response.AnyPart>) => {
   let text = ""
@@ -74,12 +84,19 @@ export const responseEvidence = (parts: ReadonlyArray<Response.AnyPart>) => {
     if (part.type === "text-delta") text += part.delta
     if (part.type === "reasoning-delta") reasoning += part.delta
     if (part.type === "response-metadata") {
-      const encoded: Response.ResponseMetadataPartEncoded = JSON.parse(Schema.encodeSync(Schema.fromJsonString(Response.ResponseMetadataPart))(part))
+      const encoded: Response.ResponseMetadataPartEncoded = encodeEvidence(Response.ResponseMetadataPart, part, () => Response.makePart("response-metadata", {
+        ...(part.id === undefined ? {} : { id: part.id }),
+        ...(part.modelId === undefined ? {} : { modelId: part.modelId }),
+        ...(part.timestamp === undefined ? {} : { timestamp: part.timestamp })
+      }))
       const { type: _type, ...metadata } = encoded
       response = { ...response, ...metadata, metadata: { ...response?.metadata, ...metadata.metadata } }
     }
     if (part.type === "finish") {
-      const encoded: Response.FinishPartEncoded = JSON.parse(Schema.encodeSync(Schema.fromJsonString(Response.FinishPart))(part))
+      const encoded: Response.FinishPartEncoded = encodeEvidence(Response.FinishPart, part, () => Response.makePart("finish", {
+        reason: part.reason,
+        usage: part.usage
+      }))
       const { type: _type, usage: tokens, ...evidence } = encoded
       usage = tokens
       finish = evidence
