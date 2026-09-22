@@ -87,10 +87,13 @@ test("locks and reloads custom metadata without a registry", async () => {
       models: { local: { metadata: { contextWindowTokens: 32768, toolCall: true }, options: { temperature: 0.2 } } }
     } }
   }
+  let requests = 0
   const lock = await resolveModelLock(custom, {
     sourceUrl: "https://example.com/catalog", cachePath: join(root, "cache.json"), timeoutMillis: 1000,
-    fetch: (async () => new Response("offline", { status: 503 })) as unknown as typeof fetch
+    fetch: (async () => { requests++; throw new Error("registry must not be contacted") }) as unknown as typeof fetch
   })
+  expect(requests).toBe(0)
+  expect(await resolveModelLock(custom)).toEqual(lock)
   expect(lock).toMatchObject({ schema: 2, models: [{ provider: "localhost", model_id: "local", contextWindowTokens: 32768, toolCall: true, options: { temperature: 0.2 } }] })
   expect(lock.models[0]).not.toHaveProperty("source")
   await writeModelLock(root, lock)

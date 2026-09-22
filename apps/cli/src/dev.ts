@@ -1,13 +1,12 @@
 import { ModelLock, modelLockService, modelCatalogForConfig, type ModelLockData } from "@clavia/tardigrade-model/lock"
-import { modelLayerFromLock } from "@clavia/tardigrade-model/host"
+import { modelLayer } from "@clavia/tardigrade-model/host"
 import { Console, Context, Duration, Effect, Layer } from "effect"
 import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
-import { BunFileSystem, BunHttpServer } from "@effect/platform-bun"
+import { BunHttpServer } from "@effect/platform-bun"
 import type { Actor } from "tardie"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
-import { layerModelCatalog, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
-import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
+import { layerModelCatalogUnavailable, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
 import {
   layerActorThreads,
   layerThreads,
@@ -131,7 +130,7 @@ interface DevBaseOptions {
   readonly assets?: string | undefined
   // The model seam, which a test binds to a scripted mind (apps/server/src/host.ts, ThreadsOptions).
   readonly threads?: ThreadsOptions | undefined
-  // catalog replaces the startup-refreshed public model catalog for an embedding or test.
+  // catalog supplies discovery metadata for an embedding or test.
   readonly catalog?: Layer.Layer<ModelCatalogStore> | undefined
   // actorRefreshMillis is the visible debounce applied to local actor-root changes.
   readonly actorRefreshMillis?: number | undefined
@@ -177,17 +176,13 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
   }
   const root = resolveAssets(options.assets)
   const config = layerConfig(options.config)
-  const catalogRepository = layerFileModelCatalogRepository(options.config.catalog.cachePath).pipe(
-    Layer.provide(BunFileSystem.layer)
-  )
   const { providers: _providers, ...policy } = options.config.model
   const catalog = options.catalog ?? (options.modelLock === undefined
-    ? Layer.provide(layerModelCatalog(), [config, catalogRepository])
+    ? layerModelCatalogUnavailable
     : Layer.effect(ModelCatalogStore, Effect.promise(async () => ({ snapshot: await modelCatalogForConfig(policy, options.modelLock!) }))))
   const inference = makeInferenceStream(options.threads?.inferenceObserver)
   const threadOptions = { ...options.threads, ...(options.modelLock === undefined ? {} : {
-    infer: options.threads?.infer ?? modelLayerFromLock(policy, options.config.modelCredentials, { observer: inference.observer }).pipe(
-      Layer.orDie,
+    infer: options.threads?.infer ?? modelLayer({ credentials: options.config.modelCredentials, observer: inference.observer }).pipe(
       Layer.provideMerge(Layer.succeed(ModelLock, modelLockService(options.modelLock, policy)))
     )
   }) }

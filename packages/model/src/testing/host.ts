@@ -1,6 +1,6 @@
 import { Layer } from "effect"
 import { ModelLock, modelLockOf, modelLockService } from "../lock"
-import { modelLayer } from "../host"
+import { modelLayer, type ModelHostOptions } from "../host"
 import type { ModelHostConfig } from "../selection"
 import type { ModelCatalogState } from "../catalog"
 
@@ -20,5 +20,5 @@ export const fixtureModelLock = (config: ModelHostConfig, catalog: ModelCatalogS
 }
 
 // fixtureModelLayer binds provider fixtures to their explicitly supplied model data.
-export const fixtureModelLayer = (...[config, catalog, options]: Parameters<typeof modelLayer>) =>
-  modelLayer(config, catalog, options).pipe(Layer.provideMerge(fixtureModelLock(config, catalog)))
+export const fixtureModelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, options: ModelHostOptions = {}) =>
+  modelLayer({ credentials: config.modelCredentials, ...options }).pipe(Layer.provideMerge(fixtureModelLock(config, catalog)))

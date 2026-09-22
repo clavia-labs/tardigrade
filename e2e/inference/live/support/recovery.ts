@@ -98,7 +98,7 @@ const runConversation = async (targets: ReadonlyArray<ResolvedLiveTarget>, lifec
       modelCredentials: Object.fromEntries(targets.map((target, index) => [`LIVE_${index}`, target.apiKey]))
     }
     const catalog = { snapshot: { source: "models.dev" as const, revision: "live", refreshedAt: Date.now(), status: "fresh" as const, providers: targets.map((target) => ({ id: target.id, name: target.id, env: [], models: [{ id: target.model, metadata: { contextWindowTokens: target.contextWindowTokens, maxOutputTokens } }] })) } }
-    const layers = () => modelLayerWith(config, catalog, (selected) => {
+    const layers = () => modelLayerWith(config.modelCredentials, (selected) => {
       const connection = connected.find(({ target }) => target.id === selected.provider)!
       return bindingFor({ ...connection.target, endpoint: connection.endpoint }, { providerId: selected.provider, ...(connection.bedrockSend === undefined ? {} : { bedrockSend: connection.bedrockSend }) })
     }).pipe(Layer.provideMerge(fixtureModelLock(config, catalog)))

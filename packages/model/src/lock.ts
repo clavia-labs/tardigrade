@@ -201,12 +201,3 @@ const modelStateOf = async (policy: ModelPolicy, lock: ModelLockData) => {
 // modelCatalogForConfig provides public discovery metadata derived from the lock (lock.test.ts).
 export const modelCatalogForConfig = async (policy: ModelPolicy, lock: ModelLockData): Promise<ModelCatalog> =>
   (await modelStateOf(policy, lock)).catalog.snapshot
-
-// lockedModelState resolves runtime configuration and discovery from the ModelLock service (lock.test.ts).
-export const lockedModelState = (policy: ModelPolicy) => Effect.gen(function*() {
-  const lock = yield* ModelLock
-  return yield* Effect.tryPromise({
-    try: () => modelStateOf(policy, lock.definitions),
-    catch: modelLockErrorOf
-  })
-})

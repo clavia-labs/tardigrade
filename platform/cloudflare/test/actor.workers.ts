@@ -278,7 +278,7 @@ describe("cloudflare actor", () => {
       const settings = await Effect.runPromise(Effect.gen(function* () {
         const selection = yield* ModelSelection
         return yield* selection.settings!()
-      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, config), catalog).pipe(Layer.provideMerge(suppliedLock)))))
+      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, config)).pipe(Layer.provideMerge(suppliedLock)))))
       expect(configured).toBe(true)
       expect(settings.policy).toMatchObject({ maxOutputTokens: 1234, timeout: { idleMs: 12345 } })
     } finally {
@@ -286,7 +286,7 @@ describe("cloudflare actor", () => {
       else mountedActor!.model = previousModel
     }
     const binding = await Effect.runPromise(ModelLock.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, config), catalog).pipe(Layer.provideMerge(suppliedLock))
+      modelLayer(modelsFrom(env as Env, config)).pipe(Layer.provideMerge(suppliedLock))
     )))
     expect(binding.resolve()).toMatchObject({
       model: config.default,
@@ -296,7 +296,7 @@ describe("cloudflare actor", () => {
     expect(binding.definitions.models).toContainEqual(expect.objectContaining({ ...config.default, maxOutputTokens: 4000 }))
     expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from models.lock.json")
     const restricted = await Effect.runPromise(ModelLock.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), catalog).pipe(Layer.provideMerge(Layer.succeed(ModelLock, modelLockService(definitions, { ...config, allow: [] }))))
+      modelLayer(modelsFrom(env as Env, { ...config, allow: [] })).pipe(Layer.provideMerge(Layer.succeed(ModelLock, modelLockService(definitions, { ...config, allow: [] }))))
     )))
     expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
   })
@@ -626,7 +626,7 @@ describe("cloudflare actor", () => {
     expect(await response.json()).toEqual({ actor: "tenant%2Fwest", definition: "echo" })
   })
 
-  test("actor storage persists model catalog snapshots", async () => {
+  test("D1 authoring snapshots do not supply runtime model discovery", async () => {
     const snapshot: ModelCatalog = {
       source: "models.dev",
       revision: "workers-catalog-test",
@@ -652,11 +652,8 @@ describe("cloudflare actor", () => {
       await runtime.dispose()
     }
     const providers = await SELF.fetch("http://test/v1/providers?search=open&limit=1")
-    expect(providers.status).toBe(200)
-    expect(await providers.json()).toEqual(expect.objectContaining({
-      total: 2,
-      items: [expect.objectContaining({ id: "openai" })]
-    }))
+    expect(await publicCatalog(env as Env)).toEqual({})
+    expect(providers.status).toBe(503)
   })
 
   test("D1 persists a catalog larger than one SQLite value", async () => {

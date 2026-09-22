@@ -7,7 +7,7 @@ import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catal
 import { modelCatalogScopeOf } from "@clavia/tardigrade-server/catalog-store"
 import type { ModelConfig } from "@clavia/tardigrade-server/config"
 
-import { MODEL_LOCK_FILE, MODEL_LOCK_SCHEMA, modelLockOf, parseModelLock, type ModelLockData } from "@clavia/tardigrade-model/lock"
+import { MODEL_LOCK_FILE, MODEL_LOCK_SCHEMA, emptyModelLock, modelLockOf, parseModelLock, type ModelLockData } from "@clavia/tardigrade-model/lock"
 export { MODEL_LOCK_FILE, emptyModelLock } from "@clavia/tardigrade-model/lock"
 export type ModelLock = ModelLockData
 
@@ -21,17 +21,30 @@ export interface ResolveModelLockOptions {
 // resolveModelLock resolves deployment model policy against one validated public catalog snapshot.
 export const resolveModelLock = async (
   config: ModelConfig,
-  options: ResolveModelLockOptions
+  options?: ResolveModelLockOptions
 ): Promise<ModelLock> => {
-  const repository = layerFileModelCatalogRepository(options.cachePath).pipe(Layer.provide(BunFileSystem.layer))
-  const state = await Effect.runPromise(loadModelCatalog({
-    sourceUrl: options.sourceUrl,
-    timeoutMillis: options.timeoutMillis,
-    policy: "refresh",
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch })
-  }).pipe(Effect.provide(repository)))
+  if (Object.keys(config.providers).length === 0) return emptyModelLock()
+  const required = [
+    ...(config.default === undefined ? [] : [config.default]),
+    ...(config.fallback ?? []),
+    ...(config.allow === "*" ? [] : config.allow.flatMap(entry => entry.model_ids === "*" ? [] : entry.model_ids.map(model_id => ({ provider: entry.provider, model_id }))))
+  ]
+  const explicit = required.every(model => config.providers[model.provider]?.models?.[model.model_id]?.metadata?.contextWindowTokens !== undefined) && Object.values(config.providers).every(provider => {
+    const models = Object.values(provider.models ?? {})
+    return models.length > 0 && models.every(model => model.metadata?.contextWindowTokens !== undefined)
+  })
+  const state = explicit ? {} : await (async () => {
+    if (options === undefined) throw new Error("model metadata is incomplete; supply explicit metadata or registry options")
+    const repository = layerFileModelCatalogRepository(options.cachePath).pipe(Layer.provide(BunFileSystem.layer))
+    return Effect.runPromise(loadModelCatalog({
+      sourceUrl: options.sourceUrl,
+      timeoutMillis: options.timeoutMillis,
+      policy: "refresh",
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch })
+    }).pipe(Effect.provide(repository)))
+  })()
   const snapshot = await modelCatalogWithConfiguredModels(config, state.snapshot)
-  if (snapshot === undefined) throw new Error(state.refreshError ?? state.cacheError ?? "model catalog is unavailable")
+  if (snapshot === undefined) throw new Error(state.refreshError ?? state.cacheError ?? "model metadata is unavailable")
   const catalog = modelCatalogScopeOf(snapshot, {
     providers: Object.keys(config.providers),
     policy: config
@@ -54,7 +67,7 @@ export const resolveModelLock = async (
       return {
         ...model.metadata, provider: provider.id, model_id: model.id,
         ...(configured?.options === undefined ? {} : { options: configured.options }),
-        ...(configured?.metadata === undefined ? { source: options.sourceUrl } : {})
+        ...(configured?.metadata === undefined && options !== undefined ? { source: options.sourceUrl } : {})
       }
     }))
   })

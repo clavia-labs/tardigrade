@@ -2,15 +2,14 @@ import { modelLockSourceOf, upgradeModelLock, type ModelLockSource } from "@clav
 import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
 import { lockedModelConfigOf, modelCatalogForConfig as lockedCatalogForConfig, ModelLock, modelLockService } from "@clavia/tardigrade-model/lock"
 import { cloudflareDirectory } from "./transport/directory"
-import { Effect, Layer } from "effect"
+import { Layer } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import { type InferenceObserver, type ModelPolicy } from "@clavia/tardigrade-agent"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import { type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { modelLayer as configuredModelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
-import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/catalog/metadata"
-import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
+import { type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
 import { modelCredentialsFrom, modelConfigOf, type ModelConfig } from "@clavia/tardigrade-model/config"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
@@ -21,7 +20,6 @@ import type { CommitObserver } from "@clavia/tardigrade-host/commit"
 import { type WorkerLoaderSandboxTransport } from "@clavia/tardigrade-worker-loader/sandbox"
 import { type CloudflareThreadStorePolicy } from "./storage"
 import { type CloudflareThreadEnv, type CloudflarePorts } from "./host"
-import { layerCloudflareModelCatalogRepository } from "./catalog"
 import { structuredWorkerConfigOf } from "./config"
 import type { Env } from "./env"
 
@@ -88,12 +86,6 @@ export const modelStateFrom = async (env: Env) => {
   return { model, lock: Layer.succeed(ModelLock, modelLockService(lock, policy)), catalog: { snapshot: await lockedCatalogForConfig(policy, lock) } }
 }
 
-// DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS bounds a catalog refresh.
-export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS = 10_000
-
-// DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY refreshes the interpreter catalog once per Thread DO activation.
-export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolicy = "refresh"
-
 export const deployed = (name: string): boolean => mountedActor?.actor.name === name
 export const directory = cloudflareDirectory(deployed)
 
@@ -119,47 +111,11 @@ export const modelPolicyFrom = async (env: Env): Promise<ModelPolicy> => {
 
 export const modelLayer = (
   models: ModelHostConfig,
-  scope: ModelCatalog,
   observer?: InferenceObserver
-) => configuredModelLayer(models, { snapshot: scope }, { ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
+) => configuredModelLayer({ credentials: models.modelCredentials, ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
 
-const positiveInteger = (raw: string | undefined, fallback: number, name: string): number => {
-  if (raw === undefined) return fallback
-  const value = Number(raw)
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`)
-  return value
-}
-
-const modelCatalogLoadPolicyOf = (raw: string | undefined): ModelCatalogLoadPolicy => {
-  const selected = raw ?? DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY
-  if (selected === "cache-first" || selected === "refresh") return selected
-  throw new Error(`TARDIGRADE_MODEL_CATALOG_LOAD_POLICY must be "cache-first" or "refresh", got ${JSON.stringify(raw)}`)
-}
-
-const loadCloudflareCatalog = (env: Env): Promise<ModelCatalogState> => Effect.runPromise(loadModelCatalog({
-  sourceUrl: env.TARDIGRADE_MODEL_CATALOG_URL?.trim() || DEFAULT_MODEL_CATALOG_URL,
-  timeoutMillis: positiveInteger(
-    env.TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS,
-    DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS,
-    "TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS"
-  ),
-  policy: modelCatalogLoadPolicyOf(env.TARDIGRADE_MODEL_CATALOG_LOAD_POLICY)
-}).pipe(
-  Effect.provide(layerCloudflareModelCatalogRepository(env.CATALOG_DB)),
-  Effect.tap((catalog) => Effect.all([
-    catalog.refreshError === undefined ? Effect.void : Effect.logWarning(`model catalog refresh failed: ${catalog.refreshError}`),
-    catalog.cacheError === undefined ? Effect.void : Effect.logWarning(`model catalog cache failed: ${catalog.cacheError}`)
-  ], { discard: true }))
-))
-
-let publicCatalogState: Promise<ModelCatalogState> | undefined
-
-export const publicCatalog = async (env: Env): Promise<ModelCatalogState> => {
-  const state = await modelStateFrom(env)
-  if (state !== undefined) return state.catalog
-  publicCatalogState ??= loadCloudflareCatalog(env)
-  return publicCatalogState
-}
+export const publicCatalog = async (env: Env): Promise<ModelCatalogState> =>
+  (await modelStateFrom(env))?.catalog ?? {}
 
 export const nonNegativeInteger = (raw: string | undefined, fallback: number, name: string): number => {
   if (raw === undefined) return fallback

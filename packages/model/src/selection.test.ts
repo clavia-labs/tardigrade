@@ -1,9 +1,10 @@
+import { ModelSelection } from "./settings"
 import { Effect, Layer } from "effect"
 import { ModelLock, modelLockOf, modelLockService } from "./lock"
 import { expect, test } from "bun:test"
 import * as fc from "fast-check"
 import { modelConfigOf } from "./config"
-import { selectedModelFrom, modelLayerWith } from "./selection"
+import { selectedModelFrom, modelLayerWith, type SelectedModel } from "./selection"
 import type { ModelCatalogState } from "./catalog/index"
 
 const config = (settings = {}) => modelConfigOf({ default: { provider: "test", model_id: "model" }, allow: "*", providers: { test: { baseUrl: "https://fixture.invalid", protocol: "openai-responses", env: ["KEY"], models: { model: settings } } } })
@@ -30,8 +31,7 @@ test("configuration retains ordered fallbacks and rejects missing providers", ()
   expect(() => modelConfigOf({ ...source, fallback: {} })).toThrow("fallback must be an array")
 })
 
-const hostConfig = { model: { allow: "*" as const, providers: {} }, modelCredentials: {} }
-const binding = () => modelLayerWith(hostConfig, {}, () => { throw new Error("provider execution was not requested") })
+const binding = () => modelLayerWith({}, () => { throw new Error("provider execution was not requested") })
 
 test("model binding requires a supplied lock before initialization", async () => {
   const build = Effect.scoped(Layer.build(binding()))
@@ -53,4 +53,21 @@ test("model binding forwards supplied definitions and lookup without reconstruct
   expect(resolved).toBe(supplied)
   expect(resolved.definitions).toEqual(definitions)
   expect(resolved.resolve().contextWindowTokens).toBe(32000)
+})
+
+test("provider selection gets connections, metadata and options exclusively from the supplied lock", async () => {
+  const definitions = modelLockOf({ schema: 2,
+    providers: { custom: { protocol: "openai-chat-completions", baseUrl: "https://locked.test", env: ["KEY"] } },
+    models: [{ provider: "custom", model_id: "small", contextWindowTokens: 32000, maxOutputTokens: 2048,
+      pricing: { promptUsdPerToken: 0.000001, completionUsdPerToken: 0.000002 }, options: { temperature: 0.2 } }]
+  })
+  const supplied = modelLockService(definitions, { allow: "*", default: { provider: "custom", model_id: "small" } })
+  let selected: SelectedModel | undefined
+  const layer = modelLayerWith({ KEY: "fixture" }, value => {
+    selected = value
+    throw new Error("selection observed")
+  }).pipe(Layer.provide(Layer.succeed(ModelLock, supplied)))
+  await expect(Effect.runPromise(Effect.flatMap(ModelSelection, selection => selection.settings!()).pipe(Effect.provide(layer))))
+    .rejects.toThrow("selection observed")
+  expect(selected).toMatchObject({ ...definitions.models[0], baseUrl: "https://locked.test", protocol: "openai-chat-completions", apiKey: "fixture" })
 })

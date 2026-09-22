@@ -1,4 +1,4 @@
-import { ModelLock } from "./lock"
+import { ModelLock, type ModelLockData } from "./lock"
 import { Effect, Layer, Stream } from "effect"
 import { LanguageModel } from "effect/unstable/ai"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
@@ -26,7 +26,8 @@ export interface SelectedModel {
   readonly contextWindowTokens: number
   readonly maxOutputTokens?: number
   readonly pricing?: import("@clavia/tardigrade-model/pricing").ModelPricing
-  readonly catalogRevision: string
+  readonly catalogRevision?: string
+  readonly options?: ModelLockData["models"][number]["options"]
 }
 
 interface ProviderConnection {
@@ -135,15 +136,19 @@ export const modelIsConfigured = (config: ModelHostConfig): boolean =>
 
 // modelLayerWith binds provider execution to a host-supplied ModelLock (selection.test.ts).
 export const modelLayerWith = (
-  config: ModelHostConfig,
-  catalog: ModelCatalogState,
+  credentials: ModelCredentials,
   bindingFor: (selected: SelectedModel) => Layer.Layer<LanguageModel.LanguageModel>,
   protocols?: ReadonlyArray<SelectedModel["protocol"]>
 ): Layer.Layer<LanguageModel.LanguageModel | ModelLock, never, ModelLock> => Layer.unwrap(Effect.map(ModelLock, lock => {
   const select = (reference?: ModelRef) => {
-    if (Object.keys(config.model.providers).length === 0) throw new Error(MISSING_MODEL)
-    const resolution = lock.resolve(reference)
-    const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, resolution.model)
+    const { model: referenceValue } = lock.resolve(reference)
+    const definition = lock.definitions.models.find(model => model.provider === referenceValue.provider && model.model_id === referenceValue.model_id)
+    if (definition === undefined) throw new Error(`model ${referenceValue.provider}/${referenceValue.model_id} is absent from models.lock.json`)
+    const connection = lock.definitions.providers[definition.provider]
+    if (connection === undefined) throw new Error(`provider ${definition.provider} is absent from models.lock.json`)
+    const apiKey = connection.env.flatMap(name => credentials[name] === undefined ? [] : [credentials[name]!])[0]
+    if (apiKey === undefined) throw new Error(`provider ${JSON.stringify(definition.provider)} needs a credential; set ${connection.env.join(" or ")} as a secret environment variable`)
+    const selected: SelectedModel = { ...definition, ...connection, apiKey }
     if (protocols !== undefined && !protocols.includes(selected.protocol)) throw new Error(`inference binding does not support ${selected.protocol} for ${selected.provider}/${selected.model_id}`)
     return selected
   }

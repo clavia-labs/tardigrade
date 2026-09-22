@@ -41,7 +41,7 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const { providers: _providers, ...policy } = config.model
   const snapshot = { snapshot: await modelCatalogForConfig(policy, definitions) }
   const inference = makeInferenceStream()
-  const binding = options.inference === undefined ? modelLayer(config, snapshot, { ...options.model, observer: inference.observer }) : options.inference(config, snapshot, inference.observer)
+  const binding = options.inference === undefined ? modelLayer({ credentials: config.modelCredentials, ...options.model, observer: inference.observer }) : options.inference(config, snapshot, inference.observer)
   const layers = Layer.mergeAll(
     binding.pipe(Layer.provideMerge(Layer.succeed(ModelLock, modelLockService(definitions, policy)))),
     BunFileSystem.layer,

@@ -24,7 +24,7 @@ import { alarmPolicyOf, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareThreadSchema } from "./storage"
 import { createCloudflareThreadHost, type CloudflareThreadHost } from "./host"
 import type { Env } from "./env"
-import { DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, type BackgroundTaskOwner, DEFAULT_BACKGROUND_TASK_OWNER, backgroundTaskOwnerOf, retainBackgroundTask, mountedActor, EMPTY_MODEL_SCOPE, modelStateFrom, deployed, directory, modelsFrom, modelLayer, nonNegativeInteger, optionalNonNegativeInteger, sandboxTransportOf, assemblyOf } from "./assembly"
+import { DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, type BackgroundTaskOwner, DEFAULT_BACKGROUND_TASK_OWNER, backgroundTaskOwnerOf, retainBackgroundTask, mountedActor, modelStateFrom, deployed, directory, modelsFrom, modelLayer, nonNegativeInteger, optionalNonNegativeInteger, sandboxTransportOf, assemblyOf } from "./assembly"
 
 // ThreadDO runs one thread over one SQLite-backed Durable Object.
 export class ThreadDO extends DurableObject<Env> {
@@ -126,7 +126,6 @@ export class ThreadDO extends DurableObject<Env> {
 
   private async openHost(): Promise<CloudflareThreadHost> {
     const state = await modelStateFrom(this.env)
-    const modelScope = state?.catalog.snapshot ?? EMPTY_MODEL_SCOPE
     const models = modelsFrom(this.env, state?.model)
     const actorName = this.name()
     const actorInstance = this.instance()
@@ -184,7 +183,7 @@ export class ThreadDO extends DurableObject<Env> {
       retainCommitTask: (task: Promise<void>) => retainBackgroundTask(this.ctx, this.backgroundTaskOwner, task),
       layers: (() => {
         const observer = mountedActor?.inferenceObserverFor?.(layerContext)
-        const framework = Layer.mergeAll(state === undefined ? Layer.empty : modelLayer(models, modelScope, {
+        const framework = Layer.mergeAll(state === undefined ? Layer.empty : modelLayer(models, {
           ...observer,
           onDelta: (delta) => Effect.andThen(this.inference.observer.onDelta(delta), observer?.onDelta(delta) ?? Effect.void)
         }).pipe(Layer.provideMerge(state.lock)), FetchHttpClient.layer, sandboxLayer)
