@@ -27,7 +27,7 @@ import {
 } from "../src/worker"
 import { providerLayer } from "@clavia/tardigrade-model/providers/openai-compat"
 import { ModelSelection } from "@clavia/tardigrade-model/settings"
-import { modelLayer, modelsFrom, mountedActor } from "../src/assembly"
+import { modelLayer, modelsFrom, mountedActor, modelConfigFrom, publicCatalog } from "../src/assembly"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
 import { plaintextEventCodec } from "../src/storage"
@@ -210,6 +210,15 @@ describe("cloudflare actor", () => {
     const config = { allow: "*" as const, default: { provider: "openai", model_id: "gpt-test" }, providers: {} }
     expect(await modelCatalogForConfig(config, scope)).toMatchObject({ providers: [{ id: "openai", models: [{ id: "gpt-test", metadata: { contextWindowTokens: 32000 } }] }] })
     await expect(modelCatalogForConfig({ ...config, default: { provider: "openai", model_id: "missing" } }, scope)).rejects.toThrow("absent from models.lock.json")
+    const previous = mountedActor!.modelScope
+    Object.assign(mountedActor!, { modelScope: scope })
+    try {
+      const environment = { ...env, TARDIGRADE_CONFIG: { models: { allow: "*", default: config.default } } } as Env
+      expect(modelConfigFrom(environment)?.providers.openai?.baseUrl).toBe("https://api.openai.test/v1")
+      expect((await publicCatalog(environment)).snapshot.providers[0]?.models[0]?.metadata?.contextWindowTokens).toBe(32000)
+    } finally {
+      Object.assign(mountedActor!, { modelScope: previous })
+    }
   })
 
   test("a deployment lock supplies only its matching model scope", async () => {

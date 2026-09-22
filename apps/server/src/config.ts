@@ -127,7 +127,7 @@ const legacyModelError = (env: Env): Error | undefined => {
 }
 
 // projectConfigOf reads runnable Tardigrade settings from a Wrangler manifest.
-export const projectConfigOf = (value: unknown): ProjectConfig => {
+export const projectConfigOf = (value: unknown, providers?: ModelConfig["providers"]): ProjectConfig => {
   const source = recordOf(value)
   if (source === undefined) throw new Error("project configuration must be a JSON object")
   if (source["models"] !== undefined) {
@@ -141,7 +141,10 @@ export const projectConfigOf = (value: unknown): ProjectConfig => {
   if (configValue === undefined) return { models: modelConfigOf(DEFAULT_MODEL_POLICY) }
   const config = recordOf(configValue)
   if (config === undefined) throw new Error(`${TARDIGRADE_CONFIG_VAR} must be a JSON object`)
-  return { models: modelConfigOf(config["models"] ?? DEFAULT_MODEL_POLICY) }
+  const models = config["models"] ?? DEFAULT_MODEL_POLICY
+  const modelRecord = recordOf(models)
+  if (modelRecord === undefined) throw new Error("models must be a JSON object")
+  return { models: modelConfigOf(providers === undefined ? models : { ...modelRecord, providers }) }
 }
 
 const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {

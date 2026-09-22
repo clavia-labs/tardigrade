@@ -1,4 +1,4 @@
-import { modelLockOf, modelCatalogForConfig as lockedCatalogForConfig, type ModelLock, type ModelLockData } from "@clavia/tardigrade-model/lock"
+import { lockedProvidersOf, modelConfigForPolicy, modelLockOf, modelCatalogForConfig as lockedCatalogForConfig, type ModelLock, type ModelLockData } from "@clavia/tardigrade-model/lock"
 import { cloudflareDirectory } from "./transport/directory"
 import { Effect, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
@@ -139,7 +139,13 @@ const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<s
 
 export const modelConfigFrom = (env: Env): ModelConfig | undefined => {
   const rawModels = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)?.["models"]
-  return rawModels === undefined ? undefined : modelConfigOf(rawModels)
+  if (rawModels === undefined) return undefined
+  const scope = mountedActor?.modelScope
+  if (scope === undefined || !("schema" in scope)) return modelConfigOf(rawModels)
+  if (typeof rawModels !== "object" || rawModels === null || Array.isArray(rawModels)) throw new Error("models must be a JSON object")
+  const config = modelConfigOf({ ...rawModels, providers: lockedProvidersOf(scope) })
+  const { providers: _providers, ...policy } = config
+  return modelConfigForPolicy(policy, scope)
 }
 
 export const modelsFrom = (env: Env, parsed: ModelConfig | undefined): CloudflareModels | undefined => {
@@ -159,7 +165,7 @@ export const modelsFrom = (env: Env, parsed: ModelConfig | undefined): Cloudflar
 
 export const providerAvailabilityFrom = (env: Env) => {
   const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
-  const parsed = modelConfigOf(config?.["models"] ?? { allow: "*" })
+  const parsed = modelConfigFrom(env) ?? modelConfigOf(config?.["models"] ?? { allow: "*" })
   const values = env as unknown as Readonly<Record<string, unknown>>
   const credentials = Object.fromEntries(
     Object.values(parsed.providers).flatMap((provider) => provider.env.flatMap((name) => {
@@ -172,7 +178,7 @@ export const providerAvailabilityFrom = (env: Env) => {
 
 export const modelPolicyFrom = (env: Env): ModelPolicy => {
   const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
-  const parsed = modelConfigOf(config?.["models"] ?? { allow: "*" })
+  const parsed = modelConfigFrom(env) ?? modelConfigOf(config?.["models"] ?? { allow: "*" })
   return { ...(parsed.default === undefined ? {} : { default: parsed.default }), allow: parsed.allow }
 }
 
@@ -220,6 +226,10 @@ const loadCloudflareCatalog = (env: Env): Promise<ModelCatalogState> => Effect.r
 let publicCatalogState: Promise<ModelCatalogState> | undefined
 
 export const publicCatalog = (env: Env): Promise<ModelCatalogState> => {
+  const scope = mountedActor?.modelScope
+  if (scope !== undefined && "schema" in scope) {
+    return modelCatalogForConfig(modelConfigFrom(env) ?? { allow: "*", providers: {} }, scope).then(snapshot => ({ snapshot }))
+  }
   publicCatalogState ??= loadCloudflareCatalog(env)
   return publicCatalogState
 }
