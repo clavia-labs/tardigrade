@@ -12,7 +12,7 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { Self, settleActor } from "@clavia/tardigrade-core/runtime"
 import { Router } from "@clavia/tardigrade-core/transport/router"
 import { threadAddressOf } from "@clavia/tardigrade-core/transport/endpoint"
-import { tool } from "./index"
+import { tools } from "./index"
 import { agentKeys } from "../../log/events"
 import { toolResultPosition } from "../../log/tool"
 
@@ -264,7 +264,7 @@ test.each(["allow", "reject"] as const)(
   "runtime settles a held native tool after %s without duplicate execution",
   async (decision) => {
     let executions = 0
-    const child = tool({
+    const child = tools({
       spec: { name: "read", description: "read", inputSchema: {} },
       run: () =>
         Effect.sync(() => {
@@ -341,7 +341,7 @@ test("responses settle only their request occurrence despite reused labels, late
     fc.array(fc.record({ turn: fc.nat(1), epoch: fc.nat(2) }), { minLength: 2, maxLength: 12 }),
     fc.array(fc.nat(50), { maxLength: 25 }),
     (requests, deliveries) => {
-      const machine = testMachineOf(tool({
+      const machine = testMachineOf(tools({
         spec: { name: "read", description: "Read", inputSchema: {} },
         run: () => Effect.die("responses must not execute the tool")
       }))

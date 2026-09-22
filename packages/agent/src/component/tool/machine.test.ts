@@ -8,7 +8,7 @@ import { actor, component, composeComponents } from "@clavia/tardigrade-core/act
 import type { Event } from "@clavia/tardigrade-core/event"
 import { enabled as enabledWithoutData, type Transition } from "@clavia/tardigrade-core/runtime"
 import { annotateTransition } from "@clavia/tardigrade-core/transition/transition"
-import { tool } from "./index"
+import { tools, tool, toolList } from "./index"
 import { nativeOutput } from "../native-output"
 import { agentMethods } from "../../actor/methods"
 import { AGENT_VIEW_ALGEBRA, infer } from "../infer/index"
@@ -24,9 +24,23 @@ const called = (callId: string, name = "read"): Event => ({
   at: 1
 })
 const reader = () =>
-  tool({ spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed({ error: "failed" }) })
+  tools({ spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed({ error: "failed" }) })
 const eventsOf = (transitions: ReadonlyArray<Transition<never, unknown>>): ReadonlyArray<Event> =>
   transitions.flatMap((transition) => (transition.kind === "intent" ? transition.events(transition.input, 1) : []))
+
+test("native tool aliases preserve instructions, names, and proposals", () => {
+  const binding = { spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed("contents") }
+  const outputs = [tools, tool, toolList].map(create => {
+    const child = create([binding], () => "Read carefully", { name: "reader" })
+    expect(child.name).toBe("reader")
+    return replayProjection(machineOf(child), [head, called("a")])
+  })
+  for (const output of outputs) {
+    expect(output.view).toEqual(outputs[0]!.view)
+    expect(output.view.system).toEqual(["Read carefully"])
+    expect(output.transitions.map(work => work.key)).toEqual(outputs[0]!.transitions.map(work => work.key))
+  }
+})
 
 test("tool views expose typed call data and proposals retain their call identity", () => {
   const output = replayProjection(machineOf(reader()), [head, called("a")])
@@ -44,7 +58,7 @@ test("tool views expose typed call data and proposals retain their call identity
 
 test("settlement preserves call identity across decoration and replay without running the tool", () => {
   let executions = 0
-  const child = tool({
+  const child = tools({
     spec: { name: "read", description: "read", inputSchema: {} },
     run: () =>
       Effect.sync(() => {

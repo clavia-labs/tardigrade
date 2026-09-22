@@ -1,6 +1,9 @@
 import { toolComponent, type ToolComponent, toolConcurrencyOf, type ToolConcurrency } from "./machine"
 import { Clock, Effect } from "effect"
-import { component, legacyComponent } from "@clavia/tardigrade-core/actor"
+import { component, legacyComponent, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import type { CodeComponent } from "@clavia/tardigrade-code/package/definition"
+import type { KeyValueStore } from "effect/unstable/persistence"
+import { tools as packageTools, type ToolsOptions } from "./packages"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { toolReturned } from "../../log/events"
 import type { ToolSpec } from "../../model/request"
@@ -16,8 +19,7 @@ export interface NativeTool<R = never> {
   ) => Effect.Effect<unknown, never, R>
 }
 
-// tool derives fixed tool bindings from their specifications and effect handlers.
-export const tool = <R = never>(
+const nativeTools = <R = never>(
   bindings: NativeTool<R> | ReadonlyArray<NativeTool<R>>,
   system: string | ((log: ReadonlyArray<Event>) => string) = "",
   options: { readonly name?: string } = {}
@@ -76,11 +78,37 @@ export const tool = <R = never>(
   return toolComponent(child)
 }
 
-// LATER(0.20.0): Remove toolList after callers migrate to tool.
-export const toolList = <R = never>(
+// tools exposes native bindings or child package methods through the tool execution boundary.
+export function tools<R = never>(
   bindings: NativeTool<R> | ReadonlyArray<NativeTool<R>>,
-  system: string | ((log: ReadonlyArray<Event>) => string) = "",
+  system?: string | ((log: ReadonlyArray<Event>) => string),
+  options?: { readonly name?: string }
+): ToolComponent<R>
+export function tools<const Cs extends ReadonlyArray<CodeComponent<unknown>>>(
+  children: Cs,
+  options?: ToolsOptions
+): ToolComponent<ComponentRequirements<Cs[number]> | KeyValueStore.KeyValueStore>
+export function tools(
+  input: NativeTool<unknown> | ReadonlyArray<NativeTool<unknown> | CodeComponent<unknown>>,
+  configuration: string | ((log: ReadonlyArray<Event>) => string) | ToolsOptions = "",
   options: { readonly name?: string } = {}
-): ToolComponent<R> => tool(bindings, system, options)
+): ToolComponent<unknown> {
+  const entries = Array.isArray(input) ? input : [input]
+  const isNative = (entry: NativeTool<unknown> | CodeComponent<unknown>): entry is NativeTool<unknown> =>
+    "spec" in entry && "run" in entry
+  if (entries.every(isNative) && typeof configuration !== "object") {
+    return nativeTools(entries, configuration, options)
+  }
+  if (entries.some(isNative) || typeof configuration === "function" || configuration !== "" && typeof configuration !== "object") {
+    throw new Error("tools accepts either native bindings or package components with their corresponding options")
+  }
+  return packageTools(entries as ReadonlyArray<CodeComponent<unknown>>, typeof configuration === "object" ? configuration : {})
+}
 
-export { tools, type ToolsOptions } from "./packages"
+/** @deprecated Use tools instead. */
+export const tool: typeof nativeTools = nativeTools
+
+/** @deprecated Use tools instead. */
+export const toolList: typeof nativeTools = nativeTools
+
+export type { ToolsOptions } from "./packages"
