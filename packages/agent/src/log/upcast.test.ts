@@ -21,16 +21,6 @@ test.each(["current", "legacy"])("upcast reads %s batches without inventing resp
   expect(upcast(view.entries.map((entry) => entry.event))).toEqual(view)
 })
 
-test("upcast preserves unknown starting allowances and recognizes recorded grants", () => {
-  const head: Event = { type: "MessageReceived", id: "turn", at: 0 }
-  expect(upcast([head]).budget).toEqual({ startingAllowance: undefined, needsInitialGrant: true })
-  expect(upcast([{ ...head, budget: 3 }]).budget.startingAllowance).toBe(3)
-  expect(upcast([head, { type: "ModelCalled", turn: "turn", at: 1 }]).budget)
-    .toEqual({ startingAllowance: undefined, needsInitialGrant: false })
-  expect(upcast([head, { type: "BudgetGranted", initial: true, amount: 3, turn: "turn", at: 1 }]).budget)
-    .toEqual({ startingAllowance: 0, needsInitialGrant: false })
-})
-
 test("upcast normalizes failure strings without changing stored history", () => {
   const event: Event = { type: "TurnFailed", error: "provider refused", at: 1 }
   const view = upcast([event])

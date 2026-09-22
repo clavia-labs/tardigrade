@@ -1,5 +1,5 @@
 import type { LanguageModel } from "effect/unstable/ai"
-import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/fixtures/model"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"

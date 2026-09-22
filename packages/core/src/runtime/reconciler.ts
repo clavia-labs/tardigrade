@@ -90,17 +90,17 @@ const advanceCache = <R>(a: Actor<R>, cache: ProjectionCache<R>, events: Readonl
   }
 }
 
-const projectionCache = <R>(a: Actor<R>, events: ReadonlyArray<Event>): ProjectionCache<R> => {
+const projectionCache = <R>(a: Actor<R>, events: ReadonlyArray<Event>, data: Context.Context<never>): ProjectionCache<R> => {
   const cache: ProjectionCache<R> = {
     events: [],
     recorded: new Set(),
     states: new Map(),
-    actorState: a.projection?.initial(),
+    actorState: a.projection?.initial(data),
     trigger: undefined,
     watermark: 0
   }
   for (const projection of a.projections) {
-    cache.states.set(projection, projection.initial())
+    cache.states.set(projection, projection.initial(data))
   }
   return advanceCache(a, cache, events)
 }
@@ -174,14 +174,14 @@ const runExternalEffect = <R>(
   })
 
 // enabled returns derived transitions whose keys the log does not record.
-export const enabled = <R>(source: ActorSource<R>, events: ReadonlyArray<Event>): ReadonlyArray<Transition<never, R>> => {
+export const enabled = <R>(source: ActorSource<R>, events: ReadonlyArray<Event>, data?: Context.Context<never>): ReadonlyArray<Transition<never, R>> => {
   const a = actorRuntimeOf(source)
   const positioned = events.map((event, index) => eventAt(event, index + 1))
   const recorded = recordedKeys(positioned, a.keyOf)
   const states = new Map<ErasedTransitionProjection<R>, unknown>()
-  let actorState = a.projection?.initial()
+  let actorState = a.projection?.initial(data)
   for (const projection of a.projections) {
-    let state = projection.initial()
+    let state = projection.initial(data)
     for (const event of positioned) state = projection.step(state, event)
     states.set(projection, state)
   }
@@ -230,8 +230,8 @@ const enabledFrom = <R>(
 
 // restingActor reports whether the log enables no transition
 // (packages/host/tla/Driver.tla, Accounting).
-export const restingActor = <R>(a: ActorSource<R>, events: ReadonlyArray<Event>): boolean =>
-  enabled(a, events).length === 0
+export const restingActor = <R>(a: ActorSource<R>, events: ReadonlyArray<Event>, data?: Context.Context<never>): boolean =>
+  enabled(a, events, data).length === 0
 
 // settleActor attempts enabled transitions until the actor rests. Any log movement starts a fresh
 // output before another transition fires (actor.properties.test.ts, "a committed intent
@@ -252,7 +252,7 @@ export const createActorReconciler = <R>(source: ActorSource<R>): ActorReconcile
   let resting = false
   const synchronize = (log: Context.Service.Shape<typeof EventLog>) => Effect.gen(function* () {
     if (cache === undefined) {
-      cache = projectionCache(a, yield* log.read)
+      cache = projectionCache(a, yield* log.read, yield* Effect.context<never>())
       return cache
     }
     cache = advanceCache(a, cache, yield* log.readFrom(cache.watermark))

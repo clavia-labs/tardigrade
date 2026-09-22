@@ -362,9 +362,11 @@ describe("cancellation properties", () => {
     })
     const component: Component<undefined> = legacyComponent({
       name: "calls",
-      cancel: (events, cancellation) => sameInvocation(cancellation.invocation, parent) &&
-        !events.some((event) => event.type === "CallTerminated") ? [terminateCall] : [],
-      derive: () => ({ view: undefined, transitions: [] })
+
+      derive: (events) => ({ view: undefined, transitions: [], interactions: {
+        cancel: (cancellation) => sameInvocation(cancellation.invocation, parent) &&
+            !events.some((event) => event.type === "CallTerminated") ? [terminateCall] : []
+    } })
     })
     const initial = [started(parent, 1), request("x1", parent, 2)]
 

@@ -1,45 +1,34 @@
+import type { ToolOffer } from "../component/view"
+import { renderOf } from "./render"
+import { testModelData, testModelLock } from "../../fixtures/model"
+import { testMachineOf as machineOf } from "@clavia/tardigrade-agent/fixtures/component"
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { eventAt, type Event } from "@clavia/tardigrade-core/event"
-import {
-  cancelComponent,
-  componentRefinementTrace,
-  composeComponents,
-  deriveComponent,
-  type CompleteComponentProjection,
-  type Component,
-  type ComponentOutput,
-  type InvocationCancellation
-} from "@clavia/tardigrade-core/component"
-import type { Projection } from "@clavia/tardigrade-core/projection"
+import { component, componentRefinementTrace, composeComponents, type CompleteComponentProjection, type Component, type ComponentOutput, type InvocationCancellation } from "@clavia/tardigrade-core/component"
+import { Projection, replayProjection, replayState } from "@clavia/tardigrade-core/projection"
 import type { Transition } from "@clavia/tardigrade-core/transition"
-import { budget } from "../component/budget"
-import { codeMode } from "../component/code"
-import {
-  compaction,
-  compactionWithWindow,
-  compactionReactor,
-  contextPolicyOf,
-  type CompactionPolicy
-} from "../component/compaction"
+import { budget } from "../component/budget/index"
+import { codeMode } from "../component/code/index"
+import { compaction } from "../component/compact/index"
 import { nativeOutput } from "../component/native-output"
 import { system } from "../component/system"
-import { inferenceFromHistory, inferenceMachine } from "../inference/machine"
+import { inferenceFromHistory, inferenceMachine } from "../component/infer/machine"
 import {
   AGENT_VIEW_ALGEBRA,
   infer,
-  renderOf,
   type AgentComponent,
-  type AgentTool,
   type AgentView,
   type InferOptions
-} from "./composition"
+} from "../component/infer/index"
 import {
-  incrementalToolsComponentFrom,
+  routeTools,
   toolsComponentFrom,
+  toolsReactorFrom,
+  toolCallOf,
   type Answer,
   type PendingCall
-} from "./tools"
+} from "../component/tool/machine"
 
 const MODEL = { provider: "test", model_id: "refinement" } as const
 const INFER_OPTIONS = { models: { default: MODEL, allow: "*" } } as const
@@ -103,7 +92,7 @@ const assertAgentRefinement = (
       invocation: { method: "message", id: String((event as { readonly id?: unknown }).id), epoch: 0 },
       cause: "requested"
     }))
-  for (const step of componentRefinementTrace(complete, incremental, log, cancellationsAt)) {
+  for (const step of componentRefinementTrace(complete, incremental, log, cancellationsAt, testModelData)) {
     const actual = observableComponentOutput(step.incremental as ComponentOutput<AgentView, unknown>)
     const expected = observableComponentOutput(step.replay as ComponentOutput<AgentView, unknown>)
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -138,35 +127,53 @@ const completeAgent = (
   options: InferOptions
 ): CompleteComponentProjection<AgentView, unknown> => {
   const combined = composeComponents("refinement.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<unknown>
-  const viewOf = (log: ReadonlyArray<Event>): AgentView => deriveComponent(combined, log).view
-  const toolsOf = (log: ReadonlyArray<Event>): ReadonlyArray<AgentTool<unknown>> => viewOf(log).tools
-  const offeredTools = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<AgentTool<unknown>> =>
+  const viewOf = (log: ReadonlyArray<Event>): AgentView => replayProjection(machineOf(combined), log, testModelData).view
+  const toolsOf = (log: ReadonlyArray<Event>): ReadonlyArray<ToolOffer<unknown>> => viewOf(log).tools
+  const offeredTools = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<ToolOffer<unknown>> =>
     toolsOf(offerLogFor(log, call))
-  const serve = (call: PendingCall, log: ReadonlyArray<Event>, answer: Answer) =>
-    offeredTools(log, call).find((tool) => tool.spec.name === call.name)?.serve(call, log, answer)
+  const serve = (call: PendingCall, log: ReadonlyArray<Event>, answer: Answer) => {
+    const tool = offeredTools(log, call).find((tool) => tool.spec.name === call.name)
+    return tool === undefined ? undefined : tool.serve?.(call, log, answer) ?? []
+  }
   const tools = toolsComponentFrom(
     AGENT_VIEW_ALGEBRA.empty,
     serve,
     (log, call) => offeredTools(log, call).map((tool) => ({ ...tool.spec, ...(tool.concurrency === undefined ? {} : { concurrency: tool.concurrency }) })),
     options.toolConcurrency
   ) as AgentComponent<unknown>
+  const scheduled = toolsReactorFrom((_call, _log, answer) => [answer(null)],
+    (log, call) => offeredTools(log, call).map((tool) => ({ ...tool.spec, ...(tool.concurrency === undefined ? {} : { concurrency: tool.concurrency }) })), options.toolConcurrency)
   const inference = inferenceFromHistory(
     { ...options, models: options.models ?? {} },
-    (log) => renderOf(components, log, options)
+    (log) => renderOf(components, log, { ...options, data: testModelData }),
+    testModelLock()
   )
   return {
+
     derive: (log) => {
-      const children = deriveComponent(combined, log)
+      const children = replayProjection(machineOf(combined), log, testModelData)
       const inferred = inference(log)
+      const selected = new Set(scheduled(log).flatMap((transition) => transition.kind === "intent"
+        ? transition.events(transition.input, 0).map((event) => JSON.stringify([event.turn, event.callId])) : []))
+      const deferred = children.view.messages?.flatMap(conversation => conversation.compaction?.proposals ?? []) ?? []
+      const proposals = children.transitions.filter((transition) => {
+        if (deferred.includes(transition.key))
+          return false
+        const call = toolCallOf(transition)
+        return call === undefined || selected.has(JSON.stringify([call.turn, call.callId]))
+      })
       return {
         view: children.view,
-        transitions: [...children.transitions.filter((transition) => transition.kind === "intent"), ...inferred, ...deriveComponent(tools, log).transitions, ...children.transitions.filter((transition) => transition.kind !== "intent")]
+        transitions: [...proposals.filter((transition) => transition.kind === "intent"), ...inferred, ...replayProjection(machineOf(tools), log).transitions, ...proposals.filter((transition) => transition.kind !== "intent")],
+        interactions: {
+          cancel: (cancellation) => [
+            ...(machineOf(combined).output(replayState(machineOf(combined), log, testModelData)).interactions?.cancel?.(cancellation) ?? []),
+            ...(machineOf(tools).output(replayState(machineOf(tools), log)).interactions?.cancel?.(cancellation) ?? [])
+          ]
+        }
       }
     },
-    cancel: (log, cancellation) => [
-      ...cancelComponent(combined, log, cancellation),
-      ...cancelComponent(tools, log, cancellation)
-    ]
+
   }
 }
 
@@ -174,6 +181,7 @@ type TurnKind = "complete" | "tool" | "batch" | "failed" | "cancelled" | "compac
 
 const eventsFor = (kinds: ReadonlyArray<TurnKind>): ReadonlyArray<Event> => kinds.flatMap((kind, index) => {
   const turn = `m${index}`
+  const offset = kinds.slice(0, index).reduce((count, kind) => count + (kind === "tool" || kind === "batch" ? 8 : kind === "compacted" ? 5 : 3), 0)
   const at = index * 20
   const head = { type: "MessageReceived", id: turn, text: `request ${index}`, model: MODEL, at } as Event
   const called = { type: "ModelCalled", callId: `${turn}/infer/0`, turn, model: MODEL, at: at + 1 } as Event
@@ -182,8 +190,8 @@ const eventsFor = (kinds: ReadonlyArray<TurnKind>): ReadonlyArray<Event> => kind
       head, called,
       { type: "ToolCalled", callId: "z", name: "execute", arguments: { code: "return 1" }, turn, batchId: `${turn}/infer/0`, batchIndex: 0, at: at + 2 },
       { type: "ToolCalled", callId: "a", name: "execute", arguments: { code: "return 2" }, turn, batchId: `${turn}/infer/0`, batchIndex: 1, at: at + 2 },
-      { type: "ToolReturned", callId: "a", result: 2, turn, at: at + 3 },
-      { type: "ToolReturned", callId: "z", result: 1, turn, at: at + 4 },
+      { type: "ToolReturned", transitionRef: { seq: offset + 4, component: "agent.tools", tag: "answer" }, callId: "a", result: 2, turn, at: at + 3 },
+      { type: "ToolReturned", transitionRef: { seq: offset + 3, component: "agent.tools", tag: "answer" }, callId: "z", result: 1, turn, at: at + 4 },
       { type: "ModelCalled", callId: `${turn}/infer/1`, turn, model: MODEL, at: at + 5 },
       { type: "TurnCompleted", turn, output: `answer ${index}`, at: at + 6 }
     ] as ReadonlyArray<Event>
@@ -211,9 +219,9 @@ const eventsFor = (kinds: ReadonlyArray<TurnKind>): ReadonlyArray<Event> => kind
     head,
     called,
     { type: "ToolCalled", callId, name: "execute", arguments: { code: "return 1" }, turn, at: at + 2 } as Event,
-    { type: "CodeDispatched", execId: callId, code: "return 1", turn, at: at + 3 } as Event,
-    { type: "CodeSettled", execId: callId, result: 1, turn, at: at + 4 } as Event,
-    { type: "ToolReturned", callId, result: { result: 1 }, turn, at: at + 5 } as Event,
+    { type: "CodeDispatched", transitionRef: { seq: offset + 3, component: "agent.tools", tag: "dispatch" }, execId: callId, code: "return 1", turn, at: at + 3 } as Event,
+    { type: "CodeSettled", executionRef: { seq: offset + 3, component: "agent.tools", tag: "dispatch" }, execId: callId, result: 1, turn, at: at + 4 } as Event,
+    { type: "ToolReturned", transitionRef: { seq: offset + 3, component: "agent.tools", tag: "answer" }, callId, result: { result: 1 }, turn, at: at + 5 } as Event,
     { type: "ModelCalled", callId: `${turn}/infer/1`, turn, model: MODEL, at: at + 6 } as Event,
     { type: "TurnCompleted", turn, output: `answer ${index}`, at: at + 7 } as Event
   ]
@@ -233,73 +241,70 @@ describe("agent projection refinement", () => {
         step: (count) => count + 1,
         output: (count) => render(Array.from({ length: count }, () => ({ type: "Observed" } as Event)))
       }
-      const complete = inferenceFromHistory(INFER_OPTIONS, render)
-      const incremental = inferenceMachine(INFER_OPTIONS, renderProjection)
-      let state = incremental.initial()
+      const complete = inferenceFromHistory(INFER_OPTIONS, render, testModelLock())
+      const incremental = inferenceMachine(INFER_OPTIONS)
+      let rendered = renderProjection.initial(testModelData)
+      let state = incremental.initial(testModelLock())
       for (let length = 0; length <= log.length; length++) {
-        expect(observableTransitions(incremental.output(state) as ReadonlyArray<Transition<never, unknown>>))
+        expect(observableTransitions(incremental.output(state, { rendered: renderProjection.output(rendered) }) as ReadonlyArray<Transition<never, unknown>>))
           .toEqual(observableTransitions(complete(log.slice(0, length)) as ReadonlyArray<Transition<never, unknown>>))
         const event = log[length]
-        if (event !== undefined) state = incremental.step(state, eventAt(event, length + 1))
+        if (event !== undefined) {
+          state = incremental.step(state, eventAt(event, length + 1))
+          rendered = renderProjection.step(rendered, eventAt(event, length + 1))
+        }
       }
     }), { numRuns: 100 })
   })
 
   test("tool routing and cancellation refine the complete-history component", () => {
     fc.assert(fc.property(historyArbitrary, (log) => {
-      const echo: AgentTool = {
+      const echo: ToolOffer = {
         spec: { name: "execute", description: "echo", inputSchema: {} },
         serve: (call, _events, answer) => [answer({ callId: call.callId })]
       }
-      const child = {
+      const child = component({
+        name: "source",
         initial: () => undefined,
         step: (state: unknown) => state,
         output: () => ({
-          view: { ...AGENT_VIEW_ALGEBRA.empty, tools: [echo] },
+          view: { ...AGENT_VIEW_ALGEBRA.empty, tools: [{ spec: echo.spec }] },
           transitions: []
         })
-      }
-      const completeComponent = toolsComponentFrom(AGENT_VIEW_ALGEBRA.empty, echo.serve, () => [echo.spec])
-      const incremental = incrementalToolsComponentFrom(AGENT_VIEW_ALGEBRA.empty, child, (view) => view.tools)
+      })
+      const completeComponent = toolsComponentFrom({ ...AGENT_VIEW_ALGEBRA.empty, tools: [{ spec: echo.spec }] }, echo.serve!, () => [echo.spec])
+      const incremental = routeTools(child, () => [echo])
       assertAgentRefinement({
-        derive: (prefix) => deriveComponent(completeComponent, prefix),
-        cancel: (prefix, cancellation) => cancelComponent(completeComponent, prefix, cancellation)
+
+        derive: (prefix) => ({
+    ...replayProjection(machineOf(completeComponent), prefix),
+    interactions: {
+        ...replayProjection(machineOf(completeComponent), prefix).interactions,
+        cancel: (cancellation) => (machineOf(completeComponent).output(replayState(machineOf(completeComponent), prefix)).interactions?.cancel?.(cancellation) ?? [])
+    }
+}),
+
       }, incremental as Component<AgentView, unknown>, log)
     }), { numRuns: 100 })
-  })
-
-  test("compaction refines its complete-history reactor", () => {
-    const policy: Partial<CompactionPolicy> & { contextWindowTokens: number } = {
-      model: MODEL,
-      contextWindowTokens: 80,
-      fireRatio: 0.5,
-      keepRatio: 0.25,
-      messageRenderCap: 80,
-      resultRenderCap: 80
-    }
-    const result = fc.check(fc.property(historyArbitrary, (log) => {
-      const incremental = compactionWithWindow(policy, policy.contextWindowTokens) as Component<AgentView, unknown>
-      const complete: CompleteComponentProjection<AgentView, unknown> = {
-        derive: (prefix) => {
-          return {
-            view: {
-              ...AGENT_VIEW_ALGEBRA.empty,
-              context: [{ component: "compaction", policy: contextPolicyOf(policy, policy.contextWindowTokens) }]
-            },
-            transitions: compactionReactor(policy, policy.contextWindowTokens)(prefix)
-          }
-        }
-      }
-      assertAgentRefinement(complete, incremental, log)
-    }), { numRuns: 100 })
-    if (result.failed) throw result.errorInstance
   })
 
   test("the composed agent refines the complete-history agent", () => {
     fc.assert(fc.property(historyArbitrary, (log) => {
       const components = [
         system("You are the refinement agent."),
-        budget([codeMode()]),
+        budget(codeMode(), {
+          onExhausted: (reason, settle) => settle({ error: reason }),
+          usage: (observation) => observation.calls.length,
+          rejectionMessage: "Tool budget reached. Answer now with your best result.",
+          view: (view, state) =>
+            state.phase === "spending"
+              ? view
+              : {
+                  ...view,
+                  tools: [],
+                  system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+                }
+        }),
         compaction(),
         nativeOutput
       ] as const

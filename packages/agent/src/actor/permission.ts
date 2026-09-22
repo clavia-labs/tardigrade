@@ -6,7 +6,6 @@ import { permissionRequestReceived } from "../log/events"
 export const PermissionRequestInput = Schema.Struct({
   request: Schema.String,
   turn: Schema.String,
-  tool: Schema.String,
   action: Schema.String,
   resource: Schema.optionalKey(Schema.String),
   reason: Schema.String
@@ -64,7 +63,7 @@ const permissionStateFrom = (state: PermissionMethodProjection, id: string) => {
       }
 }
 
-// requestPermissionMethod exposes one-shot tool authorization as a unary actor call.
+// requestPermissionMethod exposes one-shot work authorization as a unary actor call.
 export const requestPermissionMethod = actorMethod({
   input: PermissionRequestInput,
   output: PermissionDecision,

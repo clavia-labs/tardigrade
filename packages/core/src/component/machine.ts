@@ -1,18 +1,16 @@
+import { Context } from "effect"
+import { createMachine } from "./composition/parent"
+import { registerComponent } from "./runtime"
+import { composeKeys } from "../log/keys"
 import type { Event } from "../event"
-import { bindTransitionContext, validateTransitions, transitionComponentIds, TRANSITION_COMPONENT_IDS, type TransitionContext } from "../transition/transition"
-import {
-  materializeProjection,
-  type MaterializedProjectionState,
-  type Projection
-} from "@clavia/tardigrade-core/projection"
-import type { Transition } from "@clavia/tardigrade-core/transition"
-import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
-import type { InvocationCancellation } from "../interaction/events"
-import type { Component } from "./component"
+import { transitionComponentIds, TRANSITION_COMPONENT_IDS, type TransitionContext } from "../transition/transition"
+import type { Projection } from "@clavia/tardigrade-core/projection"
+import { COMPONENT_CONTRACT, mergeComponentContracts, type ComponentContract } from "../actor/contract"
+import type { Component, ComponentRequirements } from "./component"
 import type { ComponentOutput } from "./output"
+import type { ChildOf, ComponentChildren } from "./composition/children"
 
 export type { TransitionContext } from "../transition/transition"
-
 export type { InvocationCancellation } from "../interaction/events"
 
 /**
@@ -21,66 +19,38 @@ export type { InvocationCancellation } from "../interaction/events"
  *   ComponentMachine
  *     ├── initial()
  *     ├── step(state, event)
- *     ├── output(state)
- *     └── cancel?(state, cancellation)
+ *     └── output(state)
+ *           ├── view
+ *           ├── transitions (with respond)
+ *           └── interactions
+ *                 └── cancel?(cancellation)
  *
  * Cancellation is an optional state query that derives cleanup transitions for one invocation.
  */
-export interface ComponentMachine<View, Requirements = never>
-  extends Projection<unknown, ComponentOutput<View, Requirements>> {
-  readonly cancel?: (
-    state: unknown,
-    cancellation: InvocationCancellation
-  ) => ReadonlyArray<Transition<never, Requirements>>
-}
+export interface ComponentMachine<View, Requirements = never, Result = never, Interactions = unknown>
+  extends Projection<unknown, ComponentOutput<View, Requirements, Result, Interactions>> {}
+
+// ComponentDependencies names data services bound when a component snapshot is initialized.
+export type ComponentDependencies = ReadonlyArray<Context.Key<unknown, unknown>>
+export type ComponentData<D extends ComponentDependencies> = { readonly [K in keyof D]: Context.Service.Shape<D[K]> }
+export type ComponentDataRequirements<D extends ComponentDependencies> = Context.Service.Identifier<D[number]>
+type ChildRequirements<C extends ComponentChildren> = ComponentRequirements<C extends ReadonlyArray<unknown> ? C[number] : C>
 
 // ComponentDefinition is the typed author surface for a component machine.
-export interface ComponentDefinition<State, View, Requirements = never>
-  extends Omit<Projection<State, ComponentOutput<View, Requirements>>, "step"> {
+export interface ComponentDefinition<State, View, Requirements = never, Result = unknown, Children extends ComponentChildren = readonly [], Dependencies extends ComponentDependencies = readonly [], Interactions = unknown> {
   readonly name: string
-  // children declares the component identities this wrapper may forward (transition/migration.test.ts).
-  readonly children?: ReadonlyArray<Component<unknown, unknown>>
-  readonly step: (state: State, event: Event, context: TransitionContext) => State
-  readonly cancelState?: (
-    state: State,
-    cancellation: InvocationCancellation
-  ) => ReadonlyArray<Transition<never, Requirements>>
+  readonly children?: Children
+  readonly dependencies?: Dependencies
+  readonly initial: (children: ChildOf<Children>, data: ComponentData<Dependencies>) => State
+  readonly step: (state: Readonly<State>, event: Event, context: TransitionContext, children: ChildOf<Children>, previous: ChildOf<Children>) => State
+  readonly output: (state: Readonly<State>, children: ChildOf<Children>) => ComponentOutput<View, Requirements, Result, Interactions>
   readonly [COMPONENT_CONTRACT]?: ComponentContract
 }
 
-const eraseMachine = <State, View, Requirements>(
-  definition: ComponentDefinition<State, View, Requirements>,
-  identities: ReadonlyArray<string>
-): ComponentMachine<View, Requirements> => {
-  const cancelState = definition.cancelState
-  const identity = definition.name
-  const projection = materializeProjection<State, ComponentOutput<View, Requirements>>({
-    initial: definition.initial,
-    step: (state, event) => definition.step(state, event, bindTransitionContext(event, identity)),
-    output: (state) => {
-      const output = definition.output(state)
-      validateTransitions(output.transitions, identities)
-      return output
-    }
-  })
-  type CachedState = MaterializedProjectionState<State, ComponentOutput<View, Requirements>>
-  return {
-    initial: projection.initial,
-    step: (state, event) => projection.step(state as CachedState, event),
-    output: (state) => projection.output(state as CachedState),
-    ...(cancelState === undefined
-      ? {}
-      : {
-          cancel: (state: unknown, cancellation: InvocationCancellation) =>
-            validateTransitions(cancelState((state as CachedState).state, cancellation), identities)
-        })
-  }
-}
-
 // component constructs a named, materialized component machine. Complete-log definitions use legacyComponent.
-export const component = <State, View, Requirements = never>(
-  definition: ComponentDefinition<State, View, Requirements>
-): Component<View, Requirements> => {
+export const component = <State, View, Requirements = never, Result = unknown, const Children extends ComponentChildren = readonly [], const Dependencies extends ComponentDependencies = readonly [], Interactions = unknown>(
+  definition: ComponentDefinition<State, View, Requirements, Result, Children, Dependencies, Interactions>
+): Component<View, Requirements | ComponentDataRequirements<Dependencies> | ChildRequirements<Children>, Result, Interactions> => {
   if (
     typeof definition.initial !== "function" ||
     typeof definition.step !== "function" ||
@@ -91,19 +61,21 @@ export const component = <State, View, Requirements = never>(
     )
   }
   if (typeof definition.name !== "string" || definition.name.length === 0) throw new Error("components require a nonempty name")
-  const identities = transitionComponentIds([{ [TRANSITION_COMPONENT_IDS]: [definition.name] }, ...(definition.children ?? [])])
-  return {
+  const members: ReadonlyArray<Component<unknown, unknown>> = definition.children === undefined ? [] : Array.isArray(definition.children) ? [...definition.children] : [definition.children as Component<unknown, unknown>]
+  const identities = transitionComponentIds([{ [TRANSITION_COMPONENT_IDS]: [definition.name] }, ...members])
+  const fragments = members.flatMap((child) => child.keys === undefined ? [] : [child.keys])
+  const inherited = mergeComponentContracts(members)
+  const own = definition[COMPONENT_CONTRACT]
+  return registerComponent({
     name: definition.name,
     [TRANSITION_COMPONENT_IDS]: identities,
-    machine: eraseMachine(definition, identities),
-    ...(definition[COMPONENT_CONTRACT] === undefined ? {} : { [COMPONENT_CONTRACT]: definition[COMPONENT_CONTRACT] })
-  }
+    ...(fragments.length === 0 ? {} : { keys: {
+      prefixes: fragments.flatMap((fragment) => fragment.prefixes),
+      keyOf: composeKeys(...fragments)
+    } }),
+    [COMPONENT_CONTRACT]: {
+      handles: [...inherited.handles, ...(own?.handles ?? [])],
+      calls: [...inherited.calls, ...(own?.calls ?? [])]
+    }
+  }, createMachine(definition, members, identities))
 }
-
-/** @deprecated Use component. The primary component constructor now accepts the same state-machine definition. */
-export const incrementalComponent = <State, View, Requirements = never>(
-  definition: ComponentDefinition<State, View, Requirements>
-): Component<View, Requirements> => component(definition)
-
-/** @deprecated Use ComponentDefinition. The primary definition now describes the state-machine component contract. */
-export type IncrementalComponentDefinition<State, View, Requirements = never> = ComponentDefinition<State, View, Requirements>

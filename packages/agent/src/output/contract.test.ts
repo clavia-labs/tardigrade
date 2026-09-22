@@ -276,7 +276,7 @@ describe("the declaration on the log", () => {
   })
 
   // A projection that throws poisons the settle that reads it, so a declaration nobody can serve
-  // is a verdict the machine turns into a terminal (inference/machine.ts).
+  // is a verdict the machine turns into a terminal (component/infer/machine.ts).
   test("a declaration that is not a contract is a verdict, never a throw", () => {
     const bad = declaredOutputOf([{ type: "MessageReceived", id: "m1", text: "go", output: { type: "object" }, at: 1 }])
     expect(bad.kind).toBe("invalid")

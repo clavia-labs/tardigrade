@@ -1,8 +1,10 @@
+import { Context } from "effect"
+import { machineOf } from "../component/runtime"
 import { CancellationRequested, CancellationInput, CancellationResult, type CancellationDispatched, type InvocationCancellation } from "./events"
 import { Cause, Clock, Effect, Schema } from "effect"
 import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
 import { bindTransitionContext, transitionKeyOf } from "../transition/transition"
-import { replayProjection } from "@clavia/tardigrade-core/projection"
+import { replayProjection, replayState } from "@clavia/tardigrade-core/projection"
 import { EventLog } from "../log"
 import { Self } from "../runtime/context"
 import type { ActorProjection } from "../runtime/definition"
@@ -11,7 +13,7 @@ import type { KeyFragment } from "../log/keys"
 import { formatThreadAddress, parseThreadAddress } from "../transport/endpoint"
 import { Router } from "../transport/router"
 import type { ThreadLineage } from "./relations"
-import { cancelComponent, type Component } from "@clavia/tardigrade-core/component"
+import type { Component } from "@clavia/tardigrade-core/component"
 import { InvocationRef, invocationKey, sameInvocation, invocationCoordinateKey, type InvocationCoordinate } from "./invocation"
 import { actorMethod, type ActorMethodDeclaration, type ActorMethods } from "../actor/method"
 import { cancellationStateOf, initialMethodStates, reduceMethodStates, type ActorMethodCancellationState } from "./state"
@@ -296,7 +298,7 @@ export const actorCancellationComponentTransitions = <R>(
   components: ReadonlyArray<Component<unknown, R>>
 ): ReadonlyArray<Transition<never, R>> => {
   const projected = state as ActorCancellationProjectionState
-  return components.flatMap((component, index) => component.machine.output(projected.components[index]).transitions)
+  return components.flatMap((component, index) => machineOf(component).output(projected.components[index]).transitions)
 }
 
 const projectedChildCancellationTransitionsOf = <R>(
@@ -321,9 +323,9 @@ export const actorCancellationProjection = <R>(
   childTimeoutMs = DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS
 ): ActorProjection<R | Router | Self> | undefined => {
   const timeoutMs = childCancellationTimeoutOf(childTimeoutMs)
-  const initial = (): ActorCancellationProjectionState => ({
+  const initial = (data?: Context.Context<never>): ActorCancellationProjectionState => ({
     methods: initialMethodStates(methods),
-    components: components.map((component) => component.machine.initial()),
+    components: components.map((component) => machineOf(component).initial(data)),
     requests: [],
     links: [],
     settledCalls: new Set(),
@@ -347,7 +349,7 @@ export const actorCancellationProjection = <R>(
         }]
     const methodsState = reduceMethodStates(methods, state.methods, event)
     const componentsState = components.map((component, index) =>
-      component.machine.step(state.components[index], event)
+      machineOf(component).step(state.components[index], event)
     )
     const links = [...state.links]
     const link = childLinkOf(event)
@@ -404,7 +406,7 @@ export const actorCancellationProjection = <R>(
     for (const { cancellation, event } of cancellations) {
       const child = projectedChildCancellationTransitionsOf<R>(state, cancellation, timeoutMs)
       const component = components.flatMap((entry, index) =>
-        entry.machine.cancel?.(state.components[index], cancellation) ?? []
+        machineOf(entry).output(state.components[index]).interactions?.cancel?.(cancellation) ?? []
       )
       const outstanding = [...child, ...component].filter((transition) => !state.recorded.has(transition.key))
       if (outstanding.length === 0 && cancellationOf(state, cancellation.invocation) === "running") terminals.push(terminalTransitionOf(cancellation, methods, event))
@@ -448,10 +450,14 @@ export const cancellationTransitionsOf = <R>(
   }))
   const terminals: Array<Transition<never, R | Router | Self>> = []
   const obligations: Array<Transition<never, R | Router | Self>> = []
+  const cleanup = components.flatMap(component => {
+    const machine = machineOf(component)
+    return machine.output(replayState(machine, events)).interactions?.cancel ?? []
+  })
   for (const { cancellation, event } of cancellations) {
     const pending = [
       ...childCancellationTransitionsOf<R>(events, cancellation, timeoutMs),
-      ...components.flatMap((component) => cancelComponent(component, events, cancellation))
+      ...cleanup.flatMap(cancel => cancel(cancellation))
     ]
       .filter((transition) => !recorded.has(transition.key))
     if (pending.length === 0) {

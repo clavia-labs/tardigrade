@@ -1,12 +1,12 @@
 import { Schema } from "effect"
 import { MessageContent } from "../log/message"
 import { responseKeyOf, upcastError } from "../log/upcast"
-import type { ProviderContinuation } from "../inference/continuation"
+import type { ProviderContinuation } from "../model/continuation"
 import { responsesOf } from "../log/response"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replayProjection, type Projection } from "@clavia/tardigrade-core/projection"
 import { terminalReportOutcomeOf } from "@clavia/tardigrade-core/interaction/provider-message"
-import { checkpointOf, keepFromIndex, resolvedContextPolicyOf, type ContextPolicy } from "../component/context"
+import { checkpointOf, keepFromIndex, resolvedContextPolicyOf, type ContextPolicy } from "../component/compact/context"
 import {
   correctionText,
   modeOf
@@ -80,11 +80,11 @@ export interface RenderedMessageEntry {
 
 const messageEntriesFrom = (
   projected: ReadonlyArray<Event>,
-  resolved: ContextPolicy
+  resolved: ContextPolicy,
+  checkpoint = checkpointOf(projected)
 ): ReadonlyArray<RenderedMessageEntry> => {
   const messages: RenderedMessageEntry[] = []
   const push = (event: Event, message: AgentMessage) => messages.push({ event, message })
-  const checkpoint = checkpointOf(projected)
   const from = keepFromIndex(projected, checkpoint.keepFrom)
   const terminated = new Set(
     projected
@@ -230,6 +230,16 @@ export const renderMessages = (
   policy: Partial<ContextPolicy> = {}
 ): ReadonlyArray<AgentMessage> => replayProjection(messagesProjection(policy), trajectory)
 
-// renderMessageEntries retains message ownership for compaction cuts (component/compaction.properties.test.ts).
+// renderMessageEntries retains message ownership for compaction cuts (component/compact/compact.properties.test.ts).
 export const renderMessageEntries = (trajectory: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}): ReadonlyArray<RenderedMessageEntry> =>
   messageEntriesFrom(projectedOutput(trajectory), resolvedContextPolicyOf(policy))
+
+// renderConversation renders the selected conversation view under the composed context policy.
+export const renderConversation = (
+  conversation: import("../component/view").MessageView,
+  policy: Partial<ContextPolicy>
+): ReadonlyArray<AgentMessage> => messageEntriesFrom(
+  conversation.trajectory,
+  resolvedContextPolicyOf(policy),
+  conversation.checkpoint ?? { keepFrom: "", summary: "" }
+).map(entry => entry.message)

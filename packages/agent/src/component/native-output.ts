@@ -1,5 +1,5 @@
-import { NativeOutputSupport } from "../inference/contract"
-import type { AgentComponent } from "../runtime/composition"
+import { NativeOutputSupport } from "../model/contract"
+import type { AgentComponent } from "./view"
 import { component } from "@clavia/tardigrade-core/actor"
 
 // nativeOutput selects provider-native structured output and carries its model-layer requirement into the host type.

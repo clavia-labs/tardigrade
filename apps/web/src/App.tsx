@@ -155,7 +155,7 @@ const PuzzlePiece = (): ReactElement => (
 
 type Tone = "red" | "purple" | "blue" | "number"
 type CodeToken = { readonly text: string; readonly tone?: Tone }
-type Capability = "memory" | "budget" | "permission" | "code" | "mcp" | "subagents" | "output"
+type Capability = "memory" | "budget" | "code" | "mcp" | "subagents" | "output"
 type CodeLine = { readonly tokens: ReadonlyArray<CodeToken>; readonly capability?: Capability }
 type CapabilityOption = { readonly id: Capability; readonly label: string }
 
@@ -164,7 +164,6 @@ const plain = (text: string): CodeLine => ({ tokens: [token(text)] })
 const highlight = (capability: Capability, ...tokens: ReadonlyArray<CodeToken>): CodeLine => ({ tokens, capability })
 
 const start = (name: string): ReadonlyArray<CodeLine> => [
-  plain(""),
   { tokens: [token("export const", "red"), token(" " + name + " = "), token("actor", "purple"), token("({")] },
   { tokens: [token("  name: "), token("\"" + name + "\"", "blue"), token(",")] },
   plain("  methods: agentMethods,"),
@@ -177,7 +176,6 @@ const end: ReadonlyArray<CodeLine> = [plain("  ])]"), plain("})")]
 const capabilityOptions: ReadonlyArray<CapabilityOption> = [
   { id: "memory", label: "Compaction" },
   { id: "budget", label: "Budgets" },
-  { id: "permission", label: "Permissions" },
   { id: "code", label: "Code mode" },
   { id: "mcp", label: "MCP" },
   { id: "subagents", label: "Subagents" },
@@ -189,46 +187,42 @@ const indent = (depth: number): string => "    " + "  ".repeat(depth)
 const codeFor = (active: ReadonlySet<Capability>): ReadonlyArray<CodeLine> => {
   const lines: Array<CodeLine> = [...start("researcher")]
   if (active.has("memory")) {
-    lines.push(highlight("memory", token("    compaction", "purple"), token("({ fireRatio: "), token("0.8", "number"), token(", keepRatio: "), token("0.5", "number"), token(" }),")))
+    lines.push(highlight("memory", token("    compact", "purple"), token("(messages(), { triggerRatio: "), token("0.8", "number"), token(", retainRatio: "), token("0.5", "number"), token(" }),")))
   }
 
   let depth = 0
   if (active.has("budget")) {
-    lines.push(highlight("budget", token(indent(depth) + "budget", "purple"), token("([")))
+    lines.push(highlight("budget", token(indent(depth) + "budget", "purple"), token("(")))
     depth += 1
   }
-  if (active.has("permission")) {
-    lines.push(highlight("permission", token(indent(depth) + "permissions", "purple"), token("([")))
-    depth += 1
-  }
-  if (active.has("code") || active.has("mcp") || active.has("subagents")) {
+  if (active.has("code") || active.has("mcp") || active.has("subagents") || active.has("budget")) {
     const codeModeLine = [token(indent(depth) + "codeMode", "purple"), token("([")]
-    lines.push(active.has("code") ? highlight("code", ...codeModeLine) : { tokens: codeModeLine })
+    lines.push(highlight("code", ...codeModeLine))
     depth += 1
     if (active.has("code")) {
-      lines.push(plain(indent(depth) + "filesPackage(),"))
-      lines.push(plain(indent(depth) + "fetchPackage(),"))
+      lines.push(highlight("code", token(indent(depth) + "fetch(),")))
     }
     if (active.has("mcp")) {
-      lines.push(highlight("mcp", token(indent(depth) + "mcpPackage", "purple"), token("(),")))
+      lines.push(highlight("code", token(indent(depth) + "mcp", "purple"), token("(),")))
     }
     if (active.has("subagents")) {
-      lines.push(highlight("subagents", token(indent(depth) + "agentsPackage", "purple"), token("(),")))
-      lines.push(plain(indent(depth) + "workspacePackage()"))
+      lines.push(highlight("code", token(indent(depth) + "agents", "purple"), token("(),")))
+      lines.push(highlight("code", token(indent(depth) + "workspace()")))
     }
     depth -= 1
-    lines.push(plain(indent(depth) + "]),"))
-  }
-  if (active.has("permission")) {
-    depth -= 1
-    lines.push(plain(indent(depth) + "], { authority: caller() }),"))
+    lines.push(highlight("code", token(indent(depth) + "]),")))
   }
   if (active.has("budget")) {
     depth -= 1
-    lines.push(plain(indent(depth) + "], { limit: 12 }),"))
+    lines.push(highlight("budget", token(indent(depth) + "{")))
+    lines.push(highlight("budget", token(indent(depth + 1) + "limit: "), token("12", "number"), token(",")))
+    lines.push(highlight("budget", token(indent(depth + 1) + "usage: ({ calls }) => calls.length,")))
+    lines.push(highlight("budget", token(indent(depth + 1) + "onExhausted: (reason, settle) =>")))
+    lines.push(highlight("budget", token(indent(depth + 2) + "settle({ error: reason }),")))
+    lines.push(highlight("budget", token(indent(depth) + "}),")))
   }
   if (active.has("output")) {
-    lines.push(highlight("output", token("    nativeOutput", "purple"), token(",")))
+    lines.push(plain("    nativeOutput,"))
   }
   return [...lines, ...end]
 }

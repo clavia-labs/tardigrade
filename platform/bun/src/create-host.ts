@@ -1,4 +1,3 @@
-import { restingActor } from "@clavia/tardigrade-core/runtime/reconciler"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { IngressActor } from "@clavia/tardigrade-host/transport/ingress"
 import type { Directory } from "@clavia/tardigrade-core/transport/directory"
@@ -46,7 +45,7 @@ export interface HostBackend {
   readonly actor: string
   readonly methods: ActorMethods
   readonly storage: string
-  readonly resting: (events: ReadonlyArray<Event>) => boolean
+  readonly resting: (events: ReadonlyArray<Event>) => Promise<boolean>
   readonly instances: ReadonlyMap<string, BunHost>
   readonly ensure: (instance: string) => Promise<BunHost>
   readonly resolve: Directory<ThreadCoordinate, IngressActor>["resolve"]
@@ -120,7 +119,12 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
     actor: options.actor.name,
     methods: options.actor.methods,
     storage: options.storage,
-    resting: (events) => restingActor(options.actor, events),
+    resting: async (events) => {
+      const created = threadCreatedOf(events)
+      if (created === undefined) throw new Error("status requires a created thread")
+      const runtime = await instanceOf(created.address.actor, created.address.instance)
+      return runtime.restingFrom(created.address.thread, events)
+    },
     instances: pool.instances,
     ensure: (instance) => instanceOf(options.actor.name, instance),
     resolve,

@@ -226,7 +226,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       .handle("list", ({ params, query }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(yield* Threads, params.id)
-          const tree = treeOf(logsOf(yield* threads.list), threads.statusOf, query)
+          const tree = yield* treeFrom(threads, query)
           if (tree === undefined) {
             if (query.root === undefined) {
               return yield* Effect.die(new Error("a roster read without a root cannot be absent"))
@@ -251,7 +251,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       .handle("tree", ({ params, query }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(yield* Threads, params.id)
-          const tree = treeOf(logsOf(yield* threads.list), threads.statusOf, { ...query, root: params.thread })
+          const tree = yield* treeFrom(threads, { ...query, root: params.thread })
           const node = tree?.[0]
           if (node === undefined) {
             return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.thread)))
@@ -357,3 +357,15 @@ export const layerActorsGroup = HttpApiBuilder.group(ServerApi, "actors", (handl
       })))
 
 export const layerModelsGroup = (options: ApiOptions = {}) => catalogHandlers(Effect.succeed(options.catalog))
+
+const treeFrom = (threads: import("./threads").ActorThreads, bounds: import("@clavia/tardigrade-client/contract").TreeBounds) => Effect.gen(function* () {
+  const logs = logsOf(yield* threads.list)
+  const tree = treeOf(logs, () => "running", bounds)
+  if (tree === undefined) return undefined
+  const status = async (node: import("./projections").ThreadNode): Promise<import("./projections").ThreadNode> => ({
+    ...node,
+    status: await threads.statusOf(logs.get(node.id)!),
+    children: await Promise.all(node.children.map(status))
+  })
+  return yield* Effect.promise(() => Promise.all(tree.map(status)))
+})

@@ -19,7 +19,7 @@ export class ObjectStorage extends Context.Service<ObjectStorage, {
 
 export const DEFAULT_OBJECT_READ_CONCURRENCY = 4
 
-// ObjectReadConcurrency bounds simultaneous object reads within each model request (../inference/integration/model/objects.test.ts).
+// ObjectReadConcurrency bounds simultaneous object reads within each model request (../model/integration/model/objects.test.ts).
 export const ObjectReadConcurrency = Context.Reference<number | "unbounded">("tardigrade/ObjectReadConcurrency", {
   defaultValue: () => DEFAULT_OBJECT_READ_CONCURRENCY
 })

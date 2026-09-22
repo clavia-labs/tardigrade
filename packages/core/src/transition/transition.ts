@@ -148,6 +148,46 @@ export const validateTransitions = <R>(
   return transitions
 }
 
+// annotateTransition attaches symbol metadata while retaining runtime ownership (transition/annotation.test.ts).
+export const annotateTransition = <T extends Transition<never, unknown>, Key extends symbol, Value>(
+  transition: T,
+  key: Key,
+  value: Value
+): T & Readonly<Record<Key, Value>> => {
+  const annotated = Object.freeze({ ...transition, [key]: value }) as T & Readonly<Record<Key, Value>>
+  const reference = references.get(transition)
+  if (reference !== undefined) references.set(annotated, reference)
+  return annotated
+}
+
+// withResponse binds a pure response callback to proposed work while retaining its owner (component/composition/settlement.test.ts).
+export const withResponse = <T extends Transition<never, unknown>, Result>(
+  transition: T,
+  respond: (result: Result) => Intent<never>
+): T & { readonly respond: (result: Result) => Intent<never> } => {
+  const reference = references.get(transition)
+  const bound = {
+    ...transition,
+    respond: (result: Result) => {
+      const completion = respond(result)
+      validateTransitions([completion], reference?.component)
+      return completion
+    }
+  }
+  Object.freeze(bound)
+  if (reference !== undefined) references.set(bound, reference)
+  return bound
+}
+
+// executionOnly retains a proposal's execution and owner without exposing its response callback.
+export const executionOnly = <R>(transition: Transition<never, R> & { readonly respond?: (result: never) => Intent<never> }): Transition<never, R> => {
+  if (transition.respond === undefined) return transition
+  const { respond: _respond, ...execution } = transition
+  const reference = references.get(transition)
+  if (reference !== undefined) references.set(execution, reference)
+  return Object.freeze(execution)
+}
+
 // concurrentTransition preserves scoped identity when cancellation cleanup becomes concurrent (migration.test.ts).
 export const concurrentTransition = <R>(transition: ExternalEffect<never, R>): ExternalEffect<never, R> => {
   const concurrent = Object.freeze({ ...transition, concurrent: true })

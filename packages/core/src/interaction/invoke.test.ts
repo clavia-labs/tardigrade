@@ -20,7 +20,9 @@ const inspect = legacyActorMethod({
 const source = threadAddressOf("caller", "main", "root")
 const target = {
   coordinate: threadAddressOf("inspector", "main", "shared"),
-  methods: { inspect }
+  methods: {
+    inspect
+  }
 }
 
 const cancellableInspect = legacyActorMethod({
@@ -41,7 +43,9 @@ const cancellableInspect = legacyActorMethod({
 
 const cancellableTarget = {
   coordinate: target.coordinate,
-  methods: { inspect: cancellableInspect }
+  methods: {
+    inspect: cancellableInspect
+  }
 }
 
 describe("actorCall", () => {
@@ -87,7 +91,9 @@ describe("actorCall", () => {
     for (const log of [plan, pending, completed]) {
       expect(() => actorCall(log, { ...options, input: { value: "changed" } })).toThrow("input does not match")
       expect(() => actorCall(log, { ...options, target: { ...target, coordinate: { ...target.coordinate, thread: "other" } } })).toThrow("target does not match")
-      expect(() => actorCall(log, { ...options, target: { ...target, methods: { other: inspect } }, method: "other" })).toThrow("method does not match")
+      expect(() => actorCall(log, { ...options, target: { ...target, methods: {
+        other: inspect
+      } }, method: "other" })).toThrow("method does not match")
     }
     expect(actorCall(completed, { ...options, key: "second-review" }).reference).not.toEqual(initial.reference)
   })

@@ -55,7 +55,7 @@ export const bunHttpThreads = (host: BunHost, options: {
 // bunHttpServices adapts a hydrated Bun host for HTTP serving (create-host.test.ts).
 export const bunHttpServices = (host: object) => {
   const backend = hostBackend(host)
-  const statusOf: ActorThreads["statusOf"] = (events) => backend.resting(events) ? "settled" : "running"
+  const statusOf: ActorThreads["statusOf"] = async (events) => await backend.resting(events) ? "settled" : "running"
   const storage = { kind: "sqlite", location: backend.storage }
   const threadsFor = (instance: string, runtime: BunHost) => bunHttpThreads(runtime, {
     actor: backend.actor, instance, methods: backend.methods, storage, statusOf, allocate: backend.allocate

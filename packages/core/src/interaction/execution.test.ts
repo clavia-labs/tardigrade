@@ -81,7 +81,9 @@ test("completed, failed, and cancelled replies retain their typed outcomes", asy
 
 test("method namespaces preserve metadata and promise assimilation", async () => {
   for (const name of ["coordinate", "address", "methods", "then", "__proto__"]) {
-    const ref = bindThreadMethods({ coordinate: parent.target, methods: { [name]: research } })
+    const ref = bindThreadMethods({ coordinate: parent.target, methods: {
+      [name]: research
+    } })
     expect(Object.keys(ref.methods)).toEqual([name])
     expect(typeof ref.methods[name]).toBe("function")
     expect(ref.coordinate).toEqual(parent.target)

@@ -42,7 +42,7 @@ test("a missing selected provider produces an actionable model failure", async (
       import { Effect, Stream } from "effect"
       import { LanguageModel } from "effect/unstable/ai"
       import { FetchHttpClient } from "effect/unstable/http"
-      import { providerLayer } from "./layer.ts"
+      import { providerLayer } from "./layer"
       const result = await Effect.runPromise(Effect.gen(function* () {
         const model = yield* LanguageModel.LanguageModel
         return yield* model.streamText({ prompt: "Hello" }).pipe(Stream.runCollect, Effect.result)

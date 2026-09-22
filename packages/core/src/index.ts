@@ -1,4 +1,5 @@
 export * from "./actor"
+export { replayState, replayProjection } from "./projection/projection"
 export { type InvocationRef } from "./interaction/invocation"
 export { type ActorInvocation, type ActorMethodCall } from "./interaction/invocation"
 export { type ActorMethodCancellationState } from "./interaction/state"

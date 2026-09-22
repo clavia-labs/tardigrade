@@ -41,7 +41,7 @@ export class StreamIncomplete extends Data.TaggedError("StreamIncomplete") {
 
 export class StreamBoundExceeded extends Data.TaggedError("StreamBoundExceeded")<{ readonly bound: keyof StreamBounds }> {}
 
-// boundedStream interrupts stalled pulls without turning a timeout into successful completion (inference/request.test.ts).
+// boundedStream interrupts stalled pulls without turning a timeout into successful completion (model/request.test.ts).
 export const boundedStream = <A, E, R>(stream: Stream.Stream<A, E, R>, bounds: StreamBounds) => Stream.transformPull(stream, (pull) => Clock.currentTimeMillis.pipe(Effect.map((startedAt) => {
   let first = true
   let lastChunkAt = startedAt

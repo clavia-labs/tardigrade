@@ -1,7 +1,9 @@
+import { machineOf } from "../../../core/src/component/runtime"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import fc from "fast-check"
-import { composeComponents, deriveComponent } from "@clavia/tardigrade-core/actor"
+import { composeComponents } from "@clavia/tardigrade-core/actor"
 import {
   CODE_VIEW_ALGEBRA,
   definePackage,
@@ -13,33 +15,38 @@ const packageFor = (name: string): Package =>
   definePackage({
     name,
     description: `${name} package`,
-    methods: { read: () => Effect.succeed(name) }
+    methods: {
+      read: () => Effect.succeed(name)
+    }
   })
 
+const composePackages = (name: string, children: ReadonlyArray<CodeComponent<unknown>>): CodeComponent<unknown> =>
+  composeComponents(name, CODE_VIEW_ALGEBRA, children)
+
 const regroup = (
-  leaves: ReadonlyArray<CodeComponent>,
+  leaves: ReadonlyArray<CodeComponent<unknown>>,
   choices: ReadonlyArray<number>
-): CodeComponent => {
-  if (leaves.length === 0) return composeComponents("nested-empty", CODE_VIEW_ALGEBRA, [])
+): CodeComponent<unknown> => {
+  if (leaves.length === 0) return composePackages("nested-empty", [])
   const nodes = [...leaves]
   let step = 0
   while (nodes.length > 1) {
     const choice = choices[step % Math.max(choices.length, 1)] ?? 0
     const index = choice % (nodes.length - 1)
-    const pair = composeComponents(`nested-${step}`, CODE_VIEW_ALGEBRA, [nodes[index]!, nodes[index + 1]!])
+    const pair = composePackages(`nested-${step}`, [nodes[index]!, nodes[index + 1]!])
     nodes.splice(index, 2, pair)
     step += 1
   }
   return nodes[0]!
 }
 
-const namesOf = (component: CodeComponent): ReadonlyArray<string> =>
-  deriveComponent(component, []).view.packages.map((pkg) => pkg.name)
+const namesOf = (component: CodeComponent<unknown>): ReadonlyArray<string> =>
+  replayProjection(machineOf(component), []).view.packages.map((pkg) => pkg.name)
 
 describe("code view algebra laws", () => {
   test("empty is an identity and combine is associative", () => {
     const viewArbitrary = fc.array(fc.stringMatching(/^[a-z][a-z0-9_]{0,12}$/), { maxLength: 12 })
-      .map((names) => ({ packages: names.map(packageFor) }))
+      .map((names) => ({ packages: names.map(name => ({ name, description: `${name} package`, methods: [] })), calls: [], pendingCalls: [] }))
 
     fc.assert(
       fc.property(viewArbitrary, viewArbitrary, viewArbitrary, (left, middle, right) => {
@@ -62,12 +69,12 @@ describe("recursive code component composition", () => {
         fc.array(fc.nat(), { maxLength: 24 }),
         (names, choices) => {
           const leaves = names.map(packageFor)
-          const flat = composeComponents("flat", CODE_VIEW_ALGEBRA, leaves)
+          const flat = composePackages("flat", leaves)
           const nested = regroup(leaves, choices)
 
           expect(namesOf(nested)).toEqual(namesOf(flat))
-          expect(deriveComponent(nested, []).view.packages).toEqual(leaves)
-          expect(deriveComponent(nested, []).transitions).toEqual([])
+          expect(replayProjection(machineOf(nested), []).view.packages).toEqual(leaves.map(({ name, description }) => ({ name, description, methods: ["read"] })))
+          expect(replayProjection(machineOf(nested), []).transitions).toEqual([])
         }
       ),
       { numRuns: 500 }

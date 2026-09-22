@@ -4,10 +4,11 @@ import {
   agentMethods,
   agentsPackage,
   budget,
-  budgetAuthority,
   caller,
+  escalate,
   codeMode,
-  compaction,
+  compact,
+  messages,
   fetchPackage,
   filesPackage,
   infer,
@@ -46,16 +47,25 @@ const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
     methods: agentMethods,
     components: [
       infer([
-        budget([codeMode([
-          agentsPackage(models.catalog === undefined ? {} : { catalog: models.catalog }),
-          workspacePackage(),
-          filesPackage(),
-          fetchPackage()
-        ])], { authority: caller() }),
-        compaction(),
+        escalate(
+          budget(
+            codeMode([
+              agentsPackage(models.catalog === undefined ? {} : { catalog: models.catalog }),
+              workspacePackage(),
+              filesPackage(),
+              fetchPackage()
+            ]),
+            {
+              onExhausted: (reason, settle) => settle({ error: reason }),
+              usage: (observation) => observation.calls.length,
+              rejectionMessage: "Tool budget reached. Answer now with your best result."
+            }
+          ),
+          { authority: caller(), requests: { decide: request => request.grant() } }
+        ),
+        compact(messages()),
         outputValidateOnce
-      ]),
-      budgetAuthority()
+      ])
     ]
   })
 

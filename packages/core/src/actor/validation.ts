@@ -42,7 +42,7 @@ export const methodInputValidationTransitions = (
   return Object.entries(methods).flatMap(([name, method]) => transitionsFor(name, method, events))
 }
 
-// methodInputValidationComponents mount each method's durable input contract (packages/agent/src/runtime/composition.test.ts, "a historical model string durably fails its turn").
+// methodInputValidationComponents mount each method's durable input contract (packages/agent/src/component/infer/infer.test.ts, "a historical model string durably fails its turn").
 export const methodInputValidationComponents = (
   methods: ActorMethods
 ): ReadonlyArray<Component<undefined>> => Object.entries(methods).flatMap(([name, method]) => {
@@ -55,7 +55,7 @@ export const methodInputValidationComponents = (
       })
     : component({
         name: `actor.method-input.${name}`,
-        initial: projection.initial,
+        initial: () => projection.initial(),
         step: projection.step,
         output: (state) => ({ view: undefined, transitions: projection.output(state) })
       })]

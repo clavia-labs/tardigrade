@@ -131,11 +131,11 @@ h1 span { display: block; white-space: nowrap; }
 .code-filename { height: 40px; padding: 0 16px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--hair); color: var(--ink-2); background: var(--sunken); font-family: var(--mono); font-size: 12px; }
 .file-icon { width: 11px; height: 14px; border: 1.5px solid var(--blue); border-radius: 1px; position: relative; }
 .file-icon::after { content: ""; position: absolute; top: -1.5px; right: -1.5px; width: 4px; height: 4px; border-bottom: 1.5px solid var(--blue); border-left: 1.5px solid var(--blue); background: var(--sunken); }
-.code-card pre { height: 510px; margin: 0; padding: 20px 18px; overflow: auto; background: var(--surface); color: var(--ink); font-family: var(--mono); font-size: 12px; line-height: 1.7; }
+.code-card pre { min-height: 510px; margin: 0; padding: 24px 18px 20px; overflow-x: auto; background: var(--surface); color: var(--ink); font-family: var(--mono); font-size: 12px; line-height: 1.7; }
 .code-card code { display: block; min-width: 400px; }
 .code-line { display: block; min-height: 1.75em; }
 .line-memory, .line-budget, .line-permission, .line-code, .line-mcp, .line-subagents, .line-output { width: max-content; margin-left: -7px; padding-left: 7px; padding-right: 6px; border-left: 2px solid; }
-.line-memory { border-color: var(--moss); background: var(--moss-wash); }
+.line-memory { border-color: var(--subagents); background: var(--subagents-wash); }
 .line-budget { border-color: var(--wait); background: var(--wait-wash); }
 .line-permission { border-color: var(--fail); background: var(--fail-wash); }
 .line-code { border-color: var(--run); background: var(--run-wash); }
@@ -151,7 +151,7 @@ h1 span { display: block; white-space: nowrap; }
 .harness-button:active { transform: scale(.97); }
 .toggle-mark { width: 10px; color: currentColor; font-size: 15px; line-height: 1; text-align: center; }
 .harness-button[aria-pressed="true"] { border-color: var(--moss); color: var(--ink); }
-.harness-button[data-harness="memory"][aria-pressed="true"] { background: var(--moss-wash); }
+.harness-button[data-harness="memory"][aria-pressed="true"] { background: var(--subagents-wash); }
 .harness-button[data-harness="budget"][aria-pressed="true"] { background: var(--wait-wash); }
 .harness-button[data-harness="permission"][aria-pressed="true"] { background: var(--fail-wash); }
 .harness-button[data-harness="code"][aria-pressed="true"] { background: var(--run-wash); }
@@ -901,7 +901,7 @@ h1 span { display: block; white-space: nowrap; }
   h1 span { white-space: normal; }
   .hero-copy > p { font-size: 16px; }
   .code-filename { padding: 0 12px; }
-  .code-card pre { height: 500px; padding: 18px 14px; font-size: 11px; }
+  .code-card pre { min-height: 500px; padding: 24px 14px 18px; font-size: 11px; }
   .puzzle-art { right: auto; left: -40%; width: 180%; }
   .how-inner { padding-top: 64px; padding-bottom: 72px; }
   .how-copy h2 { font-size: 32px; }

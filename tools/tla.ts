@@ -40,6 +40,24 @@ const counterexample = (
 ): CounterexampleCheck => ({ directory, module, config, outcome: "counterexample", evidence })
 
 export const checks: ReadonlyArray<Check> = [
+  pass("component", "InteractionSubstitution", "InteractionSubstitution.cfg"),
+  pass("component", "InteractionSubstitution", "InteractionSubstitutionConcurrent.cfg"),
+  counterexample("component", "InteractionSubstitution", "InteractionSubstitutionEarly.cfg", "Invariant ReplayAgreement is violated"),
+  counterexample("component", "InteractionSubstitution", "InteractionSubstitutionStale.cfg", "Invariant ReplayAgreement is violated"),
+  counterexample("component", "InteractionSubstitution", "InteractionSubstitutionDuplicate.cfg", "Invariant UniqueCommits is violated"),
+  counterexample("component", "InteractionSubstitution", "InteractionSubstitutionResponse.cfg", "Invariant Substitution is violated"),
+  counterexample("component", "InteractionSubstitution", "InteractionSubstitutionCleanup.cfg", "Invariant Substitution is violated"),
+  pass("component", "Composition", "Composition.cfg"),
+  counterexample("component", "Composition", "CompositionOrder.cfg", "Invariant SiblingCommutativity is violated"),
+  counterexample("component", "Composition", "CompositionWrapperOrder.cfg", "Invariant WrapperCommutativity is violated"),
+  counterexample("component", "Composition", "CompositionDistribution.cfg", "Invariant WrapperDistribution is violated"),
+  counterexample("component", "Composition", "CompositionProjection.cfg", "Invariant ArbitraryProjectionAssociativity is violated"),
+  counterexample("component", "Composition", "CompositionLossy.cfg", "Invariant ViewDeterminesFuture is violated"),
+  pass("component", "ComponentAdmission", "ComponentAdmission.cfg"),
+  counterexample("component", "ComponentAdmission", "ComponentAdmissionStale.cfg", "Invariant AdmittedWithinLimit is violated"),
+  counterexample("component", "ComponentAdmission", "ComponentAdmissionRevoked.cfg", "Invariant PermissionAtCommit is violated"),
+  counterexample("component", "ComponentAdmission", "ComponentAdmissionBypass.cfg", "Invariant AdmittedWithinLimit is violated"),
+  counterexample("component", "ComponentAdmission", "ComponentAdmissionEffect.cfg", "Invariant NoExecutionBeforeAdmission is violated"),
   pass("interaction", "ForkPublication", "ForkPublication.cfg"),
   counterexample("interaction", "ForkPublication", "ForkPublicationBareRoot.cfg", "Invariant NoExecutionBeforePublication is violated"),
   pass("interaction", "Fork", "ForkLive.cfg"),
@@ -109,8 +127,8 @@ export const checks: ReadonlyArray<Check> = [
   pass("interaction", "Method", "MethodLive.cfg"),
   counterexample("interaction", "Method", "MethodNoDeadline.cfg", "AllDispatchedCallsTerminate was violated"),
   counterexample("interaction", "Method", "MethodHint.cfg", "Invariant ResponseReversesAcceptedLink is violated"),
-  pass("component", "Component", "Component.cfg"),
-  counterexample("component", "Component", "ComponentCurrent.cfg", "Invariant CurrentViewRoutable is violated"),
+  pass("component", "OfferedRouting", "OfferedRouting.cfg"),
+  counterexample("component", "OfferedRouting", "OfferedRoutingCurrent.cfg", "Invariant CurrentViewRoutable is violated"),
   pass("interaction", "Cancellation", "Cancellation.cfg"),
   counterexample("interaction", "Cancellation", "CancellationIdentity.cfg", "Invariant ExactRequestTarget is violated"),
   counterexample("interaction", "Cancellation", "CancellationEffectLeak.cfg", "Invariant NoNewEffects is violated"),
@@ -276,7 +294,8 @@ try {
     const output = `${stdout}\n${stderr}`
     const correct = !timedOut && (check.outcome === "pass" ? code === 0 : code !== 0 && output.includes(check.evidence))
     if (correct) {
-      console.log(`ok ${check.directory}/${check.config}`)
+      const states = output.match(/([\d,]+) distinct states found/)?.[1]
+      console.log(`ok ${check.directory}/${check.config}${states === undefined ? "" : ` (${states} states)`}`)
       continue
     }
     failures += 1

@@ -11,7 +11,7 @@ import {
   turnHeadFrom,
   turnTerminalAtFrom
 } from "@clavia/tardigrade-code/execution/turn-projection"
-import { ModelRef } from "../inference/reference"
+import { ModelRef } from "../model/reference"
 import { AgentMessageReceived, MessageContent } from "../log/message"
 export { AgentMessageReceived } from "../log/message"
 import { turnCancelled, turnFailed } from "../log/events"

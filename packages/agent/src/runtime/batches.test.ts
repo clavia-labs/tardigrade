@@ -1,5 +1,8 @@
+import { testModelData } from "../../fixtures/model"
+import { testModelLock } from "@clavia/tardigrade-agent/fixtures/model"
+import { testMachineOf } from "../../fixtures/component"
 import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/fixtures/model"
 import fc from "fast-check"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
@@ -11,14 +14,14 @@ import { createHost } from "@clavia/tardigrade-host/host"
 import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { agentMethods, budget, codeMode, infer, nativeOutput, tool } from "../index"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
-import { NativeOutputSupport, type InferRequest } from "../inference/contract"
-import { usageIn } from "../inference/usage"
+import { NativeOutputSupport, type InferRequest } from "../model/contract"
+import { usageIn } from "../model/usage"
 import type { Action, ToolCall } from "../log/events"
 import { renderMessages } from "../projection/messages"
-import { compactionReactor, keepFromIndex } from "../component/compaction"
+import { compactionReactor, keepFromIndex } from "../component/compact/index"
 import { boundaryOf } from "../output/boundary"
 import { cancellationRequested } from "@clavia/tardigrade-core/interaction/cancellation"
-import type { AgentComponent, InferOptions } from "./composition"
+import type { AgentComponent, InferOptions } from "../component/infer/index"
 import type { AgentR } from "./turn"
 
 const MODEL = { models: { default: { provider: "test", model_id: "batch" }, allow: "*" } } as const
@@ -63,7 +66,20 @@ const complete = (): Action => ({ kind: "complete", output: "done", usage: { pro
 describe("tool batches", () => {
   test("generated starting allowances are recorded once before inference and survive restart", async () => {
     await fc.assert(fc.asyncProperty(fc.integer({ min: 1, max: 20 }), fc.integer({ min: 1, max: 20 }), async (limit, replacement) => {
-      const components = (amount: number) => [budget([tool({ spec, run: () => Effect.void })], { limit: amount })]
+      const components = (amount: number) => [budget(tool({ spec, run: () => Effect.void }), {
+        limit: amount,
+        onExhausted: (reason, settle) => settle({ error: reason }),
+        usage: (observation) => observation.calls.length,
+        rejectionMessage: "Tool budget reached. Answer now with your best result.",
+        view: (view, state) =>
+          state.phase === "spending"
+            ? view
+            : {
+                ...view,
+                tools: [],
+                system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+              }
+      })]
       const original = setup(components(limit), (request) => {
         expect(request.trajectory.filter((event) => event.type === "BudgetGranted")).toMatchObject([{ initial: true, amount: limit }])
         return complete()
@@ -106,15 +122,37 @@ describe("tool batches", () => {
             requested.push(callId)
             if (tokens.shift() !== undefined) admitted.push(callId)
             history.push({ type: "ToolCalled", ...call(callId), responseId: "m1/infer/0", turn: TURN, at: history.length })
+
           }
         }
         const runFrom = async (saved: ReadonlyArray<Event>, limit: number) => {
           const executions: string[] = []
-          const recovered = setup([budget([tool({ spec, run: (_input, context) => Effect.gen(function* () {
-            for (let step = 0; step < (Number(context.callId.split("-")[1]) + restartSeed) % 4; step++) yield* Effect.yieldNow
-            executions.push(context.callId)
-            return context.callId
-          }) })], { limit })], (request) => {
+          const recovered = setup([budget(
+            tool({
+              spec,
+              run: (_input, context) =>
+                Effect.gen(function* () {
+                  for (let step = 0; step < (Number(context.callId.split("-")[1]) + restartSeed) % 4; step++)
+                    yield* Effect.yieldNow
+                  executions.push(context.callId)
+                  return context.callId
+                })
+            }),
+            {
+              limit,
+              onExhausted: (reason, settle) => settle({ error: reason }),
+              usage: (observation) => observation.calls.length,
+              rejectionMessage: "Tool budget reached. Answer now with your best result.",
+              view: (view, state) =>
+                state.phase === "spending"
+                  ? view
+                  : {
+                      ...view,
+                      tools: [],
+                      system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+                    }
+            }
+          )], (request) => {
             expect(request.trajectory.filter((event) => event.type === "ToolReturned")).toHaveLength(requested.length)
             return complete()
           }, { toolConcurrency: concurrency }, saved)
@@ -263,10 +301,30 @@ describe("tool batches", () => {
     const executions: string[][] = []
     for (const limit of [1, 2]) {
       const ran: string[] = []
-      const recovered = setup([budget([tool({ spec, run: (_input, context) => Effect.sync(() => {
-        ran.push(context.callId)
-        return context.callId
-      }) })], { limit })], complete, {}, saved)
+      const recovered = setup([budget(
+        tool({
+          spec,
+          run: (_input, context) =>
+            Effect.sync(() => {
+              ran.push(context.callId)
+              return context.callId
+            })
+        }),
+        {
+          limit,
+          onExhausted: (reason, settle) => settle({ error: reason }),
+          usage: (observation) => observation.calls.length,
+          rejectionMessage: "Tool budget reached. Answer now with your best result.",
+          view: (view, state) =>
+            state.phase === "spending"
+              ? view
+              : {
+                  ...view,
+                  tools: [],
+                  system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+                }
+        }
+      )], complete, {}, saved)
       await recovered.host.wake(ROOT)
       await recovered.host.drive()
       executions.push(ran)
@@ -327,10 +385,30 @@ describe("tool batches", () => {
 
   test("a batch crossing the budget runs its allowed prefix and answers every call", async () => {
     const ran: string[] = []
-    const run = setup([budget([tool({ spec, run: (_input, context) => Effect.sync(() => {
-      ran.push(context.callId)
-      return context.callId
-    }) })], { limit: 2 })], (request) => request.trajectory.some((event) => event.type === "ToolCalled") ? complete() : batch(call("1"), call("2"), call("3")))
+    const run = setup([budget(
+      tool({
+        spec,
+        run: (_input, context) =>
+          Effect.sync(() => {
+            ran.push(context.callId)
+            return context.callId
+          })
+      }),
+      {
+        limit: 2,
+        onExhausted: (reason, settle) => settle({ error: reason }),
+        usage: (observation) => observation.calls.length,
+        rejectionMessage: "Tool budget reached. Answer now with your best result.",
+        view: (view, state) =>
+          state.phase === "spending"
+            ? view
+            : {
+                ...view,
+                tools: [],
+                system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+              }
+      }
+    )], (request) => request.trajectory.some((event) => event.type === "ToolCalled") ? complete() : batch(call("1"), call("2"), call("3")))
     await run.start()
     expect(ran).toEqual(["1", "2"])
     expect(run.read().filter((event) => event.type === "ToolReturned")).toHaveLength(3)
@@ -339,13 +417,34 @@ describe("tool batches", () => {
 
   test.each([1, "unbounded"] as const)("a later grant cannot admit an earlier refused call at concurrency %s", async (toolConcurrency) => {
     const ran: string[] = []
-    const run = setup([budget([tool({ spec, run: (_input, context) => Effect.gen(function*() {
-      ran.push(context.callId)
-      if (context.callId === "a") yield* (yield* EventLog).append([
-        { type: "BudgetGranted", turn: TURN, callId: "grant", amount: 1, at: 2 }
-      ])
-      return context.callId
-    }) })], { limit: 1 })], (request) => {
+    const run = setup([budget(
+      tool({
+        spec,
+        run: (_input, context) =>
+          Effect.gen(function* () {
+            ran.push(context.callId)
+            if (context.callId === "a")
+              yield* (yield* EventLog).append([
+                { type: "BudgetGranted", turn: TURN, callId: "grant", amount: 1, at: 2 }
+              ])
+            return context.callId
+          })
+      }),
+      {
+        limit: 1,
+        onExhausted: (reason, settle) => settle({ error: reason }),
+        usage: (observation) => observation.calls.length,
+        rejectionMessage: "Tool budget reached. Answer now with your best result.",
+        view: (view, state) =>
+          state.phase === "spending"
+            ? view
+            : {
+                ...view,
+                tools: [],
+                system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+              }
+      }
+    )], (request) => {
       const results = request.trajectory.filter((event) => event.type === "ToolReturned")
       if (results.length === 0) return batch(call("a"), call("b"))
       if (results.length === 2) return batch(call("c"))
@@ -366,7 +465,20 @@ describe("tool batches", () => {
   })
 
   test("a budget wall lets admitted code finish beside refused batch calls", async () => {
-    const run = setup([budget([codeMode(), tool({ spec, run: () => Effect.succeed("read") })], { limit: 1 })], (request) =>
+    const run = setup([budget([codeMode(), tool({ spec, run: () => Effect.succeed("read") })], {
+      limit: 1,
+      onExhausted: (reason, settle) => settle({ error: reason }),
+      usage: ({ children }) => children.reduce((used, observation) => used + observation.calls.length, 0),
+      rejectionMessage: "Tool budget reached. Answer now with your best result.",
+      view: (view, state) =>
+        state.phase === "spending"
+          ? view
+          : {
+              ...view,
+              tools: [],
+              system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+            }
+    })], (request) =>
       request.trajectory.some((event) => event.type === "ToolCalled") ? complete() : batch(
         { callId: "code", name: "execute", arguments: { code: "return 42" } }, call("refused")
       ))
@@ -380,11 +492,11 @@ describe("tool batches", () => {
       { type: "MessageReceived", id: TURN, text: "work", at: 0 },
       { type: "ToolCalled", turn: TURN, callId: "a", name: "read", arguments: {}, ...(format === "current" ? { responseId: "m1/infer/0" } : { batchId: "m1/infer/0", batchIndex: 0 }), at: 1 },
       { type: "ToolCalled", turn: TURN, callId: "b", name: "read", arguments: {}, ...(format === "current" ? { responseId: "m1/infer/0" } : { batchId: "m1/infer/0", batchIndex: 1 }), at: 1 },
-      { type: "ToolReturned", turn: TURN, callId: "b", result: "x".repeat(500), at: 2 }
+      { type: "ToolReturned", transitionRef: { seq: 3, component: "tools", tag: "answer" }, turn: TURN, callId: "b", result: "x".repeat(500), at: 2 }
     ]
-    const reactor = compactionReactor({ fireRatio: 0.5, keepRatio: 0.1 }, 100)
+    const reactor = compactionReactor({ keepRatio: 0.1 }, testModelLock())
     expect(reactor(history)).toEqual([])
-    history.push({ type: "ToolReturned", turn: TURN, callId: "a", result: "x".repeat(500), at: 3 })
+    history.push({ type: "ToolReturned", transitionRef: { seq: 2, component: "tools", tag: "answer" }, turn: TURN, callId: "a", result: "x".repeat(500), at: 3 })
     const transitions = reactor(history)
     expect(transitions).toHaveLength(1)
     expect(transitions[0]!.input).toMatchObject({ keepFrom: 'c:["m1","a"]' })
@@ -393,8 +505,8 @@ describe("tool batches", () => {
     expect(renderMessages(history).find((message) => message.toolCalls)?.toolCalls?.map((entry) => entry.id)).toEqual(["a", "b"])
   })
 
-  test.each([0, -1, 1.5, Infinity, NaN])("invalid concurrency %s fails at construction", (value) => {
+  test.each([0, -1, 1.5, Infinity, NaN])("invalid concurrency %s is rejected before execution", (value) => {
     expect(() => infer([nativeOutput], { ...MODEL, toolConcurrency: value })).toThrow("tool concurrency")
-    expect(() => infer([tool({ spec, concurrency: value, run: () => Effect.void }), nativeOutput], MODEL)).toThrow("tool concurrency")
+    expect(() => testMachineOf(infer([tool({ spec, concurrency: value, run: () => Effect.void }), nativeOutput], MODEL)).initial(testModelData)).toThrow("tool concurrency")
   })
 })

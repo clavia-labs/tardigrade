@@ -1,4 +1,6 @@
-import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
+import type { AgentView } from "./component/view"
+import type { ToolState } from "./component/tool/machine"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/fixtures/model"
 import { definePackage } from "@clavia/tardigrade-code/package/definition"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
@@ -10,8 +12,8 @@ import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
 import { createHost, type Host, type ThreadEnv } from "@clavia/tardigrade-host/host"
 import type { Action } from "./log/events"
-import { NativeOutputSupport, type InferRequest } from "./inference/contract"
-import type { InferDelta } from "./inference/observer"
+import { NativeOutputSupport, type InferRequest } from "./model/contract"
+import type { InferDelta } from "./model/observer"
 import { boundaryOf } from "./output/boundary"
 import { resumeTurn } from "./runtime/resume"
 import { agentsPackage } from "./packages/agents"
@@ -101,14 +103,26 @@ const hosted = (
 // work surface still runs the same turn loop, budget wall, and answer contract.
 const rlm = (
   mind: Mind,
-  components: ReadonlyArray<AgentComponent<AgentR>> = [work()],
+  components: ReadonlyArray<AgentComponent<AgentR, AgentView & ToolState, unknown>> = [work()],
   log: ReadonlyArray<Event> = [],
   actorInstance: string = "main"
 ) =>
   hosted(actor({
     name: "test-agent",
     methods: agentMethods,
-    components: [infer([budget(components), compaction(), nativeOutput], TEST_MODEL)]
+    components: [infer([budget(components, {
+      onExhausted: (reason, settle) => settle({ error: reason }),
+      usage: ({ children }) => children.reduce((used, observation) => used + observation.calls.length, 0),
+      rejectionMessage: "Tool budget reached. Answer now with your best result.",
+      view: (view, state) =>
+        state.phase === "spending"
+          ? view
+          : {
+              ...view,
+              tools: [],
+              system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+            }
+    }), compaction({ model: TEST_MODEL.models.default }), nativeOutput], TEST_MODEL)]
   }), mind, log, actorInstance)
 
 const headText = (trajectory: ReadonlyArray<Event>): string => {
@@ -621,7 +635,9 @@ test("reused provider IDs execute and correlate independently across turns and c
     const run = (input: unknown) => Effect.sync(() => { dispatched.push(input); return input })
     const surface = mode === "native"
       ? tool({ spec: { name: "echo", description: "echo", inputSchema: {} }, run })
-      : codeMode([definePackage({ name: "probe", description: "echo", methods: { echo: run } })])
+      : codeMode([definePackage({ name: "probe", description: "echo", methods: {
+        echo: run
+      } })])
     const assembled = actor({ name: "test-agent", methods: agentMethods, components: [infer([surface, nativeOutput], TEST_MODEL)] })
     const react: Mind = async (request) => {
       const turn = request.identity.turn

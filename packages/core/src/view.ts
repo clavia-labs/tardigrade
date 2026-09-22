@@ -14,7 +14,7 @@
  *   combine(combine(a, b), c) = combine(a, combine(b, c))
  *
  * These identity and associativity laws let Tardigrade regroup a component tree
- * without changing its observable view (component/compose.properties.test.ts, "empty is an identity and combine is associative").
+ * without changing its observable view (component/composition/siblings.properties.test.ts, "empty is an identity and combine is associative").
  */
 export interface ViewAlgebra<View> {
   readonly empty: View

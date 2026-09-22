@@ -32,7 +32,7 @@ import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { registeredThreadAllocator, memoryThreadDirectory } from "@clavia/tardigrade-host/allocation"
-import { codeSystemFor } from "../component/code"
+import { codeSystemFor } from "../component/code/index"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
 // a host does and the same value runs anywhere.
@@ -920,7 +920,7 @@ describe("a child is named by its parent address, run, and call", () => {
 
 // The contracts a host declares for its children. A name resolves to one of these; anything else
 // a code body invents is a raw schema, and the profile check is what stands in for the compile
-// step model-authored JavaScript never had (packages/code/src/execution/reactor.ts runs it through
+// step model-authored JavaScript never had (packages/code/src/execution/code.ts runs it through
 // AsyncFunction).
 const SCOUT = output({
   name: "scout",

@@ -1,3 +1,5 @@
+import type { Context } from "effect"
+import { restingActor } from "@clavia/tardigrade-core/runtime"
 import type { HostPorts, ThreadEnv } from "../ports"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadSupervisorDriver, threadSupervisorKeyOf } from "../thread-supervisor"
@@ -28,7 +30,6 @@ import {
   EffectInterruptions,
   Self,
   effectInterruptionRegistry,
-  restingActor,
   type ActorSource as Actor
 } from "@clavia/tardigrade-core/runtime"
 import { deadlocks, victimOf, type EdgesOf } from "../deadlock"
@@ -116,6 +117,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const threads = new Map<string, ReadonlyArray<Event>>()
   const interruptions = new Map<string, ReturnType<typeof effectInterruptionRegistry>>()
   const executionOf = threadExecutions<R>()
+  const dataByThread = new Map<string, Context.Context<never>>()
   const interruptionsOf = (thread: string) => {
     const current = interruptions.get(thread)
     if (current !== undefined) return current
@@ -288,7 +290,10 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
       if (actor === undefined) return
       await supervisor.ensureReady(parseThreadAddress(self(thread)))
       await Effect.runPromise(
-        executionOf(thread, actor).settle.pipe(Effect.provide(layersOf(thread)))
+        Effect.gen(function* () {
+          dataByThread.set(thread, yield* Effect.context<never>())
+          yield* executionOf(thread, actor).settle
+        }).pipe(Effect.provide(layersOf(thread)))
       )
     }
   })
@@ -322,7 +327,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const resting = (): boolean => {
     for (const [thread, events] of threads) {
       const actor = options.actorFor(thread)
-      if (actor !== undefined && !restingActor(actor, events)) return false
+      if (actor !== undefined && !restingActor(actor, events, dataByThread.get(thread))) return false
     }
     return driver.resting()
   }

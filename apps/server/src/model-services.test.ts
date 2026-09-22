@@ -1,4 +1,4 @@
-import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
+import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"

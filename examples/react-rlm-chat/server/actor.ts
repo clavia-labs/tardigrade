@@ -1,6 +1,6 @@
 import { actor } from "tardie/core"
-import { agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode, compaction, infer, outputValidateOnce, system } from "tardie/agent"
-import { fetchPackage, workspacePackage } from "tardie/code"
+import { agentMethods, agents, budget, caller, escalate, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/agent"
+import { fetch, workspace } from "tardie/code"
 
 const actorName = "react-chat"
 const sol = { provider: "openrouter", model_id: "openai/gpt-5.6-sol" } as const
@@ -17,12 +17,16 @@ export default actor({
   components: [
     infer([
       system(actorInstructions),
-      budget([
-        codeMode([fetchPackage(), agentsPackage({ maxDepth: 2 }), workspacePackage()])
-      ], { authority: caller() }),
-      compaction(),
+      escalate(
+        budget(codeMode([fetch(), agents({ maxDepth: 2 }), workspace()]), {
+          onExhausted: (reason, settle) => settle({ error: reason }),
+          usage: (observation) => observation.calls.length,
+          rejectionMessage: "Tool budget reached. Answer now with your best result."
+        }),
+        { authority: caller(), requests: { decide: request => request.grant() } }
+      ),
+      compact(messages()),
       outputValidateOnce
-    ], { models: { default: sol, allow: [{ provider: sol.provider, model_ids: [sol.model_id] }] } }),
-    budgetAuthority()
+    ], { models: { default: sol, allow: [{ provider: sol.provider, model_ids: [sol.model_id] }] } })
   ]
 })

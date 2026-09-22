@@ -1,7 +1,7 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Machine } from "@clavia/tardigrade-core/machine"
 import { component, legacyComponent } from "@clavia/tardigrade-core/actor"
-import type { AgentComponent } from "../runtime/composition"
+import type { AgentComponent } from "./view"
 
 export type SystemText = string | ((log: ReadonlyArray<Event>) => string)
 
@@ -22,17 +22,17 @@ export const system = <State = never>(text: SystemText | SystemProjection<State>
   if (typeof text === "object") {
     return component({
       name: options.name ?? "system",
-      initial: text.initial,
+      initial: () => text.initial(),
       step: text.step,
-      output: (state) => derive(text.output(state))
+      output: (state) => ({ ...derive(text.output(state)) })
     })
   }
   return typeof text === "function"
-    ? legacyComponent({ name: options.name ?? "system", derive: (log) => derive(text(log)) })
+    ? legacyComponent({ name: options.name ?? "system", derive: (log) => ({ ...derive(text(log)) }) })
     : component({
         name: options.name ?? "system",
         initial: () => text,
         step: (state: string) => state,
-        output: derive
+        output: (state) => ({ ...derive(state) })
       })
 }

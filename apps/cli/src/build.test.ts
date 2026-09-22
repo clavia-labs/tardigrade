@@ -96,19 +96,19 @@ describe("lintActor", () => {
   test("reports the methods and calls derived from component contracts", async () => {
     const path = await entry(`
       import {
-        actor, agentMethods, budget, budgetAuthority, caller, codeMode, infer, nativeOutput
+        actor, agentMethods, budget, caller, escalate, codeMode, infer, nativeOutput
       } from "tardie"
       export default actor({
         name: "researcher",
         methods: agentMethods,
         components: [
-          infer([budget([codeMode()], { authority: caller() }), nativeOutput], {
+          infer([escalate(budget(codeMode(), { onExhausted: (reason, settle) => settle({ error: reason }), usage: observation => observation.calls.length }), { authority: caller() }), nativeOutput], {
             models: {
               default: { provider: "test", model_id: "test" },
               allow: "*"
             }
           }),
-          budgetAuthority()
+          escalate.authority("budget", {})
         ]
       })
     `)

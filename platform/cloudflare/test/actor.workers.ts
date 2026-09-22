@@ -1,4 +1,4 @@
-import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
+import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
 import { threadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"

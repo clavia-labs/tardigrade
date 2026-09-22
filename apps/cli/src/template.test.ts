@@ -40,9 +40,9 @@ describe("actorTemplate", () => {
 
     expect(built.manifest.name).toBe("reviewer")
     expect(source).toContain("You are ${actorName}, a focused research agent.")
-    expect(source).toContain("fetchPackage()")
-    expect(source).toContain("agentsPackage()")
-    expect(source).toContain("workspacePackage()")
+    expect(source).toContain("fetch()")
+    expect(source).toContain("agents()")
+    expect(source).toContain("workspace()")
   })
 
   test("keeps custom instructions valid inside the editable template literal", async () => {

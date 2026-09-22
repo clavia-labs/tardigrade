@@ -70,13 +70,9 @@ export const modelSettingsOf = (protocol: ModelProtocol, value: unknown): Record
   return models
 }
 
-// modelConfigOf validates provider connections used by a directly hosted server.
-export const modelConfigOf = (value: unknown): ModelConfig => {
-  const source = recordOf(value)
-  if (source === undefined) throw new Error("provider connection configuration must be a JSON object")
-  const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "fallback" && name !== "allow" && name !== "providers")
-  if (unknownModelFields.length > 0) throw new Error(`models contains unknown fields: ${unknownModelFields.join(", ")}`)
-  const providersSource = recordOf(source["providers"]) ?? {}
+// modelProvidersOf validates shared provider definitions (lock.test.ts).
+export const modelProvidersOf = (value: unknown): Record<string, ModelProviderConfig<Schema.JsonObject>> => {
+  const providersSource = recordOf(value) ?? {}
   const providers: Record<string, ModelProviderConfig<Schema.JsonObject>> = {}
   for (const [name, rawProvider] of Object.entries(providersSource)) {
     if (name.trim().length === 0) throw new Error("a model provider name cannot be empty")
@@ -113,6 +109,16 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
       ...(region === undefined ? {} : { region })
     } as ModelProviderConfig<Schema.JsonObject>
   }
+  return providers
+}
+
+// modelConfigOf validates provider connections used by a directly hosted server.
+export const modelConfigOf = (value: unknown): ModelConfig => {
+  const source = recordOf(value)
+  if (source === undefined) throw new Error("provider connection configuration must be a JSON object")
+  const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "fallback" && name !== "allow" && name !== "providers")
+  if (unknownModelFields.length > 0) throw new Error(`models contains unknown fields: ${unknownModelFields.join(", ")}`)
+  const providers = modelProvidersOf(source["providers"])
   const selectedValue = source["default"]
   const selected = modelRefOf(selectedValue)
   if (selectedValue !== undefined && selected === undefined) throw new Error("models.default must be { provider, model_id }")

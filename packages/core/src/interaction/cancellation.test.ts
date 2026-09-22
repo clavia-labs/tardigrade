@@ -107,8 +107,10 @@ describe("actor cancellation", () => {
     })
     const component: Component<undefined> = legacyComponent({
       name: "worker",
-      cancel: (events) => events.some((event) => event.type === "WorkCleaned") ? [] : [cleanup],
-      derive: () => ({ view: undefined, transitions: [] })
+
+      derive: (events) => ({ view: undefined, transitions: [], interactions: {
+        cancel: () => events.some((event) => event.type === "WorkCleaned") ? [] : [cleanup]
+    } })
     })
     const keyOf = (event: Event) => event.type === "WorkCleaned"
       ? `clean:${String((event as { readonly id?: unknown }).id)}`
@@ -139,14 +141,16 @@ describe("actor cancellation", () => {
     ]
     const component: Component<undefined> = legacyComponent({
       name: "worker",
-      cancel: (_events, cancellation) => cancellation.invocation.id === "w1"
-        ? [intent({
-            key: "clean:w1",
-            input: undefined,
-            events: (_input, at) => [{ type: "WorkCleaned", id: "w1", at } as Event]
-          })]
-        : [],
-      derive: () => ({ view: undefined, transitions: [] })
+
+      derive: (_events) => ({ view: undefined, transitions: [], interactions: {
+        cancel: (cancellation) => cancellation.invocation.id === "w1"
+            ? [intent({
+                    key: "clean:w1",
+                    input: undefined,
+                    events: (_input, at) => [{ type: "WorkCleaned", id: "w1", at } as Event]
+                })]
+            : []
+    } })
     })
     const keyOf = (event: Event) => event.type === "WorkCleaned"
       ? `clean:${String((event as { readonly id?: unknown }).id)}`

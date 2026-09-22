@@ -1,7 +1,7 @@
 import { Validator } from "@cfworker/json-schema"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
-// OutputContract defines the schema and decoded TypeScript value for a turn's result. Native mode sends the schema through the provider's response-format surface (packages/agent/src/inference/model/output.ts, outputSchemaFor).
+// OutputContract defines the schema and decoded TypeScript value for a turn's result. Native mode sends the schema through the provider's response-format surface (packages/agent/src/model/execution/output.ts, outputSchemaFor).
 
 // OUTPUT_NAME_PATTERN accepts names supported by the OpenAI-compatible and Converse output fields.
 export const OUTPUT_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/
@@ -413,7 +413,7 @@ export const fingerprintOf = (contract: OutputContract): string => {
   return `${low.toString(16).padStart(8, "0")}${high.toString(16).padStart(8, "0")}`
 }
 
-// DeclaredOutput is the validated output declaration on a message. Invalid declarations become preflight terminals (inference/machine.ts, inferenceFromHistory).
+// DeclaredOutput is the validated output declaration on a message. Invalid declarations become preflight terminals (component/infer/machine.ts, inferenceFromHistory).
 export type DeclaredOutput =
   | { readonly kind: "none" }
   | { readonly kind: "contract"; readonly contract: OutputContract }
@@ -451,7 +451,7 @@ export const declarationForTurn = (log: ReadonlyArray<Event>, turn: string): Dec
   return declarationOf((head as { output?: unknown }).output, turn)
 }
 
-// OutputFallback defines behavior when native structured output is unavailable for a call. Mounting a fallback leaves native mode preferred (packages/agent/src/inference/model/output.ts, outputModeOf).
+// OutputFallback defines behavior when native structured output is unavailable for a call. Mounting a fallback leaves native mode preferred (packages/agent/src/model/execution/output.ts, outputModeOf).
 type NoCorrections = { readonly attempts?: never }
 type NoHistory = { readonly projectHistory?: never }
 

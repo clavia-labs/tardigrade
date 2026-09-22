@@ -1,3 +1,4 @@
+import { ModelLock, modelLockService, MODEL_LOCK_SCHEMA, type ModelLockData } from "./lock"
 import { Effect, Layer, Stream } from "effect"
 import { LanguageModel } from "effect/unstable/ai"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
@@ -141,7 +142,7 @@ export const modelLayerWith = (
   catalog: ModelCatalogState,
   bindingFor: (selected: SelectedModel) => Layer.Layer<LanguageModel.LanguageModel>,
   protocols?: ReadonlyArray<SelectedModel["protocol"]>
-): Layer.Layer<LanguageModel.LanguageModel> => {
+): Layer.Layer<LanguageModel.LanguageModel | ModelLock> => {
   const select = (reference?: ModelRef) => {
     if (Object.keys(config.model.providers).length === 0) throw new Error(MISSING_MODEL)
     const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, reference)
@@ -190,5 +191,16 @@ export const modelLayerWith = (
     generateObject: ((...args: Parameters<typeof LanguageModel.LanguageModel.Service.generateObject>) => withModel((native) => native.generateObject(...args))) as typeof LanguageModel.LanguageModel.Service.generateObject,
     streamText: ((...args: Parameters<typeof LanguageModel.LanguageModel.Service.streamText>) => Stream.unwrap(Effect.map(CurrentModel, (reference) => Stream.unwrap(Effect.map(LanguageModel.LanguageModel, (native) => native.streamText(...args))).pipe(Stream.provide(bindingFor(select(reference))))))) as typeof LanguageModel.LanguageModel.Service.streamText
   })
-  return Layer.merge(selection, model)
+  const definitions: ModelLockData = {
+    schema: MODEL_LOCK_SCHEMA,
+    providers: Object.fromEntries(Object.entries(config.model.providers).map(([id, provider]) => [id, {
+      protocol: provider.protocol, baseUrl: provider.baseUrl, env: [...provider.env],
+      ...(provider.region === undefined ? {} : { region: provider.region })
+    }])),
+    models: (catalog.snapshot?.providers ?? []).flatMap(provider => provider.models.flatMap(model =>
+      model.metadata.contextWindowTokens === undefined ? [] : [{ ...model.metadata, provider: provider.id, model_id: model.id, contextWindowTokens: model.metadata.contextWindowTokens }]))
+  }
+  const authority = availableModels()
+  const lock = Layer.succeed(ModelLock, modelLockService(definitions, authority))
+  return Layer.mergeAll(selection, model, lock)
 }

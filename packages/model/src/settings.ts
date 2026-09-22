@@ -32,5 +32,5 @@ export const ModelSelection = Context.Reference<{
   readonly settings?: (model?: ModelRef) => Effect.Effect<BindingOptions>
 }>("tardie/ModelSelection", { defaultValue: () => ({}) })
 
-// modelSettingsFor loads selected provider settings or the supplied custom settings (agent/src/component/compaction.test.ts, agent/src/inference/integration/host.test.ts).
+// modelSettingsFor loads selected provider settings or the supplied custom settings (agent/integration/compact.test.ts, agent/integration/model-host.test.ts).
 export const modelSettingsFor = (model?: ModelRef) => Effect.flatMap(ModelSelection, selection => selection.settings?.(model) ?? BindingSettings)
