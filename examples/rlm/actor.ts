@@ -1,6 +1,6 @@
 import { defineActor } from "tardie/core"
-import { agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode, compaction, infer, outputValidateOnce, system } from "tardie/agent"
-import { fetchPackage, workspacePackage } from "tardie/code"
+import { agentMethods, agents, budget, caller, escalate, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/agent"
+import { fetch, workspace } from "tardie/code"
 
 const actorName = "researcher"
 
@@ -19,14 +19,16 @@ export default defineActor(
   [
     infer([
       system(actorInstructions),
-      budget([
-        codeMode([
-          fetchPackage(), agentsPackage(), workspacePackage()
-        ])
-      ], { authority: caller() }),
-      compaction(),
+      escalate(
+        budget(codeMode([fetch(), agents(), workspace()]), {
+          onExhausted: (reason, settle) => settle({ error: reason }),
+          usage: (observation) => observation.calls.length,
+          rejectionMessage: "Tool budget reached. Answer now with your best result."
+        }),
+        { authority: caller(), requests: { decide: request => request.grant() } }
+      ),
+      compact(messages()),
       outputValidateOnce
-    ]),
-    budgetAuthority()
+    ])
   ]
 )

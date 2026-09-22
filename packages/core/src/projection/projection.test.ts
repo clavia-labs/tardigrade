@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { materializeProjection, type Projection } from "./projection"
+import { materializeProjection, replayState, replayProjection, type Projection } from "./projection"
+import { eventAt, eventPositionOf } from "../event"
 
 interface CountState {
   readonly accepted: number
@@ -17,6 +18,30 @@ const counts: Projection<CountState, number> = {
 }
 
 describe("projection", () => {
+  test("replayState preserves positions and leaves the readout to the caller", () => {
+    const positions: Array<number | undefined> = []
+    let reads = 0
+    const projection: Projection<CountState, number> = {
+      ...counts,
+      step: (state, event) => {
+        positions.push(eventPositionOf(event))
+        return counts.step(state, event)
+      },
+      output: (state) => { reads++; return counts.output(state) }
+    }
+    const state = replayState(projection, [
+      { type: "Accepted" }, eventAt({ type: "Rejected" }, 17)
+    ])
+    expect(state).toEqual({ accepted: 1, rejected: 1 })
+    expect(positions).toEqual([1, 17])
+    expect(reads).toBe(0)
+    expect(projection.output(state)).toBe(0)
+    expect(reads).toBe(1)
+    expect(positions).toEqual([1, 17])
+    expect(replayState(projection, [])).toEqual(counts.initial())
+    expect(replayProjection(counts, [{ type: "Accepted" }])).toBe(1)
+  })
+
   test("materialization reuses the value while state identity is stable", () => {
     let derivations = 0
     const materialized = materializeProjection({

@@ -1,6 +1,8 @@
+import { machineOf, transitionProjectionOf } from "../component/runtime"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import { component, deriveComponent, transitionProjectionOf, type TransitionContext } from "../component"
+import { component, type TransitionContext } from "../component"
 import { eventAt, type Event } from "../event"
 import { bindTransitionContext, transitionKeyOf } from "./transition"
 import { actorFromProjections, enabled, settleActor } from "../runtime"
@@ -14,14 +16,16 @@ const child = component({
 })
 
 test("a wrapper forwards only its declared children's scoped transitions", () => {
+  const log = [{ type: "Requested" }]
+  const leaked = replayProjection(machineOf(child), log)
   const wrapper = (children: ReadonlyArray<typeof child>) => component({
     name: "wrapper", children,
-    initial: child.machine.initial, step: child.machine.step, output: child.machine.output
+    initial: () => undefined, step: () => undefined,
+    output: (_state, children) => ({ ...(children[0]?.output() ?? leaked) })
   })
-  const log = [{ type: "Requested" }]
-  expect(deriveComponent(wrapper([child]), log).transitions.map((transition) => transition.key))
-    .toEqual(deriveComponent(child, log).transitions.map((transition) => transition.key))
-  expect(() => deriveComponent(wrapper([]), log)).toThrow("belongs to component")
+  expect(replayProjection(machineOf(wrapper([child])), log).transitions.map((transition) => transition.key))
+    .toEqual(replayProjection(machineOf(child), log).transitions.map((transition) => transition.key))
+  expect(() => replayProjection(machineOf(wrapper([])), log)).toThrow("belongs to component")
   expect(() => wrapper([child, child])).toThrow("duplicate component identity")
 })
 

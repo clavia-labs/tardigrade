@@ -1,8 +1,8 @@
 import { Schema } from "effect"
 import { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import { InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
-import { ModelRef } from "../inference/reference"
-import { ModelPolicy } from "../inference/access"
+import { ModelRef } from "../model/reference"
+import { ModelPolicy } from "../model/access"
 import { ObjectRef } from "../object/reference"
 
 export const MessageTextPart = Schema.Struct({

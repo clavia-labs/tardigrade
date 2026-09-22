@@ -161,7 +161,7 @@ describe("the pointer's pairing", () => {
   test("the default pointer note names verbs this package answers", () => {
     // The note every bounded result carries (store.ts, WORKSPACE_SPILL_NOTE) names this
     // package's own verbs by ref; a drift between the two sends the model to a call the scope
-    // cannot answer (execute.ts, codeReactorFor).
+    // cannot answer (execute.ts, codeExecution).
     const note = WORKSPACE_SPILL_NOTE("e1.result")
     const pkg = workspacePackage()
     expect(note).toContain("workspace.read({ref: 'e1.result'})")

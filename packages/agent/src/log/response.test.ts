@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { eventAt, type Event } from "@clavia/tardigrade-core/event"
 import { responseKeyOf } from "./upcast"
 import { hasUnansweredToolCall, responsesOf } from "./response"
 
@@ -42,7 +42,7 @@ test("response identity includes turn and epoch", () => {
 })
 
 test("unanswered tool calls close when their result arrives", () => {
-  const called = { type: "ToolCalled", callId: "call", at: 0 } as Event
+  const called = eventAt({ type: "ToolCalled", callId: "call", at: 0 }, 1)
   expect(hasUnansweredToolCall([called])).toBe(true)
-  expect(hasUnansweredToolCall([called, { type: "ToolReturned", callId: "call", result: null, at: 1 } as Event])).toBe(false)
+  expect(hasUnansweredToolCall([called, { type: "ToolReturned", transitionRef: { seq: 1, component: "tools", tag: "answer" }, callId: "call", result: null, at: 1 } as Event])).toBe(false)
 })

@@ -67,7 +67,7 @@ export const refs = (): Effect.Effect<
 // SpillPolicy is the bound and what a bounded value shows: a JSON value longer than `spillBytes`
 // goes to the store and the event keeps a pointer with the first `previewChars` of it. `note`
 // renders the pointer's call to action. The reactor that applies the policy takes an override
-// (execute.ts, codeReactorFor), because the consumer owns the context window, storage, and verbs
+// (execute.ts, codeExecution), because the consumer owns the context window, storage, and verbs
 // in scope (execute.test.ts, "the pointer's note").
 export interface SpillPolicy {
   readonly spillBytes: number
@@ -76,7 +76,7 @@ export interface SpillPolicy {
 }
 
 // WORKSPACE_SPILL_NOTE names the workspace package's read and grep verbs (workspace.ts).
-// codeReactorFor refuses a scope where this note would lie
+// codeExecution refuses a scope where this note would lie
 // (execute.ts; workspace.test.ts, "the default pointer note names verbs this package answers").
 export const WORKSPACE_SPILL_NOTE = (ref: string): string =>
   `full value: workspace.read({ref: '${ref}'}), search it: workspace.grep({pattern, ref: '${ref}'})`

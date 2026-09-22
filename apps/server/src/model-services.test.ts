@@ -1,4 +1,4 @@
-import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
+import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -45,8 +45,9 @@ test("Bun model services resolve configuration and supply Effect inference by de
     expect(catalog.snapshot?.providers[0]?.models[0]?.id).toBe("gpt")
     expect(JSON.stringify(catalog)).not.toContain("test-secret")
     await Effect.runPromise(Effect.gen(function*() {
-      const infer = yield* inferenceClient
-      expect(infer.resolve?.()).toMatchObject({ model: { provider: "openai", model_id: "gpt" }, contextWindowTokens: 128000, maxOutputTokens: 16000 })
+      const lock = yield* ModelLock
+      expect(lock.resolve()).toMatchObject({ model: { provider: "openai", model_id: "gpt" }, contextWindowTokens: 128000 })
+      expect(lock.definitions.models).toContainEqual(expect.objectContaining({ provider: "openai", model_id: "gpt", maxOutputTokens: 16000 }))
       const selection = yield* ModelSelection
       const settings = yield* selection.settings!()
       expect(settings.policy).toMatchObject({ maxOutputTokens: 1234, timeout: { idleMs: 12345 } })

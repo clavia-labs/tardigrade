@@ -1,3 +1,4 @@
+import type { ModelLock } from "@clavia/tardigrade-model/lock"
 import { Clock, Effect, Schema } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/log"
@@ -5,23 +6,23 @@ import { send, type ActorSource as Actor } from "@clavia/tardigrade-core/runtime
 import type { Router } from "@clavia/tardigrade-core/transport/router"
 import type { Self } from "@clavia/tardigrade-core/runtime"
 import type { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
-import type { InferPolicy } from "../inference/contract"
+import type { InferPolicy } from "../component/infer/contract"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { OutputContract } from "../output/contract"
-import type { BudgetPolicy } from "../component/budget"
-import type { CompactionPolicy } from "../component/compaction"
-import type { CodePolicy } from "@clavia/tardigrade-code/execution/reactor"
+import type { BudgetPolicy } from "../component/budget/index"
+import type { CompactionPolicy } from "../component/compact/index"
+import type { CodePolicy } from "@clavia/tardigrade-code/execution/policy"
 import type { WorkspacePolicy } from "@clavia/tardigrade-code/package/workspace"
 import { AgentMessageInput } from "../actor/message"
 
 
 // AgentR lists the agent runtime services; components add their own requirements (core/component.ts, ComponentRequirements).
-export type AgentR = LanguageModel.LanguageModel | EventLog | Router | Self | ThreadAllocator | KeyValueStore.KeyValueStore
+export type AgentR = ModelLock | LanguageModel.LanguageModel | EventLog | Router | Self | ThreadAllocator | KeyValueStore.KeyValueStore
 
 // AgentPolicy is every policy value an assembled agent applies, one field per part that applies
 // one, so a caller sets a single number without listing reactors. Each field is itself partial
 // and fills from its own exported default (infer.ts, budget.ts, compaction.ts,
-// packages/code/src/execution/reactor.ts). `infer` is the root component's policy; `workspace`
+// packages/code/src/execution/policy.ts). `infer` is the root component's policy; `workspace`
 // bounds the workspace package's own read and grep answers (packages/code/src/package/workspace.ts); the
 // rest ride their components (budget, compaction, codeMode).
 export interface AgentPolicy {

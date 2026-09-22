@@ -1,5 +1,7 @@
+import { testMachineOf } from "../../fixtures/component"
+import { testModelData } from "@clavia/tardigrade-agent/fixtures/model"
 import type { AgentMessage } from "../projection/messages"
-import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/inference"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/fixtures/model"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { actor } from "@clavia/tardigrade-core/actor"
 import { describe, expect, test } from "bun:test"
@@ -8,7 +10,7 @@ import { Clock, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { send, settleActor, enabled } from "@clavia/tardigrade-core/runtime"
+import { send, settleActor, enabled as enabledWithoutData } from "@clavia/tardigrade-core/runtime"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { guestBindings, Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox/service"
 import { Router } from "@clavia/tardigrade-core/transport/router"
@@ -17,10 +19,10 @@ import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { Self } from "@clavia/tardigrade-core/runtime"
 import { legacyComponent } from "@clavia/tardigrade-core/component"
 import { receive } from "./turn"
-import { modelRequest } from "../inference/request"
-import { NativeOutputSupport, type InferRequest } from "../inference/contract"
+import { modelRequest } from "../model/request"
+import { NativeOutputSupport, type InferRequest } from "../model/contract"
 import { turnFailed } from "../log/events"
-import type { AgentComponent } from "./composition"
+import type { AgentComponent } from "../component/infer/index"
 import type { OutputFallback } from "../output/contract"
 import {
   budget,
@@ -53,7 +55,19 @@ const assembled = <R>(component: AgentComponent<R>) => actor({
 // The default assembly over a stated scope. The infer root contains model inference, call routing,
 // and every child transition in one projection.
 const agentWith = (packages: ReadonlyArray<Package>) =>
-  assembled(infer([budget([codeMode(packages)]), compaction(), nativeOutput], TEST_MODEL))
+  assembled(infer([budget(codeMode(packages), {
+    onExhausted: (reason, settle) => settle({ error: reason }),
+    usage: (observation) => observation.calls.length,
+    rejectionMessage: "Tool budget reached. Answer now with your best result.",
+    view: (view, state) =>
+      state.phase === "spending"
+        ? view
+        : {
+            ...view,
+            tools: [],
+            system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+          }
+  }), compaction({ model: TEST_MODEL.models.default }), nativeOutput], TEST_MODEL))
 const rlmAgent = agentWith([])
 const rootReactor = (events: ReadonlyArray<Event>) => enabled(rlmAgent, events)
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
@@ -204,8 +218,8 @@ describe("the agent with execute as the only tool", () => {
       "ModelReturned",
       "TurnCompleted"
     ])
-    expect(events[6]).toMatchObject({ callId: `${String(events[5]!.execId)}.0`, name: "zohorecruit.insert_record" })
-    expect(events[10]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
+    expect(events.find((event) => event.type === "PackageCalled")).toMatchObject({ callId: `${String(events.find((event) => event.type === "CodeDispatched")!.execId)}.0`, name: "zohorecruit.insert_record" })
+    expect(events.find((event) => event.type === "CodeSettled")).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
     expect(spies).toEqual({ insert: 1, search: 1 })
     expect(count.calls).toBe(2)
     expect(rootReactor(events)).toHaveLength(0)
@@ -218,11 +232,12 @@ describe("the agent with execute as the only tool", () => {
     const big = "y".repeat(20_000)
     const spilled: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "read the contract", at: 1 },
+      { type: "BudgetGranted", initial: true, amount: 40, turn: "m1", at: 1 },
       { type: "ToolCalled", callId: "t1", name: "execute", arguments: { code: "return await docs.read()" }, turn: "m1", at: 2 },
-      { type: "CodeDispatched", transitionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, execId: "t1", code: "return await docs.read()", turn: "m1", at: 3 },
+      { type: "CodeDispatched", transitionRef: { seq: 3, component: "agent.tools", tag: "dispatch" }, execId: "t1", code: "return await docs.read()", turn: "m1", at: 3 },
       {
         type: "CodeSettled",
-        executionRef: { seq: 2, component: "agent.tools", tag: "dispatch" },
+        executionRef: { seq: 3, component: "agent.tools", tag: "dispatch" },
         execId: "t1",
         tmp: "t1.result",
         size: big.length,
@@ -255,7 +270,7 @@ describe("the agent with execute as the only tool", () => {
     const crashed: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "add the JD and search candidates", at: 1 },
       { type: "ToolCalled", callId: "t1", name: "execute", arguments: { code: CODE }, turn: "m1", at: 2 },
-      { type: "CodeDispatched", transitionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, execId: "t1", code: CODE, turn: "m1", at: 3 },
+      { type: "CodeDispatched", transitionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, execId: JSON.stringify([2, "agent.tools", "dispatch"]), code: CODE, turn: "m1", at: 3 },
       { type: "PackageCalled", executionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, ordinal: 0, callId: "t1.0", name: "zohorecruit.insert_record", arguments: { title: "IC design lead" }, turn: "m1", at: 4 },
       { type: "PackageReturned", executionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, ordinal: 0, callId: "t1.0", result: { id: "jd-91" }, turn: "m1", at: 5 }
     ]
@@ -343,6 +358,7 @@ describe("the agent with execute as the only tool", () => {
     // fourth settle gives up instead of asking again. The model is never called.
     const crashed: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "hi", at: 1 },
+      { type: "BudgetGranted", initial: true, amount: 40, turn: "m1", at: 1 },
       { type: "ModelCalled", callId: "m1/infer/0", turn: "m1", at: 2 },
       { type: "ModelCalled", callId: "m1/infer/1", turn: "m1", at: 3 },
       { type: "ModelCalled", callId: "m1/infer/2", turn: "m1", at: 4 }
@@ -492,11 +508,23 @@ const completedTurns = (log: ReadonlyArray<Event>): ReadonlySet<string> =>
 
 // The stub binding states the mode it emulates, the way a real binding reports the mode it
 // selected. Nothing synthesizes one: a declared-output result with no mode is an invariant error
-// (inference/machine.ts, completionOf).
+// (component/infer/machine.ts, completionOf).
 const REPAIR_TWO = repairFallback({ attempts: 2 })
 
 const repairAgent = (policy: Parameters<typeof outputRepairFor>[0] = {}) =>
-  assembled(infer([budget([codeMode()]), compaction(), outputRepairFor(policy)], TEST_MODEL))
+  assembled(infer([budget(codeMode(), {
+    onExhausted: (reason, settle) => settle({ error: reason }),
+    usage: (observation) => observation.calls.length,
+    rejectionMessage: "Tool budget reached. Answer now with your best result.",
+    view: (view, state) =>
+      state.phase === "spending"
+        ? view
+        : {
+            ...view,
+            tools: [],
+            system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+          }
+  }), compaction({ model: TEST_MODEL.models.default }), outputRepairFor(policy)], TEST_MODEL))
 
 describe("a turn that declares an output contract", () => {
   test("a conforming response completes the turn, and outputOf reads it back typed", async () => {
@@ -820,7 +848,7 @@ describe("the repair implementation", () => {
   test("the recorded policy decides exhaustion, so a later mount cannot extend an old round", () => {
     // Two rejections already stand, recorded under a bound of one. Mounting a looser policy now
     // must not reopen that round: replay reads the log, never today's assembly
-    // (src/output/contract.ts, modeOf; inference/machine.ts, openRejection).
+    // (src/output/contract.ts, modeOf; component/infer/machine.ts, openRejection).
     const spent = repairFallback({ attempts: 1 })
     const seeded: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "decompose this topic", output: { name: SCOUT.name, schema: SCOUT.schema }, at: 0 },
@@ -910,13 +938,13 @@ describe("the repair implementation", () => {
     })
   })
 
-  test("two components declaring an output strategy collide at construction", () => {
-    expect(() => assembled(infer([codeMode(), outputRepair, outputValidateOnce], TEST_MODEL))).toThrow(
+  test("two components declaring an output strategy collide at initialization", () => {
+    expect(() => testMachineOf(infer([codeMode(), outputRepair, outputValidateOnce], TEST_MODEL)).initial(testModelData)).toThrow(
       "output strategy declared by components output.repair and output.validate-once"
     )
   })
 
-  test("a malformed custom fallback is refused at construction", () => {
+  test("a malformed custom fallback is refused at initialization", () => {
     const malformed: AgentComponent = legacyComponent({
       name: "output.malformed",
       derive: () => ({
@@ -935,7 +963,7 @@ describe("the repair implementation", () => {
         transitions: []
       })
     })
-    expect(() => assembled(infer([malformed], TEST_MODEL))).toThrow("output fallback declared by component output.malformed")
+    expect(() => testMachineOf(infer([malformed], TEST_MODEL)).initial(testModelData)).toThrow("output fallback declared by component output.malformed")
   })
 })
 
@@ -996,7 +1024,19 @@ describe("the mind on a native surface", () => {
 })
 
 describe("the validate-once implementation", () => {
-  const validateOnceAgent = assembled(infer([budget([codeMode()]), compaction(), outputValidateOnce], TEST_MODEL))
+  const validateOnceAgent = assembled(infer([budget(codeMode(), {
+    onExhausted: (reason, settle) => settle({ error: reason }),
+    usage: (observation) => observation.calls.length,
+    rejectionMessage: "Tool budget reached. Answer now with your best result.",
+    view: (view, state) =>
+      state.phase === "spending"
+        ? view
+        : {
+            ...view,
+            tools: [],
+            system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
+          }
+  }), compaction({ model: TEST_MODEL.models.default }), outputValidateOnce], TEST_MODEL))
 
   test("a missed response ends the turn with its own cause, and never asks again", async () => {
     let asked = 0
@@ -1075,8 +1115,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => legac
     if (owed === undefined) return { view, transitions: [] }
     const spent = rejections.length
     if (spent > options.asks) {
-      return {
-        view,
+      return { view,
         transitions: [
           bindTransitionContext(owed, "output.house-style").effect("reject", {
             input: { turn: String(owed.turn) },
@@ -1089,8 +1128,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => legac
         ]
       }
     }
-    return {
-      view,
+    return { view,
       transitions: [
         bindTransitionContext(owed, "output.house-style").effect("retry", {
           input: { rejection: String(owed.attempt), turn: String(owed.turn) },
@@ -1255,3 +1293,5 @@ describe("a declaration nobody can serve", () => {
     expect(failed.error?.message).toContain("required must list every property")
   })
 })
+
+const enabled: typeof enabledWithoutData = (actor, events, data = testModelData) => enabledWithoutData(actor, events, data)

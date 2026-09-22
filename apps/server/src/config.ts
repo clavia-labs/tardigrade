@@ -7,7 +7,7 @@ import {
 } from "@clavia/tardigrade-host/driver"
 import {
   DEFAULT_MODEL_POLICY
-} from "@clavia/tardigrade-agent/inference/access"
+} from "@clavia/tardigrade-agent/model/access"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/catalog/metadata"
 
 export { DEFAULT_MAX_CONCURRENT_THREADS } from "@clavia/tardigrade-host/driver"

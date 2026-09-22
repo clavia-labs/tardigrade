@@ -1,3 +1,4 @@
+import type { ModelLock } from "@clavia/tardigrade-model/lock"
 import { Effect, Layer } from "effect"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -12,7 +13,7 @@ import { layerFileModelCatalogRepository } from "./catalog-repository"
 import { layerConfig, projectConfigOf, projectConfigPathOf, readConfig } from "./config"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 
-type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel>
+type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel | ModelLock>
 
 export type BunModelServicesOptions = {
   readonly configFile?: string | URL

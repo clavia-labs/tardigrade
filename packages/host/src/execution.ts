@@ -10,7 +10,10 @@ export const actorExecution = <R>(actor: ActorSource<R>) => {
     settle: reconciler.settle.pipe(Effect.tap(() => Effect.sync(() => { settled = true }))),
     isResting: (read: Effect.Effect<ReadonlyArray<Event>>) => Effect.suspend(() => settled
       ? Effect.sync(() => reconciler.isResting())
-      : Effect.map(read, (events) => restingActor(actor, events)))
+      : Effect.gen(function* () {
+          const data = yield* Effect.context<never>()
+          return restingActor(actor, yield* read, data)
+        }))
   }
 }
 

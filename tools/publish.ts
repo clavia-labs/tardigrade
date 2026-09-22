@@ -2,6 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "n
 import { tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { rewriteComponentRuntimeImports } from "./publish-paths"
 import { INIT_TEMPLATES } from "../apps/cli/src/template"
 
 type PkgJson = {
@@ -141,11 +142,11 @@ const optionalPeerUnion = (packages: ReadonlyArray<PkgJson>) => {
   return { peerDependencies, peerDependenciesMeta }
 }
 
-const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>): Promise<void> => {
+const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>, sourceRoot = dir): Promise<void> => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) {
-      await rewriteSources(path, rewrites)
+      await rewriteSources(path, rewrites, sourceRoot)
       continue
     }
     if (!entry.isFile() || !entry.name.endsWith(".ts")) continue
@@ -153,7 +154,7 @@ const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>
     for (const [from, to] of rewrites) {
       source = source.replaceAll(`${from}/`, `${to}/`).replaceAll(`"${from}"`, `"${to}"`).replaceAll(`'${from}'`, `'${to}'`)
     }
-    await writeFile(path, source)
+    await writeFile(path, rewriteComponentRuntimeImports(source, path, sourceRoot))
   }
 }
 
@@ -246,7 +247,7 @@ try {
       "./package.json": "./package.json",
       "./actor/*": "./src/agent/actor/*.ts",
       "./component/*": "./src/agent/component/*.ts",
-      "./inference/*": "./src/agent/inference/*.ts",
+      "./component/infer/*": "./src/agent/component/infer/*.ts",
       "./log/*": "./src/agent/log/*.ts",
       "./output/*": "./src/agent/output/*.ts",
       "./packages/*": "./src/agent/packages/*.ts",
@@ -259,6 +260,12 @@ try {
       "./core/transport": "./src/core/transport/index.ts",
       "./core/transport/*": "./src/core/transport/*.ts",
       "./core/component": "./src/core/component/index.ts",
+      "./core/component/runtime": null,
+      "./core/component/composition/parent": null,
+      "./core/component/compose": "./src/core/component/composition/siblings.ts",
+      "./core/component/children": "./src/core/component/composition/children.ts",
+      "./core/component/reconciliation": "./src/core/component/composition/reconciliation.ts",
+      "./core/component/tree": "./src/core/component/composition/tree.ts",
       "./core/component/*": "./src/core/component/*.ts",
       "./core/effect": "./src/core/effect.ts",
       "./core/event": "./src/core/event.ts",
@@ -318,7 +325,7 @@ try {
   const stagedModules = join(stage, "node_modules")
   await symlink(join(root, "node_modules"), stagedModules, "dir")
   try {
-    await run([process.execPath, "-e", "const root = await import('tardie'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const code = await import('tardie/code'); if (root.defineActor !== core.defineActor || root.infer !== agent.infer || root.definePackage !== code.definePackage) throw new Error('scoped export compatibility failed'); await import('tardie/bun'); await import('tardie/client')"], stage)
+    await run([process.execPath, "-e", "const root = await import('tardie'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const code = await import('tardie/code'); if (root.defineActor !== core.defineActor || root.infer !== agent.infer || root.definePackage !== code.definePackage) throw new Error('scoped export compatibility failed'); await import('tardie/bun'); await import('tardie/client'); for (const path of ['tardie/core/component/runtime', 'tardie/core/component/composition/parent']) { let blocked = false; try { await import(path) } catch { blocked = true } if (!blocked) throw new Error(path + ' is publicly importable') }"], stage)
   } finally {
     await rm(stagedModules)
   }

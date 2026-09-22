@@ -1,3 +1,5 @@
+import { packageCalls, type PackageCall } from "./calls"
+import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Effect } from "effect"
 import type { Component, ViewAlgebra } from "@clavia/tardigrade-core/actor"
 import type { Park } from "../execution/errors"
@@ -58,7 +60,7 @@ export interface Connection {
 // MethodDoc documents one method for `packages.describe` and the dispatch funnel's contract
 // gate (contract.ts). `input` and `output` are JSON Schemas of the args object and the returned
 // value. The input is enforced at the funnel, and both shapes are rendered into code mode's
-// system contract (packages/agent/src/component/code.ts).
+// system contract (packages/agent/src/component/code/index.ts).
 export interface MethodDoc {
   readonly description: string
   readonly input: unknown // JSON schema of the args object
@@ -84,20 +86,24 @@ export const ANNOTATION_DEFAULTS: Required<MethodAnnotations> = {
   openWorldHint: true
 }
 
-// CodeView is the package scope a code component offers to code mode. Package order is visible
-// in the model's scope description and duplicate names fail when code mode derives the view.
+// CodeView exposes method descriptions, current-turn calls, and available call proposals (packages/agent/integration/package-budget.test.ts).
 export interface CodeView {
-  readonly packages: ReadonlyArray<Package<unknown>>
+  readonly packages: ReadonlyArray<PackageView>
+  readonly calls: ReadonlyArray<PackageCall>
+  readonly pendingCalls: ReadonlyArray<PackageCall>
 }
 
 // CODE_VIEW_ALGEBRA composes package scopes in component order.
 export const CODE_VIEW_ALGEBRA: ViewAlgebra<CodeView> = {
-  empty: { packages: [] },
-  combine: (left, right) => ({ packages: [...left.packages, ...right.packages] })
+  empty: { packages: [], calls: [], pendingCalls: [] },
+  combine: (left, right) => ({ packages: [...left.packages, ...right.packages], calls: [...left.calls, ...right.calls], pendingCalls: [...left.pendingCalls, ...right.pendingCalls] })
 }
 
+// PackageView describes a package without exposing its implementation.
+export type PackageView = Pick<Package<unknown>, "name" | "description" | "docs" | "annotations"> & { readonly methods: ReadonlyArray<string> }
+
 // CodeComponent derives package scope and package-level work from the log.
-export interface CodeComponent<R = never> extends Component<CodeView, R> {}
+export interface CodeComponent<R = never, Result = never> extends Component<CodeView, R, Result> {}
 
 // annotationsOf resolves one method's annotations over the dangerous defaults. It reads the name
 // table only, so a package's requirements are irrelevant to it: `unknown` is the shape every
@@ -107,28 +113,9 @@ export const annotationsOf = (pkg: Package<unknown>, method: string): Required<M
   ...pkg.annotations?.[method]
 })
 
-// Package is a leaf CodeComponent on an actor's world face. It declares what code is offered
-// (`name`, `description`, `docs`) and what settles its calls (`methods`). Code calls methods as
-// `zohorecruit.insert_record(args)`. The platform binds the methods to providers; tests bind
-// fakes. An MCP adapter produces the same package shape.
-//
-// `ctx.callId` is the call's recorded pair key. A method that sends a message across actors
-// uses it as the message id, so a replayed call carries the same id and the receiver absorbs
-// the duplicate.
-//
-// Inbound delivery, where a provider's webhooks or polls become `MessageReceived`, is
-// deliberately outside Package: it belongs to the host boundary and gets its own concept once a
-// consumer exists.
-//
-// Which package components an assembly passes is component scoping: a task that cannot send
-// messages is given no sending package, and the code cannot name what the assembly did not pass.
-// The powerless default is the empty array (execute.ts, codeReactor).
-//
-// `R` is what a package's methods need from the environment, the dual of `AgentComponent<R>` on the
-// model face. A package that reaches for a service names it in its type, and the reactor that
-// runs the package declares the union of what its packages need (execute.ts, codeReactorFor); a
-// package that reaches for nothing is `Package<never>` and runs anywhere.
-export interface Package<R = never> extends CodeComponent<R> {
+// Package owns method execution behind its component boundary (packages/agent/integration/package-permissions.test.ts).
+// ctx.callId identifies the recorded request across retries and is suitable for downstream idempotency.
+export interface Package<R = never> extends CodeComponent<R | KeyValueStore.KeyValueStore, unknown> {
   readonly name: string
   readonly description: string
   // Method docs, two levels: describe({name}) lists names and one-liners; describe({name,
@@ -148,28 +135,12 @@ export interface Package<R = never> extends CodeComponent<R> {
 }
 
 // PackageDefinition is the leaf declaration accepted by definePackage.
-export type PackageDefinition<R = never> = Omit<Package<R>, "machine" | "keys">
+export type PackageDefinition<R = never> = Omit<Package<R>, keyof Component<unknown, unknown>> & { readonly name: string }
 
 // definePackage makes a package declaration a leaf code component.
 export const definePackage = <R>(definition: PackageDefinition<R>): Package<R> => {
-  let pkg: Package<R>
-  pkg = {
-    ...definition,
-    machine: {
-      initial: () => undefined,
-      step: (state: unknown) => state,
-      output: () => ({
-        view: { packages: [pkg as Package<unknown>] },
-        transitions: []
-      })
-    }
-  }
-  return pkg
+  return { ...packageCalls(definition), ...definition }
 }
 
-// PackageRequirements extracts one package's R, so a mixed list infers the union of what its
-// members need rather than collapsing on the first element's R. It is the package-face twin of
-// ComponentRequirements (packages/core/src/actor/component.ts), and what makes the environment a code
-// reactor demands a function of the packages it was passed (execute.test.ts, "a package's
-// requirements ride its type").
+// PackageRequirements extracts the services used by a declaration's methods.
 export type PackageRequirements<T> = T extends Package<infer R> ? R : never

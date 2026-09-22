@@ -60,7 +60,10 @@ const effectLint = (project: string): ReadonlyArray<string> => [
 ]
 
 const tasks: ReadonlyArray<Task> = [
+  { id: "lint:component-purity", cmd: ["bun", "run", "tools/lint-component-purity.ts"] },
+  { id: "test:component-purity", cmd: ["bun", "test", "tools/component-purity.test.ts"] },
   { id: "lint:boundaries", cmd: ["bun", "run", "tools/code-graph.ts", "--check"] },
+  { id: "test:publish-paths", cmd: ["bun", "test", "tools/publish-paths.test.ts"] },
   { id: "test:code-graph", cmd: ["bun", "test", "tools/code-graph/analyze.test.ts"] },
   { id: "lint", cmd: ["bun", "--bun", "node_modules/.bin/oxlint"] },
   // Prose carries house rules the code linter does not know, so it has its own check.

@@ -6,6 +6,17 @@
 
 No silent hardcoding. When the framework applies a policy value, such as a cap, a threshold, a timeout, or a limit, the consumer must be able to see it and set it. Export the default, accept an override at the call site or on the surface that applies it, and make the effect visible in the output when the policy changes what the model sees. A constant a consumer can read but cannot change is a leaky abstraction; be explicit instead.
 
+## Formal verification tools
+
+On this workstation, TLAPS is installed at `~/.local/opt/tlaps` and TLC at `~/.local/opt/tla2tools/tla2tools.jar`. Use these paths before searching for or downloading tools. `~/.local/opt/tlaps/bin/tlapm --version` identifies the installed proof manager. Java is available at `/opt/homebrew/opt/openjdk/bin/java`.
+
+```sh
+~/.local/opt/tlaps/bin/tlapm --strict --nofp --cache-dir /tmp/tardigrade-tlaps-proof packages/core/tla/component/ResponseIdentity.tla
+TLA_JAVA=/opt/homebrew/opt/openjdk/bin/java TLA2TOOLS_JAR="$HOME/.local/opt/tla2tools/tla2tools.jar" bun run tla InteractionSubstitution
+```
+
+TLAPS needs process inspection to launch its backends; a sandbox error from `/bin/ps` requires running the checker with that access. Keep generated proof caches outside the repository. TLAPS checks deductive proofs; TLC explores configured finite models. Neither alone proves that TypeScript implements the specification.
+
 ## Pull requests
 
 - Title a pull request in the commit format, the same as any commit: `type(scope?): message`, 3 to 5 words. The title becomes the squash commit subject, so it lands in the log as written.
@@ -26,7 +37,7 @@ No silent hardcoding. When the framework applies a policy value, such as a cap, 
 
 ## Style
 
-Use the `simple-english` skill when you write or revise documentation. Do not use em dashes, emoji, or "not X, but Y" framing in documentation, code, comments, commits, or pull requests.
+Do not use em dashes, emoji, or "not X, but Y" framing in documentation, code, comments, commits, or pull requests.
 
 Write a paragraph as one line. Editors wrap for the reader, and a hard wrap bakes one width into the source, so a one-word change reads as a reflowed block.
 

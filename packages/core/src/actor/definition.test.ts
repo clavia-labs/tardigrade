@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test"
+import { bindTransitionContext } from "../transition/transition"
+import { eventAt } from "../event"
+import { machineOf } from "../component/runtime"
+import { describe, expect, expectTypeOf, test } from "bun:test"
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { component as defineComponent, legacyComponent } from "@clavia/tardigrade-core/component"
+import { component as defineComponent, legacyComponent, withResponse, type ComponentResult } from "@clavia/tardigrade-core/component"
 import { enabled } from "@clavia/tardigrade-core/runtime/reconciler"
 import { actorRuntimeOf } from "../runtime/actor"
 import { actor, defineActor, validateActor, type ActorDefinition } from "./definition"
@@ -10,7 +13,7 @@ import { actorMethod, actorMethodsOf } from "./method"
 import { legacyActorMethod } from "./method-compat"
 import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "../interaction/cancellation"
 import { alarmFired } from "../interaction/timeout"
-import { calls, externallyHandled, handles, type CallerRef } from "./contract"
+import { calls, externallyHandled, handles, withComponentContract, inheritComponentContract, EMPTY_COMPONENT_CONTRACT, COMPONENT_CONTRACT, type ComponentContract, type CallerRef } from "./contract"
 
 const component = legacyComponent({ name: "inspect", derive: () => ({ view: undefined, transitions: [] }) })
 const methods = actorMethodsOf({
@@ -122,7 +125,9 @@ describe("actor", () => {
     })
     const definition = actor({
       name: "projected",
-      methods: { work: projectedMethod },
+      methods: {
+        work: projectedMethod
+      },
       components: [projectedComponent]
     })
     enabled(definition, [
@@ -183,4 +188,87 @@ describe("actor", () => {
     })
     expect(validateActor(dependent).contract.calls[0]?.methodName).toBe("inspect")
   })
+})
+
+
+test("contract helpers preserve machine methods and concrete component fields", () => {
+  const source = {
+    ...defineComponent({
+      name: "typed", initial: () => 0, step: (state) => state,
+      output: (count) => ({
+        view: { count }, transitions: [
+          withResponse(bindTransitionContext(eventAt({ type: "Ready" }, 1), "typed").intent("work", { type: "Worked" }), (result: {
+            readonly error: string
+          }) => bindTransitionContext(eventAt({ type: "Ready" }, 1), "typed").intent("finish", { type: "Finished", result }))
+        ], interactions: {
+          cancel: () => []
+        }
+      }),
+
+    }),
+    label: "files" as const
+  }
+  const caller: CallerRef<typeof methods> = { kind: "caller", methods }
+  const decorated = [
+    withComponentContract(source, EMPTY_COMPONENT_CONTRACT),
+    inheritComponentContract(source, component),
+    handles(methods.inspect, source),
+    externallyHandled(methods.inspect, source),
+    calls(caller, methods.inspect, source)
+  ] as const
+  for (const result of decorated) {
+    expectTypeOf<Omit<typeof result, typeof COMPONENT_CONTRACT>>().toEqualTypeOf<Omit<typeof source, typeof COMPONENT_CONTRACT>>()
+    expectTypeOf<ComponentResult<typeof result>>().toEqualTypeOf<{ readonly error: string }>()
+    expect(machineOf(result)).toBe(machineOf(source))
+  }
+
+})
+
+
+test("contract helpers replace narrowed contract types while preserving component fields", () => {
+  const source = {
+    ...component,
+    label: "files" as const,
+    [COMPONENT_CONTRACT]: { handles: [] as const, calls: [] as const, marker: "original" as const }
+  }
+  const caller: CallerRef<typeof methods> = { kind: "caller", methods }
+  const decorated = [
+    withComponentContract(source, EMPTY_COMPONENT_CONTRACT),
+    inheritComponentContract(source, component),
+    handles(methods.inspect, source),
+    externallyHandled(methods.inspect, source),
+    calls(caller, methods.inspect, source)
+  ] as const
+  for (const result of decorated) {
+    expectTypeOf(result[COMPONENT_CONTRACT]).toEqualTypeOf<ComponentContract>()
+    expectTypeOf(result.label).toEqualTypeOf<"files">()
+    expect(result.label).toBe("files")
+  }
+  expect(decorated[0][COMPONENT_CONTRACT]).toBe(EMPTY_COMPONENT_CONTRACT)
+  expect(decorated[0][COMPONENT_CONTRACT]).not.toHaveProperty("marker")
+  expect(decorated[2][COMPONENT_CONTRACT].handles).toEqual([{ method: methods.inspect, handling: "local" }])
+  expect(source[COMPONENT_CONTRACT].handles).toEqual([])
+})
+
+test("managed parents preserve child keys and contracts through nested wrappers", () => {
+  const child = handles(methods.inspect, {
+    ...defineComponent({ name: "leaf", initial: () => undefined, step: () => undefined,
+      output: () => ({ view: undefined, transitions: [] }) }),
+    keys: { prefixes: ["inspected"], keyOf: (event: Event) => event.type === "Inspected" ? `inspected/${event.id}` : undefined }
+  })
+  const parent = defineComponent({ name: "parent", children: child, initial: () => undefined, step: () => undefined,
+    output: (_state, child) => ({ ...child.output() }) })
+  const outer = defineComponent({ name: "outer", children: parent, initial: () => undefined, step: () => undefined,
+    output: (_state, parent) => ({ ...parent.output() }) })
+  expect(outer.keys?.keyOf({ type: "Inspected", id: "a" })).toBe("inspected/a")
+  expect(outer[COMPONENT_CONTRACT]?.handles).toEqual(child[COMPONENT_CONTRACT].handles)
+  expect(() => validateActor(defineActor("nested", methods, [outer]))).not.toThrow()
+  expect(inheritComponentContract(parent, child)[COMPONENT_CONTRACT].handles).toHaveLength(1)
+  const duplicate = {
+    ...defineComponent({ name: "duplicate", initial: () => undefined, step: () => undefined,
+      output: () => ({ view: undefined, transitions: [] }) }),
+    keys: child.keys
+  }
+  expect(() => defineComponent({ name: "collision", children: [child, duplicate], initial: () => undefined, step: () => undefined,
+    output: () => ({ view: undefined, transitions: [] }) })).toThrow('key prefix "inspected"')
 })

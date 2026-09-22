@@ -102,8 +102,8 @@ describe("boundaryViolations", () => {
   test("model stays independent through internal helpers and erased type imports", () => {
     const model = node("packages/model/src/stream/collect.ts", "model")
     const helper = node("packages/model/src/settings.ts", "model")
-    const inference = node("packages/agent/src/inference/model/index.ts", "agent")
-    const compaction = node("packages/agent/src/component/compaction/model.ts", "agent")
+    const inference = node("packages/agent/src/model/execution/index.ts", "agent")
+    const compaction = node("packages/agent/src/component/compact/model.ts", "agent")
     const client = node("packages/client/src/contract.ts", "client")
     const graph = [model, helper, inference, compaction, client]
     const inward = [edge(inference.id, model.id), edge(compaction.id, model.id), edge(model.id, helper.id)]
@@ -192,4 +192,45 @@ test("local host invocation cannot import HTTP helpers from inside the host pack
     rule: "host-without-http", source: host, target: adapter, line: 1, message: [host, adapter].join(" → ")
   })
 
+})
+
+test.each([
+  "packages/core/src/component/runtime.ts",
+  "packages/core/src/component/composition/parent.ts"
+])("private component imports are restricted: %s", (path) => {
+  const runtime = node(path, "core")
+  const core = node("packages/core/src/component/machine.ts", "core")
+  const agent = node("packages/agent/src/component/tool/machine.ts", "agent")
+  const code = node("packages/code/src/package/definition.ts", "code")
+  const app = node("apps/server/src/actor.ts", "app")
+  const facade = node("packages/tardie/src/index.ts", "facade")
+  const spec = node("packages/host/src/event-key.test.ts", "host", true)
+  const nodes = [runtime, core, agent, code, app, facade, spec]
+  expect(boundaryViolations(nodes, [core, spec].map((source) => edge(source.id, runtime.id)), [])).toEqual([])
+  expect(boundaryViolations(nodes, [edge(app.id, runtime.id), edge(facade.id, runtime.id, true), edge(agent.id, runtime.id), edge(code.id, runtime.id)], []).map((violation) => violation.rule))
+    .toEqual(["component-runtime-private", "component-runtime-private", "component-runtime-private", "component-runtime-private"])
+})
+
+
+test("component authors cannot import activation or test helpers", () => {
+  const author = node("packages/agent/src/component/example.ts", "agent")
+  const replay = node("packages/agent/src/runtime/render.ts", "agent")
+  const testing = node("packages/agent/fixtures/component.ts", "agent")
+  const runtime = node("packages/core/src/component/runtime.ts", "core")
+  const nodes = [author, replay, testing, runtime]
+  expect(boundaryViolations(nodes, [edge(replay.id, runtime.id), edge(testing.id, runtime.id)], [])).toEqual([])
+  expect(boundaryViolations(nodes, [edge(author.id, replay.id), edge(author.id, testing.id)], []).map(v => v.rule))
+    .toEqual(["component-authoring-only", "component-authoring-only"])
+})
+
+test.each(["budget", "permissions"])("%s policies cannot import child implementations", (policy) => {
+  const source = `packages/agent/src/component/${policy}/index.ts`
+  for (const child of ["tool", "code", "infer"]) {
+    const target = `packages/agent/src/component/${child}/index.ts`
+    const nodes = [node(source, "agent"), node(target, "agent")]
+    for (const typeOnly of [false, true]) {
+      expect(boundaryViolations(nodes, [edge(source, target, typeOnly)], []).map(v => v.rule))
+        .toEqual(["policy-child-independent"])
+    }
+  }
 })

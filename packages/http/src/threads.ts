@@ -11,7 +11,7 @@ export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
   readonly cause: unknown
 }> {}
 
-import type { ThreadStatusOf } from "./projections"
+import type { ThreadStatus } from "./projections"
 
 export interface ActorThreads {
   readonly allocateRoot: (name?: string, options?: { readonly key?: string; readonly parent?: string }) => Effect.Effect<ThreadCoordinate>
@@ -19,7 +19,7 @@ export interface ActorThreads {
   readonly forkThread: (source: string, seq: number, name?: string) => Effect.Effect<ThreadCoordinate>
   readonly methods: ActorMethods
   readonly storage: ActorMetadata["storage"]
-  readonly statusOf: ThreadStatusOf
+  readonly statusOf: (events: ReadonlyArray<Event>) => ThreadStatus | Promise<ThreadStatus>
   readonly append: (id: string, event: Event) => Effect.Effect<void>
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly eventsPage: (id: string, mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>

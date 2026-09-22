@@ -73,7 +73,9 @@ export const threadSupervisor = <E = never>(options: {
   readonly timeoutMs?: number
 } = {}): ThreadSupervisor => actor({
   name: "thread-supervisor",
-  methods: { requestThread: requestThreadMethod(options) },
+  methods: {
+    requestThread: requestThreadMethod(options)
+  },
   components: [component({
     name: "threads",
     initial: () => new Map<string, { readonly request: ThreadRequested; readonly context: TransitionContext }>(),

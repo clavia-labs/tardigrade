@@ -114,6 +114,7 @@ export interface BunHost {
   readonly settled: () => Promise<void>
   readonly recover: () => Promise<void>
   readonly resting: () => Promise<boolean>
+  readonly restingFrom: (thread: string, events: ReadonlyArray<Event>) => Promise<boolean>
   readonly work: () => number
   readonly self: (thread: string) => string
   readonly close: () => Promise<void>
@@ -659,10 +660,16 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
   }
   const { drive, settled, schedule } = hostDrive(driveGraph)
+  const restingFrom = async (thread: string, events: ReadonlyArray<Event>): Promise<boolean> => {
+    const actor = options.actorFor(thread)
+    if (actor === undefined) return true
+    return Effect.runPromise(Effect.gen(function* () {
+      return restingActor(actor, events, yield* Effect.context<never>())
+    }).pipe(Effect.provide(await layersOf(thread))))
+  }
   const resting = async (): Promise<boolean> => {
     for (const [thread, events] of await logs()) {
-      const actor = options.actorFor(thread)
-      if (actor !== undefined && !restingActor(actor, events)) return false
+      if (!await restingFrom(thread, events)) return false
     }
     return driver.resting()
   }
@@ -746,6 +753,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     settled,
     recover,
     resting,
+    restingFrom,
     work: driver.work,
     self,
     close: async () => {

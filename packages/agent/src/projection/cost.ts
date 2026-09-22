@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { ModelPricing, priced, sumUsage, usageOf, type Usage } from "../inference/usage"
+import { ModelPricing, priced, sumUsage, usageOf, type Usage } from "../model/usage"
 
 export interface Cost {
   readonly reportedUsd?: number

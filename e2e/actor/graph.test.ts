@@ -4,8 +4,8 @@ import {
   actor,
   agentMethods,
   budget,
-  budgetAuthority,
   caller,
+  escalate,
   codeMode,
   compaction,
   infer,
@@ -100,10 +100,15 @@ test("an actor graph covers concurrent calls, budget negotiation, structured out
     name: "coverage-agent",
     methods: agentMethods,
     components: [
-      infer([budget([work()], {
-        authority: caller()
-      }), compaction(), nativeOutput], TEST_MODEL),
-      budgetAuthority({
+      infer([escalate(
+        budget(work(), {
+          onExhausted: (reason, settle) => settle({ error: reason }),
+          usage: (observation) => observation.calls.length,
+          rejectionMessage: "Tool budget reached. Answer now with your best result."
+        }),
+        { authority: caller() }
+      ), compaction({ model: TEST_MODEL.models.default }), nativeOutput], TEST_MODEL),
+      escalate.authority("budget", {
         decide: (request) => {
           if (request.reason.startsWith("worker 4 ")) throw new Error("the authority is unavailable")
           return request.reason.startsWith("worker 3 ")

@@ -1,5 +1,5 @@
-import { RetrySchedule } from "../inference/retry"
-import { ModelError, encodeModelError, unknownModelError } from "../inference/error"
+import { RetrySchedule } from "../component/infer/retry"
+import { ModelError, encodeModelError, unknownModelError } from "../model/error"
 import { AiError } from "effect/unstable/ai"
 import { upcastUsage } from "./response-upcast"
 import { Schema } from "effect"
@@ -7,11 +7,11 @@ import { AgentMessageReceived } from "./message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
-import { ModelPricing, type Usage } from "../inference/usage"
-import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
-import { ProviderContinuation } from "../inference/continuation"
-import { ModelUsage, ModelResponse, ModelFinish } from "../inference/response"
-export { ModelResponse } from "../inference/response"
+import { ModelPricing, type Usage } from "../model/usage"
+import { ModelRef, type ModelRef as ModelRefType } from "../model/reference"
+import { ProviderContinuation } from "../model/continuation"
+import { ModelUsage, ModelResponse, ModelFinish } from "../model/response"
+export { ModelResponse } from "../model/response"
 
 // The agent's domain events compose with core actor input and control events. The model responds
 // by acting: its recorded decision is the consequence event it emits, and the prose it emits
@@ -28,7 +28,7 @@ export { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-me
 export { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
 export { cancellationRequested } from "@clavia/tardigrade-core/interaction/cancellation"
 
-// Endpoint records configured model identity and optional routing evidence (inference/usage.test.ts).
+// Endpoint records configured model identity and optional routing evidence (model/usage.test.ts).
 export const Endpoint = Schema.Struct({
   provider: Schema.optional(Schema.String),
   model: Schema.String,
@@ -46,21 +46,22 @@ export const OutputPolicy = Schema.Struct({
   fallback: Schema.optional(Schema.Unknown)
 })
 
-// ToolCalled is the ask: the turn calls a tool. `callId` correlates the return to this call.
+// ToolCalled is the ask: the turn calls a tool. `callId` is the provider protocol label.
 export const ToolCalled = Schema.Struct({
   type: Schema.Literal("ToolCalled"),
   callId: Schema.String,
   name: Schema.String,
   arguments: Schema.Unknown,
+  validationError: Schema.optional(Schema.String),
   responseId: Schema.optional(Schema.String),
   batchId: Schema.optional(Schema.String),
   batchIndex: Schema.optional(Schema.Finite),
-  // usage preserves historical response spend; new responses use ModelReturned (inference/usage.test.ts).
+  // usage preserves historical response spend; new responses use ModelReturned (model/usage.test.ts).
   usage: Schema.optional(Schema.Unknown),
   endpoint: Schema.optional(Endpoint),
   // A tool call may be one response in a turn that declares final output. Its effective mode is
   // recorded here so replay does not decide how this attempt ran from a current capability
-  // (inference/machine.ts, consequencesOf).
+  // (component/infer/machine.ts, consequencesOf).
   mode: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Finite),
   at: Schema.Finite
@@ -84,7 +85,7 @@ export const ModelCalled = Schema.Struct({
   callId: Schema.String,
   // model is the concrete selection for this provider effect. It remains optional for earlier logs.
   model: Schema.optional(ModelRef),
-  // ordinal identifies each physical attempt; callId is reused only for unanswered crash recovery (inference/retry.test.ts).
+  // ordinal identifies each physical attempt; callId is reused only for unanswered crash recovery (integration/infer-retry.test.ts).
   ordinal: Schema.optional(Schema.Finite),
   // The output policy this attempt ran under, when the turn declared a contract. Recorded on the
   // ask, so a replay reads which policy produced which response.
@@ -270,7 +271,7 @@ export const TurnResumed = Schema.Struct({
 })
 
 // BudgetExhausted records the wall when a component subtree passes the turn's budget. The budget
-// wrapper withdraws its tools and refuses the pending call (component/budget.test.ts, "settling an
+// wrapper withdraws its tools and refuses the pending call (component/budget/budget.test.ts, "settling an
 // over-budget execute records the wall and never dispatches the call").
 export const BudgetExhausted = Schema.Struct({
   type: Schema.Literal("BudgetExhausted"),
@@ -324,7 +325,6 @@ export const PermissionRequestReceived = Schema.Struct({
   id: Schema.String,
   request: Schema.String,
   turn: Schema.String,
-  tool: Schema.String,
   action: Schema.String,
   resource: Schema.optional(Schema.String),
   reason: Schema.String,
@@ -353,7 +353,7 @@ export const BudgetGranted = Schema.Struct({
   amount: Schema.Finite, // the tool calls added to this turn's budget
   initial: Schema.optional(Schema.Boolean),
   // The BudgetRequested this grant answers. The dedup key reads it: a grant is summed into the
-  // ceiling (component/budget.ts), so a redelivered grant landing twice would silently
+  // ceiling (component/budget/index.ts), so a redelivered grant landing twice would silently
   // double the budget; keyed by the request it answers, the store absorbs the repeat.
   callId: Schema.optional(Schema.String),
   turn: Schema.optional(Schema.String),
@@ -400,7 +400,7 @@ export type AgentEvent = typeof AgentEvent.Type
 // Action is what the model reacts with: ask the world, or end the turn. `text` is the prose the
 // model emitted alongside a call; it records as `TextReturned`. A `complete` under a declared
 // output contract carries the final response verbatim, and the inference machine judges it against
-// the contract before any terminal is recorded (inference/machine.ts).
+// the contract before any terminal is recorded (component/infer/machine.ts).
 // AttemptEndpoint is the binding's report of who served the attempt, carried on every action so
 // the consequence records it whether or not the endpoint reported any spend.
 export interface AttemptEndpoint {
@@ -412,13 +412,13 @@ export interface AttemptEndpoint {
 
 // `mode` is how an attempt obtained a declared output contract. A binding answering a turn that
 // declared one must state it: the reactor records it and reads it back on replay, and it refuses
-// to invent one (inference/machine.ts, completionOf).
+// to invent one (component/infer/machine.ts, completionOf).
 type Served = {
   readonly response?: ModelResponse
   readonly finish?: ModelFinish
   readonly reportedCostUsd?: number
   readonly reasoning?: string
-  readonly continuation?: import("../inference/continuation").ProviderContinuation
+  readonly continuation?: import("../model/continuation").ProviderContinuation
   // usage accepts historical custom bindings; modelReturned stores ModelUsage.
   readonly usage?: ModelUsage | Usage
   readonly endpoint?: AttemptEndpoint
@@ -456,12 +456,10 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bdec:", "bi:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
+  prefixes: ["bdec:", "bi:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
-      case "ToolReturned":
-        return `tr:${String(v.callId)}`
       case "BudgetGranted":
         if (v.initial === true) return `bi:${String(v.turn)}`
         return v.callId === undefined ? undefined : `bdec:${String(v.callId)}`
@@ -528,7 +526,7 @@ export const modelCalled = (
     readonly callId: string
     readonly model?: ModelRefType
     readonly ordinal?: number
-    readonly pricing?: import("../inference/usage").ModelPricing
+    readonly pricing?: import("../model/usage").ModelPricing
     readonly retryIndex?: number
     readonly output?: {
       readonly contract: string
@@ -585,7 +583,7 @@ export const outputRejected = (
 
 // outputRetryRequested records one component's decision to ask again after a rejection, with the
 // feedback that component chose. Any component may append it; the inference machine reads only
-// whether the rejection it answers has one (inference/machine.ts).
+// whether the rejection it answers has one (component/infer/machine.ts).
 export const outputRetryRequested = (
   fields: {
     readonly rejection: string
@@ -648,7 +646,7 @@ export const budgetRequestFailed = (
 ): Event => ({ type: "BudgetRequestFailed", ...fields }) as Event
 
 export const permissionRequestReceived = (
-  fields: { readonly id: string; readonly request: string; readonly turn: string; readonly tool: string; readonly action: string; readonly resource?: string; readonly reason: string; readonly at: number }
+  fields: { readonly id: string; readonly request: string; readonly turn: string; readonly action: string; readonly resource?: string; readonly reason: string; readonly at: number }
 ): Event => ({ type: "PermissionRequestReceived", ...fields }) as Event
 
 export const permissionRequestDecided = (
@@ -671,8 +669,8 @@ export const compactionCompleted = (
   fields: {
     readonly keepFrom: string
     readonly summary: string
-    readonly contextWindowTokens: number
-    readonly fireTokens: number
+    readonly contextWindowTokens?: number
+    readonly fireTokens?: number
     readonly keepTokens: number
     readonly fileTokens?: number
     readonly model?: ModelRefType

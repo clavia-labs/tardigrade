@@ -3,7 +3,7 @@ import { Schema } from "effect"
 import { TurnError } from "./events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { AiError } from "effect/unstable/ai"
-import { modelErrorOf } from "../inference/error"
+import { modelErrorOf } from "../model/error"
 
 // upcastError reads historical string failures and current structured failures (upcast.test.ts).
 export const upcastError = (error: unknown): TurnError => {
@@ -29,18 +29,11 @@ export interface ReadEvent {
 
 export interface ReadHistory {
   readonly entries: ReadonlyArray<ReadEvent>
-  readonly budget: {
-    readonly startingAllowance: number | undefined
-    readonly needsInitialGrant: boolean
-  }
 }
 
 // upcast normalizes a history into read metadata without changing or synthesizing stored events (upcast.test.ts).
-// Budget metadata describes a single turn. An undefined starting allowance requires the caller's fallback; an unrecorded historical default remains unknown.
 export const upcast = (events: ReadonlyArray<Event>): ReadHistory => {
   const responses = new Set(events.filter((event) => event.type === "ModelReturned").map((event) => responseKeyOf(event, event.callId)))
-  const head = events.find((event) => event.type === "MessageReceived")
-  const initial = events.some((event) => event.type === "BudgetGranted" && event.initial === true)
   return {
     entries: events.map((stored) => {
       const event = upcastResponse(stored)
@@ -55,12 +48,6 @@ export const upcast = (events: ReadonlyArray<Event>): ReadHistory => {
         ...(response === undefined ? {} : { responseKey: responseKeyOf(event, response) }),
         advancesInference
       }
-    }),
-    budget: {
-      startingAllowance: initial ? 0 : typeof head?.budget === "number" && head.budget > 0 ? Math.floor(head.budget) : undefined,
-      needsInitialGrant: head !== undefined && !events.some((event) =>
-        event.type === "BudgetGranted" || event.type === "ModelCalled" || event.type === "ToolCalled" ||
-        event.type === "TurnCompleted" || event.type === "TurnFailed" || event.type === "TurnCancelled")
-    }
+    })
   }
 }

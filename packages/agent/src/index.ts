@@ -17,17 +17,15 @@ export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor
 export { PermissionRequestInput, PermissionDecision, requestPermissionMethod } from "./actor/permission"
 export {
   NativeOutputSupport,
-  DEFAULT_INFER_POLICY,
-  type InferPolicy,
   type InferRequest,
-  type ModelResolution,
-  type Render
-} from "./inference/contract"
-export { inferenceFromHistory, inferenceMachine, type InferenceMachineProjection } from "./inference/machine"
-export { ModelRef, modelRefOf } from "./inference/reference"
+  type ModelResolution
+} from "./model/contract"
+export { DEFAULT_INFER_POLICY, type InferPolicy, type Render } from "./component/infer/contract"
+export { inferenceFromHistory, inferenceMachine } from "./component/infer/machine"
+export { ModelRef, modelRefOf } from "./model/reference"
 export {
   type ModelRequest
-} from "./inference/request"
+} from "./model/request"
 export {
   messagesProjection,
   renderMessages,
@@ -41,7 +39,7 @@ export {
   type InferenceIdentity,
   type InferenceObserver,
   type InferenceObserverPolicy
-} from "./inference/observer"
+} from "./model/observer"
 export {
   applyModelPolicy,
   DEFAULT_MODEL_POLICY,
@@ -55,7 +53,7 @@ export {
   modelPolicyOverrideOf,
   modelPolicyScopeOf,
   ModelSelector
-} from "./inference/access"
+} from "./model/access"
 export {
   output,
   outputFrom,
@@ -109,16 +107,17 @@ export {
   type RepairPolicy
 } from "./component/repair"
 export { nativeOutput } from "./component/native-output"
-export { DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./component/budget"
-export { toolsReactorFrom, DEFAULT_TOOL_CONCURRENCY, type ToolConcurrency, type Answer, type PendingCall, type Serve } from "./runtime/tools"
+export { DEFAULT_BUDGET_POLICY, DEFAULT_BUDGET_REJECTION, type BudgetPolicy, type BudgetState } from "./component/budget/index"
+export { toolComponent, toolsReactorFrom, DEFAULT_TOOL_CONCURRENCY, type ToolConcurrency, type ToolState, type ToolCallView, toolCallOf, type Answer, type PendingCall, type Serve } from "./component/tool/machine"
 export {
   compactionReactor,
   contextPolicyOf,
   DEFAULT_COMPACTION_POLICY,
   resolvedContextPolicyOf,
+  type CompactOptions,
   type CompactionPolicy,
   type ContextPolicy
-} from "./component/compaction"
+} from "./component/compact/index"
 export { agentKeys, outputRepaired, outputRetryRequested, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./log/events"
 export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./runtime/resume"
 export {
@@ -132,9 +131,10 @@ export {
   type ProviderUsageReport,
   type CostSource,
   type ModelPricing
-} from "./inference/usage"
+} from "./model/usage"
 export { boundaryOf, outputOf, type Boundary } from "./output/boundary"
 export {
+  agents,
   agentsPackage,
   INLINE_OUTPUT_NAME,
   DEFAULT_MAX_DEPTH,
@@ -147,7 +147,6 @@ export {
   AGENT_VIEW_ALGEBRA,
   infer,
   defineOutputFallback,
-  renderOf,
   type AgentComponent,
   type AgentView,
   type AgentTool,
@@ -157,8 +156,11 @@ export {
   type OutputFallbackComponent,
   type OutputFragment,
   type InferOptions,
+  type InferView,
+  type InferCost,
+  type InferRejection,
   type Rendered
-} from "./runtime/composition"
+} from "./component/infer/index"
 export {
   codeMode,
   CODE_SYSTEM,
@@ -166,37 +168,49 @@ export {
   DEFAULT_CODE_SUMMARY_MAX_LENGTH,
   DEFAULT_CODE_TOOL_CONCURRENCY,
   type CodeModeOptions
-} from "./component/code"
+} from "./component/code/index"
 export { system, type SystemProjection, type SystemText } from "./component/system"
-export { tool, toolList, type NativeTool } from "./component/tool"
+export { tool, tools, toolList, type ToolsOptions, type NativeTool } from "./component/tool/index"
+export { budget, type BudgetOptions, type BudgetLimit, type BudgetComponent, type BudgetControl } from "./component/budget/index"
 export {
-  budget,
   caller,
   type BudgetAuthority,
   type BudgetAuthorityMethods,
-  type BudgetOptions,
-  type CallerBudgetAuthority
-} from "./component/budget"
-export {
-  budgetAuthority,
+  type CallerBudgetAuthority,
   budgetAuthorityKeys,
   DEFAULT_BUDGET_DECISION,
   type BudgetAuthorityOptions,
   type BudgetRequest,
   type DecideBudget
-} from "./component/budget-authority"
+} from "./component/escalate/budget-authority"
 export {
   permissions,
   type PermissionAuthorityMethods,
-  type PermissionCall,
+  type PermissionState,
   type PermissionsOptions,
+  type PermissionsComponent,
   type PermissionSubject
-} from "./component/permissions"
+} from "./component/permissions/index"
 export {
-  permissionAuthority,
   permissionAuthorityKeys,
   type DecidePermission,
   type PermissionAuthorityOptions,
+  type PermissionAuthority,
   type PermissionRequest
-} from "./component/permission-authority"
-export { compaction } from "./component/compaction"
+} from "./component/escalate/permission-authority"
+export { compact, compaction } from "./component/compact/index"
+export {
+  escalation,
+  DEFAULT_ESCALATION_TOOL,
+  DEFAULT_EXHAUSTED_MESSAGE,
+  DEFAULT_ESCALATION_MESSAGE,
+  type EscalationOptions
+} from "./component/escalate/index"
+
+export { messages, type MessagesOptions } from "./component/messages"
+
+export { renderOf } from "./runtime/render"
+
+export { escalate, type BudgetEscalationOptions, type PermissionEscalationOptions, type EscalatedComponent } from "./component/escalate/index"
+export type { AuthorityComponent, AuthorityRequest } from "./component/escalate/authority"
+export type { AuthorityTarget } from "./component/escalate/target"

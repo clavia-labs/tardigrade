@@ -1,4 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { toolCallPosition, toolResultPosition } from "./tool"
 import { upcast } from "./upcast"
 
 // responsesOf indexes response groups and counts completed attempts without changing event identity (response.test.ts).
@@ -29,7 +30,7 @@ export const responsesOf = (events: ReadonlyArray<Event>): {
 // hasUnansweredToolCall reports whether an event slice still awaits a tool result.
 export const hasUnansweredToolCall = (events: ReadonlyArray<Event>): boolean => {
   const answered = new Set(
-    events.filter((event) => event.type === "ToolReturned").map((event) => String(event.callId))
+    events.filter((event) => event.type === "ToolReturned").map(toolResultPosition)
   )
-  return events.some((event) => event.type === "ToolCalled" && !answered.has(String(event.callId)))
+  return events.some((event) => event.type === "ToolCalled" && !answered.has(toolCallPosition(event)))
 }

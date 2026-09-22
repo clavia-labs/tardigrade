@@ -1,3 +1,4 @@
+import { toolCallOf } from "@clavia/tardigrade-agent/component/tool/machine"
 import { expect, test } from "bun:test"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -9,14 +10,13 @@ import {
   actor,
   agentMethods,
   budget,
-  budgetAuthority,
   caller,
+  escalate,
   codeMode,
   compaction,
   infer,
   NATIVE_MODE,
   nativeOutput,
-  permissionAuthority,
   permissions,
   requestPermissionMethod,
   validateActor
@@ -102,7 +102,14 @@ test.each([false, true])("Mortys inherit Rick's depth ceiling with background=%s
     const assemble = (ceiling: number | undefined) => validateActor(actor({
       name: "depth-citadel",
       methods: { message: agentMethods.message },
-      components: [infer([budget([codeMode([agentsPackage({ maxDepth: ceiling })])]), nativeOutput], TEST_MODEL)]
+      components: [infer([escalate(
+        budget(codeMode([agentsPackage({ maxDepth: ceiling })]), {
+          onExhausted: (reason, settle) => settle({ error: reason }),
+          usage: ({ calls }) => calls.length,
+          rejectionMessage: "Tool budget reached. Answer now with your best result."
+        }),
+        { authority: caller() }
+      ), nativeOutput], TEST_MODEL)]
     }))
     const rootActor = assemble(maxDepth)
     const childActor = assemble(widen ? maxDepth + 10 : undefined)
@@ -172,14 +179,17 @@ test.each([false, true])("Mortys inherit Rick's depth ceiling with background=%s
 
 const responseFor = (
   trajectory: ReadonlyArray<Event>,
-  turn: string,
-  toolCall: string
-): { readonly type: string; readonly status?: unknown; readonly output?: unknown } | undefined =>
-  trajectory.find((event) =>
+  resource: string
+): { readonly type: string; readonly status?: unknown; readonly output?: unknown } | undefined => {
+  const request = trajectory.find(event => {
+    const input = field(event, "input")
+    return event.type === "CallPlanned" && field(event, "method") === "requestPermission" &&
+      typeof input === "object" && input !== null && "resource" in input && input.resource === resource
+  })
+  return request === undefined ? undefined : trajectory.find(event =>
     (event.type === "ResponseReceived" || event.type === "CallTimedOut") &&
-    field(event, "method") === "requestPermission" &&
-    field(event, "call") === `permission/${turn}/${toolCall}`
-  ) as { readonly type: string; readonly status?: unknown; readonly output?: unknown } | undefined
+    field(event, "method") === "requestPermission" && field(event, "call") === field(request, "id"))
+}
 
 const outcomeOf = (response: { readonly type: string; readonly status?: unknown; readonly output?: unknown }): Outcome => {
   if (response.type === "CallTimedOut") return "timeout"
@@ -262,7 +272,7 @@ const mindFor = (missions: ReadonlyMap<string, Mission>, jitter: ReadonlyArray<n
     if (!called(first)) {
       return action({ kind: "calls", calls: [{ callId: first, name: "execute", arguments: { code: portalCode(mission.key, 1) } }] })
     }
-    const firstResponse = responseFor(trajectory, turn, first)
+    const firstResponse = responseFor(trajectory, `dimension/${mission.key}/1`)
     if (firstResponse !== undefined && outcomeOf(firstResponse) !== "grant") {
       return action({ kind: "complete", output: JSON.stringify({ key: mission.key, status: `permission-1-${outcomeOf(firstResponse)}` }) })
     }
@@ -284,7 +294,7 @@ const mindFor = (missions: ReadonlyMap<string, Mission>, jitter: ReadonlyArray<n
     if (!called(second)) {
       return action({ kind: "calls", calls: [{ callId: second, name: "execute", arguments: { code: portalCode(mission.key, 2) } }] })
     }
-    const secondResponse = responseFor(trajectory, turn, second)
+    const secondResponse = responseFor(trajectory, `dimension/${mission.key}/2`)
     if (secondResponse !== undefined && outcomeOf(secondResponse) !== "grant") {
       return action({ kind: "complete", output: JSON.stringify({ key: mission.key, status: `permission-2-${outcomeOf(secondResponse)}` }) })
     }
@@ -311,35 +321,41 @@ test.each([1, 2, 3, 4])("Rick and Morty survive generated portal, budget, permis
       methods: { ...agentMethods, requestPermission: requestPermissionMethod },
       components: [
         infer([
-          budget([
-            permissions([
-              codeMode([
-                agentsPackage({ budget: {} }),
-                workspacePackage({ policy: {} })
-              ])
-            ], {
-              authority: human,
-              request: (call) => {
-                const code = typeof call.arguments === "object" && call.arguments !== null && "code" in call.arguments
-                  ? String(call.arguments.code)
-                  : ""
-                const match = /portal-tool:([^:"]+):(\d+)/u.exec(code)
-                if (match === null) return undefined
-                const mission = byKey.get(match[1]!)
-                const permission = match[2] === "1" ? mission?.firstPermission : mission?.secondPermission
-                return {
-                  action: "open-portal",
-                  resource: `dimension/${match[1]}/${match[2]}`,
-                  reason: `Morty ${match[1]} wants portal ${match[2]}`,
-                  ...(permission === "timeout" ? { timeoutMs: 1 } : {})
+          escalate(
+            budget(
+              permissions(codeMode([agentsPackage({ budget: {} }), workspacePackage({ policy: {} })]), {
+                onDenied: (reason, respond) => respond({ error: reason }),
+                authority: human,
+                request: (work) => {
+                  const call = toolCallOf(work)!
+                  const code =
+                    typeof call.arguments === "object" && call.arguments !== null && "code" in call.arguments
+                      ? String(call.arguments.code)
+                      : ""
+                  const match = /portal-tool:([^:"]+):(\d+)/u.exec(code)
+                  if (match === null) return undefined
+                  const mission = byKey.get(match[1]!)
+                  const permission = match[2] === "1" ? mission?.firstPermission : mission?.secondPermission
+                  return {
+                    action: "open-portal",
+                    resource: `dimension/${match[1]}/${match[2]}`,
+                    reason: `Morty ${match[1]} wants portal ${match[2]}`,
+                    ...(permission === "timeout" ? { timeoutMs: 1 } : {})
+                  }
                 }
+              }),
+              {
+                onExhausted: (reason, settle) => settle({ error: reason }),
+                usage: ({ permissions, calls }) => permissions.filter(permission => permission.status === "allowed" && permission.invocation?.id === calls[0]?.turn).length,
+                rejectionMessage: "Tool budget reached. Answer now with your best result."
               }
-            })
-          ], { authority: caller() }),
-          compaction(),
+            ),
+            { authority: caller() }
+          ),
+          compaction({ model: TEST_MODEL.models.default }),
           nativeOutput
         ], TEST_MODEL),
-        budgetAuthority({
+        escalate.authority("budget", {
           decide: (request) => {
             const mission = byKey.get(request.reason.slice("budget:".length))
             if (mission?.budget === "fail") throw new Error("the Citadel lost the paperwork")
@@ -348,7 +364,7 @@ test.each([1, 2, 3, 4])("Rick and Morty survive generated portal, budget, permis
               : request.deny("Rick says one portal was enough")
           }
         }),
-        permissionAuthority.manual()
+        escalate.authority("permissions", "manual")
       ]
     }))
     let pickIndex = 0
@@ -552,19 +568,27 @@ const cancelForegroundMortys = async ({ children, headroom, schedule }: {
       name: "cancel-citadel",
       methods: agentMethods,
       components: [infer([
-        budget([permissions([codeMode([
-          agentsPackage({ budget: {} }),
-          workspacePackage({ policy: {} })
-        ])], {
-          authority: {
-            coordinate: threadAddressOf("mem", "main", "ag.council-of-ricks"),
-            methods: { requestPermission: requestPermissionMethod }
-          },
-          request: () => undefined
-        })]),
-        compaction(),
+        escalate(
+          budget(
+            permissions(codeMode([agentsPackage({ budget: {} }), workspacePackage({ policy: {} })]), {
+                onDenied: (reason, respond) => respond({ error: reason }),
+              authority: {
+                coordinate: threadAddressOf("mem", "main", "ag.council-of-ricks"),
+                methods: { requestPermission: requestPermissionMethod }
+              },
+              request: () => undefined
+            }),
+            {
+              onExhausted: (reason, settle) => settle({ error: reason }),
+              usage: ({ permissions, calls }) => permissions.filter(permission => permission.status === "allowed" && permission.invocation?.id === calls[0]?.turn).length,
+              rejectionMessage: "Tool budget reached. Answer now with your best result."
+            }
+          ),
+          { authority: caller() }
+        ),
+        compaction({ model: TEST_MODEL.models.default }),
         nativeOutput
-      ], TEST_MODEL), budgetAuthority({ decide: (request) => request.grant() })]
+      ], TEST_MODEL), escalate.authority("budget", { decide: (request) => request.grant() })]
     }))
     let pickIndex = 0
     const scenario = actorScenario(assembled, mind, {
@@ -675,19 +699,27 @@ test("Rick settles when a foreground Morty is cancelled", async () => {
     name: "cancelled-morty",
     methods: agentMethods,
     components: [infer([
-      budget([permissions([codeMode([
-        agentsPackage({ budget: {} }),
-        workspacePackage({ policy: {} })
-      ])], {
-        authority: {
-          coordinate: threadAddressOf("mem", "main", "ag.council-of-ricks"),
-          methods: { requestPermission: requestPermissionMethod }
-        },
-        request: () => undefined
-      })]),
-      compaction(),
+      escalate(
+        budget(
+          permissions(codeMode([agentsPackage({ budget: {} }), workspacePackage({ policy: {} })]), {
+                onDenied: (reason, respond) => respond({ error: reason }),
+            authority: {
+              coordinate: threadAddressOf("mem", "main", "ag.council-of-ricks"),
+              methods: { requestPermission: requestPermissionMethod }
+            },
+            request: () => undefined
+          }),
+          {
+            onExhausted: (reason, settle) => settle({ error: reason }),
+            usage: ({ permissions, calls }) => permissions.filter(permission => permission.status === "allowed" && permission.invocation?.id === calls[0]?.turn).length,
+            rejectionMessage: "Tool budget reached. Answer now with your best result."
+          }
+        ),
+        { authority: caller() }
+      ),
+      compaction({ model: TEST_MODEL.models.default }),
       nativeOutput
-    ], TEST_MODEL), budgetAuthority({ decide: (request) => request.grant() })]
+    ], TEST_MODEL), escalate.authority("budget", { decide: (request) => request.grant() })]
   }))
   const scenario = actorScenario(assembled, mind, {
     driver: { maxConcurrentThreads: 2 }

@@ -1,5 +1,6 @@
-export { workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "./package/workspace"
+export { workspace, workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "./package/workspace"
 export {
+  files,
   filesPackage,
   filesPolicyOf,
   defaultFilesRoot,
@@ -10,6 +11,7 @@ export {
   type FilesPolicy
 } from "./package/files"
 export {
+  fetch,
   fetchPackage,
   fetchPolicyOf,
   DEFAULT_FETCH_POLICY,
@@ -30,4 +32,4 @@ export {
   type CodePolicy,
   type PackageCallFailure,
   type PackageCallPolicy
-} from "./execution/reactor"
+} from "./execution/policy"

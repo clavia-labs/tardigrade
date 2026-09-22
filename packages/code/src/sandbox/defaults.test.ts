@@ -1,3 +1,5 @@
+import { transitionProjectionOf } from "../../../core/src/component/runtime"
+import { codeExecution } from "../execution/code"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
@@ -7,7 +9,7 @@ import { settleActor } from "@clavia/tardigrade-core/runtime"
 import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
 import { DEFAULT_SANDBOX_POLICY, sandboxReturned, Sandbox } from "./service"
 import { jsSandbox, jsSandboxFor } from "./defaults"
-import { codeReactor } from "../execution/reactor"
+
 import { codeKeys } from "../execution/events"
 
 // Console capture: a body's prints come back on the result's `logs`, capped, and ride the
@@ -154,7 +156,7 @@ describe("logs ride the settle", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ projections: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ projections: [transitionProjectionOf(codeExecution([]))], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
         ReadonlyArray<Event>

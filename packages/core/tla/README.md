@@ -12,6 +12,16 @@ The finite configuration includes two roots in one instance, children with the s
 
 The contract assumes unique actor-instance coordinates, locally unique invocation tuples, and atomic durable claims. Host storage must preserve these assumptions. The liveness configuration assumes enough candidate IDs and fair successful claims; bounded random allocation can instead report exhaustion. TLC exhaustively checks the configured finite space. It does not prove the TypeScript implementation or unbounded trees.
 
+## Deductive proofs
+
+[ResponseIdentity](component/ResponseIdentity.tla) proves that retained response capabilities preserve their request occurrence and that committing one cannot remove a different pending request. The request set is arbitrary. `InitialInvariant`, `StepInvariant`, and `Safety` establish the invariant by induction; `CommitPreservesOtherRequests` derives the settlement rule. TLAPM `f14d233` proves all 10 obligations. This abstract protocol assumes immutable captured envelopes and exact durable-state reconstruction on restart. TypeScript correspondence and log replay require separate arguments.
+
+```sh
+tlapm --strict --nofp --cache-dir /tmp/tardigrade-tlaps-proof packages/core/tla/component/ResponseIdentity.tla
+```
+
+Run this command from the repository root. `--strict` fails on incomplete proofs and failed obligations; `--nofp` checks the obligations without reusing proof fingerprints. The workstation installation paths are in [AGENTS.md](../../../AGENTS.md).
+
 ## Checks
 
 | Module | Contract | Passing configurations | Counterexample configurations |
@@ -20,7 +30,10 @@ The contract assumes unique actor-instance coordinates, locally unique invocatio
 | `interaction/Delivery` | Spawn, await, independently served methods, settlement, and deadlock | `Delivery.cfg`, `DeliveryLive.cfg` | `DeliveryDeadlock.cfg` |
 | `transport/Link` | Directory resolution, target commit, and retry absorption | `Link.cfg`, `LinkLive.cfg` | `LinkMisroute.cfg`, `LinkStale.cfg` |
 | `interaction/Method` | Durable method futures from request through dispatch, acceptance, terminal resolution, and reversed-link response | `Method.cfg`, `MethodAlarm.cfg`, `MethodLive.cfg` | `MethodHint.cfg`, `MethodNoDeadline.cfg` |
-| `component/Component` | A call remains routable through the view that offered it | `Component.cfg` | `ComponentCurrent.cfg` |
+| `component/Composition` | Data-view algebra, ordered siblings, and selection wrappers | `Composition.cfg` | Order, wrapper order, distribution, projection, and lossy-view configurations |
+| `component/InteractionSubstitution` | Incremental and history-derived children agree through retained interactions, selection, commitment, execution, and restart | `InteractionSubstitution.cfg`, `InteractionSubstitutionConcurrent.cfg` | Early mutation, stale matching, duplicate commits, changed responses, and missing cleanup |
+| `component/ComponentAdmission` | Serial admission respects capacity, current permission, and execution order | `ComponentAdmission.cfg` | Stale, revoked, bypass, and early-effect configurations |
+| `component/OfferedRouting` | A call remains routable through the view that offered it | `OfferedRouting.cfg` | `OfferedRoutingCurrent.cfg` |
 | `interaction/Cancellation` | Requests keyed by actor invocation identity absorb retries, isolate method epochs, block new effects, signal admitted effects, close calls, cancel linked child invocations, and record each method terminal after its cleanup | `Cancellation.cfg` | `CancellationIdentity.cfg`, `CancellationEffectLeak.cfg`, `CancellationNoSignal.cfg`, `CancellationOpenCall.cfg`, `CancellationChild.cfg`, `CancellationNoSettle.cfg`, `CancellationUnreachableChild.cfg` |
 | `interaction/CancellationDeadline` | A cancellation deadline bounds parent settlement when a child does not acknowledge | `CancellationDeadline.cfg` | None |
 | `interaction/CancellationParallel` | Independent cleanup obligations can start before their peers finish | `CancellationParallel.cfg` | `CancellationSerial.cfg` |

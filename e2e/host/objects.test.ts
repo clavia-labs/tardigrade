@@ -1,3 +1,4 @@
+import { testModelLockLayer } from "@clavia/tardigrade-agent/fixtures/model"
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -44,7 +45,7 @@ test.each(["sqlite", "cached-files"] as const)("Bun host replays attachments aft
   const openHost = (storage: typeof ObjectStorage.Service, boot: number) => createHost({
     actor: reader,
     storage: join(directory, "threads"),
-    layersFor: () => Layer.mergeAll(
+    layersFor: () => Layer.mergeAll(testModelLockLayer,
       Layer.succeed(ObjectStorage, storage),
       Layer.succeed(NativeOutputSupport, { withTools: true }),
       Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({

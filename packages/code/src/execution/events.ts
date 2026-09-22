@@ -1,3 +1,4 @@
+import type { CallPolicy } from "./policy"
 import type { OwnerRef } from "@clavia/tardigrade-core/runtime/context"
 import { TransitionRef } from "@clavia/tardigrade-core/transition/transition"
 import { Schema } from "effect"
@@ -26,6 +27,11 @@ export const PackageCalled = Schema.Struct({
   callId: Schema.String,
   name: Schema.String,
   arguments: Schema.Unknown,
+  policy: Schema.optional(Schema.Struct({
+    call: Schema.Struct({ attemptTimeoutMs: Schema.Finite, retryDelaysMs: Schema.Array(Schema.Finite) }),
+    spill: Schema.Struct({ spillBytes: Schema.Finite, previewChars: Schema.Finite, note: Schema.String }),
+    shadow: Schema.Boolean
+  })),
   at: Schema.Finite
 })
 
@@ -117,7 +123,7 @@ export const codeSettled = (
 ): Event => ({ type: "CodeSettled", ...fields }) as Event
 
 export const packageCalled = (
-  fields: { readonly callId: string; readonly name: string; readonly arguments?: unknown } & Stamped
+  fields: { readonly callId: string; readonly name: string; readonly arguments?: unknown; readonly policy?: CallPolicy } & Stamped
 ): Event => ({ type: "PackageCalled", ...fields }) as Event
 
 export const packageReturned = (
@@ -146,7 +152,7 @@ export const executionKeyOf = (event: Event): string => {
   return ref === undefined ? String(event.execId ?? "") : JSON.stringify([ref.seq, ref.component, ref.tag])
 }
 
-// packageKeyOf scopes a positional call to its recorded execution (reactor.test.ts).
+// packageKeyOf scopes a positional call to its recorded execution (code.test.ts).
 export const packageKeyOf = (event: Event): string => {
   const ref = executionRefOf(event)
   if (ref === undefined) return String(event.callId ?? "")

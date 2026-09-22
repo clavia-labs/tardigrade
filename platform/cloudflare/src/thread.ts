@@ -18,7 +18,7 @@ import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { directoryRoute } from "@clavia/tardigrade-core/transport/router"
 import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { actorRuntimeOf, restingActor } from "@clavia/tardigrade-core/runtime"
+import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { layerWorkerLoaderSandbox, type WorkerLoaderSandboxLimits } from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareThreadSchema } from "./storage"
@@ -345,9 +345,10 @@ export class ThreadDO extends DurableObject<Env> {
   async summary(): Promise<ThreadSummary> {
     const events = await (await this.host()).read()
     const parent = threadCreatedOf(events)?.parent
+    const resting = await (await this.host()).resting()
     return summaryOf(
       publicThreadId(this.thread()), events,
-      (log) => restingActor(assemblyOf(this.name())!, log) ? "settled" : "running",
+      () => resting ? "settled" : "running",
       parent === undefined ? undefined : publicThreadId(parent.thread)
     )
   }

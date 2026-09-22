@@ -1,4 +1,4 @@
-import { inferenceClient } from "@clavia/tardigrade-agent/testing/inference"
+import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
 import assert from "node:assert/strict"
 import { Effect, Schema } from "effect"
 import { Prompt, Tool, Toolkit } from "effect/unstable/ai"

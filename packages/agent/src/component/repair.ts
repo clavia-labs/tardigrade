@@ -6,7 +6,7 @@ import {
 } from "@clavia/tardigrade-code/execution/turn-projection"
 import { component } from "@clavia/tardigrade-core/actor"
 import { correctionAttemptsErrors, declaredOutputOf, type OutputFallback } from "../output/contract"
-import { defineOutputFallback, type OutputFallbackComponent } from "../runtime/composition"
+import { defineOutputFallback, type OutputFallbackComponent } from "./infer/index"
 
 // RepairPolicy sets the correction limit and completed-history projection. `attempts` counts correction requests after the initial request (src/projection/transcript.ts, projectedOutput).
 export interface RepairPolicy {
@@ -41,7 +41,7 @@ export const repairFallback = (policy: Partial<RepairPolicy> = {}): OutputFallba
   }
 }
 
-// outputSystemFor returns the schema instruction used only in fallback mode (runtime/composition.ts, OutputFragment).
+// outputSystemFor returns the schema instruction used only in fallback mode (component/infer/index.ts, OutputFragment).
 export const outputSystemFor = (name: string, schema: unknown): string =>
   `Your final reply for this turn must be JSON conforming to the schema "${name}":\n${JSON.stringify(schema)}\nReply with that JSON alone: no prose around it, no code fence.`
 

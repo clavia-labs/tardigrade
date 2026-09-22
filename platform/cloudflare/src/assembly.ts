@@ -1,3 +1,4 @@
+import type { ModelLock } from "@clavia/tardigrade-model/lock"
 import { cloudflareDirectory } from "./transport/directory"
 import { Effect, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
@@ -240,7 +241,7 @@ export const assemblyOf = (name: string): Actor<never> | undefined =>
 export const methodsOf = (name: string): ActorMethods | undefined =>
   mountedActor?.actor.name === name ? mountedActor.actor.methods : undefined
 
-type CloudflareWorkerProvided = CloudflarePorts | LanguageModel.LanguageModel | HttpClient.HttpClient
+type CloudflareWorkerProvided = CloudflarePorts | ModelLock | LanguageModel.LanguageModel | HttpClient.HttpClient
 type CloudflareApplicationRequirements<R> = Exclude<R, CloudflareWorkerProvided>
 
 // CloudflareWorkerLayerContext exposes the Worker bindings and thread identity used to construct application services.

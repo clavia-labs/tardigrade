@@ -62,11 +62,11 @@ export interface WorkspaceOptions {
   readonly policy?: Partial<WorkspacePolicy>
 }
 
-// workspacePackage builds the package. The store is a requirement of its methods, stated in the
+// workspace builds the package. The store is a requirement of its methods, stated in the
 // type as `Package<KeyValueStore.KeyValueStore>`: the code funnel runs every method under the
 // attempt's own context, and the spill store is always in it, so this package mounts on the code
-// reactor at any R (packages/code/src/execution/reactor.ts, executeRecorded).
-export const workspacePackage = (options: WorkspaceOptions = {}): Package<KeyValueStore.KeyValueStore> => {
+// reactor at any R (packages/code/src/execution/code.ts, executeRecorded).
+export const workspace = (options: WorkspaceOptions = {}): Package<KeyValueStore.KeyValueStore> => {
   const policy = workspacePolicyOf(options.policy)
   const runner = options.sql
   const sqlDoc = {
@@ -135,8 +135,6 @@ export const workspacePackage = (options: WorkspaceOptions = {}): Package<KeyVal
                 return yield* runner.sql(a.query, a.params ?? [])
               })
           }),
-      // The slice never exceeds the policy's cap however large a `length` the model asks for: the
-      // turn's context is what the cap protects (workspace.test.ts, W3).
       read: (args: unknown) =>
         Effect.gen(function* () {
           const a = args as { ref?: string; offset?: number; length?: number } | undefined
@@ -147,8 +145,6 @@ export const workspacePackage = (options: WorkspaceOptions = {}): Package<KeyVal
           const take = Math.min(Math.max(0, Math.floor(a.length ?? policy.sliceChars)), policy.sliceChars)
           return { slice: whole.slice(from, from + take), size: whole.length }
         }),
-      // Every value the manifest names is searched whole, so a match inside a value far too large
-      // for one event is still found and located (workspace.test.ts, W4).
       grep: (args: unknown) =>
         Effect.gen(function* () {
           const a = args as { pattern?: string; ref?: string } | undefined
@@ -192,3 +188,6 @@ export const workspaceFor = (
     const sql = yield* WorkspaceSql
     return workspacePackage({ ...(sql === undefined ? {} : { sql }), policy })
   })
+
+/** @deprecated Use workspace instead. */
+export const workspacePackage = (options: WorkspaceOptions = {}): ReturnType<typeof workspace> => workspace(options)

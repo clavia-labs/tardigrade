@@ -15,6 +15,7 @@
   },
   "files": [
     "src",
+    "fixtures",
     "!src/**/*.test.ts"
   ],
   "engines": {
@@ -24,14 +25,25 @@
   "exports": {
     ".": "./src/index.ts",
     "./actor/*": "./src/actor/*.ts",
+    "./component/infer": "./src/component/infer/index.ts",
+    "./component/code": "./src/component/code/index.ts",
+    "./component/compaction": "./src/component/compact/index.ts",
+    "./component/context": "./src/component/compact/context.ts",
+    "./component/permissions": "./src/component/permissions/index.ts",
+    "./component/escalation": "./src/component/escalate/index.ts",
+    "./component/budget": "./src/component/budget/index.ts",
+    "./component/tool": "./src/component/tool/index.ts",
     "./component/*": "./src/component/*.ts",
-    "./inference/*": "./src/inference/*.ts",
+    "./component/infer/*": "./src/component/infer/*.ts",
+    "./model/*": "./src/model/*.ts",
     "./log/*": "./src/log/*.ts",
     "./output/*": "./src/output/*.ts",
     "./packages/*": "./src/packages/*.ts",
     "./projection/*": "./src/projection/*.ts",
     "./runtime/*": "./src/runtime/*.ts",
-    "./testing/*": "./src/testing/*.ts"
+    "./fixtures/*": "./fixtures/*.ts",
+    "./component/escalate": "./src/component/escalate/index.ts",
+    "./component/compact": "./src/component/compact/index.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-core": "workspace:*",

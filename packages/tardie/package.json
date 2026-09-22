@@ -28,7 +28,7 @@
     ".": "./src/index.ts",
     "./actor/*": "./src/actor/*.ts",
     "./component/*": "./src/component/*.ts",
-    "./inference/*": "./src/inference/*.ts",
+    "./component/infer/*": "./src/component/infer/*.ts",
     "./log/*": "./src/log/*.ts",
     "./output/*": "./src/output/*.ts",
     "./packages/*": "./src/packages/*.ts",

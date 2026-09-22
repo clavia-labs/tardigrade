@@ -24,8 +24,8 @@ export const actorProjection = <R>(
 ): ActorProjection<R | Router | Self> => {
   const cancellation = actorCancellationProjection(methods, components, keyOf, childTimeoutMs)!
   return {
-    initial: (): ActorProjectionState => ({
-      cancellation: cancellation.initial(),
+    initial: (data): ActorProjectionState => ({
+      cancellation: cancellation.initial(data),
       response: initialMethodResponseState(),
       timeout: initialMethodTimeoutState()
     }),

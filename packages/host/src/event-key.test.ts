@@ -1,5 +1,6 @@
+import { transitionProjectionOf } from "../../core/src/component/runtime"
 import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { component, transitionProjectionOf, type TransitionContext } from "@clavia/tardigrade-core/component"
+import { component, type TransitionContext } from "@clavia/tardigrade-core/component"
 import { expect, test } from "bun:test"
 import { hostEventKeyOf, requireDeliveryKey } from "./event-key"
 import { createHost } from "./host"

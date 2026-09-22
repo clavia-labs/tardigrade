@@ -41,86 +41,56 @@ export const mergeComponentContracts = (
   calls: components.flatMap((component) => componentContractOf(component).calls)
 })
 
+type WithComponentContract<C> = Omit<C, typeof COMPONENT_CONTRACT> & {
+  readonly [COMPONENT_CONTRACT]: ComponentContract
+}
+
 // withComponentContract adds semantic evidence to a component without changing its runtime behavior.
-export const withComponentContract = <V, R>(
-  component: Component<V, R>,
+export const withComponentContract = <C extends Component<unknown, unknown>>(
+  component: C,
   contract: ComponentContract
-): Component<V, R> => ({ ...component, [COMPONENT_CONTRACT]: contract })
+): WithComponentContract<C> => ({ ...component, [COMPONENT_CONTRACT]: contract })
 
 // inheritComponentContract carries a composed child's method seams through a transparent wrapper.
-export const inheritComponentContract = <V, R>(
-  component: Component<V, R>,
+export const inheritComponentContract = <C extends Component<unknown, unknown>>(
+  component: C,
   child: { readonly [COMPONENT_CONTRACT]?: ComponentContract }
-): Component<V, R> => {
+): WithComponentContract<C> => {
   const own = componentContractOf(component)
   const inherited = child[COMPONENT_CONTRACT] ?? EMPTY_COMPONENT_CONTRACT
   return withComponentContract(component, {
-    handles: [...inherited.handles, ...own.handles],
-    calls: [...inherited.calls, ...own.calls]
+    handles: [...new Set([...inherited.handles, ...own.handles])],
+    calls: [...new Set([...inherited.calls, ...own.calls])]
   })
 }
 
-// inheritComponent carries a child's method seams and cancellation obligations through a transparent wrapper.
-export const inheritComponent = <V, R>(
-  component: Component<V, R>,
-  child: Component<unknown, R>
-): Component<V, R> => {
-  const own = component.machine
-  const inherited = child.machine
-  return inheritComponentContract({
-    ...component,
-    machine: {
-      initial: () => ({ own: own.initial(), inherited: inherited.initial() }),
-      step: (state, event) => {
-        const current = state as { readonly own: unknown; readonly inherited: unknown }
-        return {
-          own: own.step(current.own, event),
-          inherited: inherited.step(current.inherited, event)
-        }
-      },
-      output: (state) => own.output((state as { readonly own: unknown }).own),
-      ...(own.cancel === undefined && inherited.cancel === undefined
-        ? {}
-        : {
-            cancel: (state: unknown, cancellation: Parameters<NonNullable<typeof own.cancel>>[1]) => {
-              const current = state as { readonly own: unknown; readonly inherited: unknown }
-              return [
-                ...(inherited.cancel?.(current.inherited, cancellation) ?? []),
-                ...(own.cancel?.(current.own, cancellation) ?? [])
-              ]
-            }
-          })
-    }
-  }, child)
-}
-
-const updateComponentContract = <V, R>(
-  component: Component<V, R>,
+const updateComponentContract = <C extends Component<unknown, unknown>>(
+  component: C,
   update: (contract: ComponentContract) => ComponentContract
-): Component<V, R> => withComponentContract(component, update(componentContractOf(component)))
+): WithComponentContract<C> => withComponentContract(component, update(componentContractOf(component)))
 
 // handles records that a component completes calls to a method locally.
-export const handles = <V, R>(
+export const handles = <C extends Component<unknown, unknown>>(
   method: ActorMethodDeclaration,
-  component: Component<V, R>
-): Component<V, R> => updateComponentContract(component, (contract) => ({
+  component: C
+): WithComponentContract<C> => updateComponentContract(component, (contract) => ({
   ...contract, handles: [...contract.handles, { method, handling: "local" }]
 }))
 
 // externallyHandled records that a component accepts a method whose completion comes from outside reconciliation.
-export const externallyHandled = <V, R>(
+export const externallyHandled = <C extends Component<unknown, unknown>>(
   method: ActorMethodDeclaration,
-  component: Component<V, R>
-): Component<V, R> => updateComponentContract(component, (contract) => ({
+  component: C
+): WithComponentContract<C> => updateComponentContract(component, (contract) => ({
   ...contract, handles: [...contract.handles, { method, handling: "external" }]
 }))
 
 // calls records an outgoing method dependency on a fixed actor or the current caller.
-export const calls = <V, R>(
+export const calls = <C extends Component<unknown, unknown>>(
   target: CalledMethod["target"],
   method: ActorMethodDeclaration,
-  component: Component<V, R>
-): Component<V, R> => updateComponentContract(component, (contract) => ({
+  component: C
+): WithComponentContract<C> => updateComponentContract(component, (contract) => ({
   ...contract, calls: [...contract.calls, { target, method }]
 }))
 

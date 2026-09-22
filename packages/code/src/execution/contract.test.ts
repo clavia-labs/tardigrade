@@ -1,3 +1,5 @@
+import { transitionProjectionOf } from "../../../core/src/component/runtime"
+import { codeExecution } from "./code"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
@@ -8,7 +10,7 @@ import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-messag
 import { checkInput, renderShape, renderSignature } from "./contract"
 import { definePackage, type Package } from "../package/definition"
 import { guestBindings, Sandbox, type Bindings } from "../sandbox/service"
-import { codeReactorFor } from "./reactor"
+
 import { codeKeys } from "./events"
 
 // The method contract: `renderSignature` folds a declared input schema into one calling line,
@@ -190,7 +192,7 @@ const settled = async (code: string): Promise<ReadonlyArray<Event>> => {
   ]
   return Effect.runPromise(
     Effect.gen(function* () {
-      yield* settleActor({ projections: [codeReactorFor({}, [notesLike])], keyOf: composeKeys(messageKeys, codeKeys) })
+      yield* settleActor({ projections: [transitionProjectionOf(codeExecution([notesLike]))], keyOf: composeKeys(messageKeys, codeKeys) })
       return yield* Effect.flatMap(EventLog, (l) => l.read)
     }).pipe(
       Effect.provide(

@@ -1,9 +1,12 @@
+import { lockedModelState } from "./lock"
+import type { ModelPolicy } from "./access"
+import type { ModelCredentials } from "./config"
 import { failedProviderLayer, type ProviderLayer } from "./providers/layer"
 import { protocolOptionsOf } from "./providers/options"
 import { MODEL_PROTOCOLS, modelProviderModuleOf } from "./providers/directory"
 import type { ModelConfig as BedrockModelConfig } from "@tardie/ai-bedrock/BedrockLanguageModel"
 import { requestPolicyOf } from "./stream/request"
-import { Layer, Redacted } from "effect"
+import { Effect, Layer, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { type InferenceObserver } from "./stream/observer"
 import type { OpenRouterLanguageModel } from "@tardie/ai-openrouter"
@@ -85,3 +88,8 @@ export const modelLayer = (config: ModelHostConfig, catalog: ModelCatalogState, 
 }, MODEL_PROTOCOLS)
 
 export { MISSING_MODEL, modelIsConfigured, selectedModelFrom, modelLayerWith, type ModelHostConfig, type SelectedModel } from "./selection"
+
+// modelLayerFromLock binds provider execution from host-supplied definitions (lock.test.ts).
+export const modelLayerFromLock = (policy: ModelPolicy, credentials: ModelCredentials, options: ModelHostOptions = {}) =>
+  Layer.unwrap(Effect.map(lockedModelState(policy), ({ model, catalog }) =>
+    modelLayer({ model, modelCredentials: credentials }, catalog, options)))

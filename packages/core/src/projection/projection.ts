@@ -1,3 +1,4 @@
+import { Context } from "effect"
 import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
 import type { Machine } from "@clavia/tardigrade-core/machine"
 
@@ -11,7 +12,19 @@ import type { Machine } from "@clavia/tardigrade-core/machine"
  *              │      └─ what can be observed
  *              └──────── what event history is remembered as
  */
-export type Projection<State, Value> = Machine<Event, State, Value>
+export interface Projection<State, Value> extends Machine<Event, State, Value> {
+  readonly initial: (data?: Context.Context<never>) => State
+}
+
+// replayState reconstructs a snapshot while preserving recorded event positions (projection.test.ts).
+export const replayState = <State>(
+  projection: Pick<Projection<State, unknown>, "initial" | "step">,
+  events: ReadonlyArray<Event>,
+  data?: Context.Context<never>
+): State => events.reduce(
+  (state, event, index) => projection.step(state, eventAt(event, eventPositionOf(event) ?? index + 1)),
+  projection.initial(data)
+)
 
 /**
  * replayProjection reconstructs a projection value from complete event history.
@@ -25,11 +38,9 @@ export type Projection<State, Value> = Machine<Event, State, Value>
  */
 export const replayProjection = <State, Value>(
   projection: Projection<State, Value>,
-  events: ReadonlyArray<Event>
-): Value => projection.output(events.reduce(
-  (state, event, index) => projection.step(state, eventAt(event, eventPositionOf(event) ?? index + 1)),
-  projection.initial()
-))
+  events: ReadonlyArray<Event>,
+  data?: Context.Context<never>
+): Value => projection.output(replayState(projection, events, data))
 
 // MaterializedProjectionState pairs projection state with the value derived from that state.
 export interface MaterializedProjectionState<State, Value> {
@@ -58,8 +69,8 @@ export interface MaterializedProjectionState<State, Value> {
 export const materializeProjection = <State, Value>(
   projection: Projection<State, Value>
 ): Projection<MaterializedProjectionState<State, Value>, Value> => ({
-  initial: () => {
-    const state = projection.initial()
+  initial: (data) => {
+    const state = projection.initial(data)
     return { state, value: projection.output(state) }
   },
   step: (current, event) => {

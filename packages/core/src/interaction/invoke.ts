@@ -343,7 +343,9 @@ export const cancelInvocation = <Methods extends ActorMethods>(
     id: options.id,
     target: {
       coordinate: targetCoordinate(options.target),
-      methods: { [CANCELLATION_CONTROL_METHOD]: method }
+      methods: {
+        [CANCELLATION_CONTROL_METHOD]: method
+      }
     },
     method: CANCELLATION_CONTROL_METHOD,
     input: {

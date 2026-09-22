@@ -110,6 +110,23 @@ export const boundaryViolations = (nodes: readonly GraphNode[], edges: readonly 
   for (const edge of edges) {
     const from = byId.get(edge.source), to = byId.get(edge.target)
     if (!from || !to || from.test) continue
+    if (/^packages\/agent\/src\/component\/(budget|permissions)\//u.test(from.id) &&
+      /^packages\/agent\/src\/component\/(tool|code|infer)\//u.test(to.id)) {
+      violations.push({ rule: "policy-child-independent", source: edge.source, target: edge.target, line: edge.line,
+        message: `${from.id} imports a governed child's implementation` })
+    }
+    if ((to.id === "packages/core/src/component/runtime.ts" || to.id === "packages/core/src/component/composition/parent.ts") &&
+      !(from.package === "packages/core" ||
+        from.id === "packages/agent/src/runtime/render.ts" ||
+        from.id === "packages/agent/fixtures/component.ts")) {
+      violations.push({ rule: "component-runtime-private", source: edge.source, target: edge.target, line: edge.line,
+        message: `${from.id} imports private component runtime machinery` })
+    }
+    if (!edge.typeOnly && from.id.startsWith("packages/agent/src/component/") &&
+      (to.id.startsWith("packages/agent/fixtures/") || to.id === "packages/agent/src/runtime/render.ts")) {
+      violations.push({ rule: "component-authoring-only", source: edge.source, target: edge.target, line: edge.line,
+        message: `${from.id} imports component activation or test machinery` })
+    }
     const rule = ruleOf({ id: from.package, layer: from.layer }, { id: to.package, layer: to.layer })
     if (rule) violations.push({ rule, source: edge.source, target: edge.target, line: edge.line, message: `${from.package} imports ${to.package}` })
   }
@@ -129,7 +146,7 @@ export const boundaryViolations = (nodes: readonly GraphNode[], edges: readonly 
     {
       start: "packages/http/src/http.ts", rule: "http-without-agent-runtime",
       forbidden: (id: string) => id.startsWith("packages/agent/") &&
-        !["packages/agent/src/inference/access.ts", "packages/agent/src/inference/reference.ts"].includes(id)
+        !["packages/agent/src/model/access.ts", "packages/agent/src/model/reference.ts"].includes(id)
     }
   ]
   for (const { start, rule, forbidden } of entryRules) {

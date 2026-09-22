@@ -1,3 +1,5 @@
+import { machineOf, transitionProjectionOf } from "../component/runtime"
+import { replayProjection, replayState } from "@clavia/tardigrade-core/projection"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option, Ref } from "effect"
 import fc from "fast-check"
@@ -8,7 +10,7 @@ import {
   settleActor,
   type Actor
 } from "./index"
-import { component, cancelComponent, composeComponents, deriveComponent, transitionProjectionOf, type Component, type TransitionContext } from "../component"
+import { component, composeComponents, type Component, type TransitionContext } from "../component"
 import { actorRuntimeOf } from "./actor"
 import { InvocationScope, OperationScope } from "./context"
 import { EffectInterruptions, effectInterruptionRegistry } from "./reconciler"
@@ -345,7 +347,7 @@ test("duplicate component identity identities are rejected across composition", 
   expect(() => composeComponents("root", algebra, [nested, worker()])).toThrow("duplicate component identity")
   expect(() => actorRuntimeOf(runtimeOf(worker(), worker()))).toThrow("duplicate component identity")
   expect(() => actorRuntimeOf({ name: "root", methods: {}, components: [nested, worker()] })).toThrow("duplicate component identity")
-  expect(() => deriveComponent(taggedComponent({ name: "", select: () => undefined, derive: () => [] }), [])).toThrow()
+  expect(() => replayProjection(machineOf(taggedComponent({ name: "", select: () => undefined, derive: () => [] })), [])).toThrow()
 })
 
 test("completion identity is attached without changing or mutating the domain event", async () => {
@@ -402,8 +404,8 @@ test("complete component replay supplies positions and rejects unpositioned tagg
   })
   const events: ReadonlyArray<Event> = [{ type: "Ignored" }, { type: "Requested" }]
   const runtimeKey = enabled(runtimeOf(worker), events)[0]!.key
-  expect(deriveComponent(worker, events).transitions[0]!.key).toBe(runtimeKey)
-  expect(() => worker.machine.step(worker.machine.initial(), { type: "Requested" }))
+  expect(replayProjection(machineOf(worker), events).transitions[0]!.key).toBe(runtimeKey)
+  expect(() => machineOf(worker).step(machineOf(worker).initial(), { type: "Requested" }))
     .toThrow("recorded event position")
 })
 
@@ -426,6 +428,7 @@ test("tag-only declarations preserve identity, completion correlation, and repla
       const expectedCalls: Event[] = []
       const sorted = (values: ReadonlyArray<Event>) => values.map((value) => JSON.stringify(value)).sort()
       const makeRuntime = (reverse = false) => runtimeOf(...(reverse ? [...names].reverse() : names).map((name) => component({
+
         name,
         initial: () => [] as ReadonlyArray<{ request: unknown; ctx: TransitionContext; remaining: typeof tags }>,
         step: (state, event, ctx) => event.type === "Requested"
@@ -508,12 +511,14 @@ test("components reject manual transitions in output and cancellation", () => {
         name: "worker",
         initial: () => false,
         step: () => true,
-        output: (ready) => ({ view: undefined, transitions: ready && !cancellation ? [transition] : [] }),
-        cancelState: () => [transition]
+        output: (ready) => ({ view: undefined, transitions: ready && !cancellation ? [transition] : [], interactions: {
+        cancel: () => [transition]
+    } }),
+
       })
       const events = [{ type: "Requested" }]
       expect(() => cancellation
-        ? cancelComponent(worker, events, { request: "stop", invocation: { method: "run", id: "1", epoch: 0 }, cause: "requested" })
+        ? (machineOf(worker).output(replayState(machineOf(worker), events)).interactions?.cancel?.({ request: "stop", invocation: { method: "run", id: "1", epoch: 0 }, cause: "requested" }) ?? [])
         : enabled(runtimeOf(worker), events)).toThrow('component "worker" requires transitions declared through its context')
     }
   }
@@ -526,7 +531,7 @@ test("components reject transitions from another component context", () => {
     derive: (_input, ctx) => [ctx.intent("execute", { type: "Completed" })]
   })
   const events = [{ type: "Requested" }]
-  const borrowed = deriveComponent(source, events).transitions
+  const borrowed = replayProjection(machineOf(source), events).transitions
   const other = component({
     name: "other",
     initial: () => false,
@@ -541,15 +546,17 @@ test("cancellation validates the shared intent and effect tag namespace", () => 
     name: "worker",
     initial: (): TransitionContext | undefined => undefined,
     step: (_state, _event, ctx) => ctx,
-    output: () => ({ view: undefined, transitions: [] }),
-    cancelState: (ctx) => ctx === undefined ? [] : [
-      ctx.intent("stop", { type: "Stopped" }),
-      ctx.effect("stop", { input: undefined, act: () => Effect.succeed({ type: "Stopped" }) })
-    ]
+    output: (ctx) => ({ view: undefined, transitions: [], interactions: {
+        cancel: () => ctx === undefined ? [] : [
+            ctx.intent("stop", { type: "Stopped" }),
+            ctx.effect("stop", { input: undefined, act: () => Effect.succeed({ type: "Stopped" }) })
+        ]
+    } }),
+
   })
-  expect(() => cancelComponent(worker, [{ type: "Requested" }], {
+  expect(() => (machineOf(worker).output(replayState(machineOf(worker), [{ type: "Requested" }])).interactions?.cancel?.({
     request: "stop", invocation: { method: "run", id: "1", epoch: 0 }, cause: "requested"
-  })).toThrow("duplicate transition tag")
+  }) ?? [])).toThrow("duplicate transition tag")
 })
 
 

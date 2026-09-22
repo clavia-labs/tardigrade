@@ -91,10 +91,10 @@ const headersOf = (raw: unknown): Readonly<Record<string, string>> => {
   return out
 }
 
-// fetchPackage builds the package. `Package<HttpClient>` is what its methods need, so an assembly
-// that mounts it cannot run on a host that binds no client (packages/code/src/execution/reactor.ts,
-// codeReactorFor).
-export const fetchPackage = (options: FetchOptions = {}): Package<HttpClient.HttpClient> => {
+// fetch builds the package. `Package<HttpClient>` is what its methods need, so an assembly
+// that mounts it cannot run on a host that binds no client (packages/code/src/execution/code.ts,
+// codeExecution).
+export const fetch = (options: FetchOptions = {}): Package<HttpClient.HttpClient> => {
   const policy = fetchPolicyOf(options.policy)
   const answer = {
     type: "object",
@@ -163,3 +163,6 @@ export const fetchPackage = (options: FetchOptions = {}): Package<HttpClient.Htt
     }
   })
 }
+
+/** @deprecated Use fetch instead. */
+export const fetchPackage = (options: FetchOptions = {}): ReturnType<typeof fetch> => fetch(options)

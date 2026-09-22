@@ -1,0 +1,52 @@
+import { actor, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { expect, expectTypeOf, test } from "bun:test"
+import { actorRuntimeOf, type Self } from "@clavia/tardigrade-core/runtime"
+import type { EventLog } from "@clavia/tardigrade-core/log"
+import type { ModelLock } from "@clavia/tardigrade-model/lock"
+import type { LanguageModel } from "effect/unstable/ai"
+import { legacyComponent, type Actor } from "@clavia/tardigrade-core/actor"
+import {
+  infer,
+  nativeOutput,
+  outputRepair,
+  type AgentComponent,
+  type NativeOutputSupport,
+  type OutputFallbackComponent
+} from "../../index"
+
+const accepts = <T>(_value: T): void => {}
+const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
+
+const empty: AgentComponent = legacyComponent({
+  name: "empty",
+  derive: () => ({
+    view: { system: [], tools: [], context: [], output: [] },
+    transitions: []
+  })
+})
+
+const nativeOnly = actor({ name: "native-only", methods: {}, components: [infer([empty, nativeOutput])] })
+const repaired = actor({ name: "repaired", methods: {}, components: [infer([empty, outputRepair], TEST_MODEL)] })
+
+type Requirements<A> = A extends Actor<infer R> ? R : never
+type RequiresNative<A> = NativeOutputSupport extends Requirements<A> ? true : false
+
+// outputRequirements proves that the component tuple changes the host's Effect environment.
+export const outputRequirements = (): void => {
+  accepts<RequiresNative<typeof nativeOnly>>(true)
+  accepts<RequiresNative<typeof repaired>>(false)
+}
+
+// fallbackBrand proves that only defineOutputFallback and the built-in fallback constructors can mark a fallback strategy.
+export const fallbackBrand = (): void => {
+  // @ts-expect-error a plain component has not been checked as an always-present output fallback
+  accepts<OutputFallbackComponent>(empty)
+}
+
+test("output strategy components carry their requirements without changing the runtime shape", () => {
+  const plain = infer([empty])
+  const native = infer([empty, nativeOutput])
+  expectTypeOf<ComponentRequirements<typeof plain>>().toEqualTypeOf<ModelLock | LanguageModel.LanguageModel | EventLog | Self>()
+  expectTypeOf<ComponentRequirements<typeof native>>().toEqualTypeOf<ModelLock | LanguageModel.LanguageModel | EventLog | Self | NativeOutputSupport>()
+  expect(actorRuntimeOf(nativeOnly).projections).toHaveLength(actorRuntimeOf(repaired).projections.length)
+})

@@ -4,10 +4,12 @@ import { legacyActorMethod } from "@clavia/tardigrade-core/actor/method-compat"
 import { connect } from "./connect"
 import { ProblemError } from "./problem"
 
-const actor = { name: "tardie", methods: { message: legacyActorMethod({
-  input: Schema.String, output: Schema.String,
-  event: () => ({ type: "MessageRequested" }), state: () => ({ status: "pending" })
-}) } }
+const actor = { name: "tardie", methods: {
+  message: legacyActorMethod({
+    input: Schema.String, output: Schema.String,
+    event: () => ({ type: "MessageRequested" }), state: () => ({ status: "pending" })
+  })
+} }
 
 test("connect preserves problem details through the configured transport", async () => {
   const client = connect({ url: "https://example.com", actor, token: "secret", fetch: (async (_url, init) => {

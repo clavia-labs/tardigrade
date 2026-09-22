@@ -10,7 +10,7 @@ import { agentMessageMethod } from "../actor/message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { eventEpochOf, turnOf, turnView } from "@clavia/tardigrade-code/execution/turns"
-import { budgetPolicyOf, type BudgetPolicy } from "../component/budget"
+import { budgetPolicyOf, type BudgetPolicy } from "../component/budget/index"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { childInvocationRef } from "./agents-compat"
 import { ChildCreated, childCreated, childLineageOf, threadCreatedOf, type ThreadCreated, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
@@ -21,7 +21,7 @@ import {
   type ThreadAddress
 } from "@clavia/tardigrade-core/transport/endpoint"
 import { decodeOutput, outputFrom, type OutputContract } from "../output/contract"
-import { modelRefOf } from "../inference/reference"
+import { modelRefOf } from "../model/reference"
 import {
   applyModelPolicy,
   DEFAULT_MODEL_POLICY,
@@ -30,7 +30,7 @@ import {
   modelPolicyOverrideOf,
   type ModelPolicy,
   type ModelPolicyOverride
-} from "../inference/access"
+} from "../model/access"
 
 // DEFAULT_MAX_DEPTH limits delegation to five edges from the root unless configured or inherited (agents.test.ts).
 export const DEFAULT_MAX_DEPTH = 5
@@ -304,8 +304,8 @@ const inheritedModelsOf = (events: ReadonlyArray<Event>): ModelPolicy => {
   return head?.models === undefined ? DEFAULT_MODEL_POLICY : modelPolicyOf(head.models)
 }
 
-// agentsPackage exposes model discovery, child dispatch, and result retrieval.
-export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self | EventLog | ThreadAllocator> => {
+// agents exposes model discovery, child dispatch, and result retrieval.
+export const agents = (options: SpawnOptions = {}): Package<Router | Self | EventLog | ThreadAllocator> => {
   const { maxDepth } = options
   if (maxDepth !== undefined && (!Number.isSafeInteger(maxDepth) || maxDepth < 0)) {
     throw new Error("agentsPackage maxDepth must be a non-negative safe integer")
@@ -566,7 +566,6 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           yield* dispatch(at)
           return yield* new Park({ callId: ctx.callId, awaiting: responseId })
         }),
-      // result validates a background response against its recorded output contract (agents.test.ts, "a later call cannot invent a contract the run never declared").
       result: (args, ctx) =>
         Effect.gen(function* () {
           const a = args as { handle?: unknown } | undefined
@@ -667,3 +666,6 @@ const shape = (
   }
   return { output: decoded.value }
 }
+
+/** @deprecated Use agents instead. */
+export const agentsPackage = (options: SpawnOptions = {}): ReturnType<typeof agents> => agents(options)

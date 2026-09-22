@@ -73,11 +73,11 @@ export interface FilesOptions {
   readonly policy?: Partial<FilesPolicy>
 }
 
-// filesPackage builds the package. Its methods need `FileSystem` and `Path`, stated in the type as
+// files builds the package. Its methods need `FileSystem` and `Path`, stated in the type as
 // `Package<FileSystem | Path>`: the code funnel runs every method under the attempt's own context,
 // so an assembly that mounts this package cannot run on a host that binds neither
-// (packages/code/src/execution/reactor.ts, codeReactorFor).
-export const filesPackage = (options: FilesOptions = {}): Package<FileSystem | Path> => {
+// (packages/code/src/execution/code.ts, codeExecution).
+export const files = (options: FilesOptions = {}): Package<FileSystem | Path> => {
   const policy = filesPolicyOf(options.policy)
   const root = policy.root
   return definePackage({
@@ -193,9 +193,6 @@ export const filesPackage = (options: FilesOptions = {}): Package<FileSystem | P
           const truncated = names.names.length > kept.length
           return { entries, ...(truncated ? { truncated } : {}) }
         }),
-      // The walk is breadth-first over directories the policy does not skip, and it reads at most
-      // `maxEntries` files: a search over a tree nobody bounded would otherwise cost a turn's whole
-      // context before the first match (files.test.ts, "search finds text under the root").
       search: (args: unknown) =>
         Effect.gen(function* () {
           const a = args as { pattern?: string; path?: string } | undefined
@@ -266,3 +263,6 @@ export const filesPackage = (options: FilesOptions = {}): Package<FileSystem | P
     }
   })
 }
+
+/** @deprecated Use files instead. */
+export const filesPackage = (options: FilesOptions = {}): ReturnType<typeof files> => files(options)
