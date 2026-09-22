@@ -97,31 +97,18 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 An agent is made of components. Each component owns a machine with `initial`, `step`, and `output`. Its state retains the information from prior events that can affect its future output. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
 
 ```ts
-import { component } from "tardie/core"
-import { type AgentComponent, type AgentView } from "tardie/agent"
+import { Effect } from "effect"
+import { tool } from "tardie/agent"
 
-const deploys: AgentComponent = component<undefined, AgentView>({
-  name: "deploys",
-  initial: () => undefined,
-  step: (state, _event) => state,
-  output: () => ({
-    view: {
-      system: ["Inspect recent deployments when a release may explain an incident."],
-      tools: [{
-        spec: {
-          name: "recent_deploys",
-          description: "List recent production deploys",
-          inputSchema: { type: "object", properties: {}, additionalProperties: false }
-        },
-        serve: (_call, _log, answer) => [
-          answer([{ service: "api", revision: "a17c", summary: "Add rate limiting" }])
-        ]
-      }],
-      context: [],
-      output: []
-    },
-    transitions: []
-  })
+const deploys = tool({
+  spec: {
+    name: "recent_deploys",
+    description: "List recent production deploys",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  run: () => Effect.succeed([
+    { service: "api", revision: "a17c", summary: "Add rate limiting" }
+  ])
 })
 ```
 
@@ -141,37 +128,36 @@ Mount the component beside the built-in parts that this task needs:
 
 ```ts
 import { actor } from "tardie/core"
-import { agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode, compaction, infer, outputValidateOnce, system } from "tardie/agent"
-import { fetchPackage, filesPackage, workspacePackage } from "tardie/code"
+import { agentMethods, agents, budget, caller, escalate, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/agent"
+import { fetch, files, workspace } from "tardie/code"
 
 const instructions = system(
   "You are a release analyst. Identify risky changes and recommend the safest next action."
 )
 
 const releaseAnalyst = actor({
-  // name supplies the actor's stable identity.
   name: "release-analyst",
-  // methods declare how the world can communicate with this actor.
   methods: agentMethods,
-  // components implement those methods and derive transitions from the actor's private log.
   components: [
-    // infer handles messages as model loops composed by children.
     infer([
-      instructions, // system prompt
-      deploys,      // provides recent_deploys tool and paired handler
-      // budget scopes the tool-call limit to the codeMode subtree
-      budget([
-        codeMode([  // sandboxed code execution
-          filesPackage(),
-          fetchPackage(),
-          agentsPackage(),
-          workspacePackage()
-        ])
-      ], { authority: caller() }),
-      compaction(), // bounded model context
-      outputValidateOnce // validates structured result once without correction
-    ]),
-    budgetAuthority() // budgetAuthority handles requestBudget for this actor.
+      instructions,
+      deploys,
+      escalate(
+        budget(codeMode([
+          files(),
+          fetch(),
+          agents(),
+          workspace()
+        ]), {
+          limit: 40,
+          usage: ({ calls }) => calls.length,
+          onExhausted: (reason, settle) => settle({ error: reason })
+        }),
+        { authority: caller(), requests: { decide: request => request.grant() } }
+      ),
+      compact(messages()),
+      outputValidateOnce
+    ])
   ]
 })
 ```
