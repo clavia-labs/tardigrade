@@ -98,3 +98,51 @@ test("an attempt at exactly the limit runs, then blocks further work", async () 
   expect(host.read("root").filter(event => event.type === "ModelCalled")).toHaveLength(2)
   expect(host.read("root").filter(event => event.type === "TurnFailed")).toHaveLength(1)
 })
+
+test("turn and lifetime limits both govern inference across turns and restart", async () => {
+  let calls = 0
+  const create = () => createHost({
+    actorName: "budget-infer",
+    actorFor: () => actor({
+      name: "budget-infer",
+      methods: agentMethods,
+      components: [budget(infer([outputValidateOnce], {
+        models: { default: { provider: "test", model_id: "fixture" }, allow: "*" }
+      }), {
+        limits: [
+          { limit: 0.03, usage: ({ cost }) => cost.turn.estimatedCostUsd ?? 1, rejectionMessage: "Turn limit reached." },
+          { limit: 0.05, usage: ({ cost }) => cost.lifetime.estimatedCostUsd ?? 1, onExhausted: (_reason, respond) => respond({ error: "Lifetime limit reached." }) }
+        ],
+        onExhausted: (reason, respond) => respond({ error: reason })
+      })]
+    }),
+    layersFor: () => testInferenceLayer({
+      policy: () => Effect.succeed(policy),
+      pricing: () => Effect.succeed({ promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }),
+      react: () => Effect.sync(() => {
+        calls++
+        return { kind: "fail", retryable: true, error: { message: "busy" }, usage: { inputTokens: { total: 20 }, outputTokens: { total: 0 } } }
+      })
+    })
+  })
+  const host = create()
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
+  for (const [index, expected] of [2, 3, 3].entries()) {
+    await host.commitRoot(host.self("root"), { type: "MessageReceived", id: `m${index}`, text: "go", at: index + 1 })
+    await host.drive()
+    expect(calls).toBe(expected)
+  }
+  const log = host.read("root")
+  expect(log.filter(event => event.type === "TurnFailed").map(event => event.error)).toEqual([
+    { message: "Turn limit reached." }, { message: "Lifetime limit reached." }, { message: "Lifetime limit reached." }
+  ])
+  expect(log.filter(event => event.type === "BudgetGranted")).toHaveLength(0)
+  expect(usageIn(log).estimatedCostUsd).toBeCloseTo(0.06)
+  const resumed = create()
+  resumed.seed("root", JSON.parse(JSON.stringify(log)))
+  await resumed.allocate({ kind: "root", coordinate: parseThreadAddress(resumed.self("root")) })
+  await resumed.commitRoot(resumed.self("root"), { type: "MessageReceived", id: "m3", text: "go", at: 4 })
+  await resumed.drive()
+  expect(calls).toBe(3)
+  expect(resumed.read("root").filter(event => event.type === "TurnFailed")).toHaveLength(4)
+})

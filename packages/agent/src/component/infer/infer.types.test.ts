@@ -1,6 +1,9 @@
-import { actor } from "@clavia/tardigrade-core/actor"
-import { expect, test } from "bun:test"
-import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
+import { actor, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { expect, expectTypeOf, test } from "bun:test"
+import { actorRuntimeOf, type Self } from "@clavia/tardigrade-core/runtime"
+import type { EventLog } from "@clavia/tardigrade-core/log"
+import type { ModelLock } from "@clavia/tardigrade-model/lock"
+import type { LanguageModel } from "effect/unstable/ai"
 import { legacyComponent, type Actor } from "@clavia/tardigrade-core/actor"
 import {
   infer,
@@ -41,5 +44,9 @@ export const fallbackBrand = (): void => {
 }
 
 test("output strategy components carry their requirements without changing the runtime shape", () => {
+  const plain = infer([empty])
+  const native = infer([empty, nativeOutput])
+  expectTypeOf<ComponentRequirements<typeof plain>>().toEqualTypeOf<ModelLock | LanguageModel.LanguageModel | EventLog | Self>()
+  expectTypeOf<ComponentRequirements<typeof native>>().toEqualTypeOf<ModelLock | LanguageModel.LanguageModel | EventLog | Self | NativeOutputSupport>()
   expect(actorRuntimeOf(nativeOnly).projections).toHaveLength(actorRuntimeOf(repaired).projections.length)
 })

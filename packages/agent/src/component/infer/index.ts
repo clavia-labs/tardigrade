@@ -3,7 +3,7 @@ export type { Rendered } from "./view"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { messages } from "../messages"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentView } from "../view"
-import { turnViewFrom } from "@clavia/tardigrade-code/execution/turn-projection"
+import { turnViewFrom, trajectoryFrom } from "@clavia/tardigrade-code/execution/turn-projection"
 import { usageIn } from "../../model/usage"
 export { AGENT_VIEW_ALGEBRA, type AgentView, type AgentComponent, type AgentTool, type ContextFragment, type NativeOutputFragment, type FallbackOutputFragment, type OutputFragment } from "../view"
 import { composeComponents, handles, component as defineComponent, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
@@ -16,8 +16,12 @@ import { inferenceMachine, type InferRejection } from "./machine"
 export type { InferRejection } from "./machine"
 import { modelPolicyOverrideOf, type ModelPolicyOverride } from "../../model/access"
 import { routeTools, toolConcurrencyOf, type ToolConcurrency } from "../tool/machine"
-import type { AgentR } from "../../runtime/turn"
+import type { LanguageModel } from "effect/unstable/ai"
+import type { EventLog } from "@clavia/tardigrade-core/log"
+import type { Self } from "@clavia/tardigrade-core/runtime"
 import { agentMessageMethod } from "../../actor/message"
+
+type InferRequirements = ModelLock | LanguageModel.LanguageModel | EventLog | Self
 
 const OutputFallbackMarker: unique symbol = Symbol("agent/OutputFallbackComponent")
 
@@ -33,13 +37,13 @@ export const defineOutputFallback = <R>(component: AgentComponent<R>): OutputFal
     step: state => state,
 
     output: (_state, child) => {
-    const derived = child.output();
-    const output = derived.view.output;
-    if (output.length !== 1 || output[0]?.kind !== "fallback" || fallbackOf(output[0].fallback) === undefined) {
-        throw new Error(`output fallback component ${component.name} must declare one applicable fallback for every log`);
+      const derived = child.output()
+      const output = derived.view.output
+      if (output.length !== 1 || output[0]?.kind !== "fallback" || fallbackOf(output[0].fallback) === undefined) {
+        throw new Error(`output fallback component ${component.name} must declare one applicable fallback for every log`)
+      }
+      return derived
     }
-    return derived;
-}
   })
   return { ...component, ...wrapped, [OutputFallbackMarker]: true }
 }
@@ -58,10 +62,22 @@ export interface InferOptions extends Partial<Omit<InferPolicy, "models">> {
   readonly toolConcurrency?: ToolConcurrency
 }
 
-// InferView exposes independent completed-attempt costs for the current turn (infer.test.ts).
-export interface InferView extends AgentView {
+export interface InferCost {
   readonly reportedCostUsd: number | undefined
   readonly estimatedCostUsd: number | undefined
+}
+
+// InferView exposes independent reported and estimated costs for the active turn and thread lifetime (infer.test.ts).
+export interface InferView extends AgentView {
+  readonly cost: { readonly turn: InferCost; readonly lifetime: InferCost }
+  readonly reportedCostUsd: number | undefined
+  readonly estimatedCostUsd: number | undefined
+}
+
+const costs = (events: Parameters<typeof usageIn>[0]): InferCost => {
+  const usage = usageIn(events)
+  const empty = !events.some(event => event.usage !== undefined || event.legacyUsage !== undefined)
+  return { reportedCostUsd: empty ? 0 : usage.reportedCostUsd, estimatedCostUsd: empty ? 0 : usage.estimatedCostUsd }
 }
 
 // infer composes an agent's child components and adds the model loop over their final view.
@@ -72,9 +88,9 @@ export const infer = <
 >(
   components: Cs,
   options: InferOptions = {}
-): AgentComponent<AgentR | ComponentRequirements<Cs[number]>, InferView, InferRejection> => {
+): AgentComponent<InferRequirements | ComponentRequirements<Cs[number]>, InferView, InferRejection> => {
   type ComponentR = ComponentRequirements<Cs[number]>
-  type R = AgentR | ComponentR
+  type R = InferRequirements | ComponentR
   const combined = composeComponents("infer.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<ComponentR>
   const { models: rawModels, toolConcurrency, ...policy } = options
   toolConcurrencyOf(toolConcurrency)
@@ -97,13 +113,12 @@ export const infer = <
       const compactions = new Set(children.view.messages?.flatMap(conversation => conversation.compaction?.proposals ?? []) ?? [])
       const proposals = children.transitions.filter((transition) => !compactions.has(transition.key))
       const turn = turnViewFrom(state.turns)
-      const usage = usageIn(turn, String(turn[0]?.id ?? ""))
-      const empty = !turn.some(event => event.usage !== undefined || event.legacyUsage !== undefined)
+      const cost = { turn: costs(turn), lifetime: costs(trajectoryFrom(state.turns)) }
       return {
         view: {
           ...children.view,
-          reportedCostUsd: empty ? 0 : usage.reportedCostUsd,
-          estimatedCostUsd: empty ? 0 : usage.estimatedCostUsd
+          ...cost.turn,
+          cost
         },
         // Component intents commit policy decisions before inference or tool admission (batches.test.ts, "generated starting allowances are recorded once before inference and survive restart").
         transitions: [

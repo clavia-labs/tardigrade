@@ -30,16 +30,25 @@ export interface BudgetPolicy {
   readonly limit: number
 }
 
-export interface BudgetOptions<ChildView, Result = unknown> extends Partial<BudgetPolicy> {
+interface BudgetRejection<Result> {
   readonly onExhausted: (
     reason: string,
     settle: (result: NoInfer<Result>) => Intent<never> | undefined
   ) => Intent<never> | undefined
   readonly rejectionMessage?: string
-  // usage measures current cumulative turn usage (integration/budget-infer.test.ts).
-  readonly usage: (childView: ComponentReadonly<ChildView>) => number
-  readonly view?: (childView: ComponentReadonly<ChildView>, budget: BudgetState) => ChildView
 }
+
+export interface BudgetLimit<ChildView, Result = unknown> extends Partial<BudgetRejection<Result>> {
+  readonly limit: number
+  readonly usage: (childView: ComponentReadonly<ChildView>) => number
+}
+
+export type BudgetOptions<ChildView, Result = unknown> = BudgetRejection<Result> & {
+  readonly view?: (childView: ComponentReadonly<ChildView>, budget: BudgetState) => ChildView
+} & (
+  | { readonly limit?: number; readonly usage: BudgetLimit<ChildView>["usage"]; readonly limits?: never }
+  | { readonly limits: ReadonlyArray<BudgetLimit<ChildView, Result>>; readonly limit?: never; readonly usage?: never }
+)
 
 // DEFAULT_BUDGET_POLICY is the default policy applied by budget and spawned agents.
 export const DEFAULT_BUDGET_POLICY: BudgetPolicy = { limit: 40 }
@@ -73,12 +82,13 @@ export const budgetOf = (view: ReadonlyArray<Event>, policy: Partial<BudgetPolic
 // BudgetPhase names whether a turn may spend, request more budget, or must finish.
 export type BudgetPhase = "spending" | "exhausted" | "denied"
 
-// BudgetState exposes the applied allowance and observed usage for the current turn (budget.test.ts).
+// BudgetState exposes every configured limit and summarizes the first exceeded rule, or the first rule when none is exceeded (budget.properties.test.ts).
 export interface BudgetState {
   readonly limit: number
   readonly used: number
   readonly remaining: number
   readonly phase: BudgetPhase
+  readonly limits?: ReadonlyArray<{ readonly limit: number; readonly used: number; readonly remaining: number }>
 }
 
 // budgetPhase returns the phase established by the latest lifecycle marker
@@ -126,7 +136,11 @@ export const budget = <
   type Result = ComponentResult<C extends ReadonlyArray<unknown> ? C[number] : C>
   type R = BudgetRequirements<C>
   type ChildView = BudgetView<C>
-  const resolved = budgetPolicyOf(options)
+  const multiple = options.limits !== undefined
+  if (multiple && (options.usage !== undefined || options.limit !== undefined)) throw new Error("budget accepts either limits or limit and usage")
+  const rules: ReadonlyArray<BudgetLimit<ChildView, Result>> = options.limits ?? [{ limit: options.limit ?? DEFAULT_BUDGET_POLICY.limit, usage: options.usage! }]
+  if (rules.length === 0) throw new Error("budget limits must contain at least one rule")
+  const resolved = rules.map(rule => ({ ...rule, ...budgetPolicyOf(rule) }))
   const name = "budget"
   const combined = (
     Array.isArray(components)
@@ -136,28 +150,40 @@ export const budget = <
           initial: () => undefined,
           step: state => state,
 
-        output: (_state, children) => {
-          const outputs = children.map(child => child.output())
-          return {
-            view: { ...outputs.reduce((view, output) => AGENT_VIEW_ALGEBRA.combine(view, output.view), AGENT_VIEW_ALGEBRA.empty), children: outputs.map(output => output.view) },
-            transitions: outputs.flatMap(output => output.transitions),
-            interactions: {
-              cancel: (cancellation) => children.flatMap(child => child.output().interactions?.cancel?.(cancellation) ?? [])
+          output: (_state, children) => {
+            const outputs = children.map(child => child.output())
+            return {
+              view: { ...outputs.reduce((view, output) => AGENT_VIEW_ALGEBRA.combine(view, output.view), AGENT_VIEW_ALGEBRA.empty), children: outputs.map(output => output.view) },
+              transitions: outputs.flatMap(output => output.transitions),
+              interactions: {
+                cancel: (cancellation) => children.flatMap(child => child.output().interactions?.cancel?.(cancellation) ?? [])
+              }
             }
           }
-        }
         })
       : components
   ) as unknown as Component<ChildView, R, Result>
-  const measure = (childView: ComponentReadonly<ChildView>): number => {
-    const used = options.usage(childView)
-    if (!Number.isFinite(used) || used < 0) throw new Error("budget usage must be a finite nonnegative number")
-    return used
+  const measure = (childView: ComponentReadonly<ChildView>, trajectory: ReadonlyArray<Event>): BudgetState => {
+    const limits = resolved.map(rule => {
+      const used = rule.usage(childView)
+      if (!Number.isFinite(used) || used < 0) throw new Error("budget usage must be a finite nonnegative number")
+      const limit = multiple ? rule.limit : budgetOf(trajectory, rule)
+      return { limit, used, remaining: Math.max(0, limit - used) }
+    })
+    const exceeded = limits.find(rule => rule.used > rule.limit)
+    return {
+      ...(exceeded ?? limits[0]!),
+      phase: multiple ? exceeded === undefined ? "spending" : "exhausted" : budgetPhase(trajectory),
+      ...(multiple ? { limits } : {})
+    }
   }
   type Child = ChildOf<typeof combined>
-  const refuse = (transition: ComponentWork<R, Result>): Intent<never> | undefined =>
-    transition.respond === undefined ? undefined :
-      options.onExhausted(options.rejectionMessage ?? DEFAULT_BUDGET_REJECTION, transition.respond)
+  const refuse = (transition: ComponentWork<R, Result>, state: BudgetState): Intent<never> | undefined => {
+    if (transition.respond === undefined) return undefined
+    const index = state.limits?.findIndex(rule => rule.used > rule.limit) ?? -1
+    const rule = resolved[index < 0 ? 0 : index]!
+    return (rule.onExhausted ?? options.onExhausted)(rule.rejectionMessage ?? options.rejectionMessage ?? DEFAULT_BUDGET_REJECTION, transition.respond)
+  }
   const derived = (
     child: Child,
     trajectory: ReadonlyArray<Event>,
@@ -166,19 +192,21 @@ export const budget = <
     admitted: HashSet.HashSet<string>
   ) => {
     const children = child.output()
-    const used = measure(children.view)
-    const allowance = budgetOf(trajectory, resolved)
-    const exhaustion = (event: Event, used: number, tag = "wall", invocation?: InvocationRef | null): Intent<never> =>
-      bindTransitionContext(event, name).intent(tag, (at) => budgetExhausted({
+    const state = measure(children.view, trajectory)
+    const { used, limit: allowance } = state
+    const exhaustion = (event: Event, used: number, tag = "wall", invocation?: InvocationRef | null): Intent<never> => {
+      const turn = event.turn ?? turnHead(trajectory)?.id
+      return bindTransitionContext(event, name).intent(tag, (at) => budgetExhausted({
         budget: allowance, used, at,
-        ...(event.turn === undefined ? {} : { turn: String(event.turn) })
+        ...(turn === undefined ? {} : { turn: String(turn) })
       }), invocation === undefined ? {} : { invocation })
+    }
     const position = eventPositionOf(log[log.length - 1] ?? { type: "Empty" }) ?? log.length
     const rejected: Array<Intent<never>> = []
     const selected = children.transitions.flatMap((transition): ReadonlyArray<ComponentWork<R, Result>> => {
-      const completion = refuse(transition)
+      const completion = refuse(transition, state)
       if (completion !== undefined && refused.some((refusal) => refusal.key === completion.key)) return []
-      if (used <= allowance || transition.respond === undefined || (completion !== undefined && HashSet.has(admitted, completion.key))) return [transition]
+      if (transition.respond === undefined || HashSet.has(admitted, completion?.key ?? transition.key)) return [transition]
       if (completion !== undefined) rejected.push(completion)
       if (budgetPhase(trajectory) !== "spending") return []
       const head = turnHead(trajectory)
@@ -198,11 +226,11 @@ export const budget = <
       ? [exhaustion(log[log.length - 1]!, used)] : []
     const head = turnHead(trajectory)
     const initial =
-      head !== undefined && !trajectory.some((event) => event.type === "BudgetGranted" && event.initial === true)
+      !multiple && head !== undefined && !trajectory.some((event) => event.type === "BudgetGranted" && event.initial === true)
         ? [
             bindTransitionContext(head, name).intent("budget.initial", (at) =>
               budgetGranted({
-                amount: initialAllowance(trajectory, resolved.limit),
+                amount: initialAllowance(trajectory, resolved[0]!.limit),
                 initial: true,
                 turn: String(head.id),
                 at
@@ -210,14 +238,7 @@ export const budget = <
             )
           ]
         : []
-    const state: BudgetState = {
-      limit: allowance,
-      used,
-      remaining: Math.max(0, allowance - used),
-      phase: budgetPhase(trajectory)
-    }
     return {
-      rejected,
       view: { ...(options.view?.(children.view, state) ?? children.view), ...state } as ChildView & BudgetState,
       transitions: [...initial, ...wall, ...refusals, ...selected, ...rejected] as ReadonlyArray<ComponentWork<R, Result>>
     }
@@ -230,40 +251,40 @@ export const budget = <
     // admitted preserves work accepted before later requests cross the limit (runtime/batches.test.ts).
     readonly admitted: HashSet.HashSet<string>
   }
+  const classify = (state: BudgetMachineState, child: Child): BudgetMachineState => {
+    const refused = [...state.refused]
+    let admitted = state.admitted
+    const output = child.output()
+    const measured = measure(output.view, turnViewFrom(state.turns))
+    const affordable = measured.used <= measured.limit
+    for (const transition of output.transitions) {
+      if (transition.respond === undefined) continue
+      const completion = refuse(transition, measured)
+      const key = completion?.key ?? transition.key
+      if (HashSet.has(admitted, key) || refused.some(refusal => refusal.key === key)) continue
+      if (affordable) admitted = HashSet.add(admitted, key)
+      else if (completion !== undefined) refused.push(completion)
+    }
+    return { ...state, refused, admitted }
+  }
   const component = defineComponent<BudgetMachineState, ChildView & BudgetState, R, Result, typeof combined>({
     children: combined,
     name,
-    initial: (child) => {
-      measure(child.output().view)
-      return {
-        turns: initialTurnProjection(),
-        log: Chunk.empty<Event>(),
-        refused: [],
-        admitted: HashSet.empty<string>()
-      }
-    },
-    step: (state, event, _context, candidate, previousChild) => {
-      const refused = [...state.refused]
-      if (event.type === "BudgetExhausted") {
-        const prior = derived(previousChild, turnViewFrom(state.turns), Chunk.toReadonlyArray(state.log), state.refused, state.admitted)
-        if (prior.transitions.some((transition) => transition.key === transitionKeyOf(event))) refused.push(...prior.rejected)
-      }
-      const turns = reduceTurnProjection(state.turns, event)
-      let admitted = state.admitted
-      const affordable = measure(candidate.output().view) <= budgetOf(turnViewFrom(turns), resolved)
-      for (const transition of candidate.output().transitions) {
-        const completion = refuse(transition)
-        if (completion === undefined || HashSet.has(admitted, completion.key) || refused.some(refusal => refusal.key === completion.key)) continue
-        if (affordable) admitted = HashSet.add(admitted, completion.key)
-        else refused.push(completion)
-      }
-      return { turns, log: Chunk.append(state.log, event), refused, admitted }
-    },
+    initial: child => classify({
+      turns: initialTurnProjection(),
+      log: Chunk.empty<Event>(),
+      refused: [],
+      admitted: HashSet.empty<string>()
+    }, child),
+    step: (state, event, _context, child) => classify({
+      ...state,
+      turns: reduceTurnProjection(state.turns, event),
+      log: Chunk.append(state.log, event)
+    }, child),
 
     output: (state, child) => {
-      const { rejected: _rejected, ...output } = derived(child, turnViewFrom(state.turns), Chunk.toReadonlyArray(state.log), state.refused, state.admitted)
       return {
-        ...output,
+        ...derived(child, turnViewFrom(state.turns), Chunk.toReadonlyArray(state.log), state.refused, state.admitted),
         interactions: {
           cancel: (cancellation) => child.output().interactions?.cancel?.(cancellation) ?? []
         }
@@ -274,6 +295,7 @@ export const budget = <
     ...component,
     budget: {
       grant: (amount, request, at) => {
+        if (multiple) throw new Error("budget grants require a single usage rule")
         if (!Number.isFinite(amount) || amount <= 0) throw new Error("budget grant must be a positive finite number")
         return budgetGranted({ ...request, amount, at })
       },

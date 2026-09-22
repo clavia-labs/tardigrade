@@ -245,12 +245,12 @@ const ofTurn = (event: Event, turn: string): boolean => {
   return callId === turn || callId.startsWith(`${turn}/`)
 }
 
-// usageIn sums response usage and legacy consequence usage for one turn (usage.test.ts).
+// usageIn sums response usage and legacy consequence usage, optionally restricted to one turn (usage.test.ts).
 // Missing usage is not spend; an empty usage object retains unknown spend.
-export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
+export const usageIn = (log: ReadonlyArray<Event>, turn?: string): Usage =>
   sumUsage(
     log.flatMap((event) => {
-      if (!ofTurn(event, turn)) return []
+      if (turn !== undefined && !ofTurn(event, turn)) return []
       const carried = event.legacyUsage ?? event.usage
       if (carried === undefined) return []
       const called = event.type === "ModelReturned" ? log.find((mark) => mark.type === "ModelCalled" && mark.turn === event.turn && mark.ordinal === event.ordinal) : undefined

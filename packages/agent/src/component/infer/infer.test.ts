@@ -62,6 +62,15 @@ describe("infer component", () => {
     expect(read([head, called, { ...returned, reportedCostUsd: 0 }])).toMatchObject({ reportedCostUsd: 0, estimatedCostUsd: 0.02 })
     expect(read([head, called, { ...returned, usage: {} }])).toMatchObject({ reportedCostUsd: undefined, estimatedCostUsd: undefined })
     expect(read([head])).not.toHaveProperty("spendUsd")
+    const next = [head, called, { ...returned, reportedCostUsd: 0.03 }, { type: "TurnCompleted", turn: "m1" }, { ...head, id: "m2" }]
+    expect(read(next).cost).toEqual({
+      turn: { reportedCostUsd: 0, estimatedCostUsd: 0 },
+      lifetime: { reportedCostUsd: 0.03, estimatedCostUsd: 0.02 }
+    })
+    expect(read([...next, { ...called, turn: "m2" }, { ...returned, turn: "m2", usage: {} }]).cost).toEqual({
+      turn: { reportedCostUsd: undefined, estimatedCostUsd: undefined },
+      lifetime: { reportedCostUsd: undefined, estimatedCostUsd: undefined }
+    })
   })
 
   test("the actor owns model selection", () => {

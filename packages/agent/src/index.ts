@@ -157,6 +157,7 @@ export {
   type OutputFragment,
   type InferOptions,
   type InferView,
+  type InferCost,
   type InferRejection,
   type Rendered
 } from "./component/infer/index"
@@ -170,7 +171,7 @@ export {
 } from "./component/code/index"
 export { system, type SystemProjection, type SystemText } from "./component/system"
 export { tool, tools, toolList, type ToolsOptions, type NativeTool } from "./component/tool/index"
-export { budget, type BudgetOptions, type BudgetComponent, type BudgetControl } from "./component/budget/index"
+export { budget, type BudgetOptions, type BudgetLimit, type BudgetComponent, type BudgetControl } from "./component/budget/index"
 export {
   caller,
   type BudgetAuthority,

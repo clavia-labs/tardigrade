@@ -83,6 +83,28 @@ const setup = (measurement: "request" | "execution", limit: number) => {
   return { append, output, proposed, checkReplay, drain, log }
 }
 
+test("multiple limits admit work only when every rule allows it, regardless of order", () => {
+  fc.assert(fc.property(
+    fc.array(fc.record({ limit: fc.integer({ min: 1, max: 20 }), used: fc.integer({ min: 0, max: 25 }) }), { minLength: 1, maxLength: 5 }),
+    rules => {
+      for (const ordered of [rules, [...rules].reverse()]) {
+        const machine = testMachineOf(budget(workload("request"), {
+          limits: ordered.map((rule, index) => ({ limit: rule.limit, usage: () => rule.used, rejectionMessage: String(index), onExhausted: (reason, respond) => respond({ error: `rule:${reason}` }) })),
+          onExhausted: (reason, respond) => respond({ error: reason })
+        }))
+        const log = [{ type: "MessageReceived", id: "turn" }, { type: "Requested", id: 1, cost: 1, turn: "turn" }]
+        const output = machine.output(replayState(machine, log))
+        const events = output.transitions.flatMap(work => work.kind === "intent" ? work.events(work.input, 0) : [])
+        const allowed = rules.every(rule => rule.used <= rule.limit)
+        expect(events.filter(event => event.type === "Executed")).toHaveLength(allowed ? 1 : 0)
+        expect(events.filter(event => event.type === "Refused")).toHaveLength(allowed ? 0 : 1)
+        if (!allowed) expect(events.find(event => event.type === "Refused")?.result).toEqual({ error: `rule:${ordered.findIndex(rule => rule.used > rule.limit)}` })
+        expect(output.view.limits).toEqual(ordered.map(rule => ({ ...rule, remaining: Math.max(0, rule.limit - rule.used) })))
+      }
+    }
+  ))
+})
+
 for (const measurement of ["request", "execution"] as const) {
   test(`${measurement}: current usage gates work and every refusal settles`, () => {
     fc.assert(

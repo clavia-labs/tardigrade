@@ -22,11 +22,32 @@ import { codeMode } from "../code/index"
 import { agentMethods } from "../../actor/methods"
 import { nativeOutput } from "../native-output"
 import { tool } from "../tool/index"
-import type { TransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { bindTransitionContext, type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import { agentKeys } from "../../log/events"
 
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
+
+test.each([0, 2])("initial admission survives later usage and replay (initial usage: %s)", used => {
+  const context = bindTransitionContext(eventAt({ type: "Ready" }, 1), "initial-worker")
+  const work = withResponse(context.intent("work", { type: "Worked" }),
+    (result: { error: string }) => context.intent("response", { type: "Finished", ...result }))
+  const responseKey = work.respond({ error: "no" }).key
+  const child = component({
+    name: "initial-worker",
+    initial: (): number => used,
+    step: (_state, event) => Number(event.used ?? used),
+    output: used => ({ view: { used }, transitions: [work] })
+  })
+  const machine = machineOf(budget(child, { limit: 1, usage: ({ used }) => used, onExhausted: (reason, respond) => respond({ error: reason }) }))
+  const key = used <= 1 ? work.key : responseKey
+  expect(machine.output(machine.initial()).transitions.map(work => work.key)).toContain(key)
+  const log = [{ type: "UsageRecorded", used: used <= 1 ? 2 : 0 }]
+  const advanced = machine.output(machine.step(machine.initial(), eventAt(log[0]!, 1)))
+  const replayed = machine.output(replayState(machine, log))
+  expect(advanced.transitions.map(work => work.key)).toContain(key)
+  expect(replayed.transitions.map(work => work.key)).toEqual(advanced.transitions.map(work => work.key))
+})
 
 const assembled = <R>(component: import("../infer/index").AgentComponent<R>) =>
   actor({
@@ -48,6 +69,16 @@ const toolBudgetOptions = {
           system: [...view.system, "Your tool budget is spent. Answer now with what you have."]
         }
 } satisfies BudgetOptions<import("../view").AgentView & ToolState>
+
+test("multiple limits reject empty rules and untargeted grants", () => {
+  const child = tool({ spec: { name: "read", description: "Read", inputSchema: {} }, run: () => Effect.succeed("done") })
+  expect(() => budget(child, { limits: [], onExhausted: (reason, respond) => respond({ error: reason }) })).toThrow("at least one rule")
+  const governed = budget(child, {
+    limits: [{ limit: 1, usage: ({ calls }) => calls.length }],
+    onExhausted: (reason, respond) => respond({ error: reason })
+  })
+  expect(() => governed.budget.grant(1, { callId: "grant", turn: "turn" }, 0)).toThrow("single usage rule")
+})
 
 const rootActor = assembled(
   infer(
