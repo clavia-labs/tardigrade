@@ -5,7 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { actor } from "@clavia/tardigrade-core/actor"
 import { createHost } from "@clavia/tardigrade-host/host"
-import { modelLayer } from "@clavia/tardigrade-model/host"
+import { fixtureModelLayer as modelLayer } from "@clavia/tardigrade-model/testing/host"
 import { modelConfigOf } from "@clavia/tardigrade-model/config"
 import { agentMethods, infer, nativeOutput, NativeOutputSupport } from "../src/index"
 

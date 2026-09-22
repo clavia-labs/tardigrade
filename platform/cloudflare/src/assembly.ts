@@ -1,8 +1,8 @@
 import { modelLockSourceOf, upgradeModelLock, type ModelLockSource } from "@clavia/tardigrade-model/lock-compat"
 import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
-import { lockedModelConfigOf, modelCatalogForConfig as lockedCatalogForConfig, type ModelLock } from "@clavia/tardigrade-model/lock"
+import { lockedModelConfigOf, modelCatalogForConfig as lockedCatalogForConfig, ModelLock, modelLockService } from "@clavia/tardigrade-model/lock"
 import { cloudflareDirectory } from "./transport/directory"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import { type InferenceObserver, type ModelPolicy } from "@clavia/tardigrade-agent"
 import type { LanguageModel } from "effect/unstable/ai"
@@ -85,7 +85,7 @@ export const modelStateFrom = async (env: Env) => {
   const lock = await upgradeModelLock(scope, models)
   const model = lockedModelConfigOf(models, lock)
   const { providers: _providers, ...policy } = model
-  return { model, catalog: { snapshot: await lockedCatalogForConfig(policy, lock) } }
+  return { model, lock: Layer.succeed(ModelLock, modelLockService(lock, policy)), catalog: { snapshot: await lockedCatalogForConfig(policy, lock) } }
 }
 
 // DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS bounds a catalog refresh.

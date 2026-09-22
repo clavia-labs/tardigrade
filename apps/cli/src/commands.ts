@@ -1,8 +1,10 @@
+import { modelLockSourceOf, upgradeModelLock } from "@clavia/tardigrade-model/lock-compat"
+import { MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelConfigOf } from "@clavia/tardigrade-model/config"
 import { Clock, Console, Effect, Layer, Option } from "effect"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { resolve } from "node:path"
+import { dirname, resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
 import { ACTOR_NAME_PATTERN, type Actor } from "tardie"
 import {
@@ -19,7 +21,7 @@ import {
 
 import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
-import { modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-server/config"
+import { projectConfigPathOf, modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-server/config"
 
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary, loadBuiltActorModule } from "./build"
 import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
@@ -674,9 +676,19 @@ export const devCommand = Command.make("dev", {
       try: () => devLayersForFrom<ServerR>(loaded.layersFor),
       catch: userErrorOf
     })
+    const modelLock = yield* Effect.tryPromise({
+      try: async () => {
+        const path = resolve(cli.cwd, dirname(projectConfigPathOf(runtimeEnv)), MODEL_LOCK_FILE)
+        const file = Bun.file(path)
+        if (!await file.exists()) throw new Error(`${path} is missing; run \`tdg models lock\``)
+        return upgradeModelLock(modelLockSourceOf(await file.json(), path), config2.model, path)
+      },
+      catch: userErrorOf
+    })
     const layer = yield* Effect.try({
       try: () => dev({
         config: config2,
+        modelLock,
         actor: loaded.actor as Actor<ServerR>,
         ...(layersFor === undefined ? {} : { layersFor }),
         assets: stated(flags.ui),

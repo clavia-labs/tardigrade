@@ -1,8 +1,9 @@
+import { fixtureModelLock } from "../../../../packages/model/src/testing/host"
 import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import type { Send as BedrockSend } from "@tardie/ai-bedrock/BedrockLanguageModel"
 import { modelLayerWith } from "../../../../packages/model/src/selection"
 import { actor } from "tardie/core"
@@ -93,14 +94,14 @@ const runConversation = async (targets: ReadonlyArray<ResolvedLiveTarget>, lifec
     const maxOutputTokens = positive("TARDIE_LIVE_MAX_OUTPUT_TOKENS", DEFAULT_LIVE_MAX_OUTPUT_TOKENS)
     const selection = { default: { provider: first.id, model_id: first.model }, allow: "*" as const }
     const config = {
-      model: { ...selection, providers: Object.fromEntries(connected.map(({ target, endpoint }, index) => [target.id, { baseUrl: endpoint, protocol: target.protocol, env: [`LIVE_${index}`] }])) },
+      model: { ...selection, providers: Object.fromEntries(connected.map(({ target, endpoint }, index) => [target.id, { baseUrl: endpoint, protocol: target.protocol, env: [`LIVE_${index}`], ...(target.region === undefined ? {} : { region: target.region }) }])) },
       modelCredentials: Object.fromEntries(targets.map((target, index) => [`LIVE_${index}`, target.apiKey]))
     }
     const catalog = { snapshot: { source: "models.dev" as const, revision: "live", refreshedAt: Date.now(), status: "fresh" as const, providers: targets.map((target) => ({ id: target.id, name: target.id, env: [], models: [{ id: target.model, metadata: { contextWindowTokens: target.contextWindowTokens, maxOutputTokens } }] })) } }
     const layers = () => modelLayerWith(config, catalog, (selected) => {
       const connection = connected.find(({ target }) => target.id === selected.provider)!
       return bindingFor({ ...connection.target, endpoint: connection.endpoint }, { providerId: selected.provider, ...(connection.bedrockSend === undefined ? {} : { bedrockSend: connection.bedrockSend }) })
-    })
+    }).pipe(Layer.provideMerge(fixtureModelLock(config, catalog)))
     const definition = () => actor({ name: "live-inference", methods: agentMethods, components: [infer([outputValidateOnce, tool(toolsOf(stages[stageIndex]!.mode).map((spec) => ({
       spec,
       run: (input) => Effect.gen(function* () {

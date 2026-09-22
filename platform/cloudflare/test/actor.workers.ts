@@ -1,9 +1,11 @@
+import { modelLockService } from "@clavia/tardigrade-model/lock"
+import { upgradeModelLock } from "@clavia/tardigrade-model/lock-compat"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { threadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { env, runInDurableObject, evictDurableObject, SELF } from "cloudflare:test"
-import { Effect, ManagedRuntime, Schema } from "effect"
+import { Effect, Layer, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -245,6 +247,8 @@ describe("cloudflare actor", () => {
         }
       }
     }
+    const definitions = await upgradeModelLock(scope, config)
+    const suppliedLock = Layer.succeed(ModelLock, modelLockService(definitions, config))
     const catalog = await modelCatalogForConfig(config, scope)
     expect(catalog).toMatchObject({ providers: [{ id: "openai" }] })
     const previousScope = mountedActor!.modelScope
@@ -274,7 +278,7 @@ describe("cloudflare actor", () => {
       const settings = await Effect.runPromise(Effect.gen(function* () {
         const selection = yield* ModelSelection
         return yield* selection.settings!()
-      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, config), catalog))))
+      }).pipe(Effect.provide(modelLayer(modelsFrom(env as Env, config), catalog).pipe(Layer.provideMerge(suppliedLock)))))
       expect(configured).toBe(true)
       expect(settings.policy).toMatchObject({ maxOutputTokens: 1234, timeout: { idleMs: 12345 } })
     } finally {
@@ -282,17 +286,17 @@ describe("cloudflare actor", () => {
       else mountedActor!.model = previousModel
     }
     const binding = await Effect.runPromise(ModelLock.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, config), catalog)
+      modelLayer(modelsFrom(env as Env, config), catalog).pipe(Layer.provideMerge(suppliedLock))
     )))
     expect(binding.resolve()).toMatchObject({
       model: config.default,
       contextWindowTokens: 32000,
-      models: { allow: [{ provider: "openai", model_ids: ["gpt-test"] }] }
+      models: { allow: "*" }
     })
     expect(binding.definitions.models).toContainEqual(expect.objectContaining({ ...config.default, maxOutputTokens: 4000 }))
-    expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("excluded by the host model policy")
+    expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from models.lock.json")
     const restricted = await Effect.runPromise(ModelLock.pipe(Effect.provide(
-      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), catalog)
+      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), catalog).pipe(Layer.provideMerge(Layer.succeed(ModelLock, modelLockService(definitions, { ...config, allow: [] }))))
     )))
     expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
   })

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { Effect } from "effect"
 import { actor } from "tardie/core"
 import { agentMethods, infer, tool, outputValidateOnce } from "tardie/agent"
-import { modelLayer as configuredModelLayer } from "../../packages/model/src/host"
+import { fixtureModelLayer as configuredModelLayer } from "../../packages/model/src/testing/host"
 
 export const definition = actor({ name: "inference-test", methods: agentMethods, components: [infer([outputValidateOnce, tool({
   spec: { name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } },

@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 
 import { modelConfigOf, canonicalModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-model/config"
-import { modelLayer } from "@clavia/tardigrade-model/host"
+import { fixtureModelLayer as modelLayer } from "@clavia/tardigrade-model/testing/host"
 import { protocolOptionsOf } from "@clavia/tardigrade-model/providers/options"
 import { providerEvents } from "@clavia/tardigrade-model/testing/fixtures"
 

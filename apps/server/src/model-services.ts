@@ -1,5 +1,5 @@
 import { modelLockSourceOf, upgradeModelLock } from "@clavia/tardigrade-model/lock-compat"
-import { ModelLock, MODEL_LOCK_FILE, lockedModelConfigOf, emptyModelLock, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
+import { ModelLock, MODEL_LOCK_FILE, lockedModelConfigOf, modelLockService, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Layer } from "effect"
@@ -14,7 +14,7 @@ import { catalogDiscoveryOf } from "@clavia/tardigrade-http/models"
 import { projectModelsOf, projectConfigPathOf, readConfig } from "./config"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 
-type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel | ModelLock>
+type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel | ModelLock, never, ModelLock>
 
 export type BunModelServicesOptions = {
   readonly configFile?: string | URL
@@ -35,15 +35,15 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const file = Bun.file(path)
   const models = projectModelsOf(exists ? Bun.JSONC.parse(await projectFile.text()) : {})
   const definitions = await file.exists() ? await upgradeModelLock(modelLockSourceOf(await file.json(), path), models, path)
-    : !exists ? emptyModelLock()
     : (() => { throw new Error(`${path} is missing; run \`tdg models lock\``) })()
   const project = { models: lockedModelConfigOf(models, definitions) }
   const config = readConfig(options.env, project)
   const { providers: _providers, ...policy } = config.model
   const snapshot = { snapshot: await modelCatalogForConfig(policy, definitions) }
   const inference = makeInferenceStream()
+  const binding = options.inference === undefined ? modelLayer(config, snapshot, { ...options.model, observer: inference.observer }) : options.inference(config, snapshot, inference.observer)
   const layers = Layer.mergeAll(
-    options.inference === undefined ? modelLayer(config, snapshot, { ...options.model, observer: inference.observer }) : options.inference(config, snapshot, inference.observer),
+    binding.pipe(Layer.provideMerge(Layer.succeed(ModelLock, modelLockService(definitions, policy)))),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer

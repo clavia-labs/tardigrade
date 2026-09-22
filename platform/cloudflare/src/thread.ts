@@ -184,10 +184,10 @@ export class ThreadDO extends DurableObject<Env> {
       retainCommitTask: (task: Promise<void>) => retainBackgroundTask(this.ctx, this.backgroundTaskOwner, task),
       layers: (() => {
         const observer = mountedActor?.inferenceObserverFor?.(layerContext)
-        const framework = Layer.mergeAll(modelLayer(models, modelScope, {
+        const framework = Layer.mergeAll(state === undefined ? Layer.empty : modelLayer(models, modelScope, {
           ...observer,
           onDelta: (delta) => Effect.andThen(this.inference.observer.onDelta(delta), observer?.onDelta(delta) ?? Effect.void)
-        }), FetchHttpClient.layer, sandboxLayer)
+        }).pipe(Layer.provideMerge(state.lock)), FetchHttpClient.layer, sandboxLayer)
         const application = mountedActor?.layersFor?.(layerContext)
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       })(),

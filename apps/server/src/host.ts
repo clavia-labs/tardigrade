@@ -1,6 +1,5 @@
 import { bunHttpServices } from "@clavia/tardigrade-bun/http-threads"
 import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
-import { modelLayer } from "@clavia/tardigrade-model/host"
 export { selectedModelFrom, modelIsConfigured, MISSING_MODEL } from "@clavia/tardigrade-model/selection"
 import { createHost, hostBackend, type HostOptions, type Host } from "@clavia/tardigrade-bun/create-host"
 import { Context, Effect, Layer } from "effect"
@@ -34,7 +33,7 @@ import {
 
 import { builtInActor, type ServerR } from "./actor"
 import { ServerConfig, type ServerConfigValue } from "./config"
-import { ModelCatalogStore, type ModelCatalogState } from "./catalog"
+import { ModelCatalogStore } from "./catalog"
 import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { DriverGauge } from "./driver-gauge"
@@ -48,12 +47,10 @@ export { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade
 // through, bound here to their bun implementations. The union comes off the assembly's own type
 // (actor.ts, ServerR), so a package added to the assembly is a compile error here until it is bound.
 const layerThread = (
-  config: ServerConfigValue,
-  catalog: ModelCatalogState,
   options: ThreadsOptions
 ) =>
   Layer.mergeAll(
-    options.infer ?? modelLayer(config, catalog, options.inferenceObserver === undefined ? {} : { observer: options.inferenceObserver }),
+    options.infer ?? Layer.empty,
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer
@@ -62,7 +59,7 @@ const layerThread = (
 export interface ThreadsOptions {
   readonly allocation?: BunHostOptions<never>["allocation"]
   readonly threadAllocator?: typeof ThreadAllocator.Service
-  // infer supplies an Effect model in place of the configured provider (host.test.ts).
+  // infer supplies model execution and its explicit ModelLock (host.test.ts).
   readonly infer?: Layer.Layer<import("effect/unstable/ai").LanguageModel.LanguageModel>
   // inferenceObserver receives ephemeral normalized text outside the durable event log.
   readonly inferenceObserver?: InferenceObserver
@@ -170,9 +167,8 @@ export const layerActorThreads = <R>(
 ): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig | ModelCatalogStore> =>
   Layer.effectContext(Effect.gen(function*() {
     const config = yield* ServerConfig
-    const catalog = yield* ModelCatalogStore
     const host = yield* Effect.acquireRelease(
-      Effect.promise(() => mountedHost(definition, config, layerThread(config, catalog, options), options)),
+      Effect.promise(() => mountedHost(definition, config, layerThread(options), options)),
       (host) => Effect.promise(host.close)
     )
     return bunHttpServices(host)
@@ -202,7 +198,7 @@ const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
     const catalog = yield* ModelCatalogStore
-    const thread = layerThread(config, catalog, options)
+    const thread = layerThread(options)
     const runtimes = new Map<string, LoadedActor>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())

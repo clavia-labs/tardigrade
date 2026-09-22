@@ -1,7 +1,9 @@
+import { Effect, Layer } from "effect"
+import { ModelLock, modelLockOf, modelLockService } from "./lock"
 import { expect, test } from "bun:test"
 import * as fc from "fast-check"
 import { modelConfigOf } from "./config"
-import { selectedModelFrom } from "./selection"
+import { selectedModelFrom, modelLayerWith } from "./selection"
 import type { ModelCatalogState } from "./catalog/index"
 
 const config = (settings = {}) => modelConfigOf({ default: { provider: "test", model_id: "model" }, allow: "*", providers: { test: { baseUrl: "https://fixture.invalid", protocol: "openai-responses", env: ["KEY"], models: { model: settings } } } })
@@ -26,4 +28,29 @@ test("configuration retains ordered fallbacks and rejects missing providers", ()
   expect(modelConfigOf({ ...source, fallback }).fallback).toEqual(fallback)
   expect(() => modelConfigOf({ ...source, fallback: [{ provider: "absent", model_id: "backup" }] })).toThrow("unconfigured provider")
   expect(() => modelConfigOf({ ...source, fallback: {} })).toThrow("fallback must be an array")
+})
+
+const hostConfig = { model: { allow: "*" as const, providers: {} }, modelCredentials: {} }
+const binding = () => modelLayerWith(hostConfig, {}, () => { throw new Error("provider execution was not requested") })
+
+test("model binding requires a supplied lock before initialization", async () => {
+  const build = Effect.scoped(Layer.build(binding()))
+  // ModelLock is deliberately absent to check the runtime boundary as well as its type.
+  // @ts-expect-error ModelLock must be supplied by the host.
+  // @effect-diagnostics-next-line missingEffectContext:off
+  await expect(Effect.runPromise(build)).rejects.toThrow("tardigrade/model/ModelLock")
+})
+
+test("model binding forwards supplied definitions and lookup without reconstruction", async () => {
+  const definitions = modelLockOf({ schema: 2,
+    providers: { custom: { protocol: "openai-chat-completions", baseUrl: "https://custom.test", env: ["KEY"] } },
+    models: [{ provider: "custom", model_id: "small", contextWindowTokens: 32000, options: { temperature: 0.2 }, source: "https://fixture.test/catalog" }]
+  })
+  const supplied = modelLockService(definitions, { allow: "*", default: { provider: "custom", model_id: "small" } })
+  const resolved = await Effect.runPromise(ModelLock.pipe(Effect.provide(binding().pipe(
+    Layer.provide(Layer.succeed(ModelLock, supplied))
+  ))))
+  expect(resolved).toBe(supplied)
+  expect(resolved.definitions).toEqual(definitions)
+  expect(resolved.resolve().contextWindowTokens).toBe(32000)
 })

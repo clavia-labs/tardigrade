@@ -1,3 +1,5 @@
+import { ModelLock, modelLockService, modelCatalogForConfig, type ModelLockData } from "@clavia/tardigrade-model/lock"
+import { modelLayerFromLock } from "@clavia/tardigrade-model/host"
 import { Console, Context, Duration, Effect, Layer } from "effect"
 import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
@@ -123,6 +125,7 @@ export const layerVoyager = (root: string) =>
 
 interface DevBaseOptions {
   readonly config: ServerConfigValue
+  readonly modelLock?: ModelLockData
   // Where the built UI lives. Absent, the two layouts a build can arrive in are tried in order
   // (assets.ts, ASSET_CANDIDATES).
   readonly assets?: string | undefined
@@ -177,9 +180,17 @@ export const dev = <R = ServerR>(options: DevOptions<R>) => {
   const catalogRepository = layerFileModelCatalogRepository(options.config.catalog.cachePath).pipe(
     Layer.provide(BunFileSystem.layer)
   )
-  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), [config, catalogRepository])
+  const { providers: _providers, ...policy } = options.config.model
+  const catalog = options.catalog ?? (options.modelLock === undefined
+    ? Layer.provide(layerModelCatalog(), [config, catalogRepository])
+    : Layer.effect(ModelCatalogStore, Effect.promise(async () => ({ snapshot: await modelCatalogForConfig(policy, options.modelLock!) }))))
   const inference = makeInferenceStream(options.threads?.inferenceObserver)
-  const threadOptions = { ...options.threads, inferenceObserver: inference.observer }
+  const threadOptions = { ...options.threads, ...(options.modelLock === undefined ? {} : {
+    infer: options.threads?.infer ?? modelLayerFromLock(policy, options.config.modelCredentials, { observer: inference.observer }).pipe(
+      Layer.orDie,
+      Layer.provideMerge(Layer.succeed(ModelLock, modelLockService(options.modelLock, policy)))
+    )
+  }) }
   const threads = Layer.provide(
     options.actor === undefined
       ? layerThreads({

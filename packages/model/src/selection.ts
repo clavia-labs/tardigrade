@@ -1,22 +1,19 @@
-import { ModelLock, modelLockService, MODEL_LOCK_SCHEMA, type ModelLockData } from "./lock"
+import { ModelLock } from "./lock"
 import { Effect, Layer, Stream } from "effect"
 import { LanguageModel } from "effect/unstable/ai"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
-import { intersectModelPolicies, modelAllowedBy, type ModelPolicy } from "./access"
+import { modelAllowedBy } from "./access"
 import type { ModelRef } from "./reference"
 import type { ModelCatalog } from "@clavia/tardigrade-model/catalog/schema"
 import type { ModelConfig, ModelCredentials } from "./config"
 import type { ModelCatalogState } from "./catalog/index"
-import { providerAvailabilitiesOf } from "./catalog/availability"
 
 export interface ModelHostConfig {
   readonly model: ModelConfig
   readonly modelCredentials: ModelCredentials
 }
 
-// The model binding the configured references name. An absent reference is not an endpoint this
-// server invents: every attempt fails with what is missing, so the process still boots, still
-// answers /healthz, and says why a turn cannot run (config.ts, ModelConfig).
+// MISSING_MODEL reports an absent provider configuration during model selection.
 export const MISSING_MODEL = "no model provider is configured: run `tdg setup`"
 
 export interface SelectedModel {
@@ -136,32 +133,19 @@ export const modelIsConfigured = (config: ModelHostConfig): boolean =>
     }
   })()
 
-// modelLayerWith shares host selection and catalog authority across inference bindings.
+// modelLayerWith binds provider execution to a host-supplied ModelLock (selection.test.ts).
 export const modelLayerWith = (
   config: ModelHostConfig,
   catalog: ModelCatalogState,
   bindingFor: (selected: SelectedModel) => Layer.Layer<LanguageModel.LanguageModel>,
   protocols?: ReadonlyArray<SelectedModel["protocol"]>
-): Layer.Layer<LanguageModel.LanguageModel | ModelLock> => {
+): Layer.Layer<LanguageModel.LanguageModel | ModelLock, never, ModelLock> => Layer.unwrap(Effect.map(ModelLock, lock => {
   const select = (reference?: ModelRef) => {
     if (Object.keys(config.model.providers).length === 0) throw new Error(MISSING_MODEL)
-    const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, reference)
+    const resolution = lock.resolve(reference)
+    const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, resolution.model)
     if (protocols !== undefined && !protocols.includes(selected.protocol)) throw new Error(`inference binding does not support ${selected.protocol} for ${selected.provider}/${selected.model_id}`)
     return selected
-  }
-  const availableModels = (): ModelPolicy => {
-    const snapshot = catalog.snapshot
-    if (snapshot === undefined) return { allow: [] }
-    const availability = providerAvailabilitiesOf(config.model, config.modelCredentials)
-    const configured: ModelPolicy = {
-      allow: snapshot.providers.flatMap((provider) =>
-        availability[provider.id]?.status === "available" && provider.models.length > 0 && (protocols === undefined || protocols.includes(config.model.providers[provider.id]!.protocol))
-          ? [{ provider: provider.id, model_ids: provider.models.map((model) => model.id) }]
-          : []
-      )
-    }
-    const authority = intersectModelPolicies([config.model, configured])
-    return { ...authority, ...(config.model.fallback === undefined ? {} : { fallback: config.model.fallback }), ...(config.model.default === undefined ? {} : { default: config.model.default }) }
   }
   const selection = Layer.succeed(ModelSelection, {
     settings: (reference) => Effect.suspend(() => {
@@ -181,16 +165,5 @@ export const modelLayerWith = (
     generateObject: ((...args: Parameters<typeof LanguageModel.LanguageModel.Service.generateObject>) => withModel((native) => native.generateObject(...args))) as typeof LanguageModel.LanguageModel.Service.generateObject,
     streamText: ((...args: Parameters<typeof LanguageModel.LanguageModel.Service.streamText>) => Stream.unwrap(Effect.map(CurrentModel, (reference) => Stream.unwrap(Effect.map(LanguageModel.LanguageModel, (native) => native.streamText(...args))).pipe(Stream.provide(bindingFor(select(reference))))))) as typeof LanguageModel.LanguageModel.Service.streamText
   })
-  const definitions: ModelLockData = {
-    schema: MODEL_LOCK_SCHEMA,
-    providers: Object.fromEntries(Object.entries(config.model.providers).map(([id, provider]) => [id, {
-      protocol: provider.protocol, baseUrl: provider.baseUrl, env: [...provider.env],
-      ...(provider.region === undefined ? {} : { region: provider.region })
-    }])),
-    models: (catalog.snapshot?.providers ?? []).flatMap(provider => provider.models.flatMap(model =>
-      model.metadata.contextWindowTokens === undefined ? [] : [{ ...model.metadata, provider: provider.id, model_id: model.id, contextWindowTokens: model.metadata.contextWindowTokens }]))
-  }
-  const authority = availableModels()
-  const lock = Layer.succeed(ModelLock, modelLockService(definitions, authority))
-  return Layer.mergeAll(selection, model, lock)
-}
+  return Layer.mergeAll(selection, model, Layer.succeed(ModelLock, lock))
+}))

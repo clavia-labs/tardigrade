@@ -6,7 +6,7 @@ import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { type InferDelta } from "@clavia/tardigrade-agent"
-import { modelLayer } from "@clavia/tardigrade-model/host"
+import { fixtureModelLayer as modelLayer } from "@clavia/tardigrade-model/testing/host"
 import { providerEvents } from "@clavia/tardigrade-model/testing/fixtures"
 
 for (const provider of ["openai", "anthropic"] as const) {
@@ -39,7 +39,7 @@ for (const provider of ["openai", "anthropic"] as const) {
       const infer = yield* inferenceClient
       const lock = yield* ModelLock
       const resolution = lock.resolve()
-      expect(resolution).toMatchObject({ model: reference, contextWindowTokens: 200000, models: { allow: [{ provider: reference.provider, model_ids: [reference.model_id] }] } })
+      expect(resolution).toMatchObject({ model: reference, contextWindowTokens: 200000, models: { allow: "*" } })
       expect(lock.definitions.models).toContainEqual(expect.objectContaining({ ...reference, maxOutputTokens: 2048 }))
       return yield* infer.react({ model: reference, identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] }, "attempt", undefined, (delta) => direct.push(delta))
     }).pipe(Effect.provide(binding), Effect.provideService(FetchHttpClient.Fetch, fetch)))
