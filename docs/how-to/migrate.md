@@ -212,3 +212,8 @@ Finish with a short report containing:
 - The comparison table with unavailable values labeled.
 - Known behavior gaps and rollback instructions.
 - The thread and event evidence for the migrated task.
+
+
+### Failed attempt accounting
+
+`costsOf(events)` and `usageIn(events, turn)` exclude failed `ModelReturned` attempts from aggregate totals. Failed attempts retain their original usage and cost evidence in the log and in `costsOf(events).attempts`. Excluding failed attempts can undercount billed work; it does not establish that inference never started.

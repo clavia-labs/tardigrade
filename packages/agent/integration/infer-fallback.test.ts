@@ -40,10 +40,11 @@ test("fallback attempts are bounded, separately accounted, and recover at every 
     expect(log.filter(e => e.type === "TurnFailed")).toHaveLength(1)
     expect(log.filter(e => e.type === "ToolCalled")).toHaveLength(0)
     expect(log.filter(e => e.type === "ModelCalled")).toHaveLength(visited.length)
-    expect(usageIn(log, "m")).toMatchObject({ promptTokens: 10 * visited.length, completionTokens: 2 * visited.length })
+    expect(usageIn(log, "m")).toMatchObject({ promptTokens: 0, completionTokens: 0 })
     const responses = log.filter(e => e.type === "ModelReturned")
     expect(new Set(responses.map(e => e.callId)).size).toBe(visited.length)
     for (const response of responses) {
+      expect(response.usage).toEqual(usage)
       if (response.retry === undefined) continue
       const index = log.indexOf(response)
       const next = log.slice(index + 1).find(e => e.type === "ModelCalled")!

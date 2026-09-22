@@ -9,7 +9,7 @@ const returned = (callId: string, extra: Record<string, unknown> = {}): Event =>
   usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } }, ...extra
 })
 
-test("costs include failed attempts and retries using each attempt's recorded prices", () => {
+test("costs retain failed attempt evidence and total successful attempts using recorded prices", () => {
   const events = [called("a"), returned("a", { outcome: "failed", reportedCostUsd: 0.1 }),
     { ...called("b"), pricing: { ...pricing, completionUsdPerToken: 0.04 } }, returned("b", { reportedCostUsd: 0.2 })]
   const before = JSON.stringify(events)
@@ -18,8 +18,8 @@ test("costs include failed attempts and retries using each attempt's recorded pr
     { callId: "a", turn: "t", outcome: "failed", reportedUsd: 0.1, estimatedUsd: 0.2 },
     { callId: "b", turn: "t", outcome: "returned", reportedUsd: 0.2, estimatedUsd: 0.1 + 0.2 }
   ])
-  expect(costs.total.reportedUsd).toBeCloseTo(0.3)
-  expect(costs.total.estimatedUsd).toBeCloseTo(0.5)
+  expect(costs.total.reportedUsd).toBeCloseTo(0.2)
+  expect(costs.total.estimatedUsd).toBeCloseTo(0.3)
   expect(costsOf(JSON.parse(before))).toEqual(costs)
   expect(JSON.stringify(events)).toBe(before)
 })
@@ -48,4 +48,18 @@ test("turn filtering and pairing scope reused call IDs to their turn", () => {
 
 test("a response without its request retains reported cost without inventing a price", () => {
   expect(costsOf([returned("a", { reportedCostUsd: 0.1 })]).total).toEqual({ reportedUsd: 0.1 })
+})
+
+
+test("failed attempts retain evidence but do not affect totals", () => {
+  const success = [called("a"), returned("a", { reportedCostUsd: 0.1 })]
+  for (const failure of [{ usage: {} }, { reportedCostUsd: 0.3 }]) {
+    const events = [...success, called("b"), returned("b", { ...failure, outcome: "failed" })]
+    expect(costsOf(events).total).toEqual(costsOf(success).total)
+    expect(costsOf(events).attempts[1]).toMatchObject({ callId: "b", outcome: "failed" })
+    expect(costsOf(JSON.parse(JSON.stringify(events)))).toEqual(costsOf(events))
+  }
+  const failed = [called("b"), returned("b", { outcome: "failed", usage: {} })]
+  expect(costsOf(failed).total).toEqual({ reportedUsd: 0, estimatedUsd: 0 })
+  expect(costsOf([...failed, called("pending")]).total).toEqual({})
 })

@@ -38,9 +38,9 @@ const makeHost = (react: TestInference["react"], allowance = limit) => createHos
 
 test("completed catalog cost blocks the fifth attempt and survives replay", async () => {
   let calls = 0
-  const react: TestInference["react"] = () => Effect.sync(() => {
+  const react: TestInference["react"] = (_request, key) => Effect.sync(() => {
     calls++
-    return { kind: "fail", retryable: true, error: { message: "busy" }, usage: { inputTokens: { total: 1234 }, outputTokens: { total: 1239 } } }
+    return { kind: "calls", calls: [{ callId: `${key}/read`, name: "ghost", arguments: {} }], usage: { inputTokens: { total: 1234 }, outputTokens: { total: 1239 } } }
   })
   const host = makeHost(react)
   await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
@@ -73,7 +73,7 @@ test("unknown usage blocks further execution while a completed result still sett
     const host = makeHost(() => Effect.sync(() => {
       calls++
       return complete ? { kind: "complete" as const, output: "done" }
-        : { kind: "fail" as const, retryable: true, error: { message: "busy" } }
+        : { kind: "calls" as const, calls: [{ callId: "read", name: "ghost", arguments: {} }] as const }
     }))
     await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
     await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "go", at: 1 })
@@ -89,7 +89,7 @@ test("an attempt at exactly the limit runs, then blocks further work", async () 
   const perAttempt = 1234 * 0.0000025 + 1239 * 0.00001
   const host = makeHost(() => Effect.sync(() => {
     calls++
-    return { kind: "fail", retryable: true, error: { message: "busy" }, usage: { inputTokens: { total: 1234 }, outputTokens: { total: 1239 } } }
+    return { kind: "calls", calls: [{ callId: `read-${calls}`, name: "ghost", arguments: {} }], usage: { inputTokens: { total: 1234 }, outputTokens: { total: 1239 } } }
   }), perAttempt)
   await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
   await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "go", at: 1 })
@@ -121,7 +121,7 @@ test("turn and lifetime limits both govern inference across turns and restart", 
       pricing: () => Effect.succeed({ promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }),
       react: () => Effect.sync(() => {
         calls++
-        return { kind: "fail", retryable: true, error: { message: "busy" }, usage: { inputTokens: { total: 20 }, outputTokens: { total: 0 } } }
+        return { kind: "calls", calls: [{ callId: `read-${calls}`, name: "ghost", arguments: {} }], usage: { inputTokens: { total: 20 }, outputTokens: { total: 0 } } }
       })
     })
   })
@@ -145,4 +145,31 @@ test("turn and lifetime limits both govern inference across turns and restart", 
   await resumed.drive()
   expect(calls).toBe(3)
   expect(resumed.read("root").filter(event => event.type === "TurnFailed")).toHaveLength(4)
+})
+
+
+test("excluded failures preserve catalog spend and permit budgeted retry", async () => {
+  let calls = 0
+  const host = makeHost(() => Effect.sync(() => {
+    calls++
+    return calls === 1
+      ? { kind: "fail" as const, retryable: true, error: { message: "busy" } }
+      : { kind: "complete" as const, output: "done", usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } } }
+  }), limit)
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
+  host.seed("root", [
+    { type: "MessageReceived", id: "previous", text: "go", at: 0 },
+    { type: "ModelCalled", callId: "previous/infer/0", ordinal: 0, turn: "previous", pricing: { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }, at: 1 },
+    { type: "ModelReturned", callId: "previous/infer/0", ordinal: 0, turn: "previous", outcome: "returned", usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } }, at: 2 },
+    { type: "TurnCompleted", turn: "previous", output: "done", at: 3 }
+  ])
+  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "go", at: 4 })
+  await host.drive()
+  const log = host.read("root")
+  expect(calls).toBe(2)
+  expect(log.filter(event => event.type === "BudgetExhausted")).toHaveLength(0)
+  expect(log.filter(event => event.type === "TurnCompleted" && event.turn === "m1")).toHaveLength(1)
+  expect(usageIn(log).estimatedCostUsd).toBeCloseTo(0.020075)
+  const first = log.findIndex(event => event.type === "ModelReturned" && event.outcome === "failed")
+  expect(usageIn(log.slice(0, first + 1)).estimatedCostUsd).toBeCloseTo(0.02)
 })

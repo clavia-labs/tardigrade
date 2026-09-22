@@ -35,7 +35,7 @@ test.each([false, true])("physical attempts commit separately and recovery uses 
   const log = JSON.parse(JSON.stringify(host.read("root"))) as ReturnType<typeof host.read>
   expect(keys).toEqual(["m1/infer/0", "m1/infer/1"])
   expect(log.filter((e) => e.type === "ModelReturned").map((e) => e.outcome)).toEqual(["failed", exhausted ? "failed" : "returned"])
-  expect(usageIn(log, "m1")).toMatchObject({ promptTokens: 200, completionTokens: exhausted ? 40 : 50 })
+  expect(usageIn(log, "m1")).toMatchObject({ promptTokens: exhausted ? 0 : 100, completionTokens: exhausted ? 0 : 30 })
   const first = log.findIndex((e) => e.type === "ModelReturned")
   let resumedCalls = 0
   const resumed = makeHost({ policy: () => Effect.succeed({ ...policy, retry: { ...policy.retry, backoffMs: [0, 0, 0, 0] } }), react: (request, key) => Effect.sync(() => {

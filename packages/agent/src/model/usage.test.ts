@@ -225,3 +225,13 @@ test("pricing is derived from the accounting snapshot without changing response 
   expect(usageIn(log, "m1")).toMatchObject({ estimatedCostUsd: 140 })
   expect(usage).not.toHaveProperty("costUsd")
 })
+
+
+test("usage aggregation excludes failed attempts from totals", () => {
+  const success = { type: "ModelReturned", callId: "a", turn: "t", outcome: "returned", usage: { promptTokens: 10, completionTokens: 5, reportedCostUsd: 0.1 }, at: 1 }
+  const failed = { type: "ModelReturned", callId: "b", turn: "t", outcome: "failed", usage: {}, at: 2 }
+  expect(usageIn([failed], "t")).toMatchObject({ costUsd: 0, reportedCostUsd: 0, estimatedCostUsd: 0 })
+  expect(usageIn([success, failed], "t")).toEqual(usageIn([success], "t"))
+  const billedFailure = { ...failed, usage: success.usage }
+  expect(usageIn([success, billedFailure], "t").reportedCostUsd).toBe(0.1)
+})

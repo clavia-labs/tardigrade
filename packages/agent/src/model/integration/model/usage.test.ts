@@ -64,6 +64,10 @@ for (const outcome of ["success", "refused", "truncated", "trailing-data", "unre
         at: 1
       })
     ], "m1")
+    if (action.kind === "fail") {
+      expect(accounting).toMatchObject({ reportedCostUsd: 0, estimatedCostUsd: 0 })
+      return
+    }
     expect(accounting).toMatchObject({
       promptTokens: 10,
       completionTokens: 5,
