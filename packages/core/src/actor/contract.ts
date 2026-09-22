@@ -1,7 +1,6 @@
-import { machineOf, registerComponent } from "../component/runtime"
 import { targetCoordinate, targetMethods, type ThreadTarget } from "./target"
 import type { ActorMethodDeclaration, ActorMethods } from "./method"
-import type { Component, ComponentRequirements } from "@clavia/tardigrade-core/component"
+import type { Component } from "@clavia/tardigrade-core/component"
 
 export const COMPONENT_CONTRACT = Symbol.for("tardigrade.component.contract")
 
@@ -63,38 +62,6 @@ export const inheritComponentContract = <C extends Component<unknown, unknown>>(
     handles: [...new Set([...inherited.handles, ...own.handles])],
     calls: [...new Set([...inherited.calls, ...own.calls])]
   })
-}
-
-// inheritComponent carries a child's method seams and cancellation obligations through a transparent wrapper.
-export function inheritComponent<C extends Component<unknown, unknown>>(
-  component: C,
-  child: Component<unknown, ComponentRequirements<C>>
-): WithComponentContract<C>
-export function inheritComponent<V, R, Result = never>(
-  component: Component<V, R, Result>,
-  child: Component<unknown, R>
-): WithComponentContract<Component<V, R, Result>> {
-  const own = machineOf(component)
-  const inherited = machineOf(child)
-  return inheritComponentContract(registerComponent(component, {
-    initial: () => ({ own: own.initial(), inherited: inherited.initial() }),
-    step: (state, event) => {
-      const current = state as { readonly own: unknown; readonly inherited: unknown }
-      return {
-        own: own.step(current.own, event),
-        inherited: inherited.step(current.inherited, event)
-      }
-    },
-    output: (state) => {
-      const current = state as { readonly own: unknown; readonly inherited: unknown }
-      const output = own.output(current.own)
-      const cleanup = [inherited.output(current.inherited).interactions?.cancel, output.interactions?.cancel].filter(cancel => cancel !== undefined)
-      return cleanup.length === 0 ? output : {
-        ...output,
-        interactions: { ...output.interactions, cancel: (cancellation: import("../interaction/events").InvocationCancellation) => cleanup.flatMap(cancel => cancel(cancellation)) }
-      }
-    }
-  }), child)
 }
 
 const updateComponentContract = <C extends Component<unknown, unknown>>(

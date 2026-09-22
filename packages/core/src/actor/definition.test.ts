@@ -13,7 +13,7 @@ import { actorMethod, actorMethodsOf } from "./method"
 import { legacyActorMethod } from "./method-compat"
 import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "../interaction/cancellation"
 import { alarmFired } from "../interaction/timeout"
-import { calls, externallyHandled, handles, withComponentContract, inheritComponentContract, inheritComponent, EMPTY_COMPONENT_CONTRACT, COMPONENT_CONTRACT, type ComponentContract, type CallerRef } from "./contract"
+import { calls, externallyHandled, handles, withComponentContract, inheritComponentContract, EMPTY_COMPONENT_CONTRACT, COMPONENT_CONTRACT, type ComponentContract, type CallerRef } from "./contract"
 
 const component = legacyComponent({ name: "inspect", derive: () => ({ view: undefined, transitions: [] }) })
 const methods = actorMethodsOf({
@@ -221,12 +221,7 @@ test("contract helpers preserve machine methods and concrete component fields", 
     expectTypeOf<ComponentResult<typeof result>>().toEqualTypeOf<{ readonly error: string }>()
     expect(machineOf(result)).toBe(machineOf(source))
   }
-  const inherited = inheritComponent(source, component)
-  expectTypeOf(inherited.label).toEqualTypeOf<"files">()
-  expectTypeOf<ComponentResult<typeof inherited>>().toEqualTypeOf<{ readonly error: string }>()
-  expectTypeOf(machineOf(inherited).output(machineOf(inherited).initial()).view).toEqualTypeOf<{ count: number }>()
-  expect(machineOf(inherited).output(machineOf(inherited).initial()).interactions?.cancel).toBeDefined()
-  expect(machineOf(inherited).output(machineOf(inherited).initial()).view).toEqual({ count: 0 })
+
 })
 
 
@@ -240,7 +235,6 @@ test("contract helpers replace narrowed contract types while preserving componen
   const decorated = [
     withComponentContract(source, EMPTY_COMPONENT_CONTRACT),
     inheritComponentContract(source, component),
-    inheritComponent(source, component),
     handles(methods.inspect, source),
     externallyHandled(methods.inspect, source),
     calls(caller, methods.inspect, source)
@@ -252,7 +246,7 @@ test("contract helpers replace narrowed contract types while preserving componen
   }
   expect(decorated[0][COMPONENT_CONTRACT]).toBe(EMPTY_COMPONENT_CONTRACT)
   expect(decorated[0][COMPONENT_CONTRACT]).not.toHaveProperty("marker")
-  expect(decorated[3][COMPONENT_CONTRACT].handles).toEqual([{ method: methods.inspect, handling: "local" }])
+  expect(decorated[2][COMPONENT_CONTRACT].handles).toEqual([{ method: methods.inspect, handling: "local" }])
   expect(source[COMPONENT_CONTRACT].handles).toEqual([])
 })
 

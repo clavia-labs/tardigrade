@@ -20,6 +20,7 @@ export const validateView = (view: unknown): void => {
       for (const entry of Set.prototype.values.call(value)) visit(entry, `${path}.value`)
       intrinsic = Set.prototype
     } else if (HashMap.isHashMap(value)) {
+      // TODO: Check attached properties on Effect collections and traverse with trusted iterators without invoking accessors.
       for (const [key, entry] of value) {
         visit(key, `${path}.key`)
         visit(entry, `${path}.value`)
