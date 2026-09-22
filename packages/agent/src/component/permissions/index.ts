@@ -10,7 +10,7 @@ import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
 import { actorInvocationContextOf } from "@clavia/tardigrade-core/interaction/invocation"
-import { calls, component, type Component, type ComponentReadonly, type ComponentWork, type ComponentOutput } from "@clavia/tardigrade-core/actor"
+import { calls, component, type Component, type ChildOf, type ComponentReadonly, type ComponentWork, type ComponentOutput } from "@clavia/tardigrade-core/actor"
 import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self, type Transition } from "@clavia/tardigrade-core/runtime"
 import type { AgentView } from "../view"
@@ -51,7 +51,7 @@ export type PermissionsComponent<R = never, V extends object = AgentView, Result
   Component<V & PermissionState, R, Result, PermissionInteractions>
 
 interface Request {
-  readonly context: TransitionContext
+  readonly context: TransitionContext | undefined
   readonly subject: PermissionSubject | undefined
   readonly invocation: InvocationRef | undefined
 }
@@ -82,23 +82,31 @@ export const permissions = <V extends object, R, Result, I>(
   child: Component<V, R, Result, I>,
   options: PermissionsOptions<NoInfer<V>, NoInfer<R>, NoInfer<Result>>
 ): PermissionsComponent<R | Router | Self, V, Result> => {
-  const pending = component({
-    name: "permissions",
-    children: child,
-    initial: () => ({ log: Chunk.empty<Event>(), requests: HashMap.empty<string, Request>() }),
-    step: (state, event, context, child) => {
-      let requests = state.requests
-      const output = child.output()
-      for (const work of output.transitions) {
-        if (work.respond === undefined || HashMap.has(requests, work.key)) continue
+  const classify = (requests: HashMap.HashMap<string, Request>, current: ChildOf<typeof child>, context?: TransitionContext) => {
+    const output = current.output()
+    for (const work of output.transitions) {
+      if (work.respond === undefined) continue
+      const previous = Option.getOrUndefined(HashMap.get(requests, work.key))
+      if (previous === undefined) {
         requests = HashMap.set(requests, work.key, {
           context,
           subject: options.request(work, output.view),
           invocation: work.invocation
         })
+      } else if (previous.context === undefined && context !== undefined) {
+        requests = HashMap.set(requests, work.key, { ...previous, context })
       }
-      return { log: Chunk.append(state.log, event), requests }
-    },
+    }
+    return requests
+  }
+  const pending = component({
+    name: "permissions",
+    children: child,
+    initial: child => ({ log: Chunk.empty<Event>(), requests: classify(HashMap.empty(), child) }),
+    step: (state, event, context, child) => ({
+      log: Chunk.append(state.log, event),
+      requests: classify(state.requests, child, context)
+    }),
 
     output: (state, child): ComponentOutput<V & PermissionState, R | Router | Self, Result, PermissionInteractions> => {
       const output = child.output()
@@ -121,8 +129,9 @@ export const permissions = <V extends object, R, Result, I>(
         } as V & PermissionState,
         transitions: output.transitions.flatMap((work): ReadonlyArray<ComponentWork<R | Router | Self, Result>> => {
           const request = Option.getOrUndefined(HashMap.get(state.requests, work.key))
-          if (work.respond === undefined || request?.subject === undefined)
-            return [work]
+          if (work.respond === undefined) return [work]
+          if (request === undefined) return []
+          if (request.subject === undefined) return [work]
           const decision = decisionOf(work.key)
           if (decision === undefined)
             return []
@@ -137,7 +146,7 @@ export const permissions = <V extends object, R, Result, I>(
         interactions: {
           escalate: (authority) => output.transitions.flatMap((work): ReadonlyArray<Transition<never, Router | Self>> => {
             const request = Option.getOrUndefined(HashMap.get(state.requests, work.key))
-            if (request?.subject === undefined || decisionOf(work.key) !== undefined)
+            if (request?.subject === undefined || request.context === undefined || decisionOf(work.key) !== undefined)
               return []
             const { subject, context, invocation } = request
             const id = decisionId(work.key)

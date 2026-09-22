@@ -1,5 +1,7 @@
 import { replayProjection } from "@clavia/tardigrade-core/projection"
 import { withResponse } from "@clavia/tardigrade-core/component"
+import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { eventAt } from "@clavia/tardigrade-core/event"
 import { component } from "@clavia/tardigrade-core/actor"
 import { Context } from "effect"
 import { expect, expectTypeOf, test } from "bun:test"
@@ -12,6 +14,30 @@ const permissionOptions = {
   request: () => undefined,
   onDenied: () => undefined
 }
+
+test.each([true, false])("initial work is classified before exposure (approval required: %s)", required => {
+  let checks = 0
+  const context = bindTransitionContext(eventAt({ type: "Ready" }, 1), "initial-worker")
+  const work = withResponse(context.intent("work", { type: "Worked" }),
+    (result: { error: string }) => context.intent("response", { type: "Finished", ...result }))
+  const responseKey = work.respond({ error: "no" }).key
+  const child = component({
+    name: "initial-worker",
+    initial: () => true,
+    step: (pending, event) => event.type === "Finished" ? false : pending,
+    output: pending => ({ view: {}, transitions: pending ? [work] : [] })
+  })
+  const machine = machineOf(permissions(child, {
+    request: () => { checks++; return required ? { action: "write", reason: "Approval needed" } : undefined },
+    onDenied: (reason, respond) => respond({ error: reason })
+  }))
+  const initial = machine.initial()
+  expect(checks).toBe(1)
+  expect(machine.output(initial).transitions.map(work => work.key)).toEqual(required ? [] : [work.key])
+  const denied = replayProjection(machine, [{ type: "PermissionRequestDecided", callId: `permission/${work.key}`, granted: false, reason: "no" }])
+  expect(denied.transitions.map(work => work.key)).toEqual(required ? [responseKey] : [work.key])
+  expect(checks).toBe(2)
+})
 
 test("permissions initialize dependent children with host data", () => {
   const initialized: string[] = []
