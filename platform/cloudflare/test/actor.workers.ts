@@ -201,6 +201,17 @@ beforeAll(async () => {
 })
 
 describe("cloudflare actor", () => {
+  test("schema-2 deployment locks use shared definitions and validate selected models", async () => {
+    const scope = modelScopeFrom({
+      schema: 2,
+      providers: { openai: { protocol: "openai-responses", baseUrl: "https://api.openai.test/v1", env: ["OPENAI_API_KEY"] } },
+      models: [{ provider: "openai", model_id: "gpt-test", contextWindowTokens: 32000, maxOutputTokens: 4000 }]
+    })
+    const config = { allow: "*" as const, default: { provider: "openai", model_id: "gpt-test" }, providers: {} }
+    expect(await modelCatalogForConfig(config, scope)).toMatchObject({ providers: [{ id: "openai", models: [{ id: "gpt-test", metadata: { contextWindowTokens: 32000 } }] }] })
+    await expect(modelCatalogForConfig({ ...config, default: { provider: "openai", model_id: "missing" } }, scope)).rejects.toThrow("absent from models.lock.json")
+  })
+
   test("a deployment lock supplies only its matching model scope", async () => {
     const scope = modelScopeFrom({
       schema: 1,
@@ -213,6 +224,7 @@ describe("cloudflare actor", () => {
         providers: [{ id: "openai", name: "OpenAI", env: [], models: [{ id: "gpt-test", metadata: { contextWindowTokens: 32000, maxOutputTokens: 4000 } }] }]
       }
     })
+    if (!("catalog" in scope)) throw new Error("Expected a legacy catalog scope")
     const config = {
       default: { provider: "openai", model_id: "gpt-test" },
       allow: "*" as const,

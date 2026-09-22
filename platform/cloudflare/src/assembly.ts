@@ -1,4 +1,4 @@
-import type { ModelLock } from "@clavia/tardigrade-model/lock"
+import { modelLockOf, modelCatalogForConfig as lockedCatalogForConfig, type ModelLock, type ModelLockData } from "@clavia/tardigrade-model/lock"
 import { cloudflareDirectory } from "./transport/directory"
 import { Effect, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
@@ -65,13 +65,16 @@ export const EMPTY_MODEL_SCOPE: ModelCatalog = {
   providers: []
 }
 
-export interface DeploymentModelScope {
+interface CatalogModelScope {
   readonly configDigest: string
   readonly catalog: ModelCatalog
 }
 
-// modelScopeFrom validates the catalog snapshot embedded in a deployment model lock.
+export type DeploymentModelScope = CatalogModelScope | ModelLockData
+
+// modelScopeFrom validates shared definitions or a legacy catalog snapshot (test/actor.workers.ts).
 export const modelScopeFrom = (value: unknown): DeploymentModelScope => {
+  if (typeof value === "object" && value !== null && "schema" in value && value.schema === 2) return modelLockOf(value)
   if (
     typeof value !== "object" ||
     value === null ||
@@ -91,11 +94,15 @@ const sha256 = async (value: string): Promise<string> => {
   return `sha256:${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`
 }
 
-// modelCatalogForConfig rejects a deployment lock resolved from different model configuration.
+// modelCatalogForConfig validates policy against locked definitions or a legacy configuration digest (test/actor.workers.ts).
 export const modelCatalogForConfig = async (
   config: ModelConfig,
   scope: DeploymentModelScope
 ): Promise<ModelCatalog> => {
+  if ("schema" in scope) {
+    const { providers: _providers, ...policy } = config
+    return lockedCatalogForConfig(policy, scope)
+  }
   if (scope.configDigest !== await sha256(canonicalModelConfig(config))) {
     throw new Error("models.lock.json does not match model configuration; run `tdg models lock`")
   }

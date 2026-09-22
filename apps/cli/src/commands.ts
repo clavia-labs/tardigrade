@@ -936,7 +936,7 @@ export const modelLockCommand = Command.make("lock", { json }, (flags) =>
       try: () => writeModelLock(cli.cwd, lock),
       catch: userErrorOf
     })
-    yield* Console.log(flags.json ? jsonOf({ path, ...lock }) : `locked ${lock.catalog.providers.length} providers at ${path}`)
+    yield* Console.log(flags.json ? jsonOf({ path, ...lock }) : `locked ${Object.keys(lock.providers).length} providers at ${path}`)
   })).pipe(
     Command.withDescription("Resolve configured models from the public catalog into the deployment lock."),
     Command.withExamples([{ command: "tdg models lock", description: "Update the deployment model lock" }])

@@ -1,3 +1,4 @@
+import { modelLockService, parseModelLock } from "@clavia/tardigrade-model/lock"
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -5,8 +6,6 @@ import { join } from "node:path"
 import type { ModelConfig } from "@clavia/tardigrade-server/config"
 
 import {
-  assertModelLockCurrent,
-  modelConfigDigest,
   readModelLock,
   resolveModelLock,
   writeModelLock
@@ -59,35 +58,22 @@ describe("model lock", () => {
       fetch: (async () => Response.json(source, { headers: { etag: "catalog-7" } })) as unknown as typeof fetch
     })
 
-    expect(lock).toMatchObject({
-      schema: 1,
-      catalog: {
-        revision: "catalog-7",
-        providers: [{ id: "openai", models: [{ id: "gpt" }] }]
-      }
-    })
-    expect(lock.catalog.providers[0]?.models).toHaveLength(1)
-    expect(lock.configDigest).toBe(modelConfigDigest(config))
+    expect(lock).toMatchObject({ schema: 2, providers: config.providers, models: [{
+      provider: "openai", model_id: "gpt", contextWindowTokens: 128000, source: "https://models.dev/api.json"
+    }] })
+    expect(lock.models).toHaveLength(1)
+    expect(modelLockService(lock, config).resolve().model).toEqual(config.default!)
+
   })
 
-  test("persists the lock and detects changed configuration", async () => {
+  test("persists the shared schema and rejects invalid definitions", async () => {
     root = await mkdtemp(join(tmpdir(), "tdg-model-lock-test-"))
-    const lock = {
-      schema: 1 as const,
-      configDigest: modelConfigDigest(config),
-      catalog: {
-        source: "models.dev" as const,
-        revision: "catalog-7",
-        refreshedAt: 1,
-        status: "cached" as const,
-        providers: []
-      }
-    }
+    const lock = { schema: 2 as const, providers: config.providers, models: [{ provider: "openai", model_id: "gpt", contextWindowTokens: 128000 }] }
     await writeModelLock(root, lock)
-
     expect(await readModelLock(root)).toEqual(lock)
-    expect(() => assertModelLockCurrent(config, lock)).not.toThrow()
-    expect(() => assertModelLockCurrent({ ...config, allow: "*" }, lock)).toThrow("does not match")
+    expect(parseModelLock(JSON.stringify(lock))).toEqual(lock)
+    await expect(writeModelLock(root, { ...lock, models: [{ ...lock.models[0]!, contextWindowTokens: 0 }] })).rejects.toThrow("contextWindowTokens")
+    expect(await readModelLock(root)).toEqual(lock)
   })
 })
 
@@ -98,17 +84,16 @@ test("locks and reloads custom metadata without a registry", async () => {
     allow: "*", default: { provider: "localhost", model_id: "local" },
     providers: { localhost: {
       protocol: "openai-chat-completions", baseUrl: "http://localhost:8080/v1", env: ["API_KEY"],
-      models: { local: { metadata: { contextWindowTokens: 32768, toolCall: true } } }
+      models: { local: { metadata: { contextWindowTokens: 32768, toolCall: true }, options: { temperature: 0.2 } } }
     } }
   }
   const lock = await resolveModelLock(custom, {
     sourceUrl: "https://example.com/catalog", cachePath: join(root, "cache.json"), timeoutMillis: 1000,
     fetch: (async () => new Response("offline", { status: 503 })) as unknown as typeof fetch
   })
-  expect(lock).toMatchObject({ schema: 1, catalog: { source: "custom", providers: [{ id: "localhost", models: [{
-    id: "local", metadata: { contextWindowTokens: 32768, toolCall: true }
-  }] }] } })
+  expect(lock).toMatchObject({ schema: 2, models: [{ provider: "localhost", model_id: "local", contextWindowTokens: 32768, toolCall: true, options: { temperature: 0.2 } }] })
+  expect(lock.models[0]).not.toHaveProperty("source")
   await writeModelLock(root, lock)
   expect(await readModelLock(root)).toEqual(lock)
-  expect(() => assertModelLockCurrent(custom, lock)).not.toThrow()
+  expect(modelLockService(lock, custom).resolve().model).toEqual(custom.default!)
 })

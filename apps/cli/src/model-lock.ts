@@ -1,22 +1,15 @@
-import { createHash } from "node:crypto"
 import { readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer } from "effect"
 import { BunFileSystem } from "@effect/platform-bun"
-import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { loadModelCatalog, modelCatalogWithConfiguredModels } from "@clavia/tardigrade-server/catalog"
 import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
 import { modelCatalogScopeOf } from "@clavia/tardigrade-server/catalog-store"
-import { canonicalModelConfig, type ModelConfig } from "@clavia/tardigrade-server/config"
+import type { ModelConfig } from "@clavia/tardigrade-server/config"
 
-export const MODEL_LOCK_SCHEMA = 1
-export const MODEL_LOCK_FILE = "models.lock.json"
-
-export interface ModelLock {
-  readonly schema: typeof MODEL_LOCK_SCHEMA
-  readonly configDigest: string
-  readonly catalog: ModelCatalog
-}
+import { MODEL_LOCK_FILE, MODEL_LOCK_SCHEMA, modelLockOf, parseModelLock, type ModelLockData } from "@clavia/tardigrade-model/lock"
+export { MODEL_LOCK_FILE, emptyModelLock } from "@clavia/tardigrade-model/lock"
+export type ModelLock = ModelLockData
 
 export interface ResolveModelLockOptions {
   readonly sourceUrl: string
@@ -24,22 +17,6 @@ export interface ResolveModelLockOptions {
   readonly timeoutMillis: number
   readonly fetch?: typeof globalThis.fetch
 }
-
-export const emptyModelLock = (): ModelLock => ({
-  schema: MODEL_LOCK_SCHEMA,
-  configDigest: modelConfigDigest({ allow: "*", providers: {} }),
-  catalog: {
-    source: "models.dev",
-    revision: "empty",
-    refreshedAt: 0,
-    status: "cached",
-    providers: []
-  }
-})
-
-// modelConfigDigest identifies the visible provider and model policy resolved by one lock.
-export const modelConfigDigest = (config: ModelConfig): string =>
-  `sha256:${createHash("sha256").update(canonicalModelConfig(config)).digest("hex")}`
 
 // resolveModelLock resolves deployment model policy against one validated public catalog snapshot.
 export const resolveModelLock = async (
@@ -66,30 +43,30 @@ export const resolveModelLock = async (
   if (!selectedExists) {
     throw new Error(`default model ${selected.provider}/${selected.model_id} is absent from catalog revision ${JSON.stringify(catalog.revision)}`)
   }
-  return {
+  return modelLockOf({
     schema: MODEL_LOCK_SCHEMA,
-    configDigest: modelConfigDigest(config),
-    catalog
-  }
+    providers: Object.fromEntries(Object.entries(config.providers).map(([id, provider]) => [id, {
+      protocol: provider.protocol, baseUrl: provider.baseUrl, env: provider.env,
+      ...(provider.region === undefined ? {} : { region: provider.region })
+    }])),
+    models: catalog.providers.flatMap(provider => provider.models.map(model => {
+      const configured = config.providers[provider.id]?.models?.[model.id]
+      return {
+        ...model.metadata, provider: provider.id, model_id: model.id,
+        ...(configured?.options === undefined ? {} : { options: configured.options }),
+        ...(configured?.metadata === undefined ? { source: options.sourceUrl } : {})
+      }
+    }))
+  })
 }
 
 export const writeModelLock = async (root: string, lock: ModelLock): Promise<string> => {
   const path = resolve(root, MODEL_LOCK_FILE)
-  await writeFile(path, `${JSON.stringify(lock, null, 2)}\n`, "utf8")
+  await writeFile(path, `${JSON.stringify(modelLockOf(lock, path), null, 2)}\n`, "utf8")
   return path
 }
 
 export const readModelLock = async (root: string): Promise<ModelLock> => {
   const path = resolve(root, MODEL_LOCK_FILE)
-  const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<ModelLock>
-  if (parsed.schema !== MODEL_LOCK_SCHEMA || typeof parsed.configDigest !== "string" || parsed.catalog === undefined) {
-    throw new Error(`${MODEL_LOCK_FILE} is invalid; run \`tdg models lock\``)
-  }
-  return { schema: MODEL_LOCK_SCHEMA, configDigest: parsed.configDigest, catalog: Schema.decodeSync(ModelCatalogSchema)(parsed.catalog) }
-}
-
-export const assertModelLockCurrent = (config: ModelConfig, lock: ModelLock): void => {
-  if (lock.configDigest !== modelConfigDigest(config)) {
-    throw new Error(`${MODEL_LOCK_FILE} does not match model configuration; run \`tdg models lock\``)
-  }
+  return parseModelLock(await readFile(path, "utf8"), path)
 }

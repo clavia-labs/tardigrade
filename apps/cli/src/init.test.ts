@@ -106,7 +106,7 @@ describe("initActor", () => {
         tardie: "0.7.1-test"
       }
     })
-    expect(modelLock).toMatchObject({ schema: 1, catalog: { revision: "empty", providers: [] } })
+    expect(modelLock).toMatchObject({ schema: 2, providers: {}, models: [] })
     expect(catalogMigration).toBe(CLOUDFLARE_MODEL_CATALOG_MIGRATION)
     expect(built.manifest.name).toBe("reviewer")
   })

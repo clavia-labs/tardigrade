@@ -339,7 +339,7 @@ describe("parsing", () => {
       const modelLock = JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8")) as Record<string, unknown>
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
-      expect(modelLock).toMatchObject({ schema: 1, catalog: { revision: "catalog-test" } })
+      expect(modelLock).toMatchObject({ schema: 2, models: expect.any(Array) })
       expect(configured.lines.join("\n")).toContain("models.lock.json")
     } finally {
       await rm(cwd, { recursive: true, force: true })
