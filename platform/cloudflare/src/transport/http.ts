@@ -44,8 +44,8 @@ interface CloudflareHttpOptions {
   readonly actorName: () => string
   readonly methodsOf: (name: string) => ActorMethods | undefined
   readonly publicCatalog: (env: Env) => Promise<ModelCatalogState>
-  readonly providerAvailabilityFrom: (env: Env) => ReturnType<typeof providerAvailabilitiesOf>
-  readonly modelPolicyFrom: (env: Env) => ModelPolicy
+  readonly providerAvailabilityFrom: (env: Env) => ReturnType<typeof providerAvailabilitiesOf> | Promise<ReturnType<typeof providerAvailabilitiesOf>>
+  readonly modelPolicyFrom: (env: Env) => ModelPolicy | Promise<ModelPolicy>
   readonly directory: CloudflareDirectory
 }
 
@@ -288,8 +288,8 @@ export const cloudflareHttp = ({
       return handler(request, Context.make(WorkerEnv, env).pipe(Context.add(MethodRuntime, runtime), Context.add(CatalogDiscovery, {
         read: Effect.promise(async () => ({
           ...await publicCatalog(env),
-          availability: providerAvailabilityFrom(env),
-          policy: modelPolicyFrom(env)
+          availability: await providerAvailabilityFrom(env),
+          policy: await modelPolicyFrom(env)
         }))
       })))
     }

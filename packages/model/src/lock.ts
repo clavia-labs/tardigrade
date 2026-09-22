@@ -93,7 +93,7 @@ const requireHttpUrl = (value: string, field: string): void => {
 export const modelLockOf = (value: unknown, path = MODEL_LOCK_FILE): ModelLockData => {
   try {
     const version = recordOf(value)?.schema
-    if (version === 1) throw new Error("schema 1 is unsupported. Run `tdg setup` to migrate saved definitions offline, or `tdg models lock` to migrate and refresh")
+    if (version === 1) throw new Error("schema 1 requires manifest provider definitions; use upgradeModelLock or run `tdg models lock`")
     if (typeof version === "number" && version !== MODEL_LOCK_SCHEMA) throw new Error(`unsupported schema ${version}; this runtime supports schema ${MODEL_LOCK_SCHEMA}`)
     const lock = Schema.decodeUnknownSync(LockSchema, { onExcessProperty: "error" })(value)
     for (const [id, provider] of Object.entries(lock.providers)) {

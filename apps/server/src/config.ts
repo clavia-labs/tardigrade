@@ -1,4 +1,3 @@
-import { lockedModelConfigOf, type ModelLockData } from "@clavia/tardigrade-model/lock"
 import { modelCredentialsFrom, modelConfigOf, type ModelConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
 export { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
 import { Context, Layer } from "effect"
@@ -127,23 +126,26 @@ const legacyModelError = (env: Env): Error | undefined => {
   )
 }
 
-// projectConfigOf reads runnable Tardigrade settings from a Wrangler manifest.
-export const projectConfigOf = (value: unknown, lock?: ModelLockData): ProjectConfig => {
+// projectModelsOf reads model options from the host manifest (config.test.ts).
+export const projectModelsOf = (value: unknown): unknown => {
   const source = recordOf(value)
   if (source === undefined) throw new Error("project configuration must be a JSON object")
-  if (source["models"] !== undefined) {
-    throw new Error(`models must be nested under vars.${TARDIGRADE_CONFIG_VAR}`)
-  }
+  if (source["models"] !== undefined) throw new Error(`models must be nested under vars.${TARDIGRADE_CONFIG_VAR}`)
   const varsValue = source["vars"]
-  if (varsValue === undefined) return { models: (lock === undefined ? modelConfigOf(DEFAULT_MODEL_POLICY) : lockedModelConfigOf(DEFAULT_MODEL_POLICY, lock)) }
+  if (varsValue === undefined) return DEFAULT_MODEL_POLICY
   const vars = recordOf(varsValue)
   if (vars === undefined) throw new Error("vars must be a JSON object")
   const configValue = vars[TARDIGRADE_CONFIG_VAR]
-  if (configValue === undefined) return { models: (lock === undefined ? modelConfigOf(DEFAULT_MODEL_POLICY) : lockedModelConfigOf(DEFAULT_MODEL_POLICY, lock)) }
+  if (configValue === undefined) return DEFAULT_MODEL_POLICY
   const config = recordOf(configValue)
   if (config === undefined) throw new Error(`${TARDIGRADE_CONFIG_VAR} must be a JSON object`)
-  const models = config["models"] ?? DEFAULT_MODEL_POLICY
-  return { models: lock === undefined ? modelConfigOf(models) : lockedModelConfigOf(models, lock) }
+  return config["models"] ?? DEFAULT_MODEL_POLICY
+}
+
+// projectConfigOf resolves runnable settings from a Wrangler manifest (config.test.ts).
+export const projectConfigOf = (value: unknown): ProjectConfig => {
+  const models = projectModelsOf(value)
+  return { models: modelConfigOf(models) }
 }
 
 const modelFrom = (env: Env, project: ProjectConfig): ModelConfig => {

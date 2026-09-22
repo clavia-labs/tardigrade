@@ -1,4 +1,5 @@
-import { ModelLock, MODEL_LOCK_FILE, parseModelLock, emptyModelLock, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
+import { modelLockSourceOf, upgradeModelLock } from "@clavia/tardigrade-model/lock-compat"
+import { ModelLock, MODEL_LOCK_FILE, lockedModelConfigOf, emptyModelLock, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Layer } from "effect"
@@ -10,7 +11,7 @@ import type { LanguageModel } from "effect/unstable/ai"
 import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import { catalogDiscoveryOf } from "@clavia/tardigrade-http/models"
-import { projectConfigOf, projectConfigPathOf, readConfig } from "./config"
+import { projectModelsOf, projectConfigPathOf, readConfig } from "./config"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 
 type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel | ModelLock>
@@ -32,10 +33,11 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   }
   const path = resolve(dirname(configPath instanceof URL ? fileURLToPath(configPath) : configPath), MODEL_LOCK_FILE)
   const file = Bun.file(path)
-  const definitions = await file.exists() ? parseModelLock(await file.text(), path)
+  const models = projectModelsOf(exists ? Bun.JSONC.parse(await projectFile.text()) : {})
+  const definitions = await file.exists() ? await upgradeModelLock(modelLockSourceOf(await file.json(), path), models, path)
     : !exists ? emptyModelLock()
     : (() => { throw new Error(`${path} is missing; run \`tdg models lock\``) })()
-  const project = projectConfigOf(exists ? Bun.JSONC.parse(await projectFile.text()) : {}, definitions)
+  const project = { models: lockedModelConfigOf(models, definitions) }
   const config = readConfig(options.env, project)
   const { providers: _providers, ...policy } = config.model
   const snapshot = { snapshot: await modelCatalogForConfig(policy, definitions) }

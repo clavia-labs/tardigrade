@@ -1,3 +1,5 @@
+import { canonicalModelConfig, modelConfigOf } from "@clavia/tardigrade-model/config"
+import { sha256Of } from "@clavia/tardigrade-model/digest"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { expect, test, spyOn } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
@@ -83,6 +85,31 @@ test("Bun model services reject missing and malformed locks beside the configure
     await expect(bunModelServices({ configFile, env: {} })).rejects.toThrow("models.lock.json is missing")
     await writeFile(join(directory, "models.lock.json"), JSON.stringify({ schema: 2, providers: {}, models: [{ provider: "custom", model_id: "model", contextWindowTokens: 0 }] }))
     await expect(bunModelServices({ configFile, env: {} })).rejects.toThrow("contextWindowTokens")
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("Bun upcasts a legacy lock at startup without changing the saved file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "model-lock-v1-"))
+  try {
+    const models = modelConfigOf({ allow: "*", default: { provider: "custom", model_id: "small" }, providers: {
+      custom: { protocol: "openai-chat-completions", baseUrl: "https://custom.test/v1", env: ["CUSTOM_KEY"] }
+    } })
+    const configFile = join(directory, "wrangler.jsonc")
+    await writeFile(configFile, JSON.stringify({ vars: { TARDIGRADE_CONFIG: { models } } }))
+    const legacy = { schema: 1, configDigest: await sha256Of(canonicalModelConfig(models)), catalog: {
+      source: "custom", revision: "saved", refreshedAt: 1, status: "cached",
+      providers: [{ id: "custom", name: "Custom", env: [], models: [{ id: "small", metadata: { contextWindowTokens: 32000 } }] }]
+    } }
+    const path = join(directory, "models.lock.json")
+    await writeFile(path, JSON.stringify(legacy))
+    const services = await bunModelServices({ configFile, env: { CUSTOM_KEY: "fixture" } })
+    const lock = await Effect.runPromise(ModelLock.pipe(Effect.provide(services.layers)))
+    expect(lock.definitions.schema).toBe(2)
+    expect(lock.resolve().contextWindowTokens).toBe(32000)
+    expect(services.config.model.providers.custom?.baseUrl).toBe("https://custom.test/v1")
+    expect(await Bun.file(path).json()).toEqual(legacy)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
