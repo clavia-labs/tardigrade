@@ -22,7 +22,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import { ObjectStorage } from "../src/object/storage"
 import { objectStorageFromKeyValueStore } from "../src/object/key-value"
 import type { MessageContent } from "../src/log/message"
-import { CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
+import { CurrentModel } from "@clavia/tardigrade-model/settings"
 import type { ModelRef } from "@clavia/tardigrade-model/reference"
 import { unknownModelError } from "@clavia/tardigrade-model/error"
 import { renderMessages } from "../src/projection/messages"
@@ -294,7 +294,6 @@ for (const explicit of [false, true]) {
         expect(model).toEqual(selected)
         return Effect.succeed({ kind: "complete", output: "A compact summary." })
       })),
-      Effect.provideService(ModelSelection, { resolve: () => { throw new Error("Execution must not select a model") } }),
       Effect.provideService(ModelLock, lock),
       Effect.provideService(EventLog, withWatermark({ read: Effect.succeed(openTurn(16)), append: () => Effect.die("The proposal returns completion events") })),
       Effect.provideService(Self, { actor: "test", instance: "main", thread: "compaction" })
@@ -367,7 +366,7 @@ const checkModelCapacity = async ({ capacity, previousCapacity, summaryCapacity,
   const resolve = (reference = { provider: "test", model_id: "host-default" }) => ({
     model: reference, contextWindowTokens: reference.model_id === "small" ? capacity : reference.model_id === "large" ? previousCapacity : summaryCapacity
   })
-  const selection = Layer.mergeAll(Layer.succeed(ModelSelection, { resolve }), Layer.succeed(ModelLock, testModelLock(resolve)))
+  const selection = Layer.succeed(ModelLock, testModelLock(resolve))
   const agent = assembled(infer([compact(messages(), { triggerRatio: fireRatio, retainRatio: keepRatio, ...(mode === "explicit" ? { model: { provider: "test", model_id: "summary" } } : {}) }), nativeOutput], TEST_MODEL))
   const events = await run(Effect.gen(function* () {
     yield* receive(agent, { id: "large-turn", text: "x".repeat(historySize), model: { provider: "test", model_id: "large" } })

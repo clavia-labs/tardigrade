@@ -1,3 +1,4 @@
+import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
 import { expect, test } from "bun:test"
 import { Effect, Layer, Redacted, Result, Schema } from "effect"
@@ -62,7 +63,7 @@ test("compat: host fails truncated JSON once and retains usage", async () => {
   const binding = modelLayer({ model: { default: reference, allow: "*", providers: { gateway: { baseUrl: "https://fixture.invalid/v1", protocol: "openai-chat-completions", env: ["KEY"] } } }, modelCredentials: { KEY: "private-key" } }, { snapshot: { source: "models.dev", revision: "r1", refreshedAt: 1, status: "fresh", providers: [{ id: "gateway", name: "Gateway", env: [], models: [{ id: "gateway-model", metadata: { contextWindowTokens: 200000, maxOutputTokens: 150 } }] }] } }, { configure: () => ({ reportedCostUsd: (finish) => { const cost = finish.metadata.openai?.usage?.cost; return typeof cost === "number" ? cost : undefined }, compat: { max_output_tokens: 200 }, retry: { backoffMs: [] } }) })
   const action = await Effect.runPromise(Effect.gen(function* () {
     const infer = yield* inferenceClient
-    expect(infer.resolve?.().model).toEqual(reference)
+    expect((yield* ModelLock).resolve().model).toEqual(reference)
     return yield* infer.react({ model: reference, identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] })
   }).pipe(Effect.provide(binding), Effect.provideService(FetchHttpClient.Fetch, fetch)))
   expect(limits).toEqual([150])

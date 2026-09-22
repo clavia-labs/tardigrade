@@ -164,16 +164,6 @@ export const modelLayerWith = (
     return { ...authority, ...(config.model.fallback === undefined ? {} : { fallback: config.model.fallback }), ...(config.model.default === undefined ? {} : { default: config.model.default }) }
   }
   const selection = Layer.succeed(ModelSelection, {
-    resolve: (reference) => {
-      const selected = select(reference)
-      return {
-        model: { provider: selected.provider, model_id: selected.model_id },
-        models: availableModels(),
-        contextWindowTokens: selected.contextWindowTokens,
-        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
-        catalogRevision: selected.catalogRevision
-      }
-    },
     settings: (reference) => Effect.suspend(() => {
       const selected = select(reference)
       return BindingSettings.pipe(Effect.provide(bindingFor(selected)))

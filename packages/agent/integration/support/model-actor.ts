@@ -16,7 +16,7 @@ import { BindingSettings } from "@clavia/tardigrade-agent/model/execution/settin
 // runModelActor runs a model request through a hosted infer component.
 export const runModelActor = (binding: Effect.Success<typeof inferenceClient>, ...args: Parameters<typeof binding.react>): Effect.Effect<Action> => Effect.promise(async (): Promise<Action> => {
   const [request, , , onDelta] = args
-  const model = request.model ?? binding.resolve().model
+  const model = request.model ?? binding.model
   const definition = actor({
     name: "binding-test",
     methods: agentMethods,
@@ -41,7 +41,7 @@ export const runModelActor = (binding: Effect.Success<typeof inferenceClient>, .
     ], { models: { default: model, allow: "*" } })]
   })
   const observed = onDelta === undefined ? binding.layer : Layer.merge(binding.layer, Layer.effect(BindingSettings, Effect.map(BindingSettings, (settings) => ({ ...settings, observer: { onDelta: (delta: import("@clavia/tardigrade-agent/model/observer").InferDelta) => Effect.sync(() => onDelta(delta)) } })).pipe(Effect.provide(binding.layer))))
-  const host = createHost({ actorName: "binding-test", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, observed, Layer.succeed(ModelLock, testModelLock(binding.resolve))) })
+  const host = createHost({ actorName: "binding-test", actorFor: () => definition, layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, observed, Layer.succeed(ModelLock, testModelLock((reference = model) => ({ model: reference, contextWindowTokens: 128_000 })))) })
   await host.allocate({ kind: "root", coordinate: { actor: "binding-test", instance: "main", thread: "root" } })
   host.seed("root", request.trajectory.length === 0 ? [{ type: "MessageReceived", id: request.identity.turn, text: "Read", at: 1 }] : request.trajectory)
   await host.wake("root")

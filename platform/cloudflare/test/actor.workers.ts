@@ -1,4 +1,4 @@
-import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
+import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { threadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
@@ -250,18 +250,17 @@ describe("cloudflare actor", () => {
       if (previousModel === undefined) delete mountedActor!.model
       else mountedActor!.model = previousModel
     }
-    const binding = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
+    const binding = await Effect.runPromise(ModelLock.pipe(Effect.provide(
       modelLayer(modelsFrom(env as Env, config), scope.catalog)
     )))
     expect(binding.resolve()).toMatchObject({
       model: config.default,
-      catalogRevision: "bundled",
       contextWindowTokens: 32000,
-      maxOutputTokens: 4000,
       models: { allow: [{ provider: "openai", model_ids: ["gpt-test"] }] }
     })
-    expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
-    const restricted = await Effect.runPromise(inferenceClient.pipe(Effect.provide(
+    expect(binding.definitions.models).toContainEqual(expect.objectContaining({ ...config.default, maxOutputTokens: 4000 }))
+    expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("excluded by the host model policy")
+    const restricted = await Effect.runPromise(ModelLock.pipe(Effect.provide(
       modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog)
     )))
     expect(() => restricted.resolve()).toThrow("excluded by the host model policy")

@@ -11,7 +11,7 @@ export const inferenceClient = Effect.gen(function* () {
   const registry = yield* ModelSelection
   return {
     layer: Layer.succeedContext(context),
-    resolve: registry.resolve ?? (() => ({ model: { provider: settings.provider, model_id: settings.model } })),
+    model: { provider: settings.provider, model_id: settings.model },
     policy: () => Effect.succeed(settings.policy),
     pricing: () => Effect.succeed(settings.pricing),
     react: (...args: Parameters<typeof react>) => Effect.gen(function* () {

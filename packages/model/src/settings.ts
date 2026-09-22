@@ -1,7 +1,6 @@
 import { Context, Effect, type SchemaRepresentation } from "effect"
 import type { Response } from "effect/unstable/ai"
 import type { ModelRef } from "./reference"
-import type { ModelResolution } from "./reference"
 import type { ModelPricing } from "./pricing"
 import type { InferenceObserver } from "./stream/observer"
 import type { OutputCapability } from "./output"
@@ -26,9 +25,8 @@ export const BindingSettings = Context.Reference<BindingOptions>("tardie/Binding
 })
 export const CurrentModel = Context.Reference<ModelRef | undefined>("tardie/CurrentModel", { defaultValue: () => undefined })
 export const ProviderRequestKey = Context.Reference<string | undefined>("tardie/model/ProviderRequestKey", { defaultValue: () => undefined })
-// ModelSelection supplies catalog authority and settings independently of inference.
+// ModelSelection supplies execution settings for the selected model.
 export const ModelSelection = Context.Reference<{
-  readonly resolve?: (model?: ModelRef) => ModelResolution
   readonly settings?: (model?: ModelRef) => Effect.Effect<BindingOptions>
 }>("tardie/ModelSelection", { defaultValue: () => ({}) })
 

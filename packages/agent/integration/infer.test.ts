@@ -86,7 +86,6 @@ const viewComponent = (
 test("a turn without any applicable default durably asks for a model reference", async () => {
     let calls = 0
     const mind = testInferenceLayer( {
-      resolve: null,
       react: () => {
         calls += 1
         return Effect.succeed({ kind: "complete" as const, output: "done" })

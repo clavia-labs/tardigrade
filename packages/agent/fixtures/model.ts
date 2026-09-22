@@ -15,7 +15,7 @@ import { BindingInvocation, BindingSettings, ModelSelection } from "../src/model
 
 export interface TestInference {
   readonly output?: import("../src/model/execution/output").OutputCapability
-  readonly resolve?: ((model?: ModelRef) => ModelResolution) | null
+  readonly resolve?: (model?: ModelRef) => ModelResolution
   readonly policy?: (model?: ModelRef) => Effect.Effect<RequestPolicy | undefined>
   readonly pricing?: (model?: ModelRef) => Effect.Effect<ModelPricing | undefined>
   readonly react: (request: InferRequest, key?: string, signal?: AbortSignal, onDelta?: (delta: InferDelta) => void) => Effect.Effect<Action | LegacyCallAction>
@@ -31,10 +31,6 @@ export const testModelLockLayer = Layer.succeed(ModelLock, testModelLock())
 // testInferenceLayer translates scripted outcomes into native model parts for runtime fixtures.
 export const testInferenceLayer = (script: TestInference): Layer.Layer<LanguageModel.LanguageModel | ModelLock> => {
   const selection = Layer.succeed(ModelSelection, {
-    ...(script.resolve === null ? {} : { resolve: script.resolve ?? ((model) => {
-      if (model === undefined) throw new Error("no model was selected; supply { provider, model_id } or configure a default")
-      return { model, contextWindowTokens: 128_000 }
-    }) }),
     settings: (model?: ModelRef) => Effect.gen(function* () {
       const defaults = yield* BindingSettings
       const policy = yield* (script.policy?.(model) ?? Effect.void)

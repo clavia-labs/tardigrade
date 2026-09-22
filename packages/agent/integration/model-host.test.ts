@@ -1,3 +1,4 @@
+import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { providerLayer as openaiLayer } from "@clavia/tardigrade-model/providers/openai"
 import { providerLayer as anthropicLayer } from "@clavia/tardigrade-model/providers/anthropic"
 import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
@@ -36,8 +37,10 @@ for (const provider of ["openai", "anthropic"] as const) {
     })
     const action = await Effect.runPromise(Effect.gen(function* () {
       const infer = yield* inferenceClient
-      const resolution = infer.resolve?.()
-      expect(resolution).toMatchObject({ model: reference, contextWindowTokens: 200000, maxOutputTokens: 2048, catalogRevision: "r1", models: { allow: [{ provider: reference.provider, model_ids: [reference.model_id] }] } })
+      const lock = yield* ModelLock
+      const resolution = lock.resolve()
+      expect(resolution).toMatchObject({ model: reference, contextWindowTokens: 200000, models: { allow: [{ provider: reference.provider, model_ids: [reference.model_id] }] } })
+      expect(lock.definitions.models).toContainEqual(expect.objectContaining({ ...reference, maxOutputTokens: 2048 }))
       return yield* infer.react({ model: reference, identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [{ name: "read", description: "Read", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }] }, "attempt", undefined, (delta) => direct.push(delta))
     }).pipe(Effect.provide(binding), Effect.provideService(FetchHttpClient.Fetch, fetch)))
     expect(requests).toBe(1)
@@ -50,7 +53,8 @@ for (const provider of ["openai", "anthropic"] as const) {
     const denied = modelLayer({ ...config, model: { ...config.model, allow: [] } }, catalog)
     await Effect.runPromise(Effect.gen(function* () {
       const infer = yield* inferenceClient
-      expect(() => infer.resolve?.()).toThrow("excluded")
+      const lock = yield* ModelLock
+      expect(() => lock.resolve()).toThrow("excluded")
       expect(yield* infer.react({ model: reference, identity: { actor: "test", instance: "main", thread: "root", turn: "m1" }, system: "Read", trajectory: [], tools: [] })).toMatchObject({ kind: "fail", failure: { attempts: 0 } })
     }).pipe(Effect.provide(denied)))
     expect(requests).toBe(1)

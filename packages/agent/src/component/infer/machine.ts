@@ -65,7 +65,7 @@ export const selectedModelOf = (head: Event, policy?: ModelRef): ModelRef | unde
 class ModelSelectionError extends Error {}
 
 const resolvedModelFor = (
-  resolve: ((reference?: ModelRef) => ModelResolution) | undefined,
+  resolve: Context.Service.Shape<typeof ModelLock>["resolve"],
   reference: ModelRef | undefined,
   models: ModelPolicy,
   policyError: string | undefined
@@ -74,13 +74,7 @@ const resolvedModelFor = (
   if (reference !== undefined && !modelAllowedBy(models, reference)) {
     throw new ModelSelectionError(`model ${reference.provider}/${reference.model_id} is excluded by the effective model policy`)
   }
-  const resolved = resolve?.(reference)
-  if (resolved === undefined) {
-    if (reference === undefined) {
-      throw new ModelSelectionError("no model was selected; supply { provider, model_id } or configure a default")
-    }
-    return { model: reference, models }
-  }
+  const resolved = resolve(reference)
   const allowed = applyModelPolicy(resolved.models ?? DEFAULT_MODEL_POLICY, models)
   if (!modelAllowedBy(allowed, resolved.model)) {
     throw new ModelSelectionError(`model ${resolved.model.provider}/${resolved.model.model_id} is excluded by the effective model policy`)
@@ -392,8 +386,6 @@ const inferTransitionsFor = <R>(policy: Partial<InferPolicy>, derived: InferDeri
         dueAt: pendingRetry?.dueAt,
         trajectory: derived.trajectory,
         model,
-        models,
-        policyError,
         // The declared policy, stamped on the ask: the contract's identity and the fallback the
         // assembly mounted. The mode the attempt actually ran in is the binding's to report, and
         // it lands on the consequence (events.ts, OutputPolicy; completionOf above).
