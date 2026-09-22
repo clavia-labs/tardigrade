@@ -155,6 +155,14 @@ export const lockedProvidersOf = (lock: ModelLockData): ModelConfig["providers"]
     }))
   }]))
 
+// lockedModelConfigOf resolves manifest selection against locked definitions (lock.test.ts).
+export const lockedModelConfigOf = (value: unknown, lock: ModelLockData): ModelConfig => {
+  const raw = value ?? { allow: "*" }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error("models must be a JSON object")
+  const { providers: _providers, ...policy } = raw as Record<string, unknown>
+  return modelConfigForPolicy(modelPolicyOf(policy), lock)
+}
+
 // modelConfigForPolicy checks that all explicit policy references exist in the lock (lock.test.ts).
 export const modelConfigForPolicy = (policy: ModelPolicy, lock: ModelLockData): ModelConfig => {
   const selected = modelPolicyOf(policy)

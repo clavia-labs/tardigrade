@@ -1,4 +1,5 @@
-import { modelConfigOf, type ModelConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
+import { lockedModelConfigOf, type ModelLockData } from "@clavia/tardigrade-model/lock"
+import { modelCredentialsFrom, modelConfigOf, type ModelConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
 export { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig, type ModelCredentials } from "@clavia/tardigrade-model/config"
 import { Context, Layer } from "effect"
 import {
@@ -127,35 +128,22 @@ const legacyModelError = (env: Env): Error | undefined => {
 }
 
 // projectConfigOf reads runnable Tardigrade settings from a Wrangler manifest.
-export const projectConfigOf = (value: unknown, providers?: ModelConfig["providers"]): ProjectConfig => {
+export const projectConfigOf = (value: unknown, lock?: ModelLockData): ProjectConfig => {
   const source = recordOf(value)
   if (source === undefined) throw new Error("project configuration must be a JSON object")
   if (source["models"] !== undefined) {
     throw new Error(`models must be nested under vars.${TARDIGRADE_CONFIG_VAR}`)
   }
   const varsValue = source["vars"]
-  if (varsValue === undefined) return { models: modelConfigOf(DEFAULT_MODEL_POLICY) }
+  if (varsValue === undefined) return { models: (lock === undefined ? modelConfigOf(DEFAULT_MODEL_POLICY) : lockedModelConfigOf(DEFAULT_MODEL_POLICY, lock)) }
   const vars = recordOf(varsValue)
   if (vars === undefined) throw new Error("vars must be a JSON object")
   const configValue = vars[TARDIGRADE_CONFIG_VAR]
-  if (configValue === undefined) return { models: modelConfigOf(DEFAULT_MODEL_POLICY) }
+  if (configValue === undefined) return { models: (lock === undefined ? modelConfigOf(DEFAULT_MODEL_POLICY) : lockedModelConfigOf(DEFAULT_MODEL_POLICY, lock)) }
   const config = recordOf(configValue)
   if (config === undefined) throw new Error(`${TARDIGRADE_CONFIG_VAR} must be a JSON object`)
   const models = config["models"] ?? DEFAULT_MODEL_POLICY
-  const modelRecord = recordOf(models)
-  if (modelRecord === undefined) throw new Error("models must be a JSON object")
-  return { models: modelConfigOf(providers === undefined ? models : { ...modelRecord, providers }) }
-}
-
-const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {
-  const credentials: Record<string, string> = {}
-  for (const provider of Object.values(model.providers)) {
-    for (const name of provider.env) {
-      const value = text(env, name)
-      if (value !== undefined) credentials[name] = value
-    }
-  }
-  return credentials
+  return { models: lock === undefined ? modelConfigOf(models) : lockedModelConfigOf(models, lock) }
 }
 
 const modelFrom = (env: Env, project: ProjectConfig): ModelConfig => {

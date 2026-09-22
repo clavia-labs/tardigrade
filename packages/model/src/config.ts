@@ -144,3 +144,10 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     providers
   }
 }
+
+// modelCredentialsFrom reads declared credential names without changing their precedence (lock.test.ts).
+export const modelCredentialsFrom = (model: ModelConfig, env: Readonly<Record<string, unknown>>): ModelCredentials =>
+  Object.fromEntries(Object.values(model.providers).flatMap(provider => provider.env.flatMap(name => {
+    const value = env[name]
+    return typeof value === "string" && value.trim().length > 0 ? [[name, value.trim()]] : []
+  })))

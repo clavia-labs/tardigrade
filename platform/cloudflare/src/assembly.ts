@@ -1,8 +1,9 @@
-import { lockedProvidersOf, modelConfigForPolicy, modelLockOf, modelCatalogForConfig as lockedCatalogForConfig, type ModelLock, type ModelLockData } from "@clavia/tardigrade-model/lock"
+import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
+import { lockedModelConfigOf, modelLockOf, modelCatalogForConfig as lockedCatalogForConfig, type ModelLock, type ModelLockData } from "@clavia/tardigrade-model/lock"
 import { cloudflareDirectory } from "./transport/directory"
 import { Effect, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
-import { type InferenceObserver, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
+import { type InferenceObserver, type ModelPolicy } from "@clavia/tardigrade-agent"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
@@ -10,7 +11,7 @@ import { modelLayer as configuredModelLayer, type ModelIntegrationOptions } from
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/catalog/metadata"
 import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
-import { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-model/config"
+import { modelCredentialsFrom, canonicalModelConfig, modelConfigOf, type ModelConfig } from "@clavia/tardigrade-model/config"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
 import type { ThreadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
@@ -118,62 +119,22 @@ export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolic
 export const deployed = (name: string): boolean => mountedActor?.actor.name === name
 export const directory = cloudflareDirectory(deployed)
 
-type CloudflareProvider = ModelProviderConfig & {
-  readonly apiKey: string
-}
-
-interface CloudflareModels extends ModelPolicy {
-  readonly default: ModelRef
-  readonly providers: Readonly<Record<string, CloudflareProvider>>
-}
-
-const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<string>): string => {
-  if (names.length === 0) throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(provider)} must declare env`)
-  const values = workerEnv as unknown as Readonly<Record<string, unknown>>
-  for (const name of names) {
-    const value = values[name]
-    if (typeof value === "string" && value.trim().length > 0) return value.trim()
-  }
-  throw new Error(`provider ${JSON.stringify(provider)} needs a credential; set ${names.join(" or ")} as a Worker secret or variable`)
-}
-
 export const modelConfigFrom = (env: Env): ModelConfig | undefined => {
   const rawModels = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)?.["models"]
-  if (rawModels === undefined) return undefined
   const scope = mountedActor?.modelScope
-  if (scope === undefined || !("schema" in scope)) return modelConfigOf(rawModels)
-  if (typeof rawModels !== "object" || rawModels === null || Array.isArray(rawModels)) throw new Error("models must be a JSON object")
-  const config = modelConfigOf({ ...rawModels, providers: lockedProvidersOf(scope) })
-  const { providers: _providers, ...policy } = config
-  return modelConfigForPolicy(policy, scope)
+  if (scope !== undefined && "schema" in scope) return lockedModelConfigOf(rawModels, scope)
+  return rawModels === undefined ? undefined : modelConfigOf(rawModels)
 }
 
-export const modelsFrom = (env: Env, parsed: ModelConfig | undefined): CloudflareModels | undefined => {
-  if (parsed === undefined) return undefined
-  if (parsed.default === undefined) {
-    throw new Error("TARDIGRADE_CONFIG.models must declare default { provider, model_id }")
-  }
-  const providers: Record<string, CloudflareProvider> = {}
-  for (const [name, provider] of Object.entries(parsed.providers)) {
-    providers[name] = {
-      ...provider,
-      apiKey: credentialFrom(env, name, provider.env)
-    }
-  }
-  return { default: parsed.default, allow: parsed.allow, providers }
+export const modelsFrom = (env: Env, parsed: ModelConfig | undefined): ModelHostConfig => {
+  const model = parsed ?? modelConfigOf({ allow: "*" })
+  return { model, modelCredentials: modelCredentialsFrom(model, env as unknown as Readonly<Record<string, unknown>>) }
 }
 
 export const providerAvailabilityFrom = (env: Env) => {
   const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
   const parsed = modelConfigFrom(env) ?? modelConfigOf(config?.["models"] ?? { allow: "*" })
-  const values = env as unknown as Readonly<Record<string, unknown>>
-  const credentials = Object.fromEntries(
-    Object.values(parsed.providers).flatMap((provider) => provider.env.flatMap((name) => {
-      const value = values[name]
-      return typeof value === "string" && value.trim().length > 0 ? [[name, value]] : []
-    }))
-  )
-  return providerAvailabilitiesOf(parsed, credentials)
+  return providerAvailabilitiesOf(parsed, modelCredentialsFrom(parsed, env as unknown as Readonly<Record<string, unknown>>))
 }
 
 export const modelPolicyFrom = (env: Env): ModelPolicy => {
@@ -182,17 +143,11 @@ export const modelPolicyFrom = (env: Env): ModelPolicy => {
   return { ...(parsed.default === undefined ? {} : { default: parsed.default }), allow: parsed.allow }
 }
 
-const hostModelConfig = (models: CloudflareModels | undefined) => ({
-  model: models ?? { allow: "*" as const, providers: {} },
-  modelCredentials: Object.fromEntries(Object.values(models?.providers ?? {}).flatMap((provider) =>
-    provider.env.map((name) => [name, provider.apiKey])))
-})
-
 export const modelLayer = (
-  models: CloudflareModels | undefined,
+  models: ModelHostConfig,
   scope: ModelCatalog,
   observer?: InferenceObserver
-) => configuredModelLayer(hostModelConfig(models), { snapshot: scope }, { ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
+) => configuredModelLayer(models, { snapshot: scope }, { ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
 
 const positiveInteger = (raw: string | undefined, fallback: number, name: string): number => {
   if (raw === undefined) return fallback

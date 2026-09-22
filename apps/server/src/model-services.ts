@@ -1,4 +1,4 @@
-import { ModelLock, MODEL_LOCK_FILE, parseModelLock, emptyModelLock, lockedProvidersOf, modelConfigForPolicy, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
+import { ModelLock, MODEL_LOCK_FILE, parseModelLock, emptyModelLock, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Layer } from "effect"
@@ -35,11 +35,9 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const definitions = await file.exists() ? parseModelLock(await file.text(), path)
     : !exists ? emptyModelLock()
     : (() => { throw new Error(`${path} is missing; run \`tdg models lock\``) })()
-  const project = projectConfigOf(exists ? Bun.JSONC.parse(await projectFile.text()) : {}, lockedProvidersOf(definitions))
-  const configured = readConfig(options.env, project)
-  const { providers: _providers, ...policy } = configured.model
-  const model = modelConfigForPolicy(policy, definitions)
-  const config = readConfig(options.env, { models: model })
+  const project = projectConfigOf(exists ? Bun.JSONC.parse(await projectFile.text()) : {}, definitions)
+  const config = readConfig(options.env, project)
+  const { providers: _providers, ...policy } = config.model
   const snapshot = { snapshot: await modelCatalogForConfig(policy, definitions) }
   const inference = makeInferenceStream()
   const layers = Layer.mergeAll(
