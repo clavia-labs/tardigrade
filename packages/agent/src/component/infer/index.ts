@@ -2,7 +2,9 @@ import { checkedTools, renderView } from "./view"
 export type { Rendered } from "./view"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { messages } from "../messages"
-import { AGENT_VIEW_ALGEBRA, type AgentComponent } from "../view"
+import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentView } from "../view"
+import { turnViewFrom } from "@clavia/tardigrade-code/execution/turn-projection"
+import { usageIn } from "../../model/usage"
 export { AGENT_VIEW_ALGEBRA, type AgentView, type AgentComponent, type AgentTool, type ContextFragment, type NativeOutputFragment, type FallbackOutputFragment, type OutputFragment } from "../view"
 import { composeComponents, handles, component as defineComponent, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
@@ -10,7 +12,8 @@ import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-messag
 import { fallbackOf } from "../../output/contract"
 import { agentKeys } from "../../log/events"
 import type { InferPolicy } from "./contract"
-import { inferenceMachine } from "./machine"
+import { inferenceMachine, type InferRejection } from "./machine"
+export type { InferRejection } from "./machine"
 import { modelPolicyOverrideOf, type ModelPolicyOverride } from "../../model/access"
 import { routeTools, toolConcurrencyOf, type ToolConcurrency } from "../tool/machine"
 import type { AgentR } from "../../runtime/turn"
@@ -55,6 +58,12 @@ export interface InferOptions extends Partial<Omit<InferPolicy, "models">> {
   readonly toolConcurrency?: ToolConcurrency
 }
 
+// InferView exposes independent completed-attempt costs for the current turn (infer.test.ts).
+export interface InferView extends AgentView {
+  readonly reportedCostUsd: number | undefined
+  readonly estimatedCostUsd: number | undefined
+}
+
 // infer composes an agent's child components and adds the model loop over their final view.
 // Inference and dispatch derive from the same child projection, so a tool remains routed against
 // the view that offered it while every child transition remains part of the root output.
@@ -63,7 +72,7 @@ export const infer = <
 >(
   components: Cs,
   options: InferOptions = {}
-): AgentComponent<AgentR | ComponentRequirements<Cs[number]>> => {
+): AgentComponent<AgentR | ComponentRequirements<Cs[number]>, InferView, InferRejection> => {
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = AgentR | ComponentR
   const combined = composeComponents("infer.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<ComponentR>
@@ -87,8 +96,15 @@ export const infer = <
       })
       const compactions = new Set(children.view.messages?.flatMap(conversation => conversation.compaction?.proposals ?? []) ?? [])
       const proposals = children.transitions.filter((transition) => !compactions.has(transition.key))
+      const turn = turnViewFrom(state.turns)
+      const usage = usageIn(turn, String(turn[0]?.id ?? ""))
+      const empty = !turn.some(event => event.usage !== undefined || event.legacyUsage !== undefined)
       return {
-        view: children.view,
+        view: {
+          ...children.view,
+          reportedCostUsd: empty ? 0 : usage.reportedCostUsd,
+          estimatedCostUsd: empty ? 0 : usage.estimatedCostUsd
+        },
         // Component intents commit policy decisions before inference or tool admission (batches.test.ts, "generated starting allowances are recorded once before inference and survive restart").
         transitions: [
           ...proposals.filter((transition) => transition.kind === "intent"),
@@ -100,6 +116,6 @@ export const infer = <
         }
       }
     }
-  }) as AgentComponent<R>
+  }) as AgentComponent<R, InferView, InferRejection>
   return handles(agentMessageMethod, { ...root, keys: rootKeys(combined.keys) })
 }

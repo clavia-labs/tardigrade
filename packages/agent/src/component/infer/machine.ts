@@ -1,4 +1,5 @@
 import { estimateTokens } from "../../projection/tokens"
+import { withResponse, type ComponentWork } from "@clavia/tardigrade-core/actor"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import type { Context } from "effect"
 import { upcastError } from "../../log/upcast"
@@ -242,7 +243,11 @@ interface InferDerivation<R> {
   readonly rendered: ReturnType<Render<R>>
 }
 
-const inferTransitionsFor = <R>(policy: Partial<InferPolicy>, derived: InferDerivation<R>): ReadonlyArray<import("@clavia/tardigrade-core/runtime").Transition<never, R | LanguageModel.LanguageModel | EventLog | Self>> => {
+export interface InferRejection {
+  readonly error: string
+}
+
+const inferTransitionsFor = <R>(policy: Partial<InferPolicy>, derived: InferDerivation<R>): ReadonlyArray<ComponentWork<R | LanguageModel.LanguageModel | EventLog | Self, InferRejection>> => {
   const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
   const slice = derived.slice
   if (slice.length === 0 || hasUnansweredToolCall(slice) || terminated(slice)) return []
@@ -376,7 +381,7 @@ const inferTransitionsFor = <R>(policy: Partial<InferPolicy>, derived: InferDeri
   }
   // attempt advances after a recorded response and survives an unanswered crash (integration/infer-retry.test.ts).
   return [
-    context.effect("infer", {
+    withResponse(context.effect("infer", {
       invocation: { method: "message", id: turn, epoch },
       input: {
         turn,
@@ -532,7 +537,7 @@ const inferTransitionsFor = <R>(policy: Partial<InferPolicy>, derived: InferDeri
             ...consequences
           ]
         })
-    })
+    }), (result: InferRejection) => terminate({ cause: "refused", error: result.error, attempts: marks, policy: null })[0]!)
   ]
 }
 

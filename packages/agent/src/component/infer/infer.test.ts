@@ -50,6 +50,20 @@ const viewComponent = (
 
 describe("infer component", () => {
 
+  test("reported and estimated costs remain independent through replay", () => {
+    const machine = machineOf(infer([nativeOutput], TEST_MODEL))
+    const read = (events: ReadonlyArray<Event>) => replayProjection(machine, events, testModelData).view
+    const head = { type: "MessageReceived", id: "m1", text: "go", at: 1 }
+    const called = { type: "ModelCalled", turn: "m1", ordinal: 0, pricing: { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }, at: 2 }
+    const returned = { type: "ModelReturned", turn: "m1", ordinal: 0, usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } }, at: 3 }
+    expect(read([head])).toMatchObject({ reportedCostUsd: 0, estimatedCostUsd: 0 })
+    expect(read([head, called, returned])).toMatchObject({ reportedCostUsd: undefined, estimatedCostUsd: 0.02 })
+    expect(read([head, called, { ...returned, reportedCostUsd: 0.03 }])).toMatchObject({ reportedCostUsd: 0.03, estimatedCostUsd: 0.02 })
+    expect(read([head, called, { ...returned, reportedCostUsd: 0 }])).toMatchObject({ reportedCostUsd: 0, estimatedCostUsd: 0.02 })
+    expect(read([head, called, { ...returned, usage: {} }])).toMatchObject({ reportedCostUsd: undefined, estimatedCostUsd: undefined })
+    expect(read([head])).not.toHaveProperty("spendUsd")
+  })
+
   test("the actor owns model selection", () => {
     const fallback = { provider: "cloudflare", model_id: "openai/gpt-5.6-luna" } as const
     const message = {

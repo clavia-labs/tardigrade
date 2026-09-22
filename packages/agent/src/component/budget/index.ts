@@ -32,24 +32,26 @@ export interface BudgetPolicy {
 }
 
 export interface BudgetOptions<ChildView, Result = unknown> extends Partial<BudgetPolicy> {
+  readonly accounting?: "admitted" | "completed"
   readonly onExhausted: (
     reason: string,
     settle: (result: NoInfer<Result>) => Intent<never> | undefined
   ) => Intent<never> | undefined
   readonly rejectionMessage?: string
-  // usage measures cumulative turn usage, including newly proposed work (budget.test.ts).
+  // usage measures cumulative turn usage in the configured accounting mode (integration/budget-infer.test.ts).
   readonly usage: (childView: ComponentReadonly<ChildView>) => number
   readonly view?: (childView: ComponentReadonly<ChildView>, budget: BudgetState) => ChildView
 }
 
 // DEFAULT_BUDGET_POLICY is the default policy applied by budget and spawned agents.
 export const DEFAULT_BUDGET_POLICY: BudgetPolicy = { limit: 40 }
+export const DEFAULT_BUDGET_ACCOUNTING = "admitted"
 
 // budgetPolicyOf applies the exported default to omitted policy fields.
 export const budgetPolicyOf = (policy: Partial<BudgetPolicy> = {}): BudgetPolicy => {
   const limit = policy.limit ?? DEFAULT_BUDGET_POLICY.limit
-  if (!Number.isSafeInteger(limit) || limit <= 0) {
-    throw new Error(`budget limit must be a positive integer, got ${JSON.stringify(limit)}`)
+  if (!Number.isFinite(limit) || limit <= 0) {
+    throw new Error(`budget limit must be a positive finite number, got ${JSON.stringify(limit)}`)
   }
   return { limit }
 }
@@ -57,7 +59,7 @@ export const budgetPolicyOf = (policy: Partial<BudgetPolicy> = {}): BudgetPolicy
 // initialAllowance reads the turn option before the initial grant is committed (budget.test.ts).
 const initialAllowance = (events: ReadonlyArray<Event>, fallback: number): number => {
   const amount = turnHead(events)?.budget
-  return typeof amount === "number" && amount > 0 ? Math.floor(amount) : fallback
+  return typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : fallback
 }
 
 // budgetOf uses the configured allowance until its initial grant is committed (budget.test.ts).
@@ -128,6 +130,7 @@ export const budget = <
   type R = BudgetRequirements<C>
   type ChildView = BudgetView<C>
   const resolved = budgetPolicyOf(options)
+  const accounting = options.accounting ?? DEFAULT_BUDGET_ACCOUNTING
   const name = "budget"
   const combined = (
     Array.isArray(components)
@@ -182,13 +185,18 @@ export const budget = <
     const selected = children.transitions.flatMap((transition): ReadonlyArray<ComponentWork<R, Result>> => {
       const completion = refused.length === 0 ? undefined : refuse(transition)
       if (completion !== undefined && refused.some((refusal) => refusal.key === completion.key)) return []
-      if (transition.kind === "effect") return [transition]
-      const candidate = reserved.preview(transition)
-      const before = Math.max(0, measure(reserved.output().view) - excluded)
-      const proposed = Math.max(0, measure(candidate.output().view) - excluded)
-      if (proposed <= allowance || proposed <= before) {
-        reserved = candidate
-        return [transition]
+      let proposed = used
+      if (accounting === "completed") {
+        if (used < allowance || transition.respond === undefined) return [transition]
+      } else {
+        if (transition.kind === "effect") return [transition]
+        const candidate = reserved.preview(transition)
+        const before = Math.max(0, measure(reserved.output().view) - excluded)
+        proposed = Math.max(0, measure(candidate.output().view) - excluded)
+        if (proposed <= allowance || proposed <= before) {
+          reserved = candidate
+          return [transition]
+        }
       }
       const response = refuse(transition)
       if (response !== undefined) rejected.push(response)
@@ -257,6 +265,7 @@ export const budget = <
     },
     step: (state, event, _context, candidate, previousChild) => {
       const turns = reduceTurnProjection(state.turns, event)
+      if (accounting === "completed") return { ...state, turns, log: Chunk.append(state.log, event) }
       const trajectory = turnViewFrom(turns)
       const previousUsage = measure(previousChild.output().view)
       const measured = measure(candidate.output().view)
@@ -309,7 +318,7 @@ export const budget = <
     ...component,
     budget: {
       grant: (amount, request, at) => {
-        if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error("budget grant must be a positive integer")
+        if (!Number.isFinite(amount) || amount <= 0) throw new Error("budget grant must be a positive finite number")
         return budgetGranted({ ...request, amount, at })
       },
       deny: (reason, request, at) => budgetDenied({ ...request, reason, at })

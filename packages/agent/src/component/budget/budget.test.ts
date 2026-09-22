@@ -189,13 +189,13 @@ describe("budget admission reacts to BudgetExhausted", () => {
     expect(budgetOf(turn(1, 9), { limit: 2 })).toBe(9)
   })
 
-  test("the limit is a positive whole number", () => {
-    expect(() => budget(codeMode(), { ...toolBudgetOptions, limit: 0 })).toThrow(
-      "budget limit must be a positive integer"
-    )
-    expect(() => budget(codeMode(), { ...toolBudgetOptions, limit: 1.5 })).toThrow(
-      "budget limit must be a positive integer"
-    )
+  test("the limit accepts fractional units and rejects invalid amounts", () => {
+    expect(() => budget(codeMode(), { ...toolBudgetOptions, limit: 0.05 })).not.toThrow()
+    for (const limit of [0, -1, Infinity, NaN]) {
+      expect(() => budget(codeMode(), { ...toolBudgetOptions, limit })).toThrow(
+        "budget limit must be a positive finite number"
+      )
+    }
   })
 
   test("the first call past the limit derives the wall without deriving dispatch", () => {

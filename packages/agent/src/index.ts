@@ -107,7 +107,7 @@ export {
   type RepairPolicy
 } from "./component/repair"
 export { nativeOutput } from "./component/native-output"
-export { DEFAULT_BUDGET_POLICY, DEFAULT_BUDGET_REJECTION, type BudgetPolicy, type BudgetState } from "./component/budget/index"
+export { DEFAULT_BUDGET_POLICY, DEFAULT_BUDGET_ACCOUNTING, DEFAULT_BUDGET_REJECTION, type BudgetPolicy, type BudgetState } from "./component/budget/index"
 export { toolComponent, toolsReactorFrom, DEFAULT_TOOL_CONCURRENCY, type ToolConcurrency, type ToolState, type ToolCallView, toolCallOf, type Answer, type PendingCall, type Serve } from "./component/tool/machine"
 export {
   compactionReactor,
@@ -156,6 +156,8 @@ export {
   type OutputFallbackComponent,
   type OutputFragment,
   type InferOptions,
+  type InferView,
+  type InferRejection,
   type Rendered
 } from "./component/infer/index"
 export {
