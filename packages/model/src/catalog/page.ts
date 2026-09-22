@@ -118,11 +118,7 @@ export const providersPageOf = (
   const search = normalized(query.search)
   const modelScope = query.models === undefined ? "wide" : modelPolicyScopeOf([query.models])
   const discovered = new Map(catalog.providers.map((provider) => [provider.id, provider] as const))
-  const ids = [...new Set([
-    ...discovered.keys(),
-    ...MODEL_PROVIDER_CONNECTIONS.map((provider) => provider.id),
-    ...Object.keys(availability)
-  ])].sort()
+  const ids = [...discovered.keys()].sort()
   const items = ids.map((id) => {
     const provider = discovered.get(id)
     const connection = MODEL_PROVIDER_CONNECTIONS.find((candidate) => candidate.id === id)
