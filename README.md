@@ -128,37 +128,26 @@ Mount the component beside the built-in parts that this task needs:
 
 ```ts
 import { actor } from "tardie/core"
-import { agentMethods, agents, budget, caller, escalate, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/agent"
-import { fetch, files, workspace } from "tardie/code"
+import { agentMethods, agents, budget, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/agent"
+import { fetch, workspace } from "tardie/code"
 
-const instructions = system(
-  "You are a release analyst. Identify risky changes and recommend the safest next action."
-)
-
-const releaseAnalyst = actor({
-  name: "release-analyst",
+const researcher = actor({
+  name: "researcher",
   methods: agentMethods,
-  components: [
-    infer([
-      instructions,
-      deploys,
-      escalate(
-        budget(codeMode([
-          files(),
-          fetch(),
-          agents(),
-          workspace()
-        ]), {
-          limit: 40,
-          usage: ({ calls }) => calls.length,
-          onExhausted: (reason, settle) => settle({ error: reason })
-        }),
-        { authority: caller(), requests: { decide: request => request.grant() } }
-      ),
-      compact(messages()),
-      outputValidateOnce
-    ])
-  ]
+  components: [infer([
+    system("You are a research assistant. Investigate the question and cite your sources."),
+    compact(messages(), { triggerRatio: 0.8, retainRatio: 0.5 }),
+    budget(codeMode([
+      fetch(),
+      agents(),
+      workspace()
+    ]), {
+      limit: 12,
+      usage: ({ calls }) => calls.length,
+      onExhausted: (reason, settle) => settle({ error: reason })
+    }),
+    outputValidateOnce
+  ])]
 })
 ```
 
@@ -196,16 +185,16 @@ const { layers } = await bunModelServices({
 })
 
 const host = await createBunHost({
-  actor: releaseAnalyst,
+  actor: researcher,
   storage: ".tardigrade",
   layersFor: () => layers
 })
 
 try {
-  const thread = await host.allocateRootThread({ instance: "analyst", name: "main" })
+  const thread = await host.allocateRootThread({ instance: "researcher", name: "main" })
   const result = await thread.methods.message(
-    { text: "What changed in the deploy?" },
-    { key: "deploy-review" }
+    { text: "Research durable agent architectures and compare their tradeoffs. Cite sources." },
+    { key: "architecture-research" }
   )
   console.log(result)
 } finally {
