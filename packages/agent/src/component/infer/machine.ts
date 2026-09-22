@@ -11,7 +11,7 @@ import { LanguageModel } from "effect/unstable/ai"
 import { react } from "../../model/execution/index"
 import { unknownModelError } from "../../model/error"
 import { BindingSettings, modelSettingsFor } from "@clavia/tardigrade-model/settings"
-import { Cause, Clock, Effect, Random, Schema } from "effect"
+import { Cause, Clock, Effect, Exit, Random, Schema } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { HashMap, Option } from "effect"
 import { Self } from "@clavia/tardigrade-core/runtime"
@@ -408,7 +408,15 @@ const inferTransitionsFor = <R>(policy: Partial<InferPolicy>, derived: InferDeri
             if (input.dueAt > now) yield* Effect.sleep(input.dueAt - now)
           }
           const at = yield* Clock.currentTimeMillis
-          const settings = yield* modelSettingsFor(selected)
+          const setup = yield* Effect.exit(modelSettingsFor(selected))
+          if (Exit.isFailure(setup)) {
+            if (Cause.hasInterruptsOnly(setup.cause)) return yield* Effect.failCause(setup.cause)
+            return consequencesOf({
+              kind: "fail", error: unknownModelError(Cause.squash(setup.cause)),
+              failure: { cause: "model_selection", attempts: 0 }
+            }, { turn: input.turn, epoch: input.epoch, attempt: input.attempt, at, contract: input.contract })
+          }
+          const settings = setup.value
           const requestPolicy = settings.policy
           const pricing = settings.pricing
           const { compactionTransitions: _compactions, ...modelRender } = rendered

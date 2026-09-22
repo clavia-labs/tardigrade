@@ -1,9 +1,13 @@
+import { actor } from "@clavia/tardigrade-core/actor"
+import { createHost } from "@clavia/tardigrade-host/host"
+import { KeyValueStore } from "effect/unstable/persistence"
+import { agentMethods, infer, outputValidateOnce } from "../src/index"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { providerLayer as openaiLayer } from "@clavia/tardigrade-model/providers/openai"
 import { providerLayer as anthropicLayer } from "@clavia/tardigrade-model/providers/anthropic"
 import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
 import { expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { type InferDelta } from "@clavia/tardigrade-agent"
 import { fixtureModelLayer as modelLayer } from "@clavia/tardigrade-model/testing/host"
@@ -60,3 +64,34 @@ for (const provider of ["openai", "anthropic"] as const) {
     expect(requests).toBe(1)
   })
 }
+
+test("a missing credential settles the turn without making a model request", async () => {
+  const reference = { provider: "private", model_id: "test" }
+  let providerStarts = 0
+  const binding = modelLayer({ model: { default: reference, allow: "*", providers: {
+    private: { baseUrl: "https://fixture.invalid/v1", protocol: "openai-responses", env: ["MODEL_KEY"] }
+  } }, modelCredentials: {} }, {
+    snapshot: { source: "custom", revision: "test", refreshedAt: 0, status: "cached", providers: [
+      { id: "private", name: "Private", env: [], models: [{ id: "test", metadata: { contextWindowTokens: 32000 } }] }
+    ] }
+  }, {
+    providerLayer: () => { providerStarts++; throw new Error("provider must not start") }
+  })
+  const host = createHost({
+    actorName: "setup-failure",
+    actorFor: () => actor({ name: "setup-failure", methods: agentMethods, components: [infer([outputValidateOnce])] }),
+    layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, binding)
+  })
+  await host.allocate({ kind: "root", coordinate: { actor: "setup-failure", instance: "main", thread: "root" } })
+  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "Hello", at: 1 })
+  await host.drive()
+  const events = host.read("root")
+  const failed = events.filter(event => event.type === "TurnFailed")
+  expect(failed).toMatchObject([{ turn: "m1", cause: "model_selection", attempts: 0 }])
+  expect(JSON.stringify(failed)).toContain("MODEL_KEY")
+  expect(events.filter(event => event.type === "ModelCalled" || event.type === "ModelReturned")).toHaveLength(0)
+  expect(providerStarts).toBe(0)
+  await host.wake("root")
+  await host.drive()
+  expect(host.read("root").filter(event => event.type === "TurnFailed")).toHaveLength(1)
+})
