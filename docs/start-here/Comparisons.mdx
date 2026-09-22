@@ -50,21 +50,26 @@ import { actor } from "tardie/core"
 import {
   agentMessageMethod,
   budget,
-  compaction,
+  compact,
+  messages,
   infer,
   outputValidateOnce,
   system
 } from "tardie/agent"
 import { repositoryTools } from "./tools"
 
-// repositoryTools uses tool() with the application's read, edit, and test bindings.
 export default actor({
   name: "test-fixer",
   methods: { message: agentMessageMethod },
   components: [infer([
     system("Fix the failing test and explain the change."),
-    budget([repositoryTools], { limit: 20 }),
-    compaction({ triggerRatio: 0.8, retainRatio: 0.5 }),
+    budget(repositoryTools, {
+      limit: 20,
+      usage: ({ calls }) => calls.length,
+      onExhausted: (reason, settle) => settle({ error: reason }),
+      view: (view, budget) => budget.phase === "spending" ? view : { ...view, tools: [] }
+    }),
+    compact(messages(), { triggerRatio: 0.8, retainRatio: 0.5 }),
     outputValidateOnce
   ])]
 })

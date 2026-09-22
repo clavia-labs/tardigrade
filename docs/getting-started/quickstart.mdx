@@ -100,19 +100,14 @@ export default actor({
 A Tardigrade component has the following interface:
 
 ```ts
-interface ComponentDefinition<State, View, Requirements = never> {
+import type { ComponentOutput, TransitionContext } from "tardie/core"
+import type { Event } from "tardie/core/event"
+
+interface ComponentDefinition<State, View, Requirements = never, Result = unknown> {
   readonly name: string
   readonly initial: () => State
-  readonly step: (state: State, event: Event, context: TransitionContext) => State
-  readonly output: (state: State) => {
-    readonly view: View
-    readonly transitions: ReadonlyArray<Transition<never, Requirements>>
-  }
-  readonly cancelState?: (
-    state: State,
-    cancellation: InvocationCancellation
-  ) => ReadonlyArray<Transition<never, Requirements>>
-  readonly children?: ReadonlyArray<Component<unknown, unknown>>
+  readonly step: (state: Readonly<State>, event: Event, context: TransitionContext) => State
+  readonly output: (state: Readonly<State>) => ComponentOutput<View, Requirements, Result>
 }
 ```
 
