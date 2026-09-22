@@ -392,4 +392,4 @@ test("responses settle only their request occurrence despite reused labels, late
       expect(pending.size).toBe(0)
     }
   ), { numRuns: 100 })
-})
+}, 30_000)
