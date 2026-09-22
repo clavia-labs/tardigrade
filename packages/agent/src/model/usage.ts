@@ -245,20 +245,28 @@ const ofTurn = (event: Event, turn: string): boolean => {
   return callId === turn || callId.startsWith(`${turn}/`)
 }
 
-// usageIn sums response usage and legacy consequence usage, optionally restricted to one turn (usage.test.ts).
+// usageIn sums response usage and legacy consequence usage, excluding failed attempts (usage.test.ts).
 // Missing usage is not spend; an empty usage object retains unknown spend.
-export const usageIn = (log: ReadonlyArray<Event>, turn?: string): Usage =>
-  sumUsage(
-    log.flatMap((event) => {
-      if (turn !== undefined && !ofTurn(event, turn)) return []
-      const carried = event.legacyUsage ?? event.usage
-      if (carried === undefined) return []
-      const called = event.type === "ModelReturned" ? log.find((mark) => mark.type === "ModelCalled" && mark.turn === event.turn && mark.ordinal === event.ordinal) : undefined
-      const recordedPricing = called?.pricing ?? asRecord(called?.policy)?.pricing
-      const pricing = Schema.is(ModelPricing)(recordedPricing) ? recordedPricing : undefined
-      const endpoint = asRecord(event.endpoint)
-      const response = asRecord(event.response)
-      const usage = usageOf({ ...(endpoint?.provider === undefined ? {} : { provider: endpoint.provider }), ...(response?.modelId === undefined && endpoint?.model === undefined ? {} : { model: response?.modelId ?? endpoint?.model }), ...asRecord(carried), ...(event.reportedCostUsd === undefined ? {} : { reportedCostUsd: event.reportedCostUsd, costUsd: event.reportedCostUsd, costSource: "provider" }) })
-      return [pricing === undefined ? usage : priced(usage, pricing)]
-    })
-  )
+export const usageIn = (log: ReadonlyArray<Event>, turn?: string): Usage => {
+  let excluded = false
+  const parts = log.flatMap((event) => {
+    if (turn !== undefined && !ofTurn(event, turn)) return []
+    // TODO: Distinguish admission rejections from potentially billed failures before aggregating failed attempts.
+    if (event.type === "ModelReturned" && event.outcome === "failed") {
+      excluded = true
+      return []
+    }
+    const carried = event.legacyUsage ?? event.usage
+    if (carried === undefined) return []
+    const called = event.type === "ModelReturned" ? log.find((mark) => mark.type === "ModelCalled" && mark.turn === event.turn && mark.ordinal === event.ordinal) : undefined
+    const recordedPricing = called?.pricing ?? asRecord(called?.policy)?.pricing
+    const pricing = Schema.is(ModelPricing)(recordedPricing) ? recordedPricing : undefined
+    const endpoint = asRecord(event.endpoint)
+    const response = asRecord(event.response)
+    const usage = usageOf({ ...(endpoint?.provider === undefined ? {} : { provider: endpoint.provider }), ...(response?.modelId === undefined && endpoint?.model === undefined ? {} : { model: response?.modelId ?? endpoint?.model }), ...asRecord(carried), ...(event.reportedCostUsd === undefined ? {} : { reportedCostUsd: event.reportedCostUsd, costUsd: event.reportedCostUsd, costSource: "provider" }) })
+    return [pricing === undefined ? usage : priced(usage, pricing)]
+  })
+  return excluded && parts.length === 0
+    ? { ...ZERO_USAGE, costUsd: 0, reportedCostUsd: 0, estimatedCostUsd: 0 }
+    : sumUsage(parts)
+}

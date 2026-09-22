@@ -44,7 +44,8 @@ export const costsOf = (events: ReadonlyArray<Event>, options: { readonly turn?:
       ...usageOf(returned.legacyUsage ?? returned.usage),
       ...(returned.reportedCostUsd === undefined ? {} : { reportedCostUsd: returned.reportedCostUsd })
     }), pricing)
-    usages.push(usage)
+    // TODO: Distinguish admission rejections from potentially billed failures before aggregating failed attempts.
+    if (returned?.outcome !== "failed") usages.push(usage)
     attempts.push({
       callId: String(event.callId),
       ...(typeof event.turn === "string" ? { turn: event.turn } : {}),
@@ -52,5 +53,5 @@ export const costsOf = (events: ReadonlyArray<Event>, options: { readonly turn?:
       ...amountsOf(usage)
     })
   }
-  return { attempts, total: attempts.length === 0 ? { reportedUsd: 0, estimatedUsd: 0 } : amountsOf(sumUsage(usages)) }
+  return { attempts, total: usages.length === 0 ? { reportedUsd: 0, estimatedUsd: 0 } : amountsOf(sumUsage(usages)) }
 }
