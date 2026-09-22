@@ -8,7 +8,7 @@ import { testMachineOf } from "../../../fixtures/component"
 import { AGENT_VIEW_ALGEBRA } from "../view"
 import { budget } from "./index"
 
-const workload = (accounting: "request" | "admission") =>
+const workload = (measurement: "request" | "execution") =>
   component({
     name: "work",
     initial: () => ({
@@ -18,16 +18,17 @@ const workload = (accounting: "request" | "admission") =>
     }),
     step: (state, event, context) => {
       if (event.type === "MessageReceived") return { used: 0, revision: 0, pending: [] }
+      if (event.type === "UsageRecorded") return { ...state, used: Number(event.used) }
       if (event.type === "Requested")
         return {
           ...state,
-          used: state.used + (accounting === "request" ? Number(event.cost) : 0),
+          used: state.used + (measurement === "request" ? Number(event.cost) : 0),
           pending: [...state.pending, { id: Number(event.id), cost: Number(event.cost), context }]
         }
       if (event.type === "Executed" || event.type === "Refused")
         return {
           ...state,
-          used: state.used + (accounting === "admission" && event.type === "Executed" ? Number(event.cost) : 0),
+          used: state.used + (measurement === "execution" && event.type === "Executed" ? Number(event.cost) : 0),
           pending: state.pending.filter((request) => request.id !== event.id)
         }
       return event.type === "Refresh" ? { ...state, revision: state.revision + 1 } : state
@@ -43,9 +44,9 @@ const workload = (accounting: "request" | "admission") =>
     })
   })
 
-const setup = (accounting: "request" | "admission", limit: number) => {
+const setup = (measurement: "request" | "execution", limit: number) => {
   const machine = testMachineOf(
-    budget(workload(accounting), {
+    budget(workload(measurement), {
       limit,
       usage: ({ measured }) => measured,
       onExhausted: (reason, respond) => respond({ error: reason })
@@ -82,29 +83,30 @@ const setup = (accounting: "request" | "admission", limit: number) => {
   return { append, output, proposed, checkReplay, drain, log }
 }
 
-for (const accounting of ["request", "admission"] as const) {
-  test(`${accounting}: ordered requests admit exactly the affordable work and settle every refusal`, () => {
+for (const measurement of ["request", "execution"] as const) {
+  test(`${measurement}: current usage gates work and every refusal settles`, () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 1, max: 30 }),
         fc.array(fc.integer({ min: 1, max: 40 }), { minLength: 1, maxLength: 15 }),
         (limit, costs) => {
-          const fixture = setup(accounting, limit)
-          let remaining = limit
+          const fixture = setup(measurement, limit)
+          let used = 0
           const expected = costs.map((cost, id) => {
-            const type = cost <= remaining ? "Executed" : "Refused"
-            if (type === "Executed") remaining -= cost
+            if (measurement === "request") used += cost
+            const type = used <= limit ? "Executed" : "Refused"
+            if (measurement === "execution" && type === "Executed") used += cost
+            fixture.append({ type: "Requested", id, cost, turn: "turn" })
+            fixture.checkReplay()
+            fixture.drain(1)
             return { type, id }
           })
-          costs.forEach((cost, id) => fixture.append({ type: "Requested", id, cost, turn: "turn" }))
-          fixture.checkReplay()
-          fixture.drain(costs.length)
           const outcomes = fixture.log
             .filter((event) => event.type === "Executed" || event.type === "Refused")
             .map((event) => ({ type: event.type, id: Number(event.id) }))
             .sort((a, b) => a.id - b.id)
           expect(outcomes).toEqual(expected)
-          expect(fixture.output().view).toMatchObject({ used: limit - remaining, remaining })
+          expect(fixture.output().view).toMatchObject({ used, remaining: Math.max(0, limit - used) })
           expect(fixture.output().view).toMatchObject({ pending: [] })
         }
       ),
@@ -112,15 +114,16 @@ for (const accounting of ["request", "admission"] as const) {
     )
   })
 
-  test(`${accounting}: committed refusal survives grants and regenerated proposals while new work can proceed`, () => {
+  test(`${measurement}: committed refusal survives grants and regenerated proposals while new work can proceed`, () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 1, max: 30 }),
         fc.integer({ min: 1, max: 30 }),
         fc.nat(5),
         (limit, excess, refreshes) => {
-          const fixture = setup(accounting, limit)
-          fixture.append({ type: "Requested", id: 0, cost: limit + excess, turn: "turn" })
+          const fixture = setup(measurement, limit)
+          fixture.append({ type: "UsageRecorded", used: limit + excess, turn: "turn" })
+          fixture.append({ type: "Requested", id: 0, cost: 0, turn: "turn" })
           const walls = fixture.proposed().filter((event) => event.type === "BudgetExhausted")
           expect(walls.length).toBeGreaterThan(0)
           walls.forEach(fixture.append)
@@ -130,12 +133,13 @@ for (const accounting of ["request", "admission"] as const) {
           expect(fixture.proposed()).toContainEqual(expect.objectContaining({ type: "Refused", id: 0 }))
           expect(fixture.proposed().some((event) => event.type === "Executed")).toBe(false)
           fixture.drain(1)
-          expect(fixture.output().view).toMatchObject({ used: 0, remaining: limit + excess, pending: [] })
-          fixture.append({ type: "Requested", id: 1, cost: limit + excess, turn: "turn" })
+          expect(fixture.output().view).toMatchObject({ used: limit + excess, remaining: 0, pending: [] })
+          fixture.append({ type: "BudgetGranted", amount: 1, turn: "turn" })
+          fixture.append({ type: "Requested", id: 1, cost: 1, turn: "turn" })
           fixture.drain(1)
           expect(fixture.log.filter((event) => event.type === "Executed").map((event) => event.id)).toEqual([1])
           expect(fixture.log.filter((event) => event.type === "Refused").map((event) => event.id)).toEqual([0])
-          expect(fixture.output().view).toMatchObject({ used: limit + excess, remaining: 0, pending: [] })
+          expect(fixture.output().view).toMatchObject({ used: limit + excess + 1, remaining: 0, pending: [] })
           fixture.append({ type: "TurnCompleted", turn: "turn", output: "done" })
           fixture.append({ type: "MessageReceived", id: "next", text: "work", budget: limit })
           fixture.append({ type: "BudgetGranted", initial: true, amount: limit, turn: "next" })

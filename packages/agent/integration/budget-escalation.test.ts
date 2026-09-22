@@ -65,7 +65,7 @@ for (const decision of ["grant", "deny"] as const) {
         .output(exhausted)
         .view.tools.map((tool) => tool.spec.name)
     ).toEqual(["request_budget"])
-    expect(machineOf(parent).output(exhausted).view).toMatchObject({ phase: "exhausted", used: 1 })
+    expect(machineOf(parent).output(exhausted).view).toMatchObject({ phase: "exhausted", used: 2 })
     const requested = [...atWall, call("ask", "request_budget")]
     const requestEvents = eventsOf(
       machineOf(parent).output(replayState(machineOf(parent), requested)).transitions
@@ -95,7 +95,7 @@ for (const decision of ["grant", "deny"] as const) {
     const state = replayState(machineOf(parent), settled)
     const output = machineOf(parent).output(state)
     expect(machineOf(parent).output(state).view).toMatchObject({
-      used: 1,
+      used: 2,
       limit: decision === "grant" ? 3 : 1,
       phase: decision === "grant" ? "spending" : "denied"
     })

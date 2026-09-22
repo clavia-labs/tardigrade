@@ -7,7 +7,6 @@ import {
   type Component,
   type ChildOf,
   type ComponentWork,
-  type ChildAdmission,
   type ComponentReadonly,
   type ComponentRequirements,
   type ComponentView,
@@ -22,7 +21,7 @@ import {
   turnViewFrom,
   type TurnProjectionState
 } from "@clavia/tardigrade-code/execution/turn-projection"
-import { Chunk } from "effect"
+import { Chunk, HashSet } from "effect"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentView } from "../view"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 
@@ -32,20 +31,18 @@ export interface BudgetPolicy {
 }
 
 export interface BudgetOptions<ChildView, Result = unknown> extends Partial<BudgetPolicy> {
-  readonly accounting?: "admitted" | "completed"
   readonly onExhausted: (
     reason: string,
     settle: (result: NoInfer<Result>) => Intent<never> | undefined
   ) => Intent<never> | undefined
   readonly rejectionMessage?: string
-  // usage measures cumulative turn usage in the configured accounting mode (integration/budget-infer.test.ts).
+  // usage measures current cumulative turn usage (integration/budget-infer.test.ts).
   readonly usage: (childView: ComponentReadonly<ChildView>) => number
   readonly view?: (childView: ComponentReadonly<ChildView>, budget: BudgetState) => ChildView
 }
 
 // DEFAULT_BUDGET_POLICY is the default policy applied by budget and spawned agents.
 export const DEFAULT_BUDGET_POLICY: BudgetPolicy = { limit: 40 }
-export const DEFAULT_BUDGET_ACCOUNTING = "admitted"
 
 // budgetPolicyOf applies the exported default to omitted policy fields.
 export const budgetPolicyOf = (policy: Partial<BudgetPolicy> = {}): BudgetPolicy => {
@@ -76,7 +73,7 @@ export const budgetOf = (view: ReadonlyArray<Event>, policy: Partial<BudgetPolic
 // BudgetPhase names whether a turn may spend, request more budget, or must finish.
 export type BudgetPhase = "spending" | "exhausted" | "denied"
 
-// BudgetState exposes the applied allowance and admitted usage for the current turn (budget.test.ts).
+// BudgetState exposes the applied allowance and observed usage for the current turn (budget.test.ts).
 export interface BudgetState {
   readonly limit: number
   readonly used: number
@@ -119,7 +116,7 @@ export interface BudgetControl {
 // BudgetComponent exposes allowance state and the decision protocol for its parent (escalation.test.ts).
 export type BudgetComponent<R = never, Result = never, View = AgentView> = Component<View & BudgetState, R, Result> & { readonly budget: BudgetControl }
 
-// budget admits predictable proposals against a child view before their effects execute (budget.test.ts).
+// budget rejects response-capable work when current usage exceeds the allowance (budget.test.ts).
 export const budget = <
   const C extends BudgetInput
 >(
@@ -130,7 +127,6 @@ export const budget = <
   type R = BudgetRequirements<C>
   type ChildView = BudgetView<C>
   const resolved = budgetPolicyOf(options)
-  const accounting = options.accounting ?? DEFAULT_BUDGET_ACCOUNTING
   const name = "budget"
   const combined = (
     Array.isArray(components)
@@ -167,12 +163,10 @@ export const budget = <
     trajectory: ReadonlyArray<Event>,
     log: ReadonlyArray<Event>,
     refused: ReadonlyArray<Intent<never>>,
-    excluded: number,
-    blocked: { readonly event: Event; readonly used: number } | undefined
+    admitted: HashSet.HashSet<string>
   ) => {
     const children = child.output()
-    const measured = measure(child.output().view)
-    const used = Math.max(0, measured - excluded)
+    const used = measure(children.view)
     const allowance = budgetOf(trajectory, resolved)
     const exhaustion = (event: Event, used: number, tag = "wall", invocation?: InvocationRef | null): Intent<never> =>
       bindTransitionContext(event, name).intent(tag, (at) => budgetExhausted({
@@ -180,26 +174,12 @@ export const budget = <
         ...(event.turn === undefined ? {} : { turn: String(event.turn) })
       }), invocation === undefined ? {} : { invocation })
     const position = eventPositionOf(log[log.length - 1] ?? { type: "Empty" }) ?? log.length
-    let reserved: ChildAdmission<ComponentReadonly<ChildView>> = child.admission()
     const rejected: Array<Intent<never>> = []
     const selected = children.transitions.flatMap((transition): ReadonlyArray<ComponentWork<R, Result>> => {
-      const completion = refused.length === 0 ? undefined : refuse(transition)
+      const completion = refuse(transition)
       if (completion !== undefined && refused.some((refusal) => refusal.key === completion.key)) return []
-      let proposed = used
-      if (accounting === "completed") {
-        if (used < allowance || transition.respond === undefined) return [transition]
-      } else {
-        if (transition.kind === "effect") return [transition]
-        const candidate = reserved.preview(transition)
-        const before = Math.max(0, measure(reserved.output().view) - excluded)
-        proposed = Math.max(0, measure(candidate.output().view) - excluded)
-        if (proposed <= allowance || proposed <= before) {
-          reserved = candidate
-          return [transition]
-        }
-      }
-      const response = refuse(transition)
-      if (response !== undefined) rejected.push(response)
+      if (used <= allowance || transition.respond === undefined || (completion !== undefined && HashSet.has(admitted, completion.key))) return [transition]
+      if (completion !== undefined) rejected.push(completion)
       if (budgetPhase(trajectory) !== "spending") return []
       const head = turnHead(trajectory)
       const invocation =
@@ -209,13 +189,13 @@ export const budget = <
           : { method: "message", id: String(head.id), epoch: turnEpochOf(trajectory, String(head.id)) })
       return [exhaustion(
         eventAt({ type: "BudgetCheck", ...(invocation === undefined ? {} : { turn: invocation.id }) }, position),
-        proposed, `wall/${transition.key}`, invocation ?? null
+        used, `wall/${transition.key}`, invocation ?? null
       )]
     })
     const recorded = new Set(log.map(transitionKeyOf).filter((key) => key !== undefined))
     const refusals = refused.filter((transition) => !recorded.has(transition.key))
-    const wall = blocked === undefined || budgetPhase(trajectory) !== "spending"
-      ? [] : [exhaustion(blocked.event, blocked.used)]
+    const wall = refusals.length > 0 && used > allowance && budgetPhase(trajectory) === "spending" && log.length > 0
+      ? [exhaustion(log[log.length - 1]!, used)] : []
     const head = turnHead(trajectory)
     const initial =
       head !== undefined && !trajectory.some((event) => event.type === "BudgetGranted" && event.initial === true)
@@ -247,8 +227,8 @@ export const budget = <
     readonly turns: TurnProjectionState
     readonly log: Chunk.Chunk<Event>
     readonly refused: ReadonlyArray<Intent<never>>
-    readonly excluded: number
-    readonly blocked: { readonly event: Event; readonly used: number } | undefined
+    // admitted preserves work accepted before later requests cross the limit (runtime/batches.test.ts).
+    readonly admitted: HashSet.HashSet<string>
   }
   const component = defineComponent<BudgetMachineState, ChildView & BudgetState, R, Result, typeof combined>({
     children: combined,
@@ -259,53 +239,29 @@ export const budget = <
         turns: initialTurnProjection(),
         log: Chunk.empty<Event>(),
         refused: [],
-        excluded: 0,
-        blocked: undefined
+        admitted: HashSet.empty<string>()
       }
     },
     step: (state, event, _context, candidate, previousChild) => {
-      const turns = reduceTurnProjection(state.turns, event)
-      if (accounting === "completed") return { ...state, turns, log: Chunk.append(state.log, event) }
-      const trajectory = turnViewFrom(turns)
-      const previousUsage = measure(previousChild.output().view)
-      const measured = measure(candidate.output().view)
-      const excluded = event.type === "MessageReceived" ? 0 : state.excluded
-      const proposed = Math.max(0, measured - excluded)
-      const over = proposed > budgetOf(trajectory, resolved) && measured > previousUsage
       const refused = [...state.refused]
       if (event.type === "BudgetExhausted") {
-        const prior = derived(previousChild, turnViewFrom(state.turns), Chunk.toReadonlyArray(state.log), state.refused, state.excluded, state.blocked)
+        const prior = derived(previousChild, turnViewFrom(state.turns), Chunk.toReadonlyArray(state.log), state.refused, state.admitted)
         if (prior.transitions.some((transition) => transition.key === transitionKeyOf(event))) refused.push(...prior.rejected)
       }
-      let rejected = false
-      if (over) {
-        const previous = new Set(previousChild.output().transitions.flatMap((transition) => {
-          const completion = refuse(transition)
-          return completion === undefined ? [] : [completion.key]
-        }))
-        for (const transition of candidate.output().transitions) {
-          const completion = refuse(transition)
-          if (completion === undefined || previous.has(completion.key) || refused.some((refusal) => refusal.key === completion.key)) continue
-          refused.push(completion)
-          rejected = true
-        }
+      const turns = reduceTurnProjection(state.turns, event)
+      let admitted = state.admitted
+      const affordable = measure(candidate.output().view) <= budgetOf(turnViewFrom(turns), resolved)
+      for (const transition of candidate.output().transitions) {
+        const completion = refuse(transition)
+        if (completion === undefined || HashSet.has(admitted, completion.key) || refused.some(refusal => refusal.key === completion.key)) continue
+        if (affordable) admitted = HashSet.add(admitted, completion.key)
+        else refused.push(completion)
       }
-      return {
-        turns,
-        log: Chunk.append(state.log, event),
-        refused,
-        excluded: excluded + (rejected ? measured - previousUsage : 0),
-        blocked:
-          event.type === "MessageReceived" || event.type === "BudgetGranted"
-            ? undefined
-            : over
-              ? { event, used: proposed }
-              : state.blocked
-      }
+      return { turns, log: Chunk.append(state.log, event), refused, admitted }
     },
 
     output: (state, child) => {
-      const { rejected: _rejected, ...output } = derived(child, turnViewFrom(state.turns), Chunk.toReadonlyArray(state.log), state.refused, state.excluded, state.blocked)
+      const { rejected: _rejected, ...output } = derived(child, turnViewFrom(state.turns), Chunk.toReadonlyArray(state.log), state.refused, state.admitted)
       return {
         ...output,
         interactions: {

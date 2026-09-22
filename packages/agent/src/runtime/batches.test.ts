@@ -103,7 +103,7 @@ describe("tool batches", () => {
       fc.array(fc.oneof(fc.constant("call" as const), fc.integer({ min: 1, max: 3 })), { minLength: 1, maxLength: 12 }),
       fc.integer({ min: 1, max: 4 }), fc.nat(),
       async (initial, operations, concurrency, restartSeed) => {
-        const tokens = Array.from({ length: initial }, () => true)
+        let allowance = initial
         const admitted: string[] = []
         const requested: string[] = []
         const history: Event[] = [
@@ -115,12 +115,12 @@ describe("tool batches", () => {
         ]
         for (const operation of [...operations, "call"] as const) {
           if (typeof operation === "number") {
-            tokens.push(...Array.from({ length: operation }, () => true))
+            allowance += operation
             history.push({ type: "BudgetGranted", amount: operation, turn: TURN, at: history.length })
           } else {
             const callId = `call-${requested.length}`
             requested.push(callId)
-            if (tokens.shift() !== undefined) admitted.push(callId)
+            if (requested.length <= allowance) admitted.push(callId)
             history.push({ type: "ToolCalled", ...call(callId), responseId: "m1/infer/0", turn: TURN, at: history.length })
 
           }
@@ -425,7 +425,7 @@ describe("tool batches", () => {
             ran.push(context.callId)
             if (context.callId === "a")
               yield* (yield* EventLog).append([
-                { type: "BudgetGranted", turn: TURN, callId: "grant", amount: 1, at: 2 }
+                { type: "BudgetGranted", turn: TURN, callId: "grant", amount: 2, at: 2 }
               ])
             return context.callId
           })

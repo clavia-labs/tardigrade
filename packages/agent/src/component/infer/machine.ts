@@ -537,7 +537,10 @@ const inferTransitionsFor = <R>(policy: Partial<InferPolicy>, derived: InferDeri
             ...consequences
           ]
         })
-    }), (result: InferRejection) => terminate({ cause: "refused", error: result.error, attempts: marks, policy: null })[0]!)
+    }), (result: InferRejection) => bindTransitionContext(head, "infer").intent(`refuse/${epoch}/${attempt}`, (at) => turnFailed({
+      cause: "refused", error: result.error, attempts: marks, policy: null,
+      attemptKey: attempt, turn, ...epochStamp(epoch), at
+    }), { invocation: { method: "message", id: turn, epoch } }))
   ]
 }
 

@@ -92,7 +92,7 @@ const turn = (calls: number, budget?: number, extra: Event[] = []): Event[] => {
 }
 
 describe("budget public state", () => {
-  test("a parent consumes the applied allowance and admitted usage", () => {
+  test("a parent consumes the applied allowance and observed usage", () => {
     const child = budget(codeMode(), { ...toolBudgetOptions, limit: 2 })
     const parent = component({
       name: "observer",
@@ -107,11 +107,11 @@ describe("budget public state", () => {
     })
     expect(machineOf(child).output(replayState(machineOf(child), turn(3, 2))).view).toMatchObject({
       limit: 2,
-      used: 2,
+      used: 3,
       remaining: 0,
       phase: "spending"
     })
-    expect(machineOf(parent).output(replayState(machineOf(parent), turn(3, 2))).view).toEqual({ remaining: 0, used: 2 })
+    expect(machineOf(parent).output(replayState(machineOf(parent), turn(3, 2))).view).toEqual({ remaining: 0, used: 3 })
   })
 
 
@@ -144,8 +144,8 @@ describe("budget admission reacts to BudgetExhausted", () => {
     return events.slice(log.length)
   }
 
-  test("with no wall on the turn, execute dispatches", async () => {
-    const log = turn(2, 12)
+  test("at exactly the limit, execute dispatches", async () => {
+    const log = turn(2, 2)
     const admitted = await dispatch(log)
     expect(admitted[0]!.type).toBe("CodeDispatched")
   })
@@ -408,7 +408,7 @@ test("rejection preserves committed child events and unrelated sibling work", ()
       expect.objectContaining({ type: "ToolReturned", callId: "second" })
     )
     expect(output.transitions.filter((transition) => transition.kind === "effect")).toHaveLength(1)
-    expect(machineOf(governed).output(state).view.used).toBe(1)
+    expect(machineOf(governed).output(state).view.used).toBe(2)
   }
 })
 

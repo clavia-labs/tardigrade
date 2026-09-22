@@ -10,15 +10,14 @@ import { usageIn } from "../src/model/usage"
 import type { RequestPolicy } from "../src/component/infer/retry"
 
 const limit = 0.05
-const definition = actor({
+const definition = (limit: number) => actor({
   name: "budget-infer",
   methods: agentMethods,
   components: [budget(infer([outputValidateOnce], {
     models: { default: { provider: "test", model_id: "fixture" }, allow: "*" }
   }), {
     limit,
-    accounting: "completed",
-    usage: ({ estimatedCostUsd }) => estimatedCostUsd ?? limit,
+    usage: ({ estimatedCostUsd }) => estimatedCostUsd ?? (limit + 1),
     onExhausted: (reason, respond) => respond({ error: reason })
   })]
 })
@@ -27,9 +26,9 @@ const policy: RequestPolicy = {
   timeout: { firstChunkMs: 90_000, idleMs: 90_000 },
   retry: { backoffMs: [0, 0, 0, 0, 0], maxRetryAfterMs: 1000, retryAfterJitterMs: 0 }
 }
-const makeHost = (react: TestInference["react"]) => createHost({
-  actorName: definition.name,
-  actorFor: () => definition,
+const makeHost = (react: TestInference["react"], allowance = limit) => createHost({
+  actorName: "budget-infer",
+  actorFor: () => definition(allowance),
   layersFor: () => Layer.mergeAll(KeyValueStore.layerMemory, testInferenceLayer({
     policy: () => Effect.succeed(policy),
     pricing: () => Effect.succeed({ promptUsdPerToken: 0.0000025, completionUsdPerToken: 0.00001 }),
@@ -82,4 +81,20 @@ test("unknown usage blocks further execution while a completed result still sett
     expect(calls).toBe(1)
     expect(host.read("root").filter(event => event.type === (complete ? "TurnCompleted" : "TurnFailed"))).toHaveLength(1)
   }
+})
+
+
+test("an attempt at exactly the limit runs, then blocks further work", async () => {
+  let calls = 0
+  const perAttempt = 1234 * 0.0000025 + 1239 * 0.00001
+  const host = makeHost(() => Effect.sync(() => {
+    calls++
+    return { kind: "fail", retryable: true, error: { message: "busy" }, usage: { inputTokens: { total: 1234 }, outputTokens: { total: 1239 } } }
+  }), perAttempt)
+  await host.allocate({ kind: "root", coordinate: parseThreadAddress(host.self("root")) })
+  await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "m1", text: "go", at: 1 })
+  await host.drive()
+  expect(calls).toBe(2)
+  expect(host.read("root").filter(event => event.type === "ModelCalled")).toHaveLength(2)
+  expect(host.read("root").filter(event => event.type === "TurnFailed")).toHaveLength(1)
 })

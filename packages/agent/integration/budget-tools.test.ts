@@ -78,7 +78,7 @@ test("budget supplies a result through tools without running refused work", asyn
     })
   )
   const settled = replayState(machineOf(governed), [...log, ...eventsOf(output.transitions), ...returned])
-  expect(machineOf(governed).output(settled).view.used).toBe(1)
+  expect(machineOf(governed).output(settled).view.used).toBe(2)
   expect(machineOf(governed).output(settled).transitions).toEqual([])
 })
 
