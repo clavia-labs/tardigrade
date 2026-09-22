@@ -1,4 +1,4 @@
-import { Context, Data, Effect, Layer } from "effect"
+import { Data, Effect } from "effect"
 import type { ModelCatalog } from "@clavia/tardigrade-model/catalog/schema"
 import { modelAllowedBy, type ModelPolicy } from "../access"
 
@@ -7,7 +7,7 @@ export class ModelRegistryError extends Data.TaggedError("ModelRegistryError")<{
   readonly cause?: unknown
 }> {}
 
-export interface ModelRegistryService {
+export interface ModelRegistryCache {
   readonly read: (sourceUrl: string) => Effect.Effect<ModelCatalog | undefined, ModelRegistryError>
   readonly readScope: (
     sourceUrl: string,
@@ -34,30 +34,4 @@ export const modelCatalogScopeOf = (snapshot: ModelCatalog, scope: ModelCatalogS
       return models.length === 0 ? [] : [{ ...provider, models }]
     })
   }
-}
-
-// ModelRegistry caches external model metadata for authoring.
-export class ModelRegistry extends Context.Service<
-  ModelRegistry,
-  ModelRegistryService
->()("tardigrade/model/ModelRegistry") {}
-
-// layerMemoryModelRegistry keeps source-keyed snapshots for tests and embeddings.
-export const layerMemoryModelRegistry = (
-  initial: ReadonlyArray<readonly [string, ModelCatalog]> = []
-): Layer.Layer<ModelRegistry> => {
-  const snapshots = new Map(initial)
-  return Layer.succeed(ModelRegistry)({
-    read: (sourceUrl) => Effect.succeed(
-      snapshots.get(sourceUrl) === undefined ? undefined : { ...snapshots.get(sourceUrl)!, status: "cached" }
-    ),
-    readScope: (sourceUrl, scope) => Effect.succeed(
-      snapshots.get(sourceUrl) === undefined
-        ? undefined
-        : modelCatalogScopeOf({ ...snapshots.get(sourceUrl)!, status: "cached" }, scope)
-    ),
-    write: (sourceUrl, snapshot) => Effect.sync(() => {
-      snapshots.set(sourceUrl, snapshot)
-    })
-  })
 }

@@ -1,6 +1,5 @@
 import { bunHttpServices } from "@clavia/tardigrade-bun/http-threads"
 import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
-export { selectedModelFrom, modelIsConfigured, MISSING_MODEL } from "@clavia/tardigrade-model/selection"
 import { createHost, hostBackend, type HostOptions, type Host } from "@clavia/tardigrade-bun/create-host"
 import { Context, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -33,7 +32,7 @@ import {
 
 import { builtInActor, type ServerR } from "./actor"
 import { ServerConfig, type ServerConfigValue } from "./config"
-import { ModelLock, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
+import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { DriverGauge } from "./driver-gauge"
@@ -66,7 +65,6 @@ export interface ThreadsOptions {
   // providers interpret replies whose durable inbound link targets an external provider instance.
   readonly providers?: ReadonlyArray<Provider>
   // actorRefresh watches the actor root and reconciles its artifacts after the stated debounce.
-  // Absent keeps a hosted server's registry fixed except for PUT /v1/actors; tdg dev supplies it.
   readonly actorRefresh?: {
     readonly debounceMillis: number
     readonly onError?: ((error: Error) => void) | undefined
@@ -197,9 +195,8 @@ const manifestOf = async (directory: string): Promise<{ readonly manifest: Actor
 const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
-    const { providers: _providers, ...policy } = config.model
     const lock = yield* Effect.serviceOption(ModelLock)
-    const catalog = lock._tag === "None" ? {} : { snapshot: yield* Effect.promise(() => modelCatalogForConfig(policy, lock.value.definitions)) }
+    const catalog = lock._tag === "None" ? {} : { snapshot: yield* Effect.promise(() => lock.value.listing()) }
     const thread = layerThread(options)
     const runtimes = new Map<string, LoadedActor>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })

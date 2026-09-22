@@ -77,20 +77,6 @@ const definitionFrom = (loaded: Record<string, unknown>): Actor<unknown> => {
 const definitionOf = async (modulePath: string): Promise<Actor<unknown>> =>
   definitionFrom(await actorModuleOf(modulePath))
 
-export interface LoadedBuiltActor {
-  readonly actor: Actor<unknown>
-  readonly layersFor?: unknown
-}
-
-// loadBuiltActorModule returns the validated actor and its optional development layer factory.
-export const loadBuiltActorModule = async (built: BuiltActor): Promise<LoadedBuiltActor> => {
-  const loaded = await actorModuleOf(join(built.directory, ACTOR_MODULE_FILE))
-  return {
-    actor: definitionFrom(loaded),
-    ...(loaded.layersFor === undefined ? {} : { layersFor: loaded.layersFor })
-  }
-}
-
 // loadBuiltActor returns the validated definition from one built artifact.
 export const loadBuiltActor = (built: BuiltActor): Promise<Actor<unknown>> =>
   definitionOf(join(built.directory, ACTOR_MODULE_FILE))

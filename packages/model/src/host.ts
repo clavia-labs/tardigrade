@@ -88,4 +88,4 @@ export const modelLayer = ({ credentials, ...options }: ModelBindingOptions) => 
   }
 }, MODEL_PROTOCOLS)
 
-export { MISSING_MODEL, modelIsConfigured, selectedModelFrom, modelLayerWith, type SelectedModel } from "./selection"
+export { modelLayerWith, type SelectedModel } from "./selection"

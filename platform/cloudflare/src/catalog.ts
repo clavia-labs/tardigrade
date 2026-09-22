@@ -1,10 +1,10 @@
+import { ModelRegistry, modelRegistry } from "@clavia/tardigrade-model/catalog"
 import { Effect, Layer, Schema } from "effect"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import {
-  ModelRegistry,
   ModelRegistryError,
   modelCatalogScopeOf,
-  type ModelRegistryService,
+  type ModelRegistryCache,
   type ModelCatalogScope
 } from "@clavia/tardigrade-model/catalog/repository"
 
@@ -179,17 +179,17 @@ const writeStored = async (
   }
 }
 
-// layerCloudflareModelRegistry stores validated catalog rows in the host's shared D1 binding.
-export const layerCloudflareModelRegistry = (
+// cloudflareModelRegistryCache stores validated registry rows in D1.
+export const cloudflareModelRegistryCache = (
   db: D1Database,
   options: CloudflareModelRegistryOptions = {}
-): Layer.Layer<ModelRegistry> => {
+): ModelRegistryCache => {
   const writeBatchSize = batchSizeOf(options.writeBatchSize)
   const read = (sourceUrl: string) => Effect.tryPromise({
     try: () => readStored(db, sourceUrl),
     catch: (cause) => repositoryError(`could not read model catalog snapshot for ${JSON.stringify(sourceUrl)}`, cause)
   })
-  return Layer.succeed(ModelRegistry)({
+  return {
     read,
     readScope: (sourceUrl: string, scope: ModelCatalogScope) => Effect.tryPromise({
       try: async () => {
@@ -202,5 +202,8 @@ export const layerCloudflareModelRegistry = (
       try: () => writeStored(db, sourceUrl, snapshot, writeBatchSize),
       catch: (cause) => repositoryError(`could not write model catalog snapshot for ${JSON.stringify(sourceUrl)}`, cause)
     })
-  } satisfies ModelRegistryService)
+  }
 }
+
+export const layerCloudflareModelRegistry = (db: D1Database, options: CloudflareModelRegistryOptions = {}) =>
+  Layer.succeed(ModelRegistry, modelRegistry(cloudflareModelRegistryCache(db, options)))

@@ -1,5 +1,5 @@
 import { modelLockSourceOf, upgradeModelLock } from "@clavia/tardigrade-model/lock-compat"
-import { ModelLock, MODEL_LOCK_FILE, lockedModelConfigOf, modelLockService, modelCatalogForConfig } from "@clavia/tardigrade-model/lock"
+import { ModelLock, MODEL_LOCK_FILE, lockedModelConfigOf, modelLockService } from "@clavia/tardigrade-model/lock"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Layer } from "effect"
@@ -9,12 +9,12 @@ import { modelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-mod
 import type { InferenceObserver } from "@clavia/tardigrade-agent"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
-import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
+import type { ModelListingState } from "@clavia/tardigrade-model/catalog/schema"
 import { catalogDiscoveryOf } from "@clavia/tardigrade-http/models"
 import { projectModelsOf, projectConfigPathOf, readConfig } from "./config"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 
-type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelCatalogState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel | ModelLock, never, ModelLock>
+type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelListingState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel | ModelLock, never, ModelLock>
 
 export type BunModelServicesOptions = {
   readonly configFile?: string | URL
@@ -23,15 +23,15 @@ export type BunModelServicesOptions = {
   readonly model?: ModelIntegrationOptions
 }
 
-// bunModelServices binds configured model inference, catalog discovery, and Bun services for a host.
+// bunModelServices loads the lock before resolving runtime configuration and credentials (model-services.test.ts).
 export const bunModelServices = async (options: BunModelServicesOptions) => {
-  const configPath = options.configFile ?? projectConfigPathOf(options.env)
-  const projectFile = Bun.file(configPath)
+  const configFile = options.configFile ?? projectConfigPathOf(options.env)
+  const projectFile = Bun.file(configFile)
   const exists = await projectFile.exists()
-  if (!exists && (options.configFile !== undefined || options.env.TARDIGRADE_CONFIG_PATH?.trim().length)) {
-    throw new Error(`project configuration ${JSON.stringify(String(configPath))} does not exist`)
+  if (!exists && (options.configFile !== undefined || options.env.TARDIGRADE_CONFIG_PATH?.trim())) {
+    throw new Error(`project configuration ${JSON.stringify(String(configFile))} does not exist`)
   }
-  const path = resolve(dirname(configPath instanceof URL ? fileURLToPath(configPath) : configPath), MODEL_LOCK_FILE)
+  const path = resolve(dirname(configFile instanceof URL ? fileURLToPath(configFile) : configFile), MODEL_LOCK_FILE)
   const file = Bun.file(path)
   const models = projectModelsOf(exists ? Bun.JSONC.parse(await projectFile.text()) : {})
   const definitions = await file.exists() ? await upgradeModelLock(modelLockSourceOf(await file.json(), path), models, path)
@@ -39,10 +39,11 @@ export const bunModelServices = async (options: BunModelServicesOptions) => {
   const project = { models: lockedModelConfigOf(models, definitions) }
   const config = readConfig(options.env, project)
   const { providers: _providers, ...policy } = config.model
-  const snapshot = { snapshot: await modelCatalogForConfig(policy, definitions) }
+  const service = modelLockService(definitions, policy)
+  const snapshot = { snapshot: await service.listing() }
   const inference = makeInferenceStream()
   const binding = options.inference === undefined ? modelLayer({ credentials: config.modelCredentials, ...options.model, observer: inference.observer }) : options.inference(config, snapshot, inference.observer)
-  const lock = Layer.succeed(ModelLock, modelLockService(definitions, policy))
+  const lock = Layer.succeed(ModelLock, service)
   const layers = Layer.mergeAll(
     binding.pipe(Layer.provideMerge(lock)),
     BunFileSystem.layer,

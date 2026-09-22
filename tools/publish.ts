@@ -51,15 +51,8 @@ const BIN_NAME = "tdg"
 
 const BIN_ENTRY = "./src/cli/main.ts"
 
-// Where the UI's build is staged, and where it comes from. `tdg dev` resolves this directory
-// relative to its own module, so a published command finds the build with no configuration. The
-// name is not the workspace directory's, so the candidate this command tries inside the repository
-// cannot match it (apps/cli/src/assets.ts, INSTALLED_ASSETS).
-const STAGED_ASSETS = "ui"
 const STAGED_EXAMPLES = "examples"
 
-const VOYAGER_SOURCE = "apps/voyager/dist"
-const VOYAGER_BUILD = ["bun", "run", "--cwd", "apps/voyager", "build"]
 
 const npmMin = { maj: 11, min: 5, patch: 1 } as const
 
@@ -194,13 +187,9 @@ const stage = join(destination, "package")
 
 try {
   await mkdir(stage, { recursive: true })
-  // The UI is built here rather than assumed: the tarball carries the assets `tdg dev` serves, and
-  // a stale build shipped as a fresh one is worse than the wait.
-  await run(VOYAGER_BUILD, root)
   await Promise.all([
     cp(join(root, "LICENSE"), join(stage, "LICENSE")),
     cp(join(root, "README.md"), join(stage, "README.md")),
-    cp(join(root, VOYAGER_SOURCE), join(stage, STAGED_ASSETS), { recursive: true }),
     ...INIT_TEMPLATES.map((template) =>
       cp(join(root, "examples", template), join(stage, STAGED_EXAMPLES, template), { recursive: true })
     ),
@@ -234,7 +223,7 @@ try {
     bugs: publicSource.pkg.bugs,
     publishConfig: publicSource.pkg.publishConfig,
     ...(sourceTree === undefined ? {} : { tardigrade: { sourceTree } }),
-    files: ["src", STAGED_ASSETS, STAGED_EXAMPLES],
+    files: ["src", STAGED_EXAMPLES],
     engines: publicSource.pkg.engines,
     type: "module",
     bin: { [BIN_NAME]: BIN_ENTRY },

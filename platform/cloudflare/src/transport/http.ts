@@ -3,7 +3,7 @@ import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "e
 import { ForkRequest, forkCheckpointOf, UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ModelPolicy } from "@clavia/tardigrade-agent"
-import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
+import type { ModelListingState } from "@clavia/tardigrade-model/catalog/schema"
 import type { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
@@ -43,9 +43,7 @@ interface CloudflareHttpOptions {
   readonly authentication?: () => "bearer" | "none"
   readonly actorName: () => string
   readonly methodsOf: (name: string) => ActorMethods | undefined
-  readonly publicCatalog: (env: Env) => Promise<ModelCatalogState>
-  readonly providerAvailabilityFrom: (env: Env) => ReturnType<typeof providerAvailabilitiesOf> | Promise<ReturnType<typeof providerAvailabilitiesOf>>
-  readonly modelPolicyFrom: (env: Env) => ModelPolicy | Promise<ModelPolicy>
+  readonly modelListingFrom: (env: Env) => Promise<ModelListingState & { readonly availability: ReturnType<typeof providerAvailabilitiesOf>; readonly policy: ModelPolicy }>
   readonly directory: CloudflareDirectory
 }
 
@@ -54,7 +52,7 @@ const FORK_REFUSAL_STATUS = { "unknown-source": 404, checkpoint: 400, occupied: 
 
 // cloudflareHttp adapts HTTP requests to the mounted host's methods and directory.
 export const cloudflareHttp = ({
-  actorName, methodsOf, publicCatalog, providerAvailabilityFrom, modelPolicyFrom, directory,
+  actorName, methodsOf, modelListingFrom, directory,
   authentication = () => DEFAULT_CLOUDFLARE_AUTHENTICATION
 }: CloudflareHttpOptions): ExportedHandler<Env> => {
   const { actorStub, threadStub } = directory
@@ -286,11 +284,7 @@ export const cloudflareHttp = ({
         })
       })
       return handler(request, Context.make(WorkerEnv, env).pipe(Context.add(MethodRuntime, runtime), Context.add(CatalogDiscovery, {
-        read: Effect.promise(async () => ({
-          ...await publicCatalog(env),
-          availability: await providerAvailabilityFrom(env),
-          policy: await modelPolicyFrom(env)
-        }))
+        read: Effect.promise(() => modelListingFrom(env))
       })))
     }
   } satisfies ExportedHandler<Env>

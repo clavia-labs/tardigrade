@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, type Layer } from "effect"
 
 import { loadModelCatalog, modelCatalogOf, type ModelCatalogLoadOptions } from "./catalog"
-import { layerMemoryModelRegistry, type ModelRegistry } from "./catalog-store"
+import { layerMemoryModelRegistry, type ModelRegistry } from "./catalog"
 
 const source = {
   openai: {

@@ -4,12 +4,11 @@ import { lockedModelConfigOf, modelCatalogForConfig as lockedCatalogForConfig, M
 import { cloudflareDirectory } from "./transport/directory"
 import { Layer } from "effect"
 import { HttpClient } from "effect/unstable/http"
-import { type InferenceObserver, type ModelPolicy } from "@clavia/tardigrade-agent"
+import { type InferenceObserver } from "@clavia/tardigrade-agent"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
-import { type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { modelLayer as configuredModelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
-import { type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
+import type { ModelCatalog, ModelListing, ModelListingState } from "@clavia/tardigrade-model/catalog/schema"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
 import { modelCredentialsFrom, modelConfigOf, type ModelConfig } from "@clavia/tardigrade-model/config"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
@@ -69,7 +68,7 @@ export type DeploymentModelScope = ModelLockSource
 export const modelScopeFrom = modelLockSourceOf
 
 // modelCatalogForConfig normalizes persisted locks before deriving discovery metadata (test/actor.workers.ts).
-export const modelCatalogForConfig = async (config: ModelConfig, scope: DeploymentModelScope): Promise<ModelCatalog> => {
+export const modelCatalogForConfig = async (config: ModelConfig, scope: DeploymentModelScope): Promise<ModelListing> => {
   const lock = await upgradeModelLock(scope, config)
   const { providers: _providers, ...policy } = lockedModelConfigOf(config, lock)
   return lockedCatalogForConfig(policy, lock)
@@ -83,30 +82,22 @@ export const modelStateFrom = async (env: Env) => {
   const lock = await upgradeModelLock(scope, models)
   const model = lockedModelConfigOf(models, lock)
   const { providers: _providers, ...policy } = model
-  return { model, lock: Layer.succeed(ModelLock, modelLockService(lock, policy)), catalog: { snapshot: await lockedCatalogForConfig(policy, lock) } }
+  const service = modelLockService(lock, policy)
+  return { model, lock: Layer.succeed(ModelLock, service), catalog: { snapshot: await service.listing() } }
 }
 
 export const deployed = (name: string): boolean => mountedActor?.actor.name === name
 export const directory = cloudflareDirectory(deployed)
-
-export const modelConfigFrom = async (env: Env): Promise<ModelConfig | undefined> =>
-  (await modelStateFrom(env))?.model
 
 export const modelsFrom = (env: Env, parsed: ModelConfig | undefined): ModelHostConfig => {
   const model = parsed ?? modelConfigOf({ allow: "*" })
   return { model, modelCredentials: modelCredentialsFrom(model, env as unknown as Readonly<Record<string, unknown>>) }
 }
 
-export const providerAvailabilityFrom = async (env: Env) => {
-  const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
-  const parsed = await modelConfigFrom(env) ?? modelConfigOf(config?.["models"] ?? { allow: "*" })
-  return providerAvailabilitiesOf(parsed, modelCredentialsFrom(parsed, env as unknown as Readonly<Record<string, unknown>>))
-}
-
-export const modelPolicyFrom = async (env: Env): Promise<ModelPolicy> => {
-  const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
-  const parsed = await modelConfigFrom(env) ?? modelConfigOf(config?.["models"] ?? { allow: "*" })
-  return { ...(parsed.default === undefined ? {} : { default: parsed.default }), allow: parsed.allow }
+export const modelListingFrom = async (env: Env) => {
+  const state = await modelStateFrom(env)
+  const { model, modelCredentials } = modelsFrom(env, state?.model)
+  return { ...state?.catalog, availability: providerAvailabilitiesOf(model, modelCredentials), policy: model }
 }
 
 export const modelLayer = (
@@ -114,7 +105,7 @@ export const modelLayer = (
   observer?: InferenceObserver
 ) => configuredModelLayer({ credentials: models.modelCredentials, ...mountedActor?.model, ...(observer === undefined ? {} : { observer }), providerLayer: mountedActor?.model?.providerLayer ?? (() => { throw new Error("Configured Worker models require model.providerLayer in workerModelServices; import the selected tardie/model/providers module") }) })
 
-export const publicCatalog = async (env: Env): Promise<ModelCatalogState> =>
+export const publicCatalog = async (env: Env): Promise<ModelListingState> =>
   (await modelStateFrom(env))?.catalog ?? {}
 
 export const nonNegativeInteger = (raw: string | undefined, fallback: number, name: string): number => {

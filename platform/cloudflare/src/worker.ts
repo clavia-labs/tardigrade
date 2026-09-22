@@ -2,7 +2,7 @@ import type { ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
 import { cloudflareHttp, DEFAULT_CLOUDFLARE_AUTHENTICATION } from "./transport/http"
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import type { Env } from "./env"
-import { mountedActor, directory, providerAvailabilityFrom, modelPolicyFrom, publicCatalog, methodsOf, type CloudflareWorkerArguments, type CloudflareWorkerOptions, type DeploymentModelScope, mountActor } from "./assembly"
+import { mountedActor, directory, modelListingFrom, methodsOf, type CloudflareWorkerArguments, type CloudflareWorkerOptions, type DeploymentModelScope, mountActor } from "./assembly"
 import { ActorDO } from "./actor"
 import { ThreadDO } from "./thread"
 export { ActorDO, type ActorThreadNode } from "./actor"
@@ -14,8 +14,7 @@ export { CLOUDFLARE_CHILD_PLACEMENTS, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, BACKGR
 
 const http = cloudflareHttp({
   authentication: () => mountedActor?.authentication ?? DEFAULT_CLOUDFLARE_AUTHENTICATION,
-  actorName: () => mountedActor!.actor.name, methodsOf, publicCatalog,
-  providerAvailabilityFrom, modelPolicyFrom, directory
+  actorName: () => mountedActor!.actor.name, methodsOf, modelListingFrom, directory
 })
 
 export type WorkerHttp<WorkerEnv extends Env = Env> = Required<Pick<ExportedHandler<WorkerEnv>, "fetch">>

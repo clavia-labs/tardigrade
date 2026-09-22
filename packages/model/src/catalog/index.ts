@@ -1,5 +1,5 @@
 import { canonicalModelConfig, type ModelConfig } from "../config"
-import { Effect, Schema } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import {
   ModelCatalog as ModelCatalogSchema,
   type ModelCatalog
@@ -7,7 +7,7 @@ import {
 import { modelsDevCatalogOf, type ModelMetadata } from "./metadata"
 
 import {
-  ModelRegistry,
+  type ModelRegistryCache,
   modelCatalogScopeOf,
   type ModelCatalogScope
 } from "./repository"
@@ -151,18 +151,17 @@ const refreshed = async (options: ModelCatalogLoadOptions): Promise<ModelCatalog
   return modelCatalogOf(JSON.parse(text) as unknown, revision, (options.now ?? Date.now)())
 }
 
-const cacheRead = (sourceUrl: string, scope: ModelCatalogScope | undefined) => Effect.flatMap(ModelRegistry, (repository) =>
+const cacheRead = (repository: ModelRegistryCache, sourceUrl: string, scope: ModelCatalogScope | undefined) =>
   (scope === undefined ? repository.read(sourceUrl) : repository.readScope(sourceUrl, scope)).pipe(Effect.match({
     onFailure: (error) => ({ cacheError: error.message }),
     onSuccess: (snapshot) => snapshot === undefined ? {} : { snapshot }
-  })))
+  }))
 
-// loadModelCatalog resolves one in-memory snapshot according to the stated source policy.
-export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effect<ModelCatalogState, never, ModelRegistry> =>
+const load = (repository: ModelRegistryCache, options: ModelCatalogLoadOptions): Effect.Effect<ModelCatalogState> =>
   Effect.gen(function*() {
     let cached: ModelCatalogState | undefined
     if (options.policy === "cache-first") {
-      cached = yield* cacheRead(options.sourceUrl, options.scope)
+      cached = yield* cacheRead(repository, options.sourceUrl, options.scope)
       if (cached.snapshot !== undefined) return cached
     }
 
@@ -175,7 +174,6 @@ export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effec
     }))
 
     if (refreshedState._tag === "Success") {
-      const repository = yield* ModelRegistry
       const cacheError = yield* repository.write(options.sourceUrl, refreshedState.snapshot).pipe(Effect.match({
         onFailure: (error) => error.message,
         onSuccess: () => undefined
@@ -190,10 +188,32 @@ export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effec
       }
     }
 
-    cached ??= yield* cacheRead(options.sourceUrl, options.scope)
+    cached ??= yield* cacheRead(repository, options.sourceUrl, options.scope)
     return {
       ...(cached.snapshot === undefined ? {} : { snapshot: cached.snapshot }),
       refreshError: refreshedState.refreshError,
       ...(cached.cacheError === undefined ? {} : { cacheError: cached.cacheError })
     }
   })
+
+// ModelRegistry loads external metadata with an optional persistent cache (apps/server/src/catalog.test.ts).
+export class ModelRegistry extends Context.Service<ModelRegistry, {
+  readonly load: (options: ModelCatalogLoadOptions) => Effect.Effect<ModelCatalogState>
+}>()("tardigrade/model/ModelRegistry") {}
+
+export const modelRegistry = (cache: ModelRegistryCache): typeof ModelRegistry.Service => ({
+  load: options => load(cache, options)
+})
+
+export const loadModelCatalog = (options: ModelCatalogLoadOptions) =>
+  Effect.flatMap(ModelRegistry, registry => registry.load(options))
+
+export const layerMemoryModelRegistry = (initial: ReadonlyArray<readonly [string, ModelCatalog]> = []) => {
+  const snapshots = new Map(initial)
+  const read = (source: string) => Effect.succeed(snapshots.get(source))
+  return Layer.succeed(ModelRegistry, modelRegistry({
+    read: source => Effect.map(read(source), snapshot => snapshot === undefined ? undefined : { ...snapshot, status: "cached" }),
+    readScope: (source, scope) => Effect.map(read(source), snapshot => snapshot === undefined ? undefined : modelCatalogScopeOf({ ...snapshot, status: "cached" }, scope)),
+    write: (source, snapshot) => Effect.sync(() => { snapshots.set(source, snapshot) })
+  }))
+}

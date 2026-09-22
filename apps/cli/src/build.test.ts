@@ -11,8 +11,7 @@ import {
   buildActor,
   buildSummary,
   lintActor,
-  lintSummary,
-  loadBuiltActorModule
+  lintSummary
 } from "./build"
 
 let root = ""
@@ -44,18 +43,6 @@ describe("buildActor", () => {
     expect(JSON.parse(await readFile(join(built.directory, ACTOR_MANIFEST_FILE), "utf8"))).toEqual(built.manifest)
     expect(built.manifest.schema).toBe(ACTOR_ARTIFACT_VERSION)
     expect(built.manifest.digest).toMatch(/^sha256:[a-f0-9]{64}$/)
-  })
-
-  test("preserves the development layer factory", async () => {
-    const path = await entry(`
-      import { actor } from "tardie"
-      export const layersFor = ({ thread }) => thread
-      export default actor({ name: "researcher", methods: {}, components: [] })
-    `)
-    const loaded = await loadBuiltActorModule(await buildActor(path, { cwd: root, out: "output" }))
-    expect(loaded.actor.name).toBe("researcher")
-    expect(typeof loaded.layersFor).toBe("function")
-    expect((loaded.layersFor as (context: { readonly thread: string }) => string)({ thread: "ag.root" })).toBe("ag.root")
   })
 
   test("refuses an unnamed module", async () => {

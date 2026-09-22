@@ -20,7 +20,7 @@ test("Bun model services use locked definitions through startup and restart with
     const configFile = join(directory, "wrangler.jsonc")
     await writeFile(configFile, JSON.stringify({ vars: { TARDIGRADE_CONFIG: { models: {
       allow: "*",
-      providers: { openai: { protocol: "openai-responses", baseUrl: "https://example.test/v1", env: ["TEST_MODEL_KEY"] } },
+      providers: { openai: { protocol: "openai-responses", baseUrl: "https://example.test/v1", env: ["OLD_MANIFEST_KEY"] } },
       default: { provider: "openai", model_id: "gpt" }
     } } } }))
     await writeFile(join(directory, "models.lock.json"), JSON.stringify({ schema: 2,
@@ -38,11 +38,13 @@ test("Bun model services use locked definitions through startup and restart with
       } },
       env: { PORT: "4321", TEST_MODEL_KEY: "test-secret", TARDIGRADE_MODEL_CATALOG_CACHE: join(directory, "catalog.json") }
     })
+    expect(services.config.modelCredentials).toEqual({ TEST_MODEL_KEY: "test-secret" })
     expect(services.config.port).toBe(4321)
     expect(services.config.model.providers.openai?.baseUrl).toBe("https://locked.test/v1")
     const catalog = await Effect.runPromise(services.api.catalog.read)
     expect(catalog.policy.default).toEqual({ provider: "openai", model_id: "gpt" })
     expect(catalog.snapshot?.providers[0]?.models[0]?.id).toBe("gpt")
+    expect(Object.keys(catalog.snapshot!).sort()).toEqual(["providers", "revision"])
     expect(JSON.stringify(catalog)).not.toContain("test-secret")
     await writeFile(configFile, JSON.stringify({ vars: { TARDIGRADE_CONFIG: { models: { allow: "*", default: { provider: "openai", model_id: "gpt" } } } } }))
     const restarted = await bunModelServices({ configFile: pathToFileURL(configFile), env: { TEST_MODEL_KEY: "test-secret" } })

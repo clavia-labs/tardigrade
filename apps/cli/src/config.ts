@@ -5,13 +5,10 @@ import { isAbsolute, join } from "node:path"
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
 import {
-  maxConcurrentThreadsOf,
   projectConfigOf,
   projectConfigPathOf,
-  readConfig,
   type Env,
-  type ProjectConfig,
-  type ServerConfigValue
+  type ProjectConfig
 } from "@clavia/tardigrade-server/config"
 
 // Where a remote client value comes from, decided once. Three sources apply in one order: a flag,
@@ -158,38 +155,3 @@ export const resolveRemote = (flags: RemoteFlags, env: Env, file: FileConfig = {
   baseUrl: resolve(flags.url, undefined, file.url) ?? DEFAULT_BASE_URL,
   token: resolve(flags.token, env["TARDIGRADE_TOKEN"], file.token)
 })
-
-export interface ServerFlags {
-  readonly port?: number | undefined
-  readonly db?: string | undefined
-  readonly actors?: string | undefined
-  readonly actorData?: string | undefined
-  readonly maxConcurrentThreads?: number | undefined
-}
-
-// resolveServer answers what `tdg dev` boots on. It starts from the server's own reader, so a
-// variable the server honours is a variable this command honours and the two can never disagree,
-// and then lets a flag win over it. A PORT that is not a port still refuses to resolve, because the reader is the server's
-// (apps/server/src/config.ts, readConfig).
-//
-// The token is dropped, `TARDIGRADE_TOKEN` in the environment included. `tdg dev` is the local
-// command: it binds loopback (dev.ts, DEV_HOST) and what keeps it private is the interface rather
-// than a secret. A server meant to be reachable by anyone else is the server run directly with a
-// token set (docs/how-to/server.md; config.test.ts, "the token is dropped, so the local server is
-// ungated").
-export const resolveServer = (
-  flags: ServerFlags,
-  env: Env,
-  project: ProjectConfig = projectConfigOf({})
-): ServerConfigValue => {
-  const base = readConfig(env, project)
-  return {
-    ...base,
-    port: flags.port ?? base.port,
-    db: text(flags.db) ?? base.db,
-    actors: text(flags.actors) ?? base.actors,
-    actorData: text(flags.actorData) ?? base.actorData,
-    maxConcurrentThreads: maxConcurrentThreadsOf(flags.maxConcurrentThreads ?? base.maxConcurrentThreads),
-    token: undefined
-  }
-}

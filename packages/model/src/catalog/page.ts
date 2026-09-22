@@ -1,6 +1,6 @@
 import type {
   CatalogAvailabilityFilter,
-  ModelCatalog,
+  ModelListing,
   ModelCatalogPage,
   ModelCatalogPriceSort,
   ModelCatalogSortOrder,
@@ -79,7 +79,7 @@ const pageLimit = (limit: number | undefined): number => {
   return value
 }
 
-const pageOffset = (catalog: ModelCatalog, query: CatalogPageQuery, scope: string): number => {
+const pageOffset = (catalog: ModelListing, query: CatalogPageQuery, scope: string): number => {
   if (query.cursor === undefined) return 0
   const cursor = decoded(query.cursor)
   if (cursor.revision !== catalog.revision) {
@@ -90,7 +90,7 @@ const pageOffset = (catalog: ModelCatalog, query: CatalogPageQuery, scope: strin
 }
 
 const pageOf = <A>(
-  catalog: ModelCatalog,
+  catalog: ModelListing,
   items: ReadonlyArray<A>,
   query: CatalogPageQuery,
   scope: string
@@ -101,8 +101,6 @@ const pageOf = <A>(
   const next = offset + selected.length
   return {
     revision: catalog.revision,
-    status: catalog.status,
-    refreshed_at: catalog.refreshedAt,
     policy: query.policy ?? query.models ?? DEFAULT_MODEL_POLICY,
     total: items.length,
     limit,
@@ -112,7 +110,7 @@ const pageOf = <A>(
 }
 
 export const providersPageOf = (
-  catalog: ModelCatalog,
+  catalog: ModelListing,
   availability: ProviderAvailabilities,
   query: CatalogPageQuery = {}
 ): ProviderCatalogPage => {
@@ -154,7 +152,7 @@ export const providersPageOf = (
 }
 
 export const modelsPageOf = (
-  catalog: ModelCatalog,
+  catalog: ModelListing,
   availability: ProviderAvailabilities,
   query: ModelCatalogPageQuery = {}
 ): ModelCatalogPage => {

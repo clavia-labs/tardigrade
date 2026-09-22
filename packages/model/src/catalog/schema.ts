@@ -40,13 +40,20 @@ export const ModelCatalogProvider = Schema.Struct({
   models: Schema.Array(ModelCatalogModel)
 }).annotate({ identifier: "ModelCatalogProvider" })
 
-// ModelCatalog describes the public provider and model snapshot.
-export const ModelCatalog = Schema.Struct({
-  source: Schema.Literals(["models.dev", "custom", "mixed"]),
+// ModelListing describes models exposed by a host.
+export const ModelListing = Schema.Struct({
   revision: Schema.NonEmptyString,
-  refreshedAt: Schema.Finite,
-  status: Schema.Literals(["fresh", "cached"]),
   providers: Schema.Array(ModelCatalogProvider)
+}).annotate({ identifier: "ModelListing" })
+export type ModelListing = typeof ModelListing.Type
+export interface ModelListingState { readonly snapshot?: ModelListing }
+
+// ModelCatalog describes a fetched registry snapshot and its cache metadata.
+export const ModelCatalog = Schema.Struct({
+  ...ModelListing.fields,
+  source: Schema.Literals(["models.dev", "custom", "mixed"]),
+  refreshedAt: Schema.Finite,
+  status: Schema.Literals(["fresh", "cached"])
 }).annotate({ identifier: "ModelCatalog" })
 
 export type ModelCatalog = typeof ModelCatalog.Type
@@ -69,8 +76,6 @@ export type ModelPolicySummary = typeof ModelPolicySummary.Type
 
 const CatalogPageFields = {
   revision: Schema.NonEmptyString,
-  status: Schema.Literals(["fresh", "cached"]),
-  refreshed_at: Schema.Finite,
   policy: ModelPolicySummary,
   total: Schema.Int,
   limit: Schema.Int,

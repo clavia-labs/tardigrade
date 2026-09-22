@@ -5,14 +5,13 @@ import { threadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { env, runInDurableObject, evictDurableObject, SELF } from "cloudflare:test"
-import { Effect, Layer, ManagedRuntime, Schema } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 
 import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { ModelRegistry } from "@clavia/tardigrade-model/catalog/repository"
 import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
 import {
@@ -29,8 +28,8 @@ import {
 } from "../src/worker"
 import { providerLayer } from "@clavia/tardigrade-model/providers/openai-compat"
 import { ModelSelection } from "@clavia/tardigrade-model/settings"
-import { modelLayer, modelsFrom, mountedActor, modelConfigFrom, modelStateFrom, publicCatalog } from "../src/assembly"
-import { layerCloudflareModelRegistry } from "../src/catalog"
+import { modelLayer, modelsFrom, mountedActor, modelStateFrom, publicCatalog } from "../src/assembly"
+import { cloudflareModelRegistryCache } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
 import { plaintextEventCodec } from "../src/storage"
 
@@ -185,8 +184,7 @@ beforeAll(async () => {
     .filter((statement) => statement.length > 0)
     .map((statement) => db.prepare(statement))
   await db.batch(statements)
-  const runtime = ManagedRuntime.make(layerCloudflareModelRegistry(db))
-  const repository = await runtime.runPromise(ModelRegistry)
+  const repository = cloudflareModelRegistryCache(db)
   await Effect.runPromise(repository.write("https://models.test/catalog.json", {
     source: "models.dev",
     revision: "workers-catalog-test",
@@ -199,7 +197,6 @@ beforeAll(async () => {
       models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
     }]
   }))
-  await runtime.dispose()
 })
 
 describe("cloudflare actor", () => {
@@ -216,7 +213,7 @@ describe("cloudflare actor", () => {
     Object.assign(mountedActor!, { modelScope: scope })
     try {
       const environment = { ...env, TARDIGRADE_CONFIG: { models: { allow: "*", default: config.default } } } as Env
-      expect((await modelConfigFrom(environment))?.providers.openai?.baseUrl).toBe("https://api.openai.test/v1")
+      expect((await modelStateFrom(environment))?.model.providers.openai?.baseUrl).toBe("https://api.openai.test/v1")
       expect((await publicCatalog(environment)).snapshot.providers[0]?.models[0]?.metadata?.contextWindowTokens).toBe(32000)
     } finally {
       Object.assign(mountedActor!, { modelScope: previous })
@@ -639,18 +636,13 @@ describe("cloudflare actor", () => {
         models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
       }]
     }
-    const runtime = ManagedRuntime.make(layerCloudflareModelRegistry((env as Env).CATALOG_DB))
-    try {
-      const repository = await runtime.runPromise(ModelRegistry)
-      await Effect.runPromise(repository.write("https://models.test/catalog.json", snapshot))
-      expect(await Effect.runPromise(repository.read("https://models.test/catalog.json"))).toEqual({
-        ...snapshot,
-        status: "cached"
-      })
-      expect(await Effect.runPromise(repository.read("https://other.test/catalog.json"))).toBeUndefined()
-    } finally {
-      await runtime.dispose()
-    }
+    const repository = cloudflareModelRegistryCache((env as Env).CATALOG_DB)
+    await Effect.runPromise(repository.write("https://models.test/catalog.json", snapshot))
+    expect(await Effect.runPromise(repository.read("https://models.test/catalog.json"))).toEqual({
+      ...snapshot,
+      status: "cached"
+    })
+    expect(await Effect.runPromise(repository.read("https://other.test/catalog.json"))).toBeUndefined()
     const providers = await SELF.fetch("http://test/v1/providers?search=open&limit=1")
     expect(await publicCatalog(env as Env)).toEqual({})
     expect(providers.status).toBe(503)
@@ -675,22 +667,17 @@ describe("cloudflare actor", () => {
       }]
     }
     expect(new TextEncoder().encode(JSON.stringify(snapshot)).byteLength).toBeGreaterThan(4_425_714)
-    const runtime = ManagedRuntime.make(layerCloudflareModelRegistry((env as Env).CATALOG_DB))
-    try {
-      const repository = await runtime.runPromise(ModelRegistry)
-      await Effect.runPromise(repository.write("https://models.test/large.json", snapshot))
-      const stored = await Effect.runPromise(repository.readScope("https://models.test/large.json", {
-        providers: ["bulk"],
-        policy: { allow: [{ provider: "bulk", model_ids: ["model-599"] }] }
-      }))
-      expect(stored).toEqual({
-        ...snapshot,
-        status: "cached",
-        providers: [{ ...snapshot.providers[0]!, models: [snapshot.providers[0]!.models[599]!] }]
-      })
-    } finally {
-      await runtime.dispose()
-    }
+    const repository = cloudflareModelRegistryCache((env as Env).CATALOG_DB)
+    await Effect.runPromise(repository.write("https://models.test/large.json", snapshot))
+    const stored = await Effect.runPromise(repository.readScope("https://models.test/large.json", {
+      providers: ["bulk"],
+      policy: { allow: [{ provider: "bulk", model_ids: ["model-599"] }] }
+    }))
+    expect(stored).toEqual({
+      ...snapshot,
+      status: "cached",
+      providers: [{ ...snapshot.providers[0]!, models: [snapshot.providers[0]!.models[599]!] }]
+    })
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
   test("a failed D1 generation leaves the active catalog unchanged", async () => {
@@ -708,9 +695,8 @@ describe("cloudflare actor", () => {
       }]
     })
     const db = (env as Env).CATALOG_DB
-    const runtime = ManagedRuntime.make(layerCloudflareModelRegistry(db, { writeBatchSize: 1 }))
+    const repository = cloudflareModelRegistryCache(db, { writeBatchSize: 1 })
     try {
-      const repository = await runtime.runPromise(ModelRegistry)
       await Effect.runPromise(repository.write(sourceUrl, catalog("old", "working")))
       await db.prepare(
         `CREATE TRIGGER refuse_catalog_generation BEFORE INSERT ON catalog_models
@@ -732,7 +718,6 @@ describe("cloudflare actor", () => {
       expect([providers?.count, models?.count]).toEqual([0, 0])
     } finally {
       await db.prepare("DROP TRIGGER IF EXISTS refuse_catalog_generation").run()
-      await runtime.dispose()
     }
   })
 

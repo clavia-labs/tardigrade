@@ -69,7 +69,7 @@ export const UNEXPECTED_RESPONSE_TITLE = "Unexpected Response"
 export const SERVER_ERROR_TITLE = "Server Error"
 
 export const SERVER_ERROR_DETAIL =
-  "The server could not read this actor. Check the actor host logs. For `tdg dev`, confirm that the project directory and `.tardigrade/actor.sqlite` still exist, then restart it."
+  "The server could not read this actor. Check the actor host logs and confirm that its configured storage is accessible."
 
 export const UNREADABLE_EXCHANGE_TITLE = "Unreadable Exchange"
 

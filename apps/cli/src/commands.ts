@@ -1,12 +1,10 @@
-import { modelLockSourceOf, upgradeModelLock } from "@clavia/tardigrade-model/lock-compat"
-import { MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelConfigOf } from "@clavia/tardigrade-model/config"
-import { Clock, Console, Effect, Layer, Option } from "effect"
+import { Clock, Console, Effect, Option } from "effect"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { dirname, resolve } from "node:path"
+import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
-import { ACTOR_NAME_PATTERN, type Actor } from "tardie"
+import { ACTOR_NAME_PATTERN } from "tardie"
 import {
   CATALOG_AVAILABILITY_FILTERS,
   MODEL_CATALOG_PRICE_SORTS,
@@ -19,14 +17,11 @@ import {
   type MethodState
 } from "@clavia/tardigrade-client"
 
-import type { ServerR } from "@clavia/tardigrade-server/actor"
-import { modelIsConfigured } from "@clavia/tardigrade-server/host"
-import { projectConfigPathOf, modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-server/config"
+import { modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-server/config"
 
-import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary, loadBuiltActorModule } from "./build"
-import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
-import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, devLayersForFrom, openBrowser } from "./dev"
-import { DEFAULT_ACTOR_ENTRY, DEFAULT_INIT_ACTOR_NAME, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
+import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary } from "./build"
+import { readFileConfig, readProjectConfig, resolveRemote } from "./config"
+import { DEFAULT_INIT_ACTOR_NAME, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 import { withLoader } from "./loader"
 import { resolveModelLock, writeModelLock } from "./model-lock"
 import { DEFAULT_INIT_TEMPLATE, INIT_TEMPLATES } from "./template"
@@ -38,8 +33,6 @@ import {
   providerConfigWithAnswers,
   providerSetupJson,
   providerSetupSummary,
-  readSetupEnv,
-  runtimeEnvironmentOf,
   setupAnswersFrom,
   setupDefaultPrompt,
   setupFlowPrompt,
@@ -76,10 +69,6 @@ export const DEFAULT_POLL_MILLIS = 200
 
 // DEFAULT_TIMEOUT_MILLIS bounds how long `tdg call` waits while the server continues the work.
 export const DEFAULT_TIMEOUT_MILLIS = 300_000
-
-// DEFAULT_OPEN_BROWSER is whether `tdg dev` opens the UI after listening. The `--no-open` flag
-// overrides it for scripts, containers, and remote shells.
-export const DEFAULT_OPEN_BROWSER = true
 
 // problemLine is the whole of what a failed call prints. The four fields are the server's own words
 // (packages/client/src/problem.ts), and a status of NO_ANSWER means the call never reached a
@@ -226,15 +215,7 @@ const settle = (
     }
   })
 
-// What `tdg dev` says when no source named a model and nobody can be asked. It names the command
-// that fixes it and stops there: the process still boots, still answers every read, and every turn
-// it is asked to run fails with the server's own sentence.
-export const NO_MODEL_NOTICE =
-  "no provider connection is configured, so reads work and turns fail. Run `tdg setup` to configure a provider and default model."
-
-// asking is only honest at a terminal. A boot inside CI, a container, or a script has no one to
-// answer, and a prompt there waits forever on input that never arrives, so those boots take the
-// notice instead (commands.test.ts, "dev asks only where someone can answer").
+// canAsk limits interactive authoring to terminals.
 const canAsk = (): boolean => process.stdin.isTTY === true
 
 const setupPromptOptionsIn = (root: string, env: Readonly<Record<string, string | undefined>>) => {
@@ -582,132 +563,6 @@ export const lintCommand = Command.make("lint", {
     ])
   )
 
-export const devCommand = Command.make("dev", {
-  port: Flag.Int("port").pipe(
-    Flag.withDescription("The port to listen on. Defaults to PORT, then the server's own default."),
-    Flag.optional
-  ),
-  minPort: Flag.Int("min-port").pipe(
-    Flag.withDescription("The lowest automatic fallback when the implicit default port is occupied."),
-    Flag.withDefault(DEFAULT_MIN_PORT)
-  ),
-  db: Flag.String("db").pipe(
-    Flag.withDescription("The SQLite file that holds every log. Defaults to TARDIGRADE_DB."),
-    Flag.optional
-  ),
-  maxConcurrentThreads: Flag.Int("max-concurrent-threads").pipe(
-    Flag.withDescription("The maximum actor threads settled at once. Defaults to TARDIGRADE_MAX_CONCURRENT_THREADS."),
-    Flag.optional
-  ),
-  ui: Flag.String("ui").pipe(
-    Flag.withDescription("The directory holding the built UI. Defaults to the build shipped beside this command."),
-    Flag.optional
-  ),
-  open: Flag.Boolean("open").pipe(
-    Flag.withDescription("Open the UI in the default browser after the server starts. Use --no-open to keep it closed."),
-    Flag.withDefault(DEFAULT_OPEN_BROWSER)
-  )
-}, (flags) =>
-  Effect.gen(function*() {
-    const cli = yield* Cli
-    if (!existsSync(resolve(cli.cwd, DEFAULT_ACTOR_ENTRY))) {
-      return yield* userErrorOf(
-        `no Tardigrade project found in ${cli.cwd}. Run \`tdg init\`, navigate to the created project directory, then run \`tdg dev\` again.`
-      )
-    }
-    const localSecrets = yield* readSetupEnv(cli.cwd)
-    const runtimeEnv = runtimeEnvironmentOf(cli.env, localSecrets)
-    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, runtimeEnv), userErrorOf)
-    const config = yield* Effect.try({
-      try: () => resolveServer({
-        port: Option.getOrUndefined(flags.port),
-        db: stated(flags.db),
-        maxConcurrentThreads: Option.getOrUndefined(flags.maxConcurrentThreads)
-      }, runtimeEnv, project),
-      catch: userErrorOf
-    })
-    // A first boot with no model asks for one, because two commands to see anything is one too
-    // many. Away from a terminal it says the notice and serves anyway: every read is a projection
-    // of a log and none of them needs a model, so a server with no model is a useful server that
-    // cannot run a turn (apps/server/src/host.ts, MISSING_MODEL).
-    const asked = yield* modelIsConfigured(config)
-      ? Effect.succeed(config)
-      : canAsk()
-      ? Effect.gen(function*() {
-        const answers = yield* Effect.mapError(setupPromptIn(cli.cwd, runtimeEnv), userErrorOf)
-        const [files, modelLock] = yield* writeSetupWithLock(
-          { ...cli, env: runtimeEnv },
-          configuredModels(project.models, [answers], { provider: answers.provider, model_id: answers.model_id }),
-          Effect.mapError(writeSetup(cli.cwd, answers, runtimeEnv), userErrorOf)
-        )
-        yield* Console.log(setupOutput(false, {}, setupSummary(files, answers), modelLock))
-        const written = yield* readSetupEnv(cli.cwd)
-        const writtenProject = yield* Effect.mapError(readProjectConfig(cli.cwd, runtimeEnv), userErrorOf)
-        return yield* Effect.try({
-          try: () => resolveServer({
-            port: Option.getOrUndefined(flags.port),
-            db: stated(flags.db),
-            maxConcurrentThreads: Option.getOrUndefined(flags.maxConcurrentThreads)
-          }, runtimeEnvironmentOf(cli.env, written), writtenProject),
-          catch: userErrorOf
-        })
-      })
-      : Effect.as(Console.log(NO_MODEL_NOTICE), config)
-    const portWasStated = Option.isSome(flags.port) || (runtimeEnv["PORT"]?.trim().length ?? 0) > 0
-    const selectedPort = portWasStated
-      ? asked.port
-      : yield* Effect.tryPromise({
-        try: () => availableDevPort(asked.port, flags.minPort),
-        catch: userErrorOf
-      })
-    if (selectedPort !== asked.port) {
-      yield* Console.log(`port ${asked.port} is busy; using http://${DEV_URL_HOST}:${selectedPort}`)
-    }
-    const config2 = selectedPort === asked.port ? asked : { ...asked, port: selectedPort }
-    const built = yield* Effect.tryPromise({
-      try: () => buildActor(DEFAULT_ACTOR_ENTRY, { cwd: cli.cwd }),
-      catch: userErrorOf
-    })
-    const loaded = yield* Effect.tryPromise({
-      try: () => loadBuiltActorModule(built),
-      catch: userErrorOf
-    })
-    const layersFor = yield* Effect.try({
-      try: () => devLayersForFrom<ServerR>(loaded.layersFor),
-      catch: userErrorOf
-    })
-    const modelLock = yield* Effect.tryPromise({
-      try: async () => {
-        const path = resolve(cli.cwd, dirname(projectConfigPathOf(runtimeEnv)), MODEL_LOCK_FILE)
-        const file = Bun.file(path)
-        if (!await file.exists()) throw new Error(`${path} is missing; run \`tdg models lock\``)
-        return upgradeModelLock(modelLockSourceOf(await file.json(), path), config2.model, path)
-      },
-      catch: userErrorOf
-    })
-    const layer = yield* Effect.try({
-      try: () => dev({
-        config: config2,
-        modelLock,
-        actor: loaded.actor as Actor<ServerR>,
-        ...(layersFor === undefined ? {} : { layersFor }),
-        assets: stated(flags.ui),
-        ...(flags.open ? { onListen: openBrowser } : {})
-      }),
-      catch: userErrorOf
-    })
-    return yield* Effect.mapError(Layer.launch(layer), userErrorOf)
-  })).pipe(
-      Command.unlisted,
-      Command.withDescription(
-        "Build actor.ts, boot its API, and serve the built UI at one loopback URL."
-      ),
-      Command.withExamples([
-        { command: "tdg dev", description: "Listen on PORT, or find a free port from the server's default" },
-        { command: "tdg dev --port 8080 --db runs.sqlite", description: "Listen elsewhere, on another store" }
-      ])
-    )
-
 export const methodsCommand = Command.make("methods", remote, (flags) =>
   Effect.gen(function*() {
     const client = yield* clientOf(flags)
@@ -1041,7 +896,7 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription("Build, run, and inspect durable actors."),
   Command.withSubcommands([
     { group: "CREATE", commands: [initCommand, setupCommand, lintCommand, buildCommand] },
-    { group: "RUN", commands: [devCommand, threadCommand, callCommand] },
+    { group: "RUN", commands: [threadCommand, callCommand] },
     { group: "CATALOG", commands: [providersCommand, modelsCommand, methodsCommand] },
     { group: "INSPECT", commands: [lsCommand, eventsCommand] }
   ])
