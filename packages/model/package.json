@@ -40,7 +40,7 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.5",
+    "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.6",
     "@tardie/ai-openai": "4.0.0-rc.113-clavia.6",
     "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.7",
     "effect": "4.0.0-rc.115",
