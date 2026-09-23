@@ -160,6 +160,27 @@ Summing it all up, a component reads the event log, derives its current state, a
 
 <ComponentCycleDiagram />
 
+## Supplying interactions to children
+
+A parent can supply typed input constructors when building its children. The infer builder exposes `message`, which describes an agent turn. The alarm package chooses its response through `onFired`:
+
+```ts
+infer(({ message }) => [
+  tools([
+    alarms({
+      onFired: alarm => message({ text: alarm.note }),
+    }),
+  ]),
+  nativeOutput,
+])
+```
+
+The same alarm package works inside `codeMode`. Its `set` method takes `{ wakeAt, note }`, where `wakeAt` is a Unix timestamp in milliseconds, and returns an alarm ID. Its `cancel` method takes `{ id }`. The host records requests in the log and arms the earliest outstanding wake.
+
+Calling `message` constructs a request. When an alarm fires, its component binds that request to the recorded firing and proposes a transition. The runtime commits the message before inference starts the turn. Replaying the firing preserves its transition identity. The package recognizes the committed response through that identity, independently of the response event type.
+
+Builder capabilities pass through wrappers such as budget and tools. A captured capability cannot be used outside the component subtree supplying it; binding that request throws. Callbacks and event constructors must be pure because projection and replay may evaluate them repeatedly. Returning `undefined` from `onFired` proposes no response.
+
 ## Authoring components
 
 Now that we've learnt the concepts, it's time to get our hands dirty. In this section we'll author a Tardigrade component from scratch. We'll build with a custom tool that lets a model search its own event log and those of its child agents.

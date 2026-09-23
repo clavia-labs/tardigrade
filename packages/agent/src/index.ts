@@ -156,6 +156,7 @@ export {
   type OutputFallbackComponent,
   type OutputFragment,
   type InferOptions,
+  type InferInputs,
   type InferView,
   type InferCost,
   type InferRejection,

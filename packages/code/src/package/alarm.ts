@@ -1,18 +1,24 @@
 import { Chunk, Effect } from "effect"
-import { component } from "@clavia/tardigrade-core/actor"
+import { component, type InteractionRequest } from "@clavia/tardigrade-core/actor"
 import { Alarm } from "@clavia/tardigrade-core/alarm"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { messageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { TransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { definePackage, type Package } from "./definition"
 
 const ALARM_ID_PREFIX = "alarms/"
-const wakeMessageId = (id: string): string => `alarms/wake/${id}`
+const firingTag = (id: string): string => `wake:${id}`
 
-interface Request {
+export interface AlarmNotification {
   readonly id: string
   readonly wakeAt: number
   readonly note: string
+}
+
+export interface AlarmsOptions {
+  readonly onFired: (alarm: AlarmNotification) => InteractionRequest | undefined
+}
+
+interface Request extends AlarmNotification {
   readonly fired?: TransitionContext
 }
 
@@ -21,10 +27,9 @@ interface RecordedEvent {
   readonly context: TransitionContext
 }
 
-// dueMessagesOf derives one agent turn for every fired package alarm without a wake message.
-const dueMessagesOf = (log: ReadonlyArray<RecordedEvent>): ReadonlyArray<{ readonly request: Request; readonly context: TransitionContext }> => {
+// pendingFiringsOf retains fired requests until their source-owned completion is recorded (alarm.test.ts).
+const pendingFiringsOf = (log: ReadonlyArray<RecordedEvent>): ReadonlyArray<{ readonly request: Request; readonly context: TransitionContext }> => {
   const requests = new Map<string, Request>()
-  const delivered = new Set<string>()
   for (const { event, context } of log) {
     if (event.type === "AlarmSet" && typeof event.id === "string" && event.id.startsWith(ALARM_ID_PREFIX) &&
       typeof event.wakeAt === "number") {
@@ -35,27 +40,28 @@ const dueMessagesOf = (log: ReadonlyArray<RecordedEvent>): ReadonlyArray<{ reado
       for (const [id, request] of requests) {
         if (request.wakeAt <= event.at && request.fired === undefined) requests.set(id, { ...request, fired: context })
       }
-    } else if (event.type === "MessageReceived" && typeof event.id === "string") {
-      delivered.add(event.id)
+    }
+    for (const [id, request] of requests) {
+      if (request.fired?.matches(firingTag(id), event)) requests.delete(id)
     }
   }
   return [...requests.values()]
-    .flatMap((request) => request.fired === undefined || delivered.has(wakeMessageId(request.id))
+    .flatMap((request) => request.fired === undefined
       ? [] : [{ request, context: request.fired }])
 }
 
-// alarms exposes durable wake requests to code and tool calls and turns each firing into an agent message.
-export const alarms = (): Package<Alarm> => {
+// alarms exposes durable wake requests and derives the caller-selected interaction on each firing (alarm.test.ts).
+export const alarms = (options: AlarmsOptions): Package<Alarm> => {
   const calls = definePackage<Alarm>({
     name: "alarms",
-    description: "Schedule a future wake for this agent. The note arrives as a new message when the alarm fires.",
+    description: "Schedule a future alarm with a note for the configured firing handler.",
     annotations: {
       set: { idempotentHint: true, destructiveHint: false, openWorldHint: false },
       cancel: { idempotentHint: true, destructiveHint: false, openWorldHint: false }
     },
     docs: {
       set: {
-        description: "Schedule a wake at a Unix timestamp in milliseconds. The note becomes a new agent message when it fires.",
+        description: "Schedule an alarm at a Unix timestamp in milliseconds with a note for its firing handler.",
         input: { type: "object", properties: { wakeAt: { type: "integer", minimum: 0 }, note: { type: "string", minLength: 1 } }, required: ["wakeAt", "note"], additionalProperties: false },
         output: { type: "object", properties: { id: { type: "string" }, wakeAt: { type: "integer" }, note: { type: "string" } }, required: ["id", "wakeAt", "note"] }
       },
@@ -90,13 +96,13 @@ export const alarms = (): Package<Alarm> => {
     step: (state, event, context) => Chunk.append(state, { event, context }),
     output: (state, child) => {
       const output = child.output()
-      const due = dueMessagesOf(Chunk.toReadonlyArray(state))
+      const due = pendingFiringsOf(Chunk.toReadonlyArray(state))
       return {
         ...output,
-        transitions: [...output.transitions, ...due.map(({ request, context }) =>
-          context.intent(`wake:${request.id}`, (at) => messageReceived({
-            id: wakeMessageId(request.id), text: request.note, at
-          }))) ]
+        transitions: [...output.transitions, ...due.flatMap(({ request: { id, wakeAt, note }, context }) => {
+          const response = options.onFired({ id, wakeAt, note })
+          return response === undefined ? [] : [context.interaction(firingTag(id), response)]
+        }) ]
       }
     }
   })
