@@ -12,7 +12,8 @@ import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope 
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
-import { alarmFired, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
+import { alarmFiredForLog, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
+import { Alarm, alarmFromLog, nextAlarmOf } from "@clavia/tardigrade-core/alarm"
 import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
 import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import {
@@ -66,6 +67,7 @@ export interface CloudflareThreadHost {
   readonly drive: () => Promise<void>
   readonly recover: () => Promise<void>
   readonly nextMethodDeadline: () => Promise<number | undefined>
+  readonly nextAlarmDeadline: () => Promise<number | undefined>
   readonly recordAlarm: (at: number) => Promise<void>
   readonly resting: () => Promise<boolean>
   readonly work: () => number
@@ -167,8 +169,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     readFrom: (mark: number) => events.readFrom(mark),
     readPage: (mark: number, limit: number) => events.readPage(mark, limit)
   }
+  const log = eventLogFrom(store)
   const ports = Layer.mergeAll(
-    Layer.succeed(EventLog, eventLogFrom(store)),
+    Layer.succeed(EventLog, log),
+    Layer.succeed(Alarm, alarmFromLog(log)),
     Layer.succeed(EffectInterruptions, interruptions),
     router,
     workspace,
@@ -192,13 +196,22 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const nextMethodDeadline = async (): Promise<number | undefined> => {
     return earliestDeadlineOf(await Effect.runPromise(events.read), methods)
   }
+  const nextAlarmDeadline = async (): Promise<number | undefined> => {
+    const history = await Effect.runPromise(events.read)
+    const methodDeadline = earliestDeadlineOf(history, methods)
+    const requested = nextAlarmOf(history)
+    return methodDeadline === undefined ? requested : requested === undefined ? methodDeadline : Math.min(methodDeadline, requested)
+  }
   // recordAlarm commits each alarm with its crossed deadline cancellations (test/actor.workers.ts, "an alarm commits its deadline cancellation atomically").
   const recordAlarm = async (at: number): Promise<void> => {
     const log = await Effect.runPromise(events.read)
-    const deadline = earliestDeadlineOf(log, methods)
+    const methodDeadline = earliestDeadlineOf(log, methods)
+    const requested = nextAlarmOf(log)
+    const deadline = methodDeadline === undefined ? requested
+      : requested === undefined ? methodDeadline : Math.min(methodDeadline, requested)
     if (deadline !== undefined && deadline <= at) {
       const result = await Effect.runPromise(store.append([
-        alarmFired({ scheduledFor: deadline, at }),
+        alarmFiredForLog(log, { scheduledFor: deadline, at }),
         ...(methods === undefined ? [] : deadlineCancellationEventsAt(log, methods, at))
       ]))
       if (result.appended > 0) driver.mark(options.thread)
@@ -235,6 +248,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     drive,
     recover,
     nextMethodDeadline,
+    nextAlarmDeadline,
     recordAlarm,
     resting,
     work: driver.work,

@@ -124,7 +124,8 @@ test.each([3, 20])("%i nested thread effects and replies complete within the inv
         recordAlarm: async () => {},
         resting: async () => driver.resting(),
         work: driver.work,
-        nextMethodDeadline: async () => undefined
+        nextMethodDeadline: async () => undefined,
+        nextAlarmDeadline: async () => undefined
       }
       const storage = {
         sql: { exec: () => ({ toArray: () => [{ actor: "chain", instance: "main", thread: String(index) }] }) },

@@ -11,6 +11,7 @@ import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 import { effect } from "@clavia/tardigrade-core/effect"
+import { Alarm, alarmSet } from "@clavia/tardigrade-core/alarm"
 import { actorFromProjections, actorRuntimeOf, type Actor } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
 import { methodTimeoutKeys, methodTimeoutDerivation } from "@clavia/tardigrade-core/interaction/timeout"
@@ -661,6 +662,54 @@ describe("the bun host", () => {
     expect((await second.read("echo")).map((e) => e.type)).toEqual(["ThreadCreated", "MessageReceived", "Done"])
     expect(await second.resting()).toBe(true)
     await second.close()
+  })
+
+  test("recovery arms the next durable alarm after each firing", async () => {
+    const path = freshPath()
+    const firstScheduler = new ManualAlarmScheduler()
+    const actor = actorFromProjections({
+      transitions: [completeTransitionProjection((events) => events.flatMap((event) => {
+        if (event.type !== "SetWake" || events.some((entry) => entry.type === "WakeArmed" && entry.id === event.id)) return []
+        return [effect({
+          key: `wake:${String(event.id)}`,
+          input: { id: String(event.id), wakeAt: Number(event.wakeAt) },
+          act: ({ id, wakeAt }) => Alarm.set(id, wakeAt).pipe(Effect.as([{ type: "WakeArmed", id } as Event]))
+        })]
+      }))],
+      keyOf: (event) => event.type === "WakeArmed" ? `wake:${String(event.id)}` : undefined
+    })
+    const first = await createBunHost({ database: path, actorFor: () => actor, alarm: firstScheduler })
+    await first.seed("clock", [created("clock"),
+      { type: "SetWake", id: "early", wakeAt: 50 }, { type: "SetWake", id: "later", wakeAt: 80 }])
+    await first.recover()
+    expect((await first.read("clock")).filter((event) => event.type === "AlarmSet")).toHaveLength(2)
+    expect(firstScheduler.pending).toEqual([50])
+    await first.close()
+
+    const recoveredScheduler = new ManualAlarmScheduler()
+    const recovered = await createBunHost({ database: path, actorFor: () => actor, alarm: recoveredScheduler })
+    await recovered.recover()
+    expect(recoveredScheduler.pending).toEqual([50])
+    await recoveredScheduler.advanceTo(53)
+    expect(recoveredScheduler.pending).toEqual([80])
+    expect(await recovered.read("clock")).toContainEqual({ type: "AlarmFired", scheduledFor: 50, at: 53 })
+    await recoveredScheduler.advanceTo(80)
+    expect(recoveredScheduler.pending).toEqual([])
+    expect(await recovered.read("clock")).toContainEqual({ type: "AlarmFired", scheduledFor: 80, at: 80 })
+    await recovered.close()
+  })
+
+  test("cancelling the earliest request arms the next wake", async () => {
+    const scheduler = new ManualAlarmScheduler()
+    const empty = actorFromProjections({ transitions: [], keyOf: () => undefined })
+    const host = await createBunHost({ database: freshPath(), actorFor: () => empty, alarm: scheduler })
+    await host.seed("clock", [created("clock"), alarmSet("early", 50), alarmSet("later", 80)])
+    await host.recover()
+    expect(scheduler.pending).toEqual([50])
+    await host.commitRoot(host.self("clock"), { type: "AlarmCancelled", id: "early" })
+    await host.drive()
+    expect(scheduler.pending).toEqual([80])
+    await host.close()
   })
 
   test("recovery rearms a durable method deadline and records its observed alarm", async () => {

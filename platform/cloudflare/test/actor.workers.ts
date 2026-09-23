@@ -14,6 +14,7 @@ import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
+import { alarmSet } from "@clavia/tardigrade-core/alarm"
 import {
   createWorker,
   workerModelServices,
@@ -445,6 +446,32 @@ describe("cloudflare actor", () => {
     })
 
     expect(resting).toBe(true)
+  })
+
+  test("a fired alarm leaves the next durable wake armed", async () => {
+    await runInDurableObject(threadStub("alarm-chain"), async (_instance, state) => {
+      const host = await createCloudflareThreadHost({
+        storage: state.storage,
+        actorName: "echo",
+        actorInstance: "main",
+        thread: "alarm-chain",
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
+      })
+      try {
+        await host.appendAt([threadCreated(host.identity, undefined, 0), alarmSet("early", 50), alarmSet("later", 80)], 0)
+        expect(await host.nextAlarmDeadline()).toBe(50)
+        await host.recordAlarm(53)
+        expect(await host.nextAlarmDeadline()).toBe(80)
+        await host.recordAlarm(80)
+        expect(await host.nextAlarmDeadline()).toBeUndefined()
+        expect(eventsOf(await host.read(), "AlarmFired")).toEqual([
+          { type: "AlarmFired", scheduledFor: 50, at: 53 },
+          { type: "AlarmFired", scheduledFor: 80, at: 80 }
+        ])
+      } finally {
+        await host.close()
+      }
+    })
   })
 
   test("method-less actors retain outgoing call deadlines", async () => {
