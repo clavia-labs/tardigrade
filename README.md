@@ -16,7 +16,7 @@
 Tardigrade is a typescript framework for building modular agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and draws inspiration from [React](https://react.dev/)'s declarative approach to UI and [Elm](https://elm-lang.org/)'s explicit state transitions.
 
 ### A declarative way to author behavior
-Building an agent can be challenging, especially as they operate over longer horizons.
+As tasks get harder, the harnesses we build around our agents get ever more complex.
 
 Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses. We took inspiration from React.
 
