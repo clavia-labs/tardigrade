@@ -13,7 +13,7 @@ export interface InteractionOrigin {
   readonly at: number
 }
 
-// InteractionScope supplies pure input constructors to a component subtree (tla/component/SuppliedInteraction.tla, ReceiverIsPreserved).
+// InteractionScope groups stable input constructors under a binding identity (tla/component/SuppliedInteraction.tla, ReceiverIsPreserved).
 export interface InteractionScope {
   readonly name: string
   readonly define: <Input>(events: (input: Input, origin: InteractionOrigin) => Event | ReadonlyArray<Event>) => (input: Input) => InteractionRequest

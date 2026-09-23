@@ -616,7 +616,7 @@ const counter = component({
 })
 
 const request = counter.input.add(2)
-// A parent's reducer can offer context.interaction("increment", request).
+// request binds to a recorded cause through context.interaction("increment", request).
 ```
 
 Inputs declared on a component are available for binding in that component and its descendants. A parent can also bind its direct children's declared inputs. Child inputs do not automatically become available in sibling subtrees; a wrapper can explicitly re-expose a child's input through its own `input` field. Constructor scopes are checked by object identity, independently of their display names. These rules are tested in `composition/supplied-interaction.properties.test.ts`.

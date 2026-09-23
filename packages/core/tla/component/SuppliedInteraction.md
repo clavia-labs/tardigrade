@@ -7,7 +7,7 @@ A component declares stable request constructors in its `input` field. Construct
 | Property | Meaning | Enforcement |
 | --- | --- | --- |
 | `DescriptionIsPure` | Description and binding publish no work or events. | Request constructors allocate descriptions; event constructors run during intent materialization. User callbacks must remain pure. |
-| `ReceiverIsPreserved` | A request uses the capability granted to its subtree. | Scope object identity is checked when binding. Equal display names confer no authority. |
+| `ReceiverIsPreserved` | A request uses an authorized receiver capability. | Scope object identity is checked when binding. Equal display names confer no authority. |
 | `SourceOwnsIdentity` | Unrelated events and replay preserve the source occurrence and tag. | The stored transition context binds the request. |
 | `DistinctRequests` | Separate requests sharing a firing retain separate identities. | Authors assign distinct tags; existing transition validation rejects duplicates. |
 | `AtMostOneCommit` | Repeated offers cannot commit a second response for one request. | Runtime completion keys deduplicate committed intents. |

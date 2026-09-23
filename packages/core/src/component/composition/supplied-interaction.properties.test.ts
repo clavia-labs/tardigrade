@@ -166,7 +166,9 @@ test("a parent can bind its child's stable input without evaluating the child's 
     const work = machine.output(state).transitions[0]!
     if (work.kind !== "intent") throw new Error("expected input intent")
     const events = work.events(work.input, 1)
-    expect(machine.output(replayState(machine, [{ type: "Trigger" }, ...events])).view).toBe(value)
+    const settled = machine.output(replayState(machine, [{ type: "Trigger" }, ...events]))
+    expect(settled.view).toBe(value)
+    expect(settled.transitions).toEqual([])
     expect(machineOf(receiver).output(replayState(machineOf(receiver), events)).interactions?.read()).toBe(value)
   }))
 })
