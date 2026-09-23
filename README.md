@@ -18,7 +18,7 @@ Tardigrade is a typescript framework for building modular agents around an immut
 ### A declarative way to author behavior
 As tasks get harder, the harnesses we build around our agents get ever more complex.
 
-Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses. We took inspiration from React.
+Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses. We took inspiration from UI frameworks.
 
 React derives its component tree and declared effects from state. Tardigrade applies the same idea to agent harnesses. An agent is a set of components tree over an immutable event log, and each component derives a view and enabled transitions as a pure function of the event log.
 
