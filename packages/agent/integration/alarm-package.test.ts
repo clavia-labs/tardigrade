@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { alarmSet } from "@clavia/tardigrade-core/alarm"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
-import { alarms } from "@clavia/tardigrade-code/package/alarm"
+import { alarm } from "@clavia/tardigrade-code/package/alarm"
 import { testMachineOf as machineOf } from "@clavia/tardigrade-agent/fixtures/component"
 import { testModelData } from "../fixtures/model"
 import { codeMode } from "../src/component/code/index"
@@ -17,15 +17,15 @@ for (const mode of ["code", "tools"] as const) {
     let suppliedMessage!: InferInputs["message"]
     const root = infer(({ message }) => {
       suppliedMessage = message
-      const pkg = alarms({ onFired: alarm => message({ text: alarm.note }) })
+      const pkg = alarm({ onFired: alarm => message({ text: alarm.note }) })
       return [budget(mode === "code" ? codeMode([pkg]) : tools([pkg]), {
         limit: 12, usage: () => 0, onExhausted: (reason, settle) => settle({ error: reason })
       }), nativeOutput]
     })
     expect(root.input.message).toBe(suppliedMessage)
     const output = replayProjection(machineOf(root), wake, testModelData)
-    if (mode === "code") expect(output.view.system.join("\n")).toContain("alarms.set")
-    else expect(output.view.tools.map(entry => entry.spec.name)).toEqual(["alarms_set", "alarms_cancel"])
+    if (mode === "code") expect(output.view.system.join("\n")).toContain("alarm.set")
+    else expect(output.view.tools.map(entry => entry.spec.name)).toEqual(["alarm_set", "alarm_cancel"])
     const firing = output.transitions.find(work => work.kind === "intent")!
     expect(firing).toBeDefined()
     if (firing.kind !== "intent") throw new Error("expected firing intent")
@@ -41,6 +41,6 @@ for (const mode of ["code", "tools"] as const) {
 test("an infer capability cannot escape into another infer", () => {
   let escaped!: InferInputs["message"]
   infer(({ message }) => { escaped = message; return [nativeOutput] })
-  const other = infer([tools([alarms({ onFired: alarm => escaped({ text: alarm.note }) })]), nativeOutput])
+  const other = infer([tools([alarm({ onFired: alarm => escaped({ text: alarm.note }) })]), nativeOutput])
   expect(() => replayProjection(machineOf(other), wake, testModelData)).toThrow("not supplied")
 })

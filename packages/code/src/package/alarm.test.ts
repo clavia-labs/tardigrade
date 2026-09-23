@@ -5,9 +5,9 @@ import { component, interactionScope } from "@clavia/tardigrade-core/actor"
 import { machineOf } from "../../../core/src/component/runtime"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { alarms } from "./alarm"
+import { alarm } from "./alarm"
 
-describe("alarms package", () => {
+describe("alarm package", () => {
   test("set records a durable request and cancel removes it", async () => {
     const events: Event[] = []
     const service = alarmFromLog({
@@ -16,7 +16,7 @@ describe("alarms package", () => {
       head: Effect.sync(() => events.length),
       readFrom: (mark) => Effect.sync(() => events.slice(mark))
     })
-    const pkg = alarms({ onFired: () => undefined })
+    const pkg = alarm({ onFired: () => undefined })
     const set = await Effect.runPromise(pkg.methods.set!({ wakeAt: 50, note: "Check the job" }, { callId: "call-1" }).pipe(Effect.provideService(Alarm, service)))
     expect(set).toEqual({ id: "alarms/call-1", wakeAt: 50, note: "Check the job" })
     expect(events).toContainEqual(alarmSet("alarms/call-1", 50, "Check the job"))
@@ -30,7 +30,7 @@ describe("alarms package", () => {
     const notify = scope.define<string>((note, { id, at }) => ({ type: "ReminderDelivered", id, note, at }))
     const pkg = component({
       name: "reminders", input: { notify },
-      children: alarms({ onFired: alarm => notify(alarm.note) }),
+      children: alarm({ onFired: alarm => notify(alarm.note) }),
       initial: () => undefined, step: () => undefined,
       output: (_state, child) => child.output()
     })

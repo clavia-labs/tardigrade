@@ -167,7 +167,7 @@ A parent can supply typed input constructors when building its children. The inf
 ```ts
 infer(({ message }) => [
   tools([
-    alarms({
+    alarm({
       onFired: alarm => message({ text: alarm.note }),
     }),
   ]),

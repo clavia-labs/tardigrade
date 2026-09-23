@@ -14,7 +14,7 @@ export interface AlarmNotification {
   readonly note: string
 }
 
-export interface AlarmsOptions {
+export interface AlarmOptions {
   readonly onFired: (alarm: AlarmNotification) => InteractionRequest | undefined
 }
 
@@ -50,10 +50,10 @@ const pendingFiringsOf = (log: ReadonlyArray<RecordedEvent>): ReadonlyArray<{ re
       ? [] : [{ request, context: request.fired }])
 }
 
-// alarms exposes durable wake requests and derives the caller-selected interaction on each firing (alarm.test.ts).
-export const alarms = (options: AlarmsOptions): Package<Alarm> => {
+// alarm exposes durable wake requests and derives the caller-selected interaction on each firing (alarm.test.ts).
+export const alarm = (options: AlarmOptions): Package<Alarm> => {
   const calls = definePackage<Alarm>({
-    name: "alarms",
+    name: "alarm",
     description: "Schedule a future alarm with a note for the configured firing handler.",
     annotations: {
       set: { idempotentHint: true, destructiveHint: false, openWorldHint: false },
@@ -66,7 +66,7 @@ export const alarms = (options: AlarmsOptions): Package<Alarm> => {
         output: { type: "object", properties: { id: { type: "string" }, wakeAt: { type: "integer" }, note: { type: "string" } }, required: ["id", "wakeAt", "note"] }
       },
       cancel: {
-        description: "Cancel a pending wake by the id returned from alarms.set.",
+        description: "Cancel a pending wake by the id returned from alarm.set.",
         input: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
         output: { type: "object", properties: { id: { type: "string" }, cancelled: { type: "boolean" } }, required: ["id", "cancelled"] }
       }
@@ -76,7 +76,7 @@ export const alarms = (options: AlarmsOptions): Package<Alarm> => {
         const input = args as { readonly wakeAt?: unknown; readonly note?: unknown } | undefined
         if (typeof input?.wakeAt !== "number" || !Number.isSafeInteger(input.wakeAt) || input.wakeAt < 0 ||
           typeof input.note !== "string" || input.note.length === 0) {
-          return { error: "alarms.set needs { wakeAt: non-negative safe integer, note: nonempty string }" }
+          return { error: "alarm.set needs { wakeAt: non-negative safe integer, note: nonempty string }" }
         }
         const id = `${ALARM_ID_PREFIX}${context.callId}`
         yield* Alarm.set(id, input.wakeAt, input.note)
@@ -84,7 +84,7 @@ export const alarms = (options: AlarmsOptions): Package<Alarm> => {
       }),
       cancel: (args) => Effect.gen(function* () {
         const id = (args as { readonly id?: unknown } | undefined)?.id
-        if (typeof id !== "string" || !id.startsWith(ALARM_ID_PREFIX)) return { error: "alarms.cancel needs an id returned by alarms.set" }
+        if (typeof id !== "string" || !id.startsWith(ALARM_ID_PREFIX)) return { error: "alarm.cancel needs an id returned by alarm.set" }
         return { id, cancelled: yield* Alarm.cancel(id) }
       })
     }
