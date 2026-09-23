@@ -28,7 +28,6 @@ svg { display: block; }
 
 .nav-brand-group { display: flex; align-items: center; gap: 24px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: var(--brand); font-size: 23px; font-weight: 600; letter-spacing: -0.03em; }
-.brand-tardie { display: block; width: 42px; height: 28px; object-fit: contain; }
 .mark { width: 32px; height: 24px; overflow: visible; fill: var(--moss); }
 .mark path { transform-box: fill-box; transform-origin: center; }
 .brand:hover .mark path { animation: mark-wave 440ms var(--ease-out) both; }
@@ -127,12 +126,13 @@ h1 span { display: block; white-space: nowrap; }
 .button-secondary { border-color: var(--hair); background: var(--surface); color: var(--ink-2); }
 .button-secondary svg { width: 18px; height: 18px; color: var(--faint); }
 
-.demo { position: relative; z-index: 1; min-width: 0; flex: 1.1 1 420px; }
+.demo { position: relative; z-index: 1; min-width: 0; flex: 1.1 1 420px; margin-top: 40px; }
+.code-tardie { position: absolute; z-index: 2; top: -104px; right: 18px; width: 170px; height: 122px; object-fit: contain; pointer-events: none; }
 .code-card { position: relative; z-index: 1; overflow: hidden; border: 1px solid var(--hair); border-radius: 2px; background: var(--surface); box-shadow: var(--shadow); }
 .code-filename { height: 40px; padding: 0 16px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--hair); color: var(--ink-2); background: var(--sunken); font-family: var(--mono); font-size: 12px; }
 .file-icon { width: 11px; height: 14px; border: 1.5px solid var(--blue); border-radius: 1px; position: relative; }
 .file-icon::after { content: ""; position: absolute; top: -1.5px; right: -1.5px; width: 4px; height: 4px; border-bottom: 1.5px solid var(--blue); border-left: 1.5px solid var(--blue); background: var(--sunken); }
-.code-card pre { min-height: 510px; margin: 0; padding: 24px 18px 20px; overflow-x: auto; background: var(--surface); color: var(--ink); font-family: var(--mono); font-size: 12px; line-height: 1.7; }
+.code-card pre { min-height: 510px; margin: 0; padding: 24px 18px 20px; overflow-x: auto; background: var(--surface); color: var(--ink); font-family: var(--mono); font-size: 12px; line-height: 1.7; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .code-card code { display: block; min-width: 400px; }
 .code-line { display: block; min-height: 1.75em; }
 .line-memory, .line-budget, .line-permission, .line-code, .line-mcp, .line-subagents, .line-output { width: max-content; margin-left: -7px; padding-left: 7px; padding-right: 6px; border-left: 2px solid; }
