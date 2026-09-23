@@ -595,3 +595,30 @@ TLA2TOOLS_JAR=/absolute/path/tla2tools.jar bun run tools/tla.ts Composition Comp
 ```
 
 `TLA_JAVA` selects a Java executable. [tools/tla.ts](../../../../tools/tla.ts) checks expected counterexamples. Documentation lint scans `docs/`; this file needs an explicit prose check outside that scan.
+
+## Stable component inputs
+
+A component's `input` field exposes typed request constructors independently of its private state and output. Calling a constructor describes information for the receiver; it does not evaluate output, commit events, or execute effects. A caller binds the request to a recorded event and tag through `context.interaction(tag, request)`. The resulting intent uses the existing runtime commitment and completion machinery.
+
+```ts
+const scope = interactionScope("counter")
+const counter = component({
+  name: "counter",
+  input: {
+    add: scope.define<number>((amount, { id, at }) => ({
+      type: "CounterAdded", amount, id, at
+    }))
+  },
+  initial: () => 0,
+  step: (state, event) => event.type === "CounterAdded"
+    ? state + Number(event.amount) : state,
+  output: state => ({ view: state, transitions: [] })
+})
+
+const request = counter.input.add(2)
+// A parent's reducer can offer context.interaction("increment", request).
+```
+
+Inputs declared on a component are available for binding in that component and its descendants. A parent can also bind its direct children's declared inputs. Child inputs do not automatically become available in sibling subtrees; a wrapper can explicitly re-expose a child's input through its own `input` field. Constructor scopes are checked by object identity, independently of their display names. These rules are tested in `composition/supplied-interaction.properties.test.ts`.
+
+Output interactions capture a snapshot and can depend on its state, including pending response and cancellation capabilities. Stable inputs remain callable regardless of the current snapshot. The receiver's reducer determines how each recorded input affects its current state; availability of a constructor does not guarantee acceptance in every state. Neither input constructors nor output interactions may mutate component state or perform effects while describing work.

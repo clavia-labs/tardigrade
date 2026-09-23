@@ -2,6 +2,8 @@ import { TRANSITION_COMPONENT_IDS } from "../transition/transition"
 import type { KeyFragment } from "../log/keys"
 import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
 
+import type { ComponentInputs } from "../transition/interaction"
+
 declare const ComponentType: unique symbol
 
 /**
@@ -18,6 +20,7 @@ declare const ComponentType: unique symbol
  */
 export interface Component<View, Requirements = never, Result = never, Interactions = unknown> {
   readonly name: string
+  readonly input?: ComponentInputs
   readonly [TRANSITION_COMPONENT_IDS]?: ReadonlyArray<string>
   readonly [ComponentType]: {
     readonly view: () => View

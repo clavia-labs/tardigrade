@@ -33,7 +33,7 @@ const assembled = (depth: number) => {
       initial: () => undefined, step: () => undefined, output: (_state, bound) => bound.output() })
   }
   return component({
-    name: "receiver", supplies: [scope], children: child,
+    name: "receiver", input: { send }, children: child,
     initial: (): ReadonlyArray<{ readonly key: string; readonly value: number }> => [],
     step: (state, event) => event.type === "Received" ? [...state, { key: String(event.id), value: Number(event.value) }] : state,
     output: (received, bound) => ({ ...bound.output(), view: { pending: bound.output().view, received } })
@@ -117,7 +117,7 @@ test("describing and binding requests defer the event constructor until material
     let built = 0
     const scope = interactionScope("receiver")
     const send = scope.define<number>((input, { id }) => { built++; return { type: "Received", id, value: input } })
-    const root = component({ name: "receiver", supplies: [scope], children: sender(send),
+    const root = component({ name: "receiver", input: { send }, children: sender(send),
       initial: () => undefined, step: () => undefined, output: (_state, child) => child.output() })
     send(value)
     const machine = machineOf(root)
@@ -135,9 +135,52 @@ test("a missing or same-named foreign supplier cannot authorize a captured capab
   fc.assert(fc.property(fc.integer(), fc.boolean(), (value, missing) => {
     const scope = interactionScope("receiver")
     const send = scope.define<number>((input, { id }) => ({ type: "Received", id, value: input }))
-    const root = component({ name: "foreign", supplies: missing ? [] : [interactionScope("receiver")], children: sender(send),
+    const root = component({ name: "foreign", input: missing ? {} : { send: interactionScope("receiver").define<number>(value => ({ type: "Foreign", value })) }, children: sender(send),
       initial: () => undefined, step: () => undefined, output: (_state, child) => child.output() })
     const machine = machineOf(root)
     expect(() => machine.output(replayState(machine, [{ type: "Trigger", values: [value] }]))).toThrow("not supplied")
+  }))
+})
+
+test("a parent can bind its child's stable input without evaluating the child's output", () => {
+  fc.assert(fc.property(fc.integer(), value => {
+    const scope = interactionScope("counter")
+    let outputs = 0
+    const receiver = component({
+      name: "counter", input: { add: scope.define<number>((amount, { id }) => ({ type: "Added", amount, id })) },
+      initial: () => 0,
+      step: (state, event) => event.type === "Added" ? state + Number(event.amount) : state,
+      output: state => { outputs++; return { view: state, transitions: [], interactions: { read: () => state } } }
+    })
+    const request = receiver.input.add(value)
+    expect(outputs).toBe(0)
+    const parent = component({
+      name: "parent", children: receiver,
+      initial: (): TransitionContext | undefined => undefined,
+      step: (state, event, context) => event.type === "Trigger" ? context : state?.matches("add", event) ? undefined : state,
+      output: (state, child) => ({ view: child.output().view,
+        transitions: state === undefined ? [] : [state.interaction("add", request)] })
+    })
+    const machine = machineOf(parent)
+    const state = replayState(machine, [{ type: "Trigger" }])
+    const work = machine.output(state).transitions[0]!
+    if (work.kind !== "intent") throw new Error("expected input intent")
+    const events = work.events(work.input, 1)
+    expect(machine.output(replayState(machine, [{ type: "Trigger" }, ...events])).view).toBe(value)
+    expect(machineOf(receiver).output(replayState(machineOf(receiver), events)).interactions?.read()).toBe(value)
+  }))
+})
+
+test("a sibling's public input is not implicitly supplied to another sibling", () => {
+  fc.assert(fc.property(fc.integer(), value => {
+    const scope = interactionScope("left")
+    const send = scope.define<number>(value => ({ type: "Received", value }))
+    const left = component({ name: "left", input: { send },
+      initial: () => undefined, step: () => undefined, output: () => ({ view: undefined, transitions: [] }) })
+    const right = sender(left.input.send)
+    const parent = component({ name: "parent", children: [left, right],
+      initial: () => undefined, step: () => undefined,
+      output: (_state, children) => ({ view: undefined, transitions: children.flatMap(child => child.output().transitions) }) })
+    expect(() => replayState(machineOf(parent), [{ type: "Trigger", values: [value] }])).toThrow("not supplied")
   }))
 })

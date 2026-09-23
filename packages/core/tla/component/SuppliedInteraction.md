@@ -1,6 +1,6 @@
 # Supplied interactions
 
-A receiver supplies an `interactionScope` through a component's `supplies` field. Its typed constructors return `InteractionRequest` descriptions. A source component binds one with `context.interaction(tag, request)`. The capability's scope selects the receiver's event constructor; the recorded source event, source component name, and tag select the durable transition identity. Identity wrappers inherit scopes without changing those coordinates.
+A component declares stable request constructors in its `input` field. Constructors are defined by an `interactionScope` and return `InteractionRequest` descriptions without evaluating component output. Declared inputs supply their scopes to the component and its descendants. A parent can also bind its direct children's public inputs; those child scopes are not propagated to siblings. A source component binds one with `context.interaction(tag, request)`. The capability's scope selects the receiver's event constructor; the recorded source event, source component name, and tag select the durable transition identity. Identity wrappers inherit scopes without changing those coordinates.
 
 ## Obligations
 
@@ -20,6 +20,6 @@ Six counterexample configurations independently introduce eager execution, bindi
 
 ## Implementation checks
 
-`src/component/composition/supplied-interaction.properties.test.ts` compares generated histories with a source-occurrence reference model using actual components, transition contexts, scopes, and `settleActor`. Histories include multiple requests per triggering event, unrelated events, withdrawal, repeated observation, commitment, and reconstruction with fresh capability objects. Separate properties check deferred event construction and rejection of missing or same-named foreign scopes.
+`src/component/composition/supplied-interaction.properties.test.ts` compares generated histories with a source-occurrence reference model using actual components, transition contexts, scopes, and `settleActor`. Histories include multiple requests per triggering event, unrelated events, withdrawal, repeated observation, commitment, and reconstruction with fresh capability objects. Separate properties check deferred event construction, parent-to-child requests, sibling isolation, and rejection of missing or same-named foreign scopes. Snapshot-dependent output interactions remain available alongside stable inputs.
 
-The model abstracts away schemas, payloads, external effects, timer deadlines, and physical alarm storage. It does not establish arbitrary JavaScript callback purity. TLC checks finite instances; fast-check tests generated TypeScript executions against a reference model. Neither establishes an unbounded refinement proof from this specification to the implementation.
+The model fixes the authorized receiver for each source; TypeScript properties separately check how component topology grants scopes. The model abstracts away schemas, payloads, external effects, timer deadlines, and physical alarm storage. It does not establish arbitrary JavaScript callback purity. TLC checks finite instances; fast-check tests generated TypeScript executions against a reference model. Neither establishes an unbounded refinement proof from this specification to the implementation.

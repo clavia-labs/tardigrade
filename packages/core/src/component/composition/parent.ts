@@ -1,5 +1,5 @@
 import { Context, Option } from "effect"
-import { SuppliedInteractions, type InteractionScope } from "../../transition/interaction"
+import { SuppliedInteractions, inputScopesOf, type InteractionScope } from "../../transition/interaction"
 import { eventPositionOf, type Event } from "../../event"
 import { machineOf } from "../runtime"
 import { bindTransitionContext, validateTransitions } from "../../transition/transition"
@@ -23,8 +23,12 @@ export const createMachine = <State, View, Requirements, Result, Children extend
   type Snapshot = { readonly own: State; readonly children: ReadonlyArray<unknown>; readonly handles: ChildOf<Children>; readonly scopes: ReadonlySet<InteractionScope> }
   const projection = materializeProjection<Snapshot, ComponentOutput<View, Requirements, Result, Interactions>>({
     initial: (data = Context.empty()) => {
-      const scopes = new Set([...Option.getOrElse(Context.getOption(data, SuppliedInteractions), () => new Set<InteractionScope>()), ...(definition.supplies ?? [])])
-      data = Context.add(data, SuppliedInteractions, scopes)
+      const inherited = Option.getOrElse(Context.getOption(data, SuppliedInteractions), () => new Set<InteractionScope>())
+      const own = inputScopesOf(definition.input)
+      const supplied = own.size === 0 ? inherited : new Set([...inherited, ...own])
+      if (own.size > 0) data = Context.add(data, SuppliedInteractions, supplied)
+      const childScopes = members.flatMap(member => [...inputScopesOf(member.input)])
+      const scopes = childScopes.length === 0 ? supplied : new Set([...supplied, ...childScopes])
       const children = members.map((member) => machineOf(member).initial(data))
       const handles = bind(children)
       return { own: definition.initial(handles, (definition.dependencies ?? []).map(key => Context.getUnsafe(data, key)) as ComponentData<Dependencies>), children, handles, scopes }
