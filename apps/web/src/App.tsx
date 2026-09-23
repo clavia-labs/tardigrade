@@ -1,5 +1,17 @@
 import { Link } from "@tanstack/react-router"
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react"
+import tardieHappy from "../../../assets/mascot/tardie-happy.svg"
+import tardie from "../../../assets/mascot/tardie-resting.svg"
+import tardieSurprised from "../../../assets/mascot/tardie-surprised.svg"
+import tardieRestingSketch from "../../../assets/mascot/tardie-resting.svg?raw"
+import tardieSurprisedSketch from "../../../assets/mascot/tardie-surprised.svg?raw"
+import tardieNormal from "../../../assets/mascot/tardie-normal.svg?raw"
+import tardieCurious from "../../../assets/mascot/tardie-curious.svg?raw"
+import tardieThinking from "../../../assets/mascot/tardie-thinking.svg?raw"
+import tardiePlaying from "../../../assets/mascot/tardie-playing.svg?raw"
+import tardieTalking from "../../../assets/mascot/tardie-talking.svg?raw"
+import tardieExcited from "../../../assets/mascot/tardie-excited.svg?raw"
+import tardieSleepy from "../../../assets/mascot/tardie-sleepy.svg?raw"
 import { ComponentBridge } from "./ComponentBridge"
 import { FlowOverlay } from "./FlowOverlay"
 import { IsometricEventLog } from "./IsometricEventLog"
@@ -411,26 +423,31 @@ const LogCards = (): ReactElement => {
   )
 }
 
-const Durability = (): ReactElement => (
-  <section className="durability">
-    <div className="durability-inner">
-      <div className="durability-copy">
-        <h2>Let it crash.</h2>
-        <p>Since all of an agent&apos;s state lives in a single log, Tardigrade agents are extremely durable and portable. The name comes from the nearly indestructible animals that survive extreme conditions by entering a dormant tun state.</p>
-      </div>
-      <figure className="durability-figure">
-        <div className="durability-image-frame">
-          <LogCards />
-          <img src="/images/tardie.png" alt="A technical illustration of a tardigrade" />
+const Durability = (): ReactElement => {
+  const [awake, setAwake] = useState(false)
+  return (
+    <section className="durability">
+      <div className="durability-inner">
+        <div className="durability-copy">
+          <h2>Let it crash.</h2>
+          <p>Since all of an agent&apos;s state lives in a single log, Tardigrade agents are extremely durable and portable. The name comes from the nearly indestructible animals that survive extreme conditions by entering a dormant tun state.</p>
         </div>
-        <figcaption>
-          <span>FIG. 02</span>
-          <span>Tardigrade</span>
-        </figcaption>
-      </figure>
-    </div>
-  </section>
-)
+        <figure className="durability-figure">
+          <div className="durability-image-frame">
+            <LogCards />
+            <button className="durability-mascot" type="button" onClick={() => setAwake(!awake)} aria-label={awake ? "Put Tardie back to sleep" : "Wake Tardie up"}>
+              <img key={awake ? "awake" : "resting"} data-awake={awake} src={awake ? tardieSurprised : tardie} alt={awake ? "Tardie awake and surprised" : "Tardie curled up in a dormant tun state"} />
+            </button>
+          </div>
+          <figcaption>
+            <span>FIG. 02</span>
+            <span>Tardigrade</span>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+  )
+}
 
 type CityRoad = {
   readonly axis: "u" | "v"
@@ -523,21 +540,17 @@ const cityAgents: ReadonlyArray<CityAgent> = [
   { x: 380, y: 275 }
 ]
 
+const cityExpressions = [tardieNormal, tardieCurious, tardieThinking, tardieExcited, tardieTalking, tardiePlaying, tardieSleepy, tardieRestingSketch, tardieCurious, tardieTalking, tardieSurprisedSketch, tardieExcited].map((svg) => svg.replace(/<style>[\s\S]*?<\/style>/, "").replace('width="570" height="410"', 'x="-16" y="-2" width="68" height="49"'))
+
 const cityCars: ReadonlyArray<CityPoint> = [
   { x: 104, y: 227 },
   { x: 384, y: 66 },
   { x: 334, y: 224 }
 ]
 
-const IsometricAgent = ({ facing = "right", x, y }: { readonly facing?: "left" | "right"; readonly x: number; readonly y: number }): ReactElement => (
-  <g className="scalability-agent" transform={`translate(${x} ${y}) scale(.82)`}>
-    <path className="scalability-agent-shadow" d="M2 53L18 45L34 53L18 61Z" />
-    <path className="scalability-agent-top" d="M0 10L18 0L36 10L18 20Z" />
-    <path className="scalability-agent-left" d="M0 10L18 20V46L0 36Z" />
-    <path className="scalability-agent-right" d="M18 20L36 10V36L18 46Z" />
-    <path className="scalability-agent-beak" d={facing === "right" ? "M36 21L46 25L36 29Z" : "M0 21L-10 25L0 29Z"} />
-    <circle className="scalability-agent-eye" cx={facing === "right" ? 28 : 8} cy="22" r="1.8" />
-    <path className="scalability-agent-detail" d="M11 42L8 52M25 42L28 52M4 52H11M25 52H32" />
+const IsometricAgent = ({ facing = "right", x, y, expression }: { readonly facing?: "left" | "right"; readonly x: number; readonly y: number; readonly expression: string }): ReactElement => (
+  <g className="scalability-agent" transform={`translate(${x} ${y})`}>
+    <g transform={facing === "left" ? "translate(30 0) scale(-1 1)" : undefined} dangerouslySetInnerHTML={{ __html: expression }} />
   </g>
 )
 
@@ -571,7 +584,7 @@ const ScalabilityGrid = (): ReactElement => (
   <figure className="scalability-figure">
     <div className="scalability-image-frame">
       <div className="scalability-grid-clip">
-        <svg className="scalability-grid" viewBox="0 0 640 420" role="img" aria-label="A civilisation of boxy isometric birds distributed across an isometric grid.">
+        <svg className="scalability-grid" viewBox="0 0 640 420" role="img" aria-label="A civilisation of little Tardies distributed across an isometric town.">
           <g className="scalability-grid-lines" aria-hidden="true">
             <polygon points={[projectCityPoint(0, 0), projectCityPoint(cityExtent, 0), projectCityPoint(cityExtent, cityExtent), projectCityPoint(0, cityExtent)].map(({ x, y }) => `${x},${y}`).join(" ")} />
             {cityGridCoordinates.map((coordinate) => {
@@ -584,7 +597,7 @@ const ScalabilityGrid = (): ReactElement => (
           </g>
           <RoadNetwork />
           <g className="scalability-agents">
-            {cityAgents.map((agent) => <IsometricAgent {...agent} key={`${agent.x}-${agent.y}`} />)}
+            {cityAgents.map((agent, index) => <IsometricAgent {...agent} expression={cityExpressions[index % cityExpressions.length]!} key={`${agent.x}-${agent.y}`} />)}
           </g>
           <g className="scalability-buildings">
             {roadsideBuildings.map((building) => <IsometricBuilding {...roadsideBuildingPosition(building)} key={building.id} />)}
@@ -784,7 +797,7 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
     <header className="site-header" ref={headerRef}>
       <nav className="nav-inner" aria-label="Main navigation">
         <div className="nav-brand-group">
-          <Link className="brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
+          <Link className="brand" to="/" aria-label="Tardigrade home"><img className="brand-tardie" src={tardieHappy} alt="" width={42} height={28} /><span>Tardigrade</span></Link>
           <Link className="guide-link" to="/docs" aria-current={docs ? "page" : undefined}>Docs</Link>
         </div>
         <div className="nav-actions">

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tardie · expressions</title>
+<style>
+:root { color-scheme: light dark; --bg: light-dark(#faf9f6, #191919); --text: light-dark(#332750, #eee9f8); --muted: light-dark(#786f83, #aaa3b5); --skin: #c7b9e9; --far: #a694cc; --line: #38294f; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; }
+main { max-width: 1250px; height: 100dvh; margin: 0 auto; padding: 20px 28px; display: flex; flex-direction: column; }
+h1 { font-size: 15px; font-weight: 500; letter-spacing: .06em; margin: 0 0 14px; color: var(--muted); }
+.board { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); grid-template-rows: repeat(4,minmax(0,1fr)); gap: 16px 20px; }
+figure { margin: 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; text-align: center; }
+svg { display: block; width: 100%; flex: 1; min-height: 0; overflow: visible; }
+figcaption { flex-shrink: 0; font-size: 14px; font-weight: 500; margin-top: 8px; }
+figcaption span { display: block; color: var(--muted); font-size: 12px; font-weight: 400; margin-top: 5px; }
+.skin { fill: var(--skin); stroke: var(--line); stroke-width: 3; stroke-linejoin: round; }
+.far { fill: var(--far); stroke: var(--line); stroke-width: 2.5; stroke-linejoin: round; }
+.detail { fill: none; stroke: var(--line); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.eye { fill: var(--line); }
+.seam { opacity: .42; }
+.cheek { fill: #aa8acb; opacity: .5; }
+.ground { fill: var(--text); opacity: .07; }
+.gesture { fill: none; stroke: var(--muted); stroke-width: 2.4; stroke-linecap: round; }
+@media(max-width:760px) { .board { grid-template-columns: repeat(3,minmax(0,1fr)); grid-template-rows: repeat(4,minmax(0,1fr)); gap: 8px; } main { padding: 16px; } figcaption span { display: none; } }
+</style>
+</head>
+<body><main>
+<h1>TARDIE · EXPRESSION STUDIES (ASTRA)</h1>
+<div class="board" id="board"></div>
+</main>
+<script>
+const body = 'M47 160 Q39 137 56 125 Q53 105 80 104 Q89 86 117 94 Q134 78 157 91 Q179 77 197 96 Q226 90 241 116 Q258 141 241 162 Q237 174 220 178 Q222 197 211 202 Q197 208 191 197 L189 185 Q178 190 169 187 Q172 202 159 206 Q146 210 141 198 L139 185 Q129 191 123 188 Q125 203 113 207 Q100 210 95 198 L94 181 Q84 182 80 177 Q83 195 70 201 Q56 206 50 192 Q43 178 47 160Z';
+const seams = ['M80 109Q64 141 85 170','M118 99Q99 139 118 174','M156 97Q140 137 156 177','M195 105Q178 136 188 171'];
+const path = (d, cls='detail') => `<path class="${cls}" d="${d}"/>`;
+const dot = (x,y,r=4) => `<circle class="eye" cx="${x}" cy="${y}" r="${r}"/>`;
+const mouth = (x=233,y=145,rx=4.5,ry=3.5) => `<ellipse class="detail" cx="${x}" cy="${y}" rx="${rx}" ry="${ry}"/>`;
+const cheeks = '<ellipse class="cheek" cx="209" cy="138" rx="6" ry="3"/>';
+const far = [79,123,169,219].map(x=>`<g transform="translate(${x} 177)">${path('M-12 -8 Q-20 6 -12 21 Q-5 28 5 23 Q15 17 9 -8Z','far')}${path('M-10 24l-2 6m9-4v6m7-7 3 5')}</g>`).join('');
+const claws = [[64,202],[109,207],[155,206],[206,204]].map(([x,y])=>`<g transform="translate(${x} ${y})">${path('M-6 0l-1 5m7-4v5m6-6 2 4')}</g>`).join('');
+const states = [
+  { name:'Normal', caption:'Just Tardie', transform:'translate(0 0)', face:dot(214,122)+dot(234,124,3.5)+path('M227 144q6 5 11-1') },
+  { name:'Thinking', caption:'Eyes up, a little pause', transform:'translate(0 0)', face:dot(214,117,3.8)+dot(234,118,3)+mouth(231,145,3.5,2)+path('M204 106q6-4 12-1'), extra:'<circle class="gesture" cx="257" cy="93" r="3"/><circle class="gesture" cx="269" cy="76" r="5"/><circle class="gesture" cx="281" cy="54" r="8"/>' },
+  { name:'Playing', caption:'A springy little hop', transform:'translate(0 -15) rotate(-12 150 165)', face:path('M207 126q6-10 12 0 M229 128q4-8 9 0')+path('M225 142q8 14 15 0q-7 3-15 0Z','eye'), extra:path('M74 222l-8 8 M112 223l-3 10','gesture') },
+  { name:'Focused', caption:'Leaning into the task', transform:'translate(0 0)', face:dot(216,125,3.5)+dot(235,127,3)+path('M207 115l11 3 M230 119l8-2')+mouth(234,147,3,2.5) },
+  { name:'Surprised', caption:'A small full-body double take', transform:'translate(2 -3) rotate(-6 150 165)', face:dot(213,121,5)+dot(235,122,4)+mouth(232,148,5.5,7)+path('M206 109q7-5 13-1 M229 110q5-4 10 0'), extra:path('M255 98l8-7 M262 112l10-2','gesture') },
+  { name:'Sleepy', caption:'Heavy lids, settling down', transform:'translate(0 0)', face:path('M207 124q7 7 14 0 M230 126q5 6 10 0')+mouth(233,147,3,2), extra:path('M255 97l10 0-10 11h10 M270 77h13l-13 14h13','gesture') },
+  { name:'Using a tool', caption:'A little hands-on work', transform:'translate(0 0)', tool:true, face:dot(215,124,3.5)+dot(235,126,3)+path('M227 144q6 5 11-1') },
+  { name:'Talking', caption:'Something to share', transform:'translate(0 0)', face:dot(214,122)+dot(234,123,3.5)+path('M225 143q9 16 15 0Z','eye'), extra:path('M248 68h39q9 0 9 9v18q0 9-9 9h-19l-14 11 3-11h-9q-9 0-9-9V77q0-9 9-9Z','gesture')+'<circle class="eye" cx="253" cy="86" r="2"/><circle class="eye" cx="267" cy="86" r="2"/><circle class="eye" cx="281" cy="86" r="2"/>' },
+  { name:'Angry', caption:'A tiny grump', transform:'translate(0 0)', face:dot(215,127,3.5)+dot(235,128,3)+path('M205 116l14 6 M230 123l10-6 M226 149q7-7 13 0'), extra:path('M263 112v-7q-1-5-6-5h-6 M270 112v-7q1-5 6-5h6 M263 119v7q-1 5-6 5h-6 M270 119v7q1 5 6 5h6','gesture') },
+  { name:'Curious', caption:'What’s that?', transform:'translate(0 0)', face:dot(214,121,4.5)+dot(235,121,3.5)+path('M205 108q7-6 14-2 M231 108q5-3 9 0')+mouth(234,144,3,2.5), extra:path('M263 80q0-9 9-9q10 0 10 8q0 5-7 9q-4 2-4 7','gesture')+'<circle class="gesture" cx="271" cy="103" r="1"/>' },
+  { name:'Sad', caption:'A little blue', transform:'translate(0 0)', face:dot(214,128,3.5)+dot(234,129,3)+path('M205 119q7 1 13-5 M229 115q5 6 11 5 M225 151q7-8 14 0') },
+  { name:'Resting · tun', caption:'Tucked in, ready to wake', tun:true }
+];
+function tun() {
+  return path('M89 163 Q73 141 91 119 Q86 96 112 89 Q128 70 151 82 Q177 70 192 91 Q220 92 226 120 Q240 142 223 164 Q220 189 194 193 Q170 207 147 197 Q120 204 106 184 Q86 183 89 163Z','skin')+
+    ['M118 96Q95 139 118 175','M151 90Q130 136 144 182','M185 99Q166 129 170 153','M188 163q-5 19-22 18','M151 170q-6 18-20 13','M119 162q-6 14-15 9'].map(d=>path(d,'detail seam')).join('')+
+    path('M190 129q6 6 12 0 M211 131q4 4 8 0')+mouth(210,148,3,2)+path('M189 172q8 5 17-3');
+}
+document.getElementById('board').innerHTML = states.map(s=>`<figure><svg viewBox="20 36 285 205" role="img" aria-label="Tardie ${s.name.toLowerCase()}"><ellipse class="ground" cx="154" cy="226" rx="${s.tun?74:104}" ry="5"/>${s.tun?tun():`<g transform="${s.transform}">${far}${s.tool?path('M231 201l25-43q-7-9 0-18l2 10 7 3 9-6q1 13-11 16l-24 43Z','far'):''}${path(s.tool?body.replace('Q237 174 220 178 Q222 197 211 202 Q197 208 191 197 L189 185','Q237 174 220 178 Q222 184 230 187 Q237 190 234 197 Q231 205 221 205 Q207 205 198 194 L189 185'):body,'skin')}${seams.map(d=>path(d,'detail seam')).join('')}${s.tool?claws.replace(/<g transform="translate\(206 204\)">.*?<\/g>/,''):claws}${s.tool?'<g transform="translate(233 198) rotate(-65)">'+path('M-6 0l-1 5m7-4v5m6-6 2 4')+'</g>':''}${cheeks}${s.face}</g>`}${s.extra||''}</svg><figcaption>${s.name}<span>${s.caption}</span></figcaption></figure>`).join('');
+</script>
+</body></html>

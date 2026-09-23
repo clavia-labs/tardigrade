@@ -28,6 +28,7 @@ svg { display: block; }
 
 .nav-brand-group { display: flex; align-items: center; gap: 24px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: var(--brand); font-size: 23px; font-weight: 600; letter-spacing: -0.03em; }
+.brand-tardie { display: block; width: 42px; height: 28px; object-fit: contain; }
 .mark { width: 32px; height: 24px; overflow: visible; fill: var(--moss); }
 .mark path { transform-box: fill-box; transform-origin: center; }
 .brand:hover .mark path { animation: mark-wave 440ms var(--ease-out) both; }
@@ -231,7 +232,31 @@ h1 span { display: block; white-space: nowrap; }
 .durability-figure { position: relative; min-width: 0; margin: 0; }
 .durability-image-frame { --durability-inner-inset: 14px; position: relative; overflow: visible; aspect-ratio: 4 / 3; border: 1px solid var(--hair); background: var(--bg); }
 .durability-image-frame::before { content: ""; position: absolute; z-index: 1; inset: var(--durability-inner-inset); border: 1px solid rgb(var(--accent-rgb) / 18%); pointer-events: none; }
-.durability-image-frame img { position: relative; z-index: 1; width: 100%; height: 100%; padding: 58px 162px 58px 18px; display: block; object-fit: contain; filter: saturate(.74) contrast(1.04); }
+.durability-mascot { position: absolute; z-index: 1; top: 50%; left: 18px; width: calc(100% - 180px); aspect-ratio: 285 / 205; transform: translateY(-50%); padding: 0; border: 0; background: transparent; cursor: pointer; }
+.durability-mascot:focus-visible { outline: 2px solid var(--moss-ink); outline-offset: 4px; }
+@keyframes tardie-wiggle {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-3deg); }
+  55% { transform: rotate(3deg); }
+  80% { transform: rotate(-1deg); }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .durability-mascot:hover:not(:active) img[data-awake="false"] { animation: tardie-wiggle 420ms ease-in-out; }
+  .durability-mascot img[data-awake="true"] { transition: scale 160ms ease-out; }
+}
+@keyframes tardie-wake {
+  0% { transform: scale(.88, .8); }
+  45% { transform: translateY(-8px) scale(1.08, 1.1); }
+  75% { transform: translateY(1px) scale(.98, .96); }
+  100% { transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .durability-mascot img[data-awake="true"] { animation: tardie-wake 360ms cubic-bezier(.22, 1, .36, 1); }
+  .durability-mascot img[data-awake="false"] { transition: transform 100ms ease-out; }
+  .durability-mascot:active img[data-awake="false"] { transform: translateY(3px) scale(.94, .9); }
+  .durability-mascot:active img[data-awake="true"] { scale: .94 .9; }
+}
+.durability-image-frame img { position: relative; z-index: 1; width: 100%; height: 100%; padding: 0; display: block; object-fit: contain; }
 .durability-log-cards { position: absolute; z-index: 0; top: -18px; right: 76px; bottom: calc(var(--durability-inner-inset) + 6px); width: 178px; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; }
 .durability-log-card { height: 30px; min-height: 30px; max-height: 30px; padding: 0 12px; display: flex; flex: 0 0 30px; align-items: center; gap: 9px; border: 1px solid rgb(var(--accent-rgb) / 58%); background: var(--surface); }
 .durability-log-card:nth-child(3n + 2) { transform: translateX(-6px); background: var(--moss-wash); }
@@ -255,14 +280,13 @@ h1 span { display: block; white-space: nowrap; }
 .scalability-grid-lines { fill: none; stroke: rgb(var(--accent-rgb) / 25%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .scalability-road { fill: rgb(var(--accent-rgb) / 8%); stroke: rgb(var(--accent-rgb) / 25%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .scalability-road-mark { fill: none; stroke: rgb(var(--accent-rgb) / 34%); stroke-dasharray: 7 8; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.scalability-agent path, .scalability-agent circle { stroke: rgb(var(--accent-rgb) / 68%); stroke-linejoin: round; stroke-width: 1.1; vector-effect: non-scaling-stroke; }
-.scalability-agent-top { fill: var(--moss-wash); }
-.scalability-agent-left { fill: var(--sunken); }
-.scalability-agent-right { fill: var(--surface); }
-.scalability-agent .scalability-agent-shadow { fill: rgb(var(--accent-rgb) / 11%); stroke: none; }
-.scalability-agent-detail { fill: none; stroke-linecap: round; }
-.scalability-agent-beak { fill: var(--moss-wash); }
-.scalability-agent-eye { fill: var(--moss-wash); }
+.scalability-agent .skin, .scalability-agent .far { fill: var(--bg); stroke: var(--moss-ink); stroke-width: 3; stroke-linejoin: round; }
+.scalability-agent .far { fill: var(--moss-wash); }
+.scalability-agent .detail, .scalability-agent .gesture { fill: none; stroke: var(--moss-ink); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.scalability-agent .eye { fill: var(--moss-ink); }
+.scalability-agent .seam { opacity: .55; }
+.scalability-agent .cheek { fill: var(--moss-ink); opacity: .12; }
+
 .scalability-building path { stroke: rgb(var(--accent-rgb) / 52%); stroke-linejoin: round; stroke-width: 1.1; vector-effect: non-scaling-stroke; }
 .scalability-building-top { fill: var(--surface); }
 .scalability-building-left { fill: var(--sunken); }
@@ -910,7 +934,7 @@ h1 span { display: block; white-space: nowrap; }
   .world-panel { width: min(100%, 260px); }
   .durability-inner, .scalability-inner { padding-top: 80px; padding-bottom: 80px; }
   .durability-copy > p { font-size: 17px; }
-  .durability-image-frame img { padding: 32px 92px 32px 8px; }
+  .durability-mascot { left: 8px; width: calc(100% - 100px); }
   .durability-log-cards { top: -20px; right: 44px; width: 120px; }
   .durability-log-card { height: 24px; min-height: 24px; max-height: 24px; padding: 0 8px; flex-basis: 24px; gap: 6px; }
   .observability-inner { padding-top: 80px; padding-bottom: 80px; }
@@ -1138,7 +1162,7 @@ h1 span { display: block; white-space: nowrap; }
 
 .agent-state-layout { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.4fr); gap: 20px; align-items: center; }
 .agent-state-character, .agent-state-chart { display: grid; justify-items: center; min-width: 0; }
-.tool-agent-art { overflow: visible; }
+.tool-agent-art { display: block; width: 100%; height: auto; }
 .tool-agent-ground { fill: none; stroke: var(--hair); stroke-width: 1; stroke-dasharray: 3 5; }
 .tool-agent-body, .tool-agent-wing { fill: var(--bg); stroke: var(--moss-ink); stroke-width: 1.4; stroke-linejoin: round; }
 .tool-agent-shade { fill: var(--moss-wash); stroke: none; }
