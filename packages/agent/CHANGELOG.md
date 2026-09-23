@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.31.0](https://github.com/clavia-labs/tardigrade/compare/v0.30.0...v0.31.0) (2026-09-23)
+
+
+### Features
+
+* **alarm:** add durable agent wakes ([#505](https://github.com/clavia-labs/tardigrade/issues/505)) ([2d2294b](https://github.com/clavia-labs/tardigrade/commit/2d2294b65d4ae1ac6f9305c892dcbde808a6dd5e))
+* **bun:** add remote backups ([#500](https://github.com/clavia-labs/tardigrade/issues/500)) ([2bd17ac](https://github.com/clavia-labs/tardigrade/commit/2bd17ac45af9356c4f39ef6a0f89e3018754ac1f))
+* **core:** expose component inputs ([#506](https://github.com/clavia-labs/tardigrade/issues/506)) ([eea1d36](https://github.com/clavia-labs/tardigrade/commit/eea1d361a4a9e4c1debe00b8b00d0d3cda6dbcae))
+* **web:** introduce Tardie mascot ([#502](https://github.com/clavia-labs/tardigrade/issues/502)) ([1cba367](https://github.com/clavia-labs/tardigrade/commit/1cba367b8aa05cd99dbc5efbcce03eade4b585d0))
+
+
+### Bug Fixes
+
+* **web:** refine homepage visuals ([#504](https://github.com/clavia-labs/tardigrade/issues/504)) ([56c875f](https://github.com/clavia-labs/tardigrade/commit/56c875faba9f1e988223290f59aa7a2b9ab362a5))
+
 ## [0.30.0](https://github.com/clavia-labs/tardigrade/compare/v0.29.0...v0.30.0) (2026-09-22)
 
 
