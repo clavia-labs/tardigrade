@@ -14,12 +14,15 @@ const wake = [alarmSet("alarms/call-1", 50, "Check the job"), { type: "AlarmFire
 
 for (const mode of ["code", "tools"] as const) {
   test(`infer supplies messages through budget and ${mode}, and alarm replay starts one turn`, () => {
+    let suppliedMessage!: InferInputs["message"]
     const root = infer(({ message }) => {
+      suppliedMessage = message
       const pkg = alarms({ onFired: alarm => message({ text: alarm.note }) })
       return [budget(mode === "code" ? codeMode([pkg]) : tools([pkg]), {
         limit: 12, usage: () => 0, onExhausted: (reason, settle) => settle({ error: reason })
       }), nativeOutput]
     })
+    expect(root.input.message).toBe(suppliedMessage)
     const output = replayProjection(machineOf(root), wake, testModelData)
     if (mode === "code") expect(output.view.system.join("\n")).toContain("alarms.set")
     else expect(output.view.tools.map(entry => entry.spec.name)).toEqual(["alarms_set", "alarms_cancel"])

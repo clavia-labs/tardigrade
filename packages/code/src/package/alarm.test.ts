@@ -29,7 +29,7 @@ describe("alarms package", () => {
     const scope = interactionScope("reminders")
     const notify = scope.define<string>((note, { id, at }) => ({ type: "ReminderDelivered", id, note, at }))
     const pkg = component({
-      name: "reminders", supplies: [scope],
+      name: "reminders", input: { notify },
       children: alarms({ onFired: alarm => notify(alarm.note) }),
       initial: () => undefined, step: () => undefined,
       output: (_state, child) => child.output()

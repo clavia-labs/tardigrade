@@ -81,7 +81,7 @@ const costs = (events: Parameters<typeof usageIn>[0]): InferCost => {
 }
 
 // InferInputs supplies pure requests whose identity is bound by the triggering child (integration/alarm-package.test.ts).
-export interface InferInputs {
+export type InferInputs = {
   readonly message: (input: AgentMessageInput) => InteractionRequest
 }
 
@@ -93,7 +93,7 @@ export const infer = <
 >(
   components: Cs | ((inputs: InferInputs) => Cs),
   options: InferOptions = {}
-): AgentComponent<InferRequirements | ComponentRequirements<Cs[number]>, InferView, InferRejection> => {
+): AgentComponent<InferRequirements | ComponentRequirements<Cs[number]>, InferView, InferRejection> & { readonly input: InferInputs } => {
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = InferRequirements | ComponentR
   const scope = interactionScope("infer")
@@ -113,7 +113,7 @@ export const infer = <
   const root = defineComponent({
     children: [routing, messages({ name: "infer.messages" })] as const,
     name: "infer",
-    supplies: [scope],
+    input: inputs,
     dependencies: [ModelLock] as const,
     initial: (_children, [lock]) => inference.initial(lock),
     step: inference.step,
@@ -144,6 +144,6 @@ export const infer = <
         }
       }
     }
-  }) as AgentComponent<R, InferView, InferRejection>
+  }) as AgentComponent<R, InferView, InferRejection> & { readonly input: InferInputs }
   return handles(agentMessageMethod, { ...root, keys: rootKeys(combined.keys) })
 }

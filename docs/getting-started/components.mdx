@@ -160,9 +160,9 @@ Summing it all up, a component reads the event log, derives its current state, a
 
 <ComponentCycleDiagram />
 
-## Supplying interactions to children
+## Supplying inputs to children
 
-A parent can supply typed input constructors when building its children. The infer builder exposes `message`, which describes an agent turn. The alarm package chooses its response through `onFired`:
+A parent can supply typed input constructors when building its children. The infer builder exposes `message`, the stable constructor also available as `agent.input.message` on the component returned by `infer`. It describes an agent turn without evaluating infer output. The alarm package chooses its response through `onFired`:
 
 ```ts
 infer(({ message }) => [
@@ -179,7 +179,7 @@ The same alarm package works inside `codeMode`. Its `set` method takes `{ wakeAt
 
 Calling `message` constructs a request. When an alarm fires, its component binds that request to the recorded firing and proposes a transition. The runtime commits the message before inference starts the turn. Replaying the firing preserves its transition identity. The package recognizes the committed response through that identity, independently of the response event type.
 
-Builder capabilities pass through wrappers such as budget and tools. A captured capability cannot be used outside the component subtree supplying it; binding that request throws. Callbacks and event constructors must be pure because projection and replay may evaluate them repeatedly. Returning `undefined` from `onFired` proposes no response.
+Builder capabilities pass through wrappers such as budget and tools. Scopes allow binding in the declaring component, its descendants, and its direct parent. Unrelated subtrees cannot bind a captured capability unless it is explicitly re-exposed through a component's `input` field. Callbacks and event constructors must be pure because projection and replay may evaluate them repeatedly. Returning `undefined` from `onFired` proposes no response.
 
 ## Authoring components
 
