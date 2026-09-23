@@ -379,18 +379,37 @@ const HowItWorks = (): ReactElement => {
   )
 }
 
-const durabilityLogIds = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13"] as const
+const LogCards = (): ReactElement => {
+  const stackRef = useRef<HTMLDivElement>(null)
+  const [count, setCount] = useState(1)
 
-const LogCards = (): ReactElement => (
-  <div className="durability-log-cards" aria-hidden="true">
-    {durabilityLogIds.map((id) => (
-      <span className="durability-log-card" key={id}>
-        <span className="log-card-mark" />
-        <span className="log-card-rule" />
-      </span>
-    ))}
-  </div>
-)
+  useEffect(() => {
+    const stack = stackRef.current
+    const card = stack?.firstElementChild
+    if (stack === null || card === undefined || card === null) return
+    const resize = () => {
+      const height = card.getBoundingClientRect().height
+      const gap = Number.parseFloat(getComputedStyle(stack).rowGap)
+      setCount(Math.max(1, Math.floor((stack.clientHeight + gap) / (height + gap))))
+    }
+    const observer = new ResizeObserver(resize)
+    observer.observe(stack)
+    observer.observe(card)
+    resize()
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div className="durability-log-cards" ref={stackRef} aria-hidden="true">
+      {Array.from({ length: count }, (_, index) => (
+        <span className="durability-log-card" key={index}>
+          <span className="log-card-mark" />
+          <span className="log-card-rule" />
+        </span>
+      ))}
+    </div>
+  )
+}
 
 const Durability = (): ReactElement => (
   <section className="durability">
