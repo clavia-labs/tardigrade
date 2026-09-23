@@ -241,6 +241,7 @@ try {
       "./runtime/*": "./src/agent/runtime/*.ts",
       "./core/actor": "./src/core/actor/index.ts",
       "./core/actor/*": "./src/core/actor/*.ts",
+      "./core/alarm": "./src/core/alarm.ts",
       "./core/interaction": "./src/core/interaction/index.ts",
       "./core/interaction/*": "./src/core/interaction/*.ts",
       "./core/transport": "./src/core/transport/index.ts",

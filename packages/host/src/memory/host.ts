@@ -26,6 +26,8 @@ import {
 } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { hostEventKeyOf } from "../event-key"
+import { Alarm, alarmFromLog, nextAlarmOf } from "@clavia/tardigrade-core/alarm"
+import { alarmFiredForLog } from "@clavia/tardigrade-core/interaction/timeout"
 import {
   EffectInterruptions,
   Self,
@@ -118,6 +120,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const interruptions = new Map<string, ReturnType<typeof effectInterruptionRegistry>>()
   const executionOf = threadExecutions<R>()
   const dataByThread = new Map<string, Context.Context<never>>()
+  const alarms = new Map<string, { readonly deadlineAt: number; readonly timer: ReturnType<typeof setTimeout> }>()
   const interruptionsOf = (thread: string) => {
     const current = interruptions.get(thread)
     if (current !== undefined) return current
@@ -260,20 +263,41 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     }
   })
 
-  const portsOf = (thread: string) =>
-    Layer.mergeAll(
-      Layer.succeed(
-        EventLog,
-        withWatermark({
-          append: (events: ReadonlyArray<Event>) => Effect.sync(() => append(thread, events)),
-          read: Effect.sync(() => read(thread))
-        })
-      ),
+  const portsOf = (thread: string) => {
+    const log = withWatermark({
+      append: (events: ReadonlyArray<Event>) => Effect.sync(() => { append(thread, events) }),
+      read: Effect.sync(() => read(thread))
+    })
+    return Layer.mergeAll(
+      Layer.succeed(EventLog, log),
+      Layer.succeed(Alarm, alarmFromLog(log)),
       router,
       Layer.succeed(ThreadAllocator, allocator),
       Layer.succeed(EffectInterruptions, interruptionsOf(thread)),
       Layer.succeed(Self, parseThreadAddress(self(thread)))
     )
+  }
+
+  const synchronizeAlarm = (thread: string): void => {
+    const deadlineAt = nextAlarmOf(read(thread))
+    const current = alarms.get(thread)
+    if (current?.deadlineAt === deadlineAt) return
+    if (current !== undefined) clearTimeout(current.timer)
+    alarms.delete(thread)
+    if (deadlineAt === undefined) return
+    const arm = (): void => {
+      const timer = setTimeout(() => {
+        if (alarms.get(thread)?.deadlineAt !== deadlineAt) return
+        if (Date.now() < deadlineAt) { arm(); return }
+        alarms.delete(thread)
+        append(thread, [alarmFiredForLog(read(thread), { scheduledFor: deadlineAt, at: Date.now() })])
+        driver.mark(thread)
+        void drive()
+      }, Math.min(Math.max(0, deadlineAt - Date.now()), 2_147_483_647))
+      alarms.set(thread, { deadlineAt, timer })
+    }
+    arm()
+  }
 
   // Exclude is not distributive over a generic R, so the merge is named
   // here as the env settleActor requires (packages/host/tla/Driver.tla, EventuallyServed).
@@ -287,7 +311,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     ...(options.pick === undefined ? {} : { pick: options.pick }),
     serve: async (thread) => {
       const actor = options.actorFor(thread)
-      if (actor === undefined) return
+      if (actor === undefined) { synchronizeAlarm(thread); return }
       await supervisor.ensureReady(parseThreadAddress(self(thread)))
       await Effect.runPromise(
         Effect.gen(function* () {
@@ -295,6 +319,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
           yield* executionOf(thread, actor).settle
         }).pipe(Effect.provide(layersOf(thread)))
       )
+      synchronizeAlarm(thread)
     }
   })
 

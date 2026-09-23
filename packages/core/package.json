@@ -26,6 +26,7 @@
   },
   "type": "module",
   "exports": {
+    "./alarm": "./src/alarm.ts",
     "./actor": "./src/actor/index.ts",
     "./actor/*": "./src/actor/*.ts",
     "./interaction": "./src/interaction/index.ts",

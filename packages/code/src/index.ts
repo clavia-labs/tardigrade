@@ -1,4 +1,5 @@
 export { workspace, workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "./package/workspace"
+export { alarm, type AlarmOptions, type AlarmNotification } from "./package/alarm"
 export {
   files,
   filesPackage,

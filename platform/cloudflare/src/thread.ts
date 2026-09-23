@@ -212,7 +212,7 @@ export class ThreadDO extends DurableObject<Env> {
       await host.resting(),
       Date.now(),
       this.alarmPolicy.recoveryDelayMillis,
-      await host.nextMethodDeadline()
+      await host.nextAlarmDeadline()
     )
     if (at === null) {
       if (current !== null) await this.ctx.storage.deleteAlarm()

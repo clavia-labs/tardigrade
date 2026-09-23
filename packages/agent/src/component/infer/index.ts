@@ -6,7 +6,7 @@ import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentView } from "../view
 import { turnViewFrom, trajectoryFrom } from "@clavia/tardigrade-code/execution/turn-projection"
 import { usageIn } from "../../model/usage"
 export { AGENT_VIEW_ALGEBRA, type AgentView, type AgentComponent, type AgentTool, type ContextFragment, type NativeOutputFragment, type FallbackOutputFragment, type OutputFragment } from "../view"
-import { composeComponents, handles, component as defineComponent, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { composeComponents, handles, interactionScope, component as defineComponent, type InteractionRequest, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
 import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
 import { fallbackOf } from "../../output/contract"
@@ -19,7 +19,7 @@ import { routeTools, toolConcurrencyOf, type ToolConcurrency } from "../tool/mac
 import type { LanguageModel } from "effect/unstable/ai"
 import type { EventLog } from "@clavia/tardigrade-core/log"
 import type { Self } from "@clavia/tardigrade-core/runtime"
-import { agentMessageMethod } from "../../actor/message"
+import { agentMessageMethod, type AgentMessageInput } from "../../actor/message"
 
 type InferRequirements = ModelLock | LanguageModel.LanguageModel | EventLog | Self
 
@@ -80,18 +80,30 @@ const costs = (events: Parameters<typeof usageIn>[0]): InferCost => {
   return { reportedCostUsd: empty ? 0 : usage.reportedCostUsd, estimatedCostUsd: empty ? 0 : usage.estimatedCostUsd }
 }
 
+// InferInputs supplies pure requests whose identity is bound by the triggering child (integration/alarm-package.test.ts).
+export type InferInputs = {
+  readonly message: (input: AgentMessageInput) => InteractionRequest
+}
+
 // infer composes an agent's child components and adds the model loop over their final view.
 // Inference and dispatch derive from the same child projection, so a tool remains routed against
 // the view that offered it while every child transition remains part of the root output.
 export const infer = <
   const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
 >(
-  components: Cs,
+  components: Cs | ((inputs: InferInputs) => Cs),
   options: InferOptions = {}
-): AgentComponent<InferRequirements | ComponentRequirements<Cs[number]>, InferView, InferRejection> => {
+): AgentComponent<InferRequirements | ComponentRequirements<Cs[number]>, InferView, InferRejection> & { readonly input: InferInputs } => {
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = InferRequirements | ComponentR
-  const combined = composeComponents("infer.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<ComponentR>
+  const scope = interactionScope("infer")
+  const inputs: InferInputs = {
+    message: scope.define<AgentMessageInput>((input, { id, at }) => agentMessageMethod.eventOf({
+      invocation: { method: "message", id, epoch: 0 }, input, at
+    }))
+  }
+  const children = typeof components === "function" ? components(inputs) : components
+  const combined = composeComponents("infer.children", AGENT_VIEW_ALGEBRA, children) as AgentComponent<ComponentR>
   const { models: rawModels, toolConcurrency, ...policy } = options
   toolConcurrencyOf(toolConcurrency)
   const routing = routeTools(combined,
@@ -101,6 +113,7 @@ export const infer = <
   const root = defineComponent({
     children: [routing, messages({ name: "infer.messages" })] as const,
     name: "infer",
+    input: inputs,
     dependencies: [ModelLock] as const,
     initial: (_children, [lock]) => inference.initial(lock),
     step: inference.step,
@@ -131,6 +144,6 @@ export const infer = <
         }
       }
     }
-  }) as AgentComponent<R, InferView, InferRejection>
+  }) as AgentComponent<R, InferView, InferRejection> & { readonly input: InferInputs }
   return handles(agentMessageMethod, { ...root, keys: rootKeys(combined.keys) })
 }

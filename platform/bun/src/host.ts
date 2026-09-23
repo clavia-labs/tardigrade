@@ -26,7 +26,8 @@ import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { actorEventKeyOf, actorThreadsOf, type ActorThreadRecord } from "@clavia/tardigrade-core/actor"
-import { alarmFired, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
+import { alarmFiredForLog, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
+import { Alarm, alarmFromLog, nextAlarmOf } from "@clavia/tardigrade-core/alarm"
 import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
 import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import {
@@ -577,8 +578,9 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           : interrupted
       }))
     }
+    const log = eventLogFrom(store)
     const ports = Layer.mergeAll(
-      Layer.succeed(EventLog, eventLogFrom(store)), router,
+      Layer.succeed(EventLog, log), Layer.succeed(Alarm, alarmFromLog(log)), router,
       Layer.succeed(EffectInterruptions, threadRuntime.interruptions),
       Layer.succeed(KeyValueStore.KeyValueStore, threadRuntime.workspace),
       Layer.succeed(Self, parseThreadAddress(self(thread))), bunSandboxFor(options.sandbox ?? {}),
@@ -599,10 +601,11 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     const methods = actor !== undefined && "methods" in actor
       ? (actor as Actor<R> & { readonly methods: ActorMethods }).methods
       : undefined
-    const deadlineAt = earliestDeadlineOf(
-      await threadRuntime.runtime.runPromise(threadRuntime.store.read),
-      methods
-    )
+    const log = await threadRuntime.runtime.runPromise(threadRuntime.store.read)
+    const methodDeadline = earliestDeadlineOf(log, methods)
+    const requestedAlarm = nextAlarmOf(log)
+    const deadlineAt = methodDeadline === undefined ? requestedAlarm
+      : requestedAlarm === undefined ? methodDeadline : Math.min(methodDeadline, requestedAlarm)
     if (threadRuntime.alarm?.deadlineAt === deadlineAt) return
     await cancelAlarm(thread)
     if (deadlineAt === undefined) return
@@ -613,7 +616,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       // synchronizeAlarm commits each alarm with its crossed deadline cancellations (host.test.ts, "an alarm commits its deadline cancellation atomically").
       const log = await active.runtime.runPromise(active.store.read)
       await appendTo(thread, [
-        alarmFired({ scheduledFor: deadlineAt, at }),
+        alarmFiredForLog(log, { scheduledFor: deadlineAt, at }),
         ...(methods === undefined ? [] : deadlineCancellationEventsAt(log, methods, at))
       ])
       driver.mark(thread)

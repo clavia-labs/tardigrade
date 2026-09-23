@@ -17,6 +17,7 @@ import { type ActorMethods } from "../actor/method"
 export interface AlarmFiredFields {
   readonly scheduledFor: number
   readonly at: number
+  readonly occurrence?: number
 }
 
 export const alarmFired = (fields: AlarmFiredFields): AlarmFired => {
@@ -26,14 +27,24 @@ export const alarmFired = (fields: AlarmFiredFields): AlarmFired => {
   if (!Number.isSafeInteger(fields.at) || fields.at < fields.scheduledFor) {
     throw new Error("alarm at must be a safe integer at or after scheduledFor")
   }
+  if (fields.occurrence !== undefined && (!Number.isSafeInteger(fields.occurrence) || fields.occurrence < 1)) {
+    throw new Error("alarm occurrence must be a positive safe integer")
+  }
   return { type: "AlarmFired", ...fields }
+}
+
+// alarmFiredForLog distinguishes repeated crossings of the same deadline (alarm.test.ts, "a repeated deadline keeps its own firing").
+export const alarmFiredForLog = (log: ReadonlyArray<Event>, fields: Omit<AlarmFiredFields, "occurrence">): AlarmFired => {
+  const prior = log.filter((event) => event.type === "AlarmFired" && event.scheduledFor === fields.scheduledFor).length
+  return alarmFired(prior === 0 ? fields : { ...fields, occurrence: prior })
 }
 
 export const methodTimeoutKeys: KeyFragment = {
   prefixes: ["malarm:", "mterm:"],
   keyOf: (event) => {
     if (event.type === "AlarmFired") {
-      return `malarm:${String((event as { readonly scheduledFor?: unknown }).scheduledFor)}`
+      const fired = event as AlarmFired
+      return `malarm:${String(fired.scheduledFor)}${fired.occurrence === undefined ? "" : `:${fired.occurrence}`}`
     }
     if (event.type === "ResponseReceived" || event.type === "CallTimedOut") {
       const terminal = event as CallTimedOut

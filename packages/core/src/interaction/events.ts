@@ -81,6 +81,7 @@ export interface AlarmFired extends Event {
   readonly type: "AlarmFired"
   readonly scheduledFor: number
   readonly at: number
+  readonly occurrence?: number
 }
 
 // CallTimedOut is the caller terminal produced when an alarm crosses a recorded deadline.

@@ -24,17 +24,17 @@ export const armAt = (due: number | null, now: number, recoveryDelayMillis: numb
   return due === null || due <= now || due > at ? at : null
 }
 
-// scheduledAlarmAt selects the standing Durable Object alarm for recovery work and method deadlines (alarm.test.ts, "active work keeps the earliest recovery or method wake").
+// scheduledAlarmAt selects the standing Durable Object alarm for recovery work and durable wakes (alarm.test.ts, "active work keeps the earliest recovery or method wake").
 export const scheduledAlarmAt = (
   current: number | null,
   resting: boolean,
   now: number,
   recoveryDelayMillis: number,
-  methodDeadline: number | undefined
+  wakeAt: number | undefined
 ): number | null => {
-  if (resting) return methodDeadline ?? null
+  if (resting) return wakeAt ?? null
   const recoveryWake = now + recoveryDelayMillis
   if (!Number.isSafeInteger(recoveryWake)) throw new Error("alarm recovery deadline must be a safe integer")
-  const target = methodDeadline === undefined ? recoveryWake : Math.min(recoveryWake, methodDeadline)
+  const target = wakeAt === undefined ? recoveryWake : Math.min(recoveryWake, wakeAt)
   return current !== null && current > now && current <= target ? current : target
 }
