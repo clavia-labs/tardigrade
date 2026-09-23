@@ -9,6 +9,7 @@ import { COMPONENT_CONTRACT, mergeComponentContracts, type ComponentContract } f
 import type { Component, ComponentRequirements } from "./component"
 import type { ComponentOutput } from "./output"
 import type { ChildOf, ComponentChildren } from "./composition/children"
+import { inputScopesOf, type ComponentInputs } from "../transition/interaction"
 
 export type { TransitionContext } from "../transition/transition"
 export type { InvocationCancellation } from "../interaction/events"
@@ -37,9 +38,10 @@ export type ComponentDataRequirements<D extends ComponentDependencies> = Context
 type ChildRequirements<C extends ComponentChildren> = ComponentRequirements<C extends ReadonlyArray<unknown> ? C[number] : C>
 
 // ComponentDefinition is the typed author surface for a component machine.
-export interface ComponentDefinition<State, View, Requirements = never, Result = unknown, Children extends ComponentChildren = readonly [], Dependencies extends ComponentDependencies = readonly [], Interactions = unknown> {
+export interface ComponentDefinition<State, View, Requirements = never, Result = unknown, Children extends ComponentChildren = readonly [], Dependencies extends ComponentDependencies = readonly [], Interactions = unknown, Input extends ComponentInputs = ComponentInputs> {
   readonly name: string
   readonly children?: Children
+  readonly input?: Input
   readonly dependencies?: Dependencies
   readonly initial: (children: ChildOf<Children>, data: ComponentData<Dependencies>) => State
   readonly step: (state: Readonly<State>, event: Event, context: TransitionContext, children: ChildOf<Children>, previous: ChildOf<Children>) => State
@@ -48,9 +50,9 @@ export interface ComponentDefinition<State, View, Requirements = never, Result =
 }
 
 // component constructs a named, materialized component machine. Complete-log definitions use legacyComponent.
-export const component = <State, View, Requirements = never, Result = unknown, const Children extends ComponentChildren = readonly [], const Dependencies extends ComponentDependencies = readonly [], Interactions = unknown>(
-  definition: ComponentDefinition<State, View, Requirements, Result, Children, Dependencies, Interactions>
-): Component<View, Requirements | ComponentDataRequirements<Dependencies> | ChildRequirements<Children>, Result, Interactions> => {
+export const component = <State, View, Requirements = never, Result = unknown, const Children extends ComponentChildren = readonly [], const Dependencies extends ComponentDependencies = readonly [], Interactions = unknown, const Input extends ComponentInputs = never>(
+  definition: ComponentDefinition<State, View, Requirements, Result, Children, Dependencies, Interactions, Input>
+): Component<View, Requirements | ComponentDataRequirements<Dependencies> | ChildRequirements<Children>, Result, Interactions> & ([Input] extends [never] ? {} : { readonly input: Input }) => {
   if (
     typeof definition.initial !== "function" ||
     typeof definition.step !== "function" ||
@@ -66,7 +68,10 @@ export const component = <State, View, Requirements = never, Result = unknown, c
   const fragments = members.flatMap((child) => child.keys === undefined ? [] : [child.keys])
   const inherited = mergeComponentContracts(members)
   const own = definition[COMPONENT_CONTRACT]
+  const input = Object.freeze({ ...definition.input }) as Input
+  inputScopesOf(input)
   return registerComponent({
+    input,
     name: definition.name,
     [TRANSITION_COMPONENT_IDS]: identities,
     ...(fragments.length === 0 ? {} : { keys: {
@@ -77,5 +82,5 @@ export const component = <State, View, Requirements = never, Result = unknown, c
       handles: [...inherited.handles, ...(own?.handles ?? [])],
       calls: [...inherited.calls, ...(own?.calls ?? [])]
     }
-  }, createMachine(definition, members, identities))
+  }, createMachine({ ...definition, input }, members, identities)) as Component<View, Requirements | ComponentDataRequirements<Dependencies> | ChildRequirements<Children>, Result, Interactions> & ([Input] extends [never] ? {} : { readonly input: Input })
 }

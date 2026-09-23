@@ -1,4 +1,5 @@
-import { Context } from "effect"
+import { Context, Option } from "effect"
+import { SuppliedInteractions, inputScopesOf, type InteractionScope } from "../../transition/interaction"
 import { eventPositionOf, type Event } from "../../event"
 import { machineOf } from "../runtime"
 import { bindTransitionContext, validateTransitions } from "../../transition/transition"
@@ -19,19 +20,25 @@ export const createMachine = <State, View, Requirements, Result, Children extend
     const handles = members.map((member, index) => bindChild(machineOf(member), snapshots[index], event === undefined ? 0 : eventPositionOf(event) ?? 0, Number(event?.at ?? 0)))
     return (definition.children !== undefined && !Array.isArray(definition.children) ? handles[0] : Object.freeze(handles)) as ChildOf<Children>
   }
-  type Snapshot = { readonly own: State; readonly children: ReadonlyArray<unknown>; readonly handles: ChildOf<Children> }
+  type Snapshot = { readonly own: State; readonly children: ReadonlyArray<unknown>; readonly handles: ChildOf<Children>; readonly scopes: ReadonlySet<InteractionScope> }
   const projection = materializeProjection<Snapshot, ComponentOutput<View, Requirements, Result, Interactions>>({
     initial: (data = Context.empty()) => {
+      const inherited = Option.getOrElse(Context.getOption(data, SuppliedInteractions), () => new Set<InteractionScope>())
+      const own = inputScopesOf(definition.input)
+      const supplied = own.size === 0 ? inherited : new Set([...inherited, ...own])
+      if (own.size > 0) data = Context.add(data, SuppliedInteractions, supplied)
+      const childScopes = members.flatMap(member => [...inputScopesOf(member.input)])
+      const scopes = childScopes.length === 0 ? supplied : new Set([...supplied, ...childScopes])
       const children = members.map((member) => machineOf(member).initial(data))
       const handles = bind(children)
-      return { own: definition.initial(handles, (definition.dependencies ?? []).map(key => Context.getUnsafe(data, key)) as ComponentData<Dependencies>), children, handles }
+      return { own: definition.initial(handles, (definition.dependencies ?? []).map(key => Context.getUnsafe(data, key)) as ComponentData<Dependencies>), children, handles, scopes }
     },
     step: (state, event) => {
       const children = members.map((member, index) => machineOf(member).step(state.children[index], event))
       const unchanged = children.every((child, index) => Object.is(child, state.children[index]))
       const handles = unchanged ? state.handles : bind(children, event)
-      const own = definition.step(state.own, event, bindTransitionContext(event, identity), handles, state.handles)
-      return Object.is(own, state.own) && unchanged ? state : { own, children, handles }
+      const own = definition.step(state.own, event, bindTransitionContext(event, identity, state.scopes), handles, state.handles)
+      return Object.is(own, state.own) && unchanged ? state : { own, children, handles, scopes: state.scopes }
     },
     output: (state) => {
       const output = definition.output(state.own, state.handles)
