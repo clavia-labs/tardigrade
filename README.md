@@ -1,9 +1,9 @@
-<p align="center">
+<p align="left">
   <br>
   <img alt="Tardie, the Tardigrade mascot" src="assets/mascot/tardie-normal.svg" width="160">
 </p>
 
-<p align="center">
+<p align="left">
   <a href="https://www.npmjs.com/package/tardie"><img alt="npm version" src="https://img.shields.io/npm/v/tardie.svg"></a>
   <a href="https://discord.gg/Z74jwRxz4k"><img alt="Join Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&amp;logoColor=white"></a>
 </p>
@@ -13,10 +13,10 @@
 
 # Tardigrade
 
-Tardigrade is a typescript framework for building modular agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and is inspired by [React](https://react.dev/)'s declarative approach to building user interfaces.
+Tardigrade is a typescript framework for building modular agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and draws inspiration from [React](https://react.dev/)'s declarative approach to UI and [Elm](https://elm-lang.org/)'s explicit state transitions.
 
 ### A declarative way to author behavior
-Building an agent can be challenging, especially as they operate over longer horizons. Tasks get harder, behaviors become harder to reason about, and the harnesses we build around our agents get ever more complex.
+Building an agent can be challenging, especially as they operate over longer horizons.
 
 Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses. We took inspiration from React.
 
