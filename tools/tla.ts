@@ -40,6 +40,14 @@ const counterexample = (
 ): CounterexampleCheck => ({ directory, module, config, outcome: "counterexample", evidence })
 
 export const checks: ReadonlyArray<Check> = [
+  pass("component", "SuppliedInteraction", "SuppliedInteraction.cfg"),
+  pass("component", "SuppliedInteraction", "SuppliedInteractionLive.cfg"),
+  counterexample("component", "SuppliedInteraction", "SuppliedInteractionEager.cfg", "Invariant DescriptionIsPure is violated"),
+  counterexample("component", "SuppliedInteraction", "SuppliedInteractionHead.cfg", "Invariant SourceOwnsIdentity is violated"),
+  counterexample("component", "SuppliedInteraction", "SuppliedInteractionTag.cfg", "Invariant DistinctRequests is violated"),
+  counterexample("component", "SuppliedInteraction", "SuppliedInteractionScope.cfg", "Invariant ReceiverIsPreserved is violated"),
+  counterexample("component", "SuppliedInteraction", "SuppliedInteractionDuplicate.cfg", "Invariant AtMostOneCommit is violated"),
+  counterexample("component", "SuppliedInteraction", "SuppliedInteractionStale.cfg", "Invariant NoWithdrawnCommit is violated"),
   pass("component", "InteractionSubstitution", "InteractionSubstitution.cfg"),
   pass("component", "InteractionSubstitution", "InteractionSubstitutionConcurrent.cfg"),
   counterexample("component", "InteractionSubstitution", "InteractionSubstitutionEarly.cfg", "Invariant ReplayAgreement is violated"),

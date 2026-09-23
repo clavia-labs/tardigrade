@@ -9,6 +9,7 @@ import { COMPONENT_CONTRACT, mergeComponentContracts, type ComponentContract } f
 import type { Component, ComponentRequirements } from "./component"
 import type { ComponentOutput } from "./output"
 import type { ChildOf, ComponentChildren } from "./composition/children"
+import type { InteractionScope } from "../transition/interaction"
 
 export type { TransitionContext } from "../transition/transition"
 export type { InvocationCancellation } from "../interaction/events"
@@ -40,6 +41,7 @@ type ChildRequirements<C extends ComponentChildren> = ComponentRequirements<C ex
 export interface ComponentDefinition<State, View, Requirements = never, Result = unknown, Children extends ComponentChildren = readonly [], Dependencies extends ComponentDependencies = readonly [], Interactions = unknown> {
   readonly name: string
   readonly children?: Children
+  readonly supplies?: ReadonlyArray<InteractionScope>
   readonly dependencies?: Dependencies
   readonly initial: (children: ChildOf<Children>, data: ComponentData<Dependencies>) => State
   readonly step: (state: Readonly<State>, event: Event, context: TransitionContext, children: ChildOf<Children>, previous: ChildOf<Children>) => State

@@ -5,6 +5,7 @@ import { intent, type Intent } from "../intent"
 import { Event, eventPositionOf } from "../event"
 import type { EventLog } from "../log/service"
 import { InvocationRef, actorInvocationContextFrom, sameInvocation } from "../interaction/invocation"
+import { interactionEvents, type InteractionRequest, type InteractionScope } from "./interaction"
 
 /**
  * Transition is an Intent or ExternalEffect offered from one event snapshot.
@@ -50,6 +51,7 @@ interface TaggedEffectOptions<Input, Result extends Event | ReadonlyArray<Event>
 // TransitionContext binds declarations and result queries to one component and event, inheriting invocation ownership when present (runtime/reconciler.properties.test.ts).
 // Tags must keep identifying the same logical operation across outputs for that owner; retries reuse the tag, while new operations need a different tag or owner (tla/runtime/TransitionDeclarations.tla, AuthorAllows; runtime/transition-lifecycle.properties.test.ts).
 export interface TransitionContext {
+  readonly interaction: (tag: string, request: InteractionRequest) => Intent<never>
   readonly invocation?: InvocationRef
   readonly effect: <Input, Result extends Event | ReadonlyArray<Event>, Requirements = never>(tag: string, options: TaggedEffectOptions<Input, Result, Requirements>) => ExternalEffect<never, Requirements>
   readonly intent: (tag: string, completion: Event | ReadonlyArray<Event> | ((at: number) => Event | ReadonlyArray<Event>), options?: { readonly invocation?: InvocationRef | null }) => Intent<never>
@@ -59,7 +61,7 @@ export interface TransitionContext {
 const references = new WeakMap<object, TransitionRef>()
 
 // bindTransitionContext supplies tagged declarations for an event delivered to a component reducer.
-export const bindTransitionContext = (event: Event, component: string): TransitionContext => {
+export const bindTransitionContext = (event: Event, component: string, scopes: ReadonlySet<InteractionScope> = new Set()): TransitionContext => {
   const accepted = actorInvocationContextFrom(event)?.invocation
   const recorded = "invocationRef" in event ? Schema.decodeUnknownSync(InvocationRef)(event.invocationRef) : undefined
   if (accepted !== undefined && recorded !== undefined && !sameInvocation(accepted, recorded)) {
@@ -95,7 +97,20 @@ export const bindTransitionContext = (event: Event, component: string): Transiti
       }
     })
   }
+  const declareIntent: TransitionContext["intent"] = (tag, result, options) => {
+    const ref = reference(tag)
+    const invocation = invocationOf(options?.invocation)
+    const transition = Object.freeze(intent({
+      key: transitionKey(ref), input: result,
+      ...(invocation === undefined ? {} : { invocation }),
+      events: (input, at) => complete(ref, invocation, typeof input === "function" ? input(at) : input)
+    }))
+    references.set(transition, ref)
+    return transition
+  }
   return Object.freeze({
+    interaction: (tag: string, request: InteractionRequest) =>
+      declareIntent(tag, interactionEvents(request, scopes, transitionKey(reference(tag)))),
     ...(inherited === undefined ? {} : { invocation: inherited }),
     effect: <Input, Result extends Event | ReadonlyArray<Event>, Requirements = never>(tag: string, options: TaggedEffectOptions<Input, Result, Requirements>) => {
       if (options.key !== undefined || options.ref !== undefined) throw new Error("transition identity is supplied by the runtime")
@@ -114,17 +129,7 @@ export const bindTransitionContext = (event: Event, component: string): Transiti
       references.set(transition, ref)
       return transition
     },
-    intent: (tag: string, result: Event | ReadonlyArray<Event> | ((at: number) => Event | ReadonlyArray<Event>), options?: { readonly invocation?: InvocationRef | null }) => {
-      const ref = reference(tag)
-      const invocation = invocationOf(options?.invocation)
-      const transition = Object.freeze(intent({
-        key: transitionKey(ref), input: result,
-        ...(invocation === undefined ? {} : { invocation }),
-        events: (input, at) => complete(ref, invocation, typeof input === "function" ? input(at) : input)
-      }))
-      references.set(transition, ref)
-      return transition
-    },
+    intent: declareIntent,
     matches: (tag: string, completion: Event) => transitionKey(reference(tag)) === transitionKeyOf(completion)
   })
 }
