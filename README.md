@@ -1,9 +1,6 @@
 <p align="center">
   <br>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mark-dark.svg">
-    <img alt="Tardigrade" src="docs/assets/mark.svg" width="120">
-  </picture>
+  <img alt="Tardie, the Tardigrade mascot" src="assets/mascot/tardie-normal.svg" width="160">
 </p>
 
 <p align="center">
@@ -18,10 +15,12 @@
 
 Tardigrade is a typescript framework for building modular agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and is inspired by [React](https://react.dev/)'s declarative approach to building user interfaces.
 
-### Agents that can self-improve
-As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more composable, and easy to author.
+### A declarative way to author behavior
+Building an agent can be challenging, especially as they operate over longer horizons. Tasks get harder, behaviors become harder to reason about, and the harnesses we build around our agents get ever more complex.
 
-We took inspiration from React. React derives its component tree and declared effects from state. Tardigrade applies the same idea to agent harnesses. Each component derives a view and enabled transitions from an event log.
+Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses. We took inspiration from React.
+
+React derives its component tree and declared effects from state. Tardigrade applies the same idea to agent harnesses. An agent is a set of components tree over an immutable event log, and each component derives a view and enabled transitions as a pure function of the event log.
 
 <p align="center"><code>{ view, transitions } = f(event log)</code></p>
 
