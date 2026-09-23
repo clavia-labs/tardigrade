@@ -20,11 +20,13 @@ import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { existingInvocation, prepareMethodInvocation } from "@clavia/tardigrade-host/invocation"
 import { bunInstances } from "./instances"
 import { createBunHost as createBunInstance, type BunHost, type BunHostOptions } from "./host"
+import { bunBackupRunner, type BunBackupOptions, type BunBackupStatus } from "./backup/runner"
 
 export type HostOptions<R, Methods extends ActorMethods> = Omit<BunHostOptions<R>, "database" | "actorName" | "actorInstance" | "actorFor" | "layersFor" | "signal"> & {
   readonly actor: Actor<R, Methods>
   readonly storage: string
   readonly storageLayout?: HostStorageLayout
+  readonly backup?: BunBackupOptions
 } & {
   [K in keyof Pick<BunHostOptions<R>, "layersFor">]: (thread: string, instance: string) => ReturnType<NonNullable<BunHostOptions<R>["layersFor"]>>
 }
@@ -39,6 +41,7 @@ export interface Host<Methods extends ActorMethods> extends ActorClient<Methods>
   readonly actor: string
   readonly forkThread: (request: ForkThreadRequest & { readonly instance?: string }) => Promise<ThreadCoordinate>
   readonly close: () => Promise<void>
+  readonly backup?: { readonly status: () => BunBackupStatus }
 }
 
 export interface HostBackend {
@@ -66,6 +69,8 @@ export const hostBackend = (host: object): HostBackend => {
 // createBunHost owns the Bun runtimes and SQLite files for an actor's instances.
 export const createBunHost = async <R, const Methods extends ActorMethods>(options: HostOptions<R, Methods>): Promise<Host<Methods>> => {
   if (!options.storage) throw new Error("storage must be a directory or :memory:")
+  if (options.backup !== undefined && (options.storageLayout !== undefined || options.threadDatabase !== undefined)) throw new Error("backup requires the default storage layout")
+  const backupRunner = options.backup === undefined ? undefined : bunBackupRunner({ actor: options.actor.name, storage: options.storage, backup: options.backup })
   const actorOf = (name: string): Actor<R, Methods> => {
     if (name !== options.actor.name) throw new Error("target actor does not match this host")
     return options.actor
@@ -74,6 +79,15 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
     recover: (host: BunHost) => host.recover(),
     open: (instance, signal) => createBunInstance<R>({
       ...options, signal,
+      commitObserverFor: backupRunner === undefined ? options.commitObserverFor : (context) => {
+        const observer = options.commitObserverFor?.(context)
+        return {
+          ...(observer?.policy === undefined ? {} : { policy: observer.policy }),
+          onCommit: (commit) => Effect.sync(() => backupRunner.markDirty()).pipe(
+            Effect.andThen(observer === undefined ? Effect.void : observer.onCommit(commit))
+          )
+        }
+      },
       keyOf: options.keyOf ?? actorRuntimeOf(options.actor).keyOf,
       layersFor: options.layersFor === undefined ? undefined : (thread: string) => options.layersFor!(thread, instance),
       database: options.storageLayout?.databaseFor(instance) ?? (options.storage === ":memory:" ? ":memory:" : join(options.storage, Buffer.from(JSON.stringify([options.actor.name, instance])).toString("base64url") + ".sqlite")),
@@ -191,7 +205,8 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
   const host: Host<Methods> = {
     ...client, actor: options.actor.name,
     forkThread: (request) => backend.forkThread(request.instance ?? "main", request),
-    close: pool.close
+    close: async () => { try { await pool.close() } finally { await backupRunner?.close() } },
+    ...(backupRunner === undefined ? {} : { backup: { status: backupRunner.status } })
   }
   if (options.storage !== ":memory:") await pool.restore(options.storage, options.storageLayout?.instanceFromFile ?? ((file) => {
     if (!file.endsWith(".sqlite")) return undefined
@@ -199,6 +214,8 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
     try { identity = JSON.parse(Buffer.from(file.slice(0, -7), "base64url").toString("utf8")) } catch { return undefined }
     return Array.isArray(identity) && identity.length === 2 && identity[0] === options.actor.name && typeof identity[1] === "string" ? identity[1] : undefined
   }))
+  backupRunner?.markDirty()
+  backupRunner?.start()
   backends.set(host, backend)
   return host
 }

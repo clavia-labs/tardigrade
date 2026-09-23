@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "devDependencies": {
+    "@effect/platform-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",

@@ -30,10 +30,11 @@ bun run dev:cloudflare
 An actor that requires an application Effect service can merge its layer with the model services in `server.ts`:
 
 ```ts title="server.ts"
-import { Layer } from "effect"
-import { createBunHost } from "tardie/bun"
+import { Layer, Schedule } from "effect"
+import { createBunHost, remoteBackupFromKeyValueStore } from "tardie/bun"
 import { bunModelServices } from "tardie/server/model-services"
 import { AppConfig } from "./application"
+import { remoteStore } from "./remote-store"
 import definition from "./actor"
 
 const { config, layers, api } = await bunModelServices({
@@ -42,6 +43,13 @@ const { config, layers, api } = await bunModelServices({
 const host = await createBunHost({
   actor: definition,
   storage: config.actorData,
+  // backup is optional and publishes local checkpoints in the background.
+  backup: {
+    layer: remoteBackupFromKeyValueStore(definition.name).pipe(
+      Layer.provide(remoteStore)
+    ),
+    schedule: Schedule.spaced("30 seconds")
+  },
   driver: { maxConcurrentThreads: config.maxConcurrentThreads },
   layersFor: (thread, instance) => Layer.mergeAll(
     layers,
@@ -50,11 +58,25 @@ const host = await createBunHost({
 })
 ```
 
-The factory receives the thread ID and actor instance ID as separate arguments. `AppConfig` is an application-owned Effect service with `thread` and `instance` fields. The model services select the provider implementation from the configured protocol. Pass `api` to `serve(host, { port: config.port, api })` to expose model discovery and live inference output. Close the HTTP server before the host during shutdown. See the [Actors guide](/docs/actors#serve-over-http) for the HTTP lifecycle.
+### Application services
+
+`layersFor(thread, instance)` combines model services with your own services. Here, `AppConfig` makes the thread and instance IDs available to the actor.
+
+### HTTP
+
+Pass `api` to `serve(host, { port: config.port, api })` for model discovery and live inference output. Close the HTTP server before the host. See the [Actors guide](/docs/actors#serve-over-http).
+
+### Optional backup
+
+`remoteStore` is your remote `KeyValueStore` layer. You can also provide a custom `RemoteBackup` through `backup.layer`.
+
+Backup snapshots the default local storage layout in a worker and retries uploads in the background. Local commits continue during remote outages.
 
 ## Storage
 
-Generated servers store actor instances under `.tardigrade/data/`. Each instance database filename is the base64url encoding of `[actor, instance]` as JSON, followed by `.sqlite`. Thread databases live in a sibling `<instance-database>.threads/` directory, with base64url-encoded thread IDs as filenames. The host persists events before running the work they enable, so it can resume unfinished work after the process restarts.
+Generated servers store actor instances under `.tardigrade/data/`. Each instance database filename is the base64url encoding of `[actor, instance]` as JSON, followed by `.sqlite`. Thread databases live in a sibling `<instance-database>.threads/` directory, with base64url-encoded thread IDs as filenames.
+
+The host persists events before running the work they enable, so it can resume unfinished work after the process restarts.
 
 ## Configure
 

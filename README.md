@@ -48,6 +48,8 @@ bun run dev
 
 `tdg init` configures the first provider and model. Edit `actor.ts` to describe the agent. The [CLI guide](docs/references/cli.mdx) covers non-interactive setup, more providers, and deployment.
 
+The generated actor uses a sample weather tool. To build a research agent, use the live paper search tool in the composition below.
+
 From another shell, discover the actor's methods, allocate a root thread, and send it a message:
 
 ```bash
@@ -94,29 +96,40 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 
 ### Create a component
 
-An agent is made of components. Each component owns a machine with `initial`, `step`, and `output`. Its state retains the information from prior events that can affect its future output. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
+The [`ComponentDefinition` interface](packages/core/src/component/machine.ts#L40) defines `initial`, `step`, and `output`. `tool` is a helper that creates a component from a tool specification and an Effect handler:
 
 ```ts
 import { Effect } from "effect"
 import { tool } from "tardie/agent"
 
-const deploys = tool({
+const papers = tool({
   spec: {
-    name: "recent_deploys",
-    description: "List recent production deploys",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+    name: "search_papers",
+    description: "Search OpenAlex for paper titles, years, and links",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 5 } },
+      required: ["query", "limit"],
+      additionalProperties: false
+    }
   },
-  run: () => Effect.succeed([
-    { service: "api", revision: "a17c", summary: "Add rate limiting" }
-  ])
+  run: (input) => Effect.promise(async () => {
+    const { query, limit } = input as { query: string; limit: number }
+    try {
+      const response = await globalThis.fetch(`https://api.openalex.org/works?search=${encodeURIComponent(query)}&per_page=${limit}&select=id,display_name,publication_year`)
+      if (!response.ok) return { error: `OpenAlex returned ${response.status}` }
+      const data = await response.json() as { results: unknown[] }
+      return data.results
+    } catch (error) {
+      return { error: String(error) }
+    }
+  })
 })
 ```
 
-`initial` creates private state. `step` updates it for each event. This component ignores events and preserves its state. `output` derives its view and enabled transitions. Each tool keeps its specification and handler together. `answer` records the result. Replace the sample result with your deployment API.
-
 An offered tool follows this lifecycle:
 
-1. The component adds `recent_deploys` to the agent's composed view.
+1. The component adds `search_papers` to the agent's composed view.
 2. `infer` includes its specification in the model request.
 3. The model calls it. Tardigrade records `ToolCalled`.
 4. Tardigrade runs the attached handler and records `ToolReturned`.
@@ -128,7 +141,7 @@ Mount the component beside the built-in parts that this task needs:
 
 ```ts
 import { actor } from "tardie/core"
-import { agentMethods, agents, budget, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/agent"
+import { agentMethods, agents, budget, compact, messages, infer, outputValidateOnce, system, tools } from "tardie/agent"
 import { fetch, workspace } from "tardie/code"
 
 const researcher = actor({
@@ -136,8 +149,9 @@ const researcher = actor({
   methods: agentMethods,
   components: [infer([
     system("You are a research assistant. Investigate the question and cite your sources."),
+    papers,
     compact(messages(), { triggerRatio: 0.8, retainRatio: 0.5 }),
-    budget(codeMode([
+    budget(tools([ // or codeMode([...])
       fetch(),
       agents(),
       workspace()
@@ -151,20 +165,18 @@ const researcher = actor({
 })
 ```
 
-- `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless its `infer` options narrow it with `models`.
+- `actor` names the agent and exposes its methods. `infer` runs its components with the host's model policy.
 
-- `compaction()` uses the active model's context window from model metadata. It summarizes at 80 percent and retains a 50 percent tail. Pass `triggerRatio` and `retainRatio` to change those values. Set `model` on `compaction()` to select a summarizer; omission uses the host default. The summarizer does not change the conversation budget. Each checkpoint records the policy it applied.
+- `compact(messages())` summarizes at the chosen `triggerRatio` and keeps the chosen `retainRatio` of recent context.
 
-- `codeMode([...components])` exposes its packages through one `execute` tool.
+- `budget(...)` counts tool calls in its subtree and runs `onExhausted` when the limit is reached.
 
-- `budget([...components])` meters tool calls within its subtree. `caller()` sends escalation requests to the invoking actor, and `budgetAuthority()` handles them locally.
-
-This agent can inspect deployments and files, fetch sources, delegate research, and analyze results with JavaScript. Change the package list to create another harness.
+This agent can search papers, fetch sources, delegate research, and store notes. Change the package list to create another harness.
 
 A run can follow this path:
 
 ```text
-MessageReceived -> recent_deploys -> execute -> TurnCompleted
+MessageReceived -> search_papers -> fetch_get -> TurnCompleted
 ```
 
 Each action and result becomes an event that every component can interpret.
@@ -214,7 +226,7 @@ Every message, model action, tool result, and checkpoint lands in the log. Compo
 
 The host runs transitions with unrecorded keys. It appends their events and repeats until the agent rests.
 
-If the process stops during `recent_deploys`, the log still contains its unanswered `ToolCalled`. `host.recover()` replays the log through the component machines, derives the same key and input, then runs the handler again. Live execution only steps the machines with newly appended events.
+If the process stops during `search_papers`, the log still contains its unanswered `ToolCalled`. `host.recover()` replays the log through the component machines, derives the same key and input, then runs the handler again. Live execution only steps the machines with newly appended events.
 
 External effects have at-least-once execution. Each keyed result is recorded once. Providers can use the transition key as an idempotency key.
 

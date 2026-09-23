@@ -3,3 +3,5 @@ export { serve, DEFAULT_HOST_IDLE_TIMEOUT_SECONDS, DEFAULT_HOST_PORT, DEFAULT_HO
 export type { ClientThread, CallOptions } from "@clavia/tardigrade-core/actor/client"
 export { threadSupervisor, requestThreadMethod, ThreadRequest, type ThreadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 export { objectStorageFromSqlite } from "./object-storage"
+export { RemoteBackup, RemoteBackupError, remoteBackupFromKeyValueStore, captureHostCheckpoint, restoreHostCheckpoint, DEFAULT_CHECKPOINT_POLICY, type HostCheckpoint, type CheckpointPolicy } from "./backup/index"
+export { DEFAULT_BUN_BACKUP_SCHEDULE, DEFAULT_BUN_BACKUP_RETRY, type BunBackupOptions, type BunBackupStatus } from "./backup/runner"
