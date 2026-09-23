@@ -231,8 +231,8 @@ h1 span { display: block; white-space: nowrap; }
 .durability-figure { position: relative; min-width: 0; margin: 0; }
 .durability-image-frame { --durability-inner-inset: 14px; position: relative; aspect-ratio: 4 / 3; padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) 178px; gap: 20px; align-items: center; border: 1px solid var(--hair); background: var(--bg); }
 .durability-image-frame::before { content: ""; position: absolute; z-index: 1; inset: var(--durability-inner-inset); border: 1px solid rgb(var(--accent-rgb) / 18%); pointer-events: none; }
-.durability-image-frame img { position: relative; z-index: 1; grid-column: 1; grid-row: 1; width: 100%; height: auto; max-height: 100%; display: block; object-fit: contain; filter: saturate(.74) contrast(1.04); }
-.durability-log-cards { position: relative; z-index: 1; grid-column: 2; grid-row: 1; min-width: 0; display: flex; flex-direction: column; justify-content: flex-start; gap: 4px; }
+.durability-image-frame img { position: relative; z-index: 1; grid-column: 1; grid-row: 1; align-self: end; width: 100%; height: auto; max-height: 100%; display: block; object-fit: contain; filter: saturate(.74) contrast(1.04); }
+.durability-log-cards { position: absolute; z-index: 1; top: -18px; right: 20px; bottom: 0; width: 178px; display: flex; flex-direction: column; justify-content: space-between; }
 .durability-log-card { height: 30px; min-height: 30px; max-height: 30px; padding: 0 12px; display: flex; flex: 0 0 30px; align-items: center; gap: 9px; border: 1px solid rgb(var(--accent-rgb) / 58%); background: var(--surface); }
 .durability-log-card:nth-child(3n + 2) { transform: translateX(-6px); background: var(--moss-wash); }
 .durability-log-card:nth-child(3n) { transform: translateX(4px); background: var(--sunken); }
@@ -913,6 +913,7 @@ h1 span { display: block; white-space: nowrap; }
   .durability-inner, .scalability-inner { padding-top: 80px; padding-bottom: 80px; }
   .durability-copy > p { font-size: 17px; }
   .durability-image-frame { padding: 14px; grid-template-columns: minmax(0, 1fr) 120px; gap: 12px; }
+  .durability-log-cards { right: 14px; width: 120px; }
   .durability-log-card { height: 24px; min-height: 24px; max-height: 24px; padding: 0 8px; flex-basis: 24px; gap: 6px; }
   .durability-log-card:nth-child(n + 8) { display: none; }
   .observability-inner { padding-top: 80px; padding-bottom: 80px; }
