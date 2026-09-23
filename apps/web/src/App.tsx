@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router"
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react"
-import tardieHappy from "../../../assets/mascot/tardie-happy.svg"
+import tardieCuriousLeftImage from "../../../assets/mascot/tardie-curious-left.svg"
 import tardie from "../../../assets/mascot/tardie-resting.svg"
 import tardieSurprised from "../../../assets/mascot/tardie-surprised.svg"
 import tardieRestingSketch from "../../../assets/mascot/tardie-resting.svg?raw"
@@ -253,6 +253,7 @@ const CodeExample = (): ReactElement => {
 
   return (
     <div className="demo">
+      <img className="code-tardie" src={tardieCuriousLeftImage} alt="" aria-hidden="true" />
       <div className="code-card">
         <div className="code-filename">
           <span className="file-icon" />actor.ts
@@ -797,7 +798,7 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
     <header className="site-header" ref={headerRef}>
       <nav className="nav-inner" aria-label="Main navigation">
         <div className="nav-brand-group">
-          <Link className="brand" to="/" aria-label="Tardigrade home"><img className="brand-tardie" src={tardieHappy} alt="" width={42} height={28} /><span>Tardigrade</span></Link>
+          <Link className="brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
           <Link className="guide-link" to="/docs" aria-current={docs ? "page" : undefined}>Docs</Link>
         </div>
         <div className="nav-actions">
