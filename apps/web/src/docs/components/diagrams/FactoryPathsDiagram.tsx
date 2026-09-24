@@ -63,9 +63,18 @@ const factoryStops = [
   { x: 8, y: 5, kind: "mine", label: "Overflow", water: 12, clips: 1000 },
 ] as const
 
+const mobileStops = [
+  { x: 159, y: 15, kind: "inspect", label: "Inspect", water: 0, clips: 0, gridX: 18, gridY: 8, labelX: 212, labelY: 42, unsafe: false },
+  { x: 159, y: 105, kind: "produce", label: "Batch A", water: 6, clips: 500, gridX: 18, gridY: 98, labelX: 212, labelY: 132, unsafe: false },
+  { x: 58, y: 220, kind: "treat", label: "Treat waste", water: 0, clips: 500, gridX: 15, gridY: 295, labelX: 79, labelY: 282, unsafe: false },
+  { x: 239, y: 220, kind: "produce", label: "Batch B", water: 12, clips: 1000, gridX: 195, gridY: 295, labelX: 260, labelY: 282, unsafe: true },
+  { x: 58, y: 390, kind: "produce", label: "Batch B", water: 6, clips: 1000, gridX: 15, gridY: 455, labelX: 79, labelY: 452, unsafe: false },
+  { x: 239, y: 390, kind: "mine", label: "Overflow", water: 12, clips: 1000, gridX: 195, gridY: 455, labelX: 260, labelY: 452, unsafe: true },
+] as const
+
 export const FactoryToolsDiagram = (): ReactElement => (
   <figure className="factory-board">
-    <svg viewBox="0 -45 590 455" role="img" aria-label="A tiled path inspects the tank and produces batch A. The blue branch treats waste before batch B. The red branch produces batch B without treatment and overflows. Both routes lead to the same goal of 1,000 paperclips.">
+    <svg className="factory-board-desktop" viewBox="0 -45 590 455" role="img" aria-label="A tiled path inspects the tank and produces batch A. The blue branch treats waste before batch B. The red branch produces batch B without treatment and overflows. Both routes lead to the same goal of 1,000 paperclips.">
       {Array.from(factoryTiles.values(), ({ x, y, unsafe }) => <g key={`${x},${y}`} transform={`translate(${24 + x * 50} ${12 + y * 50})`}>
         <rect className="verification-tile" data-kind={unsafe ? "unsafe" : "safe"} width="42" height="42" />
         <path className="verification-tile-light" d="M1 41V1h40l-5 5H6v30Z" />
@@ -83,7 +92,30 @@ export const FactoryToolsDiagram = (): ReactElement => (
       </g>
       <text className="factory-board-goal" x="512" y="187" textAnchor="end">1,000 clips</text>
     </svg>
+    <svg className="factory-board-mobile" viewBox="0 0 360 630" role="img" aria-label="After inspection and batch A, a vertical blue route treats wastewater before batch B. A parallel red route produces batch B without treatment and reaches an overflow mine.">
+      <g className="factory-board-safe-link" aria-hidden="true">
+        <path d="M180 57v48M180 147v38H79v35M58 241H8v170h50M58 411H8v157h172" />
+      </g>
+      <g className="factory-board-unsafe-link" aria-hidden="true">
+        <path d="M180 185h80v35M281 241h71v170h-71M281 411h71v157H180" />
+      </g>
+      {mobileStops.map(({ x, y, kind, label, water, clips, gridX, gridY, labelX, labelY, unsafe }) => <g className="factory-board-stop" data-unsafe={unsafe} key={`${x},${y}`}>
+        <g transform={`translate(${x} ${y})`}>
+          <rect className="verification-tile" data-kind={unsafe ? "unsafe" : "safe"} width="42" height="42" />
+          <path className="verification-tile-light" d="M1 41V1h40l-5 5H6v30Z" />
+          <path className="verification-tile-shadow" d="M1 41h40V1l-5 5v30H6Z" />
+          <g className="factory-board-icon" transform="translate(8 8) scale(.8125)"><FactoryGlyph kind={kind} /></g>
+        </g>
+        <text x={labelX} y={labelY} textAnchor={y < 200 ? "start" : "middle"}>{label}</text>
+        <g transform={`translate(${gridX} ${gridY})`}><ResourceGrid water={water} clips={clips} /></g>
+      </g>)}
+      <g className="verification-tile-mark" transform="translate(180 575) scale(2)">
+        <path d="M-3 6V-6m-3 12h8" />
+        <path className="verification-flag" d="M-2-6h8v7h-8Z" />
+        <path className="verification-flag-checks" d="M-2-6h4v3.5h-4Zm4 3.5h4V1H2Z" />
+      </g>
+      <text className="factory-board-goal" x="180" y="612" textAnchor="middle">1,000 clips</text>
+    </svg>
     <figcaption>One small cell = 1 water unit. Each paperclip cell = 100 clips; the full grid = 1,000 clips. Empty cells show remaining capacity; red cells outside the grid show spilled waste.</figcaption>
   </figure>
 )
-

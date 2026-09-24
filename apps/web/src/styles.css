@@ -1185,6 +1185,11 @@ h1 span { display: block; white-space: nowrap; }
 
 .clippie-tools { margin: 20px 0 28px; }
 .clippie-tools > svg { display: block; width: 100%; max-width: 800px; height: auto; margin-inline: auto; }
+.clippie-tools > .clippie-tools-mobile { display: none; }
+@media (max-width: 560px) {
+  .clippie-tools > .clippie-tools-desktop { display: none; }
+  .clippie-tools > .clippie-tools-mobile { display: block; max-width: 360px; }
+}
 .clippie-factory-building, .clippie-factory-tank { fill: light-dark(#e1eaf5, #20364e); stroke: light-dark(#7299cb, #719bcf); stroke-width: 2; stroke-linejoin: round; }
 .clippie-factory-detail { fill: none; stroke: light-dark(#7299cb, #91b4db); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .clippie-factory-pipe { fill: none; stroke: light-dark(#7299cb, #719bcf); stroke-width: 4; stroke-linejoin: round; }
@@ -1256,6 +1261,14 @@ h1 span { display: block; white-space: nowrap; }
 
 .factory-board { margin: 30px 0; }
 .factory-board > svg { display: block; width: 100%; height: auto; overflow: visible; }
+.factory-board > .factory-board-mobile { display: none; }
+@media (max-width: 560px) {
+  .factory-board > .factory-board-desktop { display: none; }
+  .factory-board > .factory-board-mobile { display: block; }
+}
+.factory-board-safe-link, .factory-board-unsafe-link { fill: none; stroke-width: 1.5; }
+.factory-board-safe-link { stroke: light-dark(#7299cb, #91b4db); }
+.factory-board-unsafe-link { stroke: light-dark(#b55260, #d17f8d); }
 .factory-board-icon { fill: none; stroke: light-dark(#385d89, #c0d8f4); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .factory-board-stop[data-unsafe="true"] .factory-board-icon { stroke: light-dark(#963a49, #efb0bb); }
 .factory-board-stop text, .factory-board-goal { fill: var(--ink-2); font: 11px var(--mono); }
@@ -1286,6 +1299,7 @@ h1 span { display: block; white-space: nowrap; }
 .verification-flag { fill: var(--bg); stroke-width: 1; }
 .verification-flag-checks, .verification-mine { fill: var(--ink-2); stroke: none; }
 .verification-mine-glint { fill: var(--bg); stroke: none; }
+.docs-inline-mine { display: inline-block; width: 1.25em; height: 1.25em; margin-left: .1em; vertical-align: -.28em; }
 .verification-paths figcaption { color: var(--ink-2); font-size: 13px; text-align: center; }
 
 .agent-state-layout { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.4fr); gap: 20px; align-items: center; }

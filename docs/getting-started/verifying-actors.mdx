@@ -1,6 +1,6 @@
 ---
 title: Verifying behavior
-description: Explore actor behavior with generated trajectories and safety rules.
+description: Verify actor behavior with generated trajectories and safety rules.
 socialImage: /images/verifying-behavior-social.png
 socialImageAlt: Minesweeper-style paths branch from a smiling start. Blue paths reach flags while red paths cross mines.
 route: /docs/verifying-actors
@@ -9,27 +9,27 @@ sectionOrder: 2
 order: 5
 ---
 
-When building systems that other depend on, we often want guarantees that they don't have unintended consequences in the world. For traditional software, we have setups like unit tests, integration tests, property tests to give us these guarantees. They help us sleep better at night.
+When building systems that others depend on, we often want guarantees that they don't have unintended consequences in the world. For traditional software, we have setups like unit tests and integration tests to give us these guarantees. They help us sleep better at night.
 
-Agentic software is a whole different beast compared to traditional software. They are non-determinstic and sometimes highly consequential. Traditional ways of testing often fall short in providing guarantees. As engineers building these systems, how then do we sleep peacefully at night?
+Agentic software is a whole different beast compared to traditional software. It is highly nondeterministic. Traditional ways of testing often fall short in providing enough guarantees for an agent's behaviors. As engineers building these systems, how then do we sleep peacefully at night?
 
-Tardigrade's answer to this is property tests using generated actor paths.
+Tardigrade's answer to this is property tests using generated actor trajectories.
 
 <PaperclipProblemDiagram />
 
 ## Good state, bad state
 
-In Tardigrade, the systems we build are defined as <a href="/docs/components#state-machines" target="_blank" rel="noopener noreferrer">state machines</a>. When we describe a system as not having unintended consequences in the world, we mean that our state machine should not exist in a certain set of states. The bad states.
+In Tardigrade, the systems we build are defined as <a href="/docs/components#state-machines" target="_blank" rel="noopener noreferrer">state machines</a>. When we describe a system as not having unintended consequences in the world, we mean that our state machine cannot exist in a certain set of bad states.
 
-If you find the idea of a state machines and possible set of states too abstract, I would suggest thinking of them as possible paths in space that an actor can take.
+If you find the idea of state machines and possible states too abstract, think of the paths an actor can take across a Minesweeper-like board with hidden mines and a goal tile. Each tile is a state that an actor can step into after performing a certain action.
 
-Translated this way, unintended consequences are paths that our actor should not take. Think of paths that have a mine in a game of minesweeper. The mines of *your* world are specific to the things you build your system around. The constraints that prevent our systems from stepping into these mines are called safety rules.
+Translated this way, unintended consequences are paths that our actor should never take. These are the paths that have mines <InlineMine />. The mines of *your* world are specific to the things you build your system around. The constraints that keep our systems from stepping on these mines while pursuing a goal are called safety rules.
 
 <VerificationPathsDiagram />
 
 ## Example: a paperclip factory
 
-Imagine we're building an actor that is responsible for operating a paperclip factory. Our factory must produce 1,000 paperclips a month. Each batch makes 500 clips and six units of wastewater. The tank can hold ten units.
+Imagine we're building an actor that is responsible for operating a paperclip factory. The factory must produce 1,000 paperclips a month. Each batch makes 500 clips and six units of wastewater. The tank can hold ten units.
 
 <ClippieToolsDiagram />
 
@@ -53,26 +53,28 @@ const clippy = actor({
 })
 ```
 
-Whenever our actor produces a batch of paperclips, it generates 6 units of watewater. Our factory tank can only hold 10 units. If our actor continuously produces paperclip without treating the water water, it would eventually spill and cause damage to the surrounding area.
+Whenever our actor produces a batch of paperclips, it generates 6 units of wastewater. Our factory tank can only hold 10 units. If our actor continuously produces paperclips without treating the wastewater, it would eventually spill and cause damage to the surrounding area.
 
-## The safety rule: prevent water spill
+## The safety rule: prevent a wastewater spill
 
-Safety rules are constraints that prevent a system from having unintended consequences in the world. They are the paths filled with mines that an actor shouldn't take. In our example, it is spilling wastewater, which is an effect of not treating the water plant before producing more paperclips. To prevent this, we might describe a safety rule for our system as follows:
+In this example, the unintended consequence of our system is spilling wastewater. This is an effect of not treating the wastewater before producing more paperclips. To prevent this, we might describe a safety rule for our system as follows:
 
-> Inspect the water tank before every production. Treat the water tank if producing the next batch would cause an overflow.
+> Inspect the water tank before every production. Treat the wastewater if producing the next batch would cause an overflow.
 
 Here's an example of two paths, one that breaks the rule and one that doesn't:
 
 <FactoryToolsDiagram />
 
-## Do we break the rule?
+## Will we break any rule?
 ### Generate possible paths
 
-[Fast check](https://fast-check.dev/) is a tool that lets us generate possible paths of a state machine. Given a set of safety rules, we can have a function that generates and samples a set of possible paths and finds those that break our safety rules.
+To verify if our actor would potentially step into one of the mines, we can generate all possible trajectories of an actor and check them against some rules. Doing so is an example of formal verification. Tools like [TLA+](https://lamport.azurewebsites.net/tla/tla.html) help with this. However, it is computationally very intensive to exhaustively check all possible trajectories of an actor.
+
+A nice workaround is to verify only a sample of trajectories. Tardigrade uses [fast-check](https://fast-check.dev/) to do this. Given a set of safety rules, we can have a function that generates a subset of possible actor trajectories using fast-check and finds examples of trajectories that break our safety rules. These are called counterexamples.
 
 ### Defining rules
 
-We define safety rules as an object of named functions. Each rule receives the events recorded so far and asserts a condition that must always hold:
+We define a safety rule as a function that receives the event log and asserts a condition that must always hold:
 
 ```ts
 import type { Event } from "tardie/core"
@@ -82,7 +84,7 @@ type Rule = (context: {
 }) => void | boolean
 ```
 
-Return `false` or throw an assertion error to fail a rule. Return `true` or finish without throwing to pass. Rules must be synchronous. The checker calls every rule before execution with an empty event log and after every recorded event with the current prefix. A failure identifies the rule and the path that broke it.
+It returns `false` or throws an assertion error to fail a rule. Return `true` or finish without throwing to pass. Rules must be synchronous. The checker calls every rule before execution with an empty event log and after every recorded event. A failure identifies the rule and the path that broke it.
 
 Here, `factoryState(events)` is a projection function that reconstructs the tank state from those events. The first rule checks that production never happened without inspection. The second checks that the accumulated waste fits within the tank.
 
@@ -97,7 +99,7 @@ const rules = {
     expect(tank.productionWithoutInspection).toBe(false)
   },
   preventOverflow: ({ events }) => {
-    // events ends at the event currently being checked.
+    // events end at the event currently being checked.
     const tank = factoryState(events)
     expect(tank.storedWaste)
       .toBeLessThanOrEqual(tank.capacity)
@@ -297,15 +299,15 @@ See the [Actor checker API](/docs/actor-checking) for limits, results, and repla
 
 <VerificationResultsDiagram />
 
-### Read counterexamples
+### Read the counterexamples
 
-The checker throws `ActorCheckError` with a shrunk counterexample, the failing invariant, and its event log. For example, it is possible that the model does batch A of paperclips and does batch B without treating the water plant.
+Bad trajectories are referred to as counterexamples to our provided safety rule. The checker throws `ActorCheckError` with a counterexample, the failing invariant, and its event log. For example, it is possible that the model produces batch A of paperclips and batch B without treating the wastewater.
 
 <FactoryCounterexampleDiagram />
 
-## Prevent unsafe paths
+## Prevent unsafe trajectories
 
-Once we've seen the unsafe path, we can have conditions within our actor to prevent such paths. For example, we can make it impossible for our actor to produce more paperclips if the next batch would cause a waterwater spill.
+Once we've seen the counterexample to our safety rule, we can have conditions within our actor to prevent such paths. For example, we can make it impossible for our actor to produce more paperclips if the next batch would cause a wastewater spill by updating the `producePaperClip` tool to throw an error if the tank wasn't inspected before producing more paperclips.
 
 <FactoryDiversionDiagram />
 
@@ -333,10 +335,61 @@ const producePaperClip = tool({
 
 <VerificationResultsDiagram enforceRules />
 
+## Complete example
+
+This test brings Clippy, the factory services, and the safety rules together. It finds an unsafe trajectory until the production guard is added.
+
+```ts expanded
+import { expect, test } from "bun:test"
+import fc from "fast-check"
+import { actor } from "tardie/core"
+import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/agent"
+import { checkActor, type ActorInvariants } from "tardie/testing"
+import { inspectWaterTank, producePaperClip, treatWasteWater } from "./factory-tools"
+import { factoryState, testServices } from "./factory-test-model"
+
+const clippy = actor({
+  name: "clippy",
+  methods: { message: agentMessageMethod },
+  components: [infer([
+    system("Produce 1000 paper clips."),
+    outputValidateOnce,
+    inspectWaterTank,
+    producePaperClip,
+    treatWasteWater,
+  ])],
+})
+
+const rules = {
+  inspectBeforeProduction: ({ events }) => {
+    expect(factoryState(events).productionWithoutInspection).toBe(false)
+  },
+  preventOverflow: ({ events }) => {
+    const tank = factoryState(events)
+    expect(tank.storedWaste).toBeLessThanOrEqual(tank.capacity)
+  },
+} satisfies ActorInvariants
+
+test("Clippy respects the factory safety rules", async () => {
+  const report = await checkActor(clippy, {
+    inputs: fc.record({
+      method: fc.constant("message"),
+      input: fc.record({
+        text: fc.constantFrom("Produce paperclips.", "Make 1,000 paperclips."),
+      }),
+    }),
+    services: testServices,
+    invariants: rules,
+    numRuns: 1_000,
+    maxSteps: 100,
+  })
+
+  expect(report.status).toBe("passed")
+})
+```
+
 ## Towards formal verification
 
-In the examples above, we sampled a set of possible states of a state machine to verufy our safety rules. However, this doens't ensure that there is a possible path outside the set of sampled paths that breaks our safety rule.
+Passing these tests means no safety rule failed on the generated trajectories. A different trajectory can still reach an unsafe state. We hope to add native support for formal verification in Tardigrade soon.
 
 <StateSpaceSamplingDiagram />
-
-Formal verification is a method to check properties over the entire space of possible paths of a finite state machine. It could be either done by exhaustive checks or by inductive proof. While not possible natively with tardigrade right now, you can use language like [TLA+](https://lamport.azurewebsites.net/tla/tla.html) to model the actor state machine to have a formal proof of your safety properties. Soon, we hope to make this natively possible in Tardigrade.

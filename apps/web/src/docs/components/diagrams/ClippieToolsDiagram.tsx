@@ -10,7 +10,7 @@ const tools = [
 
 export const ClippieToolsDiagram = (): ReactElement => (
   <figure className="clippie-tools">
-    <svg viewBox="0 0 860 280" role="img" aria-label="Clippy uses three tools to act on the world: Inspect water tank and Treat wastewater connect to the tank; Produce paperclips connects to the factory, which pipes waste to the tank">
+    <svg className="clippie-tools-desktop" viewBox="0 0 860 280" role="img" aria-label="Clippy uses three tools to act on the world: Inspect water tank and Treat wastewater connect to the tank; Produce paperclips connects to the factory, which pipes waste to the tank">
       <text className="clippie-world-label" x="704" y="48" textAnchor="middle">World</text>
       <g className="clippie-tools-links" aria-hidden="true">
         <path d="M530 57h302v76h-21M530 135h68M530 213h302v-48h-21" />
@@ -42,6 +42,36 @@ export const ClippieToolsDiagram = (): ReactElement => (
         <g className="factory-generated-icon" transform="translate(8 8) scale(.8125)"><FactoryGlyph kind={kind} /></g>
         <text className="clippie-tools-label" x="57" y="26">{name}</text>
       </g>)}
+    </svg>
+    <svg className="clippie-tools-mobile" viewBox="0 0 360 585" role="img" aria-label="Clippy connects to three vertically stacked tools. The tools act on a factory and water tank below.">
+      <image href={tardie} x="80" y="0" width="200" height="144" />
+      <text className="clippie-tools-name" x="180" y="158" textAnchor="middle">Clippy</text>
+      <g className="clippie-tools-links" aria-hidden="true">
+        <path d="M180 167v13H37v147M37 207h15m-15 60h15m-15 60h15" />
+        <path d="M273 207h52v140H180v47M273 267h52M273 327h52" />
+        <path d="m175 389 5 5 5-5" />
+      </g>
+      {tools.map(({ kind, name }, index) => <g key={kind} transform={`translate(52 ${186 + index * 60})`}>
+        <rect className="verification-tile" width="42" height="42" />
+        <path className="verification-tile-light" d="M1 41V1h40l-5 5H6v30Z" />
+        <path className="verification-tile-shadow" d="M1 41h40V1l-5 5v30H6Z" />
+        <g className="factory-generated-icon" transform="translate(8 8) scale(.8125)"><FactoryGlyph kind={kind} /></g>
+        <text className="clippie-tools-label" x="55" y="26">{name}</text>
+      </g>)}
+      <text className="clippie-world-label" x="180" y="414" textAnchor="middle">World</text>
+      <g className="clippie-factory-scene" transform="translate(40 416) scale(1.2)" aria-hidden="true">
+        <path className="clippie-factory-pipe" d="M144 96h16v7h20" />
+        <path className="clippie-factory-building" d="M35 66V28h16v38" />
+        <path className="clippie-factory-building" d="M24 115V71l40-19v19l40-19v19h40v44Z" />
+        <path className="clippie-factory-detail" d="M36 86h13v13H36Zm25 0h13v13H61Zm25 0h13v13H86Z" />
+        <path className="clippie-factory-detail" d="M115 115V89h17v26" />
+        <path className="clippie-factory-tank" d="M180 52h45v64h-45Z" />
+        <path className="clippie-factory-water" d="M183 80q5-3 10 0t10 0 10 0 9 0v33h-39Z" />
+        <path className="clippie-factory-detail" d="M179 48h47m-43 15h39" />
+        <path className="clippie-factory-level" d="M217 73h5m-5 12h5m-5 12h5" />
+        <text className="clippie-scene-label" x="84" y="135" textAnchor="middle">Factory</text>
+        <text className="clippie-scene-label" x="202" y="135" textAnchor="middle">Water tank</text>
+      </g>
     </svg>
   </figure>
 )
