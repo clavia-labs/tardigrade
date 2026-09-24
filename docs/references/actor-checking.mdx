@@ -9,18 +9,6 @@ order: 8
 
 Import from `tardie/testing`. [Full example](/docs/verifying-actors).
 
-```text
-inputs + services --> actor --> [e1, e2, ...]
-                              |
-                     check every prefix
-                              v
-                         named rules
-                              |
-                       pass / fail
-                              |
-                      shrink + replay
-```
-
 ## checkActor
 
 ```ts
