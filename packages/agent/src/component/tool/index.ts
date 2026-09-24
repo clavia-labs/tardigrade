@@ -5,6 +5,7 @@ import type { CodeComponent } from "@clavia/tardigrade-code/package/definition"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { tools as packageTools, type ToolsOptions } from "./packages"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { EventLog } from "@clavia/tardigrade-core/log"
 import { toolReturned } from "../../log/events"
 import type { ToolSpec } from "../../model/request"
 import type { ToolOffer } from "../view"
@@ -15,7 +16,13 @@ export interface NativeTool<R = never> {
   readonly spec: ToolSpec
   readonly run: (
     input: unknown,
-    context: { readonly callId: string; readonly turn?: string; readonly signal: AbortSignal }
+    context: {
+      readonly callId: string
+      readonly turn?: string
+      readonly signal: AbortSignal
+      // events is the committed actor log read when execution starts (machine.test.ts).
+      readonly events: ReadonlyArray<Event>
+    }
   ) => Effect.Effect<unknown, never, R>
 }
 
@@ -41,10 +48,13 @@ const nativeTools = <R = never>(
           input: { callId: call.callId, arguments: call.arguments, turn: call.turn },
           act: (input, { signal }) =>
             Effect.gen(function* () {
+              const log = yield* EventLog
+              const events = yield* log.read
               const result = yield* tool.run(input.arguments, {
                 callId: input.callId,
                 ...(input.turn === undefined ? {} : { turn: input.turn }),
-                signal
+                signal,
+                events
               })
               const at = yield* Clock.currentTimeMillis
               return [toolReturned({ callId: input.callId, result, ...stamp, at })]

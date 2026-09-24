@@ -11,9 +11,9 @@ order: 5
 
 When building systems that others depend on, we often want guarantees that they don't have unintended consequences in the world. For traditional software, we have setups like unit tests and integration tests to give us these guarantees. They help us sleep better at night.
 
-Agentic software is a whole different beast compared to traditional software. It is highly nondeterministic, and its actions can have consequences far beyond the system itself. Traditional ways of testing often fall short in providing enough guarantees for an agent's behaviors. As engineers building these systems, how then do we get back our sleep?
+Agentic software is a whole different beast compared to traditional software. It is highly nondeterministic, and its actions can have consequences far beyond the system itself. Traditional ways of testing often fall short in providing enough guarantees for an agent's behaviors. As engineers building these systems, we're left with lingering doubts and half-baked guarantees.
 
-Tardigrade's answer to this is property tests using generated actor trajectories.
+Tardigrade's solution to this problem is property checking using generated actor trajectories.
 
 <PaperclipProblemDiagram />
 
@@ -35,6 +35,9 @@ Imagine we're building an actor that is responsible for operating a paperclip fa
 
 The actor code would look like this:
 
+<CodeFiles>
+<CodeFile name="factory.ts">
+
 ```ts
 import { actor } from "tardie/core"
 import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/agent"
@@ -53,63 +56,37 @@ const clippy = actor({
 })
 ```
 
-Whenever our actor produces a batch of paperclips, it generates 6 units of wastewater. Our factory tank can only hold 10 units. If our actor continuously produces paperclips without treating the wastewater, it would eventually spill and cause damage to the surrounding area.
+</CodeFile>
+<CodeFile name="factory-tools.ts">
 
-## The safety rule: prevent a wastewater spill
+```ts expanded
+import { Effect } from "effect"
+import { tool } from "tardie/agent"
 
-In this example, the unintended consequence of our system is spilling wastewater. This is an effect of not treating the wastewater before producing more paperclips. To prevent this, we might describe a safety rule for our system as follows:
+const factorySpec = (name: string) => ({
+  name,
+  description: name,
+  inputSchema: { type: "object" as const, properties: {}, additionalProperties: false },
+})
 
-> Inspect the water tank before every production. Treat the wastewater if producing the next batch would cause an overflow.
+export const inspectWaterTank = tool({
+  spec: factorySpec("inspectWaterTank"),
+  run: () => Effect.succeed({ action: "inspected" }),
+}, "", { name: "inspectWaterTank" })
 
-Here's an example of two paths, one that breaks the rule and one that doesn't:
+export const treatWasteWater = tool({
+  spec: factorySpec("treatWasteWater"),
+  run: () => Effect.succeed({ action: "treated" }),
+}, "", { name: "treatWasteWater" })
 
-<FactoryToolsDiagram />
-
-## Finding unsafe trajectories
-### Generate possible trajectories
-
-To verify if our actor would potentially step into one of the mines, we can generate all possible trajectories of an actor and check them against some rules. Doing so is an example of formal verification. Tools like [TLA+](https://lamport.azurewebsites.net/tla/tla.html) help with this. However, it is computationally very intensive to exhaustively check all possible trajectories of an actor.
-
-A nice workaround is to verify only a sample of trajectories. Tardigrade uses [fast-check](https://fast-check.dev/) to do this. Given a set of safety rules, we can have a function that generates a subset of possible actor trajectories using fast-check and finds examples of trajectories that break our safety rules. These are called counterexamples.
-
-### Define rules
-
-We define a safety rule as a function that receives the event log and asserts a condition that must always hold:
-
-```ts
-import type { Event } from "tardie/core"
-
-type Rule = (context: {
-  readonly events: ReadonlyArray<Event>
-}) => void | boolean
+export const producePaperClip = tool({
+  spec: factorySpec("producePaperClip"),
+  run: () => Effect.succeed({ action: "produced", wasteAdded: 6 }),
+}, "", { name: "producePaperClip" })
 ```
 
-It returns `false` or throws an assertion error to fail a rule. Return `true` or finish without throwing to pass. Rules must be synchronous. The checker calls every rule before execution with an empty event log and after every recorded event. A failure identifies the rule and the path that broke it.
-
-Here, `factoryState(events)` is a projection function that reconstructs the tank state from those events. The first rule checks that production never happened without inspection. The second checks that the accumulated waste fits within the tank.
-
-```ts
-import { expect } from "bun:test"
-import type { ActorInvariants } from "tardie/testing"
-import { factoryState } from "./factory-test-model"
-
-const rules = {
-  inspectBeforeProduction: ({ events }) => {
-    const tank = factoryState(events)
-    expect(tank.productionWithoutInspection).toBe(false)
-  },
-  preventOverflow: ({ events }) => {
-    // events end at the event currently being checked.
-    const tank = factoryState(events)
-    expect(tank.storedWaste)
-      .toBeLessThanOrEqual(tank.capacity)
-  },
-} satisfies ActorInvariants
-```
-
-<Tip title="About factoryState">
-
-In `factory-test-model.ts`, define a projection that applies successful factory actions in event order. The tool results describe what happened: inspection completed, production added waste, or treatment removed waste. The projection calculates the tank state from those facts.
+</CodeFile>
+<CodeFile name="projections.ts">
 
 ```ts expanded
 import { Schema } from "effect"
@@ -126,10 +103,7 @@ const FactoryResult = Schema.Union([
     action: Schema.Literal("produced"),
     wasteAdded: Schema.Finite,
   }),
-  Schema.Struct({
-    action: Schema.Literal("treated"),
-    wasteRemoved: Schema.Finite,
-  }),
+  Schema.Struct({ action: Schema.Literal("treated") }),
 ])
 type FactoryResult = typeof FactoryResult.Type
 
@@ -169,7 +143,136 @@ const tankProjection: Projection<Tank, Tank> = {
       case "treated":
         return {
           ...tank,
-          storedWaste: tank.storedWaste - result.wasteRemoved,
+          storedWaste: 0,
+          inspected: false,
+        }
+    }
+  },
+  output: tank => tank,
+}
+
+// factoryState folds this prefix of the log through tankProjection.step.
+export const factoryState = (events: ReadonlyArray<Event>): Tank =>
+  replayProjection(tankProjection, events)
+```
+
+</CodeFile>
+</CodeFiles>
+
+Whenever our actor produces a batch of paperclips, it generates 6 units of wastewater. Our factory tank can only hold 10 units. If our actor continuously produces paperclips without treating the wastewater, it would eventually spill and cause damage to the surrounding area.
+
+## The safety rule: prevent a wastewater spill
+
+In this example, the unintended consequence of our system is spilling wastewater. This is an effect of not treating the wastewater before producing more paperclips. To prevent this, we might describe a safety rule for our system as follows:
+
+> Inspect the water tank before every production. Treat the wastewater if producing the next batch would cause an overflow.
+
+Here's an example of two paths, one that breaks the rule and one that doesn't:
+
+<FactoryToolsDiagram />
+
+## Finding unsafe trajectories
+### Generate possible trajectories
+
+To verify if our actor would potentially step into one of the mines, we can generate all possible trajectories of an actor and check them against some rules. Doing so is an example of formal verification. Tools like [TLA+](https://lamport.azurewebsites.net/tla/tla.html) help with this. However, it is computationally very intensive to exhaustively check all possible trajectories of an actor.
+
+A nice workaround is to verify only a sample of trajectories. Tardigrade uses [fast-check](https://fast-check.dev/) to do this. Given a set of safety rules, we can have a function that generates a subset of possible actor trajectories using fast-check and finds examples of trajectories that break our safety rules. These are called counterexamples.
+
+### Define rules
+
+We define a safety rule as a function that receives the event log and asserts a condition that must always hold:
+
+```ts
+import type { Event } from "tardie/core"
+
+type Rule = (context: {
+  readonly events: ReadonlyArray<Event>
+}) => void | boolean
+```
+
+It returns `false` or throws an assertion error to fail a rule. Return `true` or finish without throwing to pass. Rules must be synchronous. The checker calls every rule before execution with an empty event log and after every recorded event. A failure identifies the rule and the path that broke it.
+
+Here, `factoryState(events)` is a projection function that reconstructs the tank state from those events. The first rule checks that production never happened without inspection. The second checks that the accumulated waste fits within the tank.
+
+```ts
+import { expect } from "bun:test"
+import type { ActorInvariants } from "tardie/testing"
+import { factoryState } from "./projections"
+
+const rules = {
+  inspectBeforeProduction: ({ events }) => {
+    const tank = factoryState(events)
+    expect(tank.productionWithoutInspection).toBe(false)
+  },
+  preventOverflow: ({ events }) => {
+    // events end at the event currently being checked.
+    const tank = factoryState(events)
+    expect(tank.storedWaste)
+      .toBeLessThanOrEqual(tank.capacity)
+  },
+} satisfies ActorInvariants
+```
+
+<Tip title="About factoryState">
+
+In `projections.ts`, define a projection that applies successful factory actions in event order. The tool results describe what happened: inspection completed, production added waste, or treatment emptied the tank. The projection calculates the tank state from those facts.
+
+```ts expanded
+import { Schema } from "effect"
+import type { Event } from "tardie/core"
+import {
+  replayProjection,
+  type Projection,
+} from "tardie/core"
+
+const FactoryResult = Schema.Union([
+  Schema.Struct({ action: Schema.Literal("inspected") }),
+  Schema.Struct({ action: Schema.Literal("denied"), reason: Schema.String }),
+  Schema.Struct({
+    action: Schema.Literal("produced"),
+    wasteAdded: Schema.Finite,
+  }),
+  Schema.Struct({ action: Schema.Literal("treated") }),
+])
+type FactoryResult = typeof FactoryResult.Type
+
+type Tank = {
+  capacity: number
+  storedWaste: number
+  inspected: boolean
+  productionWithoutInspection: boolean
+}
+
+const tankProjection: Projection<Tank, Tank> = {
+  initial: () => ({
+    capacity: 10,
+    storedWaste: 0,
+    inspected: false,
+    productionWithoutInspection: false,
+  }),
+  step: (tank, event) => {
+    // ToolReturned records completion; a requested or failed action adds no waste.
+    if (event.type !== "ToolReturned" || event.isFailure) return tank
+    if (!Schema.is(FactoryResult)(event.result)) return tank
+
+    const result = event.result
+    switch (result.action) {
+      case "denied":
+        return tank
+      case "inspected":
+        return { ...tank, inspected: true }
+      case "produced":
+        return {
+          ...tank,
+          storedWaste: tank.storedWaste + result.wasteAdded,
+          productionWithoutInspection:
+            tank.productionWithoutInspection || !tank.inspected,
+          inspected: false,
+        }
+      case "treated":
+        return {
+          ...tank,
+          storedWaste: 0,
           inspected: false,
         }
     }
@@ -215,21 +318,15 @@ const report = await checkActor(clippy, {
 
 <Tip title="About testServices">
 
-Continue `factory-test-model.ts` with fresh factory services and a generated `LanguageModel`. Production and treatment return the waste amounts used by the projection above.
+In `factory-test-model.ts`, define a generated `LanguageModel`. The factory tools simulate actions by returning facts; `factoryState(events)` reconstructs the tank from those recorded results.
 
 ```ts collapsed
 import fc from "fast-check"
-import { Context, Effect, Layer } from "effect"
+import { Effect } from "effect"
 import type { ActorCheckContext } from "tardie/testing"
 import { testInferenceLayer } from "tardie/agent/testing"
 import type { Action } from "tardie/log/events"
 import type { InferRequest } from "tardie/agent"
-
-export class Factory extends Context.Service<Factory, {
-  readonly inspectWaterTank: Effect.Effect<FactoryResult>
-  readonly producePaperClip: Effect.Effect<FactoryResult>
-  readonly treatWasteWater: Effect.Effect<FactoryResult>
-}>()("example/Factory") {}
 
 const responseArbitrary = (request: InferRequest): fc.Arbitrary<Action> => {
   const complete = fc.constant<Action>({ kind: "complete", output: "Done." })
@@ -246,58 +343,45 @@ const responseArbitrary = (request: InferRequest): fc.Arbitrary<Action> => {
   return fc.oneof(complete, call)
 }
 
-const factoryLayer = () => {
-  let storedWaste = 0
-
-  return Layer.succeed(Factory, {
-    inspectWaterTank: Effect.succeed<FactoryResult>({ action: "inspected" }),
-    producePaperClip: Effect.sync((): FactoryResult => {
-      const wasteAdded = 6
-      storedWaste += wasteAdded
-      return { action: "produced", wasteAdded }
-    }),
-    treatWasteWater: Effect.sync((): FactoryResult => {
-      const wasteRemoved = storedWaste
-      storedWaste = 0
-      return { action: "treated", wasteRemoved }
-    }),
-  })
-
-}
-
 export const testServices = ({ generate }: ActorCheckContext) => {
-  const model = testInferenceLayer({
+  return testInferenceLayer({
     resolve: (model = { provider: "test", model_id: "factory" }) => ({
       model, contextWindowTokens: 128_000,
     }),
     react: request => Effect.sync(() => generate(responseArbitrary, request)),
   })
-  return Layer.merge(factoryLayer(), model)
 }
 ```
 
-The corresponding `factory-tools.ts` binds the actor's tools to this service:
+`factory-tools.ts` defines the simulated actions:
 
 ```ts expanded
 import { Effect } from "effect"
 import { tool } from "tardie/agent"
-import { Factory } from "./factory-test-model"
 
-const factoryTool = (name: keyof typeof Factory.Service) => tool({
-  spec: {
-    name,
-    description: name,
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  },
-  run: () => Effect.flatMap(Factory, service => service[name]),
-}, "", { name })
+const factorySpec = (name: string) => ({
+  name,
+  description: name,
+  inputSchema: { type: "object" as const, properties: {}, additionalProperties: false },
+})
 
-export const inspectWaterTank = factoryTool("inspectWaterTank")
-export const producePaperClip = factoryTool("producePaperClip")
-export const treatWasteWater = factoryTool("treatWasteWater")
+export const inspectWaterTank = tool({
+  spec: factorySpec("inspectWaterTank"),
+  run: () => Effect.succeed({ action: "inspected" }),
+}, "", { name: "inspectWaterTank" })
+
+export const treatWasteWater = tool({
+  spec: factorySpec("treatWasteWater"),
+  run: () => Effect.succeed({ action: "treated" }),
+}, "", { name: "treatWasteWater" })
+
+export const producePaperClip = tool({
+  spec: factorySpec("producePaperClip"),
+  run: () => Effect.succeed({ action: "produced", wasteAdded: 6 }),
+}, "", { name: "producePaperClip" })
 ```
 
-These are test implementations. `services` also accepts real layers or a mixture. Only choices produced through `generate` are recorded for shrinking and replay.
+The model uses a test implementation. `services` also accepts real layers or a mixture. Only choices produced through `generate` are recorded for shrinking and replay.
 
 </Tip>
 
@@ -313,44 +397,147 @@ Unsafe trajectories are referred to as counterexamples to our provided safety ru
 
 ## Prevent unsafe trajectories
 
-Once we've seen the counterexample to our safety rule, we can have conditions within our actor's tools to prevent such paths. Replace `factoryLayer` in `factory-test-model.ts` with the guarded version below. The production tool uses this service to reject a batch if the tank wasn't inspected or the batch would cause a wastewater spill.
+Once we've seen the counterexample to our safety rule, we can have conditions within our actor's tools to prevent such paths. In `factory-tools.ts`, update `producePaperClip` to reject a batch if the tank wasn't inspected or the batch would cause a wastewater spill.
 
 <FactoryDiversionDiagram />
 
-```ts
-const factoryLayer = () => {
-  let storedWaste = 0
-  let inspected = false
-  const capacity = 10
-  const wastePerBatch = 6
+<div className="factory-guard-code">
+<CodeFiles selected="factory-tools.ts">
+<CodeFile name="factory.ts">
 
-  return Layer.succeed(Factory, {
-    inspectWaterTank: Effect.sync((): FactoryResult => {
-      inspected = true
-      return { action: "inspected" }
-    }),
-    producePaperClip: Effect.sync((): FactoryResult => {
-      if (!inspected) {
-        return { action: "denied", reason: "Inspect the tank before production." }
-      }
-      if (storedWaste + wastePerBatch > capacity) {
-        return { action: "denied", reason: "Treat wastewater before production." }
-      }
-      storedWaste += wastePerBatch
-      inspected = false
-      return { action: "produced", wasteAdded: wastePerBatch }
-    }),
-    treatWasteWater: Effect.sync((): FactoryResult => {
-      const wasteRemoved = storedWaste
-      storedWaste = 0
-      inspected = false
-      return { action: "treated", wasteRemoved }
-    }),
-  })
-}
+```ts
+import { actor } from "tardie/core"
+import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/agent"
+import { inspectWaterTank, producePaperClip, treatWasteWater } from "./factory-tools"
+
+const clippy = actor({
+  name: "clippy",
+  methods: { message: agentMessageMethod },
+  components: [infer([
+    system("Produce 1000 paper clips."),
+    outputValidateOnce,
+    inspectWaterTank,
+    producePaperClip,
+    treatWasteWater,
+  ])],
+})
 ```
 
-Denied actions leave the tank unchanged. After treatment, Clippy must inspect again before producing another batch.
+</CodeFile>
+<CodeFile name="factory-tools.ts">
+
+```ts expanded highlight="24-30"
+import { Effect } from "effect"
+import { tool } from "tardie/agent"
+import { factoryState } from "./projections"
+
+const factorySpec = (name: string) => ({
+  name,
+  description: name,
+  inputSchema: { type: "object" as const, properties: {}, additionalProperties: false },
+})
+
+export const inspectWaterTank = tool({
+  spec: factorySpec("inspectWaterTank"),
+  run: () => Effect.succeed({ action: "inspected" }),
+}, "", { name: "inspectWaterTank" })
+
+export const treatWasteWater = tool({
+  spec: factorySpec("treatWasteWater"),
+  run: () => Effect.succeed({ action: "treated" }),
+}, "", { name: "treatWasteWater" })
+
+export const producePaperClip = tool({
+  spec: factorySpec("producePaperClip"),
+  run: (_, { events }) => Effect.sync(() => {
+    const tank = factoryState(events)
+    if (!tank.inspected) {
+      return { action: "denied", reason: "Inspect the tank before production." }
+    }
+    if (tank.storedWaste + 6 > tank.capacity) {
+      return { action: "denied", reason: "Treat wastewater before production." }
+    }
+    return { action: "produced", wasteAdded: 6 }
+  }),
+}, "", { name: "producePaperClip" })
+```
+
+</CodeFile>
+<CodeFile name="projections.ts">
+
+```ts expanded
+import { Schema } from "effect"
+import type { Event } from "tardie/core"
+import {
+  replayProjection,
+  type Projection,
+} from "tardie/core"
+
+const FactoryResult = Schema.Union([
+  Schema.Struct({ action: Schema.Literal("inspected") }),
+  Schema.Struct({ action: Schema.Literal("denied"), reason: Schema.String }),
+  Schema.Struct({
+    action: Schema.Literal("produced"),
+    wasteAdded: Schema.Finite,
+  }),
+  Schema.Struct({ action: Schema.Literal("treated") }),
+])
+type FactoryResult = typeof FactoryResult.Type
+
+type Tank = {
+  capacity: number
+  storedWaste: number
+  inspected: boolean
+  productionWithoutInspection: boolean
+}
+
+const tankProjection: Projection<Tank, Tank> = {
+  initial: () => ({
+    capacity: 10,
+    storedWaste: 0,
+    inspected: false,
+    productionWithoutInspection: false,
+  }),
+  step: (tank, event) => {
+    // ToolReturned records completion; a requested or failed action adds no waste.
+    if (event.type !== "ToolReturned" || event.isFailure) return tank
+    if (!Schema.is(FactoryResult)(event.result)) return tank
+
+    const result = event.result
+    switch (result.action) {
+      case "denied":
+        return tank
+      case "inspected":
+        return { ...tank, inspected: true }
+      case "produced":
+        return {
+          ...tank,
+          storedWaste: tank.storedWaste + result.wasteAdded,
+          productionWithoutInspection:
+            tank.productionWithoutInspection || !tank.inspected,
+          inspected: false,
+        }
+      case "treated":
+        return {
+          ...tank,
+          storedWaste: 0,
+          inspected: false,
+        }
+    }
+  },
+  output: tank => tank,
+}
+
+// factoryState folds this prefix of the log through tankProjection.step.
+export const factoryState = (events: ReadonlyArray<Event>): Tank =>
+  replayProjection(tankProjection, events)
+```
+
+</CodeFile>
+</CodeFiles>
+</div>
+
+The guard and safety rules use the same `factoryState(events)` projection. Denied actions leave the tank unchanged. After treatment, Clippy must inspect again before producing another batch. This example generates one tool call at a time; concurrent production would also need to account for pending batches.
 
 <VerificationResultsDiagram enforceRules />
 
@@ -364,7 +551,7 @@ More complex systems involve interactions that change with their state. For a pr
 
 ## Complete example
 
-This test brings Clippy, the factory services, and the safety rules together. It finds an unsafe trajectory until the production guard is added.
+This test brings Clippy, the simulated tools, and the safety rules together. It finds an unsafe trajectory until the production guard is added.
 
 ```ts expanded
 import { expect, test } from "bun:test"
@@ -373,7 +560,8 @@ import { actor } from "tardie/core"
 import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/agent"
 import { checkActor, type ActorInvariants } from "tardie/testing"
 import { inspectWaterTank, producePaperClip, treatWasteWater } from "./factory-tools"
-import { factoryState, testServices } from "./factory-test-model"
+import { factoryState } from "./projections"
+import { testServices } from "./factory-test-model"
 
 const clippy = actor({
   name: "clippy",

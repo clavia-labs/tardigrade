@@ -88,6 +88,27 @@ const Command = ({ label, value }: { readonly label?: string; readonly value: st
   )
 }
 
+type CodeFileProps = { readonly name: string; readonly children: ReactNode }
+const CodeFile = ({ children }: CodeFileProps): ReactElement => <>{children}</>
+const CodeFiles = ({ children, selected }: { readonly children: ReactNode; readonly selected?: string }): ReactElement => {
+  const files = Children.toArray(children).filter(isValidElement<CodeFileProps>)
+  const [active, setActive] = useState(selected ?? files[0]?.props.name)
+  const id = useId()
+  return <div className="docs-code-files">
+    <div className="docs-code-files-nav" role="tablist" aria-label="Example files">
+      {files.map((file, index) => <button type="button" role="tab" key={file.props.name} id={`${id}-tab-${index}`} aria-controls={`${id}-panel-${index}`} aria-selected={active === file.props.name} tabIndex={active === file.props.name ? 0 : -1} onClick={() => setActive(file.props.name)} onKeyDown={event => {
+        const offset = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 0
+        if (offset === 0 && event.key !== "Home" && event.key !== "End") return
+        event.preventDefault()
+        const next = event.key === "Home" ? 0 : event.key === "End" ? files.length - 1 : (index + offset + files.length) % files.length
+        setActive(files[next]!.props.name)
+        document.getElementById(`${id}-tab-${next}`)?.focus()
+      }}>{file.props.name}</button>)}
+    </div>
+    {files.map((file, index) => <div className="docs-code-files-panel" role="tabpanel" key={file.props.name} id={`${id}-panel-${index}`} aria-labelledby={`${id}-tab-${index}`} hidden={active !== file.props.name} tabIndex={0}>{file.props.children}</div>)}
+  </div>
+}
+
 const textFrom = (node: ReactNode): string => {
   if (typeof node === "string" || typeof node === "number") return String(node)
   if (Array.isArray(node)) return node.map(textFrom).join("")
@@ -121,10 +142,12 @@ const Code = ({ children, expanded = false, collapsed = false, highlight, varian
   const [opened, setOpened] = useState(expanded)
   const bodyId = useId()
   const codeRoot = useRef<HTMLDivElement>(null)
+  const initiallyScrolled = useRef(false)
   const language = languageOf(children)
   const lineHeight = 20
   const highlighted = highlightLines(highlight)
   const highlightedLine = highlighted?.first ?? 0
+  const highlightedCount = highlighted?.count ?? 0
   const hasHighlight = highlighted !== undefined
   const codeStyle = {
     "--docs-code-line-height": `${lineHeight}px`,
@@ -141,33 +164,48 @@ const Code = ({ children, expanded = false, collapsed = false, highlight, varian
     const code = pre?.querySelector("code")
     if (root === null || root === undefined || pre === null || pre === undefined || code === null || code === undefined) return
     const position = (): void => {
+      const panel = root.closest<HTMLElement>(".docs-code-files-panel")
+      if (panel?.hidden) return
       const lines = code.textContent?.split("\n") ?? []
       const target = lines[highlightedLine - 1]
       if (target === undefined) return
       const lineStart = lines.slice(0, highlightedLine - 1).reduce((length, line) => length + line.length + 1, 0)
-      const firstContent = target.search(/\S/)
-      const targetOffset = lineStart + (firstContent < 0 ? 0 : firstContent)
+      const startOffset = lineStart + globalThis.Math.max(0, target.search(/\S/))
+      const endOffset = lines.slice(0, highlightedLine - 1 + highlightedCount).join("\n").length
+      const range = document.createRange()
       const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT)
       let offset = 0
+      let started = false
       let node = walker.nextNode()
       while (node !== null) {
-        const text = node.textContent ?? ""
-        if (targetOffset < offset + text.length) {
-          const range = document.createRange()
-          const start = targetOffset - offset
-          range.setStart(node, start)
-          range.setEnd(node, globalThis.Math.min(start + 1, text.length))
-          const character = range.getBoundingClientRect()
-          const preRect = pre.getBoundingClientRect()
-          const scale = pre.offsetHeight === 0 ? 1 : preRect.height / pre.offsetHeight
-          const renderedTop = (character.top - preRect.top) / scale
-          const renderedHeight = character.height / scale
-          const renderedLineHeight = Number.parseFloat(getComputedStyle(pre).lineHeight)
-          root.style.setProperty("--docs-highlight-position", `${renderedTop - (renderedLineHeight - renderedHeight) / 2}px`)
-          return
+        const length = node.textContent?.length ?? 0
+        if (!started && startOffset < offset + length) {
+          range.setStart(node, startOffset - offset)
+          started = true
         }
-        offset += text.length
+        if (started && endOffset <= offset + length) {
+          range.setEnd(node, endOffset - offset)
+          break
+        }
+        offset += length
         node = walker.nextNode()
+      }
+      if (!started || node === null) return
+      const rects = Array.from(range.getClientRects()).filter(rect => rect.height > 0)
+      const first = rects[0]
+      const last = rects[rects.length - 1]
+      if (first === undefined || last === undefined) return
+      const preRect = pre.getBoundingClientRect()
+      const scale = pre.offsetHeight === 0 ? 1 : preRect.height / pre.offsetHeight
+      const lineHeight = Number.parseFloat(getComputedStyle(pre).lineHeight)
+      const leading = (lineHeight - first.height / scale) / 2
+      const top = (first.top - preRect.top) / scale - leading
+      const height = (last.bottom - first.top) / scale + leading * 2
+      root.style.setProperty("--docs-highlight-position", `${top}px`)
+      root.style.setProperty("--docs-highlight-height", `${height}px`)
+      if (!initiallyScrolled.current && panel !== null && panel.clientHeight > 0) {
+        panel.scrollTop += (first.top - panel.getBoundingClientRect().top) / scale - panel.clientHeight * 0.4
+        initiallyScrolled.current = true
       }
     }
     position()
@@ -181,7 +219,7 @@ const Code = ({ children, expanded = false, collapsed = false, highlight, varian
       active = false
       observer.disconnect()
     }
-  }, [children, hasHighlight, highlightedLine])
+  }, [source, hasHighlight, highlightedLine, highlightedCount])
   if (variant === "single") {
     return (
       <div className="install-command docs-code-single" aria-label={`${language} command`}>
@@ -317,6 +355,8 @@ export const mdxComponents = {
   VerificationResultsDiagram,
   FactoryCounterexampleDiagram,
   FactoryDiversionDiagram,
+  CodeFiles,
+  CodeFile,
   TrafficLightDiagram,
   ShipPositionDiagram,
   ProjectionFlowDiagram,

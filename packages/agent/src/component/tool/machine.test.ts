@@ -1,3 +1,4 @@
+import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import type { ToolOffer } from "../view"
 import { testModelData } from "@clavia/tardigrade-agent/fixtures/model"
 import { testMachineOf as machineOf } from "@clavia/tardigrade-agent/fixtures/component"
@@ -144,3 +145,30 @@ test("an owned dynamic tool retains the binding offered before its view changes"
 
 const enabled: typeof enabledWithoutData = (actor, events, data = testModelData) =>
   enabledWithoutData(actor, events, data)
+
+
+test("native tools receive the committed log at execution, including earlier turns", async () => {
+  const prior: Event = { type: "ToolReturned", callId: "previous", result: { wasteAdded: 6 }, at: 1 }
+  const snapshot = [head, prior, called("a")]
+  const child = tools({
+    spec: { name: "read", description: "read", inputSchema: {} },
+    run: (_, { events, callId, signal }) => {
+      expectTypeOf(events).toEqualTypeOf<ReadonlyArray<Event>>()
+      expect(events).toMatchObject(later)
+      expect(events).toHaveLength(4)
+      expect(callId).toBe("a")
+      expect(signal.aborted).toBe(false)
+      return Effect.succeed(events.filter(event => event.type === "ToolReturned").length)
+    }
+  })
+  const work = replayProjection(machineOf(child), snapshot).transitions[0]!
+  if (work.kind !== "effect") throw new Error("expected tool effect")
+  const later = [...snapshot, { type: "Later", at: 2 }]
+  const result = await Effect.runPromise(work.act(work.input, new AbortController().signal).pipe(
+    Effect.provideService(EventLog, withWatermark({
+      read: Effect.succeed(later),
+      append: () => Effect.die("unexpected append")
+    }))
+  ))
+  expect(result).toMatchObject([{ type: "ToolReturned", callId: "a", result: 1 }])
+})
