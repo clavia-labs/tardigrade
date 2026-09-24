@@ -38,7 +38,9 @@
     "./core": "./src/core.ts",
     "./code": "./src/code.ts",
     "./agent/*": "./src/*.ts",
-    "./bun": "./src/bun.ts"
+    "./bun": "./src/bun.ts",
+    "./testing": "./src/testing.ts",
+    "./agent/testing": "./src/agent-testing.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-agent": "workspace:*",

@@ -16,14 +16,14 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
   <div className="concept-copy">
     <h2>Events</h2>
     <p>An event is an immutable fact. Every input, decision, and durable outcome is appended to a thread's event log. Existing events never change.</p>
-    <p>The event log is the source of truth. A process can stop, move to another host, or start again and recover the same behavior from the stored events.</p>
+    <p>The event log is the source of truth. A process can stop, move to another host, or start again and reconstruct projected state from the stored events. Recovery requires compatible component code and configuration; external work whose outcome was not recorded may run again.</p>
   </div>
 
   <ConceptInterface>
     ```ts
     interface Event {
-      type: string
-      [field: string]: unknown
+      readonly type: string
+      readonly [field: string]: unknown
     }
     ```
   </ConceptInterface>
@@ -33,7 +33,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
   <div className="concept-copy">
     <h2>Projections</h2>
     <p>A projection is a Moore-style machine whose inputs are events. It creates an initial state, steps that state forward for each event, and reads a value from the current state.</p>
-    <p>The state is a compact summary of the history that can still affect the projection's output. During replay, Tardigrade folds the complete log through the machine. During live execution, it retains the state and steps only the new event tail.</p>
+    <p>The state summarizes the events relevant to the projection's output. A projection can also receive immutable dependency data during initialization. During replay, Tardigrade folds the complete log through the machine. During live execution, it retains the state and steps only the new event tail.</p>
   </div>
 
   <ConceptInterface>
@@ -53,22 +53,25 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 <ConceptSection kind="components">
   <div className="concept-copy">
     <h2>Components</h2>
-    <p>A component is a named projection. Its output contains a view for its parent and the transitions that are enabled in the current state.</p>
+    <p>A component is a named machine over events. Its output contains a view for its parent, enabled transitions, and optional interactions. Authors define its state through `initial`, `step`, and `output`; the runtime manages the machine.</p>
     <p>Components are pure. Given the same state, they produce the same output without performing external work. Components can contain other components, which lets an actor combine inference, tools, budgets, compaction, permissions, and output policies.</p>
     <p>Effects that call an LLM receive Effect’s <code>LanguageModel</code> service from the host. Shared model utilities collect streams, enforce supplied request timeouts, and encode provider errors. Each component owns its prompts and interpretation: inference derives tool requests and turn outcomes, while compaction accepts a summary and records its checkpoint. The model package has no dependency on the agent package.</p>
   </div>
 
   <ConceptInterface>
     ```ts
-    interface ComponentOutput<View, Requirements> {
-      view: View
-      transitions: ReadonlyArray<Transition<never, Requirements>>
-    }
+    import type {
+      ComponentOutput, Event, TransitionContext
+    } from "tardie/core"
 
-    interface Component<View, Requirements> {
+    // LeafComponent shows the required fields for a leaf component.
+    interface LeafComponent<State, View, Requirements = never> {
       name: string
-      machine: Projection<unknown,
-        ComponentOutput<View, Requirements>>
+      initial(): State
+      step(state: Readonly<State>, event: Event,
+        context: TransitionContext): State
+      output(state: Readonly<State>):
+        ComponentOutput<View, Requirements>
     }
     ```
   </ConceptInterface>
@@ -94,7 +97,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <div className="compaction-example-copy">
     <h3>Example: compaction</h3>
-    <p>Before an inference request, compaction checks the active model's context window from model metadata. With a 128k window and the default `triggerRatio: 0.8`, 104k tokens crosses the threshold and triggers a summary of the older span. The effect appends `CompactionCompleted`. Later model requests use its summary with a 64k-token tail, while the full event log remains available. Set `triggerRatio` and `retainRatio` on `compaction()` to change these thresholds.</p>
+    <p>Before an inference request, compaction checks the active model's context window from model metadata. With a 128k window and the default `triggerRatio: 0.8`, 104k tokens cross the threshold and triggers a summary of the older span. The effect appends `CompactionCompleted`. Later model requests use its summary with a tail budget of 64k tokens, while the full event log remains available. Set `triggerRatio` and `retainRatio` on `compaction()` to change these thresholds.</p>
   </div>
 
   <div className="component-diagram-frame">
@@ -123,14 +126,12 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
   <div className="concept-copy">
     <h2>Transitions</h2>
     <p>A transition describes one unit of work enabled by projected state. An intent proposes events without contacting the outside world. An effect performs external work and returns events that record its outcome.</p>
-    <p>Components declare work through the context supplied to `step(state, event, context)`. A local tag, the component name, and the owning event position identify each transition. The runtime attaches that reference to the final event in its result batch and uses recorded completions to avoid repeating finished work. The actor is settled when no transition remains enabled.</p>
+    <p>Components declare work through the context supplied to `step(state, event, context)`. A local tag, the component name, and the owning event position identify each transition. The runtime attaches that reference to the final event in its result batch and uses recorded completions to avoid repeating recorded work. External services still need idempotency when a crash occurs between performing work and recording its outcome. The actor is settled when no transition remains enabled.</p>
   </div>
 
   <ConceptInterface>
     ```ts
-    import { component } from "tardie/core"
-    import type { TransitionContext } from "tardie/core/component"
-    import type { Transition } from "tardie/core/transition"
+    import { component, type TransitionContext, type Transition } from "tardie/core"
 
     type Pending = {
       context: TransitionContext

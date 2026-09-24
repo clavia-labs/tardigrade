@@ -5,16 +5,25 @@ import { WorldEffectDiagram } from "./diagrams/WorldEffectDiagram"
 import { ComponentCycleDiagram } from "./diagrams/ComponentCycleDiagram"
 import { AgentProjectionDiagram } from "./diagrams/AgentProjectionDiagram"
 import { StateSnapshotDiagram } from "./diagrams/StateSnapshotDiagram"
+import { StateSpaceSamplingDiagram } from "./diagrams/StateSpaceSamplingDiagram"
 import { AgentCompositionDiagram } from "./diagrams/AgentCompositionDiagram"
 import { ComponentCompositionDiagram } from "./diagrams/ComponentCompositionDiagram"
 import { StateComplexityIllustration } from "./diagrams/StateComplexityIllustration"
 import { StateExplosionDiagram } from "./diagrams/StateExplosionDiagram"
 import { AgentStateMachineDiagram } from "./diagrams/AgentStateMachineDiagram"
+import { FactoryCounterexampleDiagram } from "./diagrams/FactoryCounterexampleDiagram"
+import { FactoryDiversionDiagram } from "./diagrams/FactoryDiversionDiagram"
+import { VerificationResultsDiagram } from "./diagrams/VerificationResultsDiagram"
+import { FactoryPathGenerator } from "./diagrams/FactoryPathGenerator"
+import { ClippieToolsDiagram } from "./diagrams/ClippieToolsDiagram"
+import { FactoryToolsDiagram } from "./diagrams/FactoryPathsDiagram"
+import { PaperclipProblemDiagram } from "./diagrams/PaperclipProblemDiagram"
+import { VerificationPathsDiagram } from "./diagrams/VerificationPathsDiagram"
 import { TrafficLightDiagram } from "./diagrams/TrafficLightDiagram"
 import { ShipPositionDiagram } from "./diagrams/ShipPositionDiagram"
 import { ProjectionFlowDiagram } from "./diagrams/ProjectionFlowDiagram"
 import { AgentTrajectoryDiagram } from "./diagrams/AgentTrajectoryDiagram"
-import { Children, cloneElement, isValidElement, useLayoutEffect, useRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
+import { Children, cloneElement, isValidElement, useId, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
 import { renderToString } from "katex"
 
 import { CheckIcon, CopyIcon, useCopy } from "../../ui/copy"
@@ -81,6 +90,7 @@ const languageOf = (children: ReactNode): string => {
 
 type CodeProps = ComponentPropsWithoutRef<"pre"> & {
   readonly expanded?: boolean | undefined
+  readonly collapsed?: boolean | undefined
   readonly highlight?: number | string | undefined
   readonly variant?: "diagram" | "multi" | "single" | undefined
 }
@@ -93,8 +103,10 @@ const highlightLines = (value: number | string | undefined): { readonly first: n
   return first > 0 && last >= first ? { first, count: last - first + 1 } : undefined
 }
 
-const Code = ({ children, expanded = false, highlight, variant = "multi", ...props }: CodeProps): ReactElement => {
+const Code = ({ children, expanded = false, collapsed = false, highlight, variant = "multi", ...props }: CodeProps): ReactElement => {
   const [copied, copy] = useCopy()
+  const [opened, setOpened] = useState(expanded)
+  const bodyId = useId()
   const codeRoot = useRef<HTMLDivElement>(null)
   const language = languageOf(children)
   const lineHeight = 20
@@ -172,9 +184,12 @@ const Code = ({ children, expanded = false, highlight, variant = "multi", ...pro
     return <div className="docs-text-diagram"><pre {...props}>{children}</pre></div>
   }
   return (
-    <div ref={codeRoot} className="concept-code docs-code" data-expanded={expanded} data-highlight={hasHighlight ? "true" : undefined} style={codeStyle}>
+    <div ref={codeRoot} className="concept-code docs-code" data-expanded={collapsed ? opened : expanded} data-collapsible={collapsed || undefined} data-highlight={hasHighlight ? "true" : undefined} style={codeStyle}>
       <div className="docs-code-header"><span>{language}</span></div>
-      <pre {...props}>{children}</pre>
+      <div className="docs-code-body" id={bodyId}><pre {...props}>{children}</pre></div>
+      {collapsed && <button className="docs-code-toggle" type="button" aria-expanded={opened} aria-controls={bodyId} onClick={() => setOpened(value => !value)}>
+        {opened ? "Collapse code" : "Expand code"}<ChevronIcon />
+      </button>}
       <button type="button" aria-label={copied ? "Code copied" : "Copy code"} onClick={() => void copy(source)}>
         {copied ? <CheckIcon /> : <CopyIcon />}
       </button>
@@ -274,11 +289,20 @@ export const mdxComponents = {
   ComponentCycleDiagram,
   AgentProjectionDiagram,
   StateSnapshotDiagram,
+  StateSpaceSamplingDiagram,
   AgentCompositionDiagram,
   ComponentCompositionDiagram,
   StateComplexityIllustration,
   StateExplosionDiagram,
   AgentStateMachineDiagram,
+  VerificationPathsDiagram,
+  PaperclipProblemDiagram,
+  FactoryToolsDiagram,
+  ClippieToolsDiagram,
+  FactoryPathGenerator,
+  VerificationResultsDiagram,
+  FactoryCounterexampleDiagram,
+  FactoryDiversionDiagram,
   TrafficLightDiagram,
   ShipPositionDiagram,
   ProjectionFlowDiagram,
@@ -316,5 +340,8 @@ export const mdxComponents = {
   TypedEffectDiagram,
   a: Link,
   code: InlineCode,
+  table: ({ children, ...props }: ComponentPropsWithoutRef<"table">) => (
+    <div className="docs-table"><table {...props}>{children}</table></div>
+  ),
   pre: Code
 }

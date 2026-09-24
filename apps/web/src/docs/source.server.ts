@@ -1,7 +1,9 @@
+import actorChecking from "@docs/references/actor-checking.mdx?doc-source"
 import components from "@docs/getting-started/components.mdx?doc-source"
 import cli from "@docs/references/cli.mdx?doc-source"
 import concepts from "@docs/getting-started/concepts.mdx?doc-source"
 import actors from "@docs/getting-started/actors.mdx?doc-source"
+import verifyingActors from "@docs/getting-started/verifying-actors.mdx?doc-source"
 import rlm from "@docs/examples/rlm.mdx?doc-source"
 import bun from "@docs/platforms/bun.mdx?doc-source"
 import celld from "@docs/platforms/celld.mdx?doc-source"
@@ -12,10 +14,12 @@ import welcome from "@docs/start-here/Welcome.mdx?doc-source"
 import why from "@docs/start-here/Why.mdx?doc-source"
 
 const sources: Readonly<Record<string, string>> = {
+  "references/actor-checking.mdx": actorChecking,
   "getting-started/components.mdx": components,
   "references/cli.mdx": cli,
   "getting-started/concepts.mdx": concepts,
   "getting-started/actors.mdx": actors,
+  "getting-started/verifying-actors.mdx": verifyingActors,
   "examples/rlm.mdx": rlm,
   "platforms/bun.mdx": bun,
   "platforms/celld.mdx": celld,

@@ -1,0 +1,61 @@
+---
+title: Actor checker API
+description: Generate inputs, check rules against events, and replay failures.
+route: /docs/actor-checking
+section: References
+sectionOrder: 4
+order: 8
+---
+
+Import from `tardie/testing`. [Full example](/docs/verifying-actors).
+
+## checkActor
+
+```ts
+const report = await checkActor(actor, {
+  inputs,                 // arbitrary of { method, input }
+  services: testServices,  // context => Effect Layer
+  invariants: rules,
+  numRuns: 100,
+  maxSteps: 100,
+  timeoutMs: 5_000,
+  seed: 42,               // optional
+})
+```
+
+Each case starts fresh. `services` supplies fake, real, or mixed dependencies. `context.generate(builder, ...args)` records choices for shrinking and replay. Keep its call order stable.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `numRuns` | 100 | Generated cases |
+| `maxSteps` | 100 | Committed event batches, including initial input |
+| `timeoutMs` | 5,000 | Per-case timeout, including Effect service acquisition |
+
+`DEFAULT_ACTOR_CHECK` exports the defaults. The report contains `status`, `seed`, `numRuns`, `boundedRuns`, and `policy`. `"passed"` means rest without a violation; `"bounded"` means a run reached its step limit. Rest can mean waiting for input. The step bound does not prevent an effect already running.
+
+## Rules
+
+```ts
+import type { Event } from "tardie/core"
+
+type Rule = (context: {
+  readonly events: ReadonlyArray<Event>
+}) => void | boolean
+```
+
+`invariants` maps names to synchronous rules. Each receives a copy of `[]`, `[e1]`, `[e1, e2]`, and so on. `false` or a throw fails; `true` or `void` passes.
+
+## Failures and replay
+
+`ActorCheckError` carries `counterexample`, `seed`, and `numShrinks`. Its `events` end at the first rule violation; `example` holds the input and generated choices.
+
+```ts
+const replay = await replayActor(actor, error.counterexample.example, {
+  services: testServices,
+  invariants: rules,
+})
+```
+
+Replay returns `status`, `steps`, `events`, `example`, and optional `failure`. Generated choices replay; ordinary service calls run again. Services must be deterministic to reproduce a failure.
+
+The checker covers one invocation; cross-thread delivery and child allocation fail explicitly. Passing provides evidence for sampled executions, without proving every possible execution safe.
