@@ -65,14 +65,14 @@ Here's an example of two paths, one that breaks the rule and one that doesn't:
 
 <FactoryToolsDiagram />
 
-## Will we break any rule?
-### Generate possible paths
+## Finding bad trajectories
+### Generate possible trajectories
 
 To verify if our actor would potentially step into one of the mines, we can generate all possible trajectories of an actor and check them against some rules. Doing so is an example of formal verification. Tools like [TLA+](https://lamport.azurewebsites.net/tla/tla.html) help with this. However, it is computationally very intensive to exhaustively check all possible trajectories of an actor.
 
 A nice workaround is to verify only a sample of trajectories. Tardigrade uses [fast-check](https://fast-check.dev/) to do this. Given a set of safety rules, we can have a function that generates a subset of possible actor trajectories using fast-check and finds examples of trajectories that break our safety rules. These are called counterexamples.
 
-### Defining rules
+### Define rules
 
 We define a safety rule as a function that receives the event log and asserts a condition that must always hold:
 
@@ -335,6 +335,14 @@ const producePaperClip = tool({
 
 <VerificationResultsDiagram enforceRules />
 
+## Summing up
+
+On this page, we treated unintended consequences as states we don't want a system to reach. Since Tardigrade actors are state machines, we can use fast-check to explore sample trajectories by varying inputs and service responses. Safety rules let us find trajectories that violate our system's invariants.
+
+The paperclip factory is a simple example. For a work assistant, a safety rule could prevent sending a confidential document to an external recipient, even when the model requests it. Generated trajectories can expose sequences of messages and tool calls that bypass that restriction.
+
+More complex systems involve interactions that change with their state. In his discussion of <a href="https://dspivak.net/grants/AFOSR2020-Topos-ContextDependence.pdf#page=9" target="_blank" rel="noopener noreferrer">context-dependent interactions</a>, David Spivak gives the example of a company changing suppliers. Applying that idea to a procurement assistant, a supplier might change while an order awaits approval. A safety rule could require approval for the current supplier and amount, so approval for an earlier version of the order cannot authorize the new purchase. The state we need to track now includes the relationships between orders, suppliers, and approvals.
+
 ## Complete example
 
 This test brings Clippy, the factory services, and the safety rules together. It finds an unsafe trajectory until the production guard is added.
@@ -390,6 +398,6 @@ test("Clippy respects the factory safety rules", async () => {
 
 ## Towards formal verification
 
-Passing these tests means no safety rule failed on the generated trajectories. A different trajectory can still reach an unsafe state. We hope to add native support for formal verification in Tardigrade soon.
+Passing these tests means no safety rule failed on the generated trajectories. A different trajectory can still reach an unsafe state. With formal verification, we can exhaustively search through all possible states of a state machine, or prove certain properties by induction. Though Tardigrade doesn't natively support this at the moment, you can easily model your agent state machine in TLA+ to prove certain behaviors.
 
 <StateSpaceSamplingDiagram />
