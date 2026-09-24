@@ -1605,3 +1605,23 @@ h1 span { display: block; white-space: nowrap; }
 
 .factory-guard-code .docs-code-files { min-height: 440px; }
 .factory-guard-code .docs-code[data-highlight="true"] pre { background-image: linear-gradient(rgb(225 195 105 / 12%), rgb(225 195 105 / 12%)); }
+
+.world-observation { margin: 32px 0; }
+.world-observation svg { display: block; width: 100%; height: auto; overflow: visible; }
+.world-observation text { fill: var(--ink-2); font: 12px var(--mono); }
+.world-observation .observation-muted { fill: var(--faint); font-size: 11px; }
+.observation-globe { fill: rgb(114 153 203 / 6%); stroke: #7299cb; stroke-width: 1.5; }
+.observation-land { fill: rgb(114 153 203 / 24%); stroke: #7299cb; stroke-width: 1; }
+.observation-latitude { fill: none; stroke: rgb(114 153 203 / 24%); stroke-width: 1; }
+.observation-tank { fill: var(--bg); stroke: #7299cb; stroke-width: 2; }
+.observation-water { fill: rgb(114 153 203 / 40%); stroke: none; }
+.observation-link { fill: none; stroke: #7299cb; stroke-width: 1.5; }
+.observation-log, .observation-packet { fill: var(--bg); stroke: #7299cb; stroke-width: 1; }
+.observation-divider { stroke: var(--hair); stroke-width: 1; }
+.observation-event { fill: none; stroke: var(--hair); stroke-width: 1; }
+.observation-observed { fill: rgb(114 153 203 / 12%); stroke: #7299cb; stroke-width: 1; }
+.world-observation .world-observation-mobile { display: none; }
+@media (max-width: 560px) {
+  .world-observation .world-observation-desktop { display: none; }
+  .world-observation .world-observation-mobile { display: block; max-width: 340px; margin-inline: auto; }
+}

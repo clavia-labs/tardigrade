@@ -549,6 +549,14 @@ The paperclip factory is a simple example. For a work assistant, a safety rule c
 
 More complex systems involve interactions that change with their state. For a procurement assistant, a supplier might change while an order awaits approval. A safety rule could require approval for the current supplier and amount, so approval for an earlier version of the order cannot authorize the new purchase. The state we need to track now includes the relationships between orders, suppliers, and approvals.
 
+## Going further
+
+The world can change without the actor doing anything. A sensor or API can act as an oracle: record its observations in the event log, then combine them with the actor's actions in a projection. Safety rules can now use what the actor knows about the world.
+
+<WorldObservationDiagram />
+
+We can vary these observations in our tests, including stale readings and missing updates. Our guarantees still depend on how accurately those observations represent the world.
+
 ## Complete example
 
 This test brings Clippy, the simulated tools, and the safety rules together. It finds an unsafe trajectory until the production guard is added.

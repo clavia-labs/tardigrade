@@ -1,3 +1,4 @@
+import { WorldObservationDiagram } from "./diagrams/WorldObservationDiagram"
 import { SearchToolStateDiagram } from "./diagrams/SearchToolStateDiagram"
 import { ComponentAnatomyDiagram } from "./diagrams/ComponentAnatomyDiagram"
 import { ComponentOverviewDiagram } from "./diagrams/ComponentOverviewDiagram"
@@ -355,6 +356,7 @@ export const mdxComponents = {
   VerificationResultsDiagram,
   FactoryCounterexampleDiagram,
   FactoryDiversionDiagram,
+  WorldObservationDiagram,
   CodeFiles,
   CodeFile,
   TrafficLightDiagram,
