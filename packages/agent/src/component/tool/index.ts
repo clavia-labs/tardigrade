@@ -20,8 +20,8 @@ export interface NativeTool<R = never> {
       readonly callId: string
       readonly turn?: string
       readonly signal: AbortSignal
-      // events is the committed actor log read when execution starts (machine.test.ts).
-      readonly events: ReadonlyArray<Event>
+      // readEvents reads the committed actor log when its effect runs (machine.test.ts).
+      readonly readEvents: () => Effect.Effect<ReadonlyArray<Event>>
     }
   ) => Effect.Effect<unknown, never, R>
 }
@@ -49,12 +49,11 @@ const nativeTools = <R = never>(
           act: (input, { signal }) =>
             Effect.gen(function* () {
               const log = yield* EventLog
-              const events = yield* log.read
               const result = yield* tool.run(input.arguments, {
                 callId: input.callId,
                 ...(input.turn === undefined ? {} : { turn: input.turn }),
                 signal,
-                events
+                readEvents: () => log.read
               })
               const at = yield* Clock.currentTimeMillis
               return [toolReturned({ callId: input.callId, result, ...stamp, at })]

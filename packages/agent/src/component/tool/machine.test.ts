@@ -147,28 +147,52 @@ const enabled: typeof enabledWithoutData = (actor, events, data = testModelData)
   enabledWithoutData(actor, events, data)
 
 
-test("native tools receive the committed log at execution, including earlier turns", async () => {
-  const prior: Event = { type: "ToolReturned", callId: "previous", result: { wasteAdded: 6 }, at: 1 }
+test("native tools read the full committed log lazily and refresh on each read", async () => {
+  const prior: Event = { type: "ToolReturned", callId: "previous", turn: "earlier", result: { wasteAdded: 6 }, at: 1 }
   const snapshot = [head, prior, called("a")]
+  let committed: ReadonlyArray<Event> = snapshot
+  let reads = 0
   const child = tools({
     spec: { name: "read", description: "read", inputSchema: {} },
-    run: (_, { events, callId, signal }) => {
-      expectTypeOf(events).toEqualTypeOf<ReadonlyArray<Event>>()
-      expect(events).toMatchObject(later)
-      expect(events).toHaveLength(4)
+    run: (_, { readEvents, callId, signal }) => Effect.gen(function* () {
+      expectTypeOf(readEvents()).toEqualTypeOf<Effect.Effect<ReadonlyArray<Event>>>()
+      const read = readEvents()
+      expect(reads).toBe(0)
+      committed = [...snapshot, { type: "Later", at: 2 }]
+      const first = yield* read
+      expect(first).toMatchObject(committed)
+      expect(reads).toBe(1)
+      committed = [...committed, { type: "LaterStill", at: 3 }]
+      const second = yield* readEvents()
+      expect(second).toMatchObject(committed)
+      expect(second).toHaveLength(5)
+      expect(first).toHaveLength(4)
+      expect(reads).toBe(2)
       expect(callId).toBe("a")
       expect(signal.aborted).toBe(false)
-      return Effect.succeed(events.filter(event => event.type === "ToolReturned").length)
-    }
+      return first.filter(event => event.type === "ToolReturned").length
+    })
   })
   const work = replayProjection(machineOf(child), snapshot).transitions[0]!
   if (work.kind !== "effect") throw new Error("expected tool effect")
-  const later = [...snapshot, { type: "Later", at: 2 }]
+  expect(reads).toBe(0)
   const result = await Effect.runPromise(work.act(work.input, new AbortController().signal).pipe(
     Effect.provideService(EventLog, withWatermark({
-      read: Effect.succeed(later),
+      read: Effect.sync(() => { reads++; return committed }),
       append: () => Effect.die("unexpected append")
     }))
   ))
   expect(result).toMatchObject([{ type: "ToolReturned", callId: "a", result: 1 }])
+})
+
+test("native tools that ignore readEvents perform no log reads", async () => {
+  const work = replayProjection(machineOf(reader()), [head, called("a")]).transitions[0]!
+  if (work.kind !== "effect") throw new Error("expected tool effect")
+  const result = await Effect.runPromise(work.act(work.input, new AbortController().signal).pipe(
+    Effect.provideService(EventLog, withWatermark({
+      read: Effect.die("tool must not read the log"),
+      append: () => Effect.die("unexpected append")
+    }))
+  ))
+  expect(result).toMatchObject([{ type: "ToolReturned", result: { error: "failed" } }])
 })

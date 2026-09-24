@@ -426,7 +426,7 @@ const clippy = actor({
 </CodeFile>
 <CodeFile name="factory-tools.ts">
 
-```ts expanded highlight="24-30"
+```ts expanded highlight="25-31"
 import { Effect } from "effect"
 import { tool } from "tardie/agent"
 import { factoryState } from "./projections"
@@ -449,7 +449,8 @@ export const treatWasteWater = tool({
 
 export const producePaperClip = tool({
   spec: factorySpec("producePaperClip"),
-  run: (_, { events }) => Effect.sync(() => {
+  run: (_, { readEvents }) => Effect.gen(function* () {
+    const events = yield* readEvents()
     const tank = factoryState(events)
     if (!tank.inspected) {
       return { action: "denied", reason: "Inspect the tank before production." }
@@ -537,7 +538,7 @@ export const factoryState = (events: ReadonlyArray<Event>): Tank =>
 </CodeFiles>
 </div>
 
-The guard and safety rules use the same `factoryState(events)` projection. Denied actions leave the tank unchanged. After treatment, Clippy must inspect again before producing another batch. This example generates one tool call at a time; concurrent production would also need to account for pending batches.
+The guard reads the log with `yield* readEvents()` and uses the same `factoryState(events)` projection as the safety rules. Tools that do not read the log incur no log-read cost. Denied actions leave the tank unchanged. After treatment, Clippy must inspect again before producing another batch. This example generates one tool call at a time; concurrent production would also need to account for pending batches.
 
 <VerificationResultsDiagram enforceRules />
 
