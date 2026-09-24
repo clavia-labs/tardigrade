@@ -1,0 +1,342 @@
+---
+title: Verifying behavior
+description: Explore actor behavior with generated scenarios and safety rules.
+socialImage: /images/verifying-behavior-social.png
+socialImageAlt: Minesweeper-style paths branch from a smiling start. Blue paths reach flags while red paths cross mines.
+route: /docs/verifying-actors
+section: Getting Started
+sectionOrder: 2
+order: 5
+---
+
+When building systems that other depend on, we often want guarantees that they don't have unintended consequences in the world. For traditional software, we have setups like unit tests, integration tests, property tests to give us these guarantees. They help us sleep better at night.
+
+Agentic software is a whole different beast compared to traditional software. They are non-determinstic and sometimes highly consequential. Traditional ways of testing often fall short in providing guarantees. As engineers building these systems, how then do we sleep peacefully at night?
+
+Tardigrade's answer to this is state checking.
+
+<PaperclipProblemDiagram />
+
+## Good state, bad state
+
+In Tardigrade, the systems we build are defined as <a href="/docs/components#state-machines" target="_blank" rel="noopener noreferrer">state machines</a>. When we describe a system as not having unintended consequences in the world, we mean that our state machine should not exist in a certain set of states. The bad states.
+
+If you find the idea of a state machines and possible set of states too abstract, I would suggest thinking of them as possible paths in space that an actor can take.
+
+Translated this way, unintended consequences are paths that our actor should not take. Think of paths that have a mine in a game of minesweeper. The mines of *your* world are specific to the things you build your system around. The constraints that prevent our systems from stepping into these mines are called safety rules.
+
+<VerificationPathsDiagram />
+
+## Example: a paperclip factory
+
+Imagine we're building an actor that is responsible for operating a paperclip factory. Our factory must produce 1,000 paperclips a month. Each batch makes 500 clips and six units of wastewater. The tank can hold ten units.
+
+<ClippieToolsDiagram />
+
+The actor code would look like this:
+
+```ts
+import { actor } from "tardie/core"
+import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/agent"
+import { inspectWaterTank, producePaperClip, treatWasteWater } from "./factory-tools"
+
+const clippy = actor({
+  name: "clippy",
+  methods: { message: agentMessageMethod },
+  components: [infer([
+    system("Produce 1000 paper clips."),
+    outputValidateOnce,
+    inspectWaterTank,
+    producePaperClip,
+    treatWasteWater,
+  ])],
+})
+```
+
+Whenever our actor produces a batch of paperclips, it generates 6 units of watewater. Our factory tank can only hold 10 units. If our actor continuously produces paperclip without treating the water water, it would eventually spill and cause damage to the surrounding area.
+
+## The safety rule: prevent water spill
+
+Safety rules are constraints that prevent a system from having unintended consequences in the world. They are the paths filled with mines that an actor shouldn't take. In our example, it is spilling wastewater, which is an effect of not treating the water plant before producing more paperclips. To prevent this, we might describe a safety rule for our system as follows:
+
+> Inspect the water tank before every production. Treat the water tank if producing the next batch would cause an overflow.
+
+Here's an example of two paths, one that breaks the rule and one that doesn't:
+
+<FactoryToolsDiagram />
+
+## Do we break the rule?
+### Generate possible paths
+
+[Fast check](https://fast-check.dev/) is a tool that lets us generate possible paths of a state machine. Given a set of safety rules, we can have a function that generates and samples a set of possible paths and finds those that break our safety rules.
+
+### Defining rules
+
+We define safety rules as an object of named functions. Each rule receives the events recorded so far and asserts a condition that must always hold:
+
+```ts
+import type { Event } from "tardie/core"
+
+type Rule = (context: {
+  readonly events: ReadonlyArray<Event>
+}) => void | boolean
+```
+
+Return `false` or throw an assertion error to fail a rule. Return `true` or finish without throwing to pass. Rules must be synchronous. The checker calls every rule before execution with an empty event log and after every recorded event with the current prefix. A failure identifies the rule and the path that broke it.
+
+Here, `factoryState(events)` is a projection function that reconstructs the tank state from those events. The first rule checks that production never happened without inspection. The second checks that the accumulated waste fits within the tank.
+
+```ts
+import { expect } from "bun:test"
+import type { ActorInvariants } from "tardie/testing"
+import { factoryState } from "./factory-test-model"
+
+const rules = {
+  inspectBeforeProduction: ({ events }) => {
+    const tank = factoryState(events)
+    expect(tank.productionWithoutInspection).toBe(false)
+  },
+  preventOverflow: ({ events }) => {
+    // events ends at the event currently being checked.
+    const tank = factoryState(events)
+    expect(tank.storedWaste)
+      .toBeLessThanOrEqual(tank.capacity)
+  },
+} satisfies ActorInvariants
+```
+
+<Tip title="About factoryState">
+
+In `factory-test-model.ts`, define a projection that applies successful factory actions in event order. The tool results describe what happened: inspection completed, production added waste, or treatment removed waste. The projection calculates the tank state from those facts.
+
+```ts expanded
+import { Schema } from "effect"
+import type { Event } from "tardie/core"
+import {
+  replayProjection,
+  type Projection,
+} from "tardie/core"
+
+const FactoryResult = Schema.Union([
+  Schema.Struct({ action: Schema.Literal("inspected") }),
+  Schema.Struct({
+    action: Schema.Literal("produced"),
+    wasteAdded: Schema.Finite,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("treated"),
+    wasteRemoved: Schema.Finite,
+  }),
+])
+type FactoryResult = typeof FactoryResult.Type
+
+type Tank = {
+  capacity: number
+  storedWaste: number
+  inspected: boolean
+  productionWithoutInspection: boolean
+}
+
+const tankProjection: Projection<Tank, Tank> = {
+  initial: () => ({
+    capacity: 10,
+    storedWaste: 0,
+    inspected: false,
+    productionWithoutInspection: false,
+  }),
+  step: (tank, event) => {
+    // ToolReturned records completion; a requested or failed action adds no waste.
+    if (event.type !== "ToolReturned" || event.isFailure) return tank
+    if (!Schema.is(FactoryResult)(event.result)) return tank
+
+    const result = event.result
+    switch (result.action) {
+      case "inspected":
+        return { ...tank, inspected: true }
+      case "produced":
+        return {
+          ...tank,
+          storedWaste: tank.storedWaste + result.wasteAdded,
+          productionWithoutInspection:
+            tank.productionWithoutInspection || !tank.inspected,
+          inspected: false,
+        }
+      case "treated":
+        return {
+          ...tank,
+          storedWaste: tank.storedWaste - result.wasteRemoved,
+          inspected: false,
+        }
+    }
+  },
+  output: tank => tank,
+}
+
+// factoryState folds this prefix of the log through tankProjection.step.
+export const factoryState = (events: ReadonlyArray<Event>): Tank =>
+  replayProjection(tankProjection, events)
+```
+
+For example, inspection leaves waste at 0, the first production adds 6, and the second adds another 6. The projection now reports 12 against a capacity of 10. Treatment can subsequently remove 12, but the checker has already found the violation at the second production event.
+
+The checker calls the rules for every prefix of the log: first no events, then the first event, then the first two, and so on. Each call reconstructs the state at that point. This example models completed actions; a factory with pending batches would also need reservation events and a projection that accounts for reserved capacity.
+
+</Tip>
+
+Try exploring a few paths:
+
+<FactoryPathGenerator />
+
+Pass the rules to the checker:
+
+```ts expanded
+import fc from "fast-check"
+import { checkActor } from "tardie/testing"
+import { testServices } from "./factory-test-model"
+
+const report = await checkActor(clippy, {
+  inputs: fc.record({
+    method: fc.constant("message"),
+    input: fc.record({
+      text: fc.constantFrom("Produce paperclips.", "Make 1,000 paperclips."),
+    }),
+  }),
+  services: context => testServices(context),
+  invariants: rules,
+  numRuns: 1_000,
+  maxSteps: 100,
+})
+```
+
+<Tip title="About testServices">
+
+Continue `factory-test-model.ts` with fresh factory services and a generated `LanguageModel`. Production and treatment return the waste amounts used by the projection above.
+
+```ts collapsed
+import fc from "fast-check"
+import { Context, Effect, Layer } from "effect"
+import type { ActorCheckContext } from "tardie/testing"
+import { testInferenceLayer } from "tardie/agent/testing"
+import type { Action } from "tardie/log/events"
+import type { InferRequest } from "tardie/agent"
+
+export class Factory extends Context.Service<Factory, {
+  readonly inspectWaterTank: Effect.Effect<FactoryResult>
+  readonly producePaperClip: Effect.Effect<FactoryResult>
+  readonly treatWasteWater: Effect.Effect<FactoryResult>
+}>()("example/Factory") {}
+
+const responseArbitrary = (request: InferRequest): fc.Arbitrary<Action> => {
+  const complete = fc.constant<Action>({ kind: "complete", output: "Done." })
+  if (request.tools.length === 0) return complete
+
+  const call = fc.constantFrom(...request.tools).map<Action>(tool => ({
+    kind: "calls",
+    calls: [{
+      callId: `call-${request.trajectory.length}`,
+      name: tool.name,
+      arguments: {},
+    }],
+  }))
+  return fc.oneof(complete, call)
+}
+
+export const testServices = ({ generate }: ActorCheckContext) => {
+  let storedWaste = 0
+
+  const factory = Layer.succeed(Factory, {
+    inspectWaterTank: Effect.succeed<FactoryResult>({ action: "inspected" }),
+    producePaperClip: Effect.sync((): FactoryResult => {
+      const wasteAdded = 6
+      storedWaste += wasteAdded
+      return { action: "produced", wasteAdded }
+    }),
+    treatWasteWater: Effect.sync((): FactoryResult => {
+      const wasteRemoved = storedWaste
+      storedWaste = 0
+      return { action: "treated", wasteRemoved }
+    }),
+  })
+
+  const model = testInferenceLayer({
+    resolve: (model = { provider: "test", model_id: "factory" }) => ({
+      model, contextWindowTokens: 128_000,
+    }),
+    react: request => Effect.sync(() => generate(responseArbitrary, request)),
+  })
+  return Layer.merge(factory, model)
+}
+```
+
+The corresponding `factory-tools.ts` binds the actor's tools to this service:
+
+```ts expanded
+import { Effect } from "effect"
+import { tool } from "tardie/agent"
+import { Factory } from "./factory-test-model"
+
+const factoryTool = (name: keyof typeof Factory.Service) => tool({
+  spec: {
+    name,
+    description: name,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  run: () => Effect.flatMap(Factory, service => service[name]),
+}, "", { name })
+
+export const inspectWaterTank = factoryTool("inspectWaterTank")
+export const producePaperClip = factoryTool("producePaperClip")
+export const treatWasteWater = factoryTool("treatWasteWater")
+```
+
+These are test implementations. `services` also accepts real layers or a mixture. Only choices produced through `generate` are recorded for shrinking and replay.
+
+</Tip>
+
+See the [Actor checker API](/docs/actor-checking) for limits, results, and replay.
+
+<VerificationResultsDiagram />
+
+### Read counterexamples
+
+The checker throws `ActorCheckError` with a shrunk counterexample, the failing invariant, and its event log. For example, it is possible that the model does batch A of paperclips and does batch B without treating the water plant.
+
+<FactoryCounterexampleDiagram />
+
+## Prevent unsafe paths
+
+Once we've seen the unsafe path, we can have conditions within our actor to prevent such paths. For example, we can make it impossible for our actor to produce more paperclips if the next batch would cause a waterwater spill.
+
+<FactoryDiversionDiagram />
+
+```ts
+const producePaperClip = tool({
+  spec: producePaperClipSpec,
+  run: () => factory.transaction(tank => {
+    if (!tank.inspected) {
+      return { error: "Inspect the tank before production." }
+    }
+
+    const waste = factoryPolicy.wastePerBatch
+    const available = tank.capacity - tank.storedWaste - tank.reservedWaste
+
+    if (waste > available) {
+      return { error: "Treat wastewater before starting another batch." }
+    }
+
+    tank.reservedWaste += waste
+    tank.enqueueBatch({ waste })
+    return { status: "queued" }
+  }),
+})
+```
+
+<VerificationResultsDiagram enforceRules />
+
+## Towards formal verification
+
+In the examples above, we sampled a set of possible states of a state machine to verufy our safety rules. However, this doens't ensure that there is a possible path outside the set of sampled paths that breaks our safety rule.
+
+<StateSpaceSamplingDiagram />
+
+Formal verification is a method to check properties over the entire space of possible paths of a finite state machine. It could be either done by exhaustive checks or by inductive proof. While not possible natively with tardigrade right now, you can use language like [TLA+](https://lamport.azurewebsites.net/tla/tla.html) to model the actor state machine to have a formal proof of your safety properties. Soon, we hope to make this natively possible in Tardigrade.

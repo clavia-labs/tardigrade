@@ -9,6 +9,7 @@ import rehypeSlug from "rehype-slug"
 import { defineConfig, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
 import remarkFrontmatter from "remark-frontmatter"
+import remarkGfm from "remark-gfm"
 import remarkMdxFrontmatter from "remark-mdx-frontmatter"
 
 const DOC_SOURCE_QUERY = "?doc-source"
@@ -37,7 +38,7 @@ export default defineConfig({
       ...mdx({
         providerImportSource: "@mdx-js/react",
         rehypePlugins: [rehypeSlug, [rehypeHighlight, { detect: false, plainText: ["curl", "text", "txt"] }], rehypeMdxCodeProps],
-        remarkPlugins: [remarkFrontmatter, [remarkMdxFrontmatter, { name: "frontmatter" }]]
+        remarkPlugins: [remarkGfm, remarkFrontmatter, [remarkMdxFrontmatter, { name: "frontmatter" }]]
       })
     },
     tanstackStart({

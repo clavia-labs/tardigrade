@@ -58,14 +58,14 @@
     "./transition": "./src/transition/index.ts",
     "./transition/*": "./src/transition/*.ts",
     "./view": "./src/view.ts",
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/check.ts"
   },
   "dependencies": {
-    "effect": "4.0.0-rc.115"
-  },
-  "devDependencies": {
+    "effect": "4.0.0-rc.115",
     "fast-check": "^4.9.0"
   },
+  "devDependencies": {},
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"
