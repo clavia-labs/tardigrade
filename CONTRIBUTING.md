@@ -27,7 +27,7 @@ The Effect lint reads rules the type checker does not carry: an effect nobody yi
 
 The prose lint holds markdown to the rules in [AGENTS.md](AGENTS.md) that a code linter cannot see. A paragraph is one line, because hard wrapping bakes one editor's width into the source and makes a one-word change read as a reflowed block. A document states what is true now, so words that narrate the repository's own history belong in the commit and the pull request.
 
-CI runs `bun install --frozen-lockfile` and then the same `bun run gate`. There is no second list of checks to keep in sync, so a green gate locally is a green gate in CI. Commit `bun.lock` with any dependency change.
+CI installs with `bun install --frozen-lockfile` and runs the full `bun run gate` for code changes and pushes to `main`. For PRs that change only `docs/`, the required `gate` job runs `bun run gate --only=lint:docs,build:app-web` to check prose and compile the documentation site. Commit `bun.lock` with any dependency change.
 
 ## PR expectations
 
