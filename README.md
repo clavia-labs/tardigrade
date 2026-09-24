@@ -8,9 +8,6 @@
   <a href="https://discord.gg/Z74jwRxz4k"><img alt="Join Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&amp;logoColor=white"></a>
 </p>
 
-> [!WARNING]
-> We're actively working on finding the right abstractions and ergonomics. Expect breaking changes until a stable release.
-
 # Tardigrade
 
 Tardigrade is a typescript framework for building modular agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and draws inspiration from [React](https://react.dev/)'s declarative approach to UI and [Elm](https://elm-lang.org/)'s explicit state transitions.
@@ -20,7 +17,7 @@ Building an agent can be challenging, especially as they operate over longer hor
 
 Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses. We took inspiration from UI frameworks.
 
-React derives UI from state, while Elm makes state transitions explicit functions. Tardigrade applies the same idea to agent harnesses. An agent is a set of components tree over an immutable event log, and each component derives a view and enabled transitions as a pure function of the event log.
+React derives UI from state, while Elm makes state transitions explicit functions. Tardigrade applies the same idea to agent harnesses. An agent is a component tree over an immutable event log, and each component derives a view and enabled transitions as a pure function of the log.
 
 <p align="center"><code>{ view, transitions } = f(event log)</code></p>
 
