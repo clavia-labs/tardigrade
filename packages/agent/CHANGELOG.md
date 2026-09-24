@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/clavia-labs/tardigrade/compare/v0.31.0...v0.32.0) (2026-09-24)
+
+
+### Features
+
+* **testing:** verify actor behavior ([#508](https://github.com/clavia-labs/tardigrade/issues/508)) ([b1b894e](https://github.com/clavia-labs/tardigrade/commit/b1b894ea89fbabd4ab3a4918b0e15388d2ad3d8c))
+
 ## [0.31.0](https://github.com/clavia-labs/tardigrade/compare/v0.30.0...v0.31.0) (2026-09-23)
 
 
