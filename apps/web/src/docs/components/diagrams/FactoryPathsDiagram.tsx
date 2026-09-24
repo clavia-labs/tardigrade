@@ -74,7 +74,7 @@ const mobileStops = [
 
 export const FactoryToolsDiagram = (): ReactElement => (
   <figure className="factory-board">
-    <svg className="factory-board-desktop" viewBox="0 -45 590 455" role="img" aria-label="A tiled path inspects the tank and produces batch A. The blue branch treats waste before batch B. The red branch produces batch B without treatment and overflows. Both routes lead to the same goal of 1,000 paperclips.">
+    <svg className="factory-board-desktop" viewBox="0 -45 590 455" role="img" aria-label="A tiled path inspects the tank and produces batch A. The blue branch treats waste and inspects again before batch B. The red branch produces batch B without treatment and overflows. Both routes lead to the same goal of 1,000 paperclips.">
       {Array.from(factoryTiles.values(), ({ x, y, unsafe }) => <g key={`${x},${y}`} transform={`translate(${24 + x * 50} ${12 + y * 50})`}>
         <rect className="verification-tile" data-kind={unsafe ? "unsafe" : "safe"} width="42" height="42" />
         <path className="verification-tile-light" d="M1 41V1h40l-5 5H6v30Z" />
@@ -85,6 +85,7 @@ export const FactoryToolsDiagram = (): ReactElement => (
         <text x={x === 2 ? 58 : 21} y={y === 1 ? -83 : x === 2 ? 18 : 62} textAnchor={x === 2 ? "start" : "middle"}>{label}</text>
         {kind !== "mine" && <g transform={`translate(${x === 2 ? 58 : -10} ${y === 1 ? -70 : x === 2 ? 30 : 75})`}><ResourceGrid water={water} clips={clips} /></g>}
       </g>)}
+      <g className="factory-board-icon" transform="translate(382 70) scale(.8125)"><FactoryGlyph kind="inspect" /></g>
       <g className="verification-tile-mark" transform="translate(545 183) scale(2)">
         <path d="M-3 6V-6m-3 12h8" />
         <path className="verification-flag" d="M-2-6h8v7h-8Z" />
@@ -92,9 +93,9 @@ export const FactoryToolsDiagram = (): ReactElement => (
       </g>
       <text className="factory-board-goal" x="512" y="187" textAnchor="end">1,000 clips</text>
     </svg>
-    <svg className="factory-board-mobile" viewBox="0 0 360 630" role="img" aria-label="After inspection and batch A, a vertical blue route treats wastewater before batch B. A parallel red route produces batch B without treatment and reaches an overflow mine.">
+    <svg className="factory-board-mobile" viewBox="0 0 360 630" role="img" aria-label="After inspection and batch A, a vertical blue route treats wastewater and inspects again before batch B. A parallel red route produces batch B without treatment and reaches an overflow mine.">
       <g className="factory-board-safe-link" aria-hidden="true">
-        <path d="M180 57v48M180 147v38H79v35M58 241H8v170h50M58 411H8v157h172" />
+        <path d="M180 57v48M180 147v38H79v35M58 241H8v125h71v24M58 411H8v157h172" />
       </g>
       <g className="factory-board-unsafe-link" aria-hidden="true">
         <path d="M180 185h80v35M281 241h71v170h-71M281 411h71v157H180" />
@@ -109,6 +110,13 @@ export const FactoryToolsDiagram = (): ReactElement => (
         <text x={labelX} y={labelY} textAnchor={y < 200 ? "start" : "middle"}>{label}</text>
         <g transform={`translate(${gridX} ${gridY})`}><ResourceGrid water={water} clips={clips} /></g>
       </g>)}
+      <g className="factory-board-stop" transform="translate(58 345)">
+        <rect className="verification-tile" data-kind="safe" width="42" height="42" />
+        <path className="verification-tile-light" d="M1 41V1h40l-5 5H6v30Z" />
+        <path className="verification-tile-shadow" d="M1 41h40V1l-5 5v30H6Z" />
+        <g className="factory-board-icon" transform="translate(8 8) scale(.8125)"><FactoryGlyph kind="inspect" /></g>
+        <text x="50" y="25">Inspect</text>
+      </g>
       <g className="verification-tile-mark" transform="translate(180 575) scale(2)">
         <path d="M-3 6V-6m-3 12h8" />
         <path className="verification-flag" d="M-2-6h8v7h-8Z" />

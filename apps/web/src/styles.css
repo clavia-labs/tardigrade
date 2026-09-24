@@ -1179,6 +1179,9 @@ h1 span { display: block; white-space: nowrap; }
 
 .paperclip-problem { margin: 24px 0 32px; }
 .paperclip-problem figcaption { margin-top: 16px; text-align: center; color: var(--ink-2); font-size: 13px; }
+@media (max-width: 560px) {
+  .paperclip-problem figcaption { font-size: 11px; line-height: 1.5; }
+}
 .paperclip-problem figcaption a { color: var(--moss-ink); text-decoration: underline; text-underline-offset: 3px; }
 .paperclip-problem svg { display: block; width: 100%; max-width: 460px; height: auto; margin-inline: auto; overflow: hidden; }
 .paperclip-wire { fill: none; stroke: light-dark(#7299cb, #719bcf); stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; }

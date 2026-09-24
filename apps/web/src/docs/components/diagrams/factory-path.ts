@@ -24,13 +24,17 @@ export const factoryPath = (actions: ReadonlyArray<FactoryAction>, policy: Facto
     if (action === "inspect") inspected = true
     if (action === "produce" && rejection === undefined) {
       if (!inspected) violation ??= "Production before inspection"
+      inspected = false
       clips += policy.clipsPerBatch
       const generated = water + policy.wastePerBatch
       pollution += Math.max(0, generated - policy.capacity)
       water = Math.min(policy.capacity, generated)
       if (pollution > 0) violation ??= "Wastewater escaped into the surroundings"
     }
-    if (action === "treat") water = 0
+    if (action === "treat") {
+      water = 0
+      inspected = false
+    }
     return { action, water, pollution, clips, violation, rejection }
   })
 }

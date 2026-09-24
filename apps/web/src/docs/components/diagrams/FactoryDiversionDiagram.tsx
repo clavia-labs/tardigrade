@@ -22,7 +22,7 @@ const mobileTiles = [
 
 export const FactoryDiversionDiagram = (): ReactElement => (
   <figure className="factory-diversion">
-    <svg className="factory-diversion-desktop" viewBox="0 0 580 230" role="img" aria-label="After inspecting and producing batch A, a second batch is blocked because six more units would exceed tank capacity. The blocked gray route continues to an unreachable mine. The safe tiled route diverts through wastewater treatment, then produces batch B and reaches the goal.">
+    <svg className="factory-diversion-desktop" viewBox="0 0 580 230" role="img" aria-label="After inspecting and producing batch A, a second batch is blocked because six more units would exceed tank capacity. The blocked gray route continues to an unreachable mine. The safe tiled route diverts through wastewater treatment and another inspection, then produces batch B and reaches the goal.">
       {path.map(({ x, y, blocked }) => {
         const at = tilePosition(x, y)
         return <g key={`${x},${y}`} transform={`translate(${at.x} ${at.y})`}>
@@ -34,7 +34,9 @@ export const FactoryDiversionDiagram = (): ReactElement => (
       {([
         { x: 0, y: 3, kind: "inspect" },
         { x: 2, y: 3, kind: "produce" },
+        { x: 4, y: 3, kind: "inspect" },
         { x: 6, y: 1, kind: "treat" },
+        { x: 7, y: 1, kind: "inspect" },
         { x: 8, y: 1, kind: "produce" },
       ] as const).map(({ x, y, kind }) => {
         const at = tilePosition(x, y)
@@ -51,7 +53,7 @@ export const FactoryDiversionDiagram = (): ReactElement => (
       <text className="factory-diversion-note" x="310" y="211" textAnchor="middle">6 + 6 &gt; 10</text>
       <text className="factory-diversion-label" x="482" y="38" textAnchor="middle">Goal</text>
     </svg>
-    <svg className="factory-diversion-mobile" viewBox="0 0 360 470" role="img" aria-label="A vertical blue path inspects the tank and produces batch A. At the guard, a gray route to a mine is denied. The blue route turns toward wastewater treatment, batch B, and the goal.">
+    <svg className="factory-diversion-mobile" viewBox="0 0 360 470" role="img" aria-label="A vertical blue path inspects the tank and produces batch A. At the guard, a gray route to a mine is denied. The blue route turns toward wastewater treatment, another inspection, batch B, and the goal.">
       {mobileTiles.map(({ x, y, blocked }) => <g key={`${x},${y}`} transform={`translate(${x} ${y})`}>
         <rect className="verification-tile" data-kind={blocked ? "blocked" : "safe"} width="34" height="34" />
         <path className="verification-tile-light" d="M1 33V1h32l-5 5H6v22Z" />
@@ -60,7 +62,9 @@ export const FactoryDiversionDiagram = (): ReactElement => (
       {([
         { x: 163, y: 20, kind: "inspect" },
         { x: 163, y: 102, kind: "produce" },
+        { x: 163, y: 143, kind: "inspect" },
         { x: 81, y: 225, kind: "treat" },
+        { x: 81, y: 266, kind: "inspect" },
         { x: 81, y: 307, kind: "produce" },
       ] as const).map(({ x, y, kind }) => <g className="factory-diversion-icon" key={`${x},${y}`} transform={`translate(${x + 3} ${y + 3}) scale(.875)`}><FactoryGlyph kind={kind} /></g>)}
       <g className="factory-diversion-icon" transform="translate(163 184)"><path d="M8 8l18 18M26 8 8 26" /></g>
@@ -74,6 +78,6 @@ export const FactoryDiversionDiagram = (): ReactElement => (
       <text className="factory-diversion-label" x="262" y="444" textAnchor="middle">Batch denied</text>
       <text className="factory-diversion-note" x="262" y="462" textAnchor="middle">6 + 6 &gt; 10</text>
     </svg>
-    <figcaption>The guard refuses the second batch until wastewater is treated.</figcaption>
+    <figcaption>The guard refuses the second batch until wastewater is treated and the tank is inspected again.</figcaption>
   </figure>
 )
