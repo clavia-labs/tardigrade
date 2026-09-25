@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { HashMap, HashSet, Option, Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnOf } from "@clavia/tardigrade-code/execution/turns"
 
@@ -259,14 +259,87 @@ export const usageIn = (log: ReadonlyArray<Event>, turn?: string): Usage => {
     const carried = event.legacyUsage ?? event.usage
     if (carried === undefined) return []
     const called = event.type === "ModelReturned" ? log.find((mark) => mark.type === "ModelCalled" && mark.turn === event.turn && mark.ordinal === event.ordinal) : undefined
-    const recordedPricing = called?.pricing ?? asRecord(called?.policy)?.pricing
-    const pricing = Schema.is(ModelPricing)(recordedPricing) ? recordedPricing : undefined
-    const endpoint = asRecord(event.endpoint)
-    const response = asRecord(event.response)
-    const usage = usageOf({ ...(endpoint?.provider === undefined ? {} : { provider: endpoint.provider }), ...(response?.modelId === undefined && endpoint?.model === undefined ? {} : { model: response?.modelId ?? endpoint?.model }), ...asRecord(carried), ...(event.reportedCostUsd === undefined ? {} : { reportedCostUsd: event.reportedCostUsd, costUsd: event.reportedCostUsd, costSource: "provider" }) })
-    return [pricing === undefined ? usage : priced(usage, pricing)]
+    return [usagePartOf(event, carried, called)]
   })
   return excluded && parts.length === 0
     ? { ...ZERO_USAGE, costUsd: 0, reportedCostUsd: 0, estimatedCostUsd: 0 }
     : sumUsage(parts)
 }
+
+// usagePartOf prices one event's carried usage at the rate its ModelCalled recorded.
+const usagePartOf = (event: Event, carried: unknown, called: Event | undefined): Usage => {
+  const recordedPricing = called?.pricing ?? asRecord(called?.policy)?.pricing
+  const pricing = Schema.is(ModelPricing)(recordedPricing) ? recordedPricing : undefined
+  const endpoint = asRecord(event.endpoint)
+  const response = asRecord(event.response)
+  const usage = usageOf({ ...(endpoint?.provider === undefined ? {} : { provider: endpoint.provider }), ...(response?.modelId === undefined && endpoint?.model === undefined ? {} : { model: response?.modelId ?? endpoint?.model }), ...asRecord(carried), ...(event.reportedCostUsd === undefined ? {} : { reportedCostUsd: event.reportedCostUsd, costUsd: event.reportedCostUsd, costSource: "provider" }) })
+  return pricing === undefined ? usage : priced(usage, pricing)
+}
+
+// UsageCostFold is usageIn's reported and estimated cost over a served trajectory, folded one log event at a time.
+// Stale means a later event changed an earlier sum: a late ModelCalled prices an earlier response, or a head or
+// terminal carries usage and may move in or out of the trajectory. The caller then recomputes with usageIn.
+export interface UsageCostFold {
+  readonly called: HashMap.HashMap<string, Event>
+  readonly unpriced: HashSet.HashSet<string>
+  readonly carried: boolean
+  readonly excluded: boolean
+  readonly parts: number
+  readonly reportedCostUsd: number | undefined
+  readonly estimatedCostUsd: number | undefined
+  readonly stale: boolean
+}
+
+export const emptyUsageCostFold: UsageCostFold = {
+  called: HashMap.empty(),
+  unpriced: HashSet.empty(),
+  carried: false,
+  excluded: false,
+  parts: 0,
+  reportedCostUsd: 0,
+  estimatedCostUsd: 0,
+  stale: false
+}
+
+// callKeyOf names the (turn, ordinal) pair usageIn matches with ===. A pair that === cannot match by value has no key.
+const callKeyOf = (event: Event): string | undefined => {
+  const plain = (value: unknown) => value === null || (typeof value !== "object" && typeof value !== "function" && typeof value !== "symbol" && !Number.isNaN(value))
+  return plain(event.turn) && plain(event.ordinal) ? JSON.stringify([typeof event.turn, String(event.turn), typeof event.ordinal, String(event.ordinal)]) : undefined
+}
+
+const addKnown = (total: number | undefined, part: number | undefined): number | undefined =>
+  total === undefined || part === undefined ? undefined : total + part
+
+// foldUsageCost adds one event in log order. Sums run in usageIn's order, so the totals are the same numbers (usage.test.ts).
+export const foldUsageCost = (fold: UsageCostFold, event: Event): UsageCostFold => {
+  const carriesUsage = event.usage !== undefined || event.legacyUsage !== undefined
+  if (event.type === "MessageReceived" || event.type === "TurnCompleted" || event.type === "TurnFailed" || event.type === "TurnCancelled")
+    return carriesUsage && !fold.stale ? { ...fold, stale: true } : fold
+  let next = fold
+  const key = callKeyOf(event)
+  if (event.type === "ModelCalled" && key !== undefined && !HashMap.has(next.called, key))
+    next = { ...next, called: HashMap.set(next.called, key, event), stale: next.stale || HashSet.has(next.unpriced, key) }
+  if (event.type === "ModelReturned" && event.outcome === "failed") return next.excluded ? next : { ...next, excluded: true }
+  if (!carriesUsage) return next
+  next = next.carried ? next : { ...next, carried: true }
+  const carried = event.legacyUsage ?? event.usage
+  if (carried === undefined) return next
+  const called = event.type === "ModelReturned" && key !== undefined ? Option.getOrUndefined(HashMap.get(next.called, key)) : undefined
+  const unpriced = event.type === "ModelReturned" && key !== undefined && called === undefined ? HashSet.add(next.unpriced, key) : next.unpriced
+  const part = usagePartOf(event, carried, called)
+  return {
+    ...next,
+    unpriced,
+    parts: next.parts + 1,
+    reportedCostUsd: addKnown(next.reportedCostUsd, part.reportedCostUsd),
+    estimatedCostUsd: addKnown(next.estimatedCostUsd, part.estimatedCostUsd)
+  }
+}
+
+// usageCostOf reads a fold the way infer reads usageIn: no carried usage costs zero, and so do only failed attempts.
+export const usageCostOf = (fold: UsageCostFold): { readonly reportedCostUsd: number | undefined; readonly estimatedCostUsd: number | undefined } =>
+  !fold.carried || (fold.excluded && fold.parts === 0)
+    ? { reportedCostUsd: 0, estimatedCostUsd: 0 }
+    : fold.parts === 0
+      ? { reportedCostUsd: ZERO_USAGE.reportedCostUsd, estimatedCostUsd: ZERO_USAGE.estimatedCostUsd }
+      : { reportedCostUsd: fold.reportedCostUsd, estimatedCostUsd: fold.estimatedCostUsd }

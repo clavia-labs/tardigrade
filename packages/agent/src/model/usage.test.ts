@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { priced, sumUsage, usageIn, usageOf, ZERO_USAGE } from "./usage"
+import fc from "fast-check"
+import { initialTurnProjection, reduceTurnProjection, trajectoryFrom } from "@clavia/tardigrade-code/execution/turn-projection"
+import { emptyUsageCostFold, foldUsageCost, priced, sumUsage, usageCostOf, usageIn, usageOf, ZERO_USAGE } from "./usage"
 
 const table = { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }
 
@@ -234,4 +236,65 @@ test("usage aggregation excludes failed attempts from totals", () => {
   expect(usageIn([success, failed], "t")).toEqual(usageIn([success], "t"))
   const billedFailure = { ...failed, usage: success.usage }
   expect(usageIn([success, billedFailure], "t").reportedCostUsd).toBe(0.1)
+})
+
+describe("foldUsageCost", () => {
+  // lifetime is infer's recomputed lifetime cost: usageIn over the served trajectory, zero when nothing carries usage.
+  const lifetime = (events: ReadonlyArray<Event>) => {
+    const usage = usageIn(events)
+    const empty = !events.some((event) => event.usage !== undefined || event.legacyUsage !== undefined)
+    return { reportedCostUsd: empty ? 0 : usage.reportedCostUsd, estimatedCostUsd: empty ? 0 : usage.estimatedCostUsd }
+  }
+  const usage = fc.constantFrom<unknown>(
+    undefined,
+    {},
+    { promptTokens: 10, completionTokens: 4 },
+    { promptTokens: 7, completionTokens: 3, reportedCostUsd: 0.1 },
+    { promptTokens: 3, completionTokens: 1, costUsd: 0.07, costSource: "provider" },
+    { inputTokens: { total: 100, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 20 } }
+  )
+  const turn = fc.constantFrom("m0", "m1", "m2")
+  const ordinal = fc.integer({ min: 0, max: 2 })
+  const event: fc.Arbitrary<Event> = fc.oneof(
+    { weight: 1, arbitrary: turn.map((id) => ({ type: "MessageReceived", id, text: "go" })) },
+    { weight: 3, arbitrary: fc.record({ turn, ordinal, priced: fc.boolean() }).map(({ turn, ordinal, priced }) => ({ type: "ModelCalled", callId: `${turn}/infer/${ordinal}`, turn, ordinal, ...(priced ? { pricing: table } : {}) })) },
+    { weight: 4, arbitrary: fc.record({ turn, ordinal, usage, failed: fc.boolean(), reportedCostUsd: fc.constantFrom(undefined, 0.2) }).map(({ turn, ordinal, usage, failed, reportedCostUsd }) => ({ type: "ModelReturned", callId: `${turn}/infer/${ordinal}`, turn, ordinal, outcome: failed ? "failed" : "returned", ...(usage === undefined ? {} : { usage }), ...(reportedCostUsd === undefined ? {} : { reportedCostUsd }) })) },
+    { weight: 2, arbitrary: fc.record({ turn, usage }).map(({ turn, usage }) => ({ type: "ToolCalled", callId: `${turn}/c`, name: "execute", arguments: {}, turn, ...(usage === undefined ? {} : { legacyUsage: usage }) })) },
+    { weight: 1, arbitrary: fc.record({ turn, type: fc.constantFrom("TurnCompleted", "TurnFailed", "TurnCancelled"), usage: fc.constantFrom(undefined, { promptTokens: 1, completionTokens: 1 }) }).map(({ turn, type, usage }) => ({ type, turn, ...(usage === undefined ? {} : { usage }) })) },
+    { weight: 1, arbitrary: turn.map((turn) => ({ type: "TurnResumed", turn, failedEpoch: 0, epoch: 1 })) }
+  )
+
+  test("matches usageIn over the served trajectory at every prefix it does not mark stale", () => {
+    let compared = 0
+    fc.assert(
+      fc.property(fc.array(event, { maxLength: 40 }), (log) => {
+        let turns = initialTurnProjection()
+        let fold = emptyUsageCostFold
+        for (const next of log) {
+          turns = reduceTurnProjection(turns, next)
+          fold = foldUsageCost(fold, next)
+          if (fold.stale) continue
+          compared += 1
+          expect(usageCostOf(fold)).toEqual(lifetime(trajectoryFrom(turns)))
+        }
+      }),
+      { numRuns: 500 }
+    )
+    expect(compared).toBeGreaterThan(1_000)
+  })
+
+  test("stays current through served turns and goes stale when a late ModelCalled prices an earlier response", () => {
+    const served: Event[] = [
+      { type: "MessageReceived", id: "m1", text: "go" },
+      { type: "ModelCalled", callId: "m1/infer/0", turn: "m1", ordinal: 0, pricing: table },
+      { type: "ModelReturned", callId: "m1/infer/0", turn: "m1", ordinal: 0, outcome: "returned", usage: { promptTokens: 10, completionTokens: 4 } },
+      { type: "TurnCompleted", output: "ok", turn: "m1" },
+      { type: "ModelReturned", callId: "m2/infer/0", turn: "m2", ordinal: 0, outcome: "returned", usage: { promptTokens: 1, completionTokens: 1 } }
+    ]
+    const fold = served.reduce(foldUsageCost, emptyUsageCostFold)
+    expect(fold.stale).toBe(false)
+    expect(usageCostOf(fold)).toEqual(lifetime(served))
+    const late = foldUsageCost(fold, { type: "ModelCalled", callId: "m2/infer/0", turn: "m2", ordinal: 0, pricing: table })
+    expect(late.stale).toBe(true)
+  })
 })
