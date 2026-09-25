@@ -1,13 +1,16 @@
 import { Chunk, HashMap, HashSet } from "effect"
 
 // validateView rejects executable values and accessors without evaluating them (data.test.ts).
-export const validateView = (view: unknown): void => {
+// accepted holds objects an earlier walk accepted and skips them, since earlier snapshots stay unchanged (properties.md).
+export const validateView = (view: unknown, accepted?: WeakSet<object>): void => {
   const seen = new WeakSet<object>()
+  const walked: Array<object> = []
   const visit = (value: unknown, path: string): void => {
     if (typeof value === "function")
       throw new TypeError(`${path} contains executable behavior; expose it as an interaction or transition`)
-    if (value === null || typeof value !== "object" || seen.has(value)) return
+    if (value === null || typeof value !== "object" || seen.has(value) || accepted?.has(value) === true) return
     seen.add(value)
+    walked.push(value)
     let intrinsic: object | undefined
     if (value instanceof Date) intrinsic = Date.prototype
     if (value instanceof Map) {
@@ -43,4 +46,6 @@ export const validateView = (view: unknown): void => {
     }
   }
   visit(view, "view")
+  // A walk that throws records nothing, so a rejected view is walked in full again.
+  if (accepted !== undefined) for (const value of walked) accepted.add(value)
 }
