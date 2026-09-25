@@ -26,11 +26,26 @@ const stampOf = (event: Event) => ({
   ...(event.epoch === undefined ? {} : { epoch: Number(event.epoch) })
 })
 
+const eventIdOf = (event: Event): string => String((event as { readonly id?: unknown }).id ?? "")
+const servingEvent = (event: Event): boolean => [
+  "PackageCalled", "PackageReturned", "CodeSettled", "BlockedOn", "MessageReceived", "ResponseReceived",
+  "TurnCompleted", "TurnFailed", "TurnCancelled", "TurnResumed"
+].includes(event.type)
+
 // packageCalls owns method execution and responses at the committed request boundary (packages/agent/integration/package-permissions.test.ts).
 export const packageCalls = <R>(definition: PackageDefinition<R>) => component({
   name: `package.${definition.name}`,
   initial: () => Chunk.empty<Event>(),
-  step: (state, event) => Chunk.append(state, event),
+  step: (state, event) => {
+    if (event.type === "TurnCompleted" || event.type === "TurnCancelled") {
+      const turn = turnOf(event)
+      if (turn === undefined) return state
+      const retained = [...state].filter(item => turnOf(item) !== turn && !(item.type === "MessageReceived" && eventIdOf(item) === turn))
+      return retained.length === state.length ? state : Chunk.fromIterable(retained)
+    }
+    if (!servingEvent(event) || event.type === "PackageCalled" && !String(event.name).startsWith(`${definition.name}.`)) return state
+    return Chunk.append(state, event)
+  },
   output: (state): ComponentOutput<CodeView, R | KeyValueStore.KeyValueStore, unknown> => {
     const log = Chunk.toReadonlyArray(state)
     const returned = new Set(log.filter(event => event.type === "PackageReturned").map(packageKeyOf))
