@@ -1,4 +1,4 @@
-import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
+import { inferenceClient } from "../../../../fixtures/binding"
 import { modelReturned } from "@clavia/tardigrade-agent/log/events"
 import { usageIn } from "@clavia/tardigrade-agent/model/usage"
 import { runModelActor } from "../../../../integration/support/model-actor"

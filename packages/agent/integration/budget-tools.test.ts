@@ -1,4 +1,4 @@
-import { testMachineOf as machineOf } from "@clavia/tardigrade-agent/fixtures/component"
+import { testMachineOf as machineOf } from "../fixtures/component"
 import { replayProjection, replayState } from "@clavia/tardigrade-core/projection"
 import { expect, expectTypeOf, test } from "bun:test"
 import { Effect } from "effect"

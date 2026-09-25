@@ -1,4 +1,4 @@
-import { testModelLockLayer } from "@clavia/tardigrade-agent/fixtures/model"
+import { testModelLockLayer } from "../../../testing/model"
 import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { expect, test } from "bun:test"
 import { Layer, Redacted, Schema } from "effect"

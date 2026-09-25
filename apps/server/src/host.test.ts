@@ -1,5 +1,5 @@
 import type { LanguageModel } from "effect/unstable/ai"
-import { testInferenceLayer } from "@clavia/tardigrade-agent/fixtures/model"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/model"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"

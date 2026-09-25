@@ -1,6 +1,6 @@
 import { Context, Effect } from "effect"
 import { component, composeComponents, legacyComponent } from "@clavia/tardigrade-core/actor"
-import { testMachineOf as machineOf } from "@clavia/tardigrade-agent/fixtures/component"
+import { testMachineOf as machineOf } from "../../../fixtures/component"
 import { replayState, replayProjection } from "@clavia/tardigrade-core/projection"
 import { describe, expect, expectTypeOf, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"

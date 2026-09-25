@@ -1,6 +1,6 @@
 import type { AgentView } from "./component/view"
 import type { ToolState } from "./component/tool/machine"
-import { testInferenceLayer } from "@clavia/tardigrade-agent/fixtures/model"
+import { testInferenceLayer } from "./testing/model"
 import { definePackage } from "@clavia/tardigrade-code/package/definition"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"

@@ -1,5 +1,5 @@
 import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { testInferenceLayer, type TestInference } from "@clavia/tardigrade-agent/fixtures/model"
+import { testInferenceLayer, type TestInference } from "@clavia/tardigrade-agent/testing/model"
 import { expect, test } from "bun:test"
 import { Clock, Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"

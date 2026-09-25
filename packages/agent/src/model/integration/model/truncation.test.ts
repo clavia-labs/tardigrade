@@ -1,6 +1,6 @@
-import { testModelLockLayer } from "@clavia/tardigrade-agent/fixtures/model"
+import { testModelLockLayer } from "../../../testing/model"
 import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
+import { inferenceClient } from "../../../../fixtures/binding"
 import { expect, test } from "bun:test"
 import { Effect, Layer, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"

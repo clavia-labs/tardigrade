@@ -1,7 +1,6 @@
 import { testMachineOf } from "../../fixtures/component"
-import { testModelData } from "@clavia/tardigrade-agent/fixtures/model"
+import { testInferenceLayer, testModelData } from "../testing/model"
 import type { AgentMessage } from "../projection/messages"
-import { testInferenceLayer } from "@clavia/tardigrade-agent/fixtures/model"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { actor } from "@clavia/tardigrade-core/actor"
 import { describe, expect, test } from "bun:test"

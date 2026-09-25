@@ -38,4 +38,6 @@ CI installs with `bun install --frozen-lockfile` and runs the full `bun run gate
 
 ## Releases
 
+The required dependencies of the published package are fixed by `REQUIRED_PUBLISH_DEPENDENCIES` in `tools/publish-manifest.ts`. Adding or removing a required dependency requires an explicit update to that list; version changes do not. The publish command enforces the same contract before staging files or contacting npm.
+
 Release Please keeps a release PR current with the version and changelog for the next stable release. Each revision is combined with a pinned `main` commit, tested, and published as `<version>-rc.<run number>` under the npm `next` tag. The required checks pass after that candidate records the combined git tree. Merging the release PR creates the GitHub release and stable tag. The stable package publishes under npm `latest` after its tree matches npm `next`. A normal merge to `main` only updates the release PR.

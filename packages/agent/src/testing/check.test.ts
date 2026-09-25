@@ -7,7 +7,7 @@ import { outputValidateOnce } from "../component/repair"
 import { tool } from "../component/tool"
 import { agentMessageMethod } from "../actor/message"
 import { ActorCheckError, checkActor, replayActor, type ActorCheckContext } from "@clavia/tardigrade-core/testing"
-import { testInferenceLayer } from "../../fixtures/model"
+import { testInferenceLayer } from "./model"
 import type { InferRequest } from "../model/contract"
 import type { Action } from "../log/events"
 

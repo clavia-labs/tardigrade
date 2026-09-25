@@ -1,20 +1,19 @@
 import { ModelLock, emptyModelLock, modelLockService } from "@clavia/tardigrade-model/lock"
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { AiError, LanguageModel, Response } from "effect/unstable/ai"
-import type { InferRequest, ModelResolution } from "../src/model/contract"
-import type { InferDelta } from "../src/model/observer"
-import type { Action } from "../src/log/events"
-import type { LegacyCallAction } from "../src/model/action-compat"
-import { normalizeAction } from "../src/model/action-compat"
-import { upcastUsage } from "../src/log/response-upcast"
-import { unknownModelError } from "../src/model/error"
-import type { RequestPolicy } from "../src/component/infer/retry"
-import type { ModelRef } from "../src/model/reference"
-import type { ModelPricing } from "../src/model/usage"
-import { BindingInvocation, BindingSettings, ModelSelection } from "../src/model/execution/settings"
+import type { InferRequest, ModelResolution } from "../model/contract"
+import type { InferDelta } from "../model/observer"
+import type { Action } from "../log/events"
+import { normalizeAction, type LegacyCallAction } from "../model/action-compat"
+import { upcastUsage } from "../log/response-upcast"
+import { unknownModelError } from "../model/error"
+import type { RequestPolicy } from "../component/infer/retry"
+import type { ModelRef } from "../model/reference"
+import type { ModelPricing } from "../model/usage"
+import { BindingInvocation, BindingSettings, ModelSelection } from "../model/execution/settings"
 
 export interface TestInference {
-  readonly output?: import("../src/model/execution/output").OutputCapability
+  readonly output?: import("../model/execution/output").OutputCapability
   readonly resolve?: (model?: ModelRef) => ModelResolution
   readonly policy?: (model?: ModelRef) => Effect.Effect<RequestPolicy | undefined>
   readonly pricing?: (model?: ModelRef) => Effect.Effect<ModelPricing | undefined>
@@ -56,7 +55,7 @@ export const testInferenceLayer = (script: TestInference): Layer.Layer<LanguageM
       }
       const text = action.kind === "complete" ? action.output : action.text ?? ""
       const parts: Response.AnyPart[] = []
-      const legacyUsage = action.usage as import("../src/model/usage").Usage | undefined
+      const legacyUsage = action.usage as import("../model/usage").Usage | undefined
       if (legacyUsage?.model !== undefined) parts.push(Response.makePart("response-metadata", { modelId: legacyUsage.model }))
       if (text !== "") parts.push(Response.makePart("text-start", { id: "text" }), Response.makePart("text-delta", { id: "text", delta: text }), Response.makePart("text-end", { id: "text" }))
       if (action.kind === "calls") for (const call of action.calls) parts.push(Response.makePart("tool-call", { id: call.callId, name: call.name, params: call.arguments, providerExecuted: false }))

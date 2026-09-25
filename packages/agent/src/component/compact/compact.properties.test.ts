@@ -1,6 +1,6 @@
-import { testModelData } from "../../../fixtures/model"
+import { testModelData } from "../../testing/model"
 import { messages } from "../messages"
-import { testMachineOf as machineOf } from "@clavia/tardigrade-agent/fixtures/component"
+import { testMachineOf as machineOf } from "../../../fixtures/component"
 import { expect, test } from "bun:test"
 import * as fc from "fast-check"
 import { Schema } from "effect"
