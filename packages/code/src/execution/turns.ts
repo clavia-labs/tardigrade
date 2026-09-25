@@ -53,9 +53,48 @@ const activeStamped = (log: ReadonlyArray<Event>, turn: string): ReadonlyArray<E
 const heads = (log: ReadonlyArray<Event>): ReadonlyArray<Event> =>
   log.filter((event) => event.type === "MessageReceived")
 
+// TurnIndex records, per turn, the epochs that failed, resumed from a failure, and reached a terminal.
+interface TurnIndex {
+  readonly failed: Map<string, Set<number>>
+  readonly resumed: Map<string, Set<number>>
+  readonly terminals: Map<string, Set<number>>
+}
+
+const note = (index: Map<string, Set<number>>, turn: string, epoch: number): void => {
+  const epochs = index.get(turn)
+  if (epochs === undefined) index.set(turn, new Set([epoch]))
+  else epochs.add(epoch)
+}
+
+// turnIndexOf reads the log once, so a turn's epoch and terminal cost lookups instead of log scans.
+const turnIndexOf = (log: ReadonlyArray<Event>): TurnIndex => {
+  const index: TurnIndex = { failed: new Map(), resumed: new Map(), terminals: new Map() }
+  for (const event of log) {
+    const turn = turnOf(event)
+    if (turn === undefined) continue
+    const epoch = eventEpochOf(event)
+    if (event.type === "TurnFailed") note(index.failed, turn, epoch)
+    if (event.type === "TurnResumed") {
+      const failedEpoch = Number((event as { readonly failedEpoch?: unknown }).failedEpoch ?? 0)
+      if (epoch === failedEpoch + 1) note(index.resumed, turn, failedEpoch)
+    }
+    if (isTerminal(event)) note(index.terminals, turn, epoch)
+  }
+  return index
+}
+
+// indexedEpochOf is turnEpochOf over a TurnIndex (turns.test.ts, "matches the scanning epoch and head").
+const indexedEpochOf = (index: TurnIndex, turn: string): number => {
+  let epoch = 0
+  while (index.failed.get(turn)?.has(epoch) === true && index.resumed.get(turn)?.has(epoch) === true) epoch += 1
+  return epoch
+}
+
 // turnHead returns the current turn's head: the earliest message with no stamped terminal.
-export const turnHead = (log: ReadonlyArray<Event>): Event | undefined =>
-  heads(log).find((head) => turnTerminalOf(log, idOf(head)) === undefined)
+export const turnHead = (log: ReadonlyArray<Event>): Event | undefined => {
+  const index = turnIndexOf(log)
+  return heads(log).find((head) => index.terminals.get(idOf(head))?.has(indexedEpochOf(index, idOf(head))) !== true)
+}
 
 // turnView returns the current turn's slice: its head plus its stamped events, in log order.
 export const turnView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
@@ -68,13 +107,14 @@ export const turnView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
 // place. react receives the conversation as served, never as it interleaved at ingress.
 export const trajectoryOf = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   const current = turnHead(log)
+  const index = turnIndexOf(log)
   const emitted = new Set<string>()
   const byId = new Map(heads(log).map((h) => [idOf(h), h]))
   const out: Event[] = []
   for (const e of log) {
     if (e.type === "MessageReceived") continue
     const turn = turnOf(e)
-    if (turn !== undefined && isTerminal(e) && eventEpochOf(e) !== turnEpochOf(log, turn)) continue
+    if (turn !== undefined && isTerminal(e) && eventEpochOf(e) !== indexedEpochOf(index, turn)) continue
     if (turn !== undefined && !emitted.has(turn)) {
       const head = byId.get(turn)
       if (head !== undefined) out.push(head)
