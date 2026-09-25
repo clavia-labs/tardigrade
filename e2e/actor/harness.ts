@@ -1,4 +1,4 @@
-import { testInferenceLayer } from "@clavia/tardigrade-agent/fixtures/model"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/model"
 import { Effect, Layer, Schema } from "effect"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { KeyValueStore } from "effect/unstable/persistence"

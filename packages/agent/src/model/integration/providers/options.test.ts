@@ -1,4 +1,4 @@
-import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
+import { inferenceClient } from "../../../../fixtures/binding"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"

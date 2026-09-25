@@ -1,4 +1,4 @@
-import { testModelData, testModelLock } from "../../../fixtures/model"
+import { testModelData, testModelLock } from "../../testing/model"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { messages } from "../messages"
 import { replayProjection } from "@clavia/tardigrade-core/projection"

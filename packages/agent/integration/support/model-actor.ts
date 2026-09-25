@@ -9,8 +9,8 @@ import { infer, AGENT_VIEW_ALGEBRA, type AgentView } from "@clavia/tardigrade-ag
 import { system } from "@clavia/tardigrade-agent/component/system"
 import { ModelReturned, type Action, type TurnFailureCause } from "@clavia/tardigrade-agent/log/events"
 import { modelErrorOf } from "@clavia/tardigrade-agent/model/error"
-import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
-import { testModelLock } from "@clavia/tardigrade-agent/fixtures/model"
+import { inferenceClient } from "../../fixtures/binding"
+import { testModelLock } from "@clavia/tardigrade-agent/testing/model"
 import { BindingSettings } from "@clavia/tardigrade-agent/model/execution/settings"
 
 // runModelActor runs a model request through a hosted infer component.

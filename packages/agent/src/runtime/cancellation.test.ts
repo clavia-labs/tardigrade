@@ -1,5 +1,5 @@
 import { component as defineComponent } from "@clavia/tardigrade-core/component"
-import { testMachineOf as machineOf } from "@clavia/tardigrade-agent/fixtures/component"
+import { testMachineOf as machineOf } from "../../fixtures/component"
 import { replayState } from "@clavia/tardigrade-core/projection"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import { describe, expect, test } from "bun:test"

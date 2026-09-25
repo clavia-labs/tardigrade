@@ -1,4 +1,4 @@
-import { testMachineOf as machineOf } from "@clavia/tardigrade-agent/fixtures/component"
+import { testMachineOf as machineOf } from "../fixtures/component"
 import { eventAt } from "@clavia/tardigrade-core/event"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"

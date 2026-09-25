@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { rewriteComponentRuntimeImports, stageInitTemplates } from "./publish-paths"
+import { publishDependencies, publishSources } from "./publish-manifest"
 
 type PkgJson = {
   readonly name: string
@@ -26,23 +27,6 @@ const option = (name: string) => {
   if (value === undefined || value.startsWith("--")) throw new Error(`${name} needs a value`)
   return value
 }
-
-const sources = [
-  { dir: "packages/tardie", namespace: "tardie" },
-  { dir: "packages/agent", namespace: "agent" },
-  { dir: "packages/core", namespace: "core" },
-  { dir: "packages/code", namespace: "code" },
-  { dir: "packages/host", namespace: "host" },
-  { dir: "packages/channels", namespace: "channels" },
-  { dir: "packages/client", namespace: "client" },
-  { dir: "platform/bun", namespace: "bun" },
-  { dir: "platform/worker-loader", namespace: "worker-loader" },
-  { dir: "platform/cloudflare", namespace: "cloudflare" },
-  { dir: "packages/model", namespace: "model" },
-  { dir: "packages/http", namespace: "http" },
-  { dir: "apps/server", namespace: "server" },
-  { dir: "apps/cli", namespace: "cli" }
-] as const
 
 // The command the package installs, and the module it points at. One install gives the library, the
 // server, the UI, and the command (sdk-and-cli-spec.md, "Phase 3").
@@ -78,6 +62,23 @@ const run = async (cmd: string[], cwd: string) => {
   if (code !== 0) throw new Error(`${cmd.join(" ")} exited ${code}`)
 }
 
+const verifyPackedManifest = async (tarball: string, expected: {
+  readonly dependencies: Readonly<Record<string, string>>
+  readonly peerDependencies: Readonly<Record<string, string>>
+  readonly peerDependenciesMeta: Readonly<Record<string, { readonly optional?: boolean }>>
+}) => {
+  const packed = JSON.parse(await output(["tar", "-xOf", tarball, "package/package.json"], root)) as {
+    readonly dependencies?: Readonly<Record<string, string>>
+    readonly peerDependencies?: Readonly<Record<string, string>>
+    readonly peerDependenciesMeta?: Readonly<Record<string, { readonly optional?: boolean }>>
+  }
+  for (const [name, expectedDependencies] of [["dependencies", expected.dependencies], ["peerDependencies", expected.peerDependencies], ["peerDependenciesMeta", expected.peerDependenciesMeta]] as const) {
+    if (JSON.stringify(packed[name] ?? {}) !== JSON.stringify(expectedDependencies)) {
+      throw new Error(`packed manifest ${name} differs from the publication manifest`)
+    }
+  }
+}
+
 const parseNpm = (version: string) => {
   const [maj, min, patch] = version.trim().split(".").map((part) => Number(part))
   if (maj === undefined || min === undefined || patch === undefined || [maj, min, patch].some((part) => !Number.isFinite(part))) {
@@ -101,39 +102,6 @@ const published = async (name: string, version: string) => {
   return true
 }
 
-const dependencyUnion = (packages: ReadonlyArray<PkgJson>) => {
-  const workspaceNames = new Set(packages.map((pkg) => pkg.name))
-  const dependencies = new Map<string, string>()
-  for (const pkg of packages) {
-    for (const [name, version] of Object.entries(pkg.dependencies ?? {})) {
-      if (workspaceNames.has(name)) continue
-      const previous = dependencies.get(name)
-      if (previous !== undefined && previous !== version) {
-        throw new Error(`dependency ${name} has versions ${previous} and ${version}`)
-      }
-      dependencies.set(name, version)
-    }
-  }
-  return Object.fromEntries([...dependencies].sort(([left], [right]) => left.localeCompare(right)))
-}
-
-const optionalPeerUnion = (packages: ReadonlyArray<PkgJson>) => {
-  const versions = new Map<string, string>()
-  for (const pkg of packages) {
-    for (const [name, version] of Object.entries(pkg.peerDependencies ?? {})) {
-      if (pkg.peerDependenciesMeta?.[name]?.optional !== true) continue
-      const previous = versions.get(name)
-      if (previous !== undefined && previous !== version) {
-        throw new Error(`optional peer ${name} has versions ${previous} and ${version}`)
-      }
-      versions.set(name, version)
-    }
-  }
-  const peerDependencies = Object.fromEntries([...versions].sort(([left], [right]) => left.localeCompare(right)))
-  const peerDependenciesMeta = Object.fromEntries(Object.keys(peerDependencies).map((name) => [name, { optional: true }]))
-  return { peerDependencies, peerDependenciesMeta }
-}
-
 const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>, sourceRoot = dir): Promise<void> => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
@@ -150,9 +118,9 @@ const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>
   }
 }
 
-const packages = await Promise.all(sources.map(async (source) => ({ ...source, pkg: await readPkg(source.dir) })))
+const packages = publishSources
 const publicSource = packages.find((source) => source.namespace === "tardie")!
-const optionalPeers = optionalPeerUnion(packages.map((source) => source.pkg))
+const dependencies = publishDependencies(packages.map((source) => source.pkg))
 const version = option("--version") ?? (await readPkg(".")).version
 const sourceTree = option("--source-tree")
 const prerelease = version.includes("-")
@@ -228,7 +196,11 @@ try {
       ".": "./src/tardie/index.ts",
       "./agent": "./src/agent/index.ts",
       "./agent/*": "./src/agent/*.ts",
+      "./agent/testing/model": "./src/agent/testing/model.ts",
+      "./agent/testing": "./src/tardie/agent-testing.ts",
       "./core": "./src/core/index.ts",
+      "./core/testing": "./src/core/testing/check.ts",
+      "./testing": "./src/tardie/testing.ts",
       "./code": "./src/code/index.ts",
       "./package.json": "./package.json",
       "./actor/*": "./src/agent/actor/*.ts",
@@ -302,9 +274,7 @@ try {
       "./model/output": "./src/model/output.ts",
       "./model/*": "./src/model/*.ts"
     },
-    dependencies: dependencyUnion(packages.map((source) => source.pkg)),
-    peerDependencies: optionalPeers.peerDependencies,
-    peerDependenciesMeta: optionalPeers.peerDependenciesMeta
+    ...dependencies
   }
   await writeFile(join(stage, "package.json"), `${JSON.stringify(publishManifest, null, 2)}\n`)
 
@@ -312,13 +282,14 @@ try {
   const stagedModules = join(stage, "node_modules")
   await symlink(join(root, "node_modules"), stagedModules, "dir")
   try {
-    await run([process.execPath, "-e", "const root = await import('tardie'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const code = await import('tardie/code'); if (root.defineActor !== core.defineActor || root.infer !== agent.infer || root.definePackage !== code.definePackage) throw new Error('scoped export compatibility failed'); await import('tardie/bun'); await import('tardie/client'); for (const path of ['tardie/core/component/runtime', 'tardie/core/component/composition/parent']) { let blocked = false; try { await import(path) } catch { blocked = true } if (!blocked) throw new Error(path + ' is publicly importable') }"], stage)
+    await run([process.execPath, "-e", "const root = await import('tardie'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const code = await import('tardie/code'); if (root.defineActor !== core.defineActor || root.infer !== agent.infer || root.definePackage !== code.definePackage) throw new Error('scoped export compatibility failed'); const testing = await import('tardie/testing'); const agentTesting = await import('tardie/agent/testing'); if (typeof testing.checkActor !== 'function' || typeof testing.replayActor !== 'function' || typeof agentTesting.testInferenceLayer !== 'function') throw new Error('testing exports failed'); await import('tardie/bun'); await import('tardie/client'); for (const path of ['tardie/core/component/runtime', 'tardie/core/component/composition/parent']) { let blocked = false; try { await import(path) } catch { blocked = true } if (!blocked) throw new Error(path + ' is publicly importable') }"], stage)
   } finally {
     await rm(stagedModules)
   }
 
   const filename = await output(["bun", "pm", "pack", "--destination", destination, "--quiet", "--ignore-scripts"], stage)
   const tarball = isAbsolute(filename) ? filename : join(destination, filename)
+  await verifyPackedManifest(tarball, dependencies)
   if (packOnly) {
     console.log(`pack ${publicSource.pkg.name}@${version}`)
   } else {

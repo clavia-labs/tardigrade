@@ -1,6 +1,6 @@
-import { testModelLockLayer } from "@clavia/tardigrade-agent/fixtures/model"
+import { testModelLockLayer } from "../../../testing/model"
 import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { inferenceClient } from "@clavia/tardigrade-agent/fixtures/binding"
+import { inferenceClient } from "../../../../fixtures/binding"
 import { runModelActor } from "../../../../integration/support/model-actor"
 import type { ProviderContinuation } from "@clavia/tardigrade-agent/model/continuation"
 import { TestClock } from "effect/testing"

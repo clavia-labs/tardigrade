@@ -1,5 +1,5 @@
 import type { LanguageModel } from "effect/unstable/ai"
-import { testInferenceLayer } from "@clavia/tardigrade-agent/fixtures/model"
+import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/model"
 import { Effect, Layer } from "effect"
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { type InferRequest } from "tardie"

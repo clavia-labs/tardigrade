@@ -41,7 +41,7 @@
     "./packages/*": "./src/packages/*.ts",
     "./projection/*": "./src/projection/*.ts",
     "./runtime/*": "./src/runtime/*.ts",
-    "./fixtures/*": "./fixtures/*.ts",
+    "./testing/model": "./src/testing/model.ts",
     "./component/escalate": "./src/component/escalate/index.ts",
     "./component/compact": "./src/component/compact/index.ts"
   },

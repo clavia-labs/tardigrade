@@ -1,4 +1,4 @@
-import { testModelLockLayer } from "@clavia/tardigrade-agent/fixtures/model"
+import { testModelLockLayer } from "@clavia/tardigrade-agent/testing/model"
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
