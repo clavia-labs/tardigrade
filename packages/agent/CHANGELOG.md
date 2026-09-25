@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.1](https://github.com/clavia-labs/tardigrade/compare/v0.33.0...v0.33.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **replay:** bound cold replay ([#531](https://github.com/clavia-labs/tardigrade/issues/531)) ([956b0ca](https://github.com/clavia-labs/tardigrade/commit/956b0cae483f5328c3c6f400d70fb0e4c39ff200))
+* **testing:** package test APIs ([#526](https://github.com/clavia-labs/tardigrade/issues/526)) ([8119362](https://github.com/clavia-labs/tardigrade/commit/8119362a5fa8047082e162ad28a5448685a7c4c9))
+
 ## [0.33.0](https://github.com/clavia-labs/tardigrade/compare/v0.32.0...v0.33.0) (2026-09-24)
 
 
