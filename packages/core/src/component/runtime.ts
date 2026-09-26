@@ -16,11 +16,12 @@ export const registerComponent = <Fields extends { readonly name: string }, View
 ): Fields & Component<View, Requirements, Result, Interactions> => {
   const token = Object.freeze({})
   const validated = new WeakMap<object, ComponentOutput<View, Requirements, Result, Interactions>>()
+  const accepted = new WeakSet<object>()
   machines.set(token, { ...machine, output: state => {
     const output = machine.output(state)
     const cached = validated.get(output)
     if (cached !== undefined) return cached
-    validateView(output.view)
+    validateView(output.view, accepted)
     const cancel = output.interactions?.cancel
     const checked = cancel === undefined ? output : {
       ...output,
