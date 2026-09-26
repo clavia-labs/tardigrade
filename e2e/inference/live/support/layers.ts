@@ -2,7 +2,7 @@ import { Layer, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { providerLayer, type ProviderOptions } from "../../../../packages/model/src/providers/layer"
 import { inferenceLayer } from "../../../../packages/model/src/services"
-import type { Send as BedrockSend } from "@tardie/ai-bedrock/BedrockLanguageModel"
+import { inferenceLayer as bedrockInferenceLayer, type Send as BedrockSend } from "../../../../packages/model/src/providers/bedrock"
 import { DEFAULT_LIVE_MAX_OUTPUT_TOKENS, DEFAULT_LIVE_THINKING_TOKENS, DEFAULT_LIVE_TIMEOUT_MS, positive, type ResolvedLiveTarget } from "./config"
 
 const optionsOf = (target: ResolvedLiveTarget): ProviderOptions => {
@@ -23,6 +23,9 @@ const optionsOf = (target: ResolvedLiveTarget): ProviderOptions => {
 export const providerFor = (target: ResolvedLiveTarget) => providerLayer(optionsOf(target)).pipe(Layer.provide(FetchHttpClient.layer))
 export const bindingFor = (target: ResolvedLiveTarget, overrides: { readonly providerId?: string; readonly bedrockSend?: BedrockSend } = {}) => {
   const options = optionsOf(target)
-  const configured: ProviderOptions = options.provider === "bedrock" && overrides.bedrockSend !== undefined ? { ...options, client: { send: overrides.bedrockSend } } : options
-  return inferenceLayer({ ...configured, providerId: overrides.providerId ?? "live", endpoint: target.endpoint, maxOutputTokens: positive("TARDIE_LIVE_MAX_OUTPUT_TOKENS", DEFAULT_LIVE_MAX_OUTPUT_TOKENS), retry: { backoffMs: [] }, timeout: { attemptMs: positive("TARDIE_LIVE_TIMEOUT_MS", DEFAULT_LIVE_TIMEOUT_MS) } }).pipe(Layer.provide(FetchHttpClient.layer))
+  const settings = { providerId: overrides.providerId ?? "live", endpoint: target.endpoint, maxOutputTokens: positive("TARDIE_LIVE_MAX_OUTPUT_TOKENS", DEFAULT_LIVE_MAX_OUTPUT_TOKENS), retry: { backoffMs: [] }, timeout: { attemptMs: positive("TARDIE_LIVE_TIMEOUT_MS", DEFAULT_LIVE_TIMEOUT_MS) } }
+  const layer = options.provider === "bedrock" && overrides.bedrockSend !== undefined
+    ? bedrockInferenceLayer({ ...options, ...settings, client: { send: overrides.bedrockSend } })
+    : inferenceLayer({ ...options, ...settings })
+  return layer.pipe(Layer.provide(FetchHttpClient.layer))
 }

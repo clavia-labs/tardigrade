@@ -2,6 +2,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:f
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { dependencies } from "../package.json"
 
 const root = fileURLToPath(new URL("../", import.meta.url))
 
@@ -66,7 +67,16 @@ const main = async (): Promise<void> => {
       await writeFile(join(directory, "package.json"), `${JSON.stringify({
         private: true,
         type: "module",
-        dependencies: { tardie: `file:${tarball}` }
+        dependencies: { tardie: `file:${tarball}` },
+        devDependencies: { "@types/node": dependencies["@types/node"] }
+      }, undefined, 2)}\n`)
+      await writeFile(join(directory, "index.ts"), 'import { actor } from "tardie"\nexport default actor\n')
+      await writeFile(join(directory, "tsconfig.json"), `${JSON.stringify({
+        compilerOptions: {
+          target: "ES2023", lib: ["ES2023", "DOM"], module: "Preserve", moduleResolution: "bundler",
+          strict: true, noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true, types: ["node"]
+        },
+        include: ["index.ts"]
       }, undefined, 2)}\n`)
       await writeFile(join(directory, "worker.ts"), workerSource(fixture))
       await writeFile(join(directory, "wrangler.jsonc"), wranglerSource)
@@ -82,6 +92,8 @@ const main = async (): Promise<void> => {
         const path = join(directory, "node_modules", ...name.split("/"))
         if (await exists(path)) throw new Error(`${fixture} installed optional provider dependency ${name}`)
       }
+
+      await run([process.execPath, join(root, "node_modules/typescript/bin/tsc"), "--project", "tsconfig.json"], directory)
 
       await run([process.execPath, "-e", "await import('tardie/server/host'); await import('tardie/model/host')"], directory)
       await run([process.execPath, "-e", `
