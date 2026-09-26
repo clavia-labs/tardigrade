@@ -311,10 +311,12 @@ const addKnown = (total: number | undefined, part: number | undefined): number |
   total === undefined || part === undefined ? undefined : total + part
 
 // foldUsageCost adds one event in log order. Sums run in usageIn's order, so the totals are the same numbers (usage.test.ts).
+// Stale folds stay unchanged because infer recomputes their costs from the trajectory (infer.test.ts).
 export const foldUsageCost = (fold: UsageCostFold, event: Event): UsageCostFold => {
+  if (fold.stale) return fold
   const carriesUsage = event.usage !== undefined || event.legacyUsage !== undefined
   if (event.type === "MessageReceived" || event.type === "TurnCompleted" || event.type === "TurnFailed" || event.type === "TurnCancelled")
-    return carriesUsage && !fold.stale ? { ...fold, stale: true } : fold
+    return carriesUsage ? { ...fold, stale: true } : fold
   let next = fold
   const key = callKeyOf(event)
   if (event.type === "ModelCalled" && key !== undefined && !HashMap.has(next.called, key))

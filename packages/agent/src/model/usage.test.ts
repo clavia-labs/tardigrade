@@ -297,4 +297,22 @@ describe("foldUsageCost", () => {
     const late = foldUsageCost(fold, { type: "ModelCalled", callId: "m2/infer/0", turn: "m2", ordinal: 0, pricing: table })
     expect(late.stale).toBe(true)
   })
+
+  test.each(["head usage", "late pricing"])("a fold made stale by %s stops retaining and pricing later events", (reason) => {
+    const initial: Event[] = reason === "head usage"
+      ? [{ type: "MessageReceived", id: "m1", usage: {} }]
+      : [
+        { type: "ModelReturned", turn: "m1", ordinal: 0, usage: { promptTokens: 10, completionTokens: 4 } },
+        { type: "ModelCalled", turn: "m1", ordinal: 0, pricing: table }
+      ]
+    const stale = initial.reduce(foldUsageCost, emptyUsageCostFold)
+    expect(stale.stale).toBe(true)
+    const later: Event[] = [
+      { type: "ModelCalled", turn: "m2", ordinal: 0, pricing: table },
+      { type: "ModelReturned", turn: "m2", ordinal: 0, usage: { promptTokens: 10, completionTokens: 4 } },
+      { type: "ModelReturned", turn: "m2", ordinal: 1, outcome: "failed" },
+      { type: "ToolCalled", turn: "m2", legacyUsage: { reportedCostUsd: 0.1 } }
+    ]
+    for (const next of later) expect(foldUsageCost(stale, next)).toBe(stale)
+  })
 })
