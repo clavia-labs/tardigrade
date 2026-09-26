@@ -8,7 +8,7 @@ import type { CodeView, PackageDefinition } from "./definition"
 import { checkInput, renderSignature } from "../execution/contract"
 import { blockedOn, executionKeyOf, executionRefOf, packageKeyOf, packageReturned } from "../execution/events"
 import { packageCallPolicyOf, type CallPolicy } from "../execution/policy"
-import { eventEpochOf, turnHead, turnOf } from "../execution/turns"
+import { eventEpochOf, turnEpochOf, turnHead, turnOf } from "../execution/turns"
 import { BARE_SPILL_NOTE, spill, spillPointer, spillPolicyOf } from "../storage/store"
 
 // PackageCall names a proposal and its arguments without exposing executable methods.
@@ -40,6 +40,10 @@ export const packageCalls = <R>(definition: PackageDefinition<R>) => component({
     if (event.type === "TurnCompleted" || event.type === "TurnCancelled") {
       const turn = turnOf(event)
       if (turn === undefined) return state
+      const log = Chunk.toReadonlyArray(state)
+      const epoch = eventEpochOf(event)
+      const failed = log.some(item => item.type === "TurnFailed" && turnOf(item) === turn && eventEpochOf(item) === epoch)
+      if (failed || epoch !== turnEpochOf(log, turn)) return Chunk.append(state, event)
       const retained = [...state].filter(item => turnOf(item) !== turn && !(item.type === "MessageReceived" && eventIdOf(item) === turn))
       return retained.length === state.length ? state : Chunk.fromIterable(retained)
     }
