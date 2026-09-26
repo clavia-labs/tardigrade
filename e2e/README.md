@@ -10,4 +10,6 @@ The actor graph journey covers concurrent foreground children, background work, 
 
 The Mortyplicity journey generates parallel child missions, arbitrary scheduling and inference timing, human permission grants, denials, failures, durable method timeouts, budget escalation outcomes, foreground and background aggregation, and invocation cancellation across a live child graph.
 
+The message deadline journey records how the stock agent `message` method takes the default five minute actor method deadline, refuses a caller's longer `timeoutMs`, cancels a turn whose tool is still running when that deadline fires, and fails the contract check when an application re-declares the method with a longer deadline. Its `test.failing` case states the supported configuration the stock agent does not yet offer.
+
 Run this workspace with `bun run e2e`. The repository gate runs it as `test:e2e`, type-checks it as `typecheck:e2e`, and applies the Effect rules as `lint:effect:e2e`.
