@@ -40,8 +40,10 @@ export const packageCalls = <R>(definition: PackageDefinition<R>) => component({
     if (event.type === "TurnCompleted" || event.type === "TurnCancelled") {
       const turn = turnOf(event)
       if (turn === undefined) return state
-      // A terminal from a superseded epoch leaves a resumed turn open, so its events stay (calls.test.ts).
-      if (eventEpochOf(event) !== turnEpochOf(Chunk.toReadonlyArray(state), turn)) return Chunk.append(state, event)
+      const log = Chunk.toReadonlyArray(state)
+      const epoch = eventEpochOf(event)
+      const failed = log.some(item => item.type === "TurnFailed" && turnOf(item) === turn && eventEpochOf(item) === epoch)
+      if (failed || epoch !== turnEpochOf(log, turn)) return Chunk.append(state, event)
       const retained = [...state].filter(item => turnOf(item) !== turn && !(item.type === "MessageReceived" && eventIdOf(item) === turn))
       return retained.length === state.length ? state : Chunk.fromIterable(retained)
     }
