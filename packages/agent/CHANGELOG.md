@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.33.2](https://github.com/clavia-labs/tardigrade/compare/v0.33.1...v0.33.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* **model:** isolate optional Bedrock types ([#538](https://github.com/clavia-labs/tardigrade/issues/538)) ([60ed053](https://github.com/clavia-labs/tardigrade/commit/60ed05363b3e98c337e231eb22580aefccb0a2a4))
+* **replay:** keep resumed turn calls after stale completion ([#534](https://github.com/clavia-labs/tardigrade/issues/534)) ([e8b1e7e](https://github.com/clavia-labs/tardigrade/commit/e8b1e7e0f7417f9145fd6853307f840ee507e28b))
+
+
+### Performance Improvements
+
+* **agent:** compute infer lifetime cost incrementally ([#536](https://github.com/clavia-labs/tardigrade/issues/536)) ([d10d427](https://github.com/clavia-labs/tardigrade/commit/d10d4275ef7c0915439e820456cd392410a7296c))
+* **code:** find turn head in one pass ([#535](https://github.com/clavia-labs/tardigrade/issues/535)) ([b0b7e69](https://github.com/clavia-labs/tardigrade/commit/b0b7e696bd72de177993a324264e2f84c2a856cc))
+* **core:** validate only added view objects ([#533](https://github.com/clavia-labs/tardigrade/issues/533)) ([d295e79](https://github.com/clavia-labs/tardigrade/commit/d295e794fc65415836f9f2d147c003bc8fa18077))
+
 ## [0.33.1](https://github.com/clavia-labs/tardigrade/compare/v0.33.0...v0.33.1) (2026-09-25)
 
 
