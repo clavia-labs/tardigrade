@@ -133,6 +133,8 @@ Place `models` beside the provider's `baseUrl`, `protocol`, and `env`. These ent
 
 OpenAI Responses also accepts native reasoning summary settings. Anthropic accepts adaptive, disabled, or enabled thinking; enabled thinking requires at least 1024 budget tokens. The installed Effect version accepts Anthropic effort values `low`, `medium`, `high`, or `null`. Providers validate support for the selected model. Bedrock's additional fields are provider-specific JSON and follow the selected model's request contract.
 
+Bedrock requires the optional `@tardie/ai-bedrock`, `@smithy/fetch-http-handler`, and `@smithy/node-http-handler` packages. Shared model settings use Tardie-owned types. For SDK client configuration, import `providerLayer` or `inferenceLayer` and their `BedrockProviderOptions`, `ClientOptions`, `ModelConfig`, or `Send` types from `tardie/model/providers/bedrock`. This entry point accepts SDK credentials, region providers, and custom clients. Other providers and the root `tardie` entry point typecheck without Bedrock installed.
+
 Built-in Bun and Worker model services apply these settings through Effect `modelLayer`. Regenerate the model lock after changing provider configuration.
 
 The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and catalog requests do not read the cache file on each request. With no valid source or cache, both catalog endpoints answer 503. Provider credentials never appear in either response.

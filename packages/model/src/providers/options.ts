@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import type { OpenAiLanguageModel } from "@tardie/ai-openai"
 import type { OpenAiLanguageModel as CompatibleLanguageModel } from "@tardie/ai-openai-compat"
 import type { AnthropicLanguageModel } from "@tardie/ai-anthropic"
-import type { BedrockLanguageModel } from "@tardie/ai-bedrock"
+import type { BedrockModelOptions } from "./bedrock-contract"
 import type { ModelProtocol } from "./directory"
 
 export const DEFAULT_BEDROCK_TOOL_HISTORY = "text"
@@ -11,7 +11,7 @@ export interface ModelOptionsByProtocol {
   readonly "openai-responses": NonNullable<Parameters<typeof OpenAiLanguageModel.layer>[0]["config"]>
   readonly "openai-chat-completions": NonNullable<Parameters<typeof CompatibleLanguageModel.layer>[0]["config"]>
   readonly "anthropic-messages": NonNullable<Parameters<typeof AnthropicLanguageModel.layer>[0]["config"]>
-  readonly "bedrock-converse": BedrockLanguageModel.ModelConfig
+  readonly "bedrock-converse": BedrockModelOptions
 }
 
 export interface ProtocolOptions {

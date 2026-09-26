@@ -11,8 +11,7 @@ import { FetchHttpClient } from "effect/unstable/http"
 import { Prompt, Tool, Toolkit } from "effect/unstable/ai"
 import type { ConverseStreamCommandInput, ConverseStreamOutput } from "@aws-sdk/client-bedrock-runtime"
 import { collectResponse } from "@clavia/tardigrade-model/stream/collect"
-import { providerLayer } from "@clavia/tardigrade-model/providers/layer"
-import { inferenceLayer } from "@clavia/tardigrade-model/services"
+import { providerLayer, inferenceLayer } from "@clavia/tardigrade-model/providers/bedrock"
 
 
 const events = (truncated = false): ConverseStreamOutput[] => [

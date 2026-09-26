@@ -2,7 +2,7 @@ import type { ModelCredentials } from "./config"
 import { failedProviderLayer, type ProviderLayer } from "./providers/layer"
 import { protocolOptionsOf } from "./providers/options"
 import { MODEL_PROTOCOLS, modelProviderModuleOf } from "./providers/directory"
-import type { ModelConfig as BedrockModelConfig } from "@tardie/ai-bedrock/BedrockLanguageModel"
+import type { BedrockModelOptions } from "./providers/bedrock-contract"
 import { requestPolicyOf } from "./stream/request"
 import { Layer, Redacted } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -21,7 +21,7 @@ export interface ModelSettings extends RequestOptions {
   readonly openrouter?: Parameters<typeof OpenRouterLanguageModel.layer>[0]["config"]
   readonly reportedCostUsd?: ReportedCostReader
   readonly openai?: Parameters<typeof OpenAiLanguageModel.layer>[0]["config"]
-  readonly bedrock?: BedrockModelConfig
+  readonly bedrock?: BedrockModelOptions
   readonly compat?: Parameters<typeof CompatLanguageModel.layer>[0]["config"]
   readonly anthropic?: Parameters<typeof AnthropicLanguageModel.layer>[0]["config"]
   readonly output?: OutputCapability
