@@ -4,7 +4,7 @@ import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { messages } from "../messages"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentView } from "../view"
 import { turnViewFrom, trajectoryFrom } from "@clavia/tardigrade-code/execution/turn-projection"
-import { usageIn } from "../../model/usage"
+import { emptyUsageCostFold, foldUsageCost, usageCostOf, usageIn } from "../../model/usage"
 export { AGENT_VIEW_ALGEBRA, type AgentView, type AgentComponent, type AgentTool, type ContextFragment, type NativeOutputFragment, type FallbackOutputFragment, type OutputFragment } from "../view"
 import { composeComponents, handles, interactionScope, component as defineComponent, type InteractionRequest, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
@@ -115,8 +115,9 @@ export const infer = <
     name: "infer",
     input: inputs,
     dependencies: [ModelLock] as const,
-    initial: (_children, [lock]) => inference.initial(lock),
-    step: inference.step,
+    initial: (_children, [lock]) => ({ ...inference.initial(lock), lifetime: emptyUsageCostFold }),
+    // step folds the lifetime cost once per event; output reads the trajectory only when the fold is stale (usage.test.ts, "foldUsageCost").
+    step: (state, event) => ({ ...inference.step(state, event), lifetime: foldUsageCost(state.lifetime, event) }),
 
     output: (state, [child, fallback]) => {
       const children = child.output()
@@ -126,7 +127,7 @@ export const infer = <
       const compactions = new Set(children.view.messages?.flatMap(conversation => conversation.compaction?.proposals ?? []) ?? [])
       const proposals = children.transitions.filter((transition) => !compactions.has(transition.key))
       const turn = turnViewFrom(state.turns)
-      const cost = { turn: costs(turn), lifetime: costs(trajectoryFrom(state.turns)) }
+      const cost = { turn: costs(turn), lifetime: state.lifetime.stale ? costs(trajectoryFrom(state.turns)) : usageCostOf(state.lifetime) }
       return {
         view: {
           ...children.view,

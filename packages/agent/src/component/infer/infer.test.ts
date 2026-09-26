@@ -73,6 +73,21 @@ describe("infer component", () => {
     })
   })
 
+  test("lifetime fallback includes usage arriving after the fold goes stale", () => {
+    const machine = machineOf(infer([nativeOutput], TEST_MODEL))
+    const read = (events: ReadonlyArray<Event>) => replayProjection(machine, events, testModelData).view.cost.lifetime
+    const head = { type: "MessageReceived", id: "m1", text: "go", usage: { reportedCostUsd: 0, estimatedCostUsd: 0 }, at: 1 }
+    const called = { type: "ModelCalled", turn: "m1", ordinal: 0, pricing: { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }, at: 2 }
+    const returned = { type: "ModelReturned", turn: "m1", ordinal: 0, usage: { promptTokens: 10, completionTokens: 5, reportedCostUsd: 0.03 }, at: 3 }
+    expect(read([head])).toEqual({ reportedCostUsd: 0, estimatedCostUsd: 0 })
+    expect(read([head, called, returned])).toEqual({ reportedCostUsd: 0.03, estimatedCostUsd: 0.02 })
+    expect(read([
+      head, called, returned,
+      { ...called, ordinal: 1, at: 4 },
+      { ...returned, ordinal: 1, at: 5 }
+    ])).toEqual({ reportedCostUsd: 0.06, estimatedCostUsd: 0.04 })
+  })
+
   test("the actor owns model selection", () => {
     const fallback = { provider: "cloudflare", model_id: "openai/gpt-5.6-luna" } as const
     const message = {
