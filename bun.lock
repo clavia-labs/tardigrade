@@ -254,6 +254,10 @@
         "@clavia/tardigrade-model": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20260804.1",
+        "wrangler": "^4.119.0",
+      },
     },
     "packages/experimental/host": {
       "name": "@clavia/tardigrade-experimental-host",

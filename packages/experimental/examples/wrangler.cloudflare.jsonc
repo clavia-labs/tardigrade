@@ -1,0 +1,10 @@
+{
+  "name": "tardie-experimental",
+  "main": "cloudflare.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "ACTORS", "class_name": "ActorDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorDO"] }]
+}

@@ -4,9 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "cloudflare": "wrangler dev --config wrangler.cloudflare.jsonc",
     "actors": "bun actors.ts",
     "models:lock": "bun ../../../apps/cli/src/main.ts models lock",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.cloudflare.json"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "wrangler": "^4.119.0"
   },
   "dependencies": {
     "@clavia/tardigrade-experimental-core": "workspace:*",
