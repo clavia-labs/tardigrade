@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.34.0](https://github.com/clavia-labs/tardigrade/compare/v0.33.2...v0.34.0) (2026-09-27)
+
+
+### Features
+
+* add experimental durable atoms ([#541](https://github.com/clavia-labs/tardigrade/issues/541)) ([4fedab3](https://github.com/clavia-labs/tardigrade/commit/4fedab32492672d5aafc36fb1930ecd8a003f29d))
+* **agent:** bound projected context text ([#543](https://github.com/clavia-labs/tardigrade/issues/543)) ([c3a8034](https://github.com/clavia-labs/tardigrade/commit/c3a8034dce046cffdc98e865fc0b29479bc6e5f0))
+
 ## [0.33.2](https://github.com/clavia-labs/tardigrade/compare/v0.33.1...v0.33.2) (2026-09-26)
 
 
