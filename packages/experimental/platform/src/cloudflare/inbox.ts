@@ -2,7 +2,7 @@ import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { isDeepStrictEqual } from "node:util"
 import { Effect, Layer, Schema } from "effect"
 import { ClockHandle, ExecutionHandle, RuntimeError, type ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
-import { Promises, Resolution, ResolutionRegistration, registrationKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-host"
+import { Promises, PromiseSettled, ResolutionRegistration, registrationKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-host"
 
 export interface InboxStub {
   readonly watch: (request: ResolutionRegistration) => Promise<void>
@@ -19,24 +19,24 @@ export function cloudflarePromises(options: { readonly recipient: ThreadCoordina
   return Layer.succeed(Promises, { watch: request => invoke("watch", request), cancel: request => invoke("cancel", request) })
 }
 
-export const InboxCompletion = Schema.Struct({ handle: ExecutionHandle, result: Resolution.fields.result })
+export const InboxCompletion = Schema.Struct({ handle: ExecutionHandle, result: PromiseSettled.fields.result })
 export type InboxCompletion = typeof InboxCompletion.Type
 const Entry = Schema.Struct({
   request: ResolutionRegistration, nextAt: Schema.NullOr(Schema.Finite), done: Schema.Boolean,
-  settlement: Schema.optionalKey(Resolution), error: Schema.optionalKey(Schema.String),
+  settlement: Schema.optionalKey(PromiseSettled), error: Schema.optionalKey(Schema.String),
 })
 type Entry = typeof Entry.Type
-const Incoming = Schema.Struct({ handle: ExecutionHandle, result: Schema.optionalKey(Resolution.fields.result), expiresAt: Schema.Finite })
+const Incoming = Schema.Struct({ handle: ExecutionHandle, result: Schema.optionalKey(PromiseSettled.fields.result), expiresAt: Schema.Finite })
 type Incoming = typeof Incoming.Type
 const prefix = "inbox:job:"
 const incomingPrefix = "inbox:result:"
-const handleKey = (handle: ExecutionHandle) => JSON.stringify([handle.executor, handle.id, handle.endpoint ?? null, handle.at ?? null])
+const handleKey = (handle: ExecutionHandle) => JSON.stringify([handle.executor, handle.id, handle.endpoint ?? null, handle.at ?? null, handle.value === undefined ? [] : [handle.value]])
 
 // createCloudflareInbox owns a dedicated DO's storage; acknowledged payloads are discarded and deduplication receipts expire by policy.
 export function createCloudflareInbox(options: {
   readonly storage: DurableObjectStorage
   readonly poll?: ResolutionPoll
-  readonly deliver: (recipient: ThreadCoordinate, settlement: Resolution) => Effect.Effect<void, Error>
+  readonly deliver: (recipient: ThreadCoordinate, settlement: PromiseSettled) => Effect.Effect<void, Error>
   readonly verifyWebhook?: (request: Request) => Effect.Effect<InboxCompletion, Error>
   readonly policy?: Partial<PromisePolicy>
 }) {
@@ -77,7 +77,7 @@ export function createCloudflareInbox(options: {
       const result = incoming && incoming.expiresAt > Date.now() ? incoming.result : undefined
       await tx.put(key, {
         request, done: false, nextAt: result ? Date.now() : clock ? Math.max(Date.now(), clock.at) : request.mode !== "push" ? Date.now() : null,
-        ...(result ? { settlement: { type: "PromiseSettled", ref: request.ref, result } as Resolution } : {}),
+        ...(result ? { settlement: { type: "PromiseSettled", ref: request.ref, result } as PromiseSettled } : {}),
       } satisfies Entry)
     }
     await schedule(tx)
@@ -138,7 +138,7 @@ export function createCloudflareInbox(options: {
           if (!entry.settlement) {
             const clock = entry.request.handle.executor === "clock" ? Schema.decodeUnknownSync(ClockHandle)(entry.request.handle) : undefined
             const result = clock
-              ? { status: "fulfilled" as const, value: { at: clock.at } }
+              ? { status: "fulfilled" as const, value: clock.value === undefined ? { at: clock.at } : clock.value }
               : await Effect.runPromise(options.poll!(entry.request.handle).pipe(Effect.timeout(policy.attemptTimeoutMs)))
             if (result.status !== "pending") await accept({ handle: entry.request.handle, result })
             else await update(key, current => ({ ...current, nextAt: current.settlement ? Date.now() : Date.now() + policy.pollIntervalMs }))

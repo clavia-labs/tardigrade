@@ -9,9 +9,9 @@ export const ResolutionResult = Schema.Union([
   Schema.Struct({ status: Schema.Literal("fulfilled"), value: Schema.Json }),
   Schema.Struct({ status: Schema.Literal("rejected"), error: Schema.String }),
 ])
-export const Resolution = Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: ResolutionResult })
-export type Resolution = typeof Resolution.Type
-export type ResolutionResult = Resolution["result"]
+export const PromiseSettled = Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: ResolutionResult })
+export type PromiseSettled = typeof PromiseSettled.Type
+export type ResolutionResult = PromiseSettled["result"]
 export type ResolutionState = { readonly status: "pending" } | ResolutionResult
 export type ResolutionPoll = (handle: ExecutionHandle) => Effect.Effect<ResolutionState, Error>
 

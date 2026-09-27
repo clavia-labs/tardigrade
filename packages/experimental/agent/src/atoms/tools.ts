@@ -1,16 +1,16 @@
+import { settledProjection } from "./settled-projection"
 import { RuntimeError, type EffectExecution } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { atom, type Atom, durableAtom, effectValue, type EffectValue, type EffectValues } from "@clavia/tardigrade-experimental-core"
+import { atom, type Atom, effectValue, type EffectValue, type EffectValues } from "@clavia/tardigrade-experimental-core"
 import { ToolPromise, packageTools as packageMethods, type Package, type PackageRequirements } from "@clavia/tardigrade-experimental-packages"
 import type { Event, ToolCall } from "../event"
 import { ToolState, toolState, type PermissionState } from "../projections"
-import { alarms } from "./alarms"
 import { toolPromises } from "./promises"
 import type { ToolBudgetView } from "./budget"
 import type { Tool } from "../services/model"
 
-export const pendingTools = durableAtom({ schema: ToolState, initial: { queue: [], pending: null, running: false }, reduce: toolState })
+export const pendingTools = settledProjection({ schema: ToolState, initial: { queue: [], pending: null, running: false }, reduce: toolState })
 
 export type ToolPlan<R> =
   | { readonly position: "waiting" | "blocked"; readonly reason: string }
@@ -32,7 +32,7 @@ export function packageTools<const P extends readonly Package<unknown>[]>(packag
     const registry = new Map(methods.map(method => [method.spec.name, method]))
     const names = new Set(specs.map(spec => spec.name))
     return atom(get => toolValue(get(pendingTools), {
-      effects: { ...get(toolPromises).effects, ...get(alarms).effects },
+      effects: { ...get(toolPromises).effects },
       specs,
       prepare: (call: typeof ToolCall.Type): ToolPlan<Services> => ({
         position: "ready",

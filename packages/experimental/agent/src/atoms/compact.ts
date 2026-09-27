@@ -1,7 +1,8 @@
+import { settledProjection } from "./settled-projection"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { runtimeAtom, type Atom, durableAtom, effectValue } from "@clavia/tardigrade-experimental-core"
+import { runtimeAtom, type Atom, effectValue } from "@clavia/tardigrade-experimental-core"
 import { CompactionState, compactState, type Conversation } from "../projections"
 import type { ModelCalled, ModelReturned } from "../event"
 import { resolveModel } from "../services/model-lock"
@@ -55,7 +56,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     return text === message.text ? message : { ...message, text }
   })
   const estimate = (messages: typeof Conversation.Type) => Math.ceil(messages.reduce((size, message) => size + JSON.stringify(message).length, 0) / policy.charsPerToken)
-  const compactionState = durableAtom({ schema: CompactionState, initial: { through: 0, summary: "", pending: null }, reduce: compactState })
+  const compactionState = settledProjection({ schema: CompactionState, initial: { through: 0, summary: "", pending: null }, reduce: compactState })
 
   return runtimeAtom(get => {
     const messages = render(get(trajectory))

@@ -24,7 +24,7 @@ export function trajectoryState(state: typeof Conversation.Type, event: Event): 
     const message = inboxMessage(event)
     return message ? [...state, { role: "user", text: message.text }] : state
   }
-  if (event.type === "ModelReturned" && event.purpose === "inference") return [...state, { role: "assistant", text: event.text, toolCalls: event.toolCalls }]
+  if (event.type === "ModelReturned" && !("promise" in event) && event.purpose === "inference") return [...state, { role: "assistant", text: event.text, toolCalls: event.toolCalls }]
   if (event.type === "ToolReturned") {
     const call = state.flatMap(message => message.role === "assistant" ? message.toolCalls : []).find(call => call.callId === event.callId)
     if (call) return [...state, { role: "tool", callId: event.callId, name: call.name, text: event.error ?? event.output, error: event.error !== null }]
@@ -57,7 +57,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event): typ
     }
     turns = turns.map(turn => turn.turnId === event.turnId ? { ...turn, calls: [...turn.calls, { callId: event.callId, returned: false }] } : turn)
   }
-  if (event.type === "ModelReturned" && event.purpose === "inference") {
+  if (event.type === "ModelReturned" && !("promise" in event) && event.purpose === "inference") {
     if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
     if (new Set(event.toolCalls.map(call => call.callId)).size !== event.toolCalls.length) throw new RuntimeError("Duplicate tool call IDs in model reply")
     turns = turns.map(turn => turn.calls.some(call => call.callId === event.callId) ? {
@@ -96,7 +96,7 @@ export function compactState(state: typeof CompactionState.Type, event: Event): 
     if (state.pending || !Number.isSafeInteger(event.through) || event.through <= state.through) throw new RuntimeError(`Compaction call is unavailable: ${event.callId}`)
     return { ...state, pending: { callId: event.callId, through: event.through } }
   }
-  if (event.type === "ModelReturned" && event.purpose === "compaction") {
+  if (event.type === "ModelReturned" && !("promise" in event) && event.purpose === "compaction") {
     if (!state.pending || event.callId !== state.pending.callId) throw new RuntimeError(`No matching running compaction: ${event.callId}`)
     return { through: state.pending.through, summary: event.text, pending: null }
   }
@@ -109,13 +109,13 @@ export const ToolState = Schema.Struct({
 })
 export function toolState(state: typeof ToolState.Type, event: Event): typeof ToolState.Type {
   let queue = state.queue
-  if (event.type === "ModelReturned" && event.purpose === "inference" && event.toolCalls.length > 0) queue = [...queue, ...event.toolCalls.map(call => ({ call, running: false }))]
+  if (event.type === "ModelReturned" && !("promise" in event) && event.purpose === "inference" && event.toolCalls.length > 0) queue = [...queue, ...event.toolCalls.map(call => ({ call, running: false }))]
   if (event.type === "ToolCalled" && queue.some(item => item.call.callId === event.callId && !item.running)) queue = queue.map(item => item.call.callId === event.callId && !item.running ? { ...item, running: true } : item)
   if (event.type === "ToolReturned" && queue.some(item => item.call.callId === event.callId)) queue = queue.filter(item => item.call.callId !== event.callId)
   return queue === state.queue ? state : { queue, pending: queue[0]?.call ?? null, running: queue[0]?.running ?? false }
 }
 
-export const PermissionState = Schema.Struct({ policy: Schema.NullOr(PermissionPolicy), requested: Schema.Array(Schema.String), decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: Decision })) })
+export const PermissionState = Schema.Struct({ policy: Schema.NullOr(PermissionPolicy), decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: Decision })) })
 export function permissionState(state: typeof PermissionState.Type, event: Event): typeof PermissionState.Type {
   if (event.type === "PermissionConfigured") {
     if (state.policy) throw new RuntimeError("Permission policy is already configured")
@@ -125,8 +125,7 @@ export function permissionState(state: typeof PermissionState.Type, event: Event
     if (!state.policy) throw new RuntimeError("Permission policy is not configured")
     return { ...state, policy: event.policy }
   }
-  if (event.type === "PermissionRequested" && !state.requested.includes(event.callId)) return { ...state, requested: [...state.requested, event.callId] }
-  if (event.type === "PermissionResolved") {
+  if (event.type === "PermissionResolved" && "decision" in event) {
     const prior = state.decisions.findLast(value => value.callId === event.callId)?.decision
     if (prior?.allowed === event.decision.allowed && prior.reason === event.decision.reason) return state
     return { ...state, decisions: [...state.decisions, { callId: event.callId, decision: event.decision }] }
@@ -135,7 +134,7 @@ export function permissionState(state: typeof PermissionState.Type, event: Event
 }
 
 export const ToolBudgetState = Schema.Struct({
-  policy: Schema.NullOr(BudgetPolicy), used: Schema.Finite, charged: Schema.Array(Schema.String), granted: Schema.Finite, requested: Schema.Array(Schema.String),
+  policy: Schema.NullOr(BudgetPolicy), used: Schema.Finite, charged: Schema.Array(Schema.String), granted: Schema.Finite,
   decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: BudgetDecision })),
 })
 export function toolBudgetState(state: typeof ToolBudgetState.Type, event: Event): typeof ToolBudgetState.Type {
@@ -145,12 +144,8 @@ export function toolBudgetState(state: typeof ToolBudgetState.Type, event: Event
     if (!Number.isSafeInteger(event.policy.maxCalls + state.granted)) throw new RuntimeError("Total tool budget exceeds safe integer range")
     return { ...state, policy: event.policy }
   }
-  if (event.type === "BudgetRequested") {
-    if (state.requested.includes(event.callId)) throw new RuntimeError("Duplicate budget request")
-    return { ...state, requested: [...state.requested, event.callId] }
-  }
   if (event.type === "ToolCalled" && event.charged && !state.charged.includes(event.callId)) return { ...state, used: state.used + 1, charged: [...state.charged, event.callId] }
-  if (event.type === "BudgetResolved") {
+  if (event.type === "BudgetResolved" && "decision" in event) {
     const prior = state.decisions.find(value => value.callId === event.callId)
     if (prior) {
       const same = prior.decision.allowed
