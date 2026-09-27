@@ -17,6 +17,7 @@ export interface ManagedThread<Methods, State> {
   readonly methods: Methods
   readonly get: <Value>(node: Atom<Value>) => Value
   readonly getState: () => State
+  readonly wait: () => Promise<void>
   readonly close: () => Promise<void>
 }
 
@@ -93,7 +94,7 @@ export function createThreadHost<Event extends object, Services, Methods extends
       const invocationKey = invocation.key
       return serialize(`invoke:${key}`, () => invocations.invoke(invocationKey, name, input, () => method(...input as never[])))
     }])) as unknown as ThreadMethods<Methods>
-    return { coordinate: Object.freeze({ ...coordinate }), methods, get: thread.get, getState: thread.getState, invocation: invocations.get }
+    return { coordinate: Object.freeze({ ...coordinate }), methods, get: thread.get, getState: thread.getState, wait: thread.wait, invocation: invocations.get }
   }
   const allocate = (instance: string, parent: ThreadCoordinate | undefined, suppliedName?: string) => serialize(`allocate:${instance}`, async () => {
     if (parent && (parent.actor !== options.actor.actorName || parent.instance !== instance)) throw new RuntimeError("Parent belongs to another actor instance")

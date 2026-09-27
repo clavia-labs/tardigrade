@@ -1,12 +1,14 @@
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
-import { atom, type Atom, durableAtom, effectValue, type EffectValue } from "@clavia/tardigrade-experimental-core"
+import { atom, type Atom, durableAtom, effectValue, eventValue, type EffectValue } from "@clavia/tardigrade-experimental-core"
 import { ToolBudgetState, toolBudgetState, type ToolState } from "../projections"
 import { BudgetRequests } from "../services/requests"
-import { BudgetDecision, type Event } from "../event"
+import { BudgetPolicy, BudgetDecision, type Event } from "../event"
 import { BudgetRequestInput } from "../budget-tools"
 
 export type ToolBudgetView<R = never> = {
+  readonly requestTool?: string
+  readonly configured: boolean
   readonly used: number
   readonly limit: number
   readonly remaining: number
@@ -20,16 +22,22 @@ export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: {
 export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: { readonly maxCalls: number; readonly requestTool: string }): Atom<ToolBudgetView<BudgetRequests>>
 export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: { readonly maxCalls: number; readonly requestTool?: string }): Atom<ToolBudgetView<BudgetRequests>> {
   if (!Number.isSafeInteger(options.maxCalls) || options.maxCalls < 0) throw new RuntimeError("maxCalls must be a nonnegative safe integer")
-  const usage = durableAtom({ schema: ToolBudgetState, initial: { used: 0, charged: [], granted: 0, requested: [], decisions: [] }, reduce: toolBudgetState })
+  const initialPolicy = Schema.decodeSync(BudgetPolicy, { onExcessProperty: "error" })(options)
+  const usage = durableAtom({ schema: ToolBudgetState, initial: { policy: null, used: 0, charged: [], granted: 0, requested: [], decisions: [] }, reduce: toolBudgetState })
   return atom(get => {
     const state = get(usage)
+    if (!state.policy) return {
+      configured: false, used: state.used, limit: 0, remaining: 0, decision: null, request: null,
+      effect: eventValue({ id: "configure", event: { type: "BudgetConfigured", policy: initialPolicy } satisfies Event }),
+    }
+    const policy = state.policy
     const { pending, running } = get(pendingTools)
-    const limit = options.maxCalls + state.granted
+    const limit = policy.maxCalls + state.granted
     if (!Number.isSafeInteger(limit)) throw new RuntimeError("Tool budget exceeds safe integer range")
     const remaining = Math.max(0, limit - state.used)
-    const base = { used: state.used, limit, remaining }
+    const base = { ...(policy.requestTool ? { requestTool: policy.requestTool } : {}), configured: true, used: state.used, limit, remaining }
     const resolution = state.decisions.find(value => value.callId === pending?.callId)?.decision
-    if (pending && pending.name === options.requestTool) {
+    if (pending && pending.name === policy.requestTool) {
       const waiting = { ...base, decision: null, request: { callId: pending.callId, reason: "Waiting for budget decision" } }
       if (resolution) return { ...base, decision: null, request: null, response: resolution }
       if (remaining > 0) return { ...base, decision: null, request: null, response: { error: "Tool budget is not exhausted" } }

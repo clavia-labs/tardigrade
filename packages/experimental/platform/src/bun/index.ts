@@ -71,3 +71,4 @@ export async function createBunHost<Event extends object, Services, Methods exte
     })(),
   }
 }
+export { bunResolver } from "./resolver"

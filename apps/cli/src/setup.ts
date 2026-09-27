@@ -75,6 +75,12 @@ const PRESET_DETAILS: Readonly<Record<string, Omit<Preset, "title" | "provider" 
     credential: "OpenRouter API key",
     modelsUrl: "https://openrouter.ai/models"
   },
+  bifrost: {
+    description: "Your Bifrost gateway's OpenAI-compatible endpoint (URL ending in /openai)",
+    modelExample: "openai/gpt-4o-mini",
+    credential: "Bifrost virtual key (sk-bf-...)",
+    modelsUrl: "https://docs.getbifrost.ai/integrations/openai-sdk/overview"
+  },
   vercel: {
     description: "One Vercel key across model creators",
     modelExample: "anthropic/claude-opus-5",

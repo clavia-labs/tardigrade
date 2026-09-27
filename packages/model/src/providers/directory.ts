@@ -20,6 +20,7 @@ export const MODEL_PROVIDER_CONNECTIONS: ReadonlyArray<ModelProviderConnection> 
   { id: "openai", name: "OpenAI", protocol: "openai-responses", baseUrl: "https://api.openai.com/v1", region: false },
   { id: "anthropic", name: "Anthropic", protocol: "anthropic-messages", baseUrl: "https://api.anthropic.com", region: false },
   { id: "openrouter", name: "OpenRouter", protocol: "openai-chat-completions", baseUrl: "https://openrouter.ai/api/v1", region: false },
+  { id: "bifrost", name: "Bifrost", protocol: "openai-chat-completions", region: false },
   { id: "vercel", name: "Vercel AI Gateway", protocol: "openai-responses", baseUrl: "https://ai-gateway.vercel.sh/v1", region: false },
   { id: "cloudflare-ai-gateway", name: "Cloudflare AI Gateway", protocol: "openai-responses", region: false },
   { id: "azure", name: "Microsoft Foundry", protocol: "openai-responses", region: false },

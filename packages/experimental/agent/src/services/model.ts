@@ -1,4 +1,4 @@
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, type ExecutionHandle } from "@clavia/tardigrade-experimental-core"
 import { Context, Effect, JsonSchema, Layer, Schema, SchemaRepresentation } from "effect"
 import { LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
@@ -12,8 +12,11 @@ import type { ToolCall } from "../event"
 export type Tool = ToolSpec
 export interface ModelReply { readonly text: string; readonly toolCalls: readonly (typeof ToolCall.Type)[] }
 
+export interface ModelInput { readonly model: ModelRef; readonly system: string; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type }
+
 export class Model extends Context.Service<Model, {
-  readonly call: (input: { readonly model: ModelRef; readonly system: string; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type }) => Effect.Effect<ModelReply, Error, ModelLock>
+  readonly call: (input: ModelInput) => Effect.Effect<ModelReply, Error>
+  readonly submit?: (input: ModelInput) => Effect.Effect<ExecutionHandle, Error>
 }>()("example/Model") {}
 
 export const DEFAULT_MODEL_TIMEOUT_MS = 60_000
@@ -27,11 +30,12 @@ export interface ModelServiceOptions {
 export function modelServices(options: ModelServiceOptions = {}) {
   if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new RuntimeError("timeoutMs must be a positive safe integer")
   return Layer.effect(Model, Effect.gen(function* () {
+    const lock = yield* ModelLock
     const languageModel = yield* LanguageModel.LanguageModel
     const selection = yield* ModelSelection
     const fallback = yield* BindingSettings
     return { call: input => Effect.gen(function* () {
-      const resolved = (yield* ModelLock).resolve(input.model)
+      const resolved = lock.resolve(input.model)
       const settings = yield* (selection.settings?.(resolved.model) ?? Effect.succeed(fallback))
       const timeoutMs = options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
       const toolkit = yield* Effect.try({

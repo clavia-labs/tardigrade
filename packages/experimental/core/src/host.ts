@@ -7,11 +7,17 @@ import { atom, type Atom } from "./atom"
 import { EventLog } from "./durable"
 import { recordEffect, type Recorded, type Proposed, type ServicesOf } from "./internal/effects"
 import type { Journal } from "./journal"
+import { EffectExecution } from "./effects"
+import { effectKey } from "./internal/effects"
 
-export type Requirements<Atoms> = ServicesOf<Proposed<Atoms[keyof Atoms] extends Atom<infer Value> ? Value : never>>
+export type Requirements<Atoms> = Exclude<ServicesOf<Proposed<Atoms[keyof Atoms] extends Atom<infer Value> ? Value : never>>, EffectExecution>
 
 export interface ActorRuntime<Event extends object> {
   readonly ready: Effect.Effect<void>
+  // onReady registers recovery during service construction, after replay and before the store opens.
+  readonly onReady: (recover: Effect.Effect<void, Error>) => Effect.Effect<void>
+  // onCommit registers host work acknowledged after each journal commit.
+  readonly onCommit: (work: Effect.Effect<void, Error>) => Effect.Effect<void>
   readonly get: <Value>(node: Atom<Value>) => Value
   readonly sub: <Value>(node: Atom<Value>, listener: () => void) => () => void
   readonly record: (event: Recorded<Event>) => Effect.Effect<void, Error>
@@ -49,6 +55,9 @@ export async function createActorStore<Event extends object, const Atoms extends
     })]
     store.set(source, syncedEvents)
   }
+  const recovery: Effect.Effect<void, Error>[] = []
+  const committed: Effect.Effect<void, Error>[] = []
+  const lifecycle = new AbortController()
   const ready = Deferred.makeUnsafe<void>()
   const scope = Scope.makeUnsafe()
   const lock = Semaphore.makeUnsafe(1)
@@ -70,6 +79,7 @@ export async function createActorStore<Event extends object, const Atoms extends
     snapshot = next
     sync()
     for (const record of records) options.onEvent?.(record)
+    for (const work of committed) await Effect.runPromise(work, { signal: lifecycle.signal })
   }
   const append = (event: Recorded<Event>) => commit(definition.append(snapshot, event))
   let services: Awaited<ReturnType<typeof buildServices>>
@@ -81,7 +91,21 @@ export async function createActorStore<Event extends object, const Atoms extends
       const work = snapshot.effects()[0]
       if (!work) return
       if (work.request !== undefined) yield* Effect.tryPromise({ try: () => append(recordEffect(work.request!, work.ref, "requested")), catch: RuntimeError.from })
-      const result = yield* work.run.pipe(Effect.provide(services), Effect.mapError(RuntimeError.from))
+      const execution: typeof EffectExecution.Service = {
+        ref: work.ref,
+        get: store.get,
+        record: event => runtime.record(event as unknown as Recorded<Event>),
+        fork: operation => Effect.gen(function* () {
+          const context = yield* Effect.context<Effect.Services<typeof operation>>()
+          const id = effectKey(work.ref)
+          yield* runtime.fork(id, operation.pipe(
+            Effect.provide(context),
+            Effect.flatMap(result => runtime.send((Array.isArray(result) ? result : [result]) as readonly Event[])),
+          ))
+          return { executor: "local" as const, id }
+        }),
+      }
+      const result = yield* work.run.pipe(Effect.provideService(EffectExecution, execution), Effect.provide(services), Effect.mapError(RuntimeError.from))
       const results: readonly Recorded<Event>[] = Array.isArray(result) ? result : [result as Recorded<Event>]
       if (!results.length) return yield* Effect.fail(new RuntimeError("Effect settlement must contain an event"))
       const records = results.map((event, index) => index === results.length - 1 ? recordEffect(event, work.ref, "settled") : event)
@@ -103,6 +127,14 @@ export async function createActorStore<Event extends object, const Atoms extends
   })
   const runtime: ActorRuntime<Event> = {
     ready: Deferred.await(ready),
+    onReady: recover => Effect.sync(() => {
+      if (setup !== undefined) throw new RuntimeError("Recovery must be registered during service construction")
+      recovery.push(recover)
+    }),
+    onCommit: work => Effect.sync(() => {
+      if (setup !== undefined) throw new RuntimeError("Commit hooks must be registered during service construction")
+      committed.push(work)
+    }),
     get: store.get,
     sub: store.sub,
     record: event => Effect.tryPromise({ try: async () => {
@@ -113,7 +145,7 @@ export async function createActorStore<Event extends object, const Atoms extends
     fork: (id, work) => Effect.gen(function* () {
       if (closed || background.has(id)) return yield* Effect.fail(new RuntimeError(`Cannot start background work: ${id}`))
       const fiber = yield* work.pipe(
-        Effect.catchCause(cause => Effect.sync(() => { if (!closed) errors.push(new RuntimeError(Cause.pretty(cause))) })),
+        Effect.catchCause(cause => Effect.sync(() => { if (!closed && !Cause.hasInterruptsOnly(cause)) errors.push(new RuntimeError(Cause.pretty(cause))) })),
         Effect.ensuring(Effect.sync(() => { background.delete(id) })),
         Effect.forkIn(scope),
       )
@@ -135,6 +167,7 @@ export async function createActorStore<Event extends object, const Atoms extends
   }
   const close = () => closePromise ??= (async () => {
     closed = true
+    lifecycle.abort()
     for (const unsubscribe of subscriptions) unsubscribe()
     subscriptions.clear()
     for (const abort of pending.values()) abort.abort()
@@ -148,6 +181,7 @@ export async function createActorStore<Event extends object, const Atoms extends
     snapshot = definition.replay(options.journal ? await options.journal.read() : options.events ?? [])
     sync()
     Effect.runSync(Deferred.succeed(ready, undefined))
+    for (const recover of recovery) await Effect.runPromise(recover, { signal: lifecycle.signal })
     const api = {
       get: store.get,
       sub: <Value>(node: Atom<Value>, listener: () => void) => {
@@ -162,7 +196,7 @@ export async function createActorStore<Event extends object, const Atoms extends
       replay: definition.replay,
       active: () => [...background.keys()],
       wait: () => run(Effect.gen(function* () {
-        while (background.size) yield* Fiber.joinAll([...background.values()])
+        while (background.size) yield* Fiber.awaitAll([...background.values()])
         if (errors.length) return yield* Effect.fail(errors[0]!)
       })),
       close,

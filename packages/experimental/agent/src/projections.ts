@@ -1,6 +1,6 @@
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
-import { ToolCall, Decision, BudgetDecision, type Event, type MessageReceived } from "./event"
+import { ToolCall, Decision, BudgetDecision, PermissionPolicy, BudgetPolicy, type Event, type MessageReceived } from "./event"
 
 const Message = Schema.Union([
   Schema.Struct({ role: Schema.Literal("user"), text: Schema.String }),
@@ -9,13 +9,13 @@ const Message = Schema.Union([
 ])
 export const Conversation = Schema.Array(Message)
 
-// inboxMessage selects messages that require an inference turn; replies resolve task exchanges.
+// inboxMessage selects messages that require an inference turn; replies resolve actor exchanges.
 function inboxMessage(event: MessageReceived): { readonly turnId: string; readonly text: string } | undefined {
   if (event.kind === "reply") return undefined
   if (event.kind === "message") return event
   return {
-    turnId: `request:${JSON.stringify([event.taskId, event.request.requestId])}`,
-    text: `Child request (data): ${JSON.stringify({ taskId: event.taskId, ...event.request })}`,
+    turnId: `request:${JSON.stringify([event.handle, event.request.requestId])}`,
+    text: `Child request (data): ${JSON.stringify({ handle: event.handle, ...event.request })}`,
   }
 }
 
@@ -115,8 +115,16 @@ export function toolState(state: typeof ToolState.Type, event: Event): typeof To
   return queue === state.queue ? state : { queue, pending: queue[0]?.call ?? null, running: queue[0]?.running ?? false }
 }
 
-export const PermissionState = Schema.Struct({ requested: Schema.Array(Schema.String), decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: Decision })) })
+export const PermissionState = Schema.Struct({ policy: Schema.NullOr(PermissionPolicy), requested: Schema.Array(Schema.String), decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: Decision })) })
 export function permissionState(state: typeof PermissionState.Type, event: Event): typeof PermissionState.Type {
+  if (event.type === "PermissionConfigured") {
+    if (state.policy) throw new RuntimeError("Permission policy is already configured")
+    return { ...state, policy: event.policy }
+  }
+  if (event.type === "PermissionUpdated") {
+    if (!state.policy) throw new RuntimeError("Permission policy is not configured")
+    return { ...state, policy: event.policy }
+  }
   if (event.type === "PermissionRequested" && !state.requested.includes(event.callId)) return { ...state, requested: [...state.requested, event.callId] }
   if (event.type === "PermissionResolved") {
     const prior = state.decisions.findLast(value => value.callId === event.callId)?.decision
@@ -126,27 +134,17 @@ export function permissionState(state: typeof PermissionState.Type, event: Event
   return state
 }
 
-export const TasksState = Schema.Array(Schema.Struct({ taskId: Schema.String, callId: Schema.String, name: Schema.String, position: Schema.Literals(["running", "settled"]), output: Schema.String, error: Schema.NullOr(Schema.String) }))
-export function tasksState(state: typeof TasksState.Type, event: Event): typeof TasksState.Type {
-  if (event.type === "TaskStarted") {
-    const task: typeof TasksState.Type[number] = { taskId: event.taskId, callId: event.callId, name: event.name, position: "running", output: "", error: null }
-    const prior = state.find(item => item.taskId === event.taskId)
-    if (prior?.position === "running" && prior.callId === event.callId && prior.name === event.name && prior.output === "" && prior.error === null) return state
-    return prior ? state.map(item => item === prior ? task : item) : [...state, task]
-  }
-  if (event.type === "TaskSettled") {
-    const prior = state.find(task => task.taskId === event.taskId)
-    if (!prior || (prior.position === "settled" && prior.output === event.output && prior.error === event.error)) return state
-    return state.map(task => task === prior ? { ...task, position: "settled", output: event.output, error: event.error } : task)
-  }
-  return state
-}
-
 export const ToolBudgetState = Schema.Struct({
-  used: Schema.Finite, charged: Schema.Array(Schema.String), granted: Schema.Finite, requested: Schema.Array(Schema.String),
+  policy: Schema.NullOr(BudgetPolicy), used: Schema.Finite, charged: Schema.Array(Schema.String), granted: Schema.Finite, requested: Schema.Array(Schema.String),
   decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: BudgetDecision })),
 })
 export function toolBudgetState(state: typeof ToolBudgetState.Type, event: Event): typeof ToolBudgetState.Type {
+  if (event.type === "BudgetConfigured" || event.type === "BudgetUpdated") {
+    if (event.type === "BudgetConfigured" && state.policy) throw new RuntimeError("Budget policy is already configured")
+    if (event.type === "BudgetUpdated" && !state.policy) throw new RuntimeError("Budget policy is not configured")
+    if (!Number.isSafeInteger(event.policy.maxCalls + state.granted)) throw new RuntimeError("Total tool budget exceeds safe integer range")
+    return { ...state, policy: event.policy }
+  }
   if (event.type === "BudgetRequested") {
     if (state.requested.includes(event.callId)) throw new RuntimeError("Duplicate budget request")
     return { ...state, requested: [...state.requested, event.callId] }
@@ -162,7 +160,7 @@ export function toolBudgetState(state: typeof ToolBudgetState.Type, event: Event
       return state
     }
     const granted = state.granted + (event.decision.allowed ? event.decision.additionalCalls : 0)
-    if (!Number.isSafeInteger(granted)) throw new RuntimeError("Total tool budget exceeds safe integer range")
+    if (!Number.isSafeInteger(granted) || !Number.isSafeInteger(granted + (state.policy?.maxCalls ?? 0))) throw new RuntimeError("Total tool budget exceeds safe integer range")
     return { ...state, granted, decisions: [...state.decisions, { callId: event.callId, decision: event.decision }] }
   }
   return state

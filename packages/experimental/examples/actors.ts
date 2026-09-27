@@ -36,6 +36,8 @@ async function run() {
     }, { key: "portal-experiment" })
 
     console.log({ rickResponse })
+    await rickMain.wait()
+    console.log(rickMain.get(trajectory).findLast(entry => entry.role === "assistant")?.text)
   } finally {
     await host.close()
   }

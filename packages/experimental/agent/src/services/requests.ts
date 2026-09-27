@@ -1,6 +1,6 @@
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Context, Effect, Layer } from "effect"
-import type { TaskExecution } from "@clavia/tardigrade-experimental-packages"
+import type { ActorCaller } from "@clavia/tardigrade-experimental-host"
 import type { BudgetDecision, Decision, ToolCall } from "../event"
 
 export class PermissionRequests extends Context.Service<PermissionRequests, {
@@ -19,10 +19,10 @@ export class BudgetRequests extends Context.Service<BudgetRequests, {
   readonly request: (request: BudgetRequest) => Effect.Effect<typeof BudgetDecision.Type, Error>
 }>()("example/BudgetRequests") {}
 
-// parentBudgetRequests translates a parent task reply into a budget decision without changing actor state.
-export const parentBudgetRequests = (task: typeof TaskExecution.Service) => Layer.succeed(BudgetRequests, {
+// parentBudgetRequests translates a parent actor reply into a budget decision without changing actor state.
+export const parentBudgetRequests = (caller: ActorCaller) => Layer.succeed(BudgetRequests, {
   request: request => Effect.gen(function* () {
-    const decision = yield* task.request({
+    const decision = yield* caller.request({
       requestId: request.callId, kind: "budget", description: request.reason,
       input: { amount: request.amount, used: request.used, limit: request.limit },
     })

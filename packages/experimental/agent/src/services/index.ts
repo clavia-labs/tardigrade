@@ -1,5 +1,6 @@
 export * from "./model"
+export * from "./bifrost"
 export * from "./requests"
 export * from "./runtime"
-export * from "./alarms"
+export * from "./resolver"
 export * from "./model-lock"

@@ -231,6 +231,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-experimental-core": "workspace:*",
+        "@clavia/tardigrade-experimental-host": "workspace:*",
         "@clavia/tardigrade-experimental-packages": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "effect": "4.0.0-rc.115",
@@ -271,6 +272,8 @@
       "name": "@clavia/tardigrade-experimental-packages",
       "version": "0.0.1",
       "dependencies": {
+        "@clavia/tardigrade-experimental-core": "workspace:*",
+        "@clavia/tardigrade-experimental-host": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
     },

@@ -1,32 +1,36 @@
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
-import { atom, type Atom, durableAtom, effectValue, type EffectValue } from "@clavia/tardigrade-experimental-core"
+import { atom, type Atom, durableAtom, effectValue, eventValue, type EffectValue } from "@clavia/tardigrade-experimental-core"
 import { PermissionState, permissionState, type ToolState } from "../projections"
 import { PermissionRequests } from "../services/requests"
-import { Decision, type Event, type ToolCall } from "../event"
+import { Decision, PermissionPolicy, type Event } from "../event"
 
 type PermissionView<R> = typeof PermissionState.Type & {
-  readonly position: "ready" | "checking" | "waiting"
+  readonly position: "configuring" | "ready" | "checking" | "waiting"
   readonly effect?: EffectValue<Event, Error, R>
 }
-type Policy = (call: typeof ToolCall.Type) => typeof Decision.Type
+export const DEFAULT_PERMISSION_POLICY: typeof PermissionPolicy.Type = { default: "ask", tools: {} }
 
-export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: { readonly policy: Policy }): Atom<PermissionView<never>>
-export function permissions(pendingTools: Atom<typeof ToolState.Type>): Atom<PermissionView<PermissionRequests>>
-export function permissions(pendingTools: Atom<typeof ToolState.Type>, options?: { readonly policy: Policy }): Atom<PermissionView<PermissionRequests>> {
-  const decisions = durableAtom({ schema: PermissionState, initial: { requested: [], decisions: [] }, reduce: permissionState })
+// permissions records its initial policy and uses logged updates for subsequent calls.
+export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: { readonly policy?: typeof PermissionPolicy.Type } = {}): Atom<PermissionView<PermissionRequests>> {
+  const initialPolicy = Schema.decodeSync(PermissionPolicy)(options.policy ?? DEFAULT_PERMISSION_POLICY)
+  const decisions = durableAtom({ schema: PermissionState, initial: { policy: null, requested: [], decisions: [] }, reduce: permissionState })
   return atom(get => {
     const state = get(decisions)
+    if (!state.policy) return {
+      ...state, position: "configuring",
+      effect: eventValue({ id: "configure", event: { type: "PermissionConfigured", policy: initialPolicy } satisfies Event }),
+    }
     const call = get(pendingTools).pending
     if (!call || state.decisions.some(value => value.callId === call.callId)) return { ...state, position: "ready" }
-    if (options?.policy) return {
+    const mode = Object.hasOwn(state.policy.tools, call.name) ? state.policy.tools[call.name]! : state.policy.default
+    if (mode !== "ask") return {
       ...state, position: "ready",
-      decisions: [...state.decisions, { callId: call.callId, decision: Schema.decodeSync(Decision)(options.policy(call)) }],
+      decisions: [...state.decisions, { callId: call.callId, decision: { allowed: mode === "allow", reason: `Permission policy: ${mode}` } }],
     }
     if (state.requested.includes(call.callId)) return { ...state, position: "waiting" }
     return {
-      ...state,
-      position: "checking",
+      ...state, position: "checking",
       effect: effectValue({
         id: call.callId,
         request: { type: "PermissionRequested" as const, callId: call.callId },

@@ -1,22 +1,26 @@
-import { Context, Effect, Schema } from "effect"
+import { Effect, Schema } from "effect"
+import { ExecutionHandle } from "@clavia/tardigrade-experimental-core"
+import { Actor } from "@clavia/tardigrade-experimental-host"
 import { definePackage } from "./package"
-import { asyncTool } from "./tool"
-import { TaskExecution } from "./task"
+import { promiseTool, tool } from "./tool"
 
-export class AgentRunner extends Context.Service<AgentRunner, {
-  readonly run: (message: string, task: typeof TaskExecution.Service) => Effect.Effect<unknown, Error>
-}>()("tardigrade/experimental/packages/AgentRunner") {}
-
-// agents exposes child-agent execution as a background package method.
+// agents submits child calls through the host actor service and returns promise handles.
 export function agents() {
   return definePackage({
     name: "agents", description: "Delegate work to child agents.",
-    methods: [asyncTool({
-      name: "run", description: "Start a child agent with a message. Returns a task reference; requests and results arrive in the inbox.",
+    methods: [promiseTool({
+      name: "run", description: "Start a child agent with a message. Returns a promise handle immediately; its result arrives in the inbox.",
       input: Schema.Struct({ message: Schema.String }),
-      run: ({ message }, task) => Effect.gen(function* () {
-        const runner = yield* AgentRunner
-        return yield* runner.run(message, task)
+      submit: ({ message }, call) => Effect.gen(function* () {
+        const actor = yield* Actor
+        return yield* actor.submit({ id: call.callId, message })
+      }),
+    }), tool({
+      name: "cancel", description: "Cancel a child using the handle returned by agents.run. Its promise will settle with cancellation if still pending.",
+      input: Schema.Struct({ handle: ExecutionHandle }),
+      run: ({ handle }) => Effect.gen(function* () {
+        yield* (yield* Actor).cancel(handle)
+        return { handle, cancellationRequested: true }
       }),
     })],
   })
