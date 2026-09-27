@@ -1,5 +1,5 @@
 import { ModelRef } from "@clavia/tardigrade-model/reference"
-import { ActorRequest, ActorDecision, Resolution } from "@clavia/tardigrade-experimental-host"
+import { ActorRequest, ActorDecision, Resolution, ResolutionRequest } from "@clavia/tardigrade-experimental-host"
 import { Schema } from "effect"
 import { EffectRef, ExecutionHandle, promiseSchema } from "@clavia/tardigrade-experimental-core"
 import { AlarmSet, AlarmCancelled, ToolPromise } from "@clavia/tardigrade-experimental-packages"
@@ -13,7 +13,7 @@ export const ModelSubmitted = Schema.Struct({ type: Schema.Literal("ModelSubmitt
 export const Decision = Schema.Struct({ allowed: Schema.Boolean, reason: Schema.String })
 
 export const PermissionMode = Schema.Literals(["allow", "deny", "ask"])
-export const PermissionPolicy = Schema.Struct({ default: PermissionMode, tools: Schema.Record(Schema.String, PermissionMode) })
+export const PermissionPolicy = Schema.Struct({ default: PermissionMode, tools: Schema.Record(Schema.String, PermissionMode), readOnly: Schema.optionalKey(PermissionMode) })
 export const BudgetPolicy = Schema.Struct({ maxCalls: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)), requestTool: Schema.optionalKey(Schema.NonEmptyString) })
 export const PermissionConfigured = Schema.Struct({ type: Schema.Literal("PermissionConfigured"), policy: PermissionPolicy })
 export const PermissionUpdated = Schema.Struct({ type: Schema.Literal("PermissionUpdated"), policy: PermissionPolicy })
@@ -26,6 +26,9 @@ export const BudgetDecision = Schema.Union([
 ])
 
 export const BudgetRequested = Schema.Struct({ type: Schema.Literal("BudgetRequested"), callId: Schema.String, amount: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)), reason: Schema.NonEmptyString })
+
+export const BudgetSubmitted = Schema.Struct({ type: Schema.Literal("BudgetSubmitted"), callId: Schema.String, ...ResolutionRequest.fields })
+export const PermissionSubmitted = Schema.Struct({ type: Schema.Literal("PermissionSubmitted"), callId: Schema.String, ...ResolutionRequest.fields })
 
 export const BudgetResolved = Schema.Struct({ type: Schema.Literal("BudgetResolved"), callId: Schema.String, decision: BudgetDecision })
 export type BudgetResolved = typeof BudgetResolved.Type
@@ -79,6 +82,8 @@ export const Event = Schema.Union([
   BudgetUpdated,
   PermissionConfigured,
   PermissionUpdated,
+  BudgetSubmitted,
+  PermissionSubmitted,
   BudgetRequested,
   BudgetResolved,
   PermissionRequested,

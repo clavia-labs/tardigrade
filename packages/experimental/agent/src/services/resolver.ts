@@ -3,6 +3,7 @@ import { Atom } from "effect/unstable/reactivity"
 import { atom, durableAtom, type ActorRuntime } from "@clavia/tardigrade-experimental-core"
 import { Resolver, Resolution, ResolutionRequest, resolutionKey } from "@clavia/tardigrade-experimental-host"
 import { alarmState, alarmRequest } from "@clavia/tardigrade-experimental-packages"
+import { requestPromises } from "../atoms/requests"
 import { toolPromises } from "../atoms/promises"
 import { ModelSubmitted, type Event } from "../event"
 
@@ -17,6 +18,7 @@ const remoteModels = durableAtom({
 })
 const requests = atom(get => ({
   pending: [
+    ...get(requestPromises).filter(item => item.result.status === "pending" && item.handle.executor !== "local").map(({ ref, handle, mode }) => ({ ref, handle, ...(mode ? { mode } : {}) })),
     ...get(toolPromises).pending.filter(item => item.handle.executor !== "local").map(({ ref, handle }) => ({ ref, handle })),
     ...get(remoteModels).map(({ ref, handle }) => ({ ref, handle })),
     ...get(alarmState).filter(item => item.status === "pending").map(alarmRequest),

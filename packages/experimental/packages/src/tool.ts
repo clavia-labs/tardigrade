@@ -2,7 +2,7 @@ import { ToolError } from "./errors"
 import { EffectExecution, EffectRef, ExecutionHandle, durablePromise } from "@clavia/tardigrade-experimental-core"
 import { Cause, Effect, Exit, Layer, Schema } from "effect"
 import { Context } from "effect"
-import type { ToolCall, ToolSpec, ExecutionMode } from "./types"
+import type { ToolCall, ToolSpec, ExecutionMode, ToolMetadata } from "./types"
 
 export interface ToolInvocation extends ToolCall {
   readonly parentCallId?: string
@@ -21,6 +21,7 @@ export const DEFAULT_TOOL_EXECUTION = "sync" as const
 interface ToolOptions<Input, R> {
   readonly name: string
   readonly description: string
+  readonly metadata?: typeof ToolMetadata.Type
   readonly input: Schema.ConstraintDecoder<Input>
   readonly run: (input: Input, call: ToolInvocation) => Effect.Effect<unknown, Error, R>
 }
@@ -31,7 +32,7 @@ export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execu
 export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execution?: ExecutionMode }): AgentTool<R | EffectExecution> {
   const execution = options.execution ?? DEFAULT_TOOL_EXECUTION
   return {
-    spec: { name: options.name, description: options.description, inputSchema: Schema.toJsonSchemaDocument(options.input).schema, execution },
+    spec: { name: options.name, description: options.description, inputSchema: Schema.toJsonSchemaDocument(options.input).schema, ...(options.metadata ? { metadata: options.metadata } : {}), execution },
     execute: (input, call) => Effect.gen(function* () {
       const value = yield* Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(input).pipe(Effect.mapError(ToolError.from))
       if (execution === "sync") return yield* options.run(value, call)
@@ -51,6 +52,7 @@ export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execu
 export function promiseTool<Input, R>(options: {
   readonly name: string
   readonly description: string
+  readonly metadata?: typeof ToolMetadata.Type
   readonly input: Schema.ConstraintDecoder<Input>
   readonly submit: (input: Input, call: ToolInvocation) => Effect.Effect<ExecutionHandle, Error, R>
 }): AgentTool<R | EffectExecution> {
