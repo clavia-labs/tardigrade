@@ -6,26 +6,58 @@ import type { ModelCalled, ModelReturned } from "../event"
 import { resolveModel } from "../services/model-lock"
 import { Model } from "../services/model"
 
-export const DEFAULT_COMPACTION_POLICY = { triggerRatio: 0.8, retainRatio: 0.5, charsPerToken: 4 } as const
+export const DEFAULT_COMPACTION_POLICY = {
+  triggerRatio: 0.8, retainRatio: 0.5, charsPerToken: 4,
+  toolOutputTokenLimit: 10_000, userMessageTokenLimit: 262_144,
+} as const
+
+const TRUNCATION_MARKER = "\n[truncated]\n"
 
 export interface CompactionOptions {
   readonly triggerRatio?: number
   readonly retainRatio?: number
   readonly charsPerToken?: number
+  // toolOutputTokenLimit bounds rendered tool text using charsPerToken, including the truncation marker.
+  readonly toolOutputTokenLimit?: number
+  // userMessageTokenLimit bounds rendered user text using charsPerToken, including the truncation marker.
+  readonly userMessageTokenLimit?: number
 }
 
-// compact summarizes above the trigger threshold and retains a tail near the lower threshold.
+// compact clips projected text and summarizes above the trigger threshold, retaining a tail near the lower threshold.
 export function compact(trajectory: Atom<typeof Conversation.Type>, options: CompactionOptions = {}) {
   const policy = { ...DEFAULT_COMPACTION_POLICY, ...options }
   if (!Number.isFinite(policy.charsPerToken) || policy.charsPerToken <= 0
     || !(policy.retainRatio > 0 && policy.retainRatio < policy.triggerRatio && policy.triggerRatio < 1)) {
     throw new RuntimeError("Compaction requires positive charsPerToken, and 0 < retainRatio < triggerRatio < 1")
   }
+  const charLimit = (tokens: number) => {
+    const chars = Math.floor(tokens * policy.charsPerToken)
+    if (!Number.isSafeInteger(tokens) || tokens < 1 || !Number.isSafeInteger(chars) || chars < TRUNCATION_MARKER.length) {
+      throw new RuntimeError(`Compaction token limits must be positive safe integers and allow at least ${TRUNCATION_MARKER.length} characters for a truncation marker`)
+    }
+    return chars
+  }
+  const toolCharLimit = charLimit(policy.toolOutputTokenLimit)
+  const userCharLimit = charLimit(policy.userMessageTokenLimit)
+  const clip = (text: string, limit: number) => {
+    if (text.length <= limit) return text
+    const retained = limit - TRUNCATION_MARKER.length
+    const head = Math.ceil(retained / 2)
+    const tail = retained - head
+    const prefix = text.slice(0, head).replace(/[\uD800-\uDBFF]$/, "")
+    const suffix = tail ? text.slice(-tail).replace(/^[\uDC00-\uDFFF]/, "") : ""
+    return prefix + TRUNCATION_MARKER + suffix
+  }
+  const render = (messages: typeof Conversation.Type): typeof Conversation.Type => messages.map(message => {
+    if (message.role === "assistant") return message
+    const text = clip(message.text, message.role === "tool" ? toolCharLimit : userCharLimit)
+    return text === message.text ? message : { ...message, text }
+  })
   const estimate = (messages: typeof Conversation.Type) => Math.ceil(messages.reduce((size, message) => size + JSON.stringify(message).length, 0) / policy.charsPerToken)
   const compactionState = durableAtom({ schema: CompactionState, initial: { through: 0, summary: "", pending: null }, reduce: compactState })
 
   return runtimeAtom(get => {
-    const messages = get(trajectory)
+    const messages = render(get(trajectory))
     const state = get(compactionState)
     return Effect.gen(function* () {
       const selection = yield* resolveModel
@@ -34,7 +66,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
       if (retainTokens < 1 || triggerTokens <= retainTokens) throw new RuntimeError("Compaction thresholds require triggerTokens > retainTokens >= 1")
 
       const remaining = messages.slice(state.through)
-      const summary = state.summary ? [{ role: "user" as const, text: `Earlier conversation summary (compaction applied):\n${state.summary}` }] : []
+      const summary = render(state.summary ? [{ role: "user" as const, text: `Earlier conversation summary (compaction applied):\n${state.summary}` }] : [])
       const visible = [...summary, ...remaining]
       const usage = { estimatedTokens: estimate(visible), contextWindowTokens: selection.contextWindowTokens, triggerTokens, retainTokens }
       const ready = { position: "ready" as const, messages: visible, policy, ...usage }
