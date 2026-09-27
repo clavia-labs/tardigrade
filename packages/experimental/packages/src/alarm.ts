@@ -10,8 +10,9 @@ const Alarm = Schema.Struct({ alarmId: Schema.NonEmptyString, at: Deadline, mess
 
 const ReturnedPromise = Schema.Struct({ type: Schema.Literal("ToolReturned"), promise: ToolPromise })
 const promises = durableAtom({
+  input: ReturnedPromise,
   schema: Schema.Array(ToolPromise), initial: [],
-  reduce: (state, event: unknown) => Schema.is(ReturnedPromise)(event) ? [...state, event.promise] : state,
+  reduce: (state, event) => [...state, event.promise],
 })
 
 // alarm exposes reminders as clock promises and records cancellation through promise settlement.

@@ -1,14 +1,18 @@
 import { Schema } from "effect"
 import { atom, durableAtom } from "@clavia/tardigrade-experimental-core"
-import { ModelPromiseReturned, ModelReply, PermissionPromiseResolved, BudgetPromiseResolved, Decision, BudgetDecision, type Event } from "../event"
+import { ModelPromiseReturned, ModelReply, PermissionPromiseResolved, BudgetPromiseResolved, Decision, BudgetDecision, Event } from "../event"
 
 // settledProjection supplies completed model and governance values to domain reducers without appending duplicate domain events.
-export function settledProjection<State>(options: {
+export function settledProjection<State, Input extends Event>(options: {
+  readonly input: Schema.Schema<Input>
   readonly schema: Schema.Schema<State>
   readonly initial: NoInfer<State>
-  readonly reduce: (state: NoInfer<State>, event: Event) => NoInfer<State>
+  readonly reduce: (state: NoInfer<State>, event: NoInfer<Input>) => NoInfer<State>
 }) {
+  const accepts = Schema.is(options.input)
+  const reduce = (state: State, event: Event) => accepts(event) ? options.reduce(state, event) : state
   const frame = durableAtom({
+    input: Event,
     schema: Schema.Struct({ value: options.schema, pending: Schema.Array(Schema.Union([ModelPromiseReturned, PermissionPromiseResolved, BudgetPromiseResolved])) }),
     initial: { value: options.initial, pending: [] },
     reduce: (state, event: Event) => {
@@ -24,11 +28,11 @@ export function settledProjection<State>(options: {
               resolved = returned.type === "PermissionResolved"
                 ? { type: "PermissionResolved", callId: returned.callId, decision: Schema.decodeUnknownSync(Decision)(event.result.value) }
                 : { type: "BudgetResolved", callId: returned.callId, decision: Schema.decodeUnknownSync(BudgetDecision)(event.result.value) }
-              return { value: options.reduce(state.value, resolved), pending }
+              return { value: reduce(state.value, resolved), pending }
             } catch (error) {
               const decision = { allowed: false as const, reason: `Request failed: ${String(error)}` }
               resolved = returned.type === "BudgetResolved" ? { type: "BudgetResolved", callId: returned.callId, decision } : { type: "PermissionResolved", callId: returned.callId, decision }
-              return { value: options.reduce(state.value, resolved), pending }
+              return { value: reduce(state.value, resolved), pending }
             }
           }
           if (event.result.status === "rejected") return { ...state, pending }
@@ -37,10 +41,10 @@ export function settledProjection<State>(options: {
             ? { type: "ModelReturned", purpose: "inference", callId: returned.callId, text: reply.text,
                 toolCalls: reply.toolCalls.map((call, index) => ({ ...call, callId: `${returned.callId}:tool:${index}` })) }
             : { type: "ModelReturned", purpose: "compaction", callId: returned.callId, text: reply.text }
-          return { value: options.reduce(state.value, resolved), pending }
+          return { value: reduce(state.value, resolved), pending }
         }
       }
-      const value = options.reduce(state.value, event)
+      const value = reduce(state.value, event)
       return Object.is(value, state.value) ? state : { ...state, value }
     },
   })

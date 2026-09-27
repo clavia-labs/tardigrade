@@ -4,9 +4,10 @@ import { atom, durableAtom, type ActorRuntime } from "@clavia/tardigrade-experim
 import { Promises, PromiseSettled, ResolutionRequest, resolutionKey } from "@clavia/tardigrade-experimental-host"
 import { requestPromises } from "../atoms/requests"
 import { toolPromises } from "../atoms/promises"
-import { ModelPromiseReturned, type Event } from "../event"
+import { ModelPromiseReturned, Event } from "../event"
 
 const remoteModels = durableAtom({
+  input: Event,
   schema: Schema.Array(ModelPromiseReturned), initial: [],
   reduce: (state, event: Event) => {
     if (event.type === "ModelReturned" && "promise" in event && event.promise.handle.executor !== "local") return [...state, event]
@@ -18,7 +19,7 @@ const remoteModels = durableAtom({
 const requests = atom(get => ({
   pending: [
     ...get(requestPromises).filter(item => item.result.status === "pending" && item.handle.executor !== "local").map(({ ref, handle, mode }) => ({ ref, handle, ...(mode ? { mode } : {}) })),
-    ...get(toolPromises).pending.filter(item => item.handle.executor !== "local").map(({ ref, handle }) => ({ ref, handle })),
+    ...get(toolPromises).view.pending.filter(item => item.handle.executor !== "local").map(({ ref, handle }) => ({ ref, handle })),
     ...get(remoteModels).map(({ promise: { ref, handle } }) => ({ ref, handle })),
   ],
 })).pipe(Atom.withLabel("promise registrations"))

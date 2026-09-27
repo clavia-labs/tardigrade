@@ -99,7 +99,7 @@ export function createThreadHost<Event extends object, Services, Methods extends
   const allocate = (instance: string, parent: ThreadCoordinate | undefined, suppliedName?: string) => serialize(`allocate:${instance}`, async () => {
     if (parent && (parent.actor !== options.actor.actorName || parent.instance !== instance)) throw new RuntimeError("Parent belongs to another actor instance")
     const supervisor = await supervisorFor(instance)
-    const directory = supervisor.getState().threads
+    const directory = supervisor.getState().view.threads
     const ancestor = parent ? directory.find(entry => entry.coordinate.thread === parent.thread && entry.status === "registered") : undefined
     if (parent && !ancestor) throw new RuntimeError("Unknown parent thread")
     const name = suppliedName ?? (options.generateName ?? crypto.randomUUID)()
@@ -121,7 +121,7 @@ export function createThreadHost<Event extends object, Services, Methods extends
     getThread: async (input: { readonly instance: string; readonly thread: string }) => {
       check()
       const supervisor = await supervisorFor(input.instance)
-      const entry = supervisor.getState().threads.find(thread => thread.coordinate.thread === input.thread && thread.status === "registered")
+      const entry = supervisor.getState().view.threads.find(thread => thread.coordinate.thread === input.thread && thread.status === "registered")
       return entry ? reference(entry.coordinate) : undefined
     },
     allocateRootThread: async (input: { readonly instance: string; readonly name?: string }) => allocate(input.instance, undefined, input.name),

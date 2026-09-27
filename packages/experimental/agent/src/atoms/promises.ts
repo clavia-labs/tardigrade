@@ -1,19 +1,20 @@
 import { Schema } from "effect"
 import { Atom } from "effect/unstable/reactivity"
-import { atom, durableAtom, durablePromise, eventValue } from "@clavia/tardigrade-experimental-core"
+import { effectAtom, durableAtom, durablePromise, eventValue } from "@clavia/tardigrade-experimental-core"
 import { ToolPromise } from "@clavia/tardigrade-experimental-packages"
-import type { Event, MessageReceived } from "../event"
+import { ToolReturned, type MessageReceived } from "../event"
 
 const submissions = durableAtom({
+  input: ToolReturned,
   schema: Schema.Array(Schema.Struct({ callId: Schema.String, promise: ToolPromise })), initial: [],
-  reduce: (state, event: Event) => event.type === "ToolReturned" && event.promise
+  reduce: (state, event) => event.type === "ToolReturned" && event.promise
     ? [...state, { callId: event.callId, promise: event.promise }] : state,
 })
 const replies = new Map<string, ReturnType<typeof makeReply>>()
 const makeReply = (promise: ToolPromise) => durablePromise(promise.ref, { success: Schema.Json, error: Schema.String })
 
 // toolPromises interprets settled tool promises as inbox messages and exposes unresolved handles for the resolver.
-export const toolPromises = atom(get => {
+export const toolPromises = effectAtom(get => {
   const items = get(submissions).map(item => {
     const key = JSON.stringify(item.promise.ref)
     let reply = replies.get(key)
@@ -21,7 +22,7 @@ export const toolPromises = atom(get => {
     return { ...item, result: get(reply.state) }
   })
   return {
-    pending: items.filter(item => item.result.status === "pending").map(item => item.promise),
+    view: { pending: items.filter(item => item.result.status === "pending").map(item => item.promise) },
     effects: Object.fromEntries(items.filter(item => item.result.status !== "pending").map(item => [
       `promise:${item.callId}`,
       eventValue({ id: `deliver:${item.callId}`, event: {

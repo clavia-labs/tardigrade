@@ -1,5 +1,5 @@
 import { Context, Effect, Schema } from "effect"
-import { atom } from "./atom"
+import { effectAtom } from "./effects"
 import { defineActor } from "./actor"
 import { durableAtom } from "./durable"
 import type { EffectValue } from "./effects"
@@ -26,6 +26,7 @@ export class ThreadProvisioner extends Context.Service<ThreadProvisioner, {
 
 // threads projects allocation state; provisioning must tolerate repetition after interrupted registration.
 export const threads = durableAtom({
+  input: SupervisorEvent,
   schema: Schema.Array(Thread),
   initial: [],
   reduce: (state, event: SupervisorEvent) => {
@@ -44,7 +45,7 @@ export const threads = durableAtom({
   },
 })
 
-const supervisor = Object.assign(atom(get => {
+const supervisor = Object.assign(effectAtom(get => {
   const directory = get(threads)
   const effects = Object.fromEntries(directory.filter(entry => entry.status === "requested").map(allocation => [
     allocation.coordinate.thread,
@@ -57,7 +58,7 @@ const supervisor = Object.assign(atom(get => {
       }),
     } satisfies EffectValue<SupervisorEvent, Error, ThreadProvisioner>,
   ]))
-  return { threads: directory, effects }
+  return { view: { threads: directory }, effects }
 }), { schema: SupervisorEvent })
 
 export const createSupervisor = defineActor("supervisor", Effect.succeed({

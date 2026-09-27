@@ -5,6 +5,7 @@ import { createCloudflareHost, cloudflareHandler } from "@clavia/tardigrade-expe
 
 const Message = Schema.Struct({ type: Schema.Literal("MessageReceived"), text: Schema.String })
 const messages = durableAtom({
+  input: Message,
   schema: Schema.Array(Schema.String),
   initial: [],
   reduce: (state, event: typeof Message.Type) => [...state, event.text],

@@ -30,12 +30,11 @@ export function durablePromise<Value, Error = never>(reference: EffectRef, optio
   const validate = Schema.decodeUnknownSync(Schema.toType(schema), { onExcessProperty: "error" })
   const stateSchema: Schema.Schema<PromiseState<Value, Error>> = Schema.Union([Schema.Struct({ status: Schema.Literal("pending") }), result])
   const state = durableAtom({
+    input: Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: Schema.Unknown }),
     schema: stateSchema,
     initial: { status: "pending" },
-    reduce: (previous, event: unknown) => {
-      if (typeof event !== "object" || event === null || !("type" in event) || event.type !== "PromiseSettled") return previous
-      const eventRef = Schema.decodeUnknownSync(EffectRef)("ref" in event ? event.ref : undefined)
-      if (effectKey(eventRef) !== id) return previous
+    reduce: (previous, event) => {
+      if (effectKey(event.ref) !== id) return previous
       const settlement = validate(event)
       if (previous.status === "pending") return settlement.result
       if (!isDeepStrictEqual(previous, settlement.result)) throw new RuntimeError(`Conflicting promise settlement: ${id}`)

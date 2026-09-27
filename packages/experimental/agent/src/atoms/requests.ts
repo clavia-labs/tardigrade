@@ -1,10 +1,11 @@
 import { Schema } from "effect"
 import { atom, durableAtom, durablePromise } from "@clavia/tardigrade-experimental-core"
-import { PermissionPromiseResolved, BudgetPromiseResolved, type Event } from "../event"
+import { PermissionPromiseResolved, BudgetPromiseResolved } from "../event"
 
 const submissions = durableAtom({
+  input: Schema.Union([PermissionPromiseResolved, BudgetPromiseResolved]),
   schema: Schema.Array(Schema.Union([PermissionPromiseResolved, BudgetPromiseResolved])), initial: [],
-  reduce: (state, event: Event) => {
+  reduce: (state, event) => {
     if ((event.type === "PermissionResolved" || event.type === "BudgetResolved") && "promise" in event) return [...state, event]
     return state
   },

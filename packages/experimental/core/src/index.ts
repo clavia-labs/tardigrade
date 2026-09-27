@@ -1,5 +1,5 @@
 export * from "./atom"
-export { durableAtom, EventLog } from "./durable"
+export { durableAtom, EventLog, type DurableAtom } from "./durable"
 export * from "./store"
 export type { ActorGraph } from "./graph"
 export * from "./effects"

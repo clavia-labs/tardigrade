@@ -1,6 +1,6 @@
 import { Context, Effect, Schema } from "effect"
 import type { EffectRef } from "./internal/effects"
-import type { Getter } from "./atom"
+import { atom, type Atom, type Getter } from "./atom"
 
 export const Deadline = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(8_640_000_000_000_000))
 export const ClockHandle = Schema.Struct({ executor: Schema.Literal("clock"), id: Schema.NonEmptyString, at: Deadline, value: Schema.optionalKey(Schema.Json) })
@@ -27,6 +27,16 @@ export interface EffectValue<Event, Error = never, Services = never> {
   readonly run: Effect.Effect<Event | readonly Event[], Error, Services>
 }
 export type EffectValues<Event, Error = never, Services = never> = Readonly<Record<string, EffectValue<Event, Error, Services>>>
+
+export interface EffectOutput<View, Event, Error = never, Services = never> {
+  readonly view: View
+  readonly effects: EffectValues<Event, Error, Services>
+}
+
+// effectAtom derives a view and typed work proposals; the host owns execution and event delivery.
+export function effectAtom<const Value extends EffectOutput<unknown, object, unknown, unknown>>(read: (get: Getter) => Value): Atom<Value> {
+  return atom(read)
+}
 
 // effectValue describes host-executed work without starting it.
 export function effectValue<Request extends object, Result extends object, Error, Services>(value: {
