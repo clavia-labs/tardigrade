@@ -1,11 +1,12 @@
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
-import { sqlJournal } from "../sql"
+import { SqliteClient } from "@effect/sql-sqlite-do"
+import { sqlJournal } from "@clavia/tardigrade-experimental-host"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
 export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string) {
   return sqlJournal<Event>({
-    rows: (query, ...bindings) => [...storage.sql.exec(query, ...bindings)],
-    transaction: commit => storage.transactionSync(commit),
+    actor,
+    layer: SqliteClient.layer({ storage }),
     flush: () => storage.sync(),
-  }, actor)
+  })
 }

@@ -11,7 +11,7 @@ type Task = {
 const root = fileURLToPath(new URL("../", import.meta.url))
 const pkg = (name: string) => `${root}packages/${name}`
 const packages = ["tardie", "core", "code", "agent", "host", "channels", "client", "http", "model"]
-const experimental = ["core", "agent", "packages", "platform", "examples"]
+const experimental = ["core", "host", "agent", "packages", "platform", "examples"]
 const experimentalPkg = (name: string) => pkg(`experimental/${name}`)
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["bun", "worker-loader", "cloudflare"]

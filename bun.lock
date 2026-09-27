@@ -255,6 +255,14 @@
         "effect": "4.0.0-rc.115",
       },
     },
+    "packages/experimental/host": {
+      "name": "@clavia/tardigrade-experimental-host",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-experimental-core": "workspace:*",
+        "effect": "4.0.0-rc.115",
+      },
+    },
     "packages/experimental/packages": {
       "name": "@clavia/tardigrade-experimental-packages",
       "version": "0.0.1",
@@ -267,7 +275,10 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-experimental-core": "workspace:*",
+        "@clavia/tardigrade-experimental-host": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.115",
+        "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+        "@effect/sql-sqlite-do": "4.0.0-rc.115",
         "effect": "4.0.0-rc.115",
       },
       "devDependencies": {
@@ -496,6 +507,8 @@
     "@clavia/tardigrade-experimental-core": ["@clavia/tardigrade-experimental-core@workspace:packages/experimental/core"],
 
     "@clavia/tardigrade-experimental-examples": ["@clavia/tardigrade-experimental-examples@workspace:packages/experimental/examples"],
+
+    "@clavia/tardigrade-experimental-host": ["@clavia/tardigrade-experimental-host@workspace:packages/experimental/host"],
 
     "@clavia/tardigrade-experimental-packages": ["@clavia/tardigrade-experimental-packages@workspace:packages/experimental/packages"],
 
