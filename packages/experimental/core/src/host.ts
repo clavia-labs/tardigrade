@@ -1,5 +1,6 @@
 import { RuntimeError } from "./errors"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Schema, Scope, Semaphore, Cause } from "effect"
+import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { createStore } from "./store"
 import { createEventLog } from "./event-log"
 import { atom, type Atom } from "./atom"
@@ -38,7 +39,7 @@ export async function createActorStore<Event extends object, const Atoms extends
   let setup: ActorSetup<Event, Atoms, Actions>
   let definition: ReturnType<typeof createEventLog<Event, Atoms>>
   let snapshot: ReturnType<typeof definition.replay>
-  const source = atom<readonly unknown[]>([])
+  const source = atom<readonly unknown[]>([]).pipe(NativeAtom.withLabel("events"))
   const store = createStore(Context.make(EventLog, { events: source }))
   let syncedEvents: readonly unknown[] = []
   const sync = () => {

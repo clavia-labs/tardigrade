@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { runtimeAtom, type Atom, type Getter, durableAtom, effectValue, type EffectValues, type EffectValue } from "@clavia/tardigrade-experimental-core"
 import { InferenceState, inferState, initialInference, type Conversation } from "../projections"
 import { ModelLock, resolveModel } from "../services/model-lock"
@@ -60,8 +61,8 @@ export function infer<R>(agent: Atom<AgentInput<R>>) {
         },
       }
     })
-  })
-  return Effect.map(output, node => Object.assign(node, {
+  }, { name: "infer" })
+  return Effect.map(output, node => Object.assign(node.pipe(NativeAtom.withLabel("infer")), {
     schema: Event,
     validate: (event: Event, get: Getter) => get(agent).tools.validate?.(event),
   }))

@@ -6,7 +6,7 @@ export class EventLog extends Context.Service<EventLog, {
   readonly events: Atom<readonly unknown[]>
 }>()("experimental/EventLog") {}
 
-export const eventLogContext = atom<Context.Context<EventLog> | undefined>(undefined)
+export const eventLogContext = atom<Context.Context<EventLog> | undefined>(undefined).pipe(NativeAtom.withLabel("EventLog"))
 
 // durableAtom folds events into validated state; reducers must preserve unchanged references and leave their input state unchanged.
 export function durableAtom<State, Event>(options: {

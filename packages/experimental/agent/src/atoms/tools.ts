@@ -1,5 +1,6 @@
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect } from "effect"
+import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom, durableAtom, effectValue, type EffectValue, type EffectValues } from "@clavia/tardigrade-experimental-core"
 import { packageTools as packageMethods, type Package, type PackageRequirements } from "@clavia/tardigrade-experimental-packages"
 import type { Event, ToolCall } from "../event"
@@ -43,7 +44,7 @@ export function packageTools<const P extends readonly Package<unknown>[]>(packag
             : Effect.fail(new RuntimeError(`Unknown tool: ${call.name}`))
         }),
       }),
-    }))
+    })).pipe(NativeAtom.withLabel("tools"))
   })
 }
 

@@ -1,5 +1,6 @@
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect } from "effect"
+import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { runtimeAtom, type Atom, durableAtom, effectValue } from "@clavia/tardigrade-experimental-core"
 import { CompactionState, compactState, type Conversation } from "../projections"
 import type { ModelCalled, ModelReturned } from "../event"
@@ -103,5 +104,5 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
         }),
       }
     })
-  })
+  }, { name: "compact" }).pipe(Effect.map(NativeAtom.withLabel("context")))
 }

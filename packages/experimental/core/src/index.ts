@@ -1,6 +1,7 @@
 export * from "./atom"
 export { durableAtom, EventLog } from "./durable"
 export * from "./store"
+export type { ActorGraph } from "./graph"
 export * from "./effects"
 export type { Recorded } from "./internal/effects"
 export * from "./event-log"

@@ -1,10 +1,12 @@
 import { RuntimeError } from "./errors"
-import { Effect, type Schema, type Layer, type Scope } from "effect"
-import { AsyncResult } from "effect/unstable/reactivity"
+import { Context, Effect, type Schema, type Layer, type Scope } from "effect"
+import { AsyncResult, Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom, type Getter } from "./atom"
 import { createActorStore, type ActorRuntime, type Requirements } from "./host"
 import type { Recorded } from "./internal/effects"
 import type { Journal } from "./journal"
+import { createStore } from "./store"
+import { EventLog } from "./durable"
 
 type Actions<Event> = Readonly<Record<string, (...args: never[]) => Event>>
 type Bound<Definitions> = { readonly [Key in keyof Definitions]: Definitions[Key] extends (...args: infer Args) => unknown ? (...args: Args) => Promise<void> : never }
@@ -76,5 +78,16 @@ export function defineActor<Event extends object, Value, const Name extends stri
     }
     return { ...store, getState, subscribe, methods }
   }
-  return Object.assign(create, { actorName: name })
+  const graph = () => Effect.scoped(Effect.gen(function* () {
+    const definition = yield* factory
+    const root = atom(get => resolveOutput(get(definition.atom)))
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => createStore(Context.make(EventLog, {
+        events: atom<readonly unknown[]>([]).pipe(NativeAtom.withLabel("events")),
+      }))),
+      store => Effect.try({ try: () => store.graph({ [name]: root }), catch: RuntimeError.from }),
+      store => Effect.sync(() => store.dispose()),
+    )
+  }))
+  return Object.assign(create, { actorName: name, graph })
 }

@@ -6,6 +6,10 @@ export type Getter = <Value>(node: Atom<Value>) => Value
 export type SetStateAction<Value> = Value | ((previous: Value) => Value)
 export type PrimitiveAtom<Value> = NativeAtom.Writable<Value, SetStateAction<Value>>
 
+const runtimeFactory = NativeAtom.context({
+  memoMap: NativeAtom.readable(() => Layer.makeMemoMapUnsafe()).pipe(NativeAtom.keepAlive, NativeAtom.withLabel("service cache")),
+})
+
 // atom creates pure derived values or writable source values retained for the store lifetime.
 export function atom<Value>(read: (get: Getter) => Value): Atom<Value>
 export function atom<Value>(initial: Value): PrimitiveAtom<Value>
@@ -23,9 +27,10 @@ export function atom<Value>(value: Value | ((get: Getter) => Value)): Atom<Value
 }
 
 // runtimeAtom carries projection requirements to actor setup and unwraps synchronous native results for replay.
-export function runtimeAtom<Value, Failure, Services>(read: (get: NativeAtom.AtomContext) => Effect.Effect<Value, Failure, Services>): Effect.Effect<Atom<Value>, never, Services> {
+export function runtimeAtom<Value, Failure, Services>(read: (get: NativeAtom.AtomContext) => Effect.Effect<Value, Failure, Services>, options: { readonly name?: string } = {}): Effect.Effect<Atom<Value>, never, Services> {
   return Effect.map(Effect.context<Services>(), services => {
-    const runtime = NativeAtom.runtime(Layer.succeedContext(services))
+    const runtime = runtimeFactory(Layer.succeedContext(services))
+    Object.assign(runtime.layer, { label: NativeAtom.withLabel(runtime.layer, options.name ? `${options.name} services` : "service layer").label })
     const output = runtime.atom(read)
     return atom(get => {
       const result = get(output)
