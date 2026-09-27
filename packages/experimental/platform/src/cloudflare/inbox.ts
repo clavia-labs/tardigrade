@@ -21,15 +21,18 @@ export function cloudflarePromises(options: { readonly recipient: ThreadCoordina
 
 export const InboxCompletion = Schema.Struct({ handle: ExecutionHandle, result: PromiseSettled.fields.result })
 export type InboxCompletion = typeof InboxCompletion.Type
+export const InboxNotification = Schema.Struct({ id: Schema.NonEmptyString, handle: ExecutionHandle, result: Schema.optionalKey(PromiseSettled.fields.result) })
+export type InboxNotification = typeof InboxNotification.Type
 const Entry = Schema.Struct({
   request: ResolutionRegistration, nextAt: Schema.NullOr(Schema.Finite), done: Schema.Boolean,
   settlement: Schema.optionalKey(PromiseSettled), error: Schema.optionalKey(Schema.String),
 })
 type Entry = typeof Entry.Type
-const Incoming = Schema.Struct({ handle: ExecutionHandle, result: Schema.optionalKey(PromiseSettled.fields.result), expiresAt: Schema.Finite })
+const Incoming = Schema.Struct({ handle: ExecutionHandle, result: Schema.optionalKey(PromiseSettled.fields.result), notified: Schema.optionalKey(Schema.Boolean), expiresAt: Schema.Finite })
 type Incoming = typeof Incoming.Type
 const prefix = "inbox:job:"
 const incomingPrefix = "inbox:result:"
+const receiptPrefix = "inbox:webhook:"
 const handleKey = (handle: ExecutionHandle) => JSON.stringify([handle.executor, handle.id, handle.endpoint ?? null, handle.at ?? null, handle.value === undefined ? [] : [handle.value]])
 
 // createCloudflareInbox owns a dedicated DO's storage; acknowledged payloads are discarded and deduplication receipts expire by policy.
@@ -37,7 +40,7 @@ export function createCloudflareInbox(options: {
   readonly storage: DurableObjectStorage
   readonly poll?: ResolutionPoll
   readonly deliver: (recipient: ThreadCoordinate, settlement: PromiseSettled) => Effect.Effect<void, Error>
-  readonly verifyWebhook?: (request: Request) => Effect.Effect<InboxCompletion, Error>
+  readonly verifyWebhook?: (request: Request) => Effect.Effect<InboxNotification, Error>
   readonly policy?: Partial<PromisePolicy>
 }) {
   const policy = promisePolicy(options.policy)
@@ -53,7 +56,9 @@ export function createCloudflareInbox(options: {
   const schedule = async (tx: Pick<DurableObjectStorage, "list" | "setAlarm" | "deleteAlarm">) => {
     const jobs = await tx.list<Entry>({ prefix })
     const results = await tx.list<Incoming>({ prefix: incomingPrefix })
+    const receipts = await tx.list<number>({ prefix: receiptPrefix })
     const times = [...jobs.values()].map(value => decode(value).nextAt).filter((time): time is number => time !== null)
+    times.push(...receipts.values())
     times.push(...[...results.values()].map(value => Schema.decodeSync(Incoming)(value).expiresAt))
     if (!times.length) await tx.deleteAlarm()
     else await tx.setAlarm(times.reduce((first, time) => Math.min(first, time)))
@@ -72,23 +77,27 @@ export function createCloudflareInbox(options: {
     if (cancelled) await tx.put(key, { request, done: true, nextAt: Date.now() + policy.retentionMs } satisfies Entry)
     else if (!previous) {
       const clock = request.handle.executor === "clock" ? Schema.decodeUnknownSync(ClockHandle)(request.handle) : undefined
-      if (!clock && request.mode !== "push" && !options.poll) throw new RuntimeError("Inbox has no polling adapter; use push mode")
+      if (!clock && (request.mode ?? request.handle.mode) !== "push" && !options.poll) throw new RuntimeError("Inbox has no polling adapter; use push mode")
       const incoming = await tx.get<Incoming>(incomingPrefix + handleKey(request.handle))
-      const result = incoming && incoming.expiresAt > Date.now() ? incoming.result : undefined
+      const active = incoming && incoming.expiresAt > Date.now() ? incoming : undefined
+      const result = active?.result
       await tx.put(key, {
-        request, done: false, nextAt: result ? Date.now() : clock ? Math.max(Date.now(), clock.at) : request.mode !== "push" ? Date.now() : null,
+        request, done: false, nextAt: result || active?.notified ? Date.now() : clock ? Math.max(Date.now(), clock.at) : (request.mode ?? request.handle.mode) !== "push" ? Date.now() : null,
         ...(result ? { settlement: { type: "PromiseSettled", ref: request.ref, result } as PromiseSettled } : {}),
       } satisfies Entry)
     }
     await schedule(tx)
   }))
   // accept receives trusted completions from RPC or an authenticated webhook adapter and retains early arrivals.
-  const accept = (input: InboxCompletion) => mutate(() => storage.transaction(async tx => {
-    const completion = Schema.decodeSync(InboxCompletion)(input)
+  const accept = (input: InboxCompletion | InboxNotification) => mutate(() => storage.transaction(async tx => {
+    const completion = "id" in input ? Schema.decodeSync(InboxNotification)(input) : Schema.decodeSync(InboxCompletion)(input)
+    const receipt = "id" in completion ? receiptPrefix + completion.id : undefined
+    if (receipt && (await tx.get<number>(receipt) ?? 0) > Date.now()) return
+    if (!completion.result && !options.poll) throw new RuntimeError("Inbox notification requires a polling adapter")
     const id = handleKey(completion.handle)
     const key = incomingPrefix + id
     const previous = await tx.get<Incoming>(key)
-    if (previous && previous.expiresAt > Date.now() && previous.result && !isDeepStrictEqual(previous.result, completion.result)) throw new RuntimeError("Conflicting inbox completion")
+    if (previous && previous.expiresAt > Date.now() && previous.result && completion.result && !isDeepStrictEqual(previous.result, completion.result)) throw new RuntimeError("Conflicting inbox completion")
     const entries = await tx.list<Entry>({ prefix })
     const matching = [...entries].filter(([, value]) => handleKey(value.request.handle) === id)
     let needed = matching.length === 0
@@ -96,14 +105,17 @@ export function createCloudflareInbox(options: {
       const entry = decode(value)
       if (entry.done) continue
       needed = true
-      if (entry.settlement && !isDeepStrictEqual(entry.settlement.result, completion.result)) throw new RuntimeError("Conflicting inbox completion")
-      await tx.put(jobKey, { ...entry, nextAt: Date.now(), settlement: { type: "PromiseSettled", ref: entry.request.ref, result: completion.result } } satisfies Entry)
+      if (entry.settlement && completion.result && !isDeepStrictEqual(entry.settlement.result, completion.result)) throw new RuntimeError("Conflicting inbox completion")
+      await tx.put(jobKey, { ...entry, nextAt: Date.now(), ...(completion.result ? { settlement: { type: "PromiseSettled", ref: entry.request.ref, result: completion.result } as PromiseSettled } : {}) } satisfies Entry)
     }
-    await tx.put(key, { handle: completion.handle, ...(needed ? { result: completion.result } : {}), expiresAt: (previous && previous.expiresAt > Date.now() ? previous.expiresAt : Date.now() + policy.retentionMs) } satisfies Incoming)
+    const result = completion.result ?? (previous && previous.expiresAt > Date.now() ? previous.result : undefined)
+    await tx.put(key, { handle: completion.handle, ...(needed ? { ...(result ? { result } : {}), notified: true } : {}), expiresAt: (previous && previous.expiresAt > Date.now() ? previous.expiresAt : Date.now() + policy.retentionMs) } satisfies Incoming)
+    if (receipt) await tx.put(receipt, Date.now() + policy.retentionMs)
     await schedule(tx)
   }))
   const discard = () => mutate(() => storage.transaction(async tx => {
     const jobs = await tx.list<Entry>({ prefix })
+    for (const [key, expiresAt] of await tx.list<number>({ prefix: receiptPrefix })) if (expiresAt <= Date.now()) await tx.delete(key)
     for (const [key, raw] of jobs) {
       const entry = decode(raw)
       if (entry.done && entry.nextAt !== null && entry.nextAt <= Date.now()) { await tx.delete(key); jobs.delete(key) }

@@ -4,7 +4,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 export class BifrostError extends Data.TaggedError("BifrostError")<{ readonly message: string; readonly status?: number }> {}
 const failure = (message: string) => new BifrostError({ message })
 
-export const BifrostHandle = Schema.Struct({ executor: Schema.Literal("bifrost"), id: Schema.NonEmptyString, endpoint: Schema.NonEmptyString })
+export const BifrostHandle = Schema.Struct({ executor: Schema.Literal("bifrost"), id: Schema.NonEmptyString, endpoint: Schema.NonEmptyString, mode: Schema.optionalKey(Schema.Literal("push")) })
 export type BifrostHandle = typeof BifrostHandle.Type
 
 const Submission = Schema.Struct({ id: Schema.NonEmptyString, status: Schema.Literals(["pending", "processing"]) })
@@ -20,6 +20,8 @@ export const DEFAULT_BIFROST_RESULT_TTL_SECONDS = 3_600
 export interface BifrostOptions {
   readonly baseUrl: string
   readonly apiKey?: Redacted.Redacted<string>
+  // webhookEndpoint names an enabled Bifrost endpoint subscribed to async_job.completed and async_job.failed.
+  readonly webhookEndpoint?: string
   readonly requestTimeoutMs?: number
   readonly resultTtlSeconds?: number
 }
@@ -29,6 +31,13 @@ export class Bifrost extends Context.Service<Bifrost, {
   readonly submit: (body: Readonly<Record<string, unknown>>) => Effect.Effect<BifrostHandle, Error>
   readonly poll: (handle: BifrostHandle) => Effect.Effect<{ readonly status: "pending" } | { readonly status: "fulfilled"; readonly value: unknown } | { readonly status: "rejected"; readonly error: string }, Error>
 }>()("tardigrade/model/Bifrost") {}
+
+// bifrostEndpoint derives the async chat endpoint from a configured gateway URL.
+export function bifrostEndpoint(baseUrl: string): string {
+  const url = new URL(baseUrl)
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw failure("Bifrost baseUrl must be an HTTP gateway URL without credentials, query, or fragment")
+  return `${url.href.replace(/\/$/, "")}/v1/async/chat/completions`
+}
 
 // bifrostLayer submits chat jobs without retries and polls their recorded handles (https://docs.getbifrost.ai/features/async-inference).
 export function bifrostLayer(options: BifrostOptions) {
@@ -40,9 +49,8 @@ export function bifrostLayer(options: BifrostOptions) {
       for (const [name, value] of Object.entries({ requestTimeoutMs: timeout, resultTtlSeconds: ttl })) {
         if (!Number.isSafeInteger(value) || value <= 0) throw failure(`${name} must be a positive safe integer`)
       }
-      const url = new URL(options.baseUrl)
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw failure("Bifrost baseUrl must be an HTTP gateway URL without credentials, query, or fragment")
-      return `${url.href.replace(/\/$/, "")}/v1/async/chat/completions`
+      if (options.webhookEndpoint !== undefined && !options.webhookEndpoint.trim()) throw failure("webhookEndpoint must not be empty")
+      return bifrostEndpoint(options.baseUrl)
     })
     const request = (req: HttpClientRequest.HttpClientRequest) => client.execute(options.apiKey
       ? HttpClientRequest.setHeader(req, "x-bf-vk", Redacted.value(options.apiKey)) : req).pipe(
@@ -57,10 +65,10 @@ export function bifrostLayer(options: BifrostOptions) {
       call: body => HttpClientRequest.bodyJson(HttpClientRequest.post(endpoint.replace("/v1/async/", "/v1/")), { ...body, stream: false }).pipe(Effect.flatMap(request)),
       submit: body => Effect.gen(function* () {
         const req = yield* HttpClientRequest.bodyJson(HttpClientRequest.post(endpoint, {
-          headers: { "x-bf-async-job-result-ttl": String(ttl) },
+          headers: { "x-bf-async-job-result-ttl": String(ttl), ...(options.webhookEndpoint ? { "x-bf-async-webhook": options.webhookEndpoint } : {}) },
         }), { ...body, stream: false })
         const job = yield* Schema.decodeUnknownEffect(Submission)(yield* request(req))
-        return { executor: "bifrost", id: job.id, endpoint }
+        return { executor: "bifrost", id: job.id, endpoint, ...(options.webhookEndpoint ? { mode: "push" as const } : {}) }
       }),
       poll: handle => Effect.gen(function* () {
         if (handle.endpoint !== endpoint) return yield* failure("Bifrost handle belongs to a different endpoint")

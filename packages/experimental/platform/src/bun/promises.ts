@@ -21,7 +21,7 @@ export function bunPromises(host: Pick<ActorRuntime<object>, "fork" | "cancel">,
         const value = yield* Schema.decodeEffect(ResolutionRequest)(request)
         const clock = value.handle.executor === "clock" ? yield* Schema.decodeUnknownEffect(ClockHandle)(value.handle) : undefined
         if (!clock && !options.poll) return yield* Effect.fail(new RuntimeError("Bun resolver has no polling adapter"))
-        if (!clock && value.mode === "push") return yield* Effect.fail(new RuntimeError("Bun resolver requires a polling adapter; push delivery requires an inbox"))
+        if (!clock && (value.mode ?? value.handle.mode) === "push") return yield* Effect.fail(new RuntimeError("Bun resolver requires a polling adapter; push delivery requires an inbox"))
         prune(yield* Clock.currentTimeMillis)
         const key = resolutionKey(value)
         const previous = registered.get(key)

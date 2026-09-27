@@ -40,4 +40,4 @@ export function createCloudflareHost<Event extends object, Services, Methods ext
 
 // cloudflareHandler exposes host routes as a Worker fetch handler; dispose releases HTTP resources.
 export const cloudflareHandler = (host: HttpHost) => HttpRouter.toWebHandler(hostRoutes(host), { disableLogger: true })
-export { cloudflarePromises, createCloudflareInbox, InboxCompletion, type InboxStub } from "./inbox"
+export { cloudflarePromises, createCloudflareInbox, InboxCompletion, InboxNotification, type InboxStub } from "./inbox"

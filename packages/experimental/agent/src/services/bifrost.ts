@@ -1,6 +1,7 @@
 import { Effect, Layer, Schema } from "effect"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Bifrost, BifrostHandle } from "@clavia/tardigrade-model/bifrost"
+import { bifrostWebhookVerifier, type BifrostWebhookOptions } from "@clavia/tardigrade-model/bifrost-webhook"
 import { type ResolutionPoll } from "@clavia/tardigrade-experimental-host"
 import { ModelLock } from "./model-lock"
 import { Model, type ModelInput } from "./model"
@@ -26,6 +27,21 @@ const decodeReply = (raw: unknown) => Effect.gen(function* () {
   }))
   return { text: choice.message.content ?? "", toolCalls }
 })
+
+// bifrostWebhook supplies the Inbox verifier; omitted results wake its polling adapter after durable acceptance.
+export const bifrostWebhook = (options: BifrostWebhookOptions) => Effect.map(bifrostWebhookVerifier(options), verify => (request: Request) => Effect.gen(function* () {
+  const { id, handle, data } = yield* verify(request)
+  if (data.status === "failed" && data.error !== undefined) return { id, handle, result: { status: "rejected" as const, error: `Bifrost job failed: ${JSON.stringify(data.error)}` } }
+  if (data.status === "completed" && data.response !== undefined) return { id, handle, result: yield* completionResult(data.response) }
+  if (data.result_expired) return { id, handle, result: { status: "rejected" as const, error: "Bifrost job result expired before webhook delivery" } }
+  return { id, handle }
+}))
+
+const completionResult = (raw: unknown) => decodeReply(raw).pipe(
+  Effect.flatMap(value => Schema.decodeUnknownEffect(Schema.Json)(value)),
+  Effect.map(value => ({ status: "fulfilled" as const, value })),
+  Effect.catch(error => Effect.succeed({ status: "rejected" as const, error: String(error) })),
+)
 
 export const DEFAULT_BIFROST_PROVIDER = "bifrost"
 export interface BifrostModelOptions {
@@ -72,9 +88,5 @@ export const bifrostPoll = Effect.map(Bifrost, remote => ((handle) => Effect.gen
   const reference = yield* Schema.decodeUnknownEffect(BifrostHandle)(handle)
   const state = yield* remote.poll(reference)
   if (state.status !== "fulfilled") return state
-  return yield* decodeReply(state.value).pipe(
-    Effect.flatMap(value => Schema.decodeUnknownEffect(Schema.Json)(value)),
-    Effect.map(value => ({ status: "fulfilled" as const, value })),
-    Effect.catch(error => Effect.succeed({ status: "rejected" as const, error: String(error) })),
-  )
+  return yield* completionResult(state.value)
 })) satisfies ResolutionPoll)
