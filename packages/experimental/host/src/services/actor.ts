@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Random, Schema, Scope } from "effect"
 import { ExecutionHandle, RuntimeError } from "@clavia/tardigrade-experimental-core"
-import type { ResolutionState } from "./resolver"
+import type { ResolutionState } from "./promises"
 
 export const ActorDecision = Schema.Union([
   Schema.Struct({ allowed: Schema.Literal(true), amount: Schema.optionalKey(Schema.Finite) }),

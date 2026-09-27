@@ -2,21 +2,21 @@ import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { isDeepStrictEqual } from "node:util"
 import { Effect, Layer, Schema } from "effect"
 import { ClockHandle, ExecutionHandle, RuntimeError, type ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
-import { Resolver, Resolution, ResolutionRegistration, registrationKey, resolverPolicy, type ResolutionPoll, type ResolverPolicy } from "@clavia/tardigrade-experimental-host"
+import { Promises, Resolution, ResolutionRegistration, registrationKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-host"
 
 export interface InboxStub {
   readonly watch: (request: ResolutionRegistration) => Promise<void>
   readonly cancel: (request: ResolutionRegistration) => Promise<void>
 }
 
-// cloudflareResolver binds an actor's resolver service to an Inbox DO; registration acknowledges durable acceptance by that DO.
-export function cloudflareResolver(options: { readonly recipient: ThreadCoordinate; readonly target: InboxStub; readonly policy?: Partial<ResolverPolicy> }) {
-  const policy = resolverPolicy(options.policy)
-  const invoke = (method: "watch" | "cancel", request: Parameters<typeof Resolver.Service.watch>[0]) => Effect.tryPromise({
+// cloudflarePromises binds an actor's promise service to an Inbox DO; registration acknowledges durable acceptance by that DO.
+export function cloudflarePromises(options: { readonly recipient: ThreadCoordinate; readonly target: InboxStub; readonly policy?: Partial<PromisePolicy> }) {
+  const policy = promisePolicy(options.policy)
+  const invoke = (method: "watch" | "cancel", request: Parameters<typeof Promises.Service.watch>[0]) => Effect.tryPromise({
     try: () => options.target[method]({ ...request, recipient: options.recipient }),
     catch: RuntimeError.from,
   }).pipe(Effect.timeout(policy.attemptTimeoutMs))
-  return Layer.succeed(Resolver, { watch: request => invoke("watch", request), cancel: request => invoke("cancel", request) })
+  return Layer.succeed(Promises, { watch: request => invoke("watch", request), cancel: request => invoke("cancel", request) })
 }
 
 export const InboxCompletion = Schema.Struct({ handle: ExecutionHandle, result: Resolution.fields.result })
@@ -38,9 +38,9 @@ export function createCloudflareInbox(options: {
   readonly poll?: ResolutionPoll
   readonly deliver: (recipient: ThreadCoordinate, settlement: Resolution) => Effect.Effect<void, Error>
   readonly verifyWebhook?: (request: Request) => Effect.Effect<InboxCompletion, Error>
-  readonly policy?: Partial<ResolverPolicy>
+  readonly policy?: Partial<PromisePolicy>
 }) {
-  const policy = resolverPolicy(options.policy)
+  const policy = promisePolicy(options.policy)
   const storage = options.storage
   const decode = Schema.decodeUnknownSync(Entry)
   let pending: Promise<unknown> = Promise.resolve()
@@ -68,7 +68,7 @@ export function createCloudflareInbox(options: {
     const key = prefix + registrationKey(request)
     const raw = await tx.get<Entry>(key)
     const previous = raw && decode(raw)
-    if (previous && !isDeepStrictEqual(previous.request, request)) throw new RuntimeError("Resolver reference already registered with another handle")
+    if (previous && !isDeepStrictEqual(previous.request, request)) throw new RuntimeError("Promise reference already registered with another handle")
     if (cancelled) await tx.put(key, { request, done: true, nextAt: Date.now() + policy.retentionMs } satisfies Entry)
     else if (!previous) {
       const clock = request.handle.executor === "clock" ? Schema.decodeUnknownSync(ClockHandle)(request.handle) : undefined

@@ -1,7 +1,7 @@
 import { ToolError } from "./errors"
 import { Clock, Effect, Schema } from "effect"
 import { Deadline, EffectExecution, EffectRef, durableAtom } from "@clavia/tardigrade-experimental-core"
-import { Resolver, Resolution, type ResolutionRequest } from "@clavia/tardigrade-experimental-host"
+import { Promises, Resolution, type ResolutionRequest } from "@clavia/tardigrade-experimental-host"
 import { tool } from "./tool"
 import { definePackage } from "./package"
 
@@ -43,7 +43,7 @@ export const alarmRequest = (item: Pick<typeof AlarmEntry.Type, "alarm" | "ref">
   ref: item.ref, handle: { executor: "clock", id: item.alarm.alarmId, at: item.alarm.at },
 })
 
-// alarm records reminder intent and registers clock promises with the host resolver.
+// alarm records reminder intent and registers clock promises with the host promise service.
 export function alarm() {
   return definePackage({ name: "alarm", description: "Schedule and cancel recorded reminders.", methods: [
     tool({
@@ -72,10 +72,10 @@ export function alarm() {
         })
         const validated = yield* Schema.decodeEffect(Alarm)(value).pipe(Effect.mapError(ToolError.from))
         const execution = yield* EffectExecution
-        const resolver = yield* Resolver
+        const promises = yield* Promises
         const event = { type: "AlarmSet", alarm: validated, ref: execution.ref } as const
         yield* execution.record(event)
-        yield* resolver.watch(alarmRequest(event))
+        yield* promises.watch(alarmRequest(event))
         return validated
       }),
     }),
@@ -88,7 +88,7 @@ export function alarm() {
         const item = execution.get(alarmState).find(item => item.alarm.alarmId === alarmId && item.status === "pending")
         if (!item) return yield* Effect.fail(new ToolError("No matching pending alarm"))
         yield* execution.record({ type: "AlarmCancelled", alarmId })
-        yield* (yield* Resolver).cancel(alarmRequest(item))
+        yield* (yield* Promises).cancel(alarmRequest(item))
         return { alarmId, cancelled: true }
       }),
     }),

@@ -1,19 +1,19 @@
 import { isDeepStrictEqual } from "node:util"
 import { Clock, Effect, Fiber, Layer, Schema, Scope } from "effect"
 import { ClockHandle, RuntimeError, type ActorRuntime } from "@clavia/tardigrade-experimental-core"
-import { Resolver, Resolution, ResolutionRequest, resolutionKey, resolverPolicy, type ResolutionPoll, type ResolverPolicy } from "@clavia/tardigrade-experimental-host"
+import { Promises, Resolution, ResolutionRequest, resolutionKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-host"
 
-// bunResolver resolves promises in actor-scoped fibers and retains settlements while delivery is retried.
-export function bunResolver(host: Pick<ActorRuntime<object>, "fork" | "cancel">, options: {
+// bunPromises resolves promises in actor-scoped fibers and retains settlements while delivery is retried.
+export function bunPromises(host: Pick<ActorRuntime<object>, "fork" | "cancel">, options: {
   readonly poll?: ResolutionPoll
   readonly deliver: (settlement: Resolution) => Effect.Effect<void, Error>
-  readonly policy?: Partial<ResolverPolicy>
+  readonly policy?: Partial<PromisePolicy>
   readonly onError?: (error: Error, request: ResolutionRequest) => void
 }) {
-  return Layer.effect(Resolver, Effect.gen(function* () {
+  return Layer.effect(Promises, Effect.gen(function* () {
     const scope = yield* Scope.Scope
     const timers = new Map<string, Fiber.Fiber<void, Error>>()
-    const policy = resolverPolicy(options.policy)
+    const policy = promisePolicy(options.policy)
     const registered = new Map<string, { request: ResolutionRequest; expiresAt?: number; cancelled: boolean }>()
     const prune = (now: number) => { for (const [key, entry] of registered) if (entry.expiresAt !== undefined && entry.expiresAt <= now) registered.delete(key) }
     return {
@@ -26,7 +26,7 @@ export function bunResolver(host: Pick<ActorRuntime<object>, "fork" | "cancel">,
         const key = resolutionKey(value)
         const previous = registered.get(key)
         if (previous) {
-          if (!isDeepStrictEqual(previous.request, value)) return yield* Effect.fail(new RuntimeError("Resolver reference already registered with another handle"))
+          if (!isDeepStrictEqual(previous.request, value)) return yield* Effect.fail(new RuntimeError("Promise reference already registered with another handle"))
           return
         }
         const entry: { request: ResolutionRequest; expiresAt?: number; cancelled: boolean } = { request: value, cancelled: false }
@@ -57,7 +57,7 @@ export function bunResolver(host: Pick<ActorRuntime<object>, "fork" | "cancel">,
             if (attempt._tag === "Failure") {
               const error = RuntimeError.from(attempt.failure)
               if (options.onError) options.onError(error, value)
-              else yield* Effect.logError("Resolver retry", error.message)
+              else yield* Effect.logError("Promise resolution retry", error.message)
             }
             yield* Effect.sleep(attempt._tag === "Failure" ? policy.retryIntervalMs : policy.pollIntervalMs)
           }
@@ -75,13 +75,13 @@ export function bunResolver(host: Pick<ActorRuntime<object>, "fork" | "cancel">,
         prune(now)
         const key = resolutionKey(value)
         const entry = registered.get(key)
-        if (entry && !isDeepStrictEqual(entry.request, value)) return yield* Effect.fail(new RuntimeError("Resolver reference already registered with another handle"))
+        if (entry && !isDeepStrictEqual(entry.request, value)) return yield* Effect.fail(new RuntimeError("Promise reference already registered with another handle"))
         if (!entry) { registered.set(key, { request: value, cancelled: true, expiresAt: now + policy.retentionMs }); return }
         entry.cancelled = true
         const timer = timers.get(key)
         if (timer) yield* Fiber.interrupt(timer)
         else if (entry.expiresAt === undefined) yield* host.cancel(`resolver:${key}`)
       }),
-    } satisfies typeof Resolver.Service
+    } satisfies typeof Promises.Service
   }))
 }

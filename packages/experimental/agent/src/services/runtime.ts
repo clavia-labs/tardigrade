@@ -2,12 +2,12 @@ import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Layer } from "effect"
 import { Workspace, memoryWorkspace } from "@clavia/tardigrade-experimental-packages"
 import type { ActorRuntime, Recorded } from "@clavia/tardigrade-experimental-core"
-import { Actor, Resolver, localActors, type ActorCaller } from "@clavia/tardigrade-experimental-host"
+import { Actor, Promises, localActors, type ActorCaller } from "@clavia/tardigrade-experimental-host"
 import { createActor } from "../agent"
 import type { Event } from "../event"
 import { ModelLock } from "./model-lock"
 import { Model } from "./model"
-import { resolverServices } from "./resolver"
+import { promiseServices } from "./promises"
 
 export interface AssistantContext {
   readonly depth: number
@@ -15,13 +15,13 @@ export interface AssistantContext {
 }
 
 export interface AssistantOptions {
-  readonly services: Layer.Layer<Model | ModelLock | Resolver, Error, Actor> | ((context: AssistantContext, host: ActorRuntime<Event>) => Layer.Layer<Model | ModelLock | Resolver, Error, Actor>)
+  readonly services: Layer.Layer<Model | ModelLock | Promises, Error, Actor> | ((context: AssistantContext, host: ActorRuntime<Event>) => Layer.Layer<Model | ModelLock | Promises, Error, Actor>)
   readonly maxChildDepth: number
   readonly onEvent?: (event: Recorded<Event>, depth: number) => void
 }
 
-// assistantServices supplies local child actors while the host chooses model and resolver implementations.
-export function assistantServices(host: ActorRuntime<Event>, options: AssistantOptions, depth: number, parent?: ActorCaller): Layer.Layer<Model | ModelLock | Resolver | Actor | Workspace, Error> {
+// assistantServices supplies local child actors while the host chooses model and promise implementations.
+export function assistantServices(host: ActorRuntime<Event>, options: AssistantOptions, depth: number, parent?: ActorCaller): Layer.Layer<Model | ModelLock | Promises | Actor | Workspace, Error> {
   const children = localActors({
     run: (call, caller) => Effect.gen(function* () {
       if (depth >= options.maxChildDepth) return yield* Effect.fail(new RuntimeError(`Child depth limit reached: ${options.maxChildDepth}`))
@@ -47,7 +47,7 @@ export function assistantServices(host: ActorRuntime<Event>, options: AssistantO
     onMessage: (handle, message) => host.send([{ type: "MessageReceived", kind: "message", turnId: `${handle.id}:notice:${crypto.randomUUID()}`, text: JSON.stringify({ handle, message }) }]),
   })
   const services = typeof options.services === "function" ? options.services({ depth, parent }, host) : options.services
-  return resolverServices(host).pipe(Layer.provideMerge(
+  return promiseServices(host).pipe(Layer.provideMerge(
     Layer.merge(services, memoryWorkspace).pipe(Layer.provideMerge(children)),
   ))
 }

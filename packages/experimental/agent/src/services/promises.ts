@@ -1,7 +1,7 @@
 import { Effect, Layer, Schema } from "effect"
 import { Atom } from "effect/unstable/reactivity"
 import { atom, durableAtom, type ActorRuntime } from "@clavia/tardigrade-experimental-core"
-import { Resolver, Resolution, ResolutionRequest, resolutionKey } from "@clavia/tardigrade-experimental-host"
+import { Promises, Resolution, ResolutionRequest, resolutionKey } from "@clavia/tardigrade-experimental-host"
 import { alarmState, alarmRequest } from "@clavia/tardigrade-experimental-packages"
 import { requestPromises } from "../atoms/requests"
 import { toolPromises } from "../atoms/promises"
@@ -26,10 +26,10 @@ const requests = atom(get => ({
   cancelled: get(alarmState).filter(item => item.status === "cancelled").map(alarmRequest),
 })).pipe(Atom.withLabel("promise registrations"))
 
-// resolverServices reconciles durable promise intentions with the host resolver after replay and journal commits.
-export function resolverServices(host: ActorRuntime<Event>) {
-  return Layer.effect(Resolver, Effect.gen(function* () {
-    const resolver = yield* Resolver
+// promiseServices reconciles durable promise intentions with the host promise service after replay and journal commits.
+export function promiseServices(host: ActorRuntime<Event>) {
+  return Layer.effect(Promises, Effect.gen(function* () {
+    const promises = yield* Promises
     const watching = new Map<string, ResolutionRequest>()
     const cancelled = new Set<string>()
     const reconcile = Effect.gen(function* () {
@@ -39,19 +39,19 @@ export function resolverServices(host: ActorRuntime<Event>) {
       for (const request of state.cancelled) {
         const key = resolutionKey(request)
         if (cancelled.has(key)) continue
-        yield* resolver.cancel(request)
+        yield* promises.cancel(request)
         cancelled.add(key)
       }
       for (const request of state.pending) {
         const key = resolutionKey(request)
         if (watching.has(key)) continue
-        yield* resolver.watch(request)
+        yield* promises.watch(request)
         watching.set(key, request)
       }
     })
     yield* host.onReady(reconcile)
     yield* host.onCommit(reconcile)
-    return resolver
+    return promises
   }))
 }
 
