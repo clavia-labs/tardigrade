@@ -1,8 +1,8 @@
 import { Context, Effect, Schema } from "effect"
-import { effectAtom } from "./effects"
-import { defineActor } from "./actor"
-import { durableAtom } from "./durable"
-import type { EffectValue } from "./effects"
+import { effectAtom } from "@clavia/tardigrade-experimental-core"
+import { defineActor } from "@clavia/tardigrade-experimental-core"
+import { durableAtom } from "@clavia/tardigrade-experimental-core"
+import type { EffectValue } from "@clavia/tardigrade-experimental-core"
 
 export const ThreadCoordinate = Schema.Struct({ actor: Schema.NonEmptyString, instance: Schema.NonEmptyString, thread: Schema.NonEmptyString })
 export type ThreadCoordinate = typeof ThreadCoordinate.Type
@@ -61,7 +61,7 @@ const supervisor = Object.assign(effectAtom(get => {
   return { view: { threads: directory }, effects }
 }), { schema: SupervisorEvent })
 
-export const createSupervisor = defineActor("supervisor", Effect.succeed({
+export const supervisorActor = defineActor("supervisor", Effect.succeed({
   atom: supervisor,
   actions: { requestThread: (allocation: ThreadAllocation): SupervisorEvent => ({ type: "ThreadRequested", allocation }) },
 }))

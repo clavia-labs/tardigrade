@@ -1,0 +1,22 @@
+{
+  "name": "@clavia/tardigrade-experimental-cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": { "experimental-chat": "./src/main.ts" },
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "models:lock": "bun ../../../../apps/cli/src/main.ts models lock"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-experimental-agent": "workspace:*",
+    "@clavia/tardigrade-experimental-core": "workspace:*",
+    "@clavia/tardigrade-experimental-host": "workspace:*",
+    "@clavia/tardigrade-experimental-platform": "workspace:*",
+    "@effect/platform-bun": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115",
+    "@clavia/tardigrade-experimental-packages": "workspace:*",
+    "@clavia/tardigrade-model": "workspace:*"
+  }
+}

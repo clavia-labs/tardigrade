@@ -21,5 +21,5 @@ export function fetchPackage(options: { readonly fetch?: typeof globalThis.fetch
       }),
   }
   const method = tool({ ...definition, execution: "sync" })
-  return definePackage({ name: "fetch", description: "Read HTTP and HTTPS resources.", methods: [method] })
+  return definePackage({ name: "fetch", toolNames: { get: "fetch_url" }, description: "Read HTTP and HTTPS resources.", methods: [method] })
 }

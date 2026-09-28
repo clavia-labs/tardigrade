@@ -30,8 +30,8 @@ export function packageTools<const P extends readonly Package<unknown>[]>(packag
   return Effect.map(Effect.context<Exclude<Services, EffectExecution>>(), () => {
     const methods = packageMethods(packages)
     const specs = [...methods.map(method => method.spec), ...additional]
-    const registry = new Map(methods.map(method => [method.spec.name, method]))
-    const names = new Set(specs.map(spec => spec.name))
+    const registry = new Map(methods.flatMap(method => [method.spec.name, ...(method.aliases ?? [])].map(name => [name, method] as const)))
+    const names = new Set([...registry.keys(), ...additional.map(spec => spec.name)])
     return effectAtom(get => toolValue(get(pendingTools), {
       effects: { ...get(toolPromises).effects },
       view: {

@@ -70,7 +70,7 @@ export function localActors(options: {
         entry.fiber = yield* options.run(call, caller).pipe(
           Effect.flatMap(value => Schema.decodeEffect(Schema.Json)(value)),
           Effect.exit,
-          Effect.map(exit => { entry.result = Exit.isSuccess(exit) ? { status: "fulfilled", value: exit.value } : { status: "rejected", error: Cause.pretty(exit.cause) } }),
+          Effect.map(exit => { entry.result = Exit.isSuccess(exit) ? { status: "fulfilled", value: exit.value } : { status: "rejected", error: Cause.prettyErrors(exit.cause).map(error => error.message).join("\n") } }),
           Effect.forkIn(scope),
         )
         return handle

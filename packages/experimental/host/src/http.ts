@@ -1,6 +1,8 @@
 import { Effect, Layer, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { InvocationConflict, RuntimeError, type InvocationReceipt, type ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { InvocationConflict, type InvocationReceipt } from "./invocation"
+import type { ThreadCoordinate } from "./supervisor"
 
 interface HttpThread {
   readonly coordinate: ThreadCoordinate

@@ -27,6 +27,7 @@ export function workspace(options: { readonly maxChars?: number; readonly maxEnt
   const maxEntries = options.maxEntries ?? DEFAULT_WORKSPACE_POLICY.maxEntries
   if (![maxChars, maxEntries].every(value => Number.isSafeInteger(value) && value > 0)) throw new ToolError("Workspace limits must be positive integers")
   return definePackage({
+    toolNames: { write: "write_text", read: "read_text", list: "list_texts" },
     name: "workspace", description: "Read and write named text values in the agent workspace.",
     methods: [
       tool({ name: "write", description: "Store a text value by key, replacing any existing value.", input: Schema.Struct({ key: Schema.String, value: Schema.String }),

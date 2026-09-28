@@ -5,9 +5,9 @@ import { createBunHost } from "@clavia/tardigrade-experimental-platform/bun"
 import { compact, infer, packageTools, trajectory } from "@clavia/tardigrade-experimental-agent/atoms/index"
 import { message } from "@clavia/tardigrade-experimental-agent/event"
 import { fetchPackage as fetch, workspace } from "@clavia/tardigrade-experimental-packages"
-import { layersFor } from "./services"
+import { services } from "./services"
 
-const meeseeks = defineActor("meeseeks", Effect.gen(function* () {
+export const meeseeks = defineActor("meeseeks", Effect.gen(function* () {
   const system = atom("You are a helpful assistant. Keep answers concise and practical.")
   const tools = yield* packageTools([fetch(), workspace()])
   const context = yield* compact(trajectory)
@@ -23,7 +23,7 @@ async function run() {
   const host = await createBunHost({
     actor: meeseeks,
     storage: process.env.EXPERIMENTAL_STORAGE ?? "./.tardigrade/experimental-example",
-    layersFor,
+    services: () => services,
   })
 
   try {
@@ -43,11 +43,13 @@ async function run() {
   }
 }
 
-const result = await Effect.runPromiseExit(Effect.tryPromise({
-  try: run,
-  catch: RuntimeError.from,
-}))
-if (Exit.isFailure(result)) {
-  console.error(Cause.pretty(result.cause))
-  process.exitCode = 1
+if (import.meta.main) {
+  const result = await Effect.runPromiseExit(Effect.tryPromise({
+    try: run,
+    catch: RuntimeError.from,
+  }))
+  if (Exit.isFailure(result)) {
+    console.error(Cause.pretty(result.cause))
+    process.exitCode = 1
+  }
 }

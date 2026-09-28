@@ -59,7 +59,7 @@ export function infer<R>(agent: Atom<AgentInput<R>>) {
       view: { position: "settling" as const },
       effects: { ...effects, inference: eventValue({
         id: `settle:${state.turnId}`,
-        event: { type: "TurnSettled", turnId: state.turnId, outcome: "completed", output: state.turns.find(turn => turn.turnId === state.turnId)!.answer! } satisfies TurnSettled,
+        event: { type: "TurnSettled", turnId: state.turnId, outcome: "completed", callId: state.turns.find(turn => turn.turnId === state.turnId)!.answerCallId! } satisfies TurnSettled,
       }) },
     }
     if (!state.needsReply) return { view: { position: "idle" as const }, effects }
@@ -81,7 +81,7 @@ export function infer<R>(agent: Atom<AgentInput<R>>) {
             const handle = yield* (model.submit ? model.submit(request) : execution.fork(
               model.call(request).pipe(
                 Effect.exit,
-                Effect.map(exit => Exit.isSuccess(exit) ? promise.succeed(exit.value) : promise.fail(Cause.pretty(exit.cause))),
+                Effect.map(exit => Exit.isSuccess(exit) ? promise.succeed(exit.value) : promise.fail(Cause.prettyErrors(exit.cause).map(error => error.message).join("\n"))),
               ),
             ))
             return { type: "ModelReturned", purpose: "inference", callId: state.callId, promise: { type: "promise", ref: promise.ref, handle } } satisfies typeof ModelPromiseReturned.Type

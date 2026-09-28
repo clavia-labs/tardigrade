@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" />
+
 import { DurableObject } from "cloudflare:workers"
 import { Effect, Layer, Schema } from "effect"
 import { atom, defineActor, durableAtom } from "@clavia/tardigrade-experimental-core"
@@ -21,7 +23,7 @@ export class ActorDO extends DurableObject<Env> {
   private readonly host = createCloudflareHost({
     actor,
     storage: this.ctx.storage,
-    layersFor: () => Layer.empty,
+    services: () => Layer.empty,
   })
   private readonly http = cloudflareHandler(this.host)
 

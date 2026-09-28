@@ -10,6 +10,7 @@ export interface ToolInvocation extends ToolCall {
 
 export interface AgentTool<R = never> {
   readonly spec: ToolSpec
+  readonly aliases?: readonly string[]
   readonly execute: (input: unknown, call: ToolInvocation) => Effect.Effect<unknown, Error, R>
 }
 
@@ -32,7 +33,7 @@ export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execu
 export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execution?: ExecutionMode }): AgentTool<R | EffectExecution> {
   const execution = options.execution ?? DEFAULT_TOOL_EXECUTION
   return {
-    spec: { name: options.name, description: options.description, inputSchema: Schema.toJsonSchemaDocument(options.input).schema, ...(options.metadata ? { metadata: options.metadata } : {}), execution },
+    spec: { name: options.name, description: options.description, inputSchema: Schema.toJsonSchemaDocument(options.input, { onExcessProperty: "error" }).schema, ...(options.metadata ? { metadata: options.metadata } : {}), execution },
     execute: (input, call) => Effect.gen(function* () {
       const value = yield* Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(input).pipe(Effect.mapError(ToolError.from))
       if (execution === "sync") return yield* options.run(value, call)
@@ -66,8 +67,9 @@ export function promiseTool<Input, R>(options: {
 
 // toolLayer captures tool services and routes calls by registered name.
 export function toolLayer<R>(tools: readonly AgentTool<R>[]) {
-  const registry = new Map(tools.map(tool => [tool.spec.name, tool]))
-  if (registry.size !== tools.length) throw new ToolError("Duplicate tool name")
+  const entries = tools.flatMap(tool => [tool.spec.name, ...(tool.aliases ?? [])].map(name => [name, tool] as const))
+  const registry = new Map(entries)
+  if (registry.size !== entries.length) throw new ToolError("Duplicate tool name")
   return Layer.effect(ToolExecutor, Effect.gen(function* () {
     const context = yield* Effect.context<R>()
     return {

@@ -1,10 +1,10 @@
-import { RuntimeError } from "./errors"
-import { Effect, Layer } from "effect"
-import type { ActorRuntime } from "./host"
-import type { Atom } from "./atom"
-import type { Journal } from "./journal"
-import { createSupervisor, ThreadProvisioner, type SupervisorEvent, type ThreadCoordinate } from "./supervisor"
+import { RuntimeError, type ActorRuntime, type Atom, type Journal, type ActorDefinition, type Requirements } from "@clavia/tardigrade-experimental-core"
+import { supervisorActor, ThreadProvisioner, type SupervisorEvent, type ThreadCoordinate } from "./supervisor"
 import { invocationLedger, type InvocationEvent, type InvocationOptions, type ThreadMethods } from "./invocation"
+import { createActorStore } from "./runtime"
+import { Effect, Layer, type Scope } from "effect"
+import { createThreadStore } from "./stores/thread"
+import { createSupervisorStore } from "./stores/supervisor"
 
 export interface ThreadStorage<Event extends object> {
   readonly supervisor: (actor: string, instance: string) => Journal<SupervisorEvent>
@@ -16,27 +16,30 @@ export interface ThreadStorage<Event extends object> {
 export interface ManagedThread<Methods, State> {
   readonly methods: Methods
   readonly get: <Value>(node: Atom<Value>) => Value
+  readonly sub: <Value>(node: Atom<Value>, listener: () => void) => () => void
   readonly getState: () => State
+  readonly resume: () => Promise<void>
   readonly wait: () => Promise<void>
   readonly close: () => Promise<void>
 }
 
-export interface HostedActor<Event extends object, Services, Methods, State> {
-  (options: {
-    readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Services, Error>
-    readonly journal?: Journal<Event>
-  }): Promise<ManagedThread<Methods, State>>
-  readonly actorName: string
-}
+export type HostedActor<Event extends object, Services, Methods extends object, State> = ActorDefinition<Event, State, Methods, Services>
 
 // createThreadHost allocates scoped thread identities and serializes local allocation and invocation admission.
 export function createThreadHost<Event extends object, Services, Methods extends Readonly<Record<string, (...args: never[]) => Promise<void>>>, State>(options: {
   readonly actor: HostedActor<Event, Services, Methods, State>
   readonly storage: ThreadStorage<Event>
-  readonly layersFor: (coordinate: ThreadCoordinate, runtime: ActorRuntime<Event>) => Layer.Layer<Services, Error>
+  readonly services: (coordinate: ThreadCoordinate, runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
   readonly generateName?: () => string
 }) {
-  const supervisors = new Map<string, Promise<Awaited<ReturnType<typeof createSupervisor>>>>()
+  const createSupervisor = (instance: string) => createActorStore({
+    actor: supervisorActor,
+    journal: options.storage.supervisor(options.actor.actorName, instance),
+    services: () => Layer.succeed(ThreadProvisioner, {
+      provision: allocation => Effect.tryPromise({ try: async () => { await open(allocation.coordinate) }, catch: RuntimeError.from }),
+    }),
+  })
+  const supervisors = new Map<string, ReturnType<typeof createSupervisor>>()
   const threads = new Map<string, Promise<ManagedThread<Methods, State>>>()
   const ledgers = new Map<string, ReturnType<typeof invocationLedger>>()
   const queues = new Map<string, Promise<unknown>>()
@@ -55,7 +58,7 @@ export function createThreadHost<Event extends object, Services, Methods extends
     const key = identity(coordinate)
     let pending = threads.get(key)
     if (!pending) {
-      pending = options.actor({ journal: options.storage.thread(coordinate), services: runtime => options.layersFor(coordinate, runtime) })
+      pending = createActorStore({ actor: options.actor, journal: options.storage.thread(coordinate), services: runtime => options.services(coordinate, runtime) })
       threads.set(key, pending)
       void pending.catch(() => { if (threads.get(key) === pending) threads.delete(key) })
     }
@@ -65,12 +68,7 @@ export function createThreadHost<Event extends object, Services, Methods extends
     if (!instance) throw new RuntimeError("Actor instance must be nonempty")
     let pending = supervisors.get(instance)
     if (!pending) {
-      pending = createSupervisor({
-        journal: options.storage.supervisor(options.actor.actorName, instance),
-        services: () => Layer.succeed(ThreadProvisioner, {
-          provision: allocation => Effect.tryPromise({ try: async () => { await open(allocation.coordinate) }, catch: RuntimeError.from }),
-        }),
-      }).then(async supervisor => {
+      pending = createSupervisor(instance).then(async supervisor => {
         try { await supervisor.resume(); return supervisor } catch (error) { await supervisor.close(); throw error }
       })
       supervisors.set(instance, pending)
@@ -94,7 +92,7 @@ export function createThreadHost<Event extends object, Services, Methods extends
       const invocationKey = invocation.key
       return serialize(`invoke:${key}`, () => invocations.invoke(invocationKey, name, input, () => method(...input as never[])))
     }])) as unknown as ThreadMethods<Methods>
-    return { coordinate: Object.freeze({ ...coordinate }), methods, get: thread.get, getState: thread.getState, wait: thread.wait, invocation: invocations.get }
+    return { coordinate: Object.freeze({ ...coordinate }), store: createThreadStore(coordinate, thread), methods, get: thread.get, getState: thread.getState, resume: thread.resume, wait: thread.wait, invocation: invocations.get }
   }
   const allocate = (instance: string, parent: ThreadCoordinate | undefined, suppliedName?: string) => serialize(`allocate:${instance}`, async () => {
     if (parent && (parent.actor !== options.actor.actorName || parent.instance !== instance)) throw new RuntimeError("Parent belongs to another actor instance")
@@ -102,7 +100,7 @@ export function createThreadHost<Event extends object, Services, Methods extends
     const directory = supervisor.getState().view.threads
     const ancestor = parent ? directory.find(entry => entry.coordinate.thread === parent.thread && entry.status === "registered") : undefined
     if (parent && !ancestor) throw new RuntimeError("Unknown parent thread")
-    const name = suppliedName ?? (options.generateName ?? crypto.randomUUID)()
+    const name = suppliedName ?? (options.generateName ? options.generateName() : crypto.randomUUID())
     if (!name || name.includes("/")) throw new RuntimeError("Thread name must be nonempty and contain no slash")
     const existing = directory.find(entry => entry.name === name && entry.parent === (parent?.thread ?? null))
     if (existing) {
@@ -118,6 +116,10 @@ export function createThreadHost<Event extends object, Services, Methods extends
   })
   return {
     actor: options.actor.actorName,
+    supervisorStore: async (instance: string) => {
+      check()
+      return createSupervisorStore(await supervisorFor(instance))
+    },
     getThread: async (input: { readonly instance: string; readonly thread: string }) => {
       check()
       const supervisor = await supervisorFor(input.instance)

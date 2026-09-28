@@ -1,7 +1,7 @@
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { sqlJournal } from "@clavia/tardigrade-experimental-host"
-import { createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-core"
+import { createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-host"
 import { hostRoutes, type HttpHost } from "@clavia/tardigrade-experimental-host"
 import { HttpRouter } from "effect/unstable/http"
 

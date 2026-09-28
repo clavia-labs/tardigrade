@@ -6,7 +6,12 @@
   "description": "Platform-independent actor hosting services.",
   "exports": {
     ".": "./src/index.ts",
-    "./services/*": "./src/services/*.ts"
+    "./services/*": "./src/services/*.ts",
+    "./stores/*": "./src/stores/*.ts",
+    "./thread-host": "./src/thread-host.ts",
+    "./runtime": "./src/runtime.ts",
+    "./supervisor": "./src/supervisor.ts",
+    "./invocation": "./src/invocation.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-experimental-core": "workspace:*",

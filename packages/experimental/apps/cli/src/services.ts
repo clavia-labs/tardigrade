@@ -3,15 +3,19 @@ import { Effect, Layer, Schema } from "effect"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { liveModelServices } from "@clavia/tardigrade-experimental-agent/services/model"
-import { memoryWorkspace } from "@clavia/tardigrade-experimental-packages"
+import { assistantRuntime } from "@clavia/tardigrade-experimental-agent/services/runtime"
+import { receiveResolution } from "@clavia/tardigrade-experimental-agent/services/promises"
+import { Actor } from "@clavia/tardigrade-experimental-host"
+import { bunPromises } from "@clavia/tardigrade-experimental-platform/bun"
 import { ModelLock, lockedModelConfigOf, modelLockService, parseModelLock, MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelCredentialsFrom } from "@clavia/tardigrade-model/config"
+import { actor } from "./actor"
 
 const Config = Schema.Struct({ vars: Schema.Struct({ TARDIGRADE_CONFIG: Schema.Struct({ models: Schema.Unknown }) }) })
 
 const env = { ...process.env }
 const modelServices = Layer.unwrap(Effect.gen(function* () {
-  const configPath = resolve(env.TARDIGRADE_CONFIG_PATH?.trim() || fileURLToPath(new URL("./wrangler.jsonc", import.meta.url)))
+  const configPath = resolve(env.TARDIGRADE_CONFIG_PATH?.trim() || fileURLToPath(new URL("../wrangler.jsonc", import.meta.url)))
   const lockPath = join(dirname(configPath), MODEL_LOCK_FILE)
   const [configText, lockText] = yield* Effect.tryPromise({
     try: async () => {
@@ -29,13 +33,20 @@ const modelServices = Layer.unwrap(Effect.gen(function* () {
       const config = lockedModelConfigOf(manifest.vars.TARDIGRADE_CONFIG.models, definitions)
       const { providers: _providers, ...policy } = config
       const lock = Layer.succeed(ModelLock, modelLockService(definitions, policy))
-      return Layer.merge(
-        liveModelServices({ credentials: modelCredentialsFrom(config, env) }).pipe(Layer.provideMerge(lock)),
-        memoryWorkspace,
-      )
+      return liveModelServices({ credentials: modelCredentialsFrom(config, env) }).pipe(Layer.provideMerge(lock))
     },
     catch: RuntimeError.from,
   })
 }))
 
-export const services = modelServices
+export const DEFAULT_MAX_CHILD_DEPTH = 1
+
+// services provides model access, local child actors, and promise delivery for each actor runtime.
+export const services = (options: { readonly maxChildDepth?: number } = {}) => assistantRuntime({
+  actor,
+  maxChildDepth: options.maxChildDepth ?? DEFAULT_MAX_CHILD_DEPTH,
+  services: (_context, host) => Layer.merge(modelServices, Layer.unwrap(Effect.map(Actor, actor => bunPromises(host, {
+    poll: actor.poll,
+    deliver: settlement => receiveResolution(host, settlement),
+  })))),
+}).services

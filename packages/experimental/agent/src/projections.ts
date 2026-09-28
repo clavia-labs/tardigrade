@@ -33,7 +33,7 @@ export function trajectoryState(state: typeof Conversation.Type, event: Event): 
 }
 
 const Turn = Schema.Struct({
-  turnId: Schema.String, settlement: Schema.NullOr(Schema.Literals(["completed", "failed", "cancelled"])), answer: Schema.NullOr(Schema.String),
+  turnId: Schema.String, settlement: Schema.NullOr(Schema.Literals(["completed", "failed", "cancelled"])), answer: Schema.NullOr(Schema.String), answerCallId: Schema.NullOr(Schema.String),
   calls: Schema.Array(Schema.Struct({ callId: Schema.String, returned: Schema.Boolean })),
   outstanding: Schema.Array(Schema.String),
 })
@@ -49,7 +49,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event): typ
     const message = inboxMessage(event)
     if (!message) return state
     if (turns.some(turn => turn.turnId === message.turnId)) throw new RuntimeError(`Duplicate turn: ${message.turnId}`)
-    turns = [...turns, { turnId: message.turnId, settlement: null, answer: null, calls: [], outstanding: [] }]
+    turns = [...turns, { turnId: message.turnId, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [] }]
   }
   if (event.type === "ModelCalled" && event.purpose === "inference") {
     if (!state.needsReply || state.running || state.waiting || event.turnId !== state.turnId || event.callId !== state.callId) {
@@ -62,6 +62,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event): typ
     if (new Set(event.toolCalls.map(call => call.callId)).size !== event.toolCalls.length) throw new RuntimeError("Duplicate tool call IDs in model reply")
     turns = turns.map(turn => turn.calls.some(call => call.callId === event.callId) ? {
       ...turn, answer: event.toolCalls.length === 0 ? event.text : null,
+      answerCallId: event.toolCalls.length === 0 ? event.callId : null,
       calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call),
       outstanding: event.toolCalls.map(call => call.callId),
     } : turn)
@@ -69,7 +70,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event): typ
   if (event.type === "TurnSettled") {
     const turn = turns.find(turn => turn.turnId === event.turnId)
     if (!turn || turn.settlement !== null || event.turnId !== state.turnId) throw new RuntimeError(`No matching active turn: ${event.turnId}`)
-    if (event.outcome === "completed" && (turn.answer === null || turn.answer !== event.output || state.running || state.waiting)) {
+    if (event.outcome === "completed" && (turn.answer === null || ("callId" in event ? turn.answerCallId !== event.callId : turn.answer !== event.output) || state.running || state.waiting)) {
       throw new RuntimeError(`Turn has no final answer: ${event.turnId}`)
     }
     if (event.outcome !== "completed" && turn.outstanding.length) throw new RuntimeError("Outstanding tools must settle before ending a turn")

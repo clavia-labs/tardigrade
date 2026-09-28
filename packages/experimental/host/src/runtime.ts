@@ -1,40 +1,39 @@
-import { RuntimeError } from "./errors"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Schema, Scope, Semaphore, Cause } from "effect"
+import { RuntimeError, createStore, createEventLog, atom, EventLog, EffectExecution, type Atom, type Journal, type ActorRuntime, type ActorSetup, type Requirements, type ActorDefinition } from "@clavia/tardigrade-experimental-core"
+import { recordEffect, effectKey, type Recorded } from "@clavia/tardigrade-experimental-core/internal/effects"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Semaphore, Cause } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { createStore } from "./store"
-import { createEventLog } from "./event-log"
-import { atom, type Atom } from "./atom"
-import { EventLog } from "./durable"
-import { recordEffect, type Recorded, type Proposed, type ServicesOf } from "./internal/effects"
-import type { Journal } from "./journal"
-import { EffectExecution } from "./effects"
-import { effectKey } from "./internal/effects"
+import { select } from "./stores/thread"
 
-export type Requirements<Atoms> = Exclude<ServicesOf<Proposed<Atoms[keyof Atoms] extends Atom<infer Value> ? Value : never>>, EffectExecution>
+export type ActorServices<Definition> = Definition extends ActorDefinition<infer Event, infer State, infer _Methods, infer Services>
+  ? (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
+  : never
 
-export interface ActorRuntime<Event extends object> {
-  readonly ready: Effect.Effect<void>
-  // onReady registers recovery during service construction, after replay and before the store opens.
-  readonly onReady: (recover: Effect.Effect<void, Error>) => Effect.Effect<void>
-  // onCommit registers host work acknowledged after each journal commit.
-  readonly onCommit: (work: Effect.Effect<void, Error>) => Effect.Effect<void>
-  readonly get: <Value>(node: Atom<Value>) => Value
-  readonly sub: <Value>(node: Atom<Value>, listener: () => void) => () => void
-  readonly record: (event: Recorded<Event>) => Effect.Effect<void, Error>
-  readonly send: (events: readonly Event[], when?: (get: ActorRuntime<Event>["get"]) => boolean) => Effect.Effect<void, Error>
-  readonly fork: (id: string, work: Effect.Effect<void, Error>) => Effect.Effect<void, Error>
-  readonly cancel: (id: string) => Effect.Effect<void, Error>
+// createActorStore instantiates an actor definition and owns its services, journal commits, and execution lifetime.
+export async function createActorStore<Event extends object, State, Methods extends object, Services>(options: {
+  readonly actor: ActorDefinition<Event, State, Methods, Services>
+  readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
+  readonly events?: readonly Recorded<Event>[]
+  readonly journal?: Journal<Event>
+  readonly onEvent?: (event: Recorded<Event>) => void
+}) {
+  let root!: Atom<State>
+  let methods!: Methods
+  const store = await createRuntime({
+    ...options,
+    setup: options.actor.setup.pipe(Effect.map(setup => {
+      root = setup.root
+      return { ...setup, actions: (emit: (event: Event) => Promise<void>) => {
+        methods = setup.actions(emit)
+        return methods
+      } }
+    })),
+  })
+  const state = select(store, root)
+  return { ...store, getState: state.get, subscribe: state.subscribe, methods }
 }
 
-export interface ActorSetup<Event extends object, Atoms extends Readonly<Record<string, Atom<unknown>>>, Actions extends object> {
-  readonly schema: Schema.Schema<Event>
-  readonly effects: Atoms
-  readonly actions: (emit: (event: Event) => Promise<void>) => Actions
-  readonly validate?: (event: Event, get: ActorRuntime<Event>["get"]) => void
-}
-
-// createActorStore builds services and an atom graph within an isolated actor lifetime.
-export async function createActorStore<Event extends object, const Atoms extends Readonly<Record<string, Atom<unknown>>>, Actions extends object, Services>(options: {
+// createRuntime builds services and an atom graph within an isolated actor lifetime.
+async function createRuntime<Event extends object, const Atoms extends Readonly<Record<string, Atom<unknown>>>, Actions extends object, Services>(options: {
   readonly setup: Effect.Effect<ActorSetup<Event, Atoms, Actions>, Error, Services>
   readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<Atoms> | Exclude<Services, Scope.Scope>, Error>
   readonly events?: readonly Recorded<Event>[]

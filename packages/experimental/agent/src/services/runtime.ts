@@ -2,12 +2,13 @@ import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Layer } from "effect"
 import { Workspace, memoryWorkspace } from "@clavia/tardigrade-experimental-packages"
 import type { ActorRuntime, Recorded } from "@clavia/tardigrade-experimental-core"
-import { Actor, Promises, localActors, type ActorCaller } from "@clavia/tardigrade-experimental-host"
+import { Actor, Promises, localActors, createActorStore, type ActorCaller } from "@clavia/tardigrade-experimental-host"
 import { createActor } from "../agent"
 import type { Event } from "../event"
 import { ModelLock } from "./model-lock"
 import { Model } from "./model"
 import { promiseServices } from "./promises"
+import { turnOutput } from "../result"
 
 export interface AssistantContext {
   readonly depth: number
@@ -15,6 +16,7 @@ export interface AssistantContext {
 }
 
 export interface AssistantOptions {
+  readonly actor?: typeof createActor
   readonly services: Layer.Layer<Model | ModelLock | Promises, Error, Actor> | ((context: AssistantContext, host: ActorRuntime<Event>) => Layer.Layer<Model | ModelLock | Promises, Error, Actor>)
   readonly maxChildDepth: number
   readonly onEvent?: (event: Recorded<Event>, depth: number) => void
@@ -26,7 +28,7 @@ export function assistantServices(host: ActorRuntime<Event>, options: AssistantO
     run: (call, caller) => Effect.gen(function* () {
       if (depth >= options.maxChildDepth) return yield* Effect.fail(new RuntimeError(`Child depth limit reached: ${options.maxChildDepth}`))
       return yield* Effect.acquireUseRelease(
-        Effect.tryPromise({ try: () => createActor(assistantRuntime(options, depth + 1, caller)), catch: RuntimeError.from }),
+        Effect.tryPromise({ try: () => createActorStore({ actor: options.actor ?? createActor, ...assistantRuntime(options, depth + 1, caller) }), catch: RuntimeError.from }),
         child => Effect.tryPromise({ try: async signal => {
           const stop = () => { void child.close() }
           signal.addEventListener("abort", stop, { once: true })
@@ -35,8 +37,7 @@ export function assistantServices(host: ActorRuntime<Event>, options: AssistantO
             await child.wait()
             const reply = child.snapshot().events.findLast(event => event.type === "TurnSettled")
             if (!reply || reply.type !== "TurnSettled") throw new RuntimeError("Child finished without an answer")
-            if (reply.outcome !== "completed") throw new RuntimeError(reply.reason)
-            return { answer: reply.output }
+            return { answer: turnOutput(child.snapshot().events, reply) }
           } finally { signal.removeEventListener("abort", stop) }
         }, catch: RuntimeError.from }),
         child => Effect.promise(() => child.close()),

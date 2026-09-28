@@ -36,7 +36,7 @@ export const ToolReturned = Schema.Struct({ type: Schema.Literal("ToolReturned")
 export type ToolReturned = typeof ToolReturned.Type
 
 export const MessageReceived = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("message"), turnId: Schema.String, text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("message"), source: Schema.optionalKey(Schema.Literals(["user", "agent", "tool"])), turnId: Schema.String, text: Schema.String }),
   Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("request"), handle: ExecutionHandle, request: ActorRequest }),
   Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("reply"), handle: ExecutionHandle, requestId: Schema.String, decision: ActorDecision }),
 ])
@@ -62,6 +62,7 @@ export const ModelReturned = Schema.Union([
 export type ModelReturned = typeof ModelReturned.Type
 
 export const TurnSettled = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("TurnSettled"), turnId: Schema.String, outcome: Schema.Literal("completed"), callId: Schema.String }),
   Schema.Struct({ type: Schema.Literal("TurnSettled"), turnId: Schema.String, outcome: Schema.Literal("completed"), output: Schema.String }),
   Schema.Struct({ type: Schema.Literal("TurnSettled"), turnId: Schema.String, outcome: Schema.Literals(["failed", "cancelled"]), reason: Schema.String }),
 ])
@@ -85,7 +86,7 @@ export const Event = Schema.Union([
 export type Event = typeof Event.Type
 
 export const message = (input: { readonly text: string; readonly turnId?: string }): MessageReceived =>
-  ({ type: "MessageReceived", kind: "message", turnId: input.turnId ?? crypto.randomUUID(), text: input.text })
+  ({ type: "MessageReceived", kind: "message", source: "user", turnId: input.turnId ?? crypto.randomUUID(), text: input.text })
 
 export const resolveBudget = (callId: string, decision: typeof BudgetDecision.Type): BudgetResolved =>
   ({ type: "BudgetResolved", callId, decision })
@@ -99,3 +100,20 @@ export const updatePermission = (policy: typeof PermissionPolicy.Type): typeof P
 // updateBudget replaces the base allowance while retaining usage and grants from resolved requests.
 export const updateBudget = (policy: typeof BudgetPolicy.Type): typeof BudgetUpdated.Type =>
   ({ type: "BudgetUpdated", policy })
+
+// messageSource identifies inbox senders, including synthetic turn identifiers in historical events.
+export function messageSource(event: MessageReceived): "user" | "agent" | "tool" {
+  if (event.kind !== "message") return "agent"
+  if (event.source) return event.source
+  if (event.turnId.startsWith("promise:")) {
+    const prefix = "Tool promise result (data): "
+    if (event.text.startsWith(prefix)) {
+      try {
+        const value: unknown = JSON.parse(event.text.slice(prefix.length))
+        if (Schema.is(Schema.Struct({ handle: Schema.Struct({ executor: Schema.Literal("actor") }) }))(value)) return "agent"
+      } catch { return "tool" }
+    }
+    return "tool"
+  }
+  return event.turnId.includes(":notice:") ? "agent" : "user"
+}

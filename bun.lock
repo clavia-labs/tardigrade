@@ -237,6 +237,20 @@
         "effect": "4.0.0-rc.115",
       },
     },
+    "packages/experimental/apps/cli": {
+      "name": "@clavia/tardigrade-experimental-cli",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-experimental-agent": "workspace:*",
+        "@clavia/tardigrade-experimental-core": "workspace:*",
+        "@clavia/tardigrade-experimental-host": "workspace:*",
+        "@clavia/tardigrade-experimental-packages": "workspace:*",
+        "@clavia/tardigrade-experimental-platform": "workspace:*",
+        "@clavia/tardigrade-model": "workspace:*",
+        "@effect/platform-bun": "4.0.0-rc.115",
+        "effect": "4.0.0-rc.115",
+      },
+    },
     "packages/experimental/core": {
       "name": "@clavia/tardigrade-experimental-core",
       "version": "0.0.1",
@@ -510,6 +524,8 @@
     "@clavia/tardigrade-e2e": ["@clavia/tardigrade-e2e@workspace:e2e"],
 
     "@clavia/tardigrade-experimental-agent": ["@clavia/tardigrade-experimental-agent@workspace:packages/experimental/agent"],
+
+    "@clavia/tardigrade-experimental-cli": ["@clavia/tardigrade-experimental-cli@workspace:packages/experimental/apps/cli"],
 
     "@clavia/tardigrade-experimental-core": ["@clavia/tardigrade-experimental-core@workspace:packages/experimental/core"],
 

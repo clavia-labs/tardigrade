@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
-import type { Journal } from "./journal"
+import type { Journal } from "@clavia/tardigrade-experimental-core"
 
 export const InvocationEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("InvocationRequested"), key: Schema.NonEmptyString, method: Schema.NonEmptyString, args: Schema.Array(Schema.Json) }),

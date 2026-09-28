@@ -1,8 +1,10 @@
+import { bunSupervisorPath, bunThreadPath } from "./observe"
+export { observeBunThread, observeBunSupervisor, bunThreadActivity } from "./observe"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { Effect, ManagedRuntime, type Layer } from "effect"
 import { mkdirSync } from "node:fs"
-import { dirname, join } from "node:path"
-import { createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-core"
+import { dirname } from "node:path"
+import { createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-host"
 import { RemoteBackup, sqlJournal } from "@clavia/tardigrade-experimental-host"
 import { captureHostCheckpoint, type CheckpointPolicy } from "./backup"
 export { serve, DEFAULT_SERVE_OPTIONS, type ServeOptions } from "./serve"
@@ -21,8 +23,6 @@ export async function createBunHost<Event extends object, Services, Methods exte
   readonly checkpoint?: Partial<CheckpointPolicy>
 }) {
   const connections = new Set<() => Promise<void>>()
-  const encoded = (value: string) => Buffer.from(value).toString("base64url")
-  const instanceFile = (actor: string, instance: string) => join(options.storage, `${encoded(JSON.stringify([actor, instance]))}.sqlite`)
   const journal = <Entry extends object>(filename: string, actor: string) => {
     mkdirSync(dirname(filename), { recursive: true })
     const opened = bunJournal<Entry>({ ...options.sqlite, filename, actor })
@@ -30,9 +30,9 @@ export async function createBunHost<Event extends object, Services, Methods exte
     return opened
   }
   const storage: ThreadStorage<Event> = {
-    supervisor: (actor, instance) => journal(instanceFile(actor, instance), "supervisor"),
-    thread: coordinate => journal(join(`${instanceFile(coordinate.actor, coordinate.instance)}.threads`, `${encoded(coordinate.thread)}.sqlite`), "events"),
-    invocations: coordinate => journal(join(`${instanceFile(coordinate.actor, coordinate.instance)}.threads`, `${encoded(coordinate.thread)}.sqlite`), "invocations"),
+    supervisor: (actor, instance) => journal(bunSupervisorPath(options.storage, actor, instance), "supervisor"),
+    thread: coordinate => journal(bunThreadPath(options.storage, coordinate), "events"),
+    invocations: coordinate => journal(bunThreadPath(options.storage, coordinate), "invocations"),
     close: async () => {
       const failures: unknown[] = []
       for (const close of connections) { try { await close() } catch (error) { failures.push(error) } }

@@ -1,7 +1,8 @@
+import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { isDeepStrictEqual } from "node:util"
 import { Effect, Layer, Schema } from "effect"
-import { ClockHandle, ExecutionHandle, RuntimeError, type ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
+import { ClockHandle, ExecutionHandle, RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Promises, PromiseSettled, ResolutionRegistration, registrationKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-host"
 
 export interface InboxStub {

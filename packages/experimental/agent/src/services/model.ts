@@ -1,6 +1,6 @@
 import { RuntimeError, type ExecutionHandle } from "@clavia/tardigrade-experimental-core"
 import { Context, Effect, JsonSchema, Layer, Schema, SchemaRepresentation } from "effect"
-import { LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
+import { AiError, LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
 import type { ModelRef } from "@clavia/tardigrade-model/reference"
@@ -26,6 +26,30 @@ export interface ModelServiceOptions {
   readonly timeoutMs?: number
 }
 
+const ProviderError = Schema.Struct({ error: Schema.Struct({
+  message: Schema.String,
+  metadata: Schema.optionalKey(Schema.Struct({ raw: Schema.optionalKey(Schema.String) })),
+}) })
+
+// modelError retains provider rejection details without copying HTTP request headers into persisted errors.
+export function modelError(error: AiError.AiError): RuntimeError {
+  const body = "http" in error.reason ? error.reason.http?.body : undefined
+  if (!body) return RuntimeError.from(error)
+  try {
+    const parsed: unknown = JSON.parse(body)
+    if (!Schema.is(ProviderError)(parsed)) return RuntimeError.from(error)
+    const raw = parsed.error.metadata?.raw
+    let detail = parsed.error.message
+    if (raw) {
+      try {
+        const nested: unknown = JSON.parse(raw)
+        detail = Schema.is(ProviderError)(nested) ? nested.error.message : raw
+      } catch { detail = raw }
+    }
+    return new RuntimeError(error.message.includes(detail) ? error.message : `${error.message}\n${detail}`, { cause: error })
+  } catch { return RuntimeError.from(error) }
+}
+
 // modelServices adapts native AI providers to the agent's model service without executing tools.
 export function modelServices(options: ModelServiceOptions = {}) {
   if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new RuntimeError("timeoutMs must be a positive safe integer")
@@ -41,10 +65,10 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const toolkit = yield* Effect.try({
         try: () => Toolkit.make(...input.tools.map(tool => AiTool.dynamic(tool.name, {
           description: `${tool.description} Execution: ${tool.execution ?? "sync"}.`,
-          parameters: Schema.Struct({ input: Schema.toEncoded(SchemaRepresentation.fromJsonSchemaDocument(
+          parameters: Schema.toEncoded(SchemaRepresentation.fromJsonSchemaDocument(
             JsonSchema.fromSchemaDraft07(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(tool.inputSchema)),
             settings.schemaImport ?? DEFAULT_SCHEMA_IMPORT_OPTIONS,
-          )) }),
+          )),
         }))),
         catch: RuntimeError.from,
       })
@@ -56,7 +80,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
             if (message.role === "tool") return Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.callId, name: message.name, result: message.text, isFailure: message.error, providerExecuted: false })] })
             return Prompt.makeMessage("assistant", { content: [
               ...(message.text ? [Prompt.makePart("text", { text: message.text })] : []),
-              ...message.toolCalls.map(call => Prompt.makePart("tool-call", { id: call.callId, name: call.name, params: { input: call.input }, providerExecuted: false })),
+              ...message.toolCalls.map(call => Prompt.makePart("tool-call", { id: call.callId, name: call.name, params: call.input, providerExecuted: false })),
             ] })
           }),
         ]),
@@ -66,14 +90,10 @@ export function modelServices(options: ModelServiceOptions = {}) {
       }).pipe(
         Effect.provideService(CurrentModel, resolved.model),
         Effect.timeout(timeoutMs),
-        Effect.mapError(RuntimeError.from),
+        Effect.mapError(error => AiError.isAiError(error) ? modelError(error) : RuntimeError.from(error)),
       )
       if (response.finishReason === "length") return yield* Effect.fail(new RuntimeError(`Model reached maxOutputTokens=${settings.policy.maxOutputTokens}`))
-      const toolCalls: (typeof ToolCall.Type)[] = []
-      for (const call of response.toolCalls) {
-        if (typeof call.params !== "object" || call.params === null || !("input" in call.params)) return yield* Effect.fail(new RuntimeError(`Invalid tool arguments: ${call.name}`))
-        toolCalls.push({ callId: call.id, name: call.name, input: call.params.input })
-      }
+      const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: call.params }))
       return { text: response.text, toolCalls }
     }) } satisfies typeof Model.Service
   }))

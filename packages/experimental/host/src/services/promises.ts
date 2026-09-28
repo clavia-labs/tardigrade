@@ -1,5 +1,6 @@
+import { ThreadCoordinate } from "../supervisor"
 import { Context, Effect, Schema } from "effect"
-import { EffectRef, ExecutionHandle, ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
+import { EffectRef, ExecutionHandle } from "@clavia/tardigrade-experimental-core"
 
 export const ResolutionRequest = Schema.Struct({ ref: EffectRef, handle: ExecutionHandle, mode: Schema.optionalKey(Schema.Literals(["poll", "push"])) })
 export type ResolutionRequest = typeof ResolutionRequest.Type

@@ -8,6 +8,7 @@
   "workspaces": [
     "packages/*",
     "packages/experimental/*",
+    "packages/experimental/apps/*",
     "platform/*",
     "apps/*",
     "e2e",
@@ -15,6 +16,7 @@
   ],
   "scripts": {
     "tdg": "bun run apps/cli/src/main.ts",
+    "experimental:cli": "bun run packages/experimental/apps/cli/src/main.ts",
     "cli:build": "bun run pack",
     "cli:check": "bun run gate --only=lint:effect:apps:cli,typecheck:app-cli,test:app-cli",
     "gate": "bun run tools/gate.ts",
@@ -22,7 +24,7 @@
     "lint": "oxlint",
     "lint:effect": "bun run gate --only=lint:effect",
     "tla": "bun run tools/tla.ts",
-    "typecheck": "tsc --noEmit && bun run --filter './packages/*' typecheck && bun run --filter './packages/experimental/*' typecheck",
+    "typecheck": "tsc --noEmit && bun run --filter './packages/*' typecheck && bun run --filter './packages/experimental/*' typecheck && bun run --filter './packages/experimental/apps/*' typecheck",
     "test": "bun run --filter './packages/*' test",
     "web": "bun run --cwd apps/web dev",
     "knip": "knip --no-progress --treat-config-hints-as-errors --treat-tag-hints-as-errors",
