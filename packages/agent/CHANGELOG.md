@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.35.0](https://github.com/clavia-labs/tardigrade/compare/v0.34.0...v0.35.0) (2026-09-28)
+
+
+### Features
+
+* **cloudflare:** wire experimental host ([#548](https://github.com/clavia-labs/tardigrade/issues/548)) ([d0cbbd8](https://github.com/clavia-labs/tardigrade/commit/d0cbbd89a781e11805eec5e8f14e4496d483cfeb))
+* **core:** expose actor definition graph ([#545](https://github.com/clavia-labs/tardigrade/issues/545)) ([a80917e](https://github.com/clavia-labs/tardigrade/commit/a80917eeb0ba16a16d578e0bb2319ece84763ec6))
+* **core:** resolve async promises ([#549](https://github.com/clavia-labs/tardigrade/issues/549)) ([93fb012](https://github.com/clavia-labs/tardigrade/commit/93fb0124c515aaa9e4bd6db51c026a60fa85ad11))
+* **core:** type atom contracts ([#551](https://github.com/clavia-labs/tardigrade/issues/551)) ([d431bc1](https://github.com/clavia-labs/tardigrade/commit/d431bc1afd57f73bcc6ee939e8eb6dd6034a8cc3))
+* **experimental:** add stores and CLI ([#552](https://github.com/clavia-labs/tardigrade/issues/552)) ([b5eaeea](https://github.com/clavia-labs/tardigrade/commit/b5eaeeac52e6dc2b63ed91689be18b5715e44078))
+* **experimental:** govern agent tool execution ([#553](https://github.com/clavia-labs/tardigrade/issues/553)) ([1197724](https://github.com/clavia-labs/tardigrade/commit/11977246bfba8e28b69d9bce03e12c8bbb11f7cf))
+* **host:** add experimental backups ([#547](https://github.com/clavia-labs/tardigrade/issues/547)) ([36bcffc](https://github.com/clavia-labs/tardigrade/commit/36bcffc438fbc47a2325f7757605e80abf8c693b))
+* **model:** accept Bifrost webhooks ([#550](https://github.com/clavia-labs/tardigrade/issues/550)) ([7f9bb6a](https://github.com/clavia-labs/tardigrade/commit/7f9bb6aec7b392814ec68fdff9f3007393614b55))
+
 ## [0.34.0](https://github.com/clavia-labs/tardigrade/compare/v0.33.2...v0.34.0) (2026-09-27)
 
 
