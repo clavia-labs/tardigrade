@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/clavia-labs/tardigrade/compare/v0.37.0...v0.38.0) (2026-09-28)
+
+
+### Features
+
+* **experimental:** expose hosting adapters ([#559](https://github.com/clavia-labs/tardigrade/issues/559)) ([1c852a1](https://github.com/clavia-labs/tardigrade/commit/1c852a1b627d842bddb4aa7c8df99d07809c7a70))
+
 ## [0.37.0](https://github.com/clavia-labs/tardigrade/compare/v0.36.0...v0.37.0) (2026-09-28)
 
 
