@@ -199,6 +199,7 @@ try {
       "./agent/testing/model": "./src/agent/testing/model.ts",
       "./agent/testing": "./src/tardie/agent-testing.ts",
       "./core": "./src/core/index.ts",
+      "./experimental": "./src/experimental/index.ts",
       "./core/testing": "./src/core/testing/check.ts",
       "./testing": "./src/tardie/testing.ts",
       "./code": "./src/code/index.ts",

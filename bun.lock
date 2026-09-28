@@ -368,6 +368,7 @@
         "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-experimental-core": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
     },

@@ -13,6 +13,8 @@ import manifest11 from "../packages/http/package.json"
 import manifest12 from "../apps/server/package.json"
 import manifest13 from "../apps/cli/package.json"
 
+import experimentalCore from "../packages/experimental/core/package.json"
+
 interface DependencyManifest {
   readonly name: string
   readonly dependencies?: Readonly<Record<string, string>>
@@ -21,6 +23,7 @@ interface DependencyManifest {
 }
 
 export const publishSources = [
+  { dir: "packages/experimental/core", namespace: "experimental", pkg: experimentalCore },
   { dir: "packages/tardie", namespace: "tardie", pkg: manifest0 },
   { dir: "packages/agent", namespace: "agent", pkg: manifest1 },
   { dir: "packages/core", namespace: "core", pkg: manifest2 },

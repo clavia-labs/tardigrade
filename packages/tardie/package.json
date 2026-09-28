@@ -40,14 +40,16 @@
     "./agent/*": "./src/*.ts",
     "./bun": "./src/bun.ts",
     "./testing": "./src/testing.ts",
-    "./agent/testing": "./src/agent-testing.ts"
+    "./agent/testing": "./src/agent-testing.ts",
+    "./experimental": "./src/experimental.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "effect": "4.0.0-rc.115",
-    "@clavia/tardigrade-bun": "workspace:*"
+    "@clavia/tardigrade-bun": "workspace:*",
+    "@clavia/tardigrade-experimental-core": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
