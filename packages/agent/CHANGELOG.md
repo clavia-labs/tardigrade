@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/clavia-labs/tardigrade/compare/v0.36.0...v0.37.0) (2026-09-28)
+
+
+### Features
+
+* **experimental:** expose actor primitives ([#557](https://github.com/clavia-labs/tardigrade/issues/557)) ([334501d](https://github.com/clavia-labs/tardigrade/commit/334501d299d054ae5a722de1ab68050ec32b7db9))
+
 ## [0.36.0](https://github.com/clavia-labs/tardigrade/compare/v0.35.0...v0.36.0) (2026-09-28)
 
 
