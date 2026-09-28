@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.36.0](https://github.com/clavia-labs/tardigrade/compare/v0.35.0...v0.36.0) (2026-09-28)
+
+
+### Features
+
+* **cloudflare:** classify adapter failures ([#554](https://github.com/clavia-labs/tardigrade/issues/554)) ([70267db](https://github.com/clavia-labs/tardigrade/commit/70267db03860491f21b890ee9fe92a0d04e17be4))
+
+
+### Bug Fixes
+
+* **cloudflare:** retry transient operations ([#556](https://github.com/clavia-labs/tardigrade/issues/556)) ([680d980](https://github.com/clavia-labs/tardigrade/commit/680d98023309721f6dcc5136373ad32d249f146e))
+
 ## [0.35.0](https://github.com/clavia-labs/tardigrade/compare/v0.34.0...v0.35.0) (2026-09-28)
 
 
