@@ -1,3 +1,4 @@
+import { makeRetryingAlarmPersistence, type CloudflareRetryPolicy } from "./retry"
 import { actorExecution } from "@clavia/tardigrade-host/execution"
 import { commitTracedDelivery } from "@clavia/tardigrade-host/delivery"
 import { Effect, Layer, ManagedRuntime } from "effect"
@@ -38,6 +39,7 @@ type LayersFor<R> = [Exclude<R, CloudflarePorts>] extends [never]
 
 export type CloudflareThreadHostOptions<R> = {
   readonly storage: DurableObjectStorage
+  readonly retry?: CloudflareRetryPolicy
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly actorName: string
   readonly actorInstance: string
@@ -97,7 +99,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const events = new CloudflareEventStore(sql, storeKeyOf, options.store?.codec, options.store?.indexKey)
   const interruptions = effectInterruptionRegistry()
   await Effect.runPromise(events.initialize())
-  const sync = Effect.promise(() => options.storage.sync())
+  const sync = makeRetryingAlarmPersistence(options.storage, options).sync.pipe(Effect.orDie)
   const commitDispatcher = options.commitObserver === undefined
     ? undefined
     : new CommitDispatcher(options.commitObserver, options.retainCommitTask)
@@ -216,7 +218,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
       ]))
       if (result.appended > 0) driver.mark(options.thread)
     } else {
-      await options.storage.sync()
+      await Effect.runPromise(sync)
     }
   }
   const resting = async (): Promise<boolean> => {

@@ -1,6 +1,6 @@
 import { armAt } from "./alarm"
 import { Effect } from "effect"
-import { makeAlarmPersistence, type DurableObjectAlarmsOptions } from "./layers/alarms"
+import { makeRetryingAlarmPersistence, type CloudflareAlarmOptions } from "./retry"
 
 interface AlarmStorage {
   getAlarm(): Promise<number | null>
@@ -15,10 +15,10 @@ export class AlarmScheduler {
   private running: Promise<void> | undefined
   private readonly waiters = new Map<number, { resolve(): void; reject(cause: unknown): void }>()
 
-  private readonly alarms: ReturnType<typeof makeAlarmPersistence>
+  private readonly alarms: ReturnType<typeof makeRetryingAlarmPersistence>
 
-  constructor(storage: AlarmStorage, private readonly recoveryDelayMillis: number, options: DurableObjectAlarmsOptions = {}) {
-    this.alarms = makeAlarmPersistence(storage, options)
+  constructor(storage: AlarmStorage, private readonly recoveryDelayMillis: number, options: CloudflareAlarmOptions = {}) {
+    this.alarms = makeRetryingAlarmPersistence(storage, options)
   }
 
   private serialize<A>(action: () => Promise<A>): Promise<A> {

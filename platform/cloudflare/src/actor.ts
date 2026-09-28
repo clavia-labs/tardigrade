@@ -1,3 +1,5 @@
+import type { ThreadDO } from "./thread"
+import { cloudflareRetryPolicy, makeRetryingAlarms, makeRetryingRpc } from "./retry"
 import { AlarmScheduler } from "./alarm-scheduler"
 import type { TreeBounds } from "@clavia/tardigrade-client/contract"
 import { CommitSignal, streamPolicyOf } from "./transport/stream"
@@ -110,6 +112,9 @@ export class ActorDO extends DurableObject<Env> {
   private actorInstance: string | undefined
   private readonly database = ManagedRuntime.make(SqliteClient.layer({ storage: this.ctx.storage }))
   private alarmScheduler: AlarmScheduler | undefined
+  private get storageAlarms() {
+    return makeRetryingAlarms(this.ctx.storage, { retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG) })
+  }
   private readonly alarmPolicy: AlarmPolicy
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -171,12 +176,18 @@ export class ActorDO extends DurableObject<Env> {
     return restingActor(this.definition!, await this.events())
   }
 
+  private threadRpc<A>(target: ThreadAddress, operation: string, invoke: (stub: DurableObjectStub<ThreadDO>) => Promise<A>, replaySafe: boolean): Promise<A> {
+    return Effect.runPromise(makeRetryingRpc({ retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG) }).call(
+      this.env.THREADS, threadObjectNameOf(target.actor, target.instance, target.thread), operation, invoke, replaySafe
+    ))
+  }
+
   private scheduler(): AlarmScheduler {
-    return this.alarmScheduler ??= new AlarmScheduler(this.ctx.storage, this.alarmPolicy.recoveryDelayMillis)
+    return this.alarmScheduler ??= new AlarmScheduler(this.ctx.storage, this.alarmPolicy.recoveryDelayMillis, { retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG) })
   }
 
   private async synchronizeAlarm(): Promise<void> {
-    const current = await this.ctx.storage.getAlarm()
+    const current = await Effect.runPromise(this.storageAlarms.get)
     const at = scheduledAlarmAt(
       current,
       await this.resting(),
@@ -185,16 +196,16 @@ export class ActorDO extends DurableObject<Env> {
       undefined
     )
     if (at === null) {
-      if (current !== null) await this.ctx.storage.deleteAlarm()
+      if (current !== null) await Effect.runPromise(this.storageAlarms.delete)
     } else if (current !== at) {
-      await this.ctx.storage.setAlarm(at)
+      await Effect.runPromise(this.storageAlarms.set(at))
     }
   }
 
   private async reconcile(): Promise<void> {
     await this.allocator()
     await this.readiness!.drive()
-    await this.ctx.storage.sync()
+    await Effect.runPromise(this.storageAlarms.sync)
     this.commits.notify(await this.database.runPromise((await this.store()).head))
   }
 
@@ -220,7 +231,7 @@ export class ActorDO extends DurableObject<Env> {
       const sourceEntry = (await this.threads()).find((entry) => entry.thread === source && entry.state === "registered")
       const sourceEvents = sourceEntry === undefined
         ? []
-        : await this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, source)).events(source)
+        : await this.threadRpc<ReadonlyArray<Event>>({ ...identity, thread: source }, "events", stub => stub.events(source), true)
       const seq = resolveForkCheckpoint(sourceEvents, checkpoint)
       const sourceCoordinate = { ...identity, thread: source }
       forkBatchFor(sourceEvents, { source: sourceCoordinate, seq, dest: name ?? "" }, Date.now())
@@ -266,20 +277,20 @@ export class ActorDO extends DurableObject<Env> {
     this.readiness = threadSupervisorDriver(this.definition, eventLogFrom(store), Layer.succeed(ThreadProvisioner, {
       create: (input) => Effect.flatMap(Clock.currentTimeMillis, (at) => Effect.promise(async () => {
         const target = input.target
-        const stub = this.env.THREADS.getByName(threadObjectNameOf(target.actor, target.instance, target.thread))
-        await stub.init(target.actor, target.instance, target.thread)
+        await this.threadRpc(target, "init", stub => stub.init(target.actor, target.instance, target.thread), true)
         if (input.request.kind === "root" && input.request.fork !== undefined) {
           const fork = input.request.fork
-          const events = await this.env.THREADS.getByName(threadObjectNameOf(fork.source.actor, fork.source.instance, fork.source.thread)).events(fork.source.thread)
+          const events = await this.threadRpc<ReadonlyArray<Event>>(fork.source, "events", stub => stub.events(fork.source.thread), true)
           const batch = forkBatchFor(events, { source: fork.source, seq: fork.seq, dest: target.thread }, at)
-          return stub.provision(threadCreatedOf(batch)!, batch)
+          return this.threadRpc(target, "provision", stub => stub.provision(threadCreatedOf(batch)!, batch), true)
         }
         const parent = input.request.kind === "child" ? input.request.parent : undefined
-        const events = parent === undefined ? [] : await this.env.THREADS.getByName(threadObjectNameOf(parent.actor, parent.instance, parent.thread)).events(parent.thread)
-        return stub.provision(threadCreationFor(input, threadCreatedOf(events), mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, at))
+        const events = parent === undefined ? [] : await this.threadRpc<ReadonlyArray<Event>>(parent, "events", stub => stub.events(parent.thread), true)
+        const created = threadCreationFor(input, threadCreatedOf(events), mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, at)
+        return this.threadRpc(target, "provision", stub => stub.provision(created), true)
       })),
       register: (created) => Effect.promise(async () => {
-        await this.env.THREADS.getByName(threadObjectNameOf(created.address.actor, created.address.instance, created.address.thread)).commitCreation()
+        await this.threadRpc(created.address, "commitCreation", stub => stub.commitCreation(), true)
       })
     }), (operation) => this.database.runPromise(operation.pipe(
       Effect.provideService(Self, { ...this.identity(), thread: "" }),
@@ -290,8 +301,8 @@ export class ActorDO extends DurableObject<Env> {
     const identity = this.identity()
     return hostThreadAllocator({
       read: async (target) => {
-        const stub = this.env.THREADS.getByName(threadObjectNameOf(target.actor, target.instance, target.thread))
-        return await stub.exists(target.actor, target.instance, target.thread) ? stub.events(target.thread) : []
+        return this.threadRpc(target, "read", async stub =>
+          await stub.exists(target.actor, target.instance, target.thread) ? stub.events(target.thread) : [], true)
       },
       placement: mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT,
       supervisor: this.readiness,
@@ -305,7 +316,7 @@ export class ActorDO extends DurableObject<Env> {
     try {
       return await Effect.runPromise((await this.allocator()).allocate(request))
     } finally {
-      await this.ctx.storage.sync()
+      await Effect.runPromise(this.storageAlarms.sync)
       this.commits.notify(await this.database.runPromise((await this.store()).head))
     }
   }
@@ -314,7 +325,7 @@ export class ActorDO extends DurableObject<Env> {
     const target = { ...this.identity(), thread }
     const record = (await this.threads()).find((entry) => entry.thread === thread)
     await Effect.runPromise((await this.allocator()).ensure(target, request ?? threadRequestOf(target, record)))
-    await this.ctx.storage.sync()
+    await Effect.runPromise(this.storageAlarms.sync)
     this.commits.notify(await this.database.runPromise((await this.store()).head))
   }
 

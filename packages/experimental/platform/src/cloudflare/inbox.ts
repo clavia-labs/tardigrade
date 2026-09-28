@@ -1,5 +1,6 @@
+import { makeRetryingRpc, type CloudflareRetryOptions } from "@clavia/tardigrade-cloudflare/retry"
 import { makeAlarmScheduling, type DurableObjectAlarmsOptions } from "@clavia/tardigrade-cloudflare/layers/alarms"
-import { makeDurableObjectRpc, type DurableObjectRpcOptions } from "@clavia/tardigrade-cloudflare/layers/rpc"
+import { type DurableObjectRpcOptions } from "@clavia/tardigrade-cloudflare/layers/rpc"
 import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { isDeepStrictEqual } from "node:util"
@@ -17,13 +18,13 @@ export function cloudflarePromises(options: {
   readonly recipient: ThreadCoordinate
   readonly namespace: { readonly getByName: (name: string) => InboxStub }
   readonly name: string
-  readonly rpc?: DurableObjectRpcOptions
+  readonly rpc?: DurableObjectRpcOptions & CloudflareRetryOptions
   readonly policy?: Partial<PromisePolicy>
 }) {
   const policy = promisePolicy(options.policy)
-  const rpc = makeDurableObjectRpc(options.rpc)
+  const rpc = makeRetryingRpc(options.rpc)
   const invoke = (method: "watch" | "cancel", request: Parameters<typeof Promises.Service.watch>[0]) =>
-    rpc.call(options.namespace, options.name, method, stub => stub[method]({ ...request, recipient: options.recipient }))
+    rpc.call(options.namespace, options.name, method, stub => stub[method]({ ...request, recipient: options.recipient }), true)
       .pipe(Effect.timeout(policy.attemptTimeoutMs))
   return Layer.succeed(Promises, { watch: request => invoke("watch", request), cancel: request => invoke("cancel", request) })
 }

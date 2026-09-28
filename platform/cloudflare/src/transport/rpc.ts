@@ -1,3 +1,6 @@
+import { receivedEventOf } from "@clavia/tardigrade-core/interaction"
+import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
+import { cloudflareRetryPolicy, makeRetryingRpc } from "../retry"
 import { Effect } from "effect"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -23,7 +26,7 @@ export const cloudflareRpcTransport = (
       const event = current._tag === "Some" && (envelope.event as { readonly traceparent?: unknown }).traceparent === undefined
         ? ({ ...envelope.event, traceparent: traceparentOf(current.value) } as Event)
         : envelope.event
-      return Effect.promise(async () => {
+      return Effect.suspend(() => {
         const placement = envelope.lineage?.placement ?? defaultChildPlacement
         if (placement !== "independent") throw new Error(`Cloudflare Durable Object host does not support ${JSON.stringify(placement)} thread placement`)
         if (!deployed(destination.actor)) throw new Error(`actor ${JSON.stringify(destination.actor)} is not deployed`)
@@ -32,13 +35,13 @@ export const cloudflareRpcTransport = (
           event,
           ...(envelope.lineage === undefined ? {} : { lineage: { ...envelope.lineage, placement } })
         }
-        if (envelope.lineage !== undefined) {
-          const directory = env.ACTORS.getByName(actorObjectNameOf(destination.actor, destination.instance))
-          await directory.deliverChild(delivered)
-          return
-        }
-        const stub = env.THREADS.getByName(threadObjectNameOf(destination.actor, destination.instance, destination.thread))
-        await stub.deliver(delivered)
+        const rpc = makeRetryingRpc({ retry: cloudflareRetryPolicy(env.TARDIGRADE_CONFIG) })
+        const landed = receivedEventOf({ target: destination, event, link: envelope.link, call: envelope.call })
+        const replaySafe = hostEventKeyOf(landed) !== undefined || (landed.type === "MessageReceived" && typeof landed.id === "string" && landed.id.length > 0)
+        return (envelope.lineage !== undefined
+          ? rpc.call(env.ACTORS, actorObjectNameOf(destination.actor, destination.instance), "deliverChild", stub => stub.deliverChild(delivered), replaySafe)
+          : rpc.call(env.THREADS, threadObjectNameOf(destination.actor, destination.instance, destination.thread), "deliver", stub => stub.deliver(delivered), replaySafe)
+        ).pipe(Effect.orDie)
       })
     })
   )
