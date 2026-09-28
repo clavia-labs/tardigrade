@@ -1,6 +1,6 @@
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { isAbsolute, join, resolve } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { rewriteComponentRuntimeImports, stageInitTemplates } from "./publish-paths"
 import { publishDependencies, publishSources } from "./publish-manifest"
@@ -114,6 +114,10 @@ const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>
     for (const [from, to] of rewrites) {
       source = source.replaceAll(`${from}/`, `${to}/`).replaceAll(`"${from}"`, `"${to}"`).replaceAll(`'${from}'`, `'${to}'`)
     }
+    source = source.replace(/(["'])tardie\/experimental\/internal\/([^"']+)\1/g, (_match, quote: string, module: string) => {
+      const target = relative(dirname(path), join(sourceRoot, "experimental/internal", module))
+      return `${quote}${target.startsWith(".") ? target : `./${target}`}${quote}`
+    })
     await writeFile(path, rewriteComponentRuntimeImports(source, path, sourceRoot))
   }
 }
@@ -154,6 +158,7 @@ const stage = join(destination, "package")
 
 try {
   await mkdir(stage, { recursive: true })
+  for (const source of packages) await mkdir(join(stage, "src", source.namespace), { recursive: true })
   await Promise.all([
     cp(join(root, "LICENSE"), join(stage, "LICENSE")),
     cp(join(root, "README.md"), join(stage, "README.md")),
@@ -166,11 +171,13 @@ try {
     })
   ])
 
-  const rewrites = new Map(
-    packages
+  const rewrites = new Map([
+    ["@clavia/tardigrade-experimental-platform/bun", "tardie/experimental/bun"],
+    ["@clavia/tardigrade-experimental-platform/cloudflare", "tardie/experimental/cloudflare"],
+    ...packages
       .filter((source) => source.namespace !== "tardie")
       .map((source) => [source.pkg.name, `${publicSource.pkg.name}/${source.namespace}`] as const)
-  )
+  ])
   await rewriteSources(join(stage, "src"), rewrites)
 
   const repository = publicSource.pkg.repository
@@ -200,6 +207,9 @@ try {
       "./agent/testing": "./src/tardie/agent-testing.ts",
       "./core": "./src/core/index.ts",
       "./experimental": "./src/experimental/index.ts",
+      "./experimental/host": "./src/experimental/host/index.ts",
+      "./experimental/bun": "./src/experimental/platform/bun/index.ts",
+      "./experimental/cloudflare": "./src/experimental/platform/cloudflare/index.ts",
       "./core/testing": "./src/core/testing/check.ts",
       "./testing": "./src/tardie/testing.ts",
       "./code": "./src/code/index.ts",

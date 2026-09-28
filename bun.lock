@@ -369,6 +369,8 @@
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-experimental-core": "workspace:*",
+        "@clavia/tardigrade-experimental-host": "workspace:*",
+        "@clavia/tardigrade-experimental-platform": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
     },
