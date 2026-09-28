@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect"
 import { cachedObjectStorage, makeObjectStorage, objectCachePolicy, ObjectStorage, sqlObjectCache, type ObjectCachePolicy } from "@clavia/tardigrade-agent"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { CLOUDFLARE_OBJECT_CACHE_CAPABILITIES } from "./limits"
+import { makeR2Storage, type R2StorageOptions } from "../layers/r2"
 export { CLOUDFLARE_OBJECT_CACHE_CAPABILITIES, CLOUDFLARE_SQLITE_MAX_ROW_BYTES } from "./limits"
 
 export const DEFAULT_R2_OBJECT_PREFIX = "objects/"
@@ -15,17 +16,13 @@ export interface R2ObjectCacheOptions extends Partial<ObjectCachePolicy> {
 // objectStorageFromR2 shares content-addressed objects within the supplied bucket and prefix (test/objects.workers.ts).
 export const objectStorageFromR2 = (
   bucket: Pick<R2Bucket, "get" | "put">,
-  options: { readonly prefix?: string; readonly cache?: R2ObjectCacheOptions } = {}
+  options: R2StorageOptions & { readonly prefix?: string; readonly cache?: R2ObjectCacheOptions } = {}
 ): Layer.Layer<ObjectStorage> => {
   const prefix = options.prefix ?? DEFAULT_R2_OBJECT_PREFIX
+  const storage = makeR2Storage(bucket, options)
   const backing = makeObjectStorage({
-    read: (key) => Effect.tryPromise(async () => {
-      const object = await bucket.get(prefix + key)
-      return object === null ? undefined : new Uint8Array(await object.arrayBuffer())
-    }),
-    write: (key, bytes) => Effect.tryPromise(async () => {
-      await bucket.put(prefix + key, bytes)
-    })
+    read: (key) => storage.read(prefix + key),
+    write: (key, bytes) => storage.write(prefix + key, bytes)
   })
   if (options.cache === undefined) return Layer.succeed(ObjectStorage, backing)
   const cache = options.cache

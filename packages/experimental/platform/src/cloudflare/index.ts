@@ -1,3 +1,5 @@
+import { Effect } from "effect"
+import { makeDurableObjectAlarms, type DurableObjectAlarmsOptions } from "@clavia/tardigrade-cloudflare/layers/alarms"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { sqlJournal } from "@clavia/tardigrade-experimental-host"
@@ -6,21 +8,23 @@ import { hostRoutes, type HttpHost } from "@clavia/tardigrade-experimental-host"
 import { HttpRouter } from "effect/unstable/http"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
-export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string) {
+export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string, options: DurableObjectAlarmsOptions = {}) {
+  const alarms = makeDurableObjectAlarms(storage, options)
   return sqlJournal<Event>({
     actor,
     layer: SqliteClient.layer({ storage }),
-    flush: () => storage.sync(),
+    flush: () => Effect.runPromise(alarms.sync),
   })
 }
 
 // createCloudflareHost keeps supervisor, thread, and invocation journals in the supplied Durable Object storage.
 export function createCloudflareHost<Event extends object, Services, Methods extends Readonly<Record<string, (...args: never[]) => Promise<void>>>, State>(options: Omit<Parameters<typeof createThreadHost<Event, Services, Methods, State>>[0], "storage"> & {
   readonly storage: DurableObjectStorage
+  readonly alarms?: DurableObjectAlarmsOptions
 }) {
   const connections = new Set<() => Promise<void>>()
   const journal = <Entry extends object>(key: readonly string[]) => {
-    const opened = cloudflareJournal<Entry>(options.storage, JSON.stringify(key))
+    const opened = cloudflareJournal<Entry>(options.storage, JSON.stringify(key), options.alarms)
     connections.add(opened.close)
     return opened
   }

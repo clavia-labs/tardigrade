@@ -1,3 +1,5 @@
+import { makeAlarmScheduling, type DurableObjectAlarmsOptions } from "@clavia/tardigrade-cloudflare/layers/alarms"
+import { makeDurableObjectRpc, type DurableObjectRpcOptions } from "@clavia/tardigrade-cloudflare/layers/rpc"
 import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { isDeepStrictEqual } from "node:util"
@@ -11,12 +13,18 @@ export interface InboxStub {
 }
 
 // cloudflarePromises binds an actor's promise service to an Inbox DO; registration acknowledges durable acceptance by that DO.
-export function cloudflarePromises(options: { readonly recipient: ThreadCoordinate; readonly target: InboxStub; readonly policy?: Partial<PromisePolicy> }) {
+export function cloudflarePromises(options: {
+  readonly recipient: ThreadCoordinate
+  readonly namespace: { readonly getByName: (name: string) => InboxStub }
+  readonly name: string
+  readonly rpc?: DurableObjectRpcOptions
+  readonly policy?: Partial<PromisePolicy>
+}) {
   const policy = promisePolicy(options.policy)
-  const invoke = (method: "watch" | "cancel", request: Parameters<typeof Promises.Service.watch>[0]) => Effect.tryPromise({
-    try: () => options.target[method]({ ...request, recipient: options.recipient }),
-    catch: RuntimeError.from,
-  }).pipe(Effect.timeout(policy.attemptTimeoutMs))
+  const rpc = makeDurableObjectRpc(options.rpc)
+  const invoke = (method: "watch" | "cancel", request: Parameters<typeof Promises.Service.watch>[0]) =>
+    rpc.call(options.namespace, options.name, method, stub => stub[method]({ ...request, recipient: options.recipient }))
+      .pipe(Effect.timeout(policy.attemptTimeoutMs))
   return Layer.succeed(Promises, { watch: request => invoke("watch", request), cancel: request => invoke("cancel", request) })
 }
 
@@ -39,6 +47,7 @@ const handleKey = (handle: ExecutionHandle) => JSON.stringify([handle.executor, 
 // createCloudflareInbox owns a dedicated DO's storage; acknowledged payloads are discarded and deduplication receipts expire by policy.
 export function createCloudflareInbox(options: {
   readonly storage: DurableObjectStorage
+  readonly alarms?: DurableObjectAlarmsOptions
   readonly poll?: ResolutionPoll
   readonly deliver: (recipient: ThreadCoordinate, settlement: PromiseSettled) => Effect.Effect<void, Error>
   readonly verifyWebhook?: (request: Request) => Effect.Effect<InboxNotification, Error>
@@ -61,8 +70,8 @@ export function createCloudflareInbox(options: {
     const times = [...jobs.values()].map(value => decode(value).nextAt).filter((time): time is number => time !== null)
     times.push(...receipts.values())
     times.push(...[...results.values()].map(value => Schema.decodeSync(Incoming)(value).expiresAt))
-    if (!times.length) await tx.deleteAlarm()
-    else await tx.setAlarm(times.reduce((first, time) => Math.min(first, time)))
+    const alarms = makeAlarmScheduling(tx, options.alarms)
+    await Effect.runPromise(times.length ? alarms.set(times.reduce((first, time) => Math.min(first, time))) : alarms.delete)
   }
   const update = (key: string, change: (entry: Entry) => Entry) => mutate(() => storage.transaction(async tx => {
     const value = await tx.get<Entry>(key)
@@ -168,7 +177,7 @@ export function createCloudflareInbox(options: {
       await discard()
       await mutate(async () => {
         if ((await storage.list({ limit: 1 })).size === 0) {
-          await storage.deleteAlarm()
+          await Effect.runPromise(makeAlarmScheduling(storage, options.alarms).delete)
           await storage.deleteAll()
         }
       })

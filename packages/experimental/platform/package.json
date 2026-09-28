@@ -8,6 +8,7 @@
     "./cloudflare": "./src/cloudflare/index.ts"
   },
   "dependencies": {
+    "@clavia/tardigrade-cloudflare": "workspace:*",
     "@clavia/tardigrade-experimental-core": "workspace:*",
     "@clavia/tardigrade-experimental-host": "workspace:*",
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",

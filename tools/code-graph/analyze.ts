@@ -102,7 +102,7 @@ export const boundaryViolations = (nodes: readonly GraphNode[], edges: readonly 
     if (from.layer === "core" && to.layer !== "core") return "core-only"
     if (from.layer === "model" && to.layer !== "model") return "model-independent"
     if (from.layer === "host" && !["core", "host"].includes(to.layer)) return "host-inward"
-    if (from.id.startsWith("packages/") && from.layer !== "facade" && ["platform", "app"].includes(to.layer)) return "shared-portable"
+    if (from.id.startsWith("packages/") && !["facade", "platform", "app"].includes(from.layer) && ["platform", "app"].includes(to.layer)) return "shared-portable"
     if (from.layer === "platform" && to.layer === "app") return "platform-no-apps"
     if ((from.id.startsWith("packages/") || from.layer === "platform") && from.layer !== "facade" && to.layer === "facade") return "no-facade-backedge"
     return undefined
@@ -165,8 +165,8 @@ export const boundaryViolations = (nodes: readonly GraphNode[], edges: readonly 
   return violations
 }
 
-const layerOf = (id: string): string => id.startsWith("platform/") ? "platform"
-  : id.startsWith("apps/") || id.startsWith("examples/") ? "app"
+const layerOf = (id: string): string => id.startsWith("platform/") || id === "packages/experimental/platform" || id.startsWith("packages/experimental/platform/") ? "platform"
+  : id.startsWith("apps/") || id.startsWith("examples/") || id.startsWith("packages/experimental/apps/") || id === "packages/experimental/examples" || id.startsWith("packages/experimental/examples/") ? "app"
   : id === "packages/tardie" ? "facade" : id.startsWith("packages/") ? id.split("/")[1]! : "tooling"
 
 // analyzeGraph resolves working-tree source imports through Bun's workspace and TypeScript resolution.
