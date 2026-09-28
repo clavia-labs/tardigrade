@@ -10,6 +10,41 @@ Each launch creates a fresh thread in `.tardigrade/threads`. The CLI prints its 
 
 The CLI actor includes fetch, workspace, and agents tools. `delegate_task` delegates to a local child agent and `cancel_agent` cancels a child handle. Children use the same model configuration. `--max-child-depth` sets the maximum nesting depth, defaulting to 1; 0 disables delegation. Exceeding the limit returns an error to the caller. Child actors live within the parent runtime and are not persisted as supervisor threads.
 
+## Child tool budgets
+
+`agents()` gives each child 20 tool calls per turn, exported as `DEFAULT_AGENT_TOOL_CALLS`. Override the package configuration in the actor definition:
+
+```ts
+agents({ budget: { toolCalls: 5 } })
+```
+
+The child runtime records the limit before starting work. Executed tool calls consume the allowance, including calls that fail; permission denials do not. Tool replies and approval decisions retain the current allowance. A completed turn resets it for the next turn. When exhausted, further requested calls receive a budget error and the model sees no available tools, allowing it to answer without tools. Zero disables tool execution for the child. The remaining allowance is included in the child's model instructions.
+
+Model spend has no budget limit. The child cap does not impose a shared allowance across children or a tool cap on the root chat actor. Custom child actor definitions must compose the budget atoms to enforce recorded limits, as the CLI and default agent definitions do.
+
+## Tool permissions
+
+`--permissions` selects a mode for this CLI process. Each launch defaults to `ask`, including resumed threads.
+
+| Mode | Behavior |
+| --- | --- |
+| `ask` | Ask before each tool call. |
+| `auto` | Allow tools marked read-only; ask before other calls. |
+| `full-access` | Allow all tool calls. |
+
+Read-only tools are `fetch_url`, `read_text`, and `list_texts`. Workspace writes, delegation, and cancellation require approval in `auto`. These modes govern tool execution; model calls and child-depth limits retain their own configuration.
+
+```sh
+bun run experimental:cli --permissions auto
+bun run experimental:cli --permissions full-access --message "Fetch https://example.com"
+```
+
+Use `/permissions` for a picker or `/permissions ask`, `/permissions auto`, or `/permissions full-access` to change the mode. Changes apply to every open thread and its children in this CLI process. Each actor records its policy in its journal and includes it in model instructions.
+
+Approval notices show the thread, child depth when applicable, tool name, arguments, and request ID. `/allow <id>` approves that call; `/deny <id>` rejects it. `/approvals` lists pending requests, including requests from other open threads. Changing mode leaves existing approvals pending. Approval notices preserve the chat draft. Closing the CLI interrupts pending approvals; resuming a thread denies interrupted approvals so the agent can request permission again.
+
+Noninteractive chat denies calls that require approval and returns the reason to the model. `auto` still asks for writes and delegation, so those calls are denied without an interactive chat. Use `full-access` explicitly to allow all calls without prompts.
+
 ## Noninteractive chat
 
 Use `--message` to send one message and exit:

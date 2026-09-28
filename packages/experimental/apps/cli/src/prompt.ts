@@ -3,23 +3,27 @@ import { Effect, Option, Queue, Terminal } from "effect"
 import { Prompt } from "effect/unstable/cli"
 import type { ChatMessage } from "@clavia/tardigrade-experimental-agent/messages"
 
+import type { PermissionNotice } from "./permissions"
+
+export type PromptMessage = ChatMessage | PermissionNotice
+
 const clean = (text: string) => Array.from(stripVTControlCharacters(text), character => {
   const code = character.codePointAt(0)!
   return (code < 32 && character !== "\n" && character !== "\t") || (code >= 127 && code <= 159) ? "" : character
 }).join("")
 
-function formatMessage(message: ChatMessage, color = !!process.stdout.isTTY): string {
+function formatMessage(message: PromptMessage, color = !!process.stdout.isTTY): string {
   if (message.kind === "assistant") return `\n${clean(message.text)}\n\n`
-  const label = message.kind === "agent" ? "Child agent" : message.kind === "tool" ? "Tool result" : "Error"
+  const label = message.kind === "permission" ? "Permission required" : message.kind === "agent" ? "Child agent" : message.kind === "tool" ? "Tool result" : "Error"
   const text = `${label}\n${clean(message.text).split("\n").map(line => `  ${line}`).join("\n")}`
   return `\n${color ? styleText(message.kind === "error" ? "red" : "magenta", text) : text}\n\n`
 }
 
-type State = { readonly text: readonly string[]; readonly cursor: number; readonly message?: ChatMessage }
+type State = { readonly text: readonly string[]; readonly cursor: number; readonly message?: PromptMessage }
 const segments = (text: string) => Array.from(new Intl.Segmenter().segment(text), segment => segment.segment)
 
 // chatPrompt redraws a single input row when inbox messages arrive while preserving the draft and cursor.
-export const chatPrompt = (events: Queue.Dequeue<ChatMessage>) => Prompt.Custom<State, string, ChatMessage>({ text: [], cursor: 0 }, events, {
+export const chatPrompt = (events: Queue.Dequeue<PromptMessage>) => Prompt.Custom<State, string, PromptMessage>({ text: [], cursor: 0 }, events, {
   render: (state, action) => Effect.gen(function* () {
     if (action._tag === "Submit") return `You › ${state.text.join("")}\n`
     const terminal = yield* Terminal.Terminal

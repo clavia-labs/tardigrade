@@ -11,7 +11,7 @@ export const Decision = Schema.Struct({ allowed: Schema.Boolean, reason: Schema.
 
 export const PermissionMode = Schema.Literals(["allow", "deny", "ask"])
 export const PermissionPolicy = Schema.Struct({ default: PermissionMode, tools: Schema.Record(Schema.String, PermissionMode), readOnly: Schema.optionalKey(PermissionMode) })
-export const BudgetPolicy = Schema.Struct({ maxCalls: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)), requestTool: Schema.optionalKey(Schema.NonEmptyString) })
+export const BudgetPolicy = Schema.Struct({ maxCalls: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)), requestTool: Schema.optionalKey(Schema.NonEmptyString), scope: Schema.optionalKey(Schema.Literals(["actor", "turn"])), onExhausted: Schema.optionalKey(Schema.Literals(["wait", "deny"])) })
 export const PermissionConfigured = Schema.Struct({ type: Schema.Literal("PermissionConfigured"), policy: PermissionPolicy })
 export const PermissionUpdated = Schema.Struct({ type: Schema.Literal("PermissionUpdated"), policy: PermissionPolicy })
 export const BudgetConfigured = Schema.Struct({ type: Schema.Literal("BudgetConfigured"), policy: BudgetPolicy })

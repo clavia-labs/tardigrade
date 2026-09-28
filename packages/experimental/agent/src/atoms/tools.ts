@@ -91,7 +91,7 @@ export function withBudget<R, B>(tools: Atom<Tools<R>>, budget: Atom<ToolBudgetV
           inner.view.validate?.(event)
           if (event.type === "BudgetResolved" && allowance.request?.callId !== event.callId) throw new RuntimeError("No matching pending budget request")
         },
-        specs: requestTool && allowance.remaining === 0 ? inner.view.specs.filter(tool => tool.name === requestTool) : inner.view.specs,
+        specs: allowance.exhausted ? [] : requestTool && allowance.remaining === 0 ? inner.view.specs.filter(tool => tool.name === requestTool) : inner.view.specs,
         prepare: call => {
           const plan = inner.view.prepare(call)
           if (plan.position !== "ready" || !plan.charged) return plan

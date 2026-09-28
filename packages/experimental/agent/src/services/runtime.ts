@@ -1,7 +1,7 @@
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { Effect, Layer } from "effect"
-import { Workspace, memoryWorkspace } from "@clavia/tardigrade-experimental-packages"
-import type { ActorRuntime, Recorded } from "@clavia/tardigrade-experimental-core"
+import { Effect, Layer, Schema } from "effect"
+import { Workspace, memoryWorkspace, AgentBudget, DEFAULT_AGENT_TOOL_CALLS } from "@clavia/tardigrade-experimental-packages"
+import type { ActorRuntime, Recorded, ActorDefinition, EffectOutput, EffectExecution } from "@clavia/tardigrade-experimental-core"
 import { Actor, Promises, localActors, createActorStore, type ActorCaller } from "@clavia/tardigrade-experimental-host"
 import { createActor } from "../agent"
 import type { Event } from "../event"
@@ -15,20 +15,25 @@ export interface AssistantContext {
   readonly parent: ActorCaller | undefined
 }
 
-export interface AssistantOptions {
-  readonly actor?: typeof createActor
-  readonly services: Layer.Layer<Model | ModelLock | Promises, Error, Actor> | ((context: AssistantContext, host: ActorRuntime<Event>) => Layer.Layer<Model | ModelLock | Promises, Error, Actor>)
+type AssistantDefinition<Services> = ActorDefinition<Event, EffectOutput<unknown, Event, Error, Services | Model | ModelLock | Actor | Workspace | Promises | EffectExecution>, {
+  readonly message: (input: { readonly text: string; readonly turnId?: string }) => Promise<void>
+}, Services | ModelLock | Actor | Workspace | Promises>
+
+export interface AssistantOptions<Services = never> {
+  readonly actor?: AssistantDefinition<Services>
+  readonly services: Layer.Layer<Model | ModelLock | Promises | Services, Error, Actor> | ((context: AssistantContext, host: ActorRuntime<Event>) => Layer.Layer<Model | ModelLock | Promises | Services, Error, Actor>)
   readonly maxChildDepth: number
   readonly onEvent?: (event: Recorded<Event>, depth: number) => void
 }
 
 // assistantServices supplies local child actors while the host chooses model and promise implementations.
-export function assistantServices(host: ActorRuntime<Event>, options: AssistantOptions, depth: number, parent?: ActorCaller): Layer.Layer<Model | ModelLock | Promises | Actor | Workspace, Error> {
+export function assistantServices<Services>(host: ActorRuntime<Event>, options: AssistantOptions<Services>, depth: number, parent?: ActorCaller, budget?: typeof AgentBudget.Type): Layer.Layer<Model | ModelLock | Promises | Actor | Workspace | Services, Error> {
   const children = localActors({
     run: (call, caller) => Effect.gen(function* () {
       if (depth >= options.maxChildDepth) return yield* Effect.fail(new RuntimeError(`Child depth limit reached: ${options.maxChildDepth}`))
+      const childBudget = yield* Schema.decodeUnknownEffect(AgentBudget)(call.config?.budget ?? { toolCalls: DEFAULT_AGENT_TOOL_CALLS }).pipe(Effect.mapError(RuntimeError.from))
       return yield* Effect.acquireUseRelease(
-        Effect.tryPromise({ try: () => createActorStore({ actor: options.actor ?? createActor, ...assistantRuntime(options, depth + 1, caller) }), catch: RuntimeError.from }),
+        Effect.tryPromise({ try: () => createActorStore({ actor: options.actor ?? createActor, ...assistantRuntime(options, depth + 1, caller, childBudget) }), catch: RuntimeError.from }),
         child => Effect.tryPromise({ try: async signal => {
           const stop = () => { void child.close() }
           signal.addEventListener("abort", stop, { once: true })
@@ -49,15 +54,17 @@ export function assistantServices(host: ActorRuntime<Event>, options: AssistantO
   })
   const services = typeof options.services === "function" ? options.services({ depth, parent }, host) : options.services
   return promiseServices(host).pipe(Layer.provideMerge(
-    Layer.merge(services, memoryWorkspace).pipe(Layer.provideMerge(children)),
+    Layer.mergeAll(services, memoryWorkspace, Layer.effectDiscard(budget ? host.onReady(host.record({
+      type: "BudgetConfigured", policy: { maxCalls: budget.toolCalls, scope: "turn", onExhausted: "deny" },
+    })) : Effect.void)).pipe(Layer.provideMerge(children)),
   ))
 }
 
 // assistantRuntime configures services and observation for one level of child actors.
-export function assistantRuntime(options: AssistantOptions, depth = 0, parent?: ActorCaller) {
+export function assistantRuntime<Services = never>(options: AssistantOptions<Services>, depth = 0, parent?: ActorCaller, budget?: typeof AgentBudget.Type) {
   if (!Number.isSafeInteger(options.maxChildDepth) || options.maxChildDepth < 0) throw new RuntimeError("maxChildDepth must be a nonnegative integer")
   return {
-    services: (host: ActorRuntime<Event>) => assistantServices(host, options, depth, parent),
+    services: (host: ActorRuntime<Event>) => assistantServices(host, options, depth, parent, budget),
     onEvent: (event: Recorded<Event>) => options.onEvent?.(event, depth),
   }
 }

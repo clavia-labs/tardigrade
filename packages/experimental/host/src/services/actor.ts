@@ -10,7 +10,7 @@ export const ActorDecision = Schema.Union([
 export type ActorDecision = typeof ActorDecision.Type
 export const ActorRequest = Schema.Struct({ requestId: Schema.NonEmptyString, kind: Schema.Literals(["permission", "budget"]), description: Schema.String, input: Schema.Json })
 export type ActorRequest = typeof ActorRequest.Type
-export const ActorCall = Schema.Struct({ id: Schema.NonEmptyString, message: Schema.String })
+export const ActorCall = Schema.Struct({ id: Schema.NonEmptyString, message: Schema.String, config: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)) })
 export type ActorCall = typeof ActorCall.Type
 
 export interface ActorCaller {

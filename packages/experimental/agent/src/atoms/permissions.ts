@@ -1,7 +1,7 @@
 import { settledProjection } from "./settled-projection"
 import { EffectExecution, RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
-import { effectAtom, type Atom, eventValue, type EffectOutput } from "@clavia/tardigrade-experimental-core"
+import { atom, effectAtom, type Atom, eventValue, type EffectOutput } from "@clavia/tardigrade-experimental-core"
 import { PermissionState, permissionState, type ToolState } from "../projections"
 import { requestPromises } from "./requests"
 import type { ToolSpec } from "@clavia/tardigrade-experimental-packages"
@@ -54,3 +54,9 @@ export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: 
     }
   })
 }
+
+// permissionInstructions describes the recorded permission policy for model input.
+export const permissionInstructions = <R>(permission: Atom<PermissionView<R>>) => atom(get => {
+  const { policy } = get(permission).view
+  return policy === null ? "" : `Tool permission policy: ${JSON.stringify(policy)}. Denied calls must be respected.`
+})

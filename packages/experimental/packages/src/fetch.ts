@@ -20,6 +20,6 @@ export function fetchPackage(options: { readonly fetch?: typeof globalThis.fetch
         catch: ToolError.from,
       }),
   }
-  const method = tool({ ...definition, execution: "sync" })
+  const method = tool({ ...definition, metadata: { readOnly: true }, execution: "sync" })
   return definePackage({ name: "fetch", toolNames: { get: "fetch_url" }, description: "Read HTTP and HTTPS resources.", methods: [method] })
 }

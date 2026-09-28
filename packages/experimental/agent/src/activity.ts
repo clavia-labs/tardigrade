@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { atom, durableAtom } from "@clavia/tardigrade-experimental-core"
-import { Event, ModelReply, messageSource } from "./event"
+import { Event, ModelReply, Decision, messageSource } from "./event"
 
 export const history = durableAtom({ input: Event, schema: Schema.Array(Event), initial: [], reduce: (events, event) => [...events, event] })
 export interface ActivityEntry {
@@ -23,9 +23,15 @@ function describe(event: Event): Pick<ActivityEntry, "summary" | "status"> {
       const value = event.result.value
       const summary = Schema.is(ModelReply)(value)
         ? value.toolCalls.length ? `tools · ${value.toolCalls.map(call => call.name).join(", ")}` : value.text
+        : Schema.is(Decision)(value) ? `${value.allowed ? "allowed" : "denied"} · ${value.reason}`
         : typeof value === "string" ? value : "fulfilled"
       return { summary, status: "info" }
     }
+    case "BudgetConfigured":
+    case "BudgetUpdated": return { summary: `${event.policy.maxCalls} tool calls · ${event.policy.scope ?? "actor"}`, status: "info" }
+    case "PermissionConfigured":
+    case "PermissionUpdated": return { summary: `default=${event.policy.default}${event.policy.readOnly ? ` · read-only=${event.policy.readOnly}` : ""}`, status: "info" }
+    case "PermissionResolved": return { summary: "decision" in event ? `${event.decision.allowed ? "allowed" : "denied"} · ${event.decision.reason}` : `approval requested · ${event.callId}`, status: "notification" }
     case "ToolCalled": return { summary: event.callId, status: "info" }
     case "ToolReturned": return { summary: `${event.callId}${event.error ? ` · ${event.error}` : ""}`, status: event.error ? "failed" : "info" }
     case "TurnSettled": return { summary: `${event.outcome} · ${"reason" in event ? event.reason : "callId" in event ? event.callId : event.turnId}`, status: event.outcome === "completed" ? "completed" : "failed" }

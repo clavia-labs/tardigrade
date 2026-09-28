@@ -135,7 +135,7 @@ export function permissionState(state: typeof PermissionState.Type, event: Event
 }
 
 export const ToolBudgetState = Schema.Struct({
-  policy: Schema.NullOr(BudgetPolicy), used: Schema.Finite, charged: Schema.Array(Schema.String), granted: Schema.Finite,
+  turnId: Schema.optionalKey(Schema.String), policy: Schema.NullOr(BudgetPolicy), used: Schema.Finite, charged: Schema.Array(Schema.String), granted: Schema.Finite,
   decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: BudgetDecision })),
 })
 export function toolBudgetState(state: typeof ToolBudgetState.Type, event: Event): typeof ToolBudgetState.Type {
@@ -144,6 +144,12 @@ export function toolBudgetState(state: typeof ToolBudgetState.Type, event: Event
     if (event.type === "BudgetUpdated" && !state.policy) throw new RuntimeError("Budget policy is not configured")
     if (!Number.isSafeInteger(event.policy.maxCalls + state.granted)) throw new RuntimeError("Total tool budget exceeds safe integer range")
     return { ...state, policy: event.policy }
+  }
+  if (event.type === "ModelCalled" && event.purpose === "inference" && state.policy?.scope === "turn" && state.turnId !== event.turnId) {
+    return { ...state, turnId: event.turnId, used: 0, charged: [], granted: 0, decisions: [] }
+  }
+  if (event.type === "TurnSettled" && state.policy?.scope === "turn" && state.turnId === event.turnId) {
+    return { ...state, used: 0, charged: [], granted: 0, decisions: [] }
   }
   if (event.type === "ToolCalled" && event.charged && !state.charged.includes(event.callId)) return { ...state, used: state.used + 1, charged: [...state.charged, event.callId] }
   if (event.type === "BudgetResolved" && "decision" in event) {

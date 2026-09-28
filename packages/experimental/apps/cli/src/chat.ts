@@ -3,6 +3,7 @@ import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { messages, type ChatMessage } from "@clavia/tardigrade-experimental-agent/messages"
 import { history } from "@clavia/tardigrade-experimental-agent/activity"
 import { turnOutput } from "@clavia/tardigrade-experimental-agent/result"
+import type { PromptMessage } from "./prompt"
 import type { ChatThread } from "./threads"
 
 export const sendMessage = (thread: ChatThread, text: string) => Effect.gen(function* () {
@@ -28,7 +29,7 @@ export const sendMessage = (thread: ChatThread, text: string) => Effect.gen(func
 
 // observeMessages queues each new chat message once until the selected thread scope closes.
 export const observeMessages = (thread: ChatThread) => Effect.gen(function* () {
-  const queue = yield* Queue.unbounded<ChatMessage>()
+  const queue = yield* Queue.unbounded<PromptMessage>()
   const view = thread.store.select(messages)
   let after = thread.store.select(history).get().length - 1
   const publish = (entries: readonly ChatMessage[]) => {

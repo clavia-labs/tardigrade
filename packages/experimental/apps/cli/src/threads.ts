@@ -6,15 +6,16 @@ import { ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
 import { createBunHost, observeBunSupervisor, bunThreadActivity } from "@clavia/tardigrade-experimental-platform/bun"
 import { actor } from "./actor"
 import { services } from "./services"
+import type { Permissions } from "./permissions"
 
 export const DEFAULT_THREAD_DIRECTORY = ".tardigrade/threads"
 export const DEFAULT_INSTANCE = "cli"
-export interface ThreadOptions { readonly directory: string; readonly instance: string; readonly maxChildDepth?: number }
+export interface ThreadOptions { readonly directory: string; readonly instance: string; readonly maxChildDepth?: number; readonly permissions?: Permissions }
 export type ChatHost = Awaited<ReturnType<typeof openHost>>
 export type ChatThread = Awaited<ReturnType<ChatHost["allocateRootThread"]>>
 const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: RuntimeError.from })
 
-const openHost = (options: ThreadOptions) => createBunHost({ actor, storage: options.directory, services: (_coordinate, runtime) => services(options)(runtime) })
+const openHost = (options: ThreadOptions) => createBunHost({ actor, storage: options.directory, services: (coordinate, runtime) => services({ ...options, label: `Thread ${coordinate.thread}` })(runtime) })
 export const hostScope = (options: ThreadOptions) => Effect.acquireRelease(attempt(() => openHost(options)), host => Effect.promise(() => host.close()))
 
 export async function listThreads(options: ThreadOptions) {

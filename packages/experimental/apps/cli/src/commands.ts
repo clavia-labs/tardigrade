@@ -2,6 +2,7 @@ import { Console, Effect, Option, Queue } from "effect"
 import { Command, Flag, Prompt } from "effect/unstable/cli"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { sendMessage, observeMessages } from "./chat"
+import { createPermissions, DEFAULT_PERMISSION_MODE, PERMISSION_MODES, type Permissions } from "./permissions"
 import { chatPrompt } from "./prompt"
 import { DEFAULT_MAX_CHILD_DEPTH } from "./services"
 import { DEFAULT_BATCH_SIZE, DEFAULT_POLL_MS, DEFAULT_WATCH_WIDTH, watchLog } from "./watch"
@@ -12,6 +13,7 @@ const directory = Flag.String("thread-dir").pipe(Flag.withDefault(DEFAULT_THREAD
 const instance = Flag.String("instance").pipe(Flag.withDefault(DEFAULT_INSTANCE), Flag.withDescription("Actor instance whose threads to use."))
 const thread = Flag.String("thread").pipe(Flag.optional, Flag.withDescription("Resume a thread by name or ID."))
 const maxChildDepth = Flag.Int("max-child-depth").pipe(Flag.withDefault(DEFAULT_MAX_CHILD_DEPTH), Flag.withDescription("Maximum child-agent nesting depth; 0 disables delegation."))
+const permissionMode = Flag.Literals("permissions", PERMISSION_MODES).pipe(Flag.withDefault(DEFAULT_PERMISSION_MODE), Flag.withDescription("Tool permissions: ask each time, auto allows read-only tools, full-access allows all tools."))
 const message = Flag.String("message").pipe(Flag.optional, Flag.withDescription("Send one message, print the answer, and exit without prompts."))
 const threadLabel = (item: ThreadListing) => `${item.name}  ·  ${item.status}  ·  last activity ${item.lastActivity === undefined ? "none" : new Date(item.lastActivity).toLocaleString()}`
 
@@ -66,18 +68,44 @@ const resumeThread = (host: ChatHost, coordinate: { readonly instance: string; r
   return thread
 })
 
-const chat = (host: ChatHost, selected: ChatThread, options: ThreadOptions) => Effect.scoped(Effect.gen(function* () {
+const chat = (host: ChatHost, selected: ChatThread, options: ThreadOptions & { readonly permissions: Permissions }) => Effect.scoped(Effect.gen(function* () {
   const inbox = yield* observeMessages(selected)
-  yield* attempt(async () => { await selected.resume(); await selected.wait() })
+  yield* Effect.acquireRelease(
+    Effect.sync(() => options.permissions.subscribe(notice => { Queue.offerUnsafe(inbox, notice) })),
+    unsubscribe => Effect.sync(unsubscribe),
+  )
+  yield* attempt(() => selected.resume()).pipe(Effect.catch(error => Queue.offer(inbox, { seq: -1, kind: "error", text: error.message })), Effect.forkScoped)
   yield* attempt(() => activateThread(options, selected.coordinate))
-  yield* Console.log(`Thread: ${selected.coordinate.thread}\n/new [name]  /threads  /switch [name]  /exit`)
+  yield* Console.log(`Thread: ${selected.coordinate.thread}\nPermissions: ${options.permissions.mode()}\n/new [name]  /threads  /switch [name]  /permissions [mode]  /approvals  /allow <id>  /deny <id>  /exit`)
   while (true) {
     const text = yield* chatPrompt(inbox)
     const input = text.trim()
     if (input === "/exit") return undefined
     if (!input) continue
     if (input === "/threads") { yield* printThreads(options); continue }
-    if (input === "/help") { yield* Console.log("/new [name]  /threads  /switch [name]  /exit"); continue }
+    if (input === "/help") { yield* Console.log("/new [name]  /threads  /switch [name]  /permissions [ask|auto|full-access]  /approvals  /allow <id>  /deny <id>  /exit"); continue }
+    if (input === "/approvals") {
+      const pending = options.permissions.list()
+      if (!pending.length) yield* Console.log("No pending approvals.")
+      for (const notice of pending) yield* Queue.offer(inbox, notice)
+      continue
+    }
+    if (/^\/(allow|deny)(?:\s|$)/.test(input)) {
+      const [command, id] = input.split(/\s+/)
+      yield* Effect.try({ try: () => options.permissions.decide(id ?? "", command === "/allow"), catch: RuntimeError.from }).pipe(Effect.catch(error => Effect.logError(error.message)))
+      continue
+    }
+    if (/^\/permissions(?:\s|$)/.test(input)) {
+      yield* Effect.gen(function* () {
+        const value = input.slice("/permissions".length).trim()
+        const next = value || (yield* Prompt.Select({ message: "Tool permissions", choices: PERMISSION_MODES.map(mode => ({ title: mode, value: mode })) }))
+        const mode = PERMISSION_MODES.find(mode => mode === next)
+        if (!mode) return yield* Effect.fail(new RuntimeError("Choose ask, auto, or full-access"))
+        yield* options.permissions.change(mode).pipe(Effect.mapError(RuntimeError.from))
+        yield* Console.log(`Permissions: ${mode}. Pending approvals still require /allow or /deny.`)
+      }).pipe(Effect.catchTag("RuntimeError", error => Effect.logError(error.message)))
+      continue
+    }
     if (/^\/(new|switch)(?:\s|$)/.test(input)) {
       const next = yield* Effect.gen(function* () {
         const [command, ...parts] = input.split(/\s+/)
@@ -97,7 +125,8 @@ const chat = (host: ChatHost, selected: ChatThread, options: ThreadOptions) => E
   }
 }))
 
-export const cli = Command.make("experimental-chat", { thread, directory, instance, message, maxChildDepth }, options => Effect.scoped(Effect.gen(function* () {
+export const cli = Command.make("experimental-chat", { thread, directory, instance, message, maxChildDepth, permissionMode }, flags => Effect.scoped(Effect.gen(function* () {
+  const options = { ...flags, permissions: createPermissions({ mode: flags.permissionMode, interactive: Option.isNone(flags.message) && !!process.stdin.isTTY }) }
   if (!Number.isSafeInteger(options.maxChildDepth) || options.maxChildDepth < 0) return yield* Effect.fail(new RuntimeError("--max-child-depth must be a nonnegative integer"))
   if (Option.isSome(options.message) && !options.message.value.trim()) return yield* Effect.fail(new RuntimeError("--message must not be empty"))
   if (Option.isNone(options.message) && !process.stdin.isTTY) return yield* Effect.fail(new RuntimeError("Use --message to chat without an interactive terminal"))
@@ -108,7 +137,7 @@ export const cli = Command.make("experimental-chat", { thread, directory, instan
   if (Option.isSome(options.message)) {
     yield* attempt(async () => { await selected.resume(); await selected.wait() })
     yield* attempt(() => activateThread(options, selected.coordinate))
-    yield* Console.error(`Thread: ${selected.coordinate.thread}`)
+    yield* Console.error(`Thread: ${selected.coordinate.thread}\nPermissions: ${options.permissions.mode()}`)
     const replies = yield* sendMessage(selected, options.message.value)
     for (const reply of replies) {
       if (reply.outcome !== "completed") return yield* Effect.fail(new RuntimeError(reply.text))

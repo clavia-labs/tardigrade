@@ -4,12 +4,14 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { liveModelServices } from "@clavia/tardigrade-experimental-agent/services/model"
 import { assistantRuntime } from "@clavia/tardigrade-experimental-agent/services/runtime"
+import type { PermissionRequests } from "@clavia/tardigrade-experimental-agent/services/requests"
 import { receiveResolution } from "@clavia/tardigrade-experimental-agent/services/promises"
 import { Actor } from "@clavia/tardigrade-experimental-host"
 import { bunPromises } from "@clavia/tardigrade-experimental-platform/bun"
 import { ModelLock, lockedModelConfigOf, modelLockService, parseModelLock, MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelCredentialsFrom } from "@clavia/tardigrade-model/config"
 import { actor } from "./actor"
+import { createPermissions, type Permissions } from "./permissions"
 
 const Config = Schema.Struct({ vars: Schema.Struct({ TARDIGRADE_CONFIG: Schema.Struct({ models: Schema.Unknown }) }) })
 
@@ -42,11 +44,14 @@ const modelServices = Layer.unwrap(Effect.gen(function* () {
 export const DEFAULT_MAX_CHILD_DEPTH = 1
 
 // services provides model access, local child actors, and promise delivery for each actor runtime.
-export const services = (options: { readonly maxChildDepth?: number } = {}) => assistantRuntime({
+export const services = (options: { readonly maxChildDepth?: number; readonly permissions?: Permissions; readonly label?: string } = {}) => {
+  const permissions = options.permissions ?? createPermissions({ interactive: false })
+  return assistantRuntime<PermissionRequests>({
   actor,
   maxChildDepth: options.maxChildDepth ?? DEFAULT_MAX_CHILD_DEPTH,
-  services: (_context, host) => Layer.merge(modelServices, Layer.unwrap(Effect.map(Actor, actor => bunPromises(host, {
+  services: (context, host) => Layer.mergeAll(permissions.layer(host, `${options.label ?? "Agent"}${context.depth ? ` / child depth ${context.depth}` : ""}`), modelServices, Layer.unwrap(Effect.map(Actor, actor => bunPromises(host, {
     poll: actor.poll,
     deliver: settlement => receiveResolution(host, settlement),
   })))),
 }).services
+}
