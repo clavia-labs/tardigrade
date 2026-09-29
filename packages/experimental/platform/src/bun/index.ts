@@ -1,7 +1,8 @@
+import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { bunSupervisorPath, bunThreadPath } from "./observe"
 export { observeBunThread, observeBunSupervisor, bunThreadActivity } from "./observe"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { Effect, ManagedRuntime, type Layer } from "effect"
+import { Effect, ManagedRuntime, Semaphore, Exit, type Layer } from "effect"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import { createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-host"
@@ -16,59 +17,54 @@ export function bunJournal<Event extends object>(options: SqliteClient.SqliteCli
 }
 
 // createBunHost keeps an instance supervisor database and separate thread databases beneath storage.
-export async function createBunHost<Event extends object, Services, Methods extends Readonly<Record<string, (...args: never[]) => Promise<void>>>, State>(options: Omit<Parameters<typeof createThreadHost<Event, Services, Methods, State>>[0], "storage"> & {
+export function createBunHost<Event extends object, Services, Methods extends Readonly<Record<string, (...args: never[]) => Effect.Effect<void, Error>>>, State>(options: Omit<Parameters<typeof createThreadHost<Event, Services, Methods, State>>[0], "storage"> & {
   readonly storage: string
   readonly sqlite?: Omit<SqliteClient.SqliteClientConfig, "filename">
   readonly backup?: Layer.Layer<RemoteBackup, Error>
   readonly checkpoint?: Partial<CheckpointPolicy>
 }) {
-  const connections = new Set<() => Promise<void>>()
-  const journal = <Entry extends object>(filename: string, actor: string) => {
-    mkdirSync(dirname(filename), { recursive: true })
-    const opened = bunJournal<Entry>({ ...options.sqlite, filename, actor })
-    connections.add(opened.close)
-    return opened
-  }
-  const storage: ThreadStorage<Event> = {
-    supervisor: (actor, instance) => journal(bunSupervisorPath(options.storage, actor, instance), "supervisor"),
-    thread: coordinate => journal(bunThreadPath(options.storage, coordinate), "events"),
-    invocations: coordinate => journal(bunThreadPath(options.storage, coordinate), "invocations"),
-    close: async () => {
-      const failures: unknown[] = []
-      for (const close of connections) { try { await close() } catch (error) { failures.push(error) } }
-      connections.clear()
-      if (failures.length) throw new AggregateError(failures, "Closing Bun journals failed")
-    },
-  }
-  const host = createThreadHost({ ...options, storage })
-  const runtime = options.backup ? ManagedRuntime.make(options.backup) : undefined
-  let pending: Promise<unknown> = Promise.resolve()
-  let closed = false
-  let closing: Promise<void> | undefined
-  return {
-    ...host,
-    backup: () => {
-      if (closed) return Promise.reject(new Error("Bun host is closed"))
-      if (!runtime) return Promise.reject(new Error("No backup layer was supplied"))
-      const save = () => runtime.runPromise(Effect.gen(function*() {
-        const backup = yield* RemoteBackup
-        const checkpoint = yield* Effect.try(() => captureHostCheckpoint({ actor: host.actor, storage: options.storage, policy: options.checkpoint ?? {} }))
-        yield* backup.save(checkpoint)
-        return { id: checkpoint.id, createdAt: checkpoint.createdAt, digest: checkpoint.digest }
-      }))
-      const result = pending.then(save, save)
-      pending = result.catch(() => {})
-      return result
-    },
-    close: () => closing ??= (async () => {
+  return Effect.gen(function* () {
+    const connections = new Set<Effect.Effect<void, Error>>()
+    const journal = <Entry extends object>(filename: string, actor: string) => {
+      mkdirSync(dirname(filename), { recursive: true })
+      const opened = bunJournal<Entry>({ ...options.sqlite, filename, actor })
+      connections.add(opened.close)
+      return opened
+    }
+    const storage: ThreadStorage<Event> = {
+      supervisor: (actor, instance) => journal(bunSupervisorPath(options.storage, actor, instance), "supervisor"),
+      thread: coordinate => journal(bunThreadPath(options.storage, coordinate), "events"),
+      invocations: coordinate => journal(bunThreadPath(options.storage, coordinate), "invocations"),
+      close: Effect.gen(function* () {
+        const results = yield* Effect.forEach(connections, close => Effect.exit(close))
+        connections.clear()
+        const failure = results.find(Exit.isFailure)
+        if (failure && Exit.isFailure(failure)) return yield* Effect.failCause(failure.cause)
+      }),
+    }
+    const host = createThreadHost({ ...options, storage })
+    const runtime = options.backup ? ManagedRuntime.make(options.backup) : undefined
+    const lock = yield* Semaphore.make(1)
+    let closed = false
+    const closing = yield* Effect.cached(Effect.gen(function* () {
       closed = true
-      try {
-        const results = await Promise.allSettled([pending, host.close()])
-        const failure = results.find(result => result.status === "rejected")
-        if (failure?.status === "rejected") throw failure.reason
-      }
-      finally { await runtime?.dispose() }
-    })(),
-  }
+      yield* lock.withPermit(host.close).pipe(Effect.ensuring(runtime?.disposeEffect ?? Effect.void))
+    }).pipe(Effect.uninterruptible))
+    return {
+      ...host,
+      backup: lock.withPermit(Effect.gen(function* () {
+        if (closed) return yield* Effect.fail(new RuntimeError("Bun host is closed"))
+        if (!runtime) return yield* Effect.fail(new RuntimeError("No backup layer was supplied"))
+        const context = yield* runtime.contextEffect
+        return yield* Effect.gen(function* () {
+          const backup = yield* RemoteBackup
+          const checkpoint = yield* Effect.try(() => captureHostCheckpoint({ actor: host.actor, storage: options.storage, policy: options.checkpoint ?? {} }))
+          yield* backup.save(checkpoint)
+          return { id: checkpoint.id, createdAt: checkpoint.createdAt, digest: checkpoint.digest }
+        }).pipe(Effect.provide(context))
+      })),
+      close: closing,
+    }
+  })
 }
 export { bunPromises } from "./promises"

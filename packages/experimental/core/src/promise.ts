@@ -2,19 +2,19 @@ import { isDeepStrictEqual } from "node:util"
 import { Schema } from "effect"
 import { Atom } from "effect/unstable/reactivity"
 import { durableAtom } from "./durable"
-import { EffectRef, effectKey } from "./internal/effects"
+import { EffectRef, effectKey } from "./effect-ref"
 import { RuntimeError } from "./errors"
 
 export type PromiseState<Value, Error> =
   | { readonly status: "pending" }
   | { readonly status: "fulfilled"; readonly value: Value }
-  | { readonly status: "rejected"; readonly error: Error }
+  | { readonly status: "rejected"; readonly reason: Error }
 
 // promiseSchema describes settlement events for promises sharing success and error types.
 export function promiseSchema<Value, Error = never>(options: { readonly success: Schema.Schema<Value>; readonly error?: Schema.Schema<Error> }) {
   return Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: Schema.Union([
     Schema.Struct({ status: Schema.Literal("fulfilled"), value: options.success }),
-    Schema.Struct({ status: Schema.Literal("rejected"), error: options.error ?? Schema.Never }),
+    Schema.Struct({ status: Schema.Literal("rejected"), reason: options.error ?? Schema.Never }),
   ]) })
 }
 
@@ -47,6 +47,6 @@ export function durablePromise<Value, Error = never>(reference: EffectRef, optio
     schema,
     state,
     succeed: (value: Value) => validate({ type: "PromiseSettled", ref, result: { status: "fulfilled", value } }),
-    fail: (error: Error) => validate({ type: "PromiseSettled", ref, result: { status: "rejected", error } }),
+    fail: (reason: Error) => validate({ type: "PromiseSettled", ref, result: { status: "rejected", reason } }),
   }
 }

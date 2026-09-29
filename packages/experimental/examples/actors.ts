@@ -1,53 +1,34 @@
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { Cause, Effect, Exit } from "effect"
-import { atom, defineActor } from "@clavia/tardigrade-experimental-core"
+import { trajectory } from "@clavia/tardigrade-experimental-agent/atoms/trajectory"
+import { actorContext } from "@clavia/tardigrade-experimental-agent/context"
+import { Cause, Config, Console, Effect, Exit } from "effect"
 import { createBunHost } from "@clavia/tardigrade-experimental-platform/bun"
-import { compact, infer, packageTools, trajectory } from "@clavia/tardigrade-experimental-agent/atoms/index"
-import { message } from "@clavia/tardigrade-experimental-agent/event"
-import { fetchPackage as fetch, workspace } from "@clavia/tardigrade-experimental-packages"
 import { services } from "./services"
 
-export const meeseeks = defineActor("meeseeks", Effect.gen(function* () {
-  const system = atom("You are a helpful assistant. Keep answers concise and practical.")
-  const tools = yield* packageTools([fetch(), workspace()])
-  const context = yield* compact(trajectory)
-  const agent = yield* infer(atom(get => ({
-    system: get(system),
-    tools: get(tools),
-    context: get(context),
-  })))
-  return { atom: agent, actions: { message } }
+import { meeseeks } from "./actors/meeseeks"
+
+const run = Effect.scoped(Effect.gen(function* () {
+  const host = yield* Effect.acquireRelease(createBunHost({
+    actor: meeseeks,
+    actorContext,
+    storage: yield* Config.String("EXPERIMENTAL_STORAGE").pipe(Config.withDefault("./.tardigrade/experimental-example")),
+    services: () => services,
+  }), host => host.close.pipe(Effect.orDie))
+
+  const rickMain = yield* host.allocateRootThread({ instance: "rick", name: "main" })
+
+  yield* Console.log("Threads:", [rickMain].map(thread => thread.coordinate))
+
+  const rickResponse = yield* rickMain.methods.message({
+    text: "Design a fictional experiment to test the portal gun's power source.",
+  }, { key: "portal-experiment" })
+
+  yield* Console.log({ rickResponse })
+  yield* rickMain.wait
+  yield* Console.log(rickMain.get(trajectory).findLast(entry => entry.role === "assistant")?.text)
 }))
 
-async function run() {
-  const host = await createBunHost({
-    actor: meeseeks,
-    storage: process.env.EXPERIMENTAL_STORAGE ?? "./.tardigrade/experimental-example",
-    services: () => services,
-  })
-
-  try {
-    const rickMain = await host.allocateRootThread({ instance: "rick", name: "main" })
-
-    console.log("Threads:", [rickMain].map(thread => thread.coordinate))
-
-    const rickResponse = await rickMain.methods.message({
-      text: "Design a fictional experiment to test the portal gun's power source.",
-    }, { key: "portal-experiment" })
-
-    console.log({ rickResponse })
-    await rickMain.wait()
-    console.log(rickMain.get(trajectory).findLast(entry => entry.role === "assistant")?.text)
-  } finally {
-    await host.close()
-  }
-}
-
 if (import.meta.main) {
-  const result = await Effect.runPromiseExit(Effect.tryPromise({
-    try: run,
-    catch: RuntimeError.from,
-  }))
+  const result = await Effect.runPromiseExit(run)
   if (Exit.isFailure(result)) {
     console.error(Cause.pretty(result.cause))
     process.exitCode = 1

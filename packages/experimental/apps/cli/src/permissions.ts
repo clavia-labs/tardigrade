@@ -3,7 +3,7 @@ import type { ActorRuntime } from "@clavia/tardigrade-experimental-core"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { PermissionRequests, deferDecision } from "@clavia/tardigrade-experimental-agent/services/requests"
 import { history } from "@clavia/tardigrade-experimental-agent/activity"
-import { requestPromises } from "@clavia/tardigrade-experimental-agent/atoms/requests"
+import { AskPermission } from "@clavia/tardigrade-experimental-agent/acts"
 import { updatePermission, type Decision, type Event, type PermissionPolicy, type ToolCall } from "@clavia/tardigrade-experimental-agent/event"
 
 export const PERMISSION_MODES = ["ask", "auto", "full-access"] as const
@@ -52,8 +52,8 @@ export function createPermissions(options: { readonly mode?: PermissionMode; rea
           const policy = permissionPolicy(mode)
           yield* runtime.record(runtime.get(history).some(event => event.type === "PermissionConfigured")
             ? updatePermission(policy) : { type: "PermissionConfigured", policy })
-          for (const request of runtime.get(requestPromises)) {
-            if (request.type === "PermissionResolved" && request.result.status === "pending" && request.handle.executor === "local") {
+          for (const request of runtime.get(AskPermission.pending)) {
+            if (request.handle.executor === "local") {
               yield* runtime.record({ type: "PromiseSettled", ref: request.ref, result: { status: "fulfilled", value: { allowed: false, reason: "Approval interrupted by CLI shutdown. Request permission again." } } })
             }
           }

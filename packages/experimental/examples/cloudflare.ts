@@ -1,21 +1,12 @@
 /// <reference types="@cloudflare/workers-types" />
 
+import { Context, Effect } from "effect"
+
 import { DurableObject } from "cloudflare:workers"
-import { Effect, Layer, Schema } from "effect"
-import { atom, defineActor, durableAtom } from "@clavia/tardigrade-experimental-core"
+import { Layer } from "effect"
 import { createCloudflareHost, cloudflareHandler } from "@clavia/tardigrade-experimental-platform/cloudflare"
 
-const Message = Schema.Struct({ type: Schema.Literal("MessageReceived"), text: Schema.String })
-const messages = durableAtom({
-  input: Message,
-  schema: Schema.Array(Schema.String),
-  initial: [],
-  reduce: (state, event: typeof Message.Type) => [...state, event.text],
-})
-const actor = defineActor("inbox", Effect.succeed({
-  atom: Object.assign(atom(get => ({ messages: get(messages) })), { schema: Message }),
-  actions: { message: (input: { text: string }): typeof Message.Type => ({ type: "MessageReceived", text: input.text }) },
-}))
+import { actor } from "./actors/inbox"
 
 interface Env { readonly ACTORS: DurableObjectNamespace<ActorDO> }
 
@@ -23,6 +14,7 @@ export class ActorDO extends DurableObject<Env> {
   private readonly host = createCloudflareHost({
     actor,
     storage: this.ctx.storage,
+    actorContext: () => Context.empty(),
     services: () => Layer.empty,
   })
   private readonly http = cloudflareHandler(this.host)
@@ -32,7 +24,7 @@ export class ActorDO extends DurableObject<Env> {
   }
 
   async state(instance: string, thread: string) {
-    return (await this.host.getThread({ instance, thread }))?.getState()
+    return (await Effect.runPromise(this.host.getThread({ instance, thread })))?.getState()
   }
 }
 

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite"
 import { existsSync, statSync } from "node:fs"
 import { join } from "node:path"
-import type { Schema } from "effect"
+import { Effect, type Schema } from "effect"
 import { RuntimeError, type Recorded } from "@clavia/tardigrade-experimental-core"
 import { createJournalStore, createSupervisorStore, createThreadStore, SupervisorEvent, type ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
 
@@ -10,7 +10,7 @@ export const bunSupervisorPath = (storage: string, actor: string, instance: stri
 export const bunThreadPath = (storage: string, coordinate: ThreadCoordinate) => join(`${bunSupervisorPath(storage, coordinate.actor, coordinate.instance)}.threads`, `${encoded(coordinate.thread)}.sqlite`)
 
 function reader<Event extends object>(filename: string, actor: string) {
-  return async (after: number): Promise<readonly Recorded<Event>[]> => {
+  return (after: number): Effect.Effect<readonly Recorded<Event>[], Error> => Effect.try({ try: () => {
     if (!existsSync(filename)) return []
     const database = new Database(filename, { readonly: true })
     try {
@@ -20,7 +20,7 @@ function reader<Event extends object>(filename: string, actor: string) {
         return JSON.parse(row.event) as Recorded<Event>
       })
     } finally { database.close() }
-  }
+  }, catch: RuntimeError.from })
 }
 
 // observeBunThread reads committed events and projections without starting the actor.

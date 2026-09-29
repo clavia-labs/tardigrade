@@ -1,9 +1,12 @@
+import { modelActs } from "@clavia/tardigrade-experimental-agent/services/acts"
+import { modelInfo } from "@clavia/tardigrade-experimental-agent/services/model-lock"
+import { toolActs } from "@clavia/tardigrade-experimental-agent/services/tools"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Layer, Schema } from "effect"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { liveModelServices } from "@clavia/tardigrade-experimental-agent/services/model"
-import { memoryWorkspace } from "@clavia/tardigrade-experimental-packages"
+import { memoryWorkspace, fetchPackage, workspace } from "@clavia/tardigrade-experimental-packages"
 import { ModelLock, lockedModelConfigOf, modelLockService, parseModelLock, MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelCredentialsFrom } from "@clavia/tardigrade-model/config"
 
@@ -13,14 +16,12 @@ const env = { ...process.env }
 const modelServices = Layer.unwrap(Effect.gen(function* () {
   const configPath = resolve(env.TARDIGRADE_CONFIG_PATH?.trim() || fileURLToPath(new URL("./wrangler.jsonc", import.meta.url)))
   const lockPath = join(dirname(configPath), MODEL_LOCK_FILE)
-  const [configText, lockText] = yield* Effect.tryPromise({
-    try: async () => {
-      if (!await Bun.file(configPath).exists()) throw new RuntimeError(`Model configuration does not exist: ${configPath}`)
-      if (!await Bun.file(lockPath).exists()) throw new RuntimeError(`Model lock is missing: ${lockPath}. Run tdg models lock from ${dirname(configPath)}.`)
-      return Promise.all([Bun.file(configPath).text(), Bun.file(lockPath).text()])
-    },
-    catch: RuntimeError.from,
-  })
+  if (!(yield* Effect.tryPromise({ try: () => Bun.file(configPath).exists(), catch: RuntimeError.from }))) return yield* Effect.fail(new RuntimeError(`Model configuration does not exist: ${configPath}`))
+  if (!(yield* Effect.tryPromise({ try: () => Bun.file(lockPath).exists(), catch: RuntimeError.from }))) return yield* Effect.fail(new RuntimeError(`Model lock is missing: ${lockPath}. Run tdg models lock from ${dirname(configPath)}.`))
+  const [configText, lockText] = yield* Effect.all([
+    Effect.tryPromise({ try: () => Bun.file(configPath).text(), catch: RuntimeError.from }),
+    Effect.tryPromise({ try: () => Bun.file(lockPath).text(), catch: RuntimeError.from }),
+  ], { concurrency: "unbounded" })
   const raw = yield* Effect.try({ try: () => Bun.JSONC.parse(configText), catch: RuntimeError.from })
   const manifest = yield* Schema.decodeUnknownEffect(Config)(raw)
   return yield* Effect.try({
@@ -38,4 +39,4 @@ const modelServices = Layer.unwrap(Effect.gen(function* () {
   })
 }))
 
-export const services = modelServices
+export const services = Layer.mergeAll(modelInfo, modelActs, toolActs([fetchPackage(), workspace()])).pipe(Layer.provide(modelServices))

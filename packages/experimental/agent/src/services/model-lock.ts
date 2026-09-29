@@ -1,5 +1,6 @@
+import { ModelInfo } from "../context"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 
 export { ModelLock }
@@ -16,3 +17,5 @@ export const resolveModel = Effect.flatMap(ModelLock, lock => Effect.try({
   },
   catch: RuntimeError.from,
 }))
+
+export const modelInfo = Layer.effect(ModelInfo, resolveModel)

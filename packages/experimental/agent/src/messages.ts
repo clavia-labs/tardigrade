@@ -32,7 +32,7 @@ export const messages = atom(get => {
       return [{
         seq,
         kind: value.handle.executor === "actor" ? "agent" : "tool",
-        text: result.status === "rejected" ? `Failed: ${result.error}` : Schema.is(Answer)(result.value) ? result.value.answer : typeof result.value === "string" ? result.value : JSON.stringify(result.value),
+        text: result.status === "rejected" ? `Failed: ${result.reason}` : Schema.is(Answer)(result.value) ? result.value.answer : typeof result.value === "string" ? result.value : JSON.stringify(result.value),
       }]
     } catch { return [{ seq, kind, text: event.text }] }
   })

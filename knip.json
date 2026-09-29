@@ -7,7 +7,7 @@
   "workspaces": {
     "packages/experimental/examples": {
       "entry": ["*.ts!"],
-      "project": ["*.ts"]
+      "project": ["**/*.ts"]
     },
     ".": {
       "ignoreDependencies": [

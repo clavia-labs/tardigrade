@@ -1,0 +1,43 @@
+import { Schema } from "effect"
+import { act } from "@clavia/tardigrade-experimental-core"
+import { ModelRef } from "@clavia/tardigrade-model/reference"
+import { ToolMetadata, ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
+import { ModelReply, ToolCall, Decision, BudgetDecision } from "./event"
+import { Conversation } from "./projections"
+
+const ModelInput = Schema.Struct({ model: ModelRef, system: Schema.String, tools: Schema.Array(ToolSpec), context: Conversation })
+export const Generate = act({
+  name: "agent.model.generate",
+  input: ModelInput,
+  success: ModelReply,
+  failure: Schema.String,
+})
+export const Summarize = act({ name: "agent.model.summarize", input: ModelInput, success: Schema.String, failure: Schema.String })
+export const AskPermission = act({
+  name: "agent.permission.request",
+  input: Schema.Struct({ call: ToolCall, metadata: Schema.optionalKey(ToolMetadata) }),
+  success: Decision, failure: Schema.String,
+})
+export const AskBudget = act({
+  name: "agent.budget.request",
+  input: Schema.Struct({ callId: Schema.String, amount: Schema.Finite, reason: Schema.String, used: Schema.Finite, limit: Schema.Finite }),
+  success: BudgetDecision, failure: Schema.String,
+})
+export const ExecuteTool = act({
+  name: "agent.tool.execute",
+  input: Schema.Struct({ call: ToolCall, charged: Schema.Boolean, value: Schema.optionalKey(Schema.Json), error: Schema.optionalKey(Schema.String) }),
+  success: Schema.Json, failure: Schema.String,
+})
+
+// requests retains invocation handles by domain identity across reevaluation and replay.
+export function requests<Input extends { readonly tag: string; readonly input: unknown }, Output>(create: (input: Input) => Output, identity: (input: Input) => string = input => input.tag) {
+  const cache = new Map<string, Output>()
+  return (input: Input): Output => {
+    const key = identity(input)
+    const existing = cache.get(key)
+    if (existing !== undefined) return existing
+    const value = create(input)
+    cache.set(key, value)
+    return value
+  }
+}

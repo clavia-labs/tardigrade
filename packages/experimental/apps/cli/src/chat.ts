@@ -8,24 +8,19 @@ import type { ChatThread } from "./threads"
 
 export const sendMessage = (thread: ChatThread, text: string) => Effect.gen(function* () {
   const turnId = `${yield* Random.nextInt}:${yield* Random.nextInt}`
-  return yield* Effect.tryPromise({
-    try: async () => {
-      const start = thread.store.select(history).get().length
-      const receipt = await thread.methods.message({ text, turnId }, { key: turnId })
-      if (receipt.status !== "completed") throw new RuntimeError(receipt.status === "failed" ? receipt.error : "Message invocation is still pending")
-      await thread.wait()
-      const events = thread.store.select(history).get()
-      const result = events.findLast(event => event.type === "TurnSettled" && event.turnId === turnId)
-      if (!result || result.type !== "TurnSettled") throw new RuntimeError("The turn ended without a result")
-      return events.slice(start).filter(event => event.type === "TurnSettled").map(settlement => ({
-        turnId: settlement.turnId,
-        outcome: settlement.outcome,
-        text: settlement.outcome === "completed" ? turnOutput(events, settlement) : settlement.reason,
-      }))
-    },
-    catch: RuntimeError.from,
-  })
-})
+  const start = thread.store.select(history).get().length
+  const receipt = yield* thread.methods.message({ text, turnId }, { key: turnId })
+  if (receipt.status !== "completed") return yield* Effect.fail(new RuntimeError(receipt.status === "failed" ? receipt.error : "Message invocation is still pending"))
+  yield* thread.wait
+  const events = thread.store.select(history).get()
+  const result = events.findLast(event => event.type === "TurnSettled" && event.turnId === turnId)
+  if (!result || result.type !== "TurnSettled") return yield* Effect.fail(new RuntimeError("The turn ended without a result"))
+  return events.slice(start).filter(event => event.type === "TurnSettled").map(settlement => ({
+    turnId: settlement.turnId,
+    outcome: settlement.outcome,
+    text: settlement.outcome === "completed" ? turnOutput(events, settlement) : settlement.reason,
+  }))
+}).pipe(Effect.mapError(RuntimeError.from))
 
 // observeMessages queues each new chat message once until the selected thread scope closes.
 export const observeMessages = (thread: ChatThread) => Effect.gen(function* () {

@@ -1,12 +1,12 @@
 import { ModelRef } from "@clavia/tardigrade-model/reference"
-import { ActorRequest, ActorDecision, PromiseSettled, ResolutionRequest } from "@clavia/tardigrade-experimental-host"
+import { ActorRequest, ActorDecision, PromiseSettled } from "@clavia/tardigrade-experimental-host/contracts"
 import { Schema } from "effect"
-import { ExecutionHandle, promiseSchema } from "@clavia/tardigrade-experimental-core"
-import { ToolPromise } from "@clavia/tardigrade-experimental-packages"
+import { ExecutionHandle } from "@clavia/tardigrade-experimental-core"
+import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
 
-export const ToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Unknown })
-export const ModelReply = Schema.Struct({ text: Schema.String, toolCalls: Schema.Array(ToolCall) })
-export const ModelPromiseSettled = promiseSchema({ success: ModelReply, error: Schema.String })
+const ProviderToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Json })
+export const ToolCall = Schema.Struct({ ...ProviderToolCall.fields, providerId: Schema.String })
+export const ModelReply = Schema.Struct({ text: Schema.String, toolCalls: Schema.Array(ProviderToolCall) })
 export const Decision = Schema.Struct({ allowed: Schema.Boolean, reason: Schema.String })
 
 export const PermissionMode = Schema.Literals(["allow", "deny", "ask"])
@@ -22,11 +22,9 @@ export const BudgetDecision = Schema.Union([
   Schema.Struct({ allowed: Schema.Literal(false), reason: Schema.String }),
 ])
 
-export const BudgetPromiseResolved = Schema.Struct({ type: Schema.Literal("BudgetResolved"), callId: Schema.String, promise: ResolutionRequest })
-export const PermissionPromiseResolved = Schema.Struct({ type: Schema.Literal("PermissionResolved"), callId: Schema.String, promise: ResolutionRequest })
-export const BudgetResolved = Schema.Union([BudgetPromiseResolved, Schema.Struct({ type: Schema.Literal("BudgetResolved"), callId: Schema.String, decision: BudgetDecision })])
+export const BudgetResolved = Schema.Struct({ type: Schema.Literal("BudgetResolved"), callId: Schema.String, decision: BudgetDecision })
 export type BudgetResolved = typeof BudgetResolved.Type
-export const PermissionResolved = Schema.Union([PermissionPromiseResolved, Schema.Struct({ type: Schema.Literal("PermissionResolved"), callId: Schema.String, decision: Decision })])
+export const PermissionResolved = Schema.Struct({ type: Schema.Literal("PermissionResolved"), callId: Schema.String, decision: Decision })
 export type PermissionResolved = typeof PermissionResolved.Type
 
 export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), callId: Schema.String, charged: Schema.Boolean })
@@ -53,13 +51,13 @@ export const ModelCalled = Schema.Union([
 ])
 export type ModelCalled = typeof ModelCalled.Type
 
-export const ModelPromiseReturned = Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literals(["inference", "compaction"]), callId: Schema.String, promise: ToolPromise })
 export const ModelReturned = Schema.Union([
-  ModelPromiseReturned,
   Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("inference"), callId: Schema.String, text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
   Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("compaction"), callId: Schema.String, text: Schema.String }),
 ])
 export type ModelReturned = typeof ModelReturned.Type
+
+export const CompactionFailed = Schema.Struct({ type: Schema.Literal("CompactionFailed"), callId: Schema.String, reason: Schema.String })
 
 export const TurnSettled = Schema.Union([
   Schema.Struct({ type: Schema.Literal("TurnSettled"), turnId: Schema.String, outcome: Schema.Literal("completed"), callId: Schema.String }),
@@ -79,6 +77,7 @@ export const Event = Schema.Union([
   ToolReturned,
   MessageReceived,
   ModelCalled,
+  CompactionFailed,
   PromiseSettled,
   ModelReturned,
   TurnSettled,

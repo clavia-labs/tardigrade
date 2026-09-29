@@ -1,11 +1,10 @@
 import { Effect } from "effect"
 import { atom, defineActor } from "@clavia/tardigrade-experimental-core"
-import { fetchPackage as fetch, alarm, workspace, agents } from "@clavia/tardigrade-experimental-packages"
 import { message } from "./event"
 import { trajectory, compact, infer, packageTools, systemPrompt, pendingTools, toolBudget, withBudget, budgetInstructions } from "./atoms/index"
 
 export const createActor = defineActor("tardie", Effect.gen(function* () {
-  const available = yield* packageTools([fetch(), alarm(), workspace(), agents()])
+  const available = yield* packageTools
   const budget = toolBudget(pendingTools, { configure: false })
   const limited = withBudget(available, budget)
   const tools = atom(get => get(budget).view.configured ? get(limited) : get(available))

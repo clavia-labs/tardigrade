@@ -1,19 +1,7 @@
-import { ThreadCoordinate } from "../supervisor"
-import { Context, Effect, Schema } from "effect"
-import { EffectRef, ExecutionHandle } from "@clavia/tardigrade-experimental-core"
+import { Context, Effect } from "effect"
+import type { ExecutionHandle } from "@clavia/tardigrade-experimental-core"
+import type { ResolutionRequest, ResolutionRegistration, ResolutionState } from "../contracts"
 
-export const ResolutionRequest = Schema.Struct({ ref: EffectRef, handle: ExecutionHandle, mode: Schema.optionalKey(Schema.Literals(["poll", "push"])) })
-export type ResolutionRequest = typeof ResolutionRequest.Type
-export const ResolutionRegistration = Schema.Struct({ ...ResolutionRequest.fields, recipient: ThreadCoordinate })
-export type ResolutionRegistration = typeof ResolutionRegistration.Type
-export const ResolutionResult = Schema.Union([
-  Schema.Struct({ status: Schema.Literal("fulfilled"), value: Schema.Json }),
-  Schema.Struct({ status: Schema.Literal("rejected"), error: Schema.String }),
-])
-export const PromiseSettled = Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: ResolutionResult })
-export type PromiseSettled = typeof PromiseSettled.Type
-export type ResolutionResult = PromiseSettled["result"]
-export type ResolutionState = { readonly status: "pending" } | ResolutionResult
 export type ResolutionPoll = (handle: ExecutionHandle) => Effect.Effect<ResolutionState, Error>
 
 // Promises registers a promise for eventual settlement; duplicate references must retain the same execution handle.

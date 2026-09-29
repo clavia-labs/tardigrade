@@ -3,11 +3,16 @@ export { durableAtom, EventLog, type DurableAtom } from "./durable"
 export * from "./store"
 export type { ActorGraph } from "./graph"
 export * from "./effects"
-export { EffectRef, type Recorded } from "./internal/effects"
+export * from "./effect-ref"
 export * from "./promise"
+export * from "./lifecycle"
+export * from "./execution-result"
 export * from "./event-log"
 export * from "./actor"
 export * from "./runtime"
 export * from "./journal"
 
 export * from "./errors"
+
+
+export * from "./act"

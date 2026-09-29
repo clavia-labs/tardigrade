@@ -13,7 +13,7 @@ const Completion = Schema.Struct({ choices: Schema.Array(Schema.Struct({
     function: Schema.Struct({ name: Schema.NonEmptyString, arguments: Schema.String }),
   }))) }),
 })) })
-const Arguments = Schema.Struct({ input: Schema.Unknown })
+const Arguments = Schema.Struct({ input: Schema.Json })
 
 const decodeReply = (raw: unknown) => Effect.gen(function* () {
   const reply = yield* Schema.decodeUnknownEffect(Completion)(raw)
@@ -31,16 +31,16 @@ const decodeReply = (raw: unknown) => Effect.gen(function* () {
 // bifrostWebhook supplies the Inbox verifier; omitted results wake its polling adapter after durable acceptance.
 export const bifrostWebhook = (options: BifrostWebhookOptions) => Effect.map(bifrostWebhookVerifier(options), verify => (request: Request) => Effect.gen(function* () {
   const { id, handle, data } = yield* verify(request)
-  if (data.status === "failed" && data.error !== undefined) return { id, handle, result: { status: "rejected" as const, error: `Bifrost job failed: ${JSON.stringify(data.error)}` } }
+  if (data.status === "failed" && data.error !== undefined) return { id, handle, result: { status: "rejected" as const, reason: `Bifrost job failed: ${JSON.stringify(data.error)}` } }
   if (data.status === "completed" && data.response !== undefined) return { id, handle, result: yield* completionResult(data.response) }
-  if (data.result_expired) return { id, handle, result: { status: "rejected" as const, error: "Bifrost job result expired before webhook delivery" } }
+  if (data.result_expired) return { id, handle, result: { status: "rejected" as const, reason: "Bifrost job result expired before webhook delivery" } }
   return { id, handle }
 }))
 
 const completionResult = (raw: unknown) => decodeReply(raw).pipe(
-  Effect.flatMap(value => Schema.decodeUnknownEffect(Schema.Json)(value)),
+  Effect.flatMap(value => Schema.decodeEffect(Schema.Json)(value)),
   Effect.map(value => ({ status: "fulfilled" as const, value })),
-  Effect.catch(error => Effect.succeed({ status: "rejected" as const, error: String(error) })),
+  Effect.catch(error => Effect.succeed({ status: "rejected" as const, reason: String(error) })),
 )
 
 export const DEFAULT_BIFROST_PROVIDER = "bifrost"
@@ -64,9 +64,9 @@ export function bifrostModelServices(options: BifrostModelOptions) {
         messages: [
           { role: "system", content: input.system },
           ...input.context.map(message => message.role === "user" ? { role: "user", content: message.text }
-            : message.role === "tool" ? { role: "tool", tool_call_id: message.callId, content: message.text }
+            : message.role === "tool" ? { role: "tool", tool_call_id: message.providerId, content: message.text }
             : { role: "assistant", content: message.text || null, ...(message.toolCalls.length ? { tool_calls: message.toolCalls.map(call => ({
-              id: call.callId, type: "function", function: { name: call.name, arguments: JSON.stringify({ input: call.input }) },
+              id: call.providerId, type: "function", function: { name: call.name, arguments: JSON.stringify({ input: call.input }) },
             })) } : {}) }),
         ],
         ...(input.tools.length ? { tools: input.tools.map(tool => ({ type: "function", function: {
@@ -87,6 +87,7 @@ export function bifrostModelServices(options: BifrostModelOptions) {
 export const bifrostPoll = Effect.map(Bifrost, remote => ((handle) => Effect.gen(function* () {
   const reference = yield* Schema.decodeUnknownEffect(BifrostHandle)(handle)
   const state = yield* remote.poll(reference)
+  if (state.status === "rejected") return { status: "rejected" as const, reason: state.error }
   if (state.status !== "fulfilled") return state
   return yield* completionResult(state.value)
 })) satisfies ResolutionPoll)

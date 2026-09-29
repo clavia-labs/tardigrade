@@ -5,7 +5,7 @@ import { ToolCall, Decision, BudgetDecision, PermissionPolicy, BudgetPolicy, typ
 const Message = Schema.Union([
   Schema.Struct({ role: Schema.Literal("user"), text: Schema.String }),
   Schema.Struct({ role: Schema.Literal("assistant"), text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
-  Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, name: Schema.String, text: Schema.String, error: Schema.Boolean }),
+  Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, providerId: Schema.String, name: Schema.String, text: Schema.String, error: Schema.Boolean }),
 ])
 export const Conversation = Schema.Array(Message)
 
@@ -24,10 +24,10 @@ export function trajectoryState(state: typeof Conversation.Type, event: Event): 
     const message = inboxMessage(event)
     return message ? [...state, { role: "user", text: message.text }] : state
   }
-  if (event.type === "ModelReturned" && !("promise" in event) && event.purpose === "inference") return [...state, { role: "assistant", text: event.text, toolCalls: event.toolCalls }]
+  if (event.type === "ModelReturned" && event.purpose === "inference") return [...state, { role: "assistant", text: event.text, toolCalls: event.toolCalls }]
   if (event.type === "ToolReturned") {
     const call = state.flatMap(message => message.role === "assistant" ? message.toolCalls : []).find(call => call.callId === event.callId)
-    if (call) return [...state, { role: "tool", callId: event.callId, name: call.name, text: event.error ?? event.output, error: event.error !== null }]
+    if (call) return [...state, { role: "tool", callId: event.callId, providerId: call.providerId, name: call.name, text: event.error ?? event.output, error: event.error !== null }]
   }
   return state
 }
@@ -57,7 +57,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event): typ
     }
     turns = turns.map(turn => turn.turnId === event.turnId ? { ...turn, calls: [...turn.calls, { callId: event.callId, returned: false }] } : turn)
   }
-  if (event.type === "ModelReturned" && !("promise" in event) && event.purpose === "inference") {
+  if (event.type === "ModelReturned" && event.purpose === "inference") {
     if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
     if (new Set(event.toolCalls.map(call => call.callId)).size !== event.toolCalls.length) throw new RuntimeError("Duplicate tool call IDs in model reply")
     turns = turns.map(turn => turn.calls.some(call => call.callId === event.callId) ? {
@@ -89,17 +89,21 @@ export function inferState(state: typeof InferenceState.Type, event: Event): typ
 }
 
 export const CompactionState = Schema.Struct({
-  through: Schema.Finite, summary: Schema.String,
+  through: Schema.Finite, summary: Schema.String, failure: Schema.NullOr(Schema.String),
   pending: Schema.NullOr(Schema.Struct({ callId: Schema.String, through: Schema.Finite })),
 })
 export function compactState(state: typeof CompactionState.Type, event: Event): typeof CompactionState.Type {
+  if (event.type === "CompactionFailed") {
+    if (state.pending?.callId !== event.callId) throw new RuntimeError(`No matching running compaction: ${event.callId}`)
+    return { ...state, pending: null, failure: event.reason }
+  }
   if (event.type === "ModelCalled" && event.purpose === "compaction") {
     if (state.pending || !Number.isSafeInteger(event.through) || event.through <= state.through) throw new RuntimeError(`Compaction call is unavailable: ${event.callId}`)
     return { ...state, pending: { callId: event.callId, through: event.through } }
   }
-  if (event.type === "ModelReturned" && !("promise" in event) && event.purpose === "compaction") {
+  if (event.type === "ModelReturned" && event.purpose === "compaction") {
     if (!state.pending || event.callId !== state.pending.callId) throw new RuntimeError(`No matching running compaction: ${event.callId}`)
-    return { through: state.pending.through, summary: event.text, pending: null }
+    return { through: state.pending.through, summary: event.text, pending: null, failure: null }
   }
   return state
 }
@@ -110,7 +114,7 @@ export const ToolState = Schema.Struct({
 })
 export function toolState(state: typeof ToolState.Type, event: Event): typeof ToolState.Type {
   let queue = state.queue
-  if (event.type === "ModelReturned" && !("promise" in event) && event.purpose === "inference" && event.toolCalls.length > 0) queue = [...queue, ...event.toolCalls.map(call => ({ call, running: false }))]
+  if (event.type === "ModelReturned" && event.purpose === "inference" && event.toolCalls.length > 0) queue = [...queue, ...event.toolCalls.map(call => ({ call, running: false }))]
   if (event.type === "ToolCalled" && queue.some(item => item.call.callId === event.callId && !item.running)) queue = queue.map(item => item.call.callId === event.callId && !item.running ? { ...item, running: true } : item)
   if (event.type === "ToolReturned" && queue.some(item => item.call.callId === event.callId)) queue = queue.filter(item => item.call.callId !== event.callId)
   return queue === state.queue ? state : { queue, pending: queue[0]?.call ?? null, running: queue[0]?.running ?? false }
@@ -126,7 +130,7 @@ export function permissionState(state: typeof PermissionState.Type, event: Event
     if (!state.policy) throw new RuntimeError("Permission policy is not configured")
     return { ...state, policy: event.policy }
   }
-  if (event.type === "PermissionResolved" && "decision" in event) {
+  if (event.type === "PermissionResolved") {
     const prior = state.decisions.findLast(value => value.callId === event.callId)?.decision
     if (prior?.allowed === event.decision.allowed && prior.reason === event.decision.reason) return state
     return { ...state, decisions: [...state.decisions, { callId: event.callId, decision: event.decision }] }
@@ -152,7 +156,7 @@ export function toolBudgetState(state: typeof ToolBudgetState.Type, event: Event
     return { ...state, used: 0, charged: [], granted: 0, decisions: [] }
   }
   if (event.type === "ToolCalled" && event.charged && !state.charged.includes(event.callId)) return { ...state, used: state.used + 1, charged: [...state.charged, event.callId] }
-  if (event.type === "BudgetResolved" && "decision" in event) {
+  if (event.type === "BudgetResolved") {
     const prior = state.decisions.find(value => value.callId === event.callId)
     if (prior) {
       const same = prior.decision.allowed

@@ -1,12 +1,11 @@
 import { atom, defineActor } from "@clavia/tardigrade-experimental-core"
 import { compact, infer, packageTools, systemPrompt, trajectory, permissions, pendingTools, withPermissions, toolBudget, withBudget, budgetInstructions, permissionInstructions } from "@clavia/tardigrade-experimental-agent/atoms/index"
 import { message, updatePermission } from "@clavia/tardigrade-experimental-agent/event"
-import { fetchPackage as fetch, workspace, agents } from "@clavia/tardigrade-experimental-packages"
 import { Effect } from "effect"
 
 export const actor = defineActor("tardie", Effect.gen(function* () {
   // tools
-  const available = yield* packageTools([fetch(), workspace(), agents()])
+  const available = yield* packageTools
   const permission = permissions(pendingTools, { tools: available })
   const governed = withPermissions(available, permission)
   const permitted = atom(get => get(permission).view.policy === null ? get(available) : get(governed))

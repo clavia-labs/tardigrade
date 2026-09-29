@@ -12,5 +12,312 @@
   "rules": {
     "eslint/require-yield": "off",
     "typescript/no-explicit-any": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": [
+        "packages/experimental/agent/src/atoms/**/*.ts",
+        "packages/experimental/agent/src/agent.ts",
+        "packages/experimental/agent/src/acts.ts",
+        "packages/experimental/agent/src/context.ts",
+        "packages/experimental/agent/src/event.ts",
+        "packages/experimental/agent/src/projections.ts",
+        "packages/experimental/agent/src/budget-contracts.ts",
+        "packages/experimental/apps/*/src/actor.ts",
+        "packages/experimental/**/actors/**/*.ts",
+        "packages/experimental/host/src/supervisor.ts",
+        "packages/experimental/host/src/contracts.ts"
+      ],
+      "plugins": [
+        "typescript",
+        "unicorn",
+        "oxc",
+        "import"
+      ],
+      "rules": {
+        "import/no-nodejs-modules": "error",
+        "eslint/no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@clavia/tardigrade-experimental-host",
+                "allowTypeImports": true,
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "@clavia/tardigrade-experimental-packages",
+                "message": "Import data contracts from experimental-packages/types. Configure executable packages in a service layer.",
+                "allowTypeImports": true
+              },
+              {
+                "name": "@clavia/tardigrade-experimental-core",
+                "importNames": [
+                  "EffectExecution",
+                    "runtimeAtom"
+                ],
+                "allowTypeImports": true,
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "effect",
+                "importNames": [
+                  "Layer",
+                  "FileSystem",
+                  "ChildProcessSpawner",
+                  "Terminal"
+                ],
+                "allowTypeImports": true,
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              }
+            ],
+            "patterns": [
+              {
+                "regex": "(^|/)(services|platform)(/|$)|^@effect/platform|^@clavia/tardigrade-experimental-platform(/|$)|^bun(:|$)|^cloudflare:",
+                "allowTypeImports": true,
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "group": [
+                  "@clavia/tardigrade-experimental-packages/*",
+                  "!@clavia/tardigrade-experimental-packages/types",
+                  "**/budget-tools",
+                  "effect/Layer",
+                  "effect/Effect",
+                  "effect/FileSystem",
+                  "effect/ChildProcessSpawner",
+                  "effect/unstable/*",
+                  "!effect/unstable/reactivity",
+                  "@clavia/tardigrade-experimental-host/*",
+                  "@clavia/tardigrade-model",
+                  "@clavia/tardigrade-model/*",
+                  "!@clavia/tardigrade-model/reference",
+                  "!@clavia/tardigrade-experimental-host/contracts"
+                ],
+                "allowTypeImports": true,
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              }
+            ]
+          }
+        ],
+        "eslint/no-restricted-globals": [
+          "error",
+          {
+            "globals": [
+              {
+                "name": "fetch",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "WebSocket",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "XMLHttpRequest",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "EventSource",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "Worker",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "SharedWorker",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "navigator",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "localStorage",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "sessionStorage",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "indexedDB",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "caches",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "Bun",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "Deno",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "process",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "require",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "importScripts",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "setTimeout",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "setInterval",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "setImmediate",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "clearTimeout",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "clearInterval",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "clearImmediate",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              },
+              {
+                "name": "queueMicrotask",
+                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+              }
+            ],
+            "checkGlobalObject": true,
+            "globalObjects": [
+              "global"
+            ]
+          }
+        ],
+        "eslint/no-restricted-properties": [
+          "error",
+          {
+            "property": "layer",
+            "message": "Supply act implementation layers in platform wiring; actor modules only request acts."
+          },
+          {
+            "object": "Effect",
+            "property": "runPromise",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runPromiseExit",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runSync",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runSyncExit",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runFork",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runCallback",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runPromiseWith",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runPromiseExitWith",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runSyncWith",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runSyncExitWith",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runForkWith",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "runCallbackWith",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "promise",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "tryPromise",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "async",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "sleep",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "delay",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "forkChild",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "forkDetach",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "forkIn",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          },
+          {
+            "object": "Effect",
+            "property": "forkScoped",
+            "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
+          }
+        ],
+        "eslint/no-eval": "error",
+        "eslint/no-new-func": "error"
+      }
+    }
+  ]
 }

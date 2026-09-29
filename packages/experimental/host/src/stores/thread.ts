@@ -1,5 +1,5 @@
 import type { Atom } from "@clavia/tardigrade-experimental-core"
-import type { ThreadCoordinate } from "../supervisor"
+import type { ThreadCoordinate } from "../contracts"
 
 export interface Selection<Value> {
   readonly get: () => Value

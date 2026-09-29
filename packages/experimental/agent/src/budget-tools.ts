@@ -3,9 +3,7 @@ import { ExecutionHandle } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { tool } from "@clavia/tardigrade-experimental-packages"
 
-const Amount = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
-
-export const BudgetRequestInput = Schema.Struct({ amount: Amount, reason: Schema.NonEmptyString })
+import { BudgetAmount, BudgetRequestInput } from "./budget-contracts"
 
 export const requestBudget = {
   spec: {
@@ -19,7 +17,7 @@ export const requestBudget = {
 export const grantBudget = tool({
   name: "grant_budget",
   description: "Grant additional tool calls to a child with an outstanding budget request. Use handle and requestId from its message. This grant does not consume tool budget.",
-  input: Schema.Struct({ handle: ExecutionHandle, requestId: Schema.NonEmptyString, amount: Amount }),
+  input: Schema.Struct({ handle: ExecutionHandle, requestId: Schema.NonEmptyString, amount: BudgetAmount }),
   run: ({ handle, requestId, amount }) => Effect.gen(function* () {
     const runtime = yield* Actor
     yield* runtime.reply(handle, requestId, { allowed: true, amount })

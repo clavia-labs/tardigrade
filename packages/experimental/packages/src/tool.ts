@@ -1,7 +1,6 @@
 import { ToolError } from "./errors"
-import { EffectExecution, EffectRef, ExecutionHandle, durablePromise } from "@clavia/tardigrade-experimental-core"
-import { Cause, Effect, Exit, Layer, Schema } from "effect"
-import { Context } from "effect"
+import { EffectExecution, ExecutionHandle, durablePromise } from "@clavia/tardigrade-experimental-core"
+import { Cause, Effect, Exit, Schema } from "effect"
 import type { ToolCall, ToolSpec, ExecutionMode, ToolMetadata } from "./types"
 
 export interface ToolInvocation extends ToolCall {
@@ -13,9 +12,6 @@ export interface AgentTool<R = never> {
   readonly aliases?: readonly string[]
   readonly execute: (input: unknown, call: ToolInvocation) => Effect.Effect<unknown, Error, R>
 }
-
-export const ToolPromise = Schema.Struct({ type: Schema.Literal("promise"), ref: EffectRef, handle: ExecutionHandle })
-export type ToolPromise = typeof ToolPromise.Type
 
 export const DEFAULT_TOOL_EXECUTION = "sync" as const
 
@@ -33,7 +29,7 @@ export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execu
 export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execution?: ExecutionMode }): AgentTool<R | EffectExecution> {
   const execution = options.execution ?? DEFAULT_TOOL_EXECUTION
   return {
-    spec: { name: options.name, description: options.description, inputSchema: Schema.toJsonSchemaDocument(options.input, { onExcessProperty: "error" }).schema, ...(options.metadata ? { metadata: options.metadata } : {}), execution },
+    spec: { name: options.name, description: options.description, inputSchema: Schema.decodeUnknownSync(Schema.Json)(Schema.toJsonSchemaDocument(options.input, { onExcessProperty: "error" }).schema), ...(options.metadata ? { metadata: options.metadata } : {}), execution },
     execute: (input, call) => Effect.gen(function* () {
       const value = yield* Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(input).pipe(Effect.mapError(ToolError.from))
       if (execution === "sync") return yield* options.run(value, call)
@@ -64,25 +60,3 @@ export function promiseTool<Input, R>(options: {
   }) })
   return { ...method, spec: { ...method.spec, execution: "async" } }
 }
-
-// toolLayer captures tool services and routes calls by registered name.
-export function toolLayer<R>(tools: readonly AgentTool<R>[]) {
-  const entries = tools.flatMap(tool => [tool.spec.name, ...(tool.aliases ?? [])].map(name => [name, tool] as const))
-  const registry = new Map(entries)
-  if (registry.size !== entries.length) throw new ToolError("Duplicate tool name")
-  return Layer.effect(ToolExecutor, Effect.gen(function* () {
-    const context = yield* Effect.context<R>()
-    return {
-      execute: (call: ToolCall) => {
-        const handler = registry.get(call.name)
-        return handler
-          ? handler.execute(call.input, call).pipe(Effect.provide(context))
-          : Effect.fail(new ToolError(`Unknown tool: ${call.name}`))
-      },
-    }
-  }))
-}
-
-export class ToolExecutor extends Context.Service<ToolExecutor, {
-  readonly execute: (call: ToolCall) => Effect.Effect<unknown, Error>
-}>()("tardigrade/experimental/packages/ToolExecutor") {}

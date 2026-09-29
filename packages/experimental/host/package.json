@@ -11,7 +11,8 @@
     "./thread-host": "./src/thread-host.ts",
     "./runtime": "./src/runtime.ts",
     "./supervisor": "./src/supervisor.ts",
-    "./invocation": "./src/invocation.ts"
+    "./invocation": "./src/invocation.ts",
+    "./contracts": "./src/contracts.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-experimental-core": "workspace:*",

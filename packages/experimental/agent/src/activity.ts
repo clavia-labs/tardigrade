@@ -17,9 +17,10 @@ function describe(event: Event): Pick<ActivityEntry, "summary" | "status"> {
       return { summary: `${source === "user" ? "" : `${source} · `}${event.kind === "message" ? event.text : event.kind}`, status: source === "user" ? "message" : "notification" }
     }
     case "ModelCalled": return { summary: `${event.purpose} · ${event.model.model_id}`, status: "info" }
-    case "ModelReturned": return { summary: "promise" in event ? `submitted · ${event.callId}` : event.text, status: "info" }
+    case "CompactionFailed": return { summary: event.reason, status: "failed" }
+    case "ModelReturned": return { summary: event.text, status: "info" }
     case "PromiseSettled": {
-      if (event.result.status === "rejected") return { summary: event.result.error, status: "failed" }
+      if (event.result.status === "rejected") return { summary: event.result.reason, status: "failed" }
       const value = event.result.value
       const summary = Schema.is(ModelReply)(value)
         ? value.toolCalls.length ? `tools · ${value.toolCalls.map(call => call.name).join(", ")}` : value.text
@@ -31,7 +32,7 @@ function describe(event: Event): Pick<ActivityEntry, "summary" | "status"> {
     case "BudgetUpdated": return { summary: `${event.policy.maxCalls} tool calls · ${event.policy.scope ?? "actor"}`, status: "info" }
     case "PermissionConfigured":
     case "PermissionUpdated": return { summary: `default=${event.policy.default}${event.policy.readOnly ? ` · read-only=${event.policy.readOnly}` : ""}`, status: "info" }
-    case "PermissionResolved": return { summary: "decision" in event ? `${event.decision.allowed ? "allowed" : "denied"} · ${event.decision.reason}` : `approval requested · ${event.callId}`, status: "notification" }
+    case "PermissionResolved": return { summary: `${event.decision.allowed ? "allowed" : "denied"} · ${event.decision.reason}`, status: "notification" }
     case "ToolCalled": return { summary: event.callId, status: "info" }
     case "ToolReturned": return { summary: `${event.callId}${event.error ? ` · ${event.error}` : ""}`, status: event.error ? "failed" : "info" }
     case "TurnSettled": return { summary: `${event.outcome} · ${"reason" in event ? event.reason : "callId" in event ? event.callId : event.turnId}`, status: event.outcome === "completed" ? "completed" : "failed" }

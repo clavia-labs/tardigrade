@@ -29,6 +29,12 @@ The prose lint holds markdown to the rules in [AGENTS.md](AGENTS.md) that a code
 
 CI installs with `bun install --frozen-lockfile` and runs the full `bun run gate` for code changes and pushes to `main`. For PRs that change only `docs/`, the required `gate` job runs `bun run gate --only=lint:docs,build:app-web` to check prose and compile the documentation site. Commit `bun.lock` with any dependency change.
 
+## Actor capabilities
+
+Experimental actor modules propose acts and read data services. Act implementations and platform wiring own I/O. The overrides in [.oxlintrc.json](.oxlintrc.json) apply to agent atoms and contracts, CLI actor entrypoints, the supervisor, and experimental `actors/` directories. Keep actor definitions in these locations and put implementation layers in `services/` modules or platform entrypoints. Import shared schemas from data contract modules.
+
+Oxlint's built-in restricted-import, restricted-global, and restricted-property rules reject service imports, Node built-ins, ambient I/O, timers, act layer wiring, and direct Effect execution in these modules. The global checks include `globalThis`, `window`, `self`, and `global`. These checks are syntactic: they do not establish transitive helper purity or prevent every computed import or aliased property access. Capability selection in the runtime remains a separate boundary.
+
 ## PR expectations
 
 - `main` is the default branch and the integration trunk. Feature and fix PRs target `main`.

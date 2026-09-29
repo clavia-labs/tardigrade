@@ -1,9 +1,10 @@
+import { ToolPromise } from "./types"
 import { isDeepStrictEqual } from "node:util"
 import { ToolError } from "./errors"
 import { Clock, Effect, Schema } from "effect"
 import { Deadline, EffectExecution, durableAtom, durablePromise } from "@clavia/tardigrade-experimental-core"
 import { Promises } from "@clavia/tardigrade-experimental-host"
-import { tool, promiseTool, ToolPromise } from "./tool"
+import { tool, promiseTool } from "./tool"
 import { definePackage } from "./package"
 
 const Alarm = Schema.Struct({ alarmId: Schema.NonEmptyString, at: Deadline, message: Schema.NonEmptyString })
@@ -57,7 +58,7 @@ export function alarm() {
         const state = execution.get(durablePromise(promise.ref, { success: Schema.Json, error: Schema.String }).state)
         if (state.status !== "pending") return { cancelled: false, reason: "Promise already settled" }
         yield* (yield* Promises).cancel(promise)
-        yield* execution.record({ type: "PromiseSettled", ref: promise.ref, result: { status: "rejected", error: "Alarm cancelled" } })
+        yield* execution.record({ type: "PromiseSettled", ref: promise.ref, result: { status: "rejected", reason: "Alarm cancelled" } })
         return { cancelled: true }
       }),
     }),

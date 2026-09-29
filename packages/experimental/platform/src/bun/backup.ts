@@ -119,49 +119,54 @@ const unpack = (checkpoint: HostCheckpoint, id: string, actor: string, maxBytes:
 }
 
 // restoreHostCheckpoint verifies a complete checkpoint before moving it into an absent storage directory.
-export const restoreHostCheckpoint = async (options: {
+export const restoreHostCheckpoint = (options: {
   readonly actor: string
   readonly storage: string
   readonly backup: Layer.Layer<RemoteBackup, Error>
   readonly id?: string
   readonly policy?: Partial<CheckpointPolicy>
-}): Promise<string> => {
-  if (options.storage === ":memory:") throw new Error("memory storage cannot be restored")
-  const maxBytes = options.policy?.maxBytes ?? DEFAULT_CHECKPOINT_POLICY.maxBytes
-  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("checkpoint maxBytes must be a positive integer")
-  const storage = resolve(options.storage)
-  if (existsSync(storage)) throw new Error(`restore destination already exists: ${storage}`)
+}) => Effect.gen(function* () {
+  const { storage, maxBytes } = yield* Effect.try({ try: () => {
+    if (options.storage === ":memory:") throw new Error("memory storage cannot be restored")
+    const maxBytes = options.policy?.maxBytes ?? DEFAULT_CHECKPOINT_POLICY.maxBytes
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("checkpoint maxBytes must be a positive integer")
+    const storage = resolve(options.storage)
+    if (existsSync(storage)) throw new Error(`restore destination already exists: ${storage}`)
+    return { storage, maxBytes }
+  }, catch: cause => backupError("invalid restore destination", cause) })
   const read = Effect.gen(function*() {
     const backup = yield* RemoteBackup
     const id = options.id ?? (yield* backup.latest)
-    if (id === undefined) throw new Error("no complete backup is available")
+    if (id === undefined) return yield* backupError("no complete backup is available", undefined)
     const checkpoint = yield* backup.load(id)
-    if (checkpoint === undefined) throw new Error(`backup checkpoint ${id} is missing`)
+    if (checkpoint === undefined) return yield* backupError(`backup checkpoint ${id} is missing`, undefined)
     return { checkpoint, id }
   })
-  const { checkpoint, id } = await Effect.runPromise(Effect.provide(read, options.backup.pipe(Layer.catch((cause) => Layer.effect(RemoteBackup, Effect.fail(backupError("backup layer failed", cause)))))))
-  const archive = unpack(checkpoint, id, options.actor, maxBytes)
-  mkdirSync(dirname(storage), { recursive: true })
-  const staging = mkdtempSync(join(dirname(storage), ".tardigrade-restore-"))
-  try {
-    const seen = new Set<string>()
-    let total = 0
-    for (const file of archive.files) {
-      if (typeof file.path !== "string" || file.path === "" || isAbsolute(file.path) || file.path.split(/[\\/]/).includes("..") || seen.has(file.path) ||
-        typeof file.digest !== "string" || typeof file.data !== "string") throw new Error("invalid checkpoint file")
-      seen.add(file.path)
-      const target = resolve(staging, file.path)
-      if (!target.startsWith(staging + sep)) throw new Error("checkpoint file escapes restore directory")
-      const contents = Buffer.from(file.data, "base64")
-      total += contents.byteLength
-      if (total > maxBytes || sha256(contents) !== file.digest) throw new Error("checkpoint file failed integrity check")
-      mkdirSync(dirname(target), { recursive: true })
-      writeFileSync(target, contents, { flag: "wx" })
+  const { checkpoint, id } = yield* Effect.provide(read, options.backup.pipe(Layer.catch((cause) => Layer.effect(RemoteBackup, Effect.fail(backupError("backup layer failed", cause))))))
+  return yield* Effect.try({ try: () => {
+    const archive = unpack(checkpoint, id, options.actor, maxBytes)
+    mkdirSync(dirname(storage), { recursive: true })
+    const staging = mkdtempSync(join(dirname(storage), ".tardigrade-restore-"))
+    try {
+      const seen = new Set<string>()
+      let total = 0
+      for (const file of archive.files) {
+        if (typeof file.path !== "string" || file.path === "" || isAbsolute(file.path) || file.path.split(/[\\/]/).includes("..") || seen.has(file.path) ||
+          typeof file.digest !== "string" || typeof file.data !== "string") throw new Error("invalid checkpoint file")
+        seen.add(file.path)
+        const target = resolve(staging, file.path)
+        if (!target.startsWith(staging + sep)) throw new Error("checkpoint file escapes restore directory")
+        const contents = Buffer.from(file.data, "base64")
+        total += contents.byteLength
+        if (total > maxBytes || sha256(contents) !== file.digest) throw new Error("checkpoint file failed integrity check")
+        mkdirSync(dirname(target), { recursive: true })
+        writeFileSync(target, contents, { flag: "wx" })
+      }
+      if (existsSync(storage)) throw new Error(`restore destination already exists: ${storage}`)
+      renameSync(staging, storage)
+      return checkpoint.id
+    } finally {
+      if (existsSync(staging)) rmSync(staging, { recursive: true, force: true })
     }
-    if (existsSync(storage)) throw new Error(`restore destination already exists: ${storage}`)
-    renameSync(staging, storage)
-    return checkpoint.id
-  } finally {
-    if (existsSync(staging)) rmSync(staging, { recursive: true, force: true })
-  }
-}
+  }, catch: cause => backupError("checkpoint restore failed", cause) })
+})

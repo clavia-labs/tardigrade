@@ -1,6 +1,11 @@
-import { Context, Effect, Schema } from "effect"
-import type { EffectRef } from "./internal/effects"
+import { type Effect, Schema } from "effect"
+import type { EffectExecution } from "./services/effect-execution"
+import type { ActRequest } from "./act"
+import type { EffectRef } from "./effect-ref"
+import type { EffectRequest } from "./lifecycle"
 import { atom, type Atom, type Getter } from "./atom"
+
+export { EffectExecution } from "./services/effect-execution"
 
 export const Deadline = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(8_640_000_000_000_000))
 export const ClockHandle = Schema.Struct({ executor: Schema.Literal("clock"), id: Schema.NonEmptyString, at: Deadline, value: Schema.optionalKey(Schema.Json) })
@@ -11,45 +16,38 @@ export type ExecutionHandle = typeof ExecutionHandle.Type
 export const FiberHandle = Schema.Struct({ executor: Schema.Literal("local"), id: Schema.NonEmptyString })
 export type FiberHandle = typeof FiberHandle.Type
 
-// EffectExecution supplies the current effect identity and forks work within the actor's lifetime.
-export class EffectExecution extends Context.Service<EffectExecution, {
-  readonly ref: EffectRef
-  readonly get: Getter
-  readonly record: <Event extends object>(event: Event) => Effect.Effect<void, Error>
-  readonly fork: <Event extends object, Services>(work: Effect.Effect<Event | readonly Event[], Error, Services>) => Effect.Effect<FiberHandle, Error, Services>
-}>()("experimental/EffectExecution") {}
-
-// EffectValue settles with an event or an ordered, nonempty batch committed together by the host.
-export interface EffectValue<Event, Error = never, Services = never> {
-  readonly kind: "effect"
-  readonly id: string
-  readonly request?: Event
-  readonly run: Effect.Effect<Event | readonly Event[], Error, Services>
+// EventValue proposes a domain event for direct journal delivery.
+export interface EventValue<Event> {
+  readonly kind: "event"
+  readonly event: Event
 }
-export type EffectValues<Event, Error = never, Services = never> = Readonly<Record<string, EffectValue<Event, Error, Services>>>
 
-export interface EffectOutput<View, Event, Error = never, Services = never> {
+export type EffectValues<Event, Services = never> = Readonly<Record<string, EventValue<Event> | ActRequest<Schema.Json, Schema.Json, Services>>>
+
+export interface EffectOutput<View, Event, Services = never> {
   readonly view: View
-  readonly effects: EffectValues<Event, Error, Services>
+  readonly effects: EffectValues<Event, Services>
 }
 
-// effectAtom derives a view and typed work proposals; the host owns execution and event delivery.
-export function effectAtom<const Value extends EffectOutput<unknown, object, unknown, unknown>>(read: (get: Getter) => Value): Atom<Value> {
+// effectAtom derives a view and typed proposals for the runtime.
+export function effectAtom<const Value extends { readonly view: unknown; readonly effects: Readonly<Record<string, Proposal>> }>(read: (get: Getter) => Value): Atom<Value> {
   return atom(read)
 }
 
-// effectValue describes host-executed work without starting it.
-export function effectValue<Request extends object, Result extends object, Error, Services>(value: {
-  readonly id: string
-  readonly request: Request
-  readonly run: Effect.Effect<Result | readonly Result[], Error, Services>
-}): EffectValue<Request | Result, Error, Services> {
-  if (!value.id) throw new Error("Effect identity must not be empty")
-  return { ...value, kind: "effect" }
+// eventValue describes a domain event without external work; its producer must withdraw it after delivery.
+export function eventValue<Event extends object>(event: Event): EventValue<Event> {
+  return { kind: "event", event }
 }
 
-// eventValue describes a local event delivery without a separate request event.
-export function eventValue<Event extends object>(value: { readonly id: string; readonly event: Event }): EffectValue<Event> {
-  if (!value.id) throw new Error("Effect identity must not be empty")
-  return { kind: "effect", id: value.id, run: Effect.succeed(value.event) }
+export interface IdentifiedEffectValue<Services = never> {
+  readonly kind: "act"
+  readonly id: string
+  readonly request: EffectRequest
+  readonly ref: EffectRef
+  readonly execute: Effect.Effect<import("./execution-result").ExecutionResult, Schema.Json, Services | EffectExecution>
 }
+type Proposal = EventValue<unknown> | ActRequest<Schema.Json, Schema.Json, unknown>
+type DirectEffectValue<Value> = Value extends { readonly effect?: infer P } ? Extract<NonNullable<P>, Proposal> : never
+type CollectedProposals<Value> = Value extends { readonly effects: infer Collection } ? Collection[keyof Collection] : never
+export type Proposed<Value> = Extract<Value, Proposal> | DirectEffectValue<Value> | Extract<NonNullable<CollectedProposals<Value>>, Proposal>
+export type ServicesOf<P> = P extends ActRequest<Schema.Json, Schema.Json, infer Services> ? Services | EffectExecution : never

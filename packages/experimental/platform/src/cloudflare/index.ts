@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Exit } from "effect"
 import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { SqliteClient } from "@effect/sql-sqlite-do"
@@ -13,16 +13,16 @@ export function cloudflareJournal<Event extends object>(storage: DurableObjectSt
   return sqlJournal<Event>({
     actor,
     layer: SqliteClient.layer({ storage }),
-    flush: () => Effect.runPromise(alarms.sync),
+    flush: alarms.sync,
   })
 }
 
 // createCloudflareHost keeps supervisor, thread, and invocation journals in the supplied Durable Object storage.
-export function createCloudflareHost<Event extends object, Services, Methods extends Readonly<Record<string, (...args: never[]) => Promise<void>>>, State>(options: Omit<Parameters<typeof createThreadHost<Event, Services, Methods, State>>[0], "storage"> & {
+export function createCloudflareHost<Event extends object, Services, Methods extends Readonly<Record<string, (...args: never[]) => Effect.Effect<void, Error>>>, State>(options: Omit<Parameters<typeof createThreadHost<Event, Services, Methods, State>>[0], "storage"> & {
   readonly storage: DurableObjectStorage
   readonly alarms?: CloudflareAlarmOptions
 }) {
-  const connections = new Set<() => Promise<void>>()
+  const connections = new Set<Effect.Effect<void, Error>>()
   const journal = <Entry extends object>(key: readonly string[]) => {
     const opened = cloudflareJournal<Entry>(options.storage, JSON.stringify(key), options.alarms)
     connections.add(opened.close)
@@ -32,12 +32,12 @@ export function createCloudflareHost<Event extends object, Services, Methods ext
     supervisor: (actor, instance) => journal([actor, instance, "supervisor"]),
     thread: coordinate => journal([coordinate.actor, coordinate.instance, "thread", coordinate.thread, "events"]),
     invocations: coordinate => journal([coordinate.actor, coordinate.instance, "thread", coordinate.thread, "invocations"]),
-    close: async () => {
-      const results = await Promise.allSettled([...connections].map(close => close()))
+    close: Effect.gen(function* () {
+      const results = yield* Effect.forEach(connections, close => Effect.exit(close))
       connections.clear()
-      const errors = results.filter(result => result.status === "rejected").map(result => result.reason)
-      if (errors.length) throw new AggregateError(errors, "Closing Cloudflare journals failed")
-    },
+      const failure = results.find(Exit.isFailure)
+      if (failure && Exit.isFailure(failure)) return yield* Effect.failCause(failure.cause)
+    }),
   }
   return createThreadHost({ ...options, storage })
 }

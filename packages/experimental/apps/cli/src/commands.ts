@@ -8,7 +8,6 @@ import { DEFAULT_MAX_CHILD_DEPTH } from "./services"
 import { DEFAULT_BATCH_SIZE, DEFAULT_POLL_MS, DEFAULT_WATCH_WIDTH, watchLog } from "./watch"
 import { DEFAULT_THREAD_DIRECTORY, DEFAULT_INSTANCE, activeThread, activateThread, findThread, listThreads, hostScope, type ChatHost, type ChatThread, type ThreadOptions, type ThreadListing } from "./threads"
 
-const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: RuntimeError.from })
 const directory = Flag.String("thread-dir").pipe(Flag.withDefault(DEFAULT_THREAD_DIRECTORY), Flag.withDescription("Directory containing host thread storage."))
 const instance = Flag.String("instance").pipe(Flag.withDefault(DEFAULT_INSTANCE), Flag.withDescription("Actor instance whose threads to use."))
 const thread = Flag.String("thread").pipe(Flag.optional, Flag.withDescription("Resume a thread by name or ID."))
@@ -18,15 +17,15 @@ const message = Flag.String("message").pipe(Flag.optional, Flag.withDescription(
 const threadLabel = (item: ThreadListing) => `${item.name}  ·  ${item.status}  ·  last activity ${item.lastActivity === undefined ? "none" : new Date(item.lastActivity).toLocaleString()}`
 
 const selectThread = (options: ThreadOptions, message: string) => Effect.gen(function* () {
-  const threads = yield* attempt(() => listThreads(options))
+  const threads = yield* listThreads(options)
   if (!threads.length) return yield* Effect.fail(new RuntimeError("No saved threads. Start a chat first."))
-  const active = yield* attempt(() => activeThread(options))
+  const active = yield* activeThread(options)
   return yield* Prompt.Select({ message, choices: threads.map(value => ({ title: `${threadLabel(value)}${value.coordinate.thread === active?.thread ? "  (active)" : ""}`, value: value.coordinate })) })
 })
 
 const printThreads = (options: ThreadOptions) => Effect.gen(function* () {
-  const threads = yield* attempt(() => listThreads(options))
-  const active = yield* attempt(() => activeThread(options))
+  const threads = yield* listThreads(options)
+  const active = yield* activeThread(options)
   yield* Console.log(threads.length ? threads.map(item => `${item.coordinate.thread === active?.thread ? "*" : " "} ${threadLabel(item)}  (${item.coordinate.thread})`).join("\n") : "No saved threads.")
 })
 
@@ -43,30 +42,30 @@ const watch = Command.make("watch", {
   if (options.active && Option.isSome(options.thread)) return yield* Effect.fail(new RuntimeError("Use either --active or --thread"))
   if (!options.active && Option.isNone(options.thread) && !process.stdin.isTTY) return yield* Effect.fail(new RuntimeError("Choose --thread or --active when stdin is not a terminal"))
   const coordinate = Option.isSome(options.thread)
-    ? yield* attempt(() => findThread(options, Option.getOrThrow(options.thread)))
+    ? yield* findThread(options, Option.getOrThrow(options.thread))
     : options.active ? undefined : yield* selectThread(options, "Watch thread")
   yield* watchLog({
     ...options,
     storage: options.directory,
     coordinate,
-    resolveThread: () => activeThread(options),
+    resolveThread: activeThread(options),
     width: Option.getOrUndefined(options.width),
   })
 }).pipe(Effect.catchTag("QuitError", () => Effect.void))).pipe(Command.withDescription("Choose a thread and watch its event log without running its actor."))
 
 const threadsCommand = Command.make("threads", { directory, instance }, printThreads).pipe(Command.withDescription("List threads from the supervisor store."))
 
-const newThread = (host: ChatHost, options: ThreadOptions, name?: string) => attempt(async () => {
-  const supervisor = await host.supervisorStore(options.instance)
-  if (name && supervisor.threads.get().some(thread => thread.parent === null && thread.name === name)) throw new RuntimeError(`Thread already exists: ${name}. Use /switch to resume it.`)
-  return host.allocateRootThread({ instance: options.instance, ...(name ? { name } : {}) })
-})
+const newThread = (host: ChatHost, options: ThreadOptions, name?: string) => Effect.gen(function* () {
+  const supervisor = yield* host.supervisorStore(options.instance)
+  if (name && supervisor.threads.get().some(thread => thread.parent === null && thread.name === name)) return yield* Effect.fail(new RuntimeError(`Thread already exists: ${name}. Use /switch to resume it.`))
+  return yield* host.allocateRootThread({ instance: options.instance, ...(name ? { name } : {}) })
+}).pipe(Effect.mapError(RuntimeError.from))
 
-const resumeThread = (host: ChatHost, coordinate: { readonly instance: string; readonly thread: string }) => attempt(async () => {
-  const thread = await host.getThread(coordinate)
-  if (!thread) throw new RuntimeError(`Thread is not registered: ${coordinate.thread}`)
+const resumeThread = (host: ChatHost, coordinate: { readonly instance: string; readonly thread: string }) => Effect.gen(function* () {
+  const thread = yield* host.getThread(coordinate)
+  if (!thread) return yield* Effect.fail(new RuntimeError(`Thread is not registered: ${coordinate.thread}`))
   return thread
-})
+}).pipe(Effect.mapError(RuntimeError.from))
 
 const chat = (host: ChatHost, selected: ChatThread, options: ThreadOptions & { readonly permissions: Permissions }) => Effect.scoped(Effect.gen(function* () {
   const inbox = yield* observeMessages(selected)
@@ -74,8 +73,8 @@ const chat = (host: ChatHost, selected: ChatThread, options: ThreadOptions & { r
     Effect.sync(() => options.permissions.subscribe(notice => { Queue.offerUnsafe(inbox, notice) })),
     unsubscribe => Effect.sync(unsubscribe),
   )
-  yield* attempt(() => selected.resume()).pipe(Effect.catch(error => Queue.offer(inbox, { seq: -1, kind: "error", text: error.message })), Effect.forkScoped)
-  yield* attempt(() => activateThread(options, selected.coordinate))
+  yield* selected.resume.pipe(Effect.catch(error => Queue.offer(inbox, { seq: -1, kind: "error", text: error.message })), Effect.forkScoped)
+  yield* activateThread(options, selected.coordinate)
   yield* Console.log(`Thread: ${selected.coordinate.thread}\nPermissions: ${options.permissions.mode()}\n/new [name]  /threads  /switch [name]  /permissions [mode]  /approvals  /allow <id>  /deny <id>  /exit`)
   while (true) {
     const text = yield* chatPrompt(inbox)
@@ -111,7 +110,7 @@ const chat = (host: ChatHost, selected: ChatThread, options: ThreadOptions & { r
         const [command, ...parts] = input.split(/\s+/)
         const name = parts.join(" ") || undefined
         if (command === "/new") return yield* newThread(host, options, name)
-        const coordinate = name ? yield* attempt(() => findThread(options, name)) : yield* selectThread(options, "Switch thread")
+        const coordinate = name ? yield* findThread(options, name) : yield* selectThread(options, "Switch thread")
         return yield* resumeThread(host, coordinate)
       }).pipe(Effect.catchTag("RuntimeError", error => Effect.as(Effect.logError(error.message), undefined)))
       if (next) return next
@@ -132,11 +131,12 @@ export const cli = Command.make("experimental-chat", { thread, directory, instan
   if (Option.isNone(options.message) && !process.stdin.isTTY) return yield* Effect.fail(new RuntimeError("Use --message to chat without an interactive terminal"))
   const host = yield* hostScope(options)
   const selected = Option.isSome(options.thread)
-    ? yield* resumeThread(host, yield* attempt(() => findThread(options, Option.getOrThrow(options.thread))))
+    ? yield* resumeThread(host, yield* findThread(options, Option.getOrThrow(options.thread)))
     : yield* newThread(host, options)
   if (Option.isSome(options.message)) {
-    yield* attempt(async () => { await selected.resume(); await selected.wait() })
-    yield* attempt(() => activateThread(options, selected.coordinate))
+    yield* selected.resume.pipe(Effect.mapError(RuntimeError.from))
+    yield* selected.wait.pipe(Effect.mapError(RuntimeError.from))
+    yield* activateThread(options, selected.coordinate)
     yield* Console.error(`Thread: ${selected.coordinate.thread}\nPermissions: ${options.permissions.mode()}`)
     const replies = yield* sendMessage(selected, options.message.value)
     for (const reply of replies) {

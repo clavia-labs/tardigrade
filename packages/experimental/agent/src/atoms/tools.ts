@@ -1,58 +1,47 @@
-import { settledProjection } from "./settled-projection"
-import { RuntimeError, type EffectExecution } from "@clavia/tardigrade-experimental-core"
+import { ExecuteTool, requests } from "../acts"
+import { durableAtom } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { effectAtom, type Atom, effectValue, type EffectOutput } from "@clavia/tardigrade-experimental-core"
-import { ToolPromise, packageTools as packageMethods, type Package, type PackageRequirements } from "@clavia/tardigrade-experimental-packages"
-import { ModelReturned, ToolCalled, ToolReturned, type Event, type ToolCall } from "../event"
+import { effectAtom, type Atom, type ActRequest, type EffectOutput } from "@clavia/tardigrade-experimental-core"
+import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
+import { ModelReturned, ToolCalled, ToolReturned, type Event, ToolCall } from "../event"
 import { ToolState, toolState, type PermissionState } from "../projections"
 import { toolPromises } from "./promises"
 import type { ToolBudgetView } from "./budget"
-import type { Tool } from "../services/model"
+import type { ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
 
-export const pendingTools = settledProjection({ input: Schema.Union([ModelReturned, ToolCalled, ToolReturned]), schema: ToolState, initial: { queue: [], pending: null, running: false }, reduce: toolState })
+import { ToolCatalog } from "../context"
 
-export type ToolPlan<R> =
+export const pendingTools = durableAtom({ input: Schema.Union([ModelReturned, ToolCalled, ToolReturned]), schema: ToolState, initial: { queue: [], pending: null, running: false }, reduce: toolState })
+
+export type ToolPlan =
   | { readonly position: "waiting" | "blocked"; readonly reason: string }
-  | { readonly position: "ready"; readonly charged: boolean; readonly run: Effect.Effect<unknown, Error, R> }
+  | { readonly position: "ready"; readonly charged: boolean; readonly value?: Schema.Json; readonly error?: string }
 
 export interface ToolView<R = never> {
   readonly validate?: (event: Event) => void
-  readonly specs: readonly Tool[]
-  readonly prepare: (call: typeof ToolCall.Type) => ToolPlan<R>
+  readonly specs: readonly ToolSpec[]
+  readonly request: (input: Parameters<typeof ExecuteTool.request>[0]) => ActRequest<Schema.Json, string, R>
+  readonly prepare: (call: typeof ToolCall.Type) => ToolPlan
 }
 
-export type Tools<R = never> = EffectOutput<ToolView<R>, Event, Error, R>
+export type Tools<R = never> = EffectOutput<ToolView<R>, Event, R>
 
-// packageTools exposes package descriptions and lazy handlers with their required services.
-export function packageTools<const P extends readonly Package<unknown>[]>(packages: P, additional: readonly Tool[] = []): Effect.Effect<Atom<Tools<PackageRequirements<P[number]>>>, never, Exclude<PackageRequirements<P[number]>, EffectExecution>> {
-  type Services = PackageRequirements<P[number]>
-  return Effect.map(Effect.context<Exclude<Services, EffectExecution>>(), () => {
-    const methods = packageMethods(packages)
-    const specs = [...methods.map(method => method.spec), ...additional]
-    const registry = new Map(methods.flatMap(method => [method.spec.name, ...(method.aliases ?? [])].map(name => [name, method] as const)))
-    const names = new Set([...registry.keys(), ...additional.map(spec => spec.name)])
-    return effectAtom(get => toolValue(get(pendingTools), {
-      effects: { ...get(toolPromises).effects },
-      view: {
-        specs,
-        prepare: (call: typeof ToolCall.Type): ToolPlan<Services> => ({
-          position: "ready",
-          charged: names.has(call.name),
-          run: Effect.suspend(() => {
-            const method = registry.get(call.name)
-            return method
-              ? method.execute(call.input, call)
-              : Effect.fail(new RuntimeError(`Unknown tool: ${call.name}`))
-          }),
-        }),
-      },
-    })).pipe(NativeAtom.withLabel("tools"))
-  })
-}
+// packageTools constructs tool proposals from the platform's data catalog.
+export const packageTools = Effect.map(ToolCatalog, catalog => {
+  const request = requests(ExecuteTool.request, input => JSON.stringify([input.tag, input.input]))
+  return effectAtom(get => toolValue(get(pendingTools), {
+    effects: { ...get(toolPromises).effects },
+    view: {
+      specs: catalog.specs, request,
+      prepare: (call: typeof ToolCall.Type): ToolPlan => ({ position: "ready", charged: catalog.names.includes(call.name) }),
+    },
+  })).pipe(NativeAtom.withLabel("tools"))
+})
 
 // withPermissions waits for a decision and denies execution without charging a call.
-export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<EffectOutput<typeof PermissionState.Type, Event, Error, P>>): Atom<Tools<R | P>> {
+export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<EffectOutput<typeof PermissionState.Type, Event, P>>): Atom<Tools<R | P>> {
   return effectAtom(get => {
     const inner = get(tools)
     const permission = get(permissions)
@@ -60,6 +49,7 @@ export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<E
     return toolValue<R | P>(get(pendingTools), {
       effects: { ...inner.effects, ...permission.effects },
       view: {
+        request: inner.view.request,
         validate: event => inner.view.validate?.(event),
         specs: inner.view.specs,
         prepare: call => {
@@ -67,7 +57,7 @@ export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<E
           if (plan.position !== "ready" || !plan.charged) return plan
           const decision = state.decisions.findLast(value => value.callId === call.callId)?.decision
           if (!decision) return { position: "waiting", reason: "Waiting for tool permission" }
-          return decision.allowed ? plan : { position: "ready", charged: false, run: Effect.fail(new RuntimeError(decision.reason)) }
+          return decision.allowed ? plan : { position: "ready", charged: false, error: decision.reason }
         },
       },
     })
@@ -87,6 +77,7 @@ export function withBudget<R, B>(tools: Atom<Tools<R>>, budget: Atom<ToolBudgetV
     return toolValue<R | B>(get(pendingTools), {
       effects: { ...inner.effects, ...(!allowance.configured || authorized ? budgetOutput.effects : {}) },
       view: {
+        request: inner.view.request,
         validate: event => {
           inner.view.validate?.(event)
           if (event.type === "BudgetResolved" && allowance.request?.callId !== event.callId) throw new RuntimeError("No matching pending budget request")
@@ -99,19 +90,17 @@ export function withBudget<R, B>(tools: Atom<Tools<R>>, budget: Atom<ToolBudgetV
             if (!allowance.response) return { position: "waiting", reason: "Waiting for budget decision" }
             return {
               position: "ready", charged: false,
-              run: "error" in allowance.response
-                ? Effect.fail(new RuntimeError(allowance.response.error))
-                : Effect.succeed(allowance.response),
+              ...("error" in allowance.response ? { error: allowance.response.error } : { value: allowance.response }),
             }
           }
           if (requestTool && allowance.remaining === 0 && call.name !== requestTool) return {
             position: "ready", charged: false,
-            run: Effect.fail(new RuntimeError(`Tool budget exhausted. Only ${requestTool} is available.`)),
+            error: `Tool budget exhausted. Only ${requestTool} is available.`,
           }
           if (options.exempt?.includes(call.name)) return { ...plan, charged: false }
           const decision = allowance.decision
           if (!decision) return { position: "blocked", reason: allowance.request?.reason ?? "Waiting for tool budget" }
-          return decision.allowed ? plan : { position: "ready", charged: false, run: Effect.fail(new RuntimeError(decision.reason)) }
+          return decision.allowed ? plan : { position: "ready", charged: false, error: decision.reason }
         },
       },
     })
@@ -129,13 +118,13 @@ function toolValue<R>(state: typeof ToolState.Type, tools: Tools<R>): Tools<R> {
     ...tools,
     effects: {
       ...effects,
-      execution: effectValue({
-        id: call.callId,
-        request: { type: "ToolCalled" as const, callId: call.callId, charged: plan.charged },
-        run: plan.run.pipe(
-          Effect.map(result => ({ type: "ToolReturned" as const, callId: call.callId, output: JSON.stringify(result) ?? "null", error: null, ...(Schema.is(ToolPromise)(result) ? { promise: result } : {}) })),
-          Effect.catch(error => Effect.succeed({ type: "ToolReturned" as const, callId: call.callId, output: "", error: error.message })),
-        ),
+      execution: tools.view.request({
+        tag: call.callId,
+        input: { call, charged: plan.charged, ...(plan.value !== undefined ? { value: plan.value } : {}), ...(plan.error !== undefined ? { error: plan.error } : {}) },
+        onRequested: () => [{ type: "ToolCalled", callId: call.callId, charged: plan.charged } satisfies ToolCalled],
+        onSettled: result => [result.status === "fulfilled"
+          ? { type: "ToolReturned", callId: call.callId, output: JSON.stringify(result.value), error: null, ...(Schema.is(ToolPromise)(result.value) ? { promise: result.value } : {}) } satisfies ToolReturned
+          : { type: "ToolReturned", callId: call.callId, output: "", error: result.reason } satisfies ToolReturned],
       }),
     },
   }

@@ -40,7 +40,7 @@ function formatEntry(entry: ActivityEntry, width = DEFAULT_WATCH_WIDTH, color = 
 export const watchLog = (options: {
   readonly storage: string
   readonly coordinate?: ThreadCoordinate | undefined
-  readonly resolveThread: () => Promise<ThreadCoordinate | undefined>
+  readonly resolveThread: Effect.Effect<ThreadCoordinate | undefined, Error>
   readonly after: number
   readonly poll: number
   readonly batchSize: number
@@ -55,10 +55,10 @@ export const watchLog = (options: {
   if (!options.json) yield* Console.log("Summaries only; … marks clipped text. Use --json for full events.")
   let store: ReturnType<typeof observeBunThread<Event>> | undefined
   let identity: string | undefined
-  yield* Effect.addFinalizer(() => Effect.promise(async () => { await store?.close() }))
+  yield* Effect.addFinalizer(() => Effect.suspend(() => store?.close ?? Effect.void))
   let after = options.after
   while (true) {
-    const coordinate = options.coordinate ?? (yield* Effect.tryPromise({ try: options.resolveThread, catch: RuntimeError.from }))
+    const coordinate = options.coordinate ?? (yield* options.resolveThread.pipe(Effect.mapError(RuntimeError.from)))
     if (!coordinate) {
       if (options.once) return yield* Effect.fail(new RuntimeError("No active thread. Start chat or choose --thread."))
       yield* Effect.sleep(options.poll)
@@ -66,14 +66,14 @@ export const watchLog = (options: {
     }
     const key = JSON.stringify(coordinate)
     if (key !== identity) {
-      yield* Effect.promise(async () => { await store?.close() })
+      yield* Effect.suspend(() => store?.close ?? Effect.void)
       store = observeBunThread({ storage: options.storage, coordinate, schema: Event })
       identity = key
       after = options.after
       if (!options.json) yield* Console.log(`Thread: ${coordinate.thread}`)
     }
     const current = store!
-    yield* Effect.tryPromise({ try: current.refresh, catch: RuntimeError.from })
+    yield* current.refresh.pipe(Effect.mapError(RuntimeError.from))
     const entries = yield* Effect.try({ try: () => current.select(activity).get().slice(after + 1, after + 1 + options.batchSize), catch: RuntimeError.from })
     for (const entry of entries) {
       const width = options.width ?? (process.stdout.columns ? process.stdout.columns - 1 : DEFAULT_WATCH_WIDTH)

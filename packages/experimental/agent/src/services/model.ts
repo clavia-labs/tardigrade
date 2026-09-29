@@ -7,10 +7,10 @@ import type { ModelRef } from "@clavia/tardigrade-model/reference"
 import type { ToolSpec } from "@clavia/tardigrade-experimental-packages"
 import { ModelLock } from "./model-lock"
 import type { Conversation } from "../projections"
-import type { ToolCall } from "../event"
+import type { ModelReply as ReplySchema } from "../event"
 
 export type Tool = ToolSpec
-export interface ModelReply { readonly text: string; readonly toolCalls: readonly (typeof ToolCall.Type)[] }
+export type ModelReply = typeof ReplySchema.Type
 
 export interface ModelInput { readonly model: ModelRef; readonly system: string; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type }
 
@@ -77,10 +77,10 @@ export function modelServices(options: ModelServiceOptions = {}) {
           Prompt.makeMessage("system", { content: input.system }),
           ...input.context.map((message): Prompt.Message => {
             if (message.role === "user") return Prompt.makeMessage("user", { content: [Prompt.makePart("text", { text: message.text })] })
-            if (message.role === "tool") return Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.callId, name: message.name, result: message.text, isFailure: message.error, providerExecuted: false })] })
+            if (message.role === "tool") return Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, result: message.text, isFailure: message.error, providerExecuted: false })] })
             return Prompt.makeMessage("assistant", { content: [
               ...(message.text ? [Prompt.makePart("text", { text: message.text })] : []),
-              ...message.toolCalls.map(call => Prompt.makePart("tool-call", { id: call.callId, name: call.name, params: call.input, providerExecuted: false })),
+              ...message.toolCalls.map(call => Prompt.makePart("tool-call", { id: call.providerId, name: call.name, params: call.input, providerExecuted: false })),
             ] })
           }),
         ]),
@@ -93,7 +93,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
         Effect.mapError(error => AiError.isAiError(error) ? modelError(error) : RuntimeError.from(error)),
       )
       if (response.finishReason === "length") return yield* Effect.fail(new RuntimeError(`Model reached maxOutputTokens=${settings.policy.maxOutputTokens}`))
-      const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: call.params }))
+      const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: Schema.decodeUnknownSync(Schema.Json)(call.params) }))
       return { text: response.text, toolCalls }
     }) } satisfies typeof Model.Service
   }))

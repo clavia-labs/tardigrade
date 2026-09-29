@@ -7,7 +7,7 @@ import { createStore } from "./store"
 import { EventLog } from "./durable"
 
 type Actions<Event> = Readonly<Record<string, (...args: never[]) => Event>>
-type Bound<Definitions> = { readonly [Key in keyof Definitions]: Definitions[Key] extends (...args: infer Args) => unknown ? (...args: Args) => Promise<void> : never }
+type Bound<Definitions> = { readonly [Key in keyof Definitions]: Definitions[Key] extends (...args: infer Args) => unknown ? (...args: Args) => Effect.Effect<void, Error> : never }
 type Resolved<Value> = Value extends AsyncResult.AsyncResult<infer Output, unknown> ? Output : Value
 
 // resolveOutput unwraps synchronously evaluated projections; suspended projections cannot participate in synchronous replay.
@@ -50,8 +50,8 @@ export function defineActor<Event extends object, Value, const Name extends stri
       schema: definition.atom.schema,
       effects: { [name]: root } as Atoms,
       validate: (event: Event, get: Getter) => definition.atom.validate?.(event, get),
-      actions: (emit: (event: Event) => Promise<void>) => Object.fromEntries(Object.entries(definition.actions).map(([name, action]) => [
-        name, (...args: never[]) => Promise.resolve().then(() => emit(action(...args))),
+      actions: (emit: (event: Event) => Effect.Effect<void, Error>) => Object.fromEntries(Object.entries(definition.actions).map(([name, action]) => [
+        name, (...args: never[]) => Effect.try({ try: () => action(...args), catch: RuntimeError.from }).pipe(Effect.flatMap(emit)),
       ])) as Bound<Definitions>,
     }
   }))

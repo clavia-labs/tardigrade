@@ -1,17 +1,9 @@
 import { isDeepStrictEqual } from "node:util"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Random, Schema, Scope } from "effect"
 import { ExecutionHandle, RuntimeError } from "@clavia/tardigrade-experimental-core"
-import type { ResolutionState } from "./promises"
+import type { ResolutionState } from "../contracts"
 
-export const ActorDecision = Schema.Union([
-  Schema.Struct({ allowed: Schema.Literal(true), amount: Schema.optionalKey(Schema.Finite) }),
-  Schema.Struct({ allowed: Schema.Literal(false), reason: Schema.String }),
-])
-export type ActorDecision = typeof ActorDecision.Type
-export const ActorRequest = Schema.Struct({ requestId: Schema.NonEmptyString, kind: Schema.Literals(["permission", "budget"]), description: Schema.String, input: Schema.Json })
-export type ActorRequest = typeof ActorRequest.Type
-export const ActorCall = Schema.Struct({ id: Schema.NonEmptyString, message: Schema.String, config: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)) })
-export type ActorCall = typeof ActorCall.Type
+import { ActorDecision, ActorRequest, ActorCall } from "../contracts"
 
 export interface ActorCaller {
   readonly handle: ExecutionHandle
@@ -70,18 +62,18 @@ export function localActors(options: {
         entry.fiber = yield* options.run(call, caller).pipe(
           Effect.flatMap(value => Schema.decodeEffect(Schema.Json)(value)),
           Effect.exit,
-          Effect.map(exit => { entry.result = Exit.isSuccess(exit) ? { status: "fulfilled", value: exit.value } : { status: "rejected", error: Cause.prettyErrors(exit.cause).map(error => error.message).join("\n") } }),
+          Effect.map(exit => { entry.result = Exit.isSuccess(exit) ? { status: "fulfilled", value: exit.value } : { status: "rejected", reason: Cause.prettyErrors(exit.cause).map(error => error.message).join("\n") } }),
           Effect.forkIn(scope),
         )
         return handle
       }),
-      poll: handle => Effect.sync(() => lookup(handle)?.result ?? { status: "rejected" as const, error: "Local actor handle is no longer available" }),
+      poll: handle => Effect.sync(() => lookup(handle)?.result ?? { status: "rejected" as const, reason: "Local actor handle is no longer available" }),
       cancel: handle => Effect.gen(function* () {
         const entry = lookup(handle)
         if (!entry) return yield* Effect.fail(new RuntimeError("Unknown actor handle"))
         if (entry.result.status !== "pending") return
         if (entry.fiber) yield* Fiber.interrupt(entry.fiber)
-        entry.result = { status: "rejected", error: "Actor call cancelled" }
+        entry.result = { status: "rejected", reason: "Actor call cancelled" }
       }),
       reply: (handle, requestId, decision) => Effect.gen(function* () {
         if (!lookup(handle)) return yield* Effect.fail(new RuntimeError("Unknown actor handle"))

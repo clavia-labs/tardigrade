@@ -1,9 +1,11 @@
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import type { EffectRef } from "./effect-ref"
 import { atom, type Atom } from "./atom"
 
 export class EventLog extends Context.Service<EventLog, {
   readonly events: Atom<readonly unknown[]>
+  readonly bindings?: Atom<ReadonlyMap<object, EffectRef>>
 }>()("experimental/EventLog") {}
 
 export const eventLogContext = atom<Context.Context<EventLog> | undefined>(undefined).pipe(NativeAtom.withLabel("EventLog"))
