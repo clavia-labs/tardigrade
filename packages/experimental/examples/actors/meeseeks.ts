@@ -14,4 +14,3 @@ export const meeseeks = defineActor("meeseeks", Effect.gen(function* () {
   })))
   return { atom: agent, actions: { message } }
 }))
-

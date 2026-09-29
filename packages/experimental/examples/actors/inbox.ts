@@ -12,4 +12,3 @@ export const actor = defineActor("inbox", Effect.succeed({
   atom: Object.assign(atom(get => ({ messages: get(messages) })), { schema: Message }),
   actions: { message: (input: { text: string }): typeof Message.Type => ({ type: "MessageReceived", text: input.text }) },
 }))
-

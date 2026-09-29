@@ -21,4 +21,3 @@ export const greeter = defineActor("greeter", Effect.sync(() => {
     actions: { open: () => ({ type: "Opened" as const }) },
   }
 }))
-
