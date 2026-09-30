@@ -4,7 +4,7 @@ import { AsyncResult } from "effect/unstable/reactivity"
 import { atom, type Atom, type Getter } from "./atom"
 import type { ActorSetup } from "./runtime"
 import { createStore } from "./store"
-import { EventLog } from "./durable"
+import { EventLog } from "./services/event-log"
 import { createEventSource } from "./event-source"
 
 type Actions<Event> = Readonly<Record<string, (...args: never[]) => Event>>

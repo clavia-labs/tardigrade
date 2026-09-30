@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { atom, type Atom } from "./atom"
-import { EventLog, eventLogContext } from "./durable"
+import { EventLog, eventLogContext } from "./services/event-log"
 import { effectKey, EffectRef } from "./effect-ref"
 import { type EffectRequest, EffectRequested, EffectSettled, PromiseSettled } from "./lifecycle"
 import { ExecutionHandle } from "./effects"

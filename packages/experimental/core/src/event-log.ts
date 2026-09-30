@@ -1,7 +1,7 @@
 import { Context, Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { atom, type Atom } from "./atom"
-import { EventLog } from "./durable"
+import { EventLog } from "./services/event-log"
 import { createStore } from "./store"
 import { createEventSource } from "./event-source"
 import type { ActRequest } from "./act"

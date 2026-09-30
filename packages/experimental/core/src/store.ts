@@ -1,7 +1,7 @@
 import { Context } from "effect"
 import { AtomRegistry } from "effect/unstable/reactivity"
 import type { Atom, PrimitiveAtom, SetStateAction } from "./atom"
-import { EventLog, eventLogContext } from "./durable"
+import { EventLog, eventLogContext } from "./services/event-log"
 import { actorGraph } from "./graph"
 
 // createStore owns an Effect registry and provides services to durable projections.
