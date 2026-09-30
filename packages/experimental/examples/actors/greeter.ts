@@ -16,7 +16,7 @@ export const greeter = defineActor("greeter", Effect.sync(() => {
   return {
     atom: Object.assign(effectAtom(get => ({
       view: get(greeting.result),
-      effects: { greeting },
+      events: {}, acts: { greeting },
     })), { schema: Schema.Union([Schema.Struct({ type: Schema.Literal("Opened") }), Schema.Struct({ type: Schema.Literal("Greeted"), message: Schema.String })]) }),
     actions: { open: () => ({ type: "Opened" as const }) },
   }

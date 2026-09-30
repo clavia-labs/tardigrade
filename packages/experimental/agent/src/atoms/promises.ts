@@ -24,7 +24,7 @@ export const toolPromises = effectAtom(get => {
   })
   return {
     view: { pending: items.filter(item => item.result.status === "pending").map(item => item.promise) },
-    effects: Object.fromEntries(items.filter(item => item.result.status !== "pending").map(item => [
+    acts: {}, events: Object.fromEntries(items.filter(item => item.result.status !== "pending").map(item => [
       `promise:${encodeURIComponent(item.callId)}`,
       eventValue({
         type: "MessageReceived", kind: "message", turnId: `promise:${item.callId}`,

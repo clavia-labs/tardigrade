@@ -5,7 +5,7 @@ import { toolActs } from "./tools"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Layer, Schema } from "effect"
 import { Workspace, memoryWorkspace, AgentBudget, DEFAULT_AGENT_TOOL_CALLS, fetchPackage, alarm, workspace, agents, type Package } from "@clavia/tardigrade-experimental-packages"
-import type { ActorRuntime, Recorded, ActorDefinition, EffectOutput, EffectExecution, ActService } from "@clavia/tardigrade-experimental-core"
+import type { ActorRuntime, Recorded, ActorDefinition, ActorOutput, EffectExecution, ActService } from "@clavia/tardigrade-experimental-core"
 import { Actor, Promises, localActors, createActorStore, type ActorCaller } from "@clavia/tardigrade-experimental-host"
 import { createActor } from "../agent"
 import { Event } from "../event"
@@ -21,7 +21,7 @@ export interface AssistantContext {
 
 type AgentActs = ActService<"agent.model.generate"> | ActService<"agent.model.summarize"> | ActService<"agent.tool.execute">
 
-type AssistantDefinition<Services> = ActorDefinition<Event, EffectOutput<unknown, Event, Services | AgentActs>, {
+type AssistantDefinition<Services> = ActorDefinition<Event, ActorOutput<unknown, Event, Services | AgentActs>, {
   readonly message: (input: { readonly text: string; readonly turnId?: string }) => Effect.Effect<void, Error>
 }, ModelInfo | ToolCatalog>
 

@@ -20,7 +20,7 @@ export function createActorStore<Event extends object, State, Methods extends ob
   return Effect.gen(function* () {
     let root!: Atom<State>
     let methods!: Methods
-    const store = yield* createRuntime({
+    const store = yield* createRuntime<Event, Readonly<Record<string, Atom<State>>>, Methods, Services>({
       ...options,
       setup: options.actor.setup.pipe(Effect.map(setup => {
         root = setup.root

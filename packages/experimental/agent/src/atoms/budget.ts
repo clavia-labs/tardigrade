@@ -3,12 +3,12 @@ import { AskBudget, requests } from "../acts"
 import { durableAtom } from "@clavia/tardigrade-experimental-core"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
-import { atom, effectAtom, type Atom, eventValue, type EffectOutput } from "@clavia/tardigrade-experimental-core"
+import { atom, effectAtom, type Atom, eventValue, type ActorOutput } from "@clavia/tardigrade-experimental-core"
 import { ToolBudgetState, toolBudgetState, type ToolState } from "../projections"
 import { BudgetConfigured, BudgetUpdated, BudgetResolved, ToolCalled, ModelCalled, TurnSettled, BudgetPolicy, BudgetDecision, type Event } from "../event"
 import { BudgetRequestInput } from "../budget-contracts"
 
-export type ToolBudgetView<R = never> = EffectOutput<{
+export type ToolBudgetView<R = never> = ActorOutput<{
   readonly requestTool?: string
   readonly exhausted?: boolean
   readonly configured: boolean
@@ -32,7 +32,7 @@ export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: {
     const state = get(usage)
     if (!state.policy) return {
       view: { configured: false, used: state.used, limit: 0, remaining: 0, decision: null, request: null },
-      effects: initialPolicy ? { budget: eventValue({ type: "BudgetConfigured", policy: initialPolicy } satisfies Event) } : {},
+      acts: {}, events: initialPolicy ? { budget: eventValue({ type: "BudgetConfigured", policy: initialPolicy } satisfies Event) } : {},
     }
     const policy = state.policy
     const { pending, running } = get(pendingTools)
@@ -43,14 +43,14 @@ export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: {
     const resolution = state.decisions.find(value => value.callId === pending?.callId)?.decision
     if (pending && pending.name === policy.requestTool) {
       const waiting = { ...base, decision: null, request: { callId: pending.callId, reason: "Waiting for budget decision" } }
-      if (resolution) return { view: { ...base, decision: null, request: null, response: resolution }, effects: {} }
-      if (remaining > 0) return { view: { ...base, decision: null, request: null, response: { error: "Tool budget is not exhausted" } }, effects: {} }
+      if (resolution) return { view: { ...base, decision: null, request: null, response: resolution }, events: {}, acts: {} }
+      if (remaining > 0) return { view: { ...base, decision: null, request: null, response: { error: "Tool budget is not exhausted" } }, events: {}, acts: {} }
       let input: typeof BudgetRequestInput.Type
       try { input = Schema.decodeUnknownSync(BudgetRequestInput, { onExcessProperty: "error" })(pending.input) }
-      catch (error) { return { view: { ...base, decision: null, request: null, response: { error: String(error) } }, effects: {} } }
+      catch (error) { return { view: { ...base, decision: null, request: null, response: { error: String(error) } }, events: {}, acts: {} } }
       return {
         view: waiting,
-        effects: { budget: request({
+        events: {}, acts: { budget: request({
           tag: pending.callId,
           input: { callId: pending.callId, ...input, used: state.used, limit },
           onSettled: result => {
@@ -61,10 +61,10 @@ export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: {
         }) },
       }
     }
-    if (resolution && !resolution.allowed) return { view: { ...base, decision: resolution, request: null }, effects: {} }
-    if (base.exhausted) return { view: { ...base, decision: { allowed: false, reason: `Tool budget exhausted: ${state.used}/${limit} calls` }, request: null }, effects: {} }
-    if (!pending || running || remaining > 0) return { view: { ...base, decision: { allowed: true, reason: "Tool budget available" }, request: null }, effects: {} }
-    return { view: { ...base, decision: null, request: { callId: pending.callId, reason: `Tool budget exhausted: ${state.used}/${limit} calls` } }, effects: {} }
+    if (resolution && !resolution.allowed) return { view: { ...base, decision: resolution, request: null }, events: {}, acts: {} }
+    if (base.exhausted) return { view: { ...base, decision: { allowed: false, reason: `Tool budget exhausted: ${state.used}/${limit} calls` }, request: null }, events: {}, acts: {} }
+    if (!pending || running || remaining > 0) return { view: { ...base, decision: { allowed: true, reason: "Tool budget available" }, request: null }, events: {}, acts: {} }
+    return { view: { ...base, decision: null, request: { callId: pending.callId, reason: `Tool budget exhausted: ${state.used}/${limit} calls` } }, events: {}, acts: {} }
   })
 }
 

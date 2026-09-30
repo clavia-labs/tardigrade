@@ -22,15 +22,14 @@ export interface EventValue<Event> {
   readonly event: Event
 }
 
-export type EffectValues<Event, Services = never> = Readonly<Record<string, EventValue<Event> | ActRequest<Schema.Json, Schema.Json, Services>>>
-
-export interface EffectOutput<View, Event, Services = never> {
+export interface ActorOutput<View, Event, Services = never> {
   readonly view: View
-  readonly effects: EffectValues<Event, Services>
+  readonly events: Readonly<Record<string, EventValue<Event>>>
+  readonly acts: Readonly<Record<string, ActRequest<Schema.Json, Schema.Json, Services>>>
 }
 
 // effectAtom derives a view and typed proposals for the runtime.
-export function effectAtom<const Value extends { readonly view: unknown; readonly effects: Readonly<Record<string, Proposal>> }>(read: (get: Getter) => Value): Atom<Value> {
+export function effectAtom<const Value extends ActorOutput<unknown, unknown, unknown>>(read: (get: Getter) => Value): Atom<Value> {
   return atom(read)
 }
 
@@ -47,7 +46,6 @@ export interface IdentifiedEffectValue<Services = never> {
   readonly execute: Effect.Effect<import("./execution-result").ExecutionResult, Schema.Json, Services | EffectExecution>
 }
 type Proposal = EventValue<unknown> | ActRequest<Schema.Json, Schema.Json, unknown>
-type DirectEffectValue<Value> = Value extends { readonly effect?: infer P } ? Extract<NonNullable<P>, Proposal> : never
-type CollectedProposals<Value> = Value extends { readonly effects: infer Collection } ? Collection[keyof Collection] : never
-export type Proposed<Value> = Extract<Value, Proposal> | DirectEffectValue<Value> | Extract<NonNullable<CollectedProposals<Value>>, Proposal>
+type CollectedProposals<Value> = Value extends { readonly events: infer Events; readonly acts: infer Acts } ? Events[keyof Events] | Acts[keyof Acts] : never
+export type Proposed<Value> = Extract<NonNullable<CollectedProposals<Value>>, Proposal>
 export type ServicesOf<P> = P extends ActRequest<Schema.Json, Schema.Json, infer Services> ? Services | EffectExecution : never

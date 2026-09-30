@@ -3,7 +3,7 @@ import { durableAtom } from "@clavia/tardigrade-experimental-core"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { effectAtom, type Atom, type ActRequest, type EffectOutput } from "@clavia/tardigrade-experimental-core"
+import { effectAtom, type Atom, type ActRequest, type ActorOutput } from "@clavia/tardigrade-experimental-core"
 import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
 import { ModelReturned, ToolCalled, ToolReturned, type Event, ToolCall } from "../event"
 import { ToolState, toolState, type PermissionState } from "../projections"
@@ -26,13 +26,13 @@ export interface ToolView<R = never> {
   readonly prepare: (call: typeof ToolCall.Type) => ToolPlan
 }
 
-export type Tools<R = never> = EffectOutput<ToolView<R>, Event, R>
+export type Tools<R = never> = ActorOutput<ToolView<R>, Event, R>
 
 // packageTools constructs tool proposals from the platform's data catalog.
 export const packageTools = Effect.map(ToolCatalog, catalog => {
   const request = requests(ExecuteTool.request, input => JSON.stringify([input.tag, input.input]))
   return effectAtom(get => toolValue(get(pendingTools), {
-    effects: { ...get(toolPromises).effects },
+    events: get(toolPromises).events, acts: {},
     view: {
       specs: catalog.specs, request,
       prepare: (call: typeof ToolCall.Type): ToolPlan => ({ position: "ready", charged: catalog.names.includes(call.name) }),
@@ -41,13 +41,14 @@ export const packageTools = Effect.map(ToolCatalog, catalog => {
 })
 
 // withPermissions waits for a decision and denies execution without charging a call.
-export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<EffectOutput<typeof PermissionState.Type, Event, P>>): Atom<Tools<R | P>> {
+export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<ActorOutput<typeof PermissionState.Type, Event, P>>): Atom<Tools<R | P>> {
   return effectAtom(get => {
     const inner = get(tools)
     const permission = get(permissions)
     const state = permission.view
     return toolValue<R | P>(get(pendingTools), {
-      effects: { ...inner.effects, ...permission.effects },
+      events: { ...inner.events, ...permission.events },
+      acts: { ...inner.acts, ...permission.acts },
       view: {
         request: inner.view.request,
         validate: event => inner.view.validate?.(event),
@@ -75,7 +76,8 @@ export function withBudget<R, B>(tools: Atom<Tools<R>>, budget: Atom<ToolBudgetV
     const candidate = pending ? inner.view.prepare(pending) : null
     const authorized = candidate?.position === "ready" && candidate.charged
     return toolValue<R | B>(get(pendingTools), {
-      effects: { ...inner.effects, ...(!allowance.configured || authorized ? budgetOutput.effects : {}) },
+      events: { ...inner.events, ...(!allowance.configured || authorized ? budgetOutput.events : {}) },
+      acts: { ...inner.acts, ...(!allowance.configured || authorized ? budgetOutput.acts : {}) },
       view: {
         request: inner.view.request,
         validate: event => {
@@ -109,15 +111,15 @@ export function withBudget<R, B>(tools: Atom<Tools<R>>, budget: Atom<ToolBudgetV
 
 // toolValue replaces the inner execution proposal with the final governed plan.
 function toolValue<R>(state: typeof ToolState.Type, tools: Tools<R>): Tools<R> {
-  const { execution: _execution, ...effects } = tools.effects
+  const { execution: _execution, ...acts } = tools.acts
   const call = state.pending
-  if (!call || state.running) return { ...tools, effects }
+  if (!call || state.running) return { ...tools, acts }
   const plan = tools.view.prepare(call)
-  if (plan.position !== "ready") return { ...tools, effects }
+  if (plan.position !== "ready") return { ...tools, acts }
   return {
     ...tools,
-    effects: {
-      ...effects,
+    acts: {
+      ...acts,
       execution: tools.view.request({
         tag: call.callId,
         input: { call, charged: plan.charged, ...(plan.value !== undefined ? { value: plan.value } : {}), ...(plan.error !== undefined ? { error: plan.error } : {}) },

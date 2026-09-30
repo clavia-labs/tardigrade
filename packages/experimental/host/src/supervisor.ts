@@ -47,7 +47,7 @@ export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
   const requests = new Map<string, ReturnType<typeof Provision.request>>()
   const supervisor = Object.assign(effectAtom(get => {
     const directory = get(threads)
-    const effects = Object.fromEntries(directory.filter(entry => entry.status === "requested").map(allocation => {
+    const acts = Object.fromEntries(directory.filter(entry => entry.status === "requested").map(allocation => {
       const tag = allocation.coordinate.thread
       let request = requests.get(tag)
       if (!request) {
@@ -59,7 +59,7 @@ export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
       }
       return [tag, request]
     }))
-    return { view: { threads: directory }, effects }
+    return { view: { threads: directory }, events: {}, acts }
   }), { schema: SupervisorEvent })
   return { atom: supervisor, actions: { requestThread: (allocation: ThreadAllocation): SupervisorEvent => ({ type: "ThreadRequested", allocation }) } }
 }))

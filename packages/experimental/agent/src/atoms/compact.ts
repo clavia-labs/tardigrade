@@ -71,9 +71,9 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     const visible = [...summary, ...remaining]
     const usage = { estimatedTokens: estimate(visible), contextWindowTokens: selection.contextWindowTokens, triggerTokens, retainTokens }
     const ready = { position: "ready" as const, messages: visible, policy, ...usage }
-    if (state.failure !== null) return { view: { position: "failed" as const, reason: state.failure, policy, ...usage }, effects: {} }
-    if (state.pending) return { view: { position: "compacting" as const, policy, ...usage }, effects: {} }
-    if (usage.estimatedTokens < triggerTokens) return { view: ready, effects: {} }
+    if (state.failure !== null) return { view: { position: "failed" as const, reason: state.failure, policy, ...usage }, events: {}, acts: {} }
+    if (state.pending) return { view: { position: "compacting" as const, policy, ...usage }, events: {}, acts: {} }
+    if (usage.estimatedTokens < triggerTokens) return { view: ready, events: {}, acts: {} }
 
     const boundaries: number[] = []
     const pending = new Set<string>()
@@ -83,12 +83,12 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
       if (message.role === "assistant") for (const call of message.toolCalls) pending.add(call.callId)
       if (message.role === "tool") pending.delete(message.callId)
     }
-    if (pending.size || !boundaries.length) return { view: ready, effects: {} }
+    if (pending.size || !boundaries.length) return { view: ready, events: {}, acts: {} }
     const through = boundaries.find(index => estimate(messages.slice(index)) <= retainTokens) ?? boundaries.at(-1)!
     const callId = `compact:${through}`
     return {
       view: { position: "compacting" as const, policy, ...usage },
-      effects: { compact: request({
+      events: {}, acts: { compact: request({
         tag: callId,
         input: {
           model: selection.model,

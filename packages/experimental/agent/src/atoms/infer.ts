@@ -2,14 +2,14 @@ import type { ActService } from "@clavia/tardigrade-experimental-core"
 import { durableAtom } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { effectAtom, eventValue, type Atom, type Getter, type EffectValues, type EffectOutput } from "@clavia/tardigrade-experimental-core"
+import { effectAtom, eventValue, type Atom, type Getter, type ActorOutput } from "@clavia/tardigrade-experimental-core"
 import { InferenceState, inferState, initialInference, type Conversation } from "../projections"
 import { ModelInfo } from "../context"
 import { Generate, requests } from "../acts"
 import type { Tools } from "./tools"
 import { Event, ModelCalled, MessageReceived, ToolReturned, ModelReturned, TurnSettled } from "../event"
 
-export type ContextView = EffectOutput<{ readonly position: "compacting" } | { readonly position: "failed"; readonly reason: string } | {
+export type ContextView = ActorOutput<{ readonly position: "compacting" } | { readonly position: "failed"; readonly reason: string } | {
   readonly position: "ready"; readonly messages: typeof Conversation.Type
 }, Event, ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>
 export interface AgentInput<R> {
@@ -30,27 +30,30 @@ export function infer<R>(agent: Atom<AgentInput<R>>) {
     const input = get(agent)
     const state = get(inferenceState)
 
-    const effects: EffectValues<Event, R | ActService<"agent.model.generate"> | ActService<"agent.model.summarize">> = {
-      ...input.context.effects,
-      ...input.tools.effects,
+    const proposals = {
+      events: { ...input.context.events, ...input.tools.events },
+      acts: { ...input.context.acts, ...input.tools.acts },
     }
-    if (state.running) return { view: { position: "running" as const }, effects }
+    if (state.running) return { view: { position: "running" as const }, ...proposals }
     if (state.turnId && !state.needsReply) return {
       view: { position: "settling" as const },
-      effects: { ...effects, inference: eventValue({ type: "TurnSettled", turnId: state.turnId, outcome: "completed", callId: state.turns.find(turn => turn.turnId === state.turnId)!.answerCallId! } satisfies TurnSettled) },
+      acts: proposals.acts,
+      events: { ...proposals.events, inference: eventValue({ type: "TurnSettled", turnId: state.turnId, outcome: "completed", callId: state.turns.find(turn => turn.turnId === state.turnId)!.answerCallId! } satisfies TurnSettled) },
     }
-    if (!state.needsReply) return { view: { position: "idle" as const }, effects }
+    if (!state.needsReply) return { view: { position: "idle" as const }, ...proposals }
     if (!state.waiting && input.context.view.position === "failed") return {
       view: { position: "settling" as const },
-      effects: { ...effects, inference: eventValue({ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: input.context.view.reason } satisfies TurnSettled) },
+      acts: proposals.acts,
+      events: { ...proposals.events, inference: eventValue({ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: input.context.view.reason } satisfies TurnSettled) },
     }
-    if (state.waiting || input.context.view.position !== "ready") return { view: { position: "waiting" as const }, effects }
+    if (state.waiting || input.context.view.position !== "ready") return { view: { position: "waiting" as const }, ...proposals }
     const messages = input.context.view.messages
 
     return {
       view: { position: "ready" as const },
-      effects: {
-        ...effects,
+      events: proposals.events,
+      acts: {
+        ...proposals.acts,
         inference: request({
           tag: state.callId,
           input: { model: selection.model, system: input.system, tools: input.tools.view.specs, context: messages },

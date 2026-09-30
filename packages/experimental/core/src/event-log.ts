@@ -84,14 +84,16 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       }
       const candidates = Object.entries(values).flatMap(([name, value]): [string, unknown][] => {
         if (typeof value !== "object" || value === null) return []
-        if ("kind" in value && (value.kind === "event" || value.kind === "act")) return [identify(name, JSON.stringify([name]), value)]
         const entries: [string, unknown][] = []
-        if ("effect" in value && value.effect !== undefined) entries.push(identify(name, JSON.stringify([name, "effect"]), value.effect))
-        if ("effects" in value && value.effects !== undefined) {
-          if (typeof value.effects !== "object" || value.effects === null || Array.isArray(value.effects)) throw new Error(`Invalid effect collection from ${name}`)
-          for (const [source, effect] of Object.entries(value.effects)) {
+        if (!("view" in value) || (!("events" in value) && !("acts" in value))) return entries
+        for (const collection of ["events", "acts"] as const) {
+          const proposals = collection === "events" ? ("events" in value ? value.events : undefined) : ("acts" in value ? value.acts : undefined)
+          if (typeof proposals !== "object" || proposals === null || Array.isArray(proposals)) throw new Error(`Invalid ${collection} collection from ${name}`)
+          for (const [source, proposal] of Object.entries(proposals)) {
             if (!source || source.includes("/")) throw new Error(`Invalid effect source: ${source}`)
-            if (effect !== undefined) entries.push(identify(`${name}/${source}`, JSON.stringify([name, "effects", source]), effect))
+            if (typeof proposal !== "object" || proposal === null || !("kind" in proposal) || proposal.kind !== (collection === "events" ? "event" : "act")) throw new Error(`Invalid ${collection} proposal from ${name}/${source}`)
+            const path = collection === "acts" ? `${name}/${source}` : `${name}/events/${source}`
+            entries.push(identify(path, JSON.stringify([name, collection, source]), proposal))
           }
         }
         return entries

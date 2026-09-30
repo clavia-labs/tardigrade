@@ -7,6 +7,15 @@ export interface DurableAtom<State, Event> extends Atom<State> {
   readonly input: Schema.Schema<Event>
 }
 
+/*
+const count = durableAtom({
+  input: Incremented,       // event schema
+  schema: Schema.Finite,    // state schema
+  initial: 0,
+  reduce: (state, event) => state + event.amount,
+})
+*/
+
 // durableAtom folds matching input events into validated state; reducers must preserve unchanged references and leave their input state unchanged.
 export function durableAtom<State, Event>(options: {
   readonly input: Schema.Schema<Event>
