@@ -85,9 +85,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       if (persistenceFailure) return yield* Effect.fail(persistenceFailure)
       if (next === snapshot) return
       const records = next.events.slice(snapshot.events.length)
-      if (options.journal) yield* options.journal.append(snapshot.events.length, records).pipe(Effect.mapError(cause => {
+      if (options.journal) yield* options.journal.append(snapshot.events.length, records).pipe(Effect.catchCause(cause => {
+        definition.discard(next)
         persistenceFailure = new RuntimeError("Journal commit failed; reopen the actor before continuing", { cause })
-        return persistenceFailure
+        return Effect.fail(persistenceFailure)
       }))
       snapshot = next
       yield* Effect.try({ try: sync, catch: RuntimeError.from }).pipe(Effect.catch(error => Effect.sync(() => report(error))))
@@ -107,11 +108,16 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       const updated = yield* Effect.try({ try: () => {
         let next = definition.append(snapshot, event)
         if (next === snapshot) return next
-        for (const domain of snapshot.followups(event)) {
-          if (hasCoreEventType(domain)) throw new RuntimeError("Act callbacks must return domain events")
-          next = definition.append(next, domain as Event)
+        try {
+          for (const domain of next.followups(event)) {
+            if (hasCoreEventType(domain)) throw new RuntimeError("Act callbacks must return domain events")
+            next = definition.append(next, domain as Event)
+          }
+          return next
+        } catch (error) {
+          definition.discard(next)
+          throw error
         }
-        return next
       }, catch: RuntimeError.from })
       yield* commit(updated)
     })
@@ -251,6 +257,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         yield* Queue.shutdown(admissions)
         yield* Queue.shutdown(processing)
         yield* Queue.shutdown(notifications)
+        definition?.dispose()
         store.dispose()
       })))
     }).pipe(Effect.uninterruptible))

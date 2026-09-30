@@ -20,6 +20,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
 }) {
   type EffectValues = Proposed<Values<Atoms>[keyof Atoms]>
   type Work = IdentifiedEffectValue<ServicesOf<EffectValues>>
+  const disposers = new Set<() => void>()
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
   const validateCore = Schema.decodeUnknownSync(Schema.toType(CoreEvent), { onExcessProperty: "error" })
   const freeze = <Value>(value: Value): Value => {
@@ -35,13 +36,33 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     if ("effect" in record) throw new Error("Domain effect metadata is not supported")
     return freeze(structuredClone(hasCoreEventType(record) ? validateCore(record) : validate(record)))
   }
-  const replay = (history: readonly Recorded<Event>[]) => {
+  type Snapshot = {
+    readonly events: readonly Recorded<Event>[]
+    readonly bindings: ReadonlyMap<object, EffectRef>
+    readonly get: <Value>(node: Atom<Value>) => Value
+    readonly view: () => Values<Atoms>
+    readonly effects: () => readonly Work[]
+    readonly deliveries: () => readonly Event[]
+    readonly followups: (event: Recorded<Event>) => readonly object[]
+    readonly pending: () => readonly EffectRequested[]
+    readonly effect: (ref: EffectRef) => { readonly request: EffectRequested; readonly settlement?: EffectSettled } | undefined
+    readonly promise: (ref: EffectRef) => PromiseSettled | undefined
+  }
+  const createEngine = (history: readonly Recorded<Event>[]) => {
     const source = createEventSource<Recorded<Event>>()
     const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
     const store = createStore(Context.make(EventLog, { events: source.events, bindings }))
     const actReferences = new Map<object, EffectRef>()
     const actOwners = new Map<object, string>()
-    const records: Recorded<Event>[] = []
+    let records: readonly Recorded<Event>[] = store.get(source.events)
+    let disposed = false
+    const dispose = () => {
+      if (disposed) return
+      disposed = true
+      disposers.delete(dispose)
+      store.dispose()
+    }
+    disposers.add(dispose)
     const acts = new Map<string, ActRequest<Schema.Json, Schema.Json, unknown>>()
     let deliveries: Event[] = []
     const owners = new Map<string, string>()
@@ -110,10 +131,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       })
       return [...accepted.values(), ...work]
     }
-    effects()
-    for (const raw of history) {
-      const record = eventOf(raw)
-      const event = record
+    const append = (event: Recorded<Event>) => {
       if (Schema.is(CoreEvent)(event)) {
         const key = effectKey(event.ref)
         if (event.type === "EffectRequested") {
@@ -135,13 +153,23 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           promiseSettlements.set(key, event)
         }
       }
-      records.push(freeze(record))
-      source.append(store, [record])
+      source.append(store, [event])
+      records = store.get(source.events)
       effects()
     }
-    return Object.freeze({
-      events: Object.freeze(records),
-      deliveries: () => { effects(); return deliveries },
+    try {
+      effects()
+      for (const raw of history) append(eventOf(raw))
+    } catch (error) {
+      dispose()
+      throw error
+    }
+    return {
+      get events() { return records },
+      get disposed() { return disposed },
+      append,
+      dispose,
+      deliveries: () => deliveries,
       followups: (event: Recorded<Event>): readonly object[] => {
         if (!Schema.is(CoreEvent)(event)) return []
         const request = acts.get(effectKey(event.ref))
@@ -156,7 +184,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const result = Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value)
         return result.type === "value" ? request.onSettled?.({ status: "fulfilled", value: result.value }, event.ref) ?? [] : []
       },
-      bindings: new Map(actReferences) as ReadonlyMap<object, EffectRef>,
+      bindings: () => store.get(bindings),
+      restoreBindings: (previous: ReadonlyMap<object, EffectRef>) => {
+        for (const [identity, ref] of previous) {
+          actReferences.set(identity, ref)
+          actOwners.set(identity, ref.atom)
+        }
+        store.set(bindings, new Map(actReferences))
+      },
       get: store.get,
       view,
       effects,
@@ -168,23 +203,74 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         return settlement ? { request, settlement } : { request }
       },
       promise: (ref: EffectRef) => promiseSettlements.get(effectKey(ref)),
-    })
+    }
   }
-  type Snapshot = ReturnType<typeof replay>
+  type Engine = ReturnType<typeof createEngine>
+  const engines = new WeakMap<Snapshot, Engine>()
+  // engineOf reconstructs historical or discarded preparation state; current snapshots reuse their registry.
+  const engineOf = (snapshot: Snapshot): Engine => {
+    const current = engines.get(snapshot)
+    if (!current) throw new Error("Snapshot belongs to another event log")
+    if (!current.disposed && current.events.length === snapshot.events.length) return current
+    const restored = createEngine(snapshot.events)
+    restored.restoreBindings(snapshot.bindings)
+    engines.set(snapshot, restored)
+    return restored
+  }
+  const snapshotOf = (engine: Engine): Snapshot => {
+    const work = Object.freeze([...engine.effects()])
+    const deliveries = Object.freeze([...engine.deliveries()])
+    const values = Object.freeze(engine.view())
+    const snapshot: Snapshot = Object.freeze({
+      events: engine.events,
+      bindings: engine.bindings(),
+      get: <Value>(node: Atom<Value>): Value => engineOf(snapshot).get(node),
+      view: () => values,
+      effects: () => work,
+      deliveries: () => deliveries,
+      followups: (event: Recorded<Event>) => engineOf(snapshot).followups(event),
+      pending: () => engineOf(snapshot).pending(),
+      effect: (ref: EffectRef) => engineOf(snapshot).effect(ref),
+      promise: (ref: EffectRef) => engineOf(snapshot).promise(ref),
+    })
+    engines.set(snapshot, engine)
+    return snapshot
+  }
+  const replay = (history: readonly Recorded<Event>[]): Snapshot => {
+    const engine = createEngine(history)
+    try {
+      return snapshotOf(engine)
+    } catch (error) {
+      engine.dispose()
+      throw error
+    }
+  }
   return {
-    initial: replay([]),
+    get initial() { return replay([]) },
     replay,
     append: (snapshot: Snapshot, event: Recorded<Event>): Snapshot => {
       const record = eventOf(event)
+      const engine = engineOf(snapshot)
       if (Schema.is(CoreEvent)(record)) {
-        const prior = snapshot.events.find(item => Schema.is(CoreEvent)(item) && item.type === record.type && effectKey(item.ref) === effectKey(record.ref))
+        const lifecycle = engine.effect(record.ref)
+        const prior = record.type === "EffectRequested" ? lifecycle?.request
+          : record.type === "EffectSettled" ? lifecycle?.settlement : engine.promise(record.ref)
         if (prior) {
           if (!isDeepStrictEqual(prior, record)) throw new Error("Conflicting core event delivery")
           return snapshot
         }
       }
-      return replay([...snapshot.events, record])
+      try {
+        engine.append(record)
+        return snapshotOf(engine)
+      } catch (error) {
+        engine.dispose()
+        throw error
+      }
     },
+    // discard releases a preparation registry; the snapshot's committed history remains available for reconstruction.
+    discard: (snapshot: Snapshot) => engines.get(snapshot)?.dispose(),
+    dispose: () => { for (const dispose of disposers) dispose() },
     get: <Value>(snapshot: Snapshot, node: Atom<Value>): Value => snapshot.get(node),
     view: (snapshot: Snapshot) => snapshot.view(),
     effects: (snapshot: Snapshot) => snapshot.effects(),
