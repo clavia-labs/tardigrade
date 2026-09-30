@@ -1,10 +1,11 @@
 import { RuntimeError } from "./errors"
 import { Context, Effect, type Schema } from "effect"
-import { AsyncResult, Atom as NativeAtom } from "effect/unstable/reactivity"
+import { AsyncResult } from "effect/unstable/reactivity"
 import { atom, type Atom, type Getter } from "./atom"
 import type { ActorSetup } from "./runtime"
 import { createStore } from "./store"
 import { EventLog } from "./durable"
+import { createEventSource } from "./event-source"
 
 type Actions<Event> = Readonly<Record<string, (...args: never[]) => Event>>
 type Bound<Definitions> = { readonly [Key in keyof Definitions]: Definitions[Key] extends (...args: infer Args) => unknown ? (...args: Args) => Effect.Effect<void, Error> : never }
@@ -60,7 +61,7 @@ export function defineActor<Event extends object, Value, const Name extends stri
     const root = atom(get => resolveOutput(get(definition.atom)))
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => createStore(Context.make(EventLog, {
-        events: atom<readonly unknown[]>([]).pipe(NativeAtom.withLabel("events")),
+        events: createEventSource().events,
       }))),
       store => Effect.try({ try: () => store.graph({ [name]: root }), catch: RuntimeError.from }),
       store => Effect.sync(() => store.dispose()),

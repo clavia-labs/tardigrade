@@ -1,6 +1,5 @@
-import { RuntimeError, createStore, createEventLog, atom, EventLog, EffectExecution, ExecutionResult, EffectRequested, EffectSettled, hasCoreEventType, effectKey, type Recorded, type Atom, type Journal, type ActorRuntime, type ActorSetup, type Requirements, type ActorDefinition } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, createStore, createEventLog, createEventSource, atom, EventLog, EffectExecution, ExecutionResult, EffectRequested, EffectSettled, hasCoreEventType, effectKey, type Recorded, type Atom, type Journal, type ActorRuntime, type ActorSetup, type Requirements, type ActorDefinition } from "@clavia/tardigrade-experimental-core"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { Promises } from "./services/promises"
 import { select } from "./stores/thread"
 
@@ -50,14 +49,14 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     let setup: ActorSetup<Event, Atoms, Actions>
     let definition: ReturnType<typeof createEventLog<Event, Atoms>>
     let snapshot: ReturnType<typeof definition.replay>
-    const source = atom<readonly unknown[]>([]).pipe(NativeAtom.withLabel("events"))
+    const source = createEventSource<Recorded<Event>>()
     const bindings = atom<ReadonlyMap<object, import("@clavia/tardigrade-experimental-core").EffectRef>>(new Map())
-    const store = createStore(Context.make(EventLog, { events: source, bindings }))
-    let syncedEvents: readonly unknown[] = []
+    const store = createStore(Context.make(EventLog, { events: source.events, bindings }))
     const sync = () => {
-      syncedEvents = snapshot.events
+      const position = store.get(source.events).length
+      if (position > snapshot.events.length) throw new RuntimeError("Committed event history cannot shrink")
       store.set(bindings, snapshot.bindings)
-      store.set(source, syncedEvents)
+      source.append(store, snapshot.events.slice(position))
     }
     const recovery: Effect.Effect<void, Error>[] = []
     const committed: Effect.Effect<void, Error>[] = []

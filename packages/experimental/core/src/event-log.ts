@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util"
 import { atom, type Atom } from "./atom"
 import { EventLog } from "./durable"
 import { createStore } from "./store"
+import { createEventSource } from "./event-source"
 import type { ActRequest } from "./act"
 import { ExecutionResult } from "./execution-result"
 import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, type PromiseSettled } from "./lifecycle"
@@ -35,9 +36,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     return freeze(structuredClone(hasCoreEventType(record) ? validateCore(record) : validate(record)))
   }
   const replay = (history: readonly Recorded<Event>[]) => {
-    const source = atom<readonly unknown[]>([])
+    const source = createEventSource<Recorded<Event>>()
     const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
-    const store = createStore(Context.make(EventLog, { events: source, bindings }))
+    const store = createStore(Context.make(EventLog, { events: source.events, bindings }))
     const actReferences = new Map<object, EffectRef>()
     const actOwners = new Map<object, string>()
     const records: Recorded<Event>[] = []
@@ -135,7 +136,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         }
       }
       records.push(freeze(record))
-      store.set(source, Object.freeze([...records]))
+      source.append(store, [record])
       effects()
     }
     return Object.freeze({
