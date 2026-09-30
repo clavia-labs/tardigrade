@@ -1,4 +1,5 @@
 export * from "./services/backup"
+export * from "./services/checkpoint"
 export * from "./sql"
 export * from "./http"
 export * from "./services/promises"

@@ -11,6 +11,7 @@ export function createStore(services?: Context.Context<EventLog>) {
   return {
     get: <Value>(node: Atom<Value>): Value => registry.get(node),
     graph: (roots: Readonly<Record<string, Atom<unknown>>>) => actorGraph(registry, roots),
+    nodes: () => registry.getNodes(),
     set: <Value>(node: PrimitiveAtom<Value>, value: SetStateAction<Value>) => registry.set(node, value),
     sub: <Value>(node: Atom<Value>, listener: () => void) => {
       registry.get(node)

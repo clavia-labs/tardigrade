@@ -30,6 +30,7 @@ export function durablePromise<Value, Error = never>(reference: EffectRef, optio
   const validate = Schema.decodeUnknownSync(Schema.toType(schema), { onExcessProperty: "error" })
   const stateSchema: Schema.Schema<PromiseState<Value, Error>> = Schema.Union([Schema.Struct({ status: Schema.Literal("pending") }), result])
   const state = durableAtom({
+    name: `promise:${id}`,
     input: Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: Schema.Unknown }),
     schema: stateSchema,
     initial: { status: "pending" },

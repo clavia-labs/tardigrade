@@ -5,6 +5,7 @@ import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
 import { ToolReturned, MessageReceived } from "../event"
 
 const submissions = durableAtom({
+  name: "agent.promises.submissions",
   input: Schema.Union([ToolReturned, MessageReceived]),
   schema: Schema.Array(Schema.Struct({ callId: Schema.String, promise: ToolPromise })), initial: [],
   reduce: (state, event) => event.type === "ToolReturned" && event.promise

@@ -56,7 +56,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     return text === message.text ? message : { ...message, text }
   })
   const estimate = (messages: typeof Conversation.Type) => Math.ceil(messages.reduce((size, message) => size + JSON.stringify(message).length, 0) / policy.charsPerToken)
-  const compactionState = durableAtom({ input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed]), schema: CompactionState, initial: { through: 0, summary: "", pending: null, failure: null }, reduce: compactState })
+  const compactionState = durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed]), schema: CompactionState, initial: { through: 0, summary: "", pending: null, failure: null }, reduce: compactState })
 
   const request = requests(Summarize.request)
   return Effect.map(ModelInfo, selection => effectAtom(get => {

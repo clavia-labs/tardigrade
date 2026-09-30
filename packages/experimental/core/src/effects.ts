@@ -38,12 +38,16 @@ export function eventValue<Event extends object>(event: Event): EventValue<Event
   return { kind: "event", event }
 }
 
-export interface IdentifiedEffectValue<Services = never> {
+export interface EffectWork<Services = never> {
   readonly kind: "act"
   readonly id: string
   readonly request: EffectRequest
-  readonly ref: EffectRef
+  readonly source: string
+  readonly ref?: EffectRef
   readonly execute: Effect.Effect<import("./execution-result").ExecutionResult, Schema.Json, Services | EffectExecution>
+}
+export interface IdentifiedEffectValue<Services = never> extends EffectWork<Services> {
+  readonly ref: EffectRef
 }
 type Proposal = EventValue<unknown> | ActRequest<Schema.Json, Schema.Json, unknown>
 type CollectedProposals<Value> = Value extends { readonly events: infer Events; readonly acts: infer Acts } ? Events[keyof Events] | Acts[keyof Acts] : never

@@ -10,7 +10,7 @@ import { definePackage } from "./package"
 const Alarm = Schema.Struct({ alarmId: Schema.NonEmptyString, at: Deadline, message: Schema.NonEmptyString })
 
 const ReturnedPromise = Schema.Struct({ type: Schema.Literal("ToolReturned"), promise: ToolPromise })
-const promises = durableAtom({
+const promises = durableAtom({ name: "packages.alarm.promises",
   input: ReturnedPromise,
   schema: Schema.Array(ToolPromise), initial: [],
   reduce: (state, event) => [...state, event.promise],

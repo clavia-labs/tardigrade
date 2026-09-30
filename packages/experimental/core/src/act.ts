@@ -30,8 +30,10 @@ export interface ActRequest<Value, Failure, Services> {
   readonly execute: Effect.Effect<ExecutionResult, Schema.Json, Services | EffectExecution>
   // onRequested derives domain events committed with durable acceptance; callbacks must be pure.
   onRequested?(ref: EffectRef): readonly object[]
-  // onSettled derives domain events committed with the immediate or deferred result; callbacks must be pure.
-  onSettled?(result: Exclude<ActState<Value, Failure>, { status: "pending" }>, ref: EffectRef): readonly object[]
+  // onDeferred derives domain events committed with the submitted handle; callbacks must be pure.
+  onDeferred?(handle: ExecutionHandle, ref: EffectRef): readonly object[]
+  // onSettled derives domain events committed with the final result; handle identifies deferred completion and callbacks must be pure.
+  onSettled?(result: Exclude<ActState<Value, Failure>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
   readonly ref: Atom<EffectRef | undefined>
   readonly result: Atom<ActState<Value, Failure>>
 }
@@ -70,7 +72,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
   }))
 
   // request creates an invocation handle retained across reevaluation; another invocation requires another handle.
-  const request = (invocation: { readonly tag: string; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
+  const request = (invocation: { readonly tag: string; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
     if (!invocation.tag) throw new Error("Act tag must not be empty")
     const input = Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
     const identity = {}
@@ -84,14 +86,15 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       const reference = get(ref)
       const context = get(eventLogContext)
       if (!reference || !context) return { status: "pending" }
-      const events = get(Context.get(context, EventLog).events)
+      const service = Context.get(context, EventLog)
+      const events = get(service.events)
       const key = effectKey(reference)
-      const settlement = events.find(event => Schema.is(EffectSettled)(event) && effectKey(event.ref) === key)
+      const settlement = service.effect?.(reference)?.settlement ?? events.find(event => Schema.is(EffectSettled)(event) && effectKey(event.ref) === key)
       if (!Schema.is(EffectSettled)(settlement)) return { status: "pending" }
       if (settlement.outcome.status === "rejected") return { status: "rejected", reason: decodeFailure(settlement.outcome.reason) }
       const outcome = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
       if (outcome.type === "value") return { status: "fulfilled", value: decodeSuccess(outcome.value) }
-      const resolved = events.find(event => Schema.is(PromiseSettled)(event) && effectKey(event.ref) === key)
+      const resolved = service.promise?.(reference) ?? events.find(event => Schema.is(PromiseSettled)(event) && effectKey(event.ref) === key)
       if (!Schema.is(PromiseSettled)(resolved)) return { status: "pending" }
       return resolved.result.status === "fulfilled"
         ? { status: "fulfilled", value: decodeSuccess(resolved.result.value) }
@@ -100,11 +103,12 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
     const handle: ActRequest<Value, Failure, ActService<Name>> = Object.freeze({
       kind: "act", identity, id: invocation.tag, request: { executor: options.name, input }, ref, result,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
-      onSettled: (outcome: Exclude<ActState<Value, Failure>, { status: "pending" }>, ref: EffectRef) => {
+      ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
+      onSettled: (outcome: Exclude<ActState<Value, Failure>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
         const result = outcome.status === "fulfilled"
           ? { status: "fulfilled" as const, value: decodeSuccess(outcome.value) }
           : { status: "rejected" as const, reason: decodeFailure(outcome.reason) }
-        return invocation.onSettled?.(result, ref) ?? []
+        return invocation.onSettled?.(result, ref, handle) ?? []
       },
       execute: EffectExecution.use(({ ref }) => Implementation.use(service => service.execute(input, ref))),
     })

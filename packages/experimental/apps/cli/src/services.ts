@@ -7,7 +7,6 @@ import { assistantRuntime } from "@clavia/tardigrade-experimental-agent/services
 import type { ActService } from "@clavia/tardigrade-experimental-core"
 import { askPermission } from "@clavia/tardigrade-experimental-agent/services/acts"
 import { fetchPackage, workspace, agents } from "@clavia/tardigrade-experimental-packages"
-import { receiveResolution } from "@clavia/tardigrade-experimental-agent/services/promises"
 import { Actor } from "@clavia/tardigrade-experimental-host"
 import { bunPromises } from "@clavia/tardigrade-experimental-platform/bun"
 import { ModelLock, lockedModelConfigOf, modelLockService, parseModelLock, MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
@@ -52,7 +51,7 @@ export const services = (options: { readonly maxChildDepth?: number; readonly pe
   maxChildDepth: options.maxChildDepth ?? DEFAULT_MAX_CHILD_DEPTH,
   services: (context, host) => Layer.mergeAll(askPermission.pipe(Layer.provide(permissions.layer(host, `${options.label ?? "Agent"}${context.depth ? ` / child depth ${context.depth}` : ""}`))), modelServices, Layer.unwrap(Effect.map(Actor, actor => bunPromises(host, {
     poll: actor.poll,
-    deliver: settlement => receiveResolution(host, settlement),
+    deliver: settlement => host.send([settlement]),
   })))),
 }).services
 }

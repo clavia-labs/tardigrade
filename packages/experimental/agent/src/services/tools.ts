@@ -15,7 +15,7 @@ export function toolActs<const P extends readonly Package<unknown>[]>(packages: 
     if (input.value !== undefined) return Effect.succeed(input.value)
     const method = registry.get(input.call.name)
     return (method ? method.execute(input.call.input, input.call) : Effect.fail(new RuntimeError(`Unknown tool: ${input.call.name}`))).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)), Effect.mapError(String),
+      Effect.map(result => result.type === "promise" ? ExecuteTool.defer(result.handle) : result.value), Effect.mapError(String),
     )
   }))
 }

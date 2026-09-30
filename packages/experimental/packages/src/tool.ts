@@ -1,5 +1,5 @@
 import { ToolError } from "./errors"
-import { EffectExecution, ExecutionHandle, durablePromise } from "@clavia/tardigrade-experimental-core"
+import { EffectExecution, ExecutionHandle, type ExecutionResult, durablePromise } from "@clavia/tardigrade-experimental-core"
 import { Cause, Effect, Exit, Schema } from "effect"
 import type { ToolCall, ToolSpec, ExecutionMode, ToolMetadata } from "./types"
 
@@ -10,7 +10,7 @@ export interface ToolInvocation extends ToolCall {
 export interface AgentTool<R = never> {
   readonly spec: ToolSpec
   readonly aliases?: readonly string[]
-  readonly execute: (input: unknown, call: ToolInvocation) => Effect.Effect<unknown, Error, R>
+  readonly execute: (input: unknown, call: ToolInvocation) => Effect.Effect<ExecutionResult, Error, R>
 }
 
 export const DEFAULT_TOOL_EXECUTION = "sync" as const
@@ -32,7 +32,10 @@ export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execu
     spec: { name: options.name, description: options.description, inputSchema: Schema.decodeUnknownSync(Schema.Json)(Schema.toJsonSchemaDocument(options.input, { onExcessProperty: "error" }).schema), ...(options.metadata ? { metadata: options.metadata } : {}), execution },
     execute: (input, call) => Effect.gen(function* () {
       const value = yield* Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(input).pipe(Effect.mapError(ToolError.from))
-      if (execution === "sync") return yield* options.run(value, call)
+      if (execution === "sync") {
+        const result = yield* options.run(value, call).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)), Effect.mapError(ToolError.from))
+        return { type: "value" as const, value: result }
+      }
       const current = yield* EffectExecution
       const promise = durablePromise(current.ref, { success: Schema.Json, error: Schema.String })
       const handle = yield* current.fork(options.run(value, call).pipe(
@@ -40,7 +43,7 @@ export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execu
         Effect.exit,
         Effect.map(exit => Exit.isSuccess(exit) ? promise.succeed(exit.value) : promise.fail(Cause.pretty(exit.cause))),
       ))
-      return { type: "promise" as const, ref: promise.ref, handle }
+      return { type: "promise" as const, handle }
     }),
   }
 }
@@ -52,11 +55,13 @@ export function promiseTool<Input, R>(options: {
   readonly metadata?: typeof ToolMetadata.Type
   readonly input: Schema.ConstraintDecoder<Input>
   readonly submit: (input: Input, call: ToolInvocation) => Effect.Effect<ExecutionHandle, Error, R>
-}): AgentTool<R | EffectExecution> {
-  const method = tool({ ...options, run: (input: Input, call: ToolInvocation) => Effect.gen(function* () {
-    const current = yield* EffectExecution
-    const handle = yield* options.submit(input, call)
-    return { type: "promise" as const, ref: current.ref, handle }
-  }) })
-  return { ...method, spec: { ...method.spec, execution: "async" } }
+}): AgentTool<R> {
+  return {
+    spec: { name: options.name, description: options.description, inputSchema: Schema.decodeUnknownSync(Schema.Json)(Schema.toJsonSchemaDocument(options.input, { onExcessProperty: "error" }).schema), ...(options.metadata ? { metadata: options.metadata } : {}), execution: "async" },
+    execute: (input, call) => Effect.gen(function* () {
+      const value = yield* Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(input)
+      const handle = yield* options.submit(value, call).pipe(Effect.flatMap(Schema.decodeEffect(ExecutionHandle)))
+      return { type: "promise" as const, handle }
+    }).pipe(Effect.mapError(ToolError.from)),
+  }
 }

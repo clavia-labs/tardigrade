@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect"
 import { atom, defineActor, durableAtom } from "@clavia/tardigrade-experimental-core"
 
 const Message = Schema.Struct({ type: Schema.Literal("MessageReceived"), text: Schema.String })
-const messages = durableAtom({
+const messages = durableAtom({ name: "examples.inbox.messages",
   input: Message,
   schema: Schema.Array(Schema.String),
   initial: [],

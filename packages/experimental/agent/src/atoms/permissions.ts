@@ -15,7 +15,7 @@ export const DEFAULT_PERMISSION_POLICY: typeof PermissionPolicy.Type = { default
 // permissions records its initial policy and uses logged updates for subsequent calls.
 export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: { readonly policy?: typeof PermissionPolicy.Type; readonly tools?: Atom<ActorOutput<{ readonly specs: readonly ToolSpec[] }, unknown, unknown>> } = {}): Atom<PermissionView<ActService<"agent.permission.request">>> {
   const initialPolicy = Schema.decodeSync(PermissionPolicy)(options.policy ?? DEFAULT_PERMISSION_POLICY)
-  const decisions = durableAtom({ input: Schema.Union([PermissionConfigured, PermissionUpdated, PermissionResolved]), schema: PermissionState, initial: { policy: null, decisions: [] }, reduce: permissionState })
+  const decisions = durableAtom({ name: "agent.permissions.decisions", input: Schema.Union([PermissionConfigured, PermissionUpdated, PermissionResolved]), schema: PermissionState, initial: { policy: null, decisions: [] }, reduce: permissionState })
   const request = requests(AskPermission.request)
   return effectAtom(get => {
     const state = get(decisions)

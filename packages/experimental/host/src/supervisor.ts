@@ -21,7 +21,7 @@ export const SupervisorEvent = Schema.Union([
 export type SupervisorEvent = typeof SupervisorEvent.Type
 
 // threads projects allocation state; provisioning must tolerate repetition after interrupted registration.
-export const threads = durableAtom({
+export const threads = durableAtom({ name: "host.supervisor.threads",
   input: SupervisorEvent,
   schema: Schema.Array(Thread),
   initial: [],

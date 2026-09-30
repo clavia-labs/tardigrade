@@ -19,7 +19,7 @@ export interface AgentInput<R> {
 }
 
 export function infer<R>(agent: Atom<AgentInput<R>>) {
-  const inferenceState = durableAtom({ input: Schema.Union([MessageReceived, ModelCalled, ModelReturned, ToolReturned, TurnSettled]),
+  const inferenceState = durableAtom({ name: "agent.inference.state", input: Schema.Union([MessageReceived, ModelCalled, ModelReturned, ToolReturned, TurnSettled]),
     schema: InferenceState,
     initial: initialInference, reduce: inferState,
   })

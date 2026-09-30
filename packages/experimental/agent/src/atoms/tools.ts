@@ -4,7 +4,6 @@ import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { effectAtom, type Atom, type ActRequest, type ActorOutput } from "@clavia/tardigrade-experimental-core"
-import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
 import { ModelReturned, ToolCalled, ToolReturned, type Event, ToolCall } from "../event"
 import { ToolState, toolState, type PermissionState } from "../projections"
 import { toolPromises } from "./promises"
@@ -13,7 +12,7 @@ import type { ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
 
 import { ToolCatalog } from "../context"
 
-export const pendingTools = durableAtom({ input: Schema.Union([ModelReturned, ToolCalled, ToolReturned]), schema: ToolState, initial: { queue: [], pending: null, running: false }, reduce: toolState })
+export const pendingTools = durableAtom({ name: "agent.tools.pending", input: Schema.Union([ModelReturned, ToolCalled, ToolReturned]), schema: ToolState, initial: { queue: [], pending: null, running: false }, reduce: toolState })
 
 export type ToolPlan =
   | { readonly position: "waiting" | "blocked"; readonly reason: string }
@@ -124,8 +123,12 @@ function toolValue<R>(state: typeof ToolState.Type, tools: Tools<R>): Tools<R> {
         tag: call.callId,
         input: { call, charged: plan.charged, ...(plan.value !== undefined ? { value: plan.value } : {}), ...(plan.error !== undefined ? { error: plan.error } : {}) },
         onRequested: () => [{ type: "ToolCalled", callId: call.callId, charged: plan.charged } satisfies ToolCalled],
-        onSettled: result => [result.status === "fulfilled"
-          ? { type: "ToolReturned", callId: call.callId, output: JSON.stringify(result.value), error: null, ...(Schema.is(ToolPromise)(result.value) ? { promise: result.value } : {}) } satisfies ToolReturned
+        onDeferred: (handle, ref) => {
+          const promise = { type: "promise" as const, ref, handle }
+          return [{ type: "ToolReturned", callId: call.callId, output: JSON.stringify(promise), error: null, promise } satisfies ToolReturned]
+        },
+        onSettled: (result, _ref, handle) => handle ? [] : [result.status === "fulfilled"
+          ? { type: "ToolReturned", callId: call.callId, output: JSON.stringify(result.value), error: null } satisfies ToolReturned
           : { type: "ToolReturned", callId: call.callId, output: "", error: result.reason } satisfies ToolReturned],
       }),
     },

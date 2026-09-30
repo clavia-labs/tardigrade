@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { atom, durableAtom } from "@clavia/tardigrade-experimental-core"
 import { Event, ModelReply, Decision, messageSource } from "./event"
 
-export const history = durableAtom({ input: Event, schema: Schema.Array(Event), initial: [], reduce: (events, event) => [...events, event] })
+export const history = durableAtom({ name: "agent.activity.history", input: Event, schema: Schema.Array(Event), initial: [], reduce: (events, event) => [...events, event] })
 export interface ActivityEntry {
   readonly seq: number
   readonly type: Event["type"]
