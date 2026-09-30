@@ -5,6 +5,13 @@
     "@clavia/tardigrade-ui"
   ],
   "workspaces": {
+    "packages/experimental/platform": {
+      "entry": ["test/workerd/fixture.worker.ts"],
+      "project": ["src/**/*.ts!", "test/**/*.ts"]
+    },
+    "packages/experimental/host": {
+      "project": ["src/**/*.ts!", "properties/**/*.ts"]
+    },
     "packages/experimental/examples": {
       "entry": ["*.ts!"],
       "project": ["**/*.ts"]

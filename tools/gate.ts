@@ -83,6 +83,8 @@ const tasks: ReadonlyArray<Task> = [
   ...examplePackages.map((name) => ({ id: `typecheck:example-react-rlm-chat-${name}`, cwd: examplePkg(name), cmd: ["bun", "run", "typecheck"] })),
   { id: "typecheck:e2e", cwd: e2e, cmd: ["bun", "run", "typecheck"] },
   ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
+  { id: "test:experimental-platform", cwd: experimentalPkg("platform"), cmd: ["bun", "run", "test"] },
+  { id: "test:experimental-platform:workers", cwd: experimentalPkg("platform"), cmd: ["bun", "run", "test:workers"] },
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),
   { id: "test:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "test:workers"] },
   { id: "test:platform-cloudflare:e2e", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "vitest", "run", "--config", "vitest.e2e.config.ts"] },
