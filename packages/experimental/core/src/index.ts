@@ -14,6 +14,7 @@ export { event, type EventDeclaration, type DeclaredEvent, type EventHandler } f
 export { AbortRequested, abortRequested } from "./actor/cancellation"
 export * from "./runtime/contracts"
 export * from "./services/journal"
+export type { ThreadJournal } from "./services/journal/thread"
 
 export * from "./atoms/act"
 

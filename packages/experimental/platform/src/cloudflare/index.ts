@@ -4,6 +4,8 @@ import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigr
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { sqlJournal } from "../shared/sql-journal"
+export { sqlJournal } from "../shared/sql-journal"
+export { hostRoutes, type HttpHost } from "../shared/http"
 import { hostRoutes, type HttpHost } from "../shared/http"
 import { HttpRouter } from "effect/unstable/http"
 

@@ -1,5 +1,5 @@
 import { Effect, Fiber, Layer, Schema, Scope } from "effect"
-import { Isolate, type IsolateCall, type IsolateInput, type IsolateResult } from "@clavia/tardigrade-experimental-core/services/isolate"
+import { Isolate, type IsolateCall, type IsolateInput, type IsolateResult } from "@clavia/tardigrade-experimental-core"
 import { bunSandboxServiceFor, type BunSandboxPolicy } from "@clavia/tardigrade-bun/sandbox"
 import { sandboxReturned, type SandboxCall } from "@clavia/tardigrade-code/sandbox/service"
 

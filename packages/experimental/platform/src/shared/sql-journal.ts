@@ -1,9 +1,9 @@
 import { Effect, Encoding, ManagedRuntime, Result, Schema, type Layer } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import { JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-experimental-core"
-import type { ThreadJournal } from "../../../core/src/services/journal/thread"
+import type { ThreadJournal } from "@clavia/tardigrade-experimental-core"
 
-import { checkpointDigest } from "../../../core/src/services/checkpoint"
+import { checkpointDigest } from "@clavia/tardigrade-experimental-core"
 
 // sqlJournal stores event prefixes through an Effect SQL layer; close releases its resources.
 export function sqlJournal<Event extends object>(options: {

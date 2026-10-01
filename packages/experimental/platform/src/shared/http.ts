@@ -1,7 +1,7 @@
 import { Effect, Layer, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { InvalidMessage, MessageConflict, type MessageReceipt } from "@clavia/tardigrade-experimental-core"
-import type { MessageDelivery } from "../../../core/src/services/invocation"
+import type { MessageDelivery } from "@clavia/tardigrade-experimental-core"
 import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
 
 interface HttpThread {
