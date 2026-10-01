@@ -8,6 +8,11 @@ const Message = Schema.Union([
   Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, providerId: Schema.String, name: Schema.String, text: Schema.String, error: Schema.Boolean }),
 ])
 export const Conversation = Schema.Array(Message)
+export const Trajectory = Schema.Array(Schema.Struct({ turnId: Schema.String, message: Message }))
+export const TrajectoryState = Schema.Struct({
+  entries: Trajectory,
+  models: Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String })),
+})
 
 // inboxMessage selects messages that require an inference turn; replies resolve actor exchanges.
 export function inboxMessage(event: MessageReceived): { readonly turnId: string; readonly text: string } | undefined {
@@ -19,16 +24,29 @@ export function inboxMessage(event: MessageReceived): { readonly turnId: string;
   }
 }
 
-export function trajectoryState(state: typeof Conversation.Type, event: Event): typeof Conversation.Type {
+export function trajectoryState(state: typeof TrajectoryState.Type, event: Event): typeof TrajectoryState.Type {
   if (event.type === "MessageReceived") {
     const message = inboxMessage(event)
-    return message ? [...state, { role: "user", text: message.text }] : state
+    return message ? { ...state, entries: [...state.entries, { turnId: message.turnId, message: { role: "user", text: message.text } }] } : state
   }
-  if (event.type === "ModelReturned" && event.purpose === "inference") return [...state, { role: "assistant", text: event.text, toolCalls: event.toolCalls }]
+  if (event.type === "ModelCalled" && event.purpose === "inference") return {
+    ...state, models: [...state.models, { callId: event.callId, turnId: event.turnId }],
+  }
+  if (event.type === "ModelReturned" && event.purpose === "inference") {
+    const call = state.models.find(call => call.callId === event.callId)
+    if (!call) return state
+    return {
+      entries: [...state.entries, { turnId: call.turnId, message: { role: "assistant", text: event.text, toolCalls: event.toolCalls } }],
+      models: state.models.filter(value => value !== call),
+    }
+  }
   if (event.type === "ToolReturned") {
-    const call = state.flatMap(message => message.role === "assistant" ? message.toolCalls : []).find(call => call.callId === event.callId)
-    if (call) return [...state, { role: "tool", callId: event.callId, providerId: call.providerId, name: call.name, text: event.error ?? event.output, error: event.error !== null }]
+    const entry = state.entries.find(entry => entry.message.role === "assistant" && entry.message.toolCalls.some(call => call.callId === event.callId))
+    const call = entry?.message.role === "assistant" ? entry.message.toolCalls.find(call => call.callId === event.callId) : undefined
+    if (entry && call) return { ...state, entries: [...state.entries, { turnId: entry.turnId, message: { role: "tool", callId: event.callId, providerId: call.providerId, name: call.name, text: event.error ?? event.output, error: event.error !== null } }] }
   }
+  if (event.type === "ModelFailed") return { ...state, models: state.models.filter(call => call.callId !== event.callId) }
+  if (event.type === "TurnSettled") return { ...state, models: state.models.filter(call => call.turnId !== event.turnId) }
   return state
 }
 

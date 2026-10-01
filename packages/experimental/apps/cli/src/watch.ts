@@ -1,6 +1,6 @@
 import { styleText, stripVTControlCharacters } from "node:util"
 import { Console, Effect, Schema } from "effect"
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, type Recorded } from "@clavia/tardigrade-experimental-core"
 import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
 import { observeBunThread } from "@clavia/tardigrade-experimental-platform/bun"
 const Event = Schema.Record(Schema.String, Schema.Unknown)
@@ -16,7 +16,7 @@ const line = (value: unknown) => value == null ? "" : Array.from(stripVTControlC
 }).join("").replace(/\s+/g, " ").trim()
 
 
-function formatEntry(event: Event, seq: number, width = DEFAULT_WATCH_WIDTH, color = false): string {
+function formatEntry(event: Recorded<Event>, seq: number, width = DEFAULT_WATCH_WIDTH, color = false): string {
   if (!Number.isSafeInteger(width) || width < 1) throw new RuntimeError("Event log width must be a positive integer")
   const { type, ...fields } = event
   const text = `${String(seq).padStart(6, "0")}  ${String(type).padEnd(22)}  ${line(JSON.stringify(fields))}`.trimEnd()

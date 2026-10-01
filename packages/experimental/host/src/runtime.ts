@@ -1,6 +1,6 @@
-import { RuntimeError, PromiseNotReady, createStore, createEventSource, atom, EventLog, EffectExecution, ExecutionResult, EffectRequested, EffectSettled, EffectCancelled, cancelAct, PromiseSettled, hasCoreEventType, effectKey, type Recorded, type Atom, type Journal, type ActorRuntime, type ActorSetup, type Requirements, type ActorDefinition, type EffectRef, type ActCancellation } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, PromiseNotReady, createStore, createEventSource, atom, EventLog, EffectExecution, ExecutionResult, EffectRequested, EffectSettled, EffectCancelled, cancelAct, CoreEvent, PromiseSettled, hasCoreEventType, effectKey, type Recorded, type Atom, type Journal, type ActorRuntime, type ActorSetup, type Requirements, type ActorDefinition, type EffectRef, type ActCancellation } from "@clavia/tardigrade-experimental-core"
 import { createEventLog, type EffectCheckpoint } from "@clavia/tardigrade-experimental-core/event-log"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue, Schedule } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue, Schedule, Clock } from "effect"
 import { Promises, DEFAULT_PROMISE_POLICY } from "./services/promises"
 import { DEFAULT_CHECKPOINT_MAX_BYTES, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "./services/checkpoint"
 import { select } from "./stores/thread"
@@ -189,13 +189,19 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       return yield* Deferred.await(accepted)
     })
     const appendNow = (event: Recorded<Event>): Effect.Effect<void, Error> => Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis
+      const lifecycle = Schema.is(CoreEvent)(event) ? snapshot.effect(event.ref) : undefined
+      const prior = !Schema.is(CoreEvent)(event) ? undefined : event.type === "EffectRequested" ? lifecycle?.request
+        : event.type === "EffectSettled" ? lifecycle?.settlement : event.type === "EffectCancelled" ? lifecycle?.cancellation : snapshot.promise(event.ref)
+      const recordedAt = (prior as Recorded<Event> | undefined)?.recordedAt ?? now
+      event = { ...event, recordedAt }
       const updated = yield* Effect.try({ try: () => {
         let next = definition.append(snapshot, event)
         if (next === snapshot) return next
         try {
           for (const domain of next.followups(event)) {
             if (hasCoreEventType(domain)) throw new RuntimeError("Act callbacks must return domain events")
-            next = definition.append(next, domain as Event)
+            next = definition.append(next, { ...domain, recordedAt } as Recorded<Event>)
           }
           return next
         } catch (error) {

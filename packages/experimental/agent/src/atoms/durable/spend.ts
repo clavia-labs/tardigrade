@@ -1,27 +1,37 @@
-import { atom, durableAtom } from "@clavia/tardigrade-experimental-core"
+import { atom, durableAtom, CoreEvent, type RecordMetadata } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
-import { MessageReceived, ModelCalled, ModelReturned, ToolCalled, ToolReturned, TurnSettled, CompactionFailed } from "../../event"
+import { Event } from "../../event"
 import { inboxMessage } from "../../projections"
 
 const Count = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
 const ToolSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, count: Count }))
 const TokenSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, input: Count, output: Count }))
 const UsdSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, usd: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))) }))
+const TimeSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, ms: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))) }))
 const Calls = Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String }))
 const SpendState = Schema.Struct({
-  toolSpend: ToolSpend, tokenSpend: TokenSpend, usdSpend: UsdSpend,
+  toolSpend: ToolSpend, tokenSpend: TokenSpend, usdSpend: UsdSpend, timeSpend: TimeSpend, timers: Schema.Array(Schema.Struct({ turnId: Schema.String, startedAt: Schema.NullOr(Count) })),
   turns: Schema.Array(Schema.String), models: Calls, tools: Calls,
 })
-const SpendEvent = Schema.Union([MessageReceived, ModelCalled, ModelReturned, ToolCalled, ToolReturned, TurnSettled, CompactionFailed])
+const SpendEvent = Schema.Union([Event, CoreEvent])
 
 // spendState retains pending call attribution alongside ordered turn totals across checkpoint recovery.
-function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type): typeof SpendState.Type {
+function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type, metadata: RecordMetadata): typeof SpendState.Type {
+  if (state.timers.length && metadata.recordedAt !== undefined) {
+    const now = metadata.recordedAt
+    state = { ...state, timeSpend: state.timeSpend.map(turn => {
+      const timer = state.timers.find(timer => timer.turnId === turn.turnId)
+      return timer?.startedAt != null ? { ...turn, ms: Math.max(0, now - timer.startedAt) } : turn
+    }) }
+  }
   if (event.type === "MessageReceived") {
     const message = inboxMessage(event)
     if (!message || state.toolSpend.some(turn => turn.turnId === message.turnId)) return state
     const turnId = message.turnId
     return {
       ...state, turns: [...state.turns, turnId],
+      timers: [...state.timers, { turnId, startedAt: metadata.recordedAt ?? null }],
+      timeSpend: [...state.timeSpend, { turnId, ms: metadata.recordedAt === undefined ? null : 0 }],
       toolSpend: [...state.toolSpend, { turnId, count: 0 }],
       tokenSpend: [...state.tokenSpend, { turnId, input: 0, output: 0 }],
       usdSpend: [...state.usdSpend, { turnId, usd: 0 }],
@@ -54,7 +64,7 @@ function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type
         ? state.toolSpend.map(turn => turn.turnId === call.turnId ? { ...turn, count: turn.count + 1 } : turn) : state.toolSpend,
     }
   }
-  if (event.type === "CompactionFailed") {
+  if (event.type === "CompactionFailed" || event.type === "ModelFailed") {
     const call = state.models.find(call => call.callId === event.callId)
     if (!call) return state
     return {
@@ -62,8 +72,12 @@ function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type
       usdSpend: state.usdSpend.map(turn => turn.turnId === call.turnId ? { ...turn, usd: null } : turn),
     }
   }
+  if (event.type !== "TurnSettled") return state
+  const timer = state.timers.find(timer => timer.turnId === event.turnId)
   return {
     ...state, turns: state.turns.filter(turnId => turnId !== event.turnId),
+    timers: state.timers.filter(timer => timer.turnId !== event.turnId),
+    timeSpend: state.timeSpend.map(turn => turn.turnId === event.turnId && (metadata.recordedAt === undefined || timer?.startedAt == null) ? { ...turn, ms: null } : turn),
     models: state.models.filter(call => call.turnId !== event.turnId),
     tools: state.tools.filter(call => call.turnId !== event.turnId),
     usdSpend: state.models.some(call => call.turnId === event.turnId)
@@ -73,7 +87,7 @@ function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type
 
 const spend = durableAtom({
   name: "agent.spend", input: SpendEvent, schema: SpendState,
-  initial: { toolSpend: [], tokenSpend: [], usdSpend: [], turns: [], models: [], tools: [] }, reduce: spendState,
+  initial: { toolSpend: [], tokenSpend: [], usdSpend: [], timeSpend: [], timers: [], turns: [], models: [], tools: [] }, reduce: spendState,
 })
 
 // toolSpend records budget-counted tool calls per turn, including execution failures.
@@ -82,3 +96,6 @@ export const toolSpend = atom(get => get(spend).toolSpend)
 export const tokenSpend = atom(get => get(spend).tokenSpend)
 // usdSpend sums reported provider costs per turn; a missing cost makes that turn's total unknown.
 export const usdSpend = atom(get => get(spend).usdSpend)
+
+// timeSpend records wall milliseconds from message receipt to turn settlement at journal boundaries, including queueing and downtime; missing timestamps produce unknown totals.
+export const timeSpend = atom(get => get(spend).timeSpend)

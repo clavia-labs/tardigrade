@@ -6,7 +6,7 @@ import { type Conversation } from "../projections"
 import { ModelInfo } from "../context"
 import { Generate, requests, failureMessage } from "../acts"
 import { inferenceState } from "./durable/inference"
-import { toolSpend, tokenSpend, usdSpend } from "./durable/spend"
+import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
 import type { ToolView } from "./tools"
 import { Event, MessageReceived, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled } from "../event"
 
@@ -26,6 +26,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
     get(toolSpend)
     get(tokenSpend)
     get(usdSpend)
+    get(timeSpend)
     const input = get(agent)
     const state = get(inferenceState)
     const turn = state.turns.find(turn => turn.turnId === state.turnId)

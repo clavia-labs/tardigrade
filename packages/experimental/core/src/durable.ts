@@ -1,6 +1,7 @@
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom } from "./atom"
+import type { RecordMetadata } from "./journal"
 import { EventLog, eventLogContext } from "./services/event-log"
 
 export interface DurableAtomCheckpoint<State = unknown> {
@@ -32,7 +33,7 @@ export function durableAtom<State, Event>(options: {
   readonly input: Schema.Schema<Event>
   readonly schema: Schema.Schema<State>
   readonly initial: NoInfer<State>
-  readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>) => NoInfer<State>
+  readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata) => NoInfer<State>
 }): DurableAtom<State, Event> {
   const accepts = Schema.is(options.input)
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
@@ -61,7 +62,9 @@ export function durableAtom<State, Event>(options: {
     for (let index = Math.max(0, start); index < events.length; index++) {
       const event = events[index]
       if (!accepts(event)) continue
-      const next = options.reduce(state, event)
+      const { recordedAt, ...value } = event as Event & RecordMetadata
+      const metadata = recordedAt === undefined ? {} : { recordedAt }
+      const next = options.reduce(state, value as Event, metadata)
       if (!Object.is(next, state)) validate(next)
       state = next
     }

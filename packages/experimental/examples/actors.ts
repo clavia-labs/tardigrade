@@ -24,7 +24,7 @@ const run = Effect.scoped(Effect.gen(function* () {
 
   yield* Console.log({ rickResponse })
   yield* rickMain.wait
-  yield* Console.log(rickMain.get(trajectory).findLast(entry => entry.role === "assistant")?.text)
+  yield* Console.log(rickMain.get(trajectory).findLast(entry => entry.message.role === "assistant")?.message.text)
 }))
 
 if (import.meta.main) {

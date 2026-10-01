@@ -1,7 +1,12 @@
 import type { Effect } from "effect"
 import type { CoreEvent } from "./lifecycle"
 
-export type Recorded<Event> = Event | CoreEvent
+// RecordMetadata carries host admission wall time separately from domain payloads.
+export interface RecordMetadata {
+  readonly recordedAt?: number
+}
+
+export type Recorded<Event> = (Event | CoreEvent) & RecordMetadata
 
 export interface StoredCheckpoint {
   readonly position: number

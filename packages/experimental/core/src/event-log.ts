@@ -42,10 +42,19 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     return value
   }
+  const sameRecord = (left: object | undefined, right: object) => {
+    if (!left) return false
+    const { recordedAt: _leftTime, ...leftValue } = left as Record<string, unknown>
+    const { recordedAt: _rightTime, ...rightValue } = right as Record<string, unknown>
+    return isDeepStrictEqual(leftValue, rightValue)
+  }
   const eventOf = (record: unknown) => {
     if (typeof record !== "object" || record === null || Array.isArray(record)) throw new Error("Domain event must be an object")
     if ("effect" in record) throw new Error("Domain effect metadata is not supported")
-    return freeze(structuredClone(hasCoreEventType(record) ? validateCore(record) : validate(record)))
+    const { recordedAt, ...value } = record as Record<string, unknown>
+    if (recordedAt !== undefined && (typeof recordedAt !== "number" || !Number.isSafeInteger(recordedAt) || recordedAt < 0)) throw new Error("Recorded timestamp must be a nonnegative safe integer")
+    const event = hasCoreEventType(value) ? validateCore(value) : validate(value)
+    return freeze(structuredClone(recordedAt === undefined ? event : { ...event, recordedAt }))
   }
   type Snapshot = {
     readonly events: readonly Recorded<Event>[]
@@ -239,7 +248,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (event.type === "EffectRequested") {
           if (coreRequests.has(key)) {
             const prior = coreRequests.get(key)
-            if (!isDeepStrictEqual(prior, event)) throw new Error("Conflicting core effect request")
+            if (!sameRecord(prior, event)) throw new Error("Conflicting core effect request")
             source.append(store, [event])
             records = store.get(source.events)
             effects()
@@ -265,7 +274,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         } else {
           validatePromise(event)
           const prior = promiseSettlements.get(key)
-          if (prior && !isDeepStrictEqual(prior, event)) throw new Error("Conflicting promise settlement")
+          if (prior && !sameRecord(prior, event)) throw new Error("Conflicting promise settlement")
           promiseSettlements.set(key, event)
         }
       }
@@ -412,7 +421,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const prior = record.type === "EffectRequested" ? lifecycle?.request
           : record.type === "EffectSettled" ? lifecycle?.settlement : record.type === "EffectCancelled" ? lifecycle?.cancellation : engine.promise(record.ref)
         if (prior) {
-          if (!isDeepStrictEqual(prior, record)) throw new Error("Conflicting core event delivery")
+          if (!sameRecord(prior, record)) throw new Error("Conflicting core event delivery")
           return snapshot
         }
         if (record.type === "PromiseSettled") engine.validatePromise(record)

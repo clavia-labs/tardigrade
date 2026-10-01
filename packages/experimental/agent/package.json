@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/agent.ts",
     "./*": "./src/*.ts",
+    "./atoms/durable": "./src/atoms/durable/index.ts",
     "./services": "./src/services/index.ts"
   },
   "dependencies": {

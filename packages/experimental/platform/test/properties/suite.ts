@@ -6,11 +6,13 @@ import { ownedProducerRecovery, externalProducerObservation } from "../../../hos
 
 import { cancellationTerminality, cancellationForwarding, cancellationBatchIsolation } from "../../../host/properties/cancellation"
 
+import { turnFactRecovery } from "./turn-facts"
 import { toolDeferredLifecycle } from "./tool-deferred-lifecycle"
 
 import { agentTurnCancellation, agentCancellationRecovery, codeModeCancellationRecovery, compactionCancellationRecovery } from "./agent-cancellation"
 
 export const propertyCases = {
+  turnFactRecovery: () => fc.assert(turnFactRecovery, HOST_PROPERTY_OPTIONS),
   compactionCancellationRecovery: () => fc.assert(compactionCancellationRecovery, HOST_PROPERTY_OPTIONS),
   agentTurnCancellation: () => fc.assert(agentTurnCancellation, HOST_PROPERTY_OPTIONS),
   agentCancellationRecovery: () => fc.assert(agentCancellationRecovery, HOST_PROPERTY_OPTIONS),
