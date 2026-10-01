@@ -1,6 +1,7 @@
 import { ModelInfo, ToolCatalog, actorContext } from "../context"
 import { modelInfo } from "./model-lock"
-import { modelActs } from "./acts"
+import { modelActs, askPermission } from "./acts"
+import { PermissionRequests } from "./requests"
 import { toolActs } from "./tools"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Layer, Schema } from "effect"
@@ -8,6 +9,7 @@ import { Workspace, memoryWorkspace, AgentBudget, DEFAULT_AGENT_TOOL_CALLS, fetc
 import type { ActorRuntime, Recorded, ActorDefinition, ActorOutput, EffectExecution, ActService } from "@clavia/tardigrade-experimental-core"
 import { Actor, Promises, localActors, createActorStore, type ActorCaller } from "@clavia/tardigrade-experimental-host"
 import { createActor } from "../agent"
+import { budgetState } from "../atoms/durable/budget"
 import { Event } from "../event"
 import { ModelLock } from "./model-lock"
 import { Model } from "./model"
@@ -18,7 +20,7 @@ export interface AssistantContext {
   readonly parent: ActorCaller | undefined
 }
 
-type AgentActs = ActService<"agent.model.generate"> | ActService<"agent.model.summarize"> | ActService<"agent.tool.execute">
+type AgentActs = ActService<"agent.model.generate"> | ActService<"agent.model.summarize"> | ActService<"agent.tool.execute"> | ActService<"agent.permission.request">
 
 type AssistantDefinition<Services> = ActorDefinition<Event, ActorOutput<unknown, Event, Services | AgentActs>, {
   readonly message: (input: { readonly text: string; readonly turnId?: string }) => Effect.Effect<void, Error>
@@ -26,7 +28,7 @@ type AssistantDefinition<Services> = ActorDefinition<Event, ActorOutput<unknown,
 
 export interface AssistantOptions<Services = never> {
   readonly actor?: AssistantDefinition<Services>
-  readonly services: Layer.Layer<Model | ModelLock | Promises | Services, Error, Actor> | ((context: AssistantContext, host: ActorRuntime<Event>) => Layer.Layer<Model | ModelLock | Promises | Services, Error, Actor>)
+  readonly services: Layer.Layer<Model | ModelLock | Promises | PermissionRequests | Services, Error, Actor> | ((context: AssistantContext, host: ActorRuntime<Event>) => Layer.Layer<Model | ModelLock | Promises | PermissionRequests | Services, Error, Actor>)
   readonly packages?: readonly Package<Services | Actor | Workspace | Promises | EffectExecution>[]
   readonly maxChildDepth: number
   readonly onEvent?: (event: Recorded<Event>, depth: number) => void
@@ -56,10 +58,11 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
     onMessage: (handle, message) => host.send([{ type: "MessageReceived", kind: "message", turnId: `${handle.id}:notice:${crypto.randomUUID()}`, text: JSON.stringify({ handle, message }) }]),
   })
   const services = typeof options.services === "function" ? options.services({ depth, parent }, host) : options.services
-  const platform = Layer.mergeAll(services, memoryWorkspace, Layer.effectDiscard(budget ? host.onReady(host.record({
-    type: "BudgetConfigured", policy: { maxCalls: budget.toolCalls, scope: "turn", onExhausted: "deny" },
-  })) : Effect.void)).pipe(Layer.provideMerge(children))
-  return Layer.mergeAll(modelInfo, modelActs, toolActs(options.packages ?? [fetchPackage(), alarm(), workspace(), agents()])).pipe(Layer.provideMerge(platform))
+  const platform = Layer.mergeAll(services, memoryWorkspace, Layer.effectDiscard(budget ? host.onReady(Effect.suspend(() => host.record({
+    type: host.get(budgetState).some(entry => entry.metric === "toolCalls") ? "BudgetUpdated" : "BudgetConfigured",
+    metric: "toolCalls", policy: { limit: budget.toolCalls, scope: "turn", onExhausted: "deny" },
+  }))) : Effect.void)).pipe(Layer.provideMerge(children))
+  return Layer.mergeAll(modelInfo, modelActs, askPermission, toolActs(options.packages ?? [fetchPackage(), alarm(), workspace(), agents()])).pipe(Layer.provideMerge(platform))
 }
 
 // assistantRuntime configures services and observation for one level of child actors.

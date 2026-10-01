@@ -42,6 +42,7 @@
     "./testing": "./src/testing.ts",
     "./agent/testing": "./src/agent-testing.ts",
     "./experimental": "./src/experimental.ts",
+    "./experimental/event-log": "./src/experimental/event-log.ts",
     "./experimental/host": "./src/experimental/host.ts",
     "./experimental/bun": "./src/experimental/bun.ts",
     "./experimental/cloudflare": "./src/experimental/cloudflare.ts"

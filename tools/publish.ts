@@ -207,6 +207,7 @@ try {
       "./agent/testing": "./src/tardie/agent-testing.ts",
       "./core": "./src/core/index.ts",
       "./experimental": "./src/experimental/index.ts",
+      "./experimental/event-log": "./src/experimental/event-log.ts",
       "./experimental/host": "./src/experimental/host/index.ts",
       "./experimental/bun": "./src/experimental/platform/bun/index.ts",
       "./experimental/cloudflare": "./src/experimental/platform/cloudflare/index.ts",
@@ -293,7 +294,7 @@ try {
   const stagedModules = join(stage, "node_modules")
   await symlink(join(root, "node_modules"), stagedModules, "dir")
   try {
-    await run([process.execPath, "-e", "const root = await import('tardie'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const code = await import('tardie/code'); if (root.defineActor !== core.defineActor || root.infer !== agent.infer || root.definePackage !== code.definePackage) throw new Error('scoped export compatibility failed'); const testing = await import('tardie/testing'); const agentTesting = await import('tardie/agent/testing'); if (typeof testing.checkActor !== 'function' || typeof testing.replayActor !== 'function' || typeof agentTesting.testInferenceLayer !== 'function') throw new Error('testing exports failed'); await import('tardie/bun'); await import('tardie/client'); for (const path of ['tardie/core/component/runtime', 'tardie/core/component/composition/parent']) { let blocked = false; try { await import(path) } catch { blocked = true } if (!blocked) throw new Error(path + ' is publicly importable') }"], stage)
+    await run([process.execPath, "-e", "const root = await import('tardie'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const code = await import('tardie/code'); if (root.defineActor !== core.defineActor || root.infer !== agent.infer || root.definePackage !== code.definePackage) throw new Error('scoped export compatibility failed'); const testing = await import('tardie/testing'); const agentTesting = await import('tardie/agent/testing'); if (typeof testing.checkActor !== 'function' || typeof testing.replayActor !== 'function' || typeof agentTesting.testInferenceLayer !== 'function') throw new Error('testing exports failed'); const eventLog = await import('tardie/experimental/event-log'); if (typeof eventLog.createEventLog !== 'function') throw new Error('experimental event-log export failed'); await import('tardie/bun'); await import('tardie/client'); for (const path of ['tardie/core/component/runtime', 'tardie/core/component/composition/parent']) { let blocked = false; try { await import(path) } catch { blocked = true } if (!blocked) throw new Error(path + ' is publicly importable') }"], stage)
   } finally {
     await rm(stagedModules)
   }

@@ -35,7 +35,7 @@ export function codeMode(options: { readonly name: string }) {
       const parsed = Schema.decodeUnknownOption(CodeInput, { onExcessProperty: "error" })(call.input)
       const error = call.name !== "execute" ? `Unknown tool: ${call.name}` : Option.isNone(parsed) ? "execute requires { code: string }" : undefined
       if (!queue.running) {
-        events.called = eventValue({ type: "ToolCalled", callId: call.callId, charged: error === undefined } satisfies ToolCalled)
+        events.called = eventValue({ type: "ToolCalled", callId: call.callId, counted: error === undefined } satisfies ToolCalled)
         return { view, events, acts }
       }
       const execution = executions.find(entry => entry.call.callId === call.callId)

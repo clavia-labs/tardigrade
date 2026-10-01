@@ -6,6 +6,7 @@ import { effectAtom, eventValue, type Atom, type Getter, type ActorOutput } from
 import { InferenceState, inferState, initialInference, type Conversation } from "../projections"
 import { ModelInfo } from "../context"
 import { Generate, requests } from "../acts"
+import { toolSpend, tokenSpend, usdSpend } from "./durable/spend"
 import type { ToolView } from "./tools"
 import { Event, ModelCalled, MessageReceived, ToolReturned, ModelReturned, TurnSettled } from "../event"
 
@@ -27,6 +28,9 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
   const request = requests(Generate.request)
 
   const output = Effect.map(ModelInfo, selection => effectAtom(get => {
+    get(toolSpend)
+    get(tokenSpend)
+    get(usdSpend)
     const input = get(agent)
     const state = get(inferenceState)
 
@@ -61,7 +65,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
           onSettled: (result, ref) => {
             if (result.status === "rejected") return [{ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: result.reason } satisfies TurnSettled]
             if (new Set(result.value.toolCalls.map(call => call.callId)).size !== result.value.toolCalls.length) return [{ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: "Duplicate provider tool call IDs" } satisfies TurnSettled]
-            return [{ type: "ModelReturned", purpose: "inference", callId: state.callId, text: result.value.text,
+            return [{ type: "ModelReturned", purpose: "inference", callId: state.callId, text: result.value.text, ...(result.value.usage ? { usage: result.value.usage } : {}),
               toolCalls: result.value.toolCalls.map((call, index) => ({ ...call, providerId: call.callId, callId: JSON.stringify([ref.seq, ref.atom, ref.tag, index]) })),
             } satisfies ModelReturned]
           },

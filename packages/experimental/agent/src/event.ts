@@ -6,28 +6,44 @@ import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
 
 const ProviderToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Json })
 export const ToolCall = Schema.Struct({ ...ProviderToolCall.fields, providerId: Schema.String })
-export const ModelReply = Schema.Struct({ text: Schema.String, toolCalls: Schema.Array(ProviderToolCall) })
+const TokenCount = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
+export const ModelUsage = Schema.Struct({
+  input: Schema.optionalKey(TokenCount), output: Schema.optionalKey(TokenCount),
+  usd: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+})
+export const ModelReply = Schema.Struct({ text: Schema.String, toolCalls: Schema.Array(ProviderToolCall), usage: Schema.optionalKey(ModelUsage) })
 export const Decision = Schema.Struct({ allowed: Schema.Boolean, reason: Schema.String })
 
 export const PermissionMode = Schema.Literals(["allow", "deny", "ask"])
-export const PermissionPolicy = Schema.Struct({ default: PermissionMode, tools: Schema.Record(Schema.String, PermissionMode), readOnly: Schema.optionalKey(PermissionMode) })
-export const BudgetPolicy = Schema.Struct({ maxCalls: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)), requestTool: Schema.optionalKey(Schema.NonEmptyString), scope: Schema.optionalKey(Schema.Literals(["actor", "turn"])), onExhausted: Schema.optionalKey(Schema.Literals(["wait", "deny"])) })
+export const PermissionAction = Schema.NonEmptyString
+export const PermissionRule = Schema.Struct({
+  default: Schema.optionalKey(PermissionMode), resources: Schema.Record(Schema.String, PermissionMode),
+  readOnly: Schema.optionalKey(PermissionMode),
+})
+export const PermissionPolicy = Schema.Struct({ default: PermissionMode, actions: Schema.Record(PermissionAction, PermissionRule) })
+export const PermissionRequest = Schema.Struct({
+  action: PermissionAction, requestId: Schema.NonEmptyString, resource: Schema.NonEmptyString, input: Schema.Json,
+  metadata: Schema.optionalKey(Schema.Struct({ readOnly: Schema.optionalKey(Schema.Boolean) })),
+})
+// BudgetMetric names a measured quantity and its unit, such as toolCalls, usd, or elapsedMs.
+export const BudgetMetric = Schema.NonEmptyString
+export const BudgetPolicy = Schema.Struct({ limit: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)), requestTool: Schema.optionalKey(Schema.NonEmptyString), scope: Schema.optionalKey(Schema.Literals(["actor", "turn"])), onExhausted: Schema.optionalKey(Schema.Literals(["wait", "deny"])) })
 export const PermissionConfigured = Schema.Struct({ type: Schema.Literal("PermissionConfigured"), policy: PermissionPolicy })
 export const PermissionUpdated = Schema.Struct({ type: Schema.Literal("PermissionUpdated"), policy: PermissionPolicy })
-export const BudgetConfigured = Schema.Struct({ type: Schema.Literal("BudgetConfigured"), policy: BudgetPolicy })
-export const BudgetUpdated = Schema.Struct({ type: Schema.Literal("BudgetUpdated"), policy: BudgetPolicy })
+export const BudgetConfigured = Schema.Struct({ type: Schema.Literal("BudgetConfigured"), metric: BudgetMetric, policy: BudgetPolicy })
+export const BudgetUpdated = Schema.Struct({ type: Schema.Literal("BudgetUpdated"), metric: BudgetMetric, policy: BudgetPolicy })
 
 export const BudgetDecision = Schema.Union([
-  Schema.Struct({ allowed: Schema.Literal(true), additionalCalls: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)) }),
+  Schema.Struct({ allowed: Schema.Literal(true), additional: Schema.Finite.check(Schema.isGreaterThan(0)) }),
   Schema.Struct({ allowed: Schema.Literal(false), reason: Schema.String }),
 ])
 
-export const BudgetResolved = Schema.Struct({ type: Schema.Literal("BudgetResolved"), callId: Schema.String, decision: BudgetDecision })
+export const BudgetResolved = Schema.Struct({ type: Schema.Literal("BudgetResolved"), metric: BudgetMetric, callId: Schema.String, decision: BudgetDecision })
 export type BudgetResolved = typeof BudgetResolved.Type
-export const PermissionResolved = Schema.Struct({ type: Schema.Literal("PermissionResolved"), callId: Schema.String, decision: Decision })
+export const PermissionResolved = Schema.Struct({ type: Schema.Literal("PermissionResolved"), action: PermissionAction, requestId: Schema.NonEmptyString, decision: Decision })
 export type PermissionResolved = typeof PermissionResolved.Type
 
-export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), callId: Schema.String, charged: Schema.Boolean })
+export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), callId: Schema.String, counted: Schema.Boolean })
 export type ToolCalled = typeof ToolCalled.Type
 
 export const ToolReturned = Schema.Struct({ type: Schema.Literal("ToolReturned"), callId: Schema.String, output: Schema.String, error: Schema.NullOr(Schema.String), promise: Schema.optionalKey(ToolPromise) })
@@ -52,8 +68,8 @@ export const ModelCalled = Schema.Union([
 export type ModelCalled = typeof ModelCalled.Type
 
 export const ModelReturned = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("inference"), callId: Schema.String, text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
-  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("compaction"), callId: Schema.String, text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("inference"), callId: Schema.String, text: Schema.String, toolCalls: Schema.Array(ToolCall), usage: Schema.optionalKey(ModelUsage) }),
+  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("compaction"), callId: Schema.String, text: Schema.String, usage: Schema.optionalKey(ModelUsage) }),
 ])
 export type ModelReturned = typeof ModelReturned.Type
 
@@ -87,18 +103,18 @@ export type Event = typeof Event.Type
 export const message = (input: { readonly text: string; readonly turnId?: string }): MessageReceived =>
   ({ type: "MessageReceived", kind: "message", source: "user", turnId: input.turnId ?? crypto.randomUUID(), text: input.text })
 
-export const resolveBudget = (callId: string, decision: typeof BudgetDecision.Type): BudgetResolved =>
-  ({ type: "BudgetResolved", callId, decision })
+export const resolveBudget = (metric: string, callId: string, decision: typeof BudgetDecision.Type): BudgetResolved =>
+  ({ type: "BudgetResolved", metric, callId, decision })
 
-export const resolvePermission = (callId: string, decision: typeof Decision.Type): PermissionResolved =>
-  ({ type: "PermissionResolved", callId, decision })
+export const resolvePermission = (action: string, requestId: string, decision: typeof Decision.Type): PermissionResolved =>
+  ({ type: "PermissionResolved", action, requestId, decision })
 
 export const updatePermission = (policy: typeof PermissionPolicy.Type): typeof PermissionUpdated.Type =>
   ({ type: "PermissionUpdated", policy })
 
 // updateBudget replaces the base allowance while retaining usage and grants from resolved requests.
-export const updateBudget = (policy: typeof BudgetPolicy.Type): typeof BudgetUpdated.Type =>
-  ({ type: "BudgetUpdated", policy })
+export const updateBudget = (metric: string, policy: typeof BudgetPolicy.Type): typeof BudgetUpdated.Type =>
+  ({ type: "BudgetUpdated", metric, policy })
 
 // messageSource identifies inbox senders, including synthetic turn identifiers in historical events.
 export function messageSource(event: MessageReceived): "user" | "agent" | "tool" {

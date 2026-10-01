@@ -1,5 +1,5 @@
 import { Schema } from "effect"
 
-export const BudgetAmount = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
+export const ToolBudgetAmount = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
 
-export const BudgetRequestInput = Schema.Struct({ amount: BudgetAmount, reason: Schema.NonEmptyString })
+export const ToolBudgetRequestInput = Schema.Struct({ amount: ToolBudgetAmount, reason: Schema.NonEmptyString })

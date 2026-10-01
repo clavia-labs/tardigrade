@@ -29,10 +29,10 @@ function describe(event: Event): Pick<ActivityEntry, "summary" | "status"> {
       return { summary, status: "info" }
     }
     case "BudgetConfigured":
-    case "BudgetUpdated": return { summary: `${event.policy.maxCalls} tool calls · ${event.policy.scope ?? "actor"}`, status: "info" }
+    case "BudgetUpdated": return { summary: `${event.policy.limit} ${event.metric} · ${event.policy.scope ?? "actor"}`, status: "info" }
     case "PermissionConfigured":
-    case "PermissionUpdated": return { summary: `default=${event.policy.default}${event.policy.readOnly ? ` · read-only=${event.policy.readOnly}` : ""}`, status: "info" }
-    case "PermissionResolved": return { summary: `${event.decision.allowed ? "allowed" : "denied"} · ${event.decision.reason}`, status: "notification" }
+    case "PermissionUpdated": return { summary: `default=${event.policy.default} · actions=${Object.keys(event.policy.actions).join(", ")}`, status: "info" }
+    case "PermissionResolved": return { summary: `${event.action} · ${event.decision.allowed ? "allowed" : "denied"} · ${event.decision.reason}`, status: "notification" }
     case "ToolCalled": return { summary: event.callId, status: "info" }
     case "ToolReturned": return { summary: `${event.callId}${event.error ? ` · ${event.error}` : ""}`, status: event.error ? "failed" : "info" }
     case "TurnSettled": return { summary: `${event.outcome} · ${"reason" in event ? event.reason : "callId" in event ? event.callId : event.turnId}`, status: event.outcome === "completed" ? "completed" : "failed" }

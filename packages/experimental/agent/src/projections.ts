@@ -1,6 +1,6 @@
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
-import { ToolCall, Decision, BudgetDecision, PermissionPolicy, BudgetPolicy, type Event, type MessageReceived } from "./event"
+import { ToolCall, Decision, BudgetDecision, PermissionPolicy, BudgetPolicy, BudgetMetric, PermissionAction, type Event, type MessageReceived } from "./event"
 
 const Message = Schema.Union([
   Schema.Struct({ role: Schema.Literal("user"), text: Schema.String }),
@@ -10,7 +10,7 @@ const Message = Schema.Union([
 export const Conversation = Schema.Array(Message)
 
 // inboxMessage selects messages that require an inference turn; replies resolve actor exchanges.
-function inboxMessage(event: MessageReceived): { readonly turnId: string; readonly text: string } | undefined {
+export function inboxMessage(event: MessageReceived): { readonly turnId: string; readonly text: string } | undefined {
   if (event.kind === "reply") return undefined
   if (event.kind === "message") return event
   return {
@@ -120,7 +120,7 @@ export function toolState(state: typeof ToolState.Type, event: Event): typeof To
   return queue === state.queue ? state : { queue, pending: queue[0]?.call ?? null, running: queue[0]?.running ?? false }
 }
 
-export const PermissionState = Schema.Struct({ policy: Schema.NullOr(PermissionPolicy), decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: Decision })) })
+export const PermissionState = Schema.Struct({ policy: Schema.NullOr(PermissionPolicy), decisions: Schema.Array(Schema.Struct({ action: PermissionAction, requestId: Schema.NonEmptyString, decision: Decision })) })
 export function permissionState(state: typeof PermissionState.Type, event: Event): typeof PermissionState.Type {
   if (event.type === "PermissionConfigured") {
     if (state.policy) throw new RuntimeError("Permission policy is already configured")
@@ -131,43 +131,61 @@ export function permissionState(state: typeof PermissionState.Type, event: Event
     return { ...state, policy: event.policy }
   }
   if (event.type === "PermissionResolved") {
-    const prior = state.decisions.findLast(value => value.callId === event.callId)?.decision
+    const prior = state.decisions.findLast(value => value.action === event.action && value.requestId === event.requestId)?.decision
     if (prior?.allowed === event.decision.allowed && prior.reason === event.decision.reason) return state
-    return { ...state, decisions: [...state.decisions, { callId: event.callId, decision: event.decision }] }
+    return { ...state, decisions: [...state.decisions, { action: event.action, requestId: event.requestId, decision: event.decision }] }
   }
   return state
 }
 
-export const ToolBudgetState = Schema.Struct({
-  turnId: Schema.optionalKey(Schema.String), policy: Schema.NullOr(BudgetPolicy), used: Schema.Finite, charged: Schema.Array(Schema.String), granted: Schema.Finite,
+export const BudgetState = Schema.Array(Schema.Struct({
+  metric: BudgetMetric, turnId: Schema.optionalKey(Schema.String), policy: BudgetPolicy, granted: Schema.Finite,
   decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: BudgetDecision })),
-})
-export function toolBudgetState(state: typeof ToolBudgetState.Type, event: Event): typeof ToolBudgetState.Type {
+}))
+
+function validateBudgetAmount(metric: string, amount: number) {
+  if (!Number.isFinite(amount) || (metric === "toolCalls" && !Number.isSafeInteger(amount))) throw new RuntimeError(`Invalid budget amount for ${metric}`)
+}
+
+export function budgetState(state: typeof BudgetState.Type, event: Event): typeof BudgetState.Type {
   if (event.type === "BudgetConfigured" || event.type === "BudgetUpdated") {
-    if (event.type === "BudgetConfigured" && state.policy) throw new RuntimeError("Budget policy is already configured")
-    if (event.type === "BudgetUpdated" && !state.policy) throw new RuntimeError("Budget policy is not configured")
-    if (!Number.isSafeInteger(event.policy.maxCalls + state.granted)) throw new RuntimeError("Total tool budget exceeds safe integer range")
-    return { ...state, policy: event.policy }
+    const prior = state.find(entry => entry.metric === event.metric)
+    if (event.type === "BudgetConfigured" && prior) throw new RuntimeError(`Budget policy is already configured: ${event.metric}`)
+    if (event.type === "BudgetUpdated" && !prior) throw new RuntimeError(`Budget policy is not configured: ${event.metric}`)
+    validateBudgetAmount(event.metric, event.policy.limit)
+    validateBudgetAmount(event.metric, event.policy.limit + (prior?.granted ?? 0))
+    return prior ? state.map(entry => entry === prior ? { ...entry, policy: event.policy } : entry)
+      : [...state, { metric: event.metric, policy: event.policy, granted: 0, decisions: [] }]
   }
-  if (event.type === "ModelCalled" && event.purpose === "inference" && state.policy?.scope === "turn" && state.turnId !== event.turnId) {
-    return { ...state, turnId: event.turnId, used: 0, charged: [], granted: 0, decisions: [] }
+  if (event.type === "ModelCalled" && event.purpose === "inference") {
+    if (!state.some(entry => entry.policy.scope === "turn" && entry.turnId !== event.turnId)) return state
+    return state.map(entry => entry.policy.scope === "turn" && entry.turnId !== event.turnId
+      ? { ...entry, turnId: event.turnId, granted: 0, decisions: [] } : entry)
   }
-  if (event.type === "TurnSettled" && state.policy?.scope === "turn" && state.turnId === event.turnId) {
-    return { ...state, used: 0, charged: [], granted: 0, decisions: [] }
+  if (event.type === "TurnSettled") {
+    if (!state.some(entry => entry.policy.scope === "turn" && entry.turnId === event.turnId)) return state
+    return state.map(entry => {
+      if (entry.policy.scope !== "turn" || entry.turnId !== event.turnId) return entry
+      const { turnId: _turnId, ...retained } = entry
+      return { ...retained, granted: 0, decisions: [] }
+    })
   }
-  if (event.type === "ToolCalled" && event.charged && !state.charged.includes(event.callId)) return { ...state, used: state.used + 1, charged: [...state.charged, event.callId] }
   if (event.type === "BudgetResolved") {
-    const prior = state.decisions.find(value => value.callId === event.callId)
+    const budget = state.find(entry => entry.metric === event.metric)
+    if (!budget) throw new RuntimeError(`Budget policy is not configured: ${event.metric}`)
+    const prior = budget.decisions.find(value => value.callId === event.callId)
     if (prior) {
       const same = prior.decision.allowed
-        ? event.decision.allowed && prior.decision.additionalCalls === event.decision.additionalCalls
+        ? event.decision.allowed && prior.decision.additional === event.decision.additional
         : !event.decision.allowed && prior.decision.reason === event.decision.reason
-      if (!same) throw new RuntimeError(`Conflicting budget resolution: ${event.callId}`)
+      if (!same) throw new RuntimeError(`Conflicting budget resolution: ${event.metric}:${event.callId}`)
       return state
     }
-    const granted = state.granted + (event.decision.allowed ? event.decision.additionalCalls : 0)
-    if (!Number.isSafeInteger(granted) || !Number.isSafeInteger(granted + (state.policy?.maxCalls ?? 0))) throw new RuntimeError("Total tool budget exceeds safe integer range")
-    return { ...state, granted, decisions: [...state.decisions, { callId: event.callId, decision: event.decision }] }
+    if (event.decision.allowed) validateBudgetAmount(event.metric, event.decision.additional)
+    const granted = budget.granted + (event.decision.allowed ? event.decision.additional : 0)
+    validateBudgetAmount(event.metric, granted)
+    validateBudgetAmount(event.metric, granted + budget.policy.limit)
+    return state.map(entry => entry === budget ? { ...entry, granted, decisions: [...entry.decisions, { callId: event.callId, decision: event.decision }] } : entry)
   }
   return state
 }

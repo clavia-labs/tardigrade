@@ -2,6 +2,7 @@ import { RuntimeError, type ExecutionHandle } from "@clavia/tardigrade-experimen
 import { Context, Effect, JsonSchema, Layer, Schema, SchemaRepresentation } from "effect"
 import { AiError, LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
+import { reportedCostOf } from "@clavia/tardigrade-model/providers/usage"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
 import type { ModelRef } from "@clavia/tardigrade-model/reference"
 import type { ToolSpec } from "@clavia/tardigrade-experimental-packages"
@@ -94,7 +95,13 @@ export function modelServices(options: ModelServiceOptions = {}) {
       )
       if (response.finishReason === "length") return yield* Effect.fail(new RuntimeError(`Model reached maxOutputTokens=${settings.policy.maxOutputTokens}`))
       const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: Schema.decodeUnknownSync(Schema.Json)(call.params) }))
-      return { text: response.text, toolCalls }
+      const finish = response.content.find(part => part.type === "finish")
+      const usd = finish ? reportedCostOf(finish) : undefined
+      return { text: response.text, toolCalls, usage: {
+        ...(response.usage.inputTokens.total === undefined ? {} : { input: response.usage.inputTokens.total }),
+        ...(response.usage.outputTokens.total === undefined ? {} : { output: response.usage.outputTokens.total }),
+        usd: usd ?? null,
+      } }
     }) } satisfies typeof Model.Service
   }))
 }

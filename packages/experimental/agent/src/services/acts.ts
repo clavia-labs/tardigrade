@@ -18,12 +18,12 @@ export const generate = Generate.layer(input => Effect.gen(function* () {
 }).pipe(Effect.mapError(String)))
 
 export const summarize = Summarize.layer(input => Model.use(model => model.call(input)).pipe(
-  Effect.flatMap(reply => reply.text.trim() ? Effect.succeed(reply.text) : Effect.fail("Compaction returned an empty summary")),
+  Effect.flatMap(reply => reply.text.trim() ? Effect.succeed(reply) : Effect.fail("Compaction returned an empty summary")),
   Effect.mapError(String),
 ))
 
 export const askPermission = AskPermission.layer(input => Effect.gen(function* () {
-  const answer = yield* PermissionRequests.use(service => service.request(input.call, input.metadata))
+  const answer = yield* PermissionRequests.use(service => service.request(input))
   const result = yield* Schema.decodeEffect(requestResult(Decision))(answer)
   return result.type === "decision" ? result.decision : AskPermission.defer({ ...result.handle, ...(result.mode ? { mode: result.mode } : {}) })
 }).pipe(Effect.mapError(String)))
@@ -32,7 +32,10 @@ export const askBudget = AskBudget.layer(input => Effect.gen(function* () {
   const answer = yield* BudgetRequests.use(service => service.request(input))
   const result = yield* Schema.decodeEffect(requestResult(BudgetDecision))(answer)
   if (result.type === "pending") return AskBudget.defer({ ...result.handle, ...(result.mode ? { mode: result.mode } : {}) })
-  if (result.decision.allowed && !Number.isSafeInteger(input.limit + result.decision.additionalCalls)) return yield* Effect.fail("Total tool budget exceeds safe integer range")
+  if (result.decision.allowed) {
+    const total = input.limit + result.decision.additional
+    if (!Number.isFinite(total) || (input.metric === "toolCalls" && (!Number.isSafeInteger(result.decision.additional) || !Number.isSafeInteger(total)))) return yield* Effect.fail("Invalid budget grant")
+  }
   return result.decision
 }).pipe(Effect.mapError(String)))
 

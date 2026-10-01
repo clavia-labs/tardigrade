@@ -1,8 +1,7 @@
 import { EffectExecution, ExecutionHandle, RuntimeError, durablePromise } from "@clavia/tardigrade-experimental-core"
 import { Cause, Context, Effect, Exit, Layer, Schema } from "effect"
-import type { ToolMetadata } from "@clavia/tardigrade-experimental-packages"
 import type { ActorCaller } from "@clavia/tardigrade-experimental-host"
-import type { BudgetDecision, Decision, ToolCall } from "../event"
+import type { BudgetDecision, Decision, PermissionRequest } from "../event"
 
 export type RequestResult<Decision> =
   | { readonly type: "decision"; readonly decision: Decision }
@@ -23,10 +22,11 @@ export const deferDecision = <Value extends Schema.Json, Services>(work: Effect.
 })
 
 export class PermissionRequests extends Context.Service<PermissionRequests, {
-  readonly request: (call: typeof ToolCall.Type, metadata?: typeof ToolMetadata.Type) => Effect.Effect<RequestResult<typeof Decision.Type>, Error, EffectExecution>
+  readonly request: (request: typeof PermissionRequest.Type) => Effect.Effect<RequestResult<typeof Decision.Type>, Error, EffectExecution>
 }>()("example/PermissionRequests") {}
 
 export type BudgetRequest = {
+  readonly metric: string
   readonly callId: string
   readonly amount: number
   readonly reason: string
@@ -43,10 +43,10 @@ export const parentBudgetRequests = (caller: ActorCaller) => Layer.succeed(Budge
   request: request => deferDecision(Effect.gen(function* () {
     const decision = yield* caller.request({
       requestId: request.callId, kind: "budget", description: request.reason,
-      input: { amount: request.amount, used: request.used, limit: request.limit },
+      input: { metric: request.metric, amount: request.amount, used: request.used, limit: request.limit },
     })
     if (!decision.allowed) return { allowed: false, reason: decision.reason }
     if (decision.amount === undefined) return yield* Effect.fail(new RuntimeError("Budget grant omitted its amount"))
-    return { allowed: true, additionalCalls: decision.amount }
+    return { allowed: true, additional: decision.amount }
   })),
 })

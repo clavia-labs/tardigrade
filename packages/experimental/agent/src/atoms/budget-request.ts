@@ -1,12 +1,13 @@
 import type { ActService } from "@clavia/tardigrade-experimental-core"
 import { AskBudget, requests } from "../acts"
-import { durableAtom } from "@clavia/tardigrade-experimental-core"
+import { toolSpend } from "./durable/spend"
+import { budgetState } from "./durable/budget"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
 import { atom, effectAtom, type Atom, eventValue, type ActorOutput } from "@clavia/tardigrade-experimental-core"
-import { ToolBudgetState, toolBudgetState, type ToolState } from "../projections"
-import { BudgetConfigured, BudgetUpdated, BudgetResolved, ToolCalled, ModelCalled, TurnSettled, BudgetPolicy, BudgetDecision, type Event } from "../event"
-import { BudgetRequestInput } from "../budget-contracts"
+import type { ToolState } from "../projections"
+import { BudgetPolicy, BudgetDecision, type Event } from "../event"
+import { ToolBudgetRequestInput } from "../budget-contracts"
 
 export type ToolBudgetView<R = never> = ActorOutput<{
   readonly requestTool?: string
@@ -25,46 +26,47 @@ export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: {
 export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: { readonly configure: false }): Atom<ToolBudgetView>
 export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: { readonly maxCalls: number; readonly requestTool?: string } | { readonly configure: false }): Atom<ToolBudgetView<ActService<"agent.budget.request">>> {
   if ("maxCalls" in options && (!Number.isSafeInteger(options.maxCalls) || options.maxCalls < 0)) throw new RuntimeError("maxCalls must be a nonnegative safe integer")
-  const initialPolicy = "maxCalls" in options ? Schema.decodeSync(BudgetPolicy, { onExcessProperty: "error" })(options) : undefined
-  const usage = durableAtom({ name: "agent.budget.usage", input: Schema.Union([BudgetConfigured, BudgetUpdated, BudgetResolved, ToolCalled, ModelCalled, TurnSettled]), schema: ToolBudgetState, initial: { policy: null, used: 0, charged: [], granted: 0, decisions: [] }, reduce: toolBudgetState })
+  const initialPolicy = "maxCalls" in options ? Schema.decodeSync(BudgetPolicy, { onExcessProperty: "error" })({ limit: options.maxCalls, ...(options.requestTool ? { requestTool: options.requestTool } : {}) }) : undefined
   const request = requests(AskBudget.request)
   return effectAtom(get => {
-    const state = get(usage)
-    if (!state.policy) return {
-      view: { configured: false, used: state.used, limit: 0, remaining: 0, decision: null, request: null },
-      acts: {}, events: initialPolicy ? { budget: eventValue({ type: "BudgetConfigured", policy: initialPolicy } satisfies Event) } : {},
+    const state = get(budgetState).find(entry => entry.metric === "toolCalls")
+    const spend = get(toolSpend)
+    const used = state?.policy.scope === "turn" ? spend.find(turn => turn.turnId === state.turnId)?.count ?? 0 : spend.reduce((total, turn) => total + turn.count, 0)
+    if (!state) return {
+      view: { configured: false, used, limit: 0, remaining: 0, decision: null, request: null },
+      acts: {}, events: initialPolicy ? { budget: eventValue({ type: "BudgetConfigured", metric: "toolCalls", policy: initialPolicy } satisfies Event) } : {},
     }
     const policy = state.policy
     const { pending, running } = get(pendingTools)
-    const limit = policy.maxCalls + state.granted
+    const limit = policy.limit + state.granted
     if (!Number.isSafeInteger(limit)) throw new RuntimeError("Tool budget exceeds safe integer range")
-    const remaining = Math.max(0, limit - state.used)
-    const base = { exhausted: remaining === 0 && policy.onExhausted === "deny", ...(policy.requestTool ? { requestTool: policy.requestTool } : {}), configured: true, used: state.used, limit, remaining }
+    const remaining = Math.max(0, limit - used)
+    const base = { exhausted: remaining === 0 && policy.onExhausted === "deny", ...(policy.requestTool ? { requestTool: policy.requestTool } : {}), configured: true, used, limit, remaining }
     const resolution = state.decisions.find(value => value.callId === pending?.callId)?.decision
     if (pending && pending.name === policy.requestTool) {
       const waiting = { ...base, decision: null, request: { callId: pending.callId, reason: "Waiting for budget decision" } }
       if (resolution) return { view: { ...base, decision: null, request: null, response: resolution }, events: {}, acts: {} }
       if (remaining > 0) return { view: { ...base, decision: null, request: null, response: { error: "Tool budget is not exhausted" } }, events: {}, acts: {} }
-      let input: typeof BudgetRequestInput.Type
-      try { input = Schema.decodeUnknownSync(BudgetRequestInput, { onExcessProperty: "error" })(pending.input) }
+      let input: typeof ToolBudgetRequestInput.Type
+      try { input = Schema.decodeUnknownSync(ToolBudgetRequestInput, { onExcessProperty: "error" })(pending.input) }
       catch (error) { return { view: { ...base, decision: null, request: null, response: { error: String(error) } }, events: {}, acts: {} } }
       return {
         view: waiting,
         events: {}, acts: { budget: request({
           tag: pending.callId,
-          input: { callId: pending.callId, ...input, used: state.used, limit },
+          input: { metric: "toolCalls", callId: pending.callId, ...input, used, limit },
           onSettled: result => {
             const decision = result.status === "fulfilled" ? result.value : { allowed: false as const, reason: `Budget request failed: ${result.reason}` }
-            if (decision.allowed && !Number.isSafeInteger(limit + decision.additionalCalls)) return [{ type: "BudgetResolved", callId: pending.callId, decision: { allowed: false, reason: "Total tool budget exceeds safe integer range" } } satisfies Event]
-            return [{ type: "BudgetResolved", callId: pending.callId, decision } satisfies Event]
+            if (decision.allowed && !Number.isSafeInteger(limit + decision.additional)) return [{ type: "BudgetResolved", metric: "toolCalls", callId: pending.callId, decision: { allowed: false, reason: "Total tool budget exceeds safe integer range" } } satisfies Event]
+            return [{ type: "BudgetResolved", metric: "toolCalls", callId: pending.callId, decision } satisfies Event]
           },
         }) },
       }
     }
     if (resolution && !resolution.allowed) return { view: { ...base, decision: resolution, request: null }, events: {}, acts: {} }
-    if (base.exhausted) return { view: { ...base, decision: { allowed: false, reason: `Tool budget exhausted: ${state.used}/${limit} calls` }, request: null }, events: {}, acts: {} }
+    if (base.exhausted) return { view: { ...base, decision: { allowed: false, reason: `Tool budget exhausted: ${used}/${limit} calls` }, request: null }, events: {}, acts: {} }
     if (!pending || running || remaining > 0) return { view: { ...base, decision: { allowed: true, reason: "Tool budget available" }, request: null }, events: {}, acts: {} }
-    return { view: { ...base, decision: null, request: { callId: pending.callId, reason: `Tool budget exhausted: ${state.used}/${limit} calls` } }, events: {}, acts: {} }
+    return { view: { ...base, decision: null, request: { callId: pending.callId, reason: `Tool budget exhausted: ${used}/${limit} calls` } }, events: {}, acts: {} }
   })
 }
 

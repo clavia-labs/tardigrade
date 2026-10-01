@@ -1,4 +1,4 @@
-import { trajectory } from "@clavia/tardigrade-experimental-agent/atoms/trajectory"
+import { trajectory } from "@clavia/tardigrade-experimental-agent/atoms/durable/trajectory"
 import { actorContext } from "@clavia/tardigrade-experimental-agent/context"
 import { Cause, Config, Console, Effect, Exit } from "effect"
 import { createBunHost } from "@clavia/tardigrade-experimental-platform/bun"
