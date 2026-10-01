@@ -4,7 +4,7 @@ import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { effectAtom, type Atom } from "@clavia/tardigrade-experimental-core"
 import { CompactionState, compactState, type Conversation } from "../projections"
-import { ModelCalled, ModelReturned, CompactionFailed } from "../event"
+import { ModelCalled, ModelReturned, CompactionFailed, TurnSettled } from "../event"
 import { ModelInfo } from "../context"
 import { Summarize, requests, failureMessage } from "../acts"
 
@@ -56,7 +56,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     return text === message.text ? message : { ...message, text }
   })
   const estimate = (messages: typeof Conversation.Type) => Math.ceil(messages.reduce((size, message) => size + JSON.stringify(message).length, 0) / policy.charsPerToken)
-  const compactionState = durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed]), schema: CompactionState, initial: { through: 0, summary: "", pending: null, failure: null }, reduce: compactState })
+  const compactionState = durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed, TurnSettled]), schema: CompactionState, initial: { through: 0, attempts: 0, summary: "", pending: null, failure: null }, reduce: compactState })
 
   const request = requests(Summarize.request)
   return Effect.map(ModelInfo, selection => effectAtom(get => {
@@ -85,7 +85,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     }
     if (pending.size || !boundaries.length) return { view: ready, events: {}, acts: {} }
     const through = boundaries.find(index => estimate(messages.slice(index)) <= retainTokens) ?? boundaries.at(-1)!
-    const callId = `compact:${through}`
+    const callId = `compact:${through}:${state.attempts}`
     return {
       view: { position: "compacting" as const, policy, ...usage },
       events: {}, acts: { compact: request({

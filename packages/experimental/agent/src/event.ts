@@ -1,7 +1,7 @@
 import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ActorRequest, ActorDecision, PromiseSettled } from "@clavia/tardigrade-experimental-host/contracts"
 import { Schema } from "effect"
-import { ExecutionHandle } from "@clavia/tardigrade-experimental-core"
+import { ExecutionHandle, EffectRef } from "@clavia/tardigrade-experimental-core"
 import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
 
 const ProviderToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Json })
@@ -50,7 +50,7 @@ export const ToolReturned = Schema.Struct({ type: Schema.Literal("ToolReturned")
 export type ToolReturned = typeof ToolReturned.Type
 
 export const MessageReceived = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("message"), source: Schema.optionalKey(Schema.Literals(["user", "agent", "tool"])), turnId: Schema.String, text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("message"), source: Schema.optionalKey(Schema.Literals(["user", "agent", "tool"])), promiseRef: Schema.optionalKey(EffectRef), turnId: Schema.String, text: Schema.String }),
   Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("request"), handle: ExecutionHandle, request: ActorRequest }),
   Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("reply"), handle: ExecutionHandle, requestId: Schema.String, decision: ActorDecision }),
 ])
@@ -74,6 +74,8 @@ export const ModelReturned = Schema.Union([
 export type ModelReturned = typeof ModelReturned.Type
 
 export const CompactionFailed = Schema.Struct({ type: Schema.Literal("CompactionFailed"), callId: Schema.String, reason: Schema.String })
+export const ModelFailed = Schema.Struct({ type: Schema.Literal("ModelFailed"), callId: Schema.String, reason: Schema.String })
+export const TurnCancelRequested = Schema.Struct({ type: Schema.Literal("TurnCancelRequested"), reason: Schema.String })
 
 export const TurnSettled = Schema.Union([
   Schema.Struct({ type: Schema.Literal("TurnSettled"), turnId: Schema.String, outcome: Schema.Literal("completed"), callId: Schema.String }),
@@ -93,6 +95,8 @@ export const Event = Schema.Union([
   ToolReturned,
   MessageReceived,
   ModelCalled,
+  ModelFailed,
+  TurnCancelRequested,
   CompactionFailed,
   PromiseSettled,
   ModelReturned,
@@ -102,6 +106,9 @@ export type Event = typeof Event.Type
 
 export const message = (input: { readonly text: string; readonly turnId?: string }): MessageReceived =>
   ({ type: "MessageReceived", kind: "message", source: "user", turnId: input.turnId ?? crypto.randomUUID(), text: input.text })
+
+// cancel requests cancellation of the turn active when the event is committed.
+export const cancel = (reason: string): typeof TurnCancelRequested.Type => ({ type: "TurnCancelRequested", reason })
 
 export const resolveBudget = (metric: string, callId: string, decision: typeof BudgetDecision.Type): BudgetResolved =>
   ({ type: "BudgetResolved", metric, callId, decision })

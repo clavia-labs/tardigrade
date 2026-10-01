@@ -8,9 +8,11 @@ import { cancellationTerminality, cancellationForwarding, cancellationBatchIsola
 
 import { toolDeferredLifecycle } from "./tool-deferred-lifecycle"
 
-import { agentCancellationRecovery, codeModeCancellationRecovery } from "./agent-cancellation"
+import { agentTurnCancellation, agentCancellationRecovery, codeModeCancellationRecovery, compactionCancellationRecovery } from "./agent-cancellation"
 
 export const propertyCases = {
+  compactionCancellationRecovery: () => fc.assert(compactionCancellationRecovery, HOST_PROPERTY_OPTIONS),
+  agentTurnCancellation: () => fc.assert(agentTurnCancellation, HOST_PROPERTY_OPTIONS),
   agentCancellationRecovery: () => fc.assert(agentCancellationRecovery, HOST_PROPERTY_OPTIONS),
   codeModeCancellationRecovery: () => fc.assert(codeModeCancellationRecovery, HOST_PROPERTY_OPTIONS),
   cancellationBatchIsolation: () => fc.assert(cancellationBatchIsolation, HOST_PROPERTY_OPTIONS),

@@ -40,8 +40,9 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
     run: (call, caller) => Effect.gen(function* () {
       if (depth >= options.maxChildDepth) return yield* Effect.fail(new RuntimeError(`Child depth limit reached: ${options.maxChildDepth}`))
       const childBudget = yield* Schema.decodeUnknownEffect(AgentBudget)(call.config?.budget ?? { toolCalls: DEFAULT_AGENT_TOOL_CALLS }).pipe(Effect.mapError(RuntimeError.from))
+      const actor: AssistantDefinition<Services> = options.actor ?? createActor
       return yield* Effect.acquireUseRelease(
-        createActorStore({ actor: options.actor ?? createActor, ...assistantRuntime(options, depth + 1, caller, childBudget) }),
+        createActorStore({ actor, ...assistantRuntime(options, depth + 1, caller, childBudget) }),
         child => Effect.gen(function* () {
           yield* child.message({ text: call.message, turnId: call.id })
           yield* child.wait

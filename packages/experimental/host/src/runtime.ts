@@ -19,6 +19,7 @@ export type ActorServices<Definition> = Definition extends ActorDefinition<infer
   : never
 
 // createActorStore instantiates an actor definition and owns its services, journal commits, and execution lifetime.
+// Actor actions are available through methods; runtime operations take precedence on the store surface.
 export function createActorStore<Event extends object, State, Methods extends object, Services>(options: {
   readonly actor: ActorDefinition<Event, State, Methods, Services>
   readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
@@ -516,9 +517,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }
       const actions = setup.actions(event => run(send([event])))
       for (const [name, action] of Object.entries(actions)) {
-        if (name in api || typeof action !== "function") return yield* Effect.fail(new RuntimeError(`Invalid actor action: ${name}`))
+        if (typeof action !== "function") return yield* Effect.fail(new RuntimeError(`Invalid actor action: ${name}`))
       }
-      return { ...api, ...actions }
+      return { ...actions, ...api }
     }).pipe(Effect.onError(() => close))
   })
 }

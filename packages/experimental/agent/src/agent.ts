@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { atom, defineActor } from "@clavia/tardigrade-experimental-core"
-import { message } from "./event"
+import { message, cancel } from "./event"
 import { trajectory } from "./atoms/durable"
 import { toolBudget, budgetInstructions } from "./atoms/budget-request"
 import { compact } from "./atoms/compact"
@@ -27,5 +27,5 @@ export const createActor = defineActor("tardie", Effect.gen(function* () {
     context: get(context),
   }))
   const inference = yield* infer(input)
-  return { atom: inference, actions: { message } }
+  return { atom: inference, actions: { message, cancel } }
 }))

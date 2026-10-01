@@ -1,14 +1,14 @@
 import type { ActService } from "@clavia/tardigrade-experimental-core"
-import { durableAtom } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { effectAtom, eventValue, type Atom, type Getter, type ActorOutput } from "@clavia/tardigrade-experimental-core"
-import { InferenceState, inferState, initialInference, type Conversation } from "../projections"
+import { effectAtom, eventValue, cancel, effectKey, type Atom, type Getter, type ActorOutput } from "@clavia/tardigrade-experimental-core"
+import { type Conversation } from "../projections"
 import { ModelInfo } from "../context"
 import { Generate, requests, failureMessage } from "../acts"
+import { inferenceState } from "./durable/inference"
 import { toolSpend, tokenSpend, usdSpend } from "./durable/spend"
 import type { ToolView } from "./tools"
-import { Event, ModelCalled, MessageReceived, ToolReturned, ModelReturned, TurnSettled } from "../event"
+import { Event, MessageReceived, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled } from "../event"
 
 export type ContextView = ActorOutput<{ readonly position: "compacting" } | { readonly position: "failed"; readonly reason: string } | {
   readonly position: "ready"; readonly messages: typeof Conversation.Type
@@ -20,11 +20,6 @@ export interface AgentInput<R, ToolEvents extends object = Event> {
 }
 
 export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>>) {
-  const inferenceState = durableAtom({ name: "agent.inference.state", input: Schema.Union([MessageReceived, ModelCalled, ModelReturned, ToolReturned, TurnSettled]),
-    schema: InferenceState,
-    initial: initialInference, reduce: inferState,
-  })
-
   const request = requests(Generate.request)
 
   const output = Effect.map(ModelInfo, selection => effectAtom(get => {
@@ -33,12 +28,33 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
     get(usdSpend)
     const input = get(agent)
     const state = get(inferenceState)
+    const turn = state.turns.find(turn => turn.turnId === state.turnId)
 
+    if (turn && turn.cancellation !== null) {
+      const reason = turn.cancellation
+      const pending = turn.effects.filter(work => work.pending)
+      return {
+        view: { position: "stopping" as const },
+        acts: Object.fromEntries(pending.map(({ ref }) => [encodeURIComponent(effectKey(ref)), cancel(ref, reason)])),
+        events: pending.length ? {} : turn.outstanding.length
+          ? Object.fromEntries(turn.outstanding.map(callId => [encodeURIComponent(callId), eventValue({ type: "ToolReturned", callId, output: "", error: reason } satisfies ToolReturned)]))
+          : { inference: eventValue({ type: "TurnSettled", turnId: turn.turnId, outcome: "cancelled", reason } satisfies TurnSettled) },
+      }
+    }
+
+    const cancelled = new Set(state.turns.filter(turn => turn.cancellation !== null).flatMap(turn => turn.effects.map(work => effectKey(work.ref))))
     const proposals = {
-      events: { ...input.context.events, ...input.tools.events },
-      acts: { ...input.context.acts, ...input.tools.acts },
+      events: Object.fromEntries(Object.entries({ ...input.context.events, ...input.tools.events }).filter(([, proposal]) => {
+        const event = proposal.event
+        return !Schema.is(MessageReceived)(event) || event.kind !== "message" || !event.promiseRef || !cancelled.has(effectKey(event.promiseRef))
+      })),
+      acts: state.turnId ? { ...input.context.acts, ...input.tools.acts } : {},
     }
     if (state.running) return { view: { position: "running" as const }, ...proposals }
+    if (turn && turn.failure !== null) return {
+      view: { position: "settling" as const }, acts: proposals.acts,
+      events: { ...proposals.events, inference: eventValue({ type: "TurnSettled", turnId: turn.turnId, outcome: "failed", reason: turn.failure } satisfies TurnSettled) },
+    }
     if (state.turnId && !state.needsReply) return {
       view: { position: "settling" as const },
       acts: proposals.acts,
@@ -63,8 +79,8 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
           input: { model: selection.model, system: input.system, tools: input.tools.view.specs, context: messages },
           onRequested: () => [{ type: "ModelCalled", purpose: "inference", ...selection, callId: state.callId, turnId: state.turnId } satisfies ModelCalled],
           onSettled: (result, ref) => {
-            if (result.status === "rejected") return [{ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: failureMessage(result.reason) } satisfies TurnSettled]
-            if (new Set(result.value.toolCalls.map(call => call.callId)).size !== result.value.toolCalls.length) return [{ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: "Duplicate provider tool call IDs" } satisfies TurnSettled]
+            if (result.status === "rejected") return [{ type: "ModelFailed", callId: state.callId, reason: failureMessage(result.reason) } satisfies typeof ModelFailed.Type]
+            if (new Set(result.value.toolCalls.map(call => call.callId)).size !== result.value.toolCalls.length) return [{ type: "ModelFailed", callId: state.callId, reason: "Duplicate provider tool call IDs" } satisfies typeof ModelFailed.Type]
             return [{ type: "ModelReturned", purpose: "inference", callId: state.callId, text: result.value.text, ...(result.value.usage ? { usage: result.value.usage } : {}),
               toolCalls: result.value.toolCalls.map((call, index) => ({ ...call, providerId: call.callId, callId: JSON.stringify([ref.seq, ref.atom, ref.tag, index]) })),
             } satisfies ModelReturned]

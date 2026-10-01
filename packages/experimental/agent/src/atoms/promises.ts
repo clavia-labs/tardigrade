@@ -1,15 +1,16 @@
 import { Schema } from "effect"
 import { Atom } from "effect/unstable/reactivity"
-import { effectAtom, durableAtom, durablePromise, eventValue } from "@clavia/tardigrade-experimental-core"
+import { effectAtom, durableAtom, durablePromise, eventValue, EffectCancelled, effectKey } from "@clavia/tardigrade-experimental-core"
 import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
 import { ToolReturned, MessageReceived } from "../event"
 
 const submissions = durableAtom({
   name: "agent.promises.submissions",
-  input: Schema.Union([ToolReturned, MessageReceived]),
+  input: Schema.Union([ToolReturned, MessageReceived, EffectCancelled]),
   schema: Schema.Array(Schema.Struct({ callId: Schema.String, promise: ToolPromise })), initial: [],
   reduce: (state, event) => event.type === "ToolReturned" && event.promise
     ? [...state, { callId: event.callId, promise: event.promise }]
+    : event.type === "EffectCancelled" ? state.filter(item => effectKey(item.promise.ref) !== effectKey(event.ref))
     : event.type === "MessageReceived" && event.kind === "message" ? state.filter(item => event.turnId !== `promise:${item.callId}`) : state,
 })
 const replies = new Map<string, ReturnType<typeof makeReply>>()
@@ -28,7 +29,7 @@ export const toolPromises = effectAtom(get => {
     acts: {}, events: Object.fromEntries(items.filter(item => item.result.status !== "pending").map(item => [
       `promise:${encodeURIComponent(item.callId)}`,
       eventValue({
-        type: "MessageReceived", kind: "message", turnId: `promise:${item.callId}`,
+        type: "MessageReceived", kind: "message", promiseRef: item.promise.ref, turnId: `promise:${item.callId}`,
         text: `Tool promise result (data): ${JSON.stringify({ callId: item.callId, handle: item.promise.handle, result: item.result })}`,
       } satisfies MessageReceived),
     ])),

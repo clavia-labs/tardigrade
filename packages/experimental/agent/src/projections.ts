@@ -1,4 +1,4 @@
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, EffectRef, effectKey, ExecutionResult, type CoreEvent } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
 import { ToolCall, Decision, BudgetDecision, PermissionPolicy, BudgetPolicy, BudgetMetric, PermissionAction, type Event, type MessageReceived } from "./event"
 
@@ -36,6 +36,7 @@ const Turn = Schema.Struct({
   turnId: Schema.String, settlement: Schema.NullOr(Schema.Literals(["completed", "failed", "cancelled"])), answer: Schema.NullOr(Schema.String), answerCallId: Schema.NullOr(Schema.String),
   calls: Schema.Array(Schema.Struct({ callId: Schema.String, returned: Schema.Boolean })),
   outstanding: Schema.Array(Schema.String),
+  effects: Schema.Array(Schema.Struct({ ref: EffectRef, pending: Schema.Boolean })), failure: Schema.NullOr(Schema.String), cancellation: Schema.NullOr(Schema.String),
 })
 export const InferenceState = Schema.Struct({
   turns: Schema.Array(Turn),
@@ -43,13 +44,19 @@ export const InferenceState = Schema.Struct({
 })
 export const initialInference: typeof InferenceState.Type = { turns: [], turnId: "", callId: "model::0", needsReply: false, running: false, waiting: false }
 
-export function inferState(state: typeof InferenceState.Type, event: Event): typeof InferenceState.Type {
+export function inferState(state: typeof InferenceState.Type, event: Event | CoreEvent): typeof InferenceState.Type {
   let turns = state.turns
   if (event.type === "MessageReceived") {
     const message = inboxMessage(event)
     if (!message) return state
     if (turns.some(turn => turn.turnId === message.turnId)) throw new RuntimeError(`Duplicate turn: ${message.turnId}`)
-    turns = [...turns, { turnId: message.turnId, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [] }]
+    turns = [...turns, { turnId: message.turnId, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }]
+  }
+  if (event.type === "TurnCancelRequested") turns = turns.map(turn => turn.turnId === state.turnId && turn.cancellation === null ? { ...turn, cancellation: event.reason } : turn)
+  if (event.type === "EffectRequested") turns = turns.map(turn => turn.turnId === state.turnId ? { ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] } : turn)
+  if (event.type === "EffectCancelled" || event.type === "PromiseSettled" || (event.type === "EffectSettled" && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value"))) {
+    const key = effectKey(event.ref)
+    turns = turns.map(turn => turn.effects.some(work => work.pending && effectKey(work.ref) === key) ? { ...turn, effects: turn.effects.map(work => effectKey(work.ref) === key ? { ...work, pending: false } : work) } : turn)
   }
   if (event.type === "ModelCalled" && event.purpose === "inference") {
     if (!state.needsReply || state.running || state.waiting || event.turnId !== state.turnId || event.callId !== state.callId) {
@@ -67,6 +74,10 @@ export function inferState(state: typeof InferenceState.Type, event: Event): typ
       outstanding: event.toolCalls.map(call => call.callId),
     } : turn)
   }
+  if (event.type === "ModelFailed") {
+    if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
+    turns = turns.map(turn => turn.calls.some(call => call.callId === event.callId) ? { ...turn, failure: event.reason, calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call) } : turn)
+  }
   if (event.type === "TurnSettled") {
     const turn = turns.find(turn => turn.turnId === event.turnId)
     if (!turn || turn.settlement !== null || event.turnId !== state.turnId) throw new RuntimeError(`No matching active turn: ${event.turnId}`)
@@ -74,6 +85,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event): typ
       throw new RuntimeError(`Turn has no final answer: ${event.turnId}`)
     }
     if (event.outcome !== "completed" && turn.outstanding.length) throw new RuntimeError("Outstanding tools must settle before ending a turn")
+    if (event.outcome === "cancelled" && (turn.cancellation === null || turn.effects.some(work => work.pending))) throw new RuntimeError("Turn cancellation must drain accepted work before settlement")
     turns = turns.map(value => value === turn ? { ...value, settlement: event.outcome } : value)
   }
   if (event.type === "ToolReturned" && turns.some(turn => turn.outstanding.includes(event.callId))) {
@@ -89,21 +101,22 @@ export function inferState(state: typeof InferenceState.Type, event: Event): typ
 }
 
 export const CompactionState = Schema.Struct({
-  through: Schema.Finite, summary: Schema.String, failure: Schema.NullOr(Schema.String),
+  through: Schema.Finite, attempts: Schema.Finite, summary: Schema.String, failure: Schema.NullOr(Schema.String),
   pending: Schema.NullOr(Schema.Struct({ callId: Schema.String, through: Schema.Finite })),
 })
 export function compactState(state: typeof CompactionState.Type, event: Event): typeof CompactionState.Type {
+  if (event.type === "TurnSettled" && state.failure !== null) return { ...state, failure: null }
   if (event.type === "CompactionFailed") {
     if (state.pending?.callId !== event.callId) throw new RuntimeError(`No matching running compaction: ${event.callId}`)
     return { ...state, pending: null, failure: event.reason }
   }
   if (event.type === "ModelCalled" && event.purpose === "compaction") {
     if (state.pending || !Number.isSafeInteger(event.through) || event.through <= state.through) throw new RuntimeError(`Compaction call is unavailable: ${event.callId}`)
-    return { ...state, pending: { callId: event.callId, through: event.through } }
+    return { ...state, attempts: state.attempts + 1, pending: { callId: event.callId, through: event.through } }
   }
   if (event.type === "ModelReturned" && event.purpose === "compaction") {
     if (!state.pending || event.callId !== state.pending.callId) throw new RuntimeError(`No matching running compaction: ${event.callId}`)
-    return { through: state.pending.through, summary: event.text, pending: null, failure: null }
+    return { ...state, through: state.pending.through, summary: event.text, pending: null, failure: null }
   }
   return state
 }
