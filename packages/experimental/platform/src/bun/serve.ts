@@ -3,7 +3,7 @@ import { Context, Effect, Layer, ManagedRuntime, Result } from "effect"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import * as NetAddress from "effect/unstable/net/NetAddress"
 import { BunHttpServer } from "@effect/platform-bun"
-import { hostRoutes, type HttpHost } from "@clavia/tardigrade-experimental-host"
+import { hostRoutes, type HttpHost } from "../shared/http"
 
 export const DEFAULT_SERVE_OPTIONS = { hostname: "127.0.0.1", port: 4242, idleTimeoutSeconds: 0 } as const
 export interface ServeOptions {

@@ -1,6 +1,6 @@
 import { Context, Effect } from "effect"
-import { createActorStore } from "@clavia/tardigrade-experimental-host"
-import { Greet, greeter } from "./actors/greeter"
+import { createActorStore } from "@clavia/tardigrade-experimental-core"
+import { Greet, greeter } from "./agents/greeter"
 
 // openGreeter supplies an act implementation without exposing core lifecycle events to the actor.
 export const openGreeter = createActorStore({

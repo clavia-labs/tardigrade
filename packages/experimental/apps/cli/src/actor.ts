@@ -26,5 +26,5 @@ export const actor = defineActor("tardie", Effect.gen(function* () {
   const system = systemPrompt("You are a helpful assistant. Use execute to run JavaScript against the connected packages. Keep answers concise and practical.")
   const context = yield* compact(conversation)
   const agent = yield* infer<ActService<"code-mode.evaluate"> | ActService<"code-mode.package"> | ActService<"agent.permission.request">, typeof Event.Type>(atom(get => ({ system: get(system), tools: get(tools), context: get(context) })))
-  return { atom: Object.assign(atom(get => get(agent)), { schema: Event }), actions: { message, cancel, updatePermission } }
+  return { atom: Object.assign(atom(get => get(agent)), { schema: Event, methods: agent.methods }), actions: { message, cancel, updatePermission } }
 }))

@@ -1,14 +1,16 @@
 import { Effect, Schema } from "effect"
-import { ExecutionHandle, RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { Actor } from "@clavia/tardigrade-experimental-host"
+import { Actor, ExecutionHandle, RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { definePackage } from "./package"
 import { promiseTool, tool } from "./tool"
 
+export const DEFAULT_AGENT_ACTOR = "tardie"
 export const DEFAULT_AGENT_TOOL_CALLS = 20
 export const AgentBudget = Schema.Struct({ toolCalls: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)) })
 
-// agents submits child calls through the host actor service and returns promise handles.
-export function agents(options: { readonly budget?: { readonly toolCalls?: number } } = {}) {
+export const AgentMessage = Schema.Struct({ text: Schema.String, budget: Schema.optionalKey(AgentBudget) })
+
+// agents submits child calls through the core actor service and returns promise handles.
+export function agents(options: { readonly actor?: string; readonly budget?: { readonly toolCalls?: number } } = {}) {
   const budget = { toolCalls: options.budget?.toolCalls ?? DEFAULT_AGENT_TOOL_CALLS }
   if (!Schema.is(AgentBudget)(budget)) throw new RuntimeError("Child toolCalls must be a nonnegative safe integer")
   return definePackage({
@@ -19,7 +21,7 @@ export function agents(options: { readonly budget?: { readonly toolCalls?: numbe
       input: Schema.Struct({ message: Schema.String }),
       submit: ({ message }, call) => Effect.gen(function* () {
         const actor = yield* Actor
-        return yield* actor.submit({ id: call.callId, message, config: { budget } })
+        return yield* actor.invoke({ id: call.callId, target: { actor: options.actor ?? DEFAULT_AGENT_ACTOR, instance: call.callId, thread: call.callId }, method: "message", input: { text: message, budget } })
       }),
       cancel: (handle, call) => Actor.use(actor => actor.cancel(handle ?? { executor: "actor", id: call.callId })),
     }), tool({

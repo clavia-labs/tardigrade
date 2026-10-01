@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { Effect, Layer } from "effect"
 import { BunServices } from "@effect/platform-bun"
-import { RemoteBackup, RemoteBackupError, remoteBackupFromKeyValueStore, type HostCheckpoint } from "@clavia/tardigrade-experimental-host"
+import { RemoteBackup, RemoteBackupError, remoteBackupFromKeyValueStore, type HostCheckpoint } from "@clavia/tardigrade-experimental-core"
 import { KeyValueStore } from "effect/unstable/persistence"
 
 // bunBackup stores checkpoints in a filesystem directory; callers must choose a destination outside host storage.

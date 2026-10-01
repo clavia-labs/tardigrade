@@ -6,7 +6,8 @@
   "description": "Durable event projections, reactive atoms, and lazy effects.",
   "exports": {
     ".": "./src/index.ts",
-    "./*": "./src/*.ts"
+    "./*": "./src/*.ts",
+    "./event-log": "./src/runtime/replay.ts"
   },
   "dependencies": {
     "effect": "4.0.0-rc.115"

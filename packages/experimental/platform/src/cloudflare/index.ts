@@ -1,10 +1,11 @@
 import { Effect, Exit } from "effect"
+import type { ActorMethods } from "@clavia/tardigrade-experimental-core"
 import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import { sqlJournal } from "@clavia/tardigrade-experimental-host"
-import { createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-host"
-import { hostRoutes, type HttpHost } from "@clavia/tardigrade-experimental-host"
+import { sqlJournal } from "../shared/sql-journal"
+import { createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-core"
+import { hostRoutes, type HttpHost } from "../shared/http"
 import { HttpRouter } from "effect/unstable/http"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
@@ -17,8 +18,8 @@ export function cloudflareJournal<Event extends object>(storage: DurableObjectSt
   })
 }
 
-// createCloudflareHost keeps supervisor, thread, and invocation journals in the supplied Durable Object storage.
-export function createCloudflareHost<Event extends object, Services, Methods extends Readonly<Record<string, (...args: never[]) => Effect.Effect<void, Error>>>, State>(options: Omit<Parameters<typeof createThreadHost<Event, Services, Methods, State>>[0], "storage"> & {
+// createCloudflareHost keeps supervisor and thread journals in the supplied Durable Object storage.
+export function createCloudflareHost<Event extends object, Services, Actions extends Readonly<Record<string, (...args: never[]) => Effect.Effect<void, Error>>>, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, Actions, State, Contracts>>[0], "storage"> & {
   readonly storage: DurableObjectStorage
   readonly alarms?: CloudflareAlarmOptions
 }) {
@@ -31,7 +32,6 @@ export function createCloudflareHost<Event extends object, Services, Methods ext
   const storage: ThreadStorage<Event> = {
     supervisor: (actor, instance) => journal([actor, instance, "supervisor"]),
     thread: coordinate => journal([coordinate.actor, coordinate.instance, "thread", coordinate.thread, "events"]),
-    invocations: coordinate => journal([coordinate.actor, coordinate.instance, "thread", coordinate.thread, "invocations"]),
     close: Effect.gen(function* () {
       const results = yield* Effect.forEach(connections, close => Effect.exit(close))
       connections.clear()
@@ -45,3 +45,6 @@ export function createCloudflareHost<Event extends object, Services, Methods ext
 // cloudflareHandler exposes host routes as a Worker fetch handler; dispose releases HTTP resources.
 export const cloudflareHandler = (host: HttpHost) => HttpRouter.toWebHandler(hostRoutes(host), { disableLogger: true })
 export { cloudflarePromises, createCloudflareInbox, InboxCompletion, InboxNotification, type InboxStub } from "./inbox"
+
+export { httpMessageTransport } from "../shared/http-message"
+export { rpcMessageTransport, type ActorReceiver } from "../shared/rpc-message"

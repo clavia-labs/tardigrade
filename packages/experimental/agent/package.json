@@ -15,8 +15,7 @@
     "@clavia/tardigrade-experimental-core": "workspace:*",
     "@clavia/tardigrade-experimental-packages": "workspace:*",
     "effect": "4.0.0-rc.115",
-    "@clavia/tardigrade-model": "workspace:*",
-    "@clavia/tardigrade-experimental-host": "workspace:*"
+    "@clavia/tardigrade-model": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

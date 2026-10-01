@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util"
 import { Clock, Effect, Fiber, Layer, Schema, Scope } from "effect"
 import { ClockHandle, RuntimeError, type ActorRuntime } from "@clavia/tardigrade-experimental-core"
-import { Promises, PromiseSettled, ResolutionRequest, resolutionKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-host"
+import { Promises, ResolutionSettled as PromiseSettled, ResolutionRequest, resolutionKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-core"
 
 // bunPromises resolves promises in actor-scoped fibers and retains settlements while delivery is retried.
 export function bunPromises(host: Pick<ActorRuntime<object>, "fork" | "interrupt">, options: {

@@ -1,7 +1,7 @@
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { defineActor, atom, Isolate, RuntimeError, type CoreEvent } from "@clavia/tardigrade-experimental-core"
-import { createActorStore, Promises } from "@clavia/tardigrade-experimental-host"
+import { createActorStore, Promises } from "@clavia/tardigrade-experimental-core"
 import { infer } from "@clavia/tardigrade-experimental-agent/atoms/infer"
 import { codeMode } from "@clavia/tardigrade-experimental-agent/atoms/code-mode"
 import { pendingTools, packageTools, withPermissions, withBudget } from "@clavia/tardigrade-experimental-agent/atoms/tools"
@@ -39,17 +39,17 @@ export const compactionCancellationRecovery = fc.asyncProperty(fc.record({ reaso
   ) })
   let store = yield* open(history)
   yield* Effect.gen(function* () {
-    yield* store.methods.message({ text: "first", turnId: "first" })
+    yield* store.actions.message({ text: "first", turnId: "first" })
     yield* Deferred.await(entered)
-    if (options.queued) yield* store.methods.message({ text: "second", turnId: "second" })
-    yield* store.methods.cancel(options.reason)
+    if (options.queued) yield* store.actions.message({ text: "second", turnId: "second" })
+    yield* store.actions.cancel({ turnId: "first", reason: options.reason })
     yield* store.wait
     if (options.reopen) {
       const events = store.snapshot().events
       yield* store.close
       store = yield* open(events)
     }
-    if (!options.queued) yield* store.methods.message({ text: "second", turnId: "second" })
+    if (!options.queued) yield* store.actions.message({ text: "second", turnId: "second" })
     yield* store.wait
     if (!store.snapshot().events.some(event => event.type === "ModelCalled" && event.purpose === "inference" && event.turnId === "second")) return yield* Effect.fail(new RuntimeError("Cancelled compaction prevented the next turn"))
   }).pipe(Effect.ensuring(Effect.suspend(() => store.close)))
@@ -101,14 +101,14 @@ export const agentTurnCancellation = fc.asyncProperty(fc.record({
   })
   let store = yield* open()
   yield* Effect.gen(function* () {
-    yield* store.methods.cancel("idle")
+    yield* store.actions.cancel({ turnId: "idle", reason: "idle" })
     yield* store.wait
     if (store.snapshot().events.some(event => event.type === "TurnSettled")) return yield* Effect.fail(new RuntimeError("Idle cancellation settled a turn"))
-    yield* store.methods.message({ text: "hello", turnId: "first" })
+    yield* store.actions.message({ text: "hello", turnId: "first" })
     yield* Deferred.await(entered)
     if (options.phase !== "tool") yield* store.wait
     const deferred = store.snapshot().deferred().find(work => work.request.executor === ExecuteTool.name)
-    yield* store.methods.cancel(options.reason)
+    yield* store.actions.cancel({ turnId: "first", reason: options.reason })
     if (options.reopen || (options.phase === "deferred" && options.completionRace)) {
       const events = store.snapshot().events
       const started = events.findIndex(event => event.type === "MessageReceived")
@@ -118,7 +118,7 @@ export const agentTurnCancellation = fc.asyncProperty(fc.record({
       store = yield* open(prefix)
     }
     yield* store.wait
-    for (let index = 0; index < options.duplicates; index++) yield* store.methods.cancel("duplicate")
+    for (let index = 0; index < options.duplicates; index++) yield* store.actions.cancel({ turnId: "first", reason: "duplicate" })
     yield* store.wait
     const events = store.snapshot().events
     const terminal = events.filter(event => event.type === "TurnSettled")
@@ -127,7 +127,7 @@ export const agentTurnCancellation = fc.asyncProperty(fc.record({
     const boundary = events.findIndex((event, index) => event.type === "AbortReceived" && index > started)
     if (events.slice(boundary + 1).some(event => event.type === "EffectRequested")) return yield* Effect.fail(new RuntimeError("Stopped turn accepted new work"))
     const calls = events.filter(event => event.type === "ModelCalled").length
-    yield* store.methods.message({ text: "next", turnId: "second" })
+    yield* store.actions.message({ text: "next", turnId: "second" })
     yield* store.wait
     if (store.snapshot().events.filter(event => event.type === "ModelCalled").length !== calls + 1) return yield* Effect.fail(new RuntimeError("Stopped actor could not accept the next turn"))
   }).pipe(Effect.ensuring(Effect.suspend(() => store.close)))
@@ -146,13 +146,13 @@ export const agentCancellationRecovery = fc.asyncProperty(fc.record({ reason: fc
     Layer.succeed(Promises, { watch: () => Effect.void, cancel: () => Effect.void }),
   ) })
   yield* Effect.gen(function* () {
-    yield* store.methods.message("first")
+    yield* store.actions.message("first")
     yield* store.wait
     const ref = store.snapshot().deferred()[0]!.ref
     for (let index = 0; index <= options.duplicates; index++) yield* store.cancel(ref, options.reason)
     yield* store.wait
     if (store.getState().view.position !== "idle" || store.snapshot().events.filter(event => event.type === "TurnSettled").length !== 1) return yield* Effect.fail(new RuntimeError("Cancellation stranded the active agent turn"))
-    yield* store.methods.message("second")
+    yield* store.actions.message("second")
     yield* store.wait
     if (store.snapshot().events.filter(event => event.type === "ModelCalled").length !== 2) return yield* Effect.fail(new RuntimeError("Cancelled model prevented the next turn"))
   }).pipe(Effect.ensuring(store.close))
@@ -178,13 +178,13 @@ export const codeModeCancellationRecovery = fc.asyncProperty(fc.record({ reason:
     run: (_input, onCall) => onCall({ ordinal: 0, package: "test", method: "job", input: {} }).pipe(Effect.map(result => ({ result, logs: [] }))),
   }))) })
   yield* Effect.gen(function* () {
-    yield* store.methods.start("first")
+    yield* store.actions.start("first")
     yield* Deferred.await(entered)
     const ref = store.snapshot().deferred().find(work => work.request.executor === EvaluateCode.name)!.ref
     yield* store.cancel(ref, options.reason)
     yield* store.wait
     if (store.get(pendingTools).pending !== null || store.snapshot().events.filter(event => event.type === "EffectCancelled").length !== 2 || store.snapshot().events.filter(event => event.type === "ToolReturned").length !== 1 || store.getState().view.executions.length !== 0) return yield* Effect.fail(new RuntimeError("Cancelled code retained running packages or its tool queue"))
-    yield* store.methods.start("second")
+    yield* store.actions.start("second")
     yield* store.wait
     if (executions !== 2 || store.get(pendingTools).pending !== null || store.snapshot().events.filter(event => event.type === "ToolReturned").length !== 2) return yield* Effect.fail(new RuntimeError("Cancelled code prevented subsequent execution"))
   }).pipe(Effect.ensuring(store.close))

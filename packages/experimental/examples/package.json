@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./actors": "./actors/index.ts",
-    "./services": "./services.ts"
+    "./services": "./services.ts",
+    "./agents": "./agents/index.ts"
   },
   "scripts": {
     "cloudflare": "wrangler dev --config wrangler.cloudflare.jsonc",
     "models:lock": "bun ../../../apps/cli/src/main.ts models lock",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.cloudflare.json",
-    "actors": "bun actors.ts"
+    "bun": "bun bun.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260804.1",

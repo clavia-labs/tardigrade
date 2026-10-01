@@ -1,7 +1,7 @@
 import { styleText, stripVTControlCharacters } from "node:util"
 import { Console, Effect, Schema } from "effect"
 import { RuntimeError, type Recorded } from "@clavia/tardigrade-experimental-core"
-import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
+import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
 import { observeBunThread } from "@clavia/tardigrade-experimental-platform/bun"
 const Event = Schema.Record(Schema.String, Schema.Unknown)
 type Event = typeof Event.Type

@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { atom } from "@clavia/tardigrade-experimental-core"
-import { ResolutionResult } from "@clavia/tardigrade-experimental-host"
+import { ResolutionResult } from "@clavia/tardigrade-experimental-core"
 import { history } from "./activity"
 import { messageSource } from "./event"
 import { turnOutput } from "./result"
@@ -19,8 +19,8 @@ export const messages = atom(get => {
   return events.flatMap((event, seq): ChatMessage[] => {
     if (event.type === "TurnSettled") return [{ seq, kind: event.outcome === "completed" ? "assistant" : "error", text: event.outcome === "completed" ? turnOutput(events, event) : event.reason }]
     if (event.type !== "MessageReceived" || messageSource(event) === "user") return []
-    if (event.kind === "request") return [{ seq, kind: "agent", text: event.request.description }]
-    if (event.kind === "reply") return [{ seq, kind: "agent", text: `Request ${event.requestId}: ${event.decision.allowed ? "allowed" : "denied"}` }]
+    if (event.kind === "request") return [{ seq, kind: "agent", text: `Request ${event.request.requestId} (${event.request.method}): ${JSON.stringify(event.request.input)}` }]
+    if (event.kind === "reply") return [{ seq, kind: "agent", text: `Request ${event.requestId}: ${JSON.stringify(event.result)}` }]
     const source = messageSource(event)
     const kind = source === "agent" ? "agent" : "tool"
     const prefix = "Tool promise result (data): "

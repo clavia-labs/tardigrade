@@ -232,7 +232,6 @@
       "dependencies": {
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-experimental-core": "workspace:*",
-        "@clavia/tardigrade-experimental-host": "workspace:*",
         "@clavia/tardigrade-experimental-packages": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "effect": "4.0.0-rc.115",
@@ -241,10 +240,12 @@
     "packages/experimental/apps/cli": {
       "name": "@clavia/tardigrade-experimental-cli",
       "version": "0.0.1",
+      "bin": {
+        "experimental-chat": "./src/main.ts",
+      },
       "dependencies": {
         "@clavia/tardigrade-experimental-agent": "workspace:*",
         "@clavia/tardigrade-experimental-core": "workspace:*",
-        "@clavia/tardigrade-experimental-host": "workspace:*",
         "@clavia/tardigrade-experimental-packages": "workspace:*",
         "@clavia/tardigrade-experimental-platform": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
@@ -275,23 +276,11 @@
         "wrangler": "^4.119.0",
       },
     },
-    "packages/experimental/host": {
-      "name": "@clavia/tardigrade-experimental-host",
-      "version": "0.0.1",
-      "dependencies": {
-        "@clavia/tardigrade-experimental-core": "workspace:*",
-        "effect": "4.0.0-rc.115",
-      },
-      "devDependencies": {
-        "fast-check": "^4.9.0",
-      },
-    },
     "packages/experimental/packages": {
       "name": "@clavia/tardigrade-experimental-packages",
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-experimental-core": "workspace:*",
-        "@clavia/tardigrade-experimental-host": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
     },
@@ -303,7 +292,6 @@
         "@clavia/tardigrade-cloudflare": "workspace:*",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-experimental-core": "workspace:*",
-        "@clavia/tardigrade-experimental-host": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-do": "4.0.0-rc.115",
@@ -380,7 +368,6 @@
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-experimental-core": "workspace:*",
-        "@clavia/tardigrade-experimental-host": "workspace:*",
         "@clavia/tardigrade-experimental-platform": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
@@ -545,8 +532,6 @@
     "@clavia/tardigrade-experimental-core": ["@clavia/tardigrade-experimental-core@workspace:packages/experimental/core"],
 
     "@clavia/tardigrade-experimental-examples": ["@clavia/tardigrade-experimental-examples@workspace:packages/experimental/examples"],
-
-    "@clavia/tardigrade-experimental-host": ["@clavia/tardigrade-experimental-host@workspace:packages/experimental/host"],
 
     "@clavia/tardigrade-experimental-packages": ["@clavia/tardigrade-experimental-packages@workspace:packages/experimental/packages"],
 

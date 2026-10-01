@@ -1,10 +1,10 @@
 import { Context } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { atom, type Atom } from "../atom"
-import type { Recorded } from "../journal"
-import type { EffectRef } from "../effect-ref"
-import type { DurableAtomCheckpoint } from "../durable"
-import type { EffectRequested, EffectSettled, PromiseSettled, EffectCancelled } from "../lifecycle"
+import { atom, type Atom } from "../atoms/atom"
+import type { Recorded } from "./journal"
+import type { EffectRef, EffectCancelled } from "../runtime/effects"
+import type { DurableAtomCheckpoint } from "../atoms/durable"
+import type { EffectRequested, EffectSettled, PromiseSettled } from "../runtime/events"
 
 export class EventLog extends Context.Service<EventLog, {
   // events extends an immutable prefix; another history requires another source atom.

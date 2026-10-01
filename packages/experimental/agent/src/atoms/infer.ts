@@ -1,3 +1,4 @@
+import { agentMethods } from "../methods"
 import type { ActService } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
@@ -92,6 +93,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
   }))
   return Effect.map(output, node => Object.assign(node.pipe(NativeAtom.withLabel("infer")), {
     schema: Event,
+    methods: agentMethods,
     validate: (event: Event, get: Getter) => get(agent).tools.view.validate?.(event),
   }))
 }

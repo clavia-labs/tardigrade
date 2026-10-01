@@ -3,7 +3,7 @@ import { existsSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, type Schema } from "effect"
 import { RuntimeError, type Recorded } from "@clavia/tardigrade-experimental-core"
-import { createJournalStore, createSupervisorStore, createThreadStore, SupervisorEvent, type ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
+import { createJournalStore, createSupervisorStore, createThreadStore, SupervisorEvent, type ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
 
 const encoded = (value: string) => Buffer.from(value).toString("base64url")
 export const bunSupervisorPath = (storage: string, actor: string, instance: string) => join(storage, `${encoded(JSON.stringify([actor, instance]))}.sqlite`)

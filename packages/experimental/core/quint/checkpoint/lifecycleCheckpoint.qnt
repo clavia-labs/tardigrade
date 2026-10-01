@@ -8,10 +8,10 @@
 // TLC exhaustively checks the finite composed state space; this does not establish an unbounded composition theorem.
 // Pending deliveries are volatile; eventual redelivery and scheduling fairness are outside these safety checks.
 // Unread atoms, callback reconstruction, handle validation, multiple concurrent effects, and TypeScript refinement are outside this model.
-// prepare corresponds to host/src/runtime.ts drain and appendNow; core/src/event-log.ts append validates the acceptance position and proposal.
-// commit corresponds to host/src/runtime.ts commit and host/src/sql.ts appendWithCheckpoint; publish corresponds to snapshot assignment and sync.
-// prepareCheckpoint corresponds to core/src/event-log.ts checkpoint; durable roots use core/src/durable.ts schema codecs and a shared position.
-// arrive and retry correspond to host/src/runtime.ts send; core/src/event-log.ts validatePromise rejects admission before successful effect settlement.
+// prepare corresponds to core/src/runtime/execution.ts drain and appendNow; core/src/runtime/replay.ts append validates the acceptance position and proposal.
+// commit corresponds to core/src/runtime/execution.ts commit and platform/src/shared/sql-journal.ts appendWithCheckpoint; publish corresponds to snapshot assignment and sync.
+// prepareCheckpoint corresponds to core/src/runtime/replay.ts checkpoint; durable roots use core/src/atoms/durable.ts schema codecs and a shared position.
+// arrive and retry correspond to core/src/runtime/execution.ts send; core/src/runtime/replay.ts validatePromise rejects admission before successful effect settlement.
 // crash discards volatile state; a persistence error requires reopening even when storage may already have committed.
 // restore and replayNext correspond to journal.readCheckpoint, journal.readAfter, and definition.replay; expose corresponds to sync and ready completion.
 // restart corresponds to snapshot.deferred and localRecovery consumption; observe corresponds to observePromises for nonlocal handles.

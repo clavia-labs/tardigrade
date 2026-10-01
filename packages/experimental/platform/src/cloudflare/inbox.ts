@@ -1,12 +1,12 @@
 import { makeRetryingRpc, type CloudflareRetryOptions } from "@clavia/tardigrade-cloudflare/retry"
 import { makeAlarmScheduling, type DurableObjectAlarmsOptions } from "@clavia/tardigrade-cloudflare/layers/alarms"
 import { type DurableObjectRpcOptions } from "@clavia/tardigrade-cloudflare/layers/rpc"
-import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
+import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
 import type { DurableObjectStorage, DurableObjectTransaction } from "@cloudflare/workers-types"
 import { isDeepStrictEqual } from "node:util"
 import { Clock, Effect, Layer, Schema, Semaphore } from "effect"
 import { ClockHandle, ExecutionHandle, RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { Promises, PromiseSettled, ResolutionResult, ResolutionRegistration, registrationKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-host"
+import { Promises, ResolutionSettled as PromiseSettled, ResolutionResult, ResolutionRegistration, registrationKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-core"
 
 export interface InboxStub {
   readonly watch: (request: ResolutionRegistration) => Promise<void>

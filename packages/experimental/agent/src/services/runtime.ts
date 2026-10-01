@@ -3,11 +3,11 @@ import { modelInfo } from "./model-lock"
 import { modelActs, askPermission } from "./acts"
 import { PermissionRequests } from "./requests"
 import { toolActs } from "./tools"
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { Actor, RuntimeError, type ActorCaller } from "@clavia/tardigrade-experimental-core"
 import { Effect, Layer, Schema } from "effect"
-import { Workspace, memoryWorkspace, AgentBudget, DEFAULT_AGENT_TOOL_CALLS, fetchPackage, alarm, workspace, agents, type Package } from "@clavia/tardigrade-experimental-packages"
+import { Workspace, memoryWorkspace, AgentMessage, AgentBudget, DEFAULT_AGENT_TOOL_CALLS, fetchPackage, alarm, workspace, agents, type Package } from "@clavia/tardigrade-experimental-packages"
 import type { ActorRuntime, RuntimeEvent, ActorDefinition, ActorOutput, EffectExecution, ActService } from "@clavia/tardigrade-experimental-core"
-import { Actor, Promises, localActors, createActorStore, type ActorCaller } from "@clavia/tardigrade-experimental-host"
+import { Promises, localActors, createActorStore } from "@clavia/tardigrade-experimental-core"
 import { createActor } from "../agent"
 import { budgetState } from "../atoms/durable/budget"
 import { Event } from "../event"
@@ -39,12 +39,15 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
   const children = localActors({
     run: (call, caller) => Effect.gen(function* () {
       if (depth >= options.maxChildDepth) return yield* Effect.fail(new RuntimeError(`Child depth limit reached: ${options.maxChildDepth}`))
-      const childBudget = yield* Schema.decodeUnknownEffect(AgentBudget)(call.config?.budget ?? { toolCalls: DEFAULT_AGENT_TOOL_CALLS }).pipe(Effect.mapError(RuntimeError.from))
       const actor: AssistantDefinition<Services> = options.actor ?? createActor
+      if (call.target.actor !== actor.actorName) return yield* Effect.fail(new RuntimeError(`Unknown actor: ${call.target.actor}`))
+      if (call.method !== "message") return yield* Effect.fail(new RuntimeError(`Unknown agent method: ${call.method}`))
+      const input = yield* Schema.decodeUnknownEffect(AgentMessage)(call.input).pipe(Effect.mapError(RuntimeError.from))
+      const childBudget = input.budget ?? { toolCalls: DEFAULT_AGENT_TOOL_CALLS }
       return yield* Effect.acquireUseRelease(
         createActorStore({ actor, ...assistantRuntime(options, depth + 1, caller, childBudget) }),
         child => Effect.gen(function* () {
-          yield* child.message({ text: call.message, turnId: call.id })
+          yield* child.actions.message({ text: input.text, turnId: call.id })
           yield* child.wait
           const reply = child.snapshot().events.filter(Schema.is(Event)).findLast(event => event.type === "TurnSettled")
           if (!reply || reply.type !== "TurnSettled") return yield* Effect.fail(new RuntimeError("Child finished without an answer"))
@@ -60,7 +63,7 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
       )
     }),
     onRequest: (handle, request) => host.send([{ type: "MessageReceived", kind: "request", handle, request }]),
-    onReply: (handle, requestId, decision) => host.record({ type: "MessageReceived", kind: "reply", handle, requestId, decision }),
+    onReply: (handle, requestId, result) => host.record({ type: "MessageReceived", kind: "reply", handle, requestId, result }),
     onMessage: (handle, message) => host.send([{ type: "MessageReceived", kind: "message", turnId: `${handle.id}:notice:${crypto.randomUUID()}`, text: JSON.stringify({ handle, message }) }]),
   })
   const services = typeof options.services === "function" ? options.services({ depth, parent }, host) : options.services
@@ -68,7 +71,7 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
     type: host.get(budgetState).some(entry => entry.metric === "toolCalls") ? "BudgetUpdated" : "BudgetConfigured",
     metric: "toolCalls", policy: { limit: budget.toolCalls, onExhausted: "deny" },
   }))) : Effect.void)).pipe(Layer.provideMerge(children))
-  return Layer.mergeAll(modelInfo, modelActs, askPermission, toolActs(options.packages ?? [fetchPackage(), alarm(), workspace(), agents()])).pipe(Layer.provideMerge(platform))
+  return Layer.mergeAll(modelInfo, modelActs, askPermission, toolActs(options.packages ?? [fetchPackage(), alarm(), workspace(), agents({ actor: (options.actor ?? createActor).actorName })])).pipe(Layer.provideMerge(platform))
 }
 
 // assistantRuntime configures services and observation for one level of child actors.

@@ -2,7 +2,7 @@
 // One accepted effect successfully returns a deferred handle; its eventual result may fulfill or reject.
 // Preparation does not publish EffectSettled; commitEffect makes it durable before PromiseSettled admission.
 // The delivery batch contains a domain prefix, PromiseSettled, and a domain suffix; its cursor survives admission retries.
-// retry represents host/src/runtime.ts send preserving its cursor; commitPromise represents core/src/event-log.ts validatePromise.
+// retry represents core/src/runtime/execution.ts send preserving its cursor; commitPromise represents core/src/runtime/replay.ts validatePromise.
 // Fair preparation, storage commit, and admission scheduling imply eventual acknowledgement without further crashes.
 // Crashes, conflicting duplicate results, producer recovery, retry timer duration, and TypeScript refinement are outside this model.
 // Apalache checks inductive safety; TLC exhaustively checks fair delivery progress for this finite instance.

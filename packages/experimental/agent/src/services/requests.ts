@@ -1,6 +1,7 @@
 import { EffectExecution, ExecutionHandle, RuntimeError, durablePromise } from "@clavia/tardigrade-experimental-core"
 import { Cause, Context, Effect, Exit, Layer, Schema } from "effect"
-import type { ActorCaller } from "@clavia/tardigrade-experimental-host"
+import type { ActorCaller } from "@clavia/tardigrade-experimental-core"
+import { BudgetReply } from "../budget-contracts"
 import type { BudgetDecision, Decision, PermissionRequest } from "../event"
 
 export type RequestResult<Decision> =
@@ -41,12 +42,12 @@ export class BudgetRequests extends Context.Service<BudgetRequests, {
 // parentBudgetRequests translates a parent actor reply into a budget decision without changing actor state.
 export const parentBudgetRequests = (caller: ActorCaller) => Layer.succeed(BudgetRequests, {
   request: request => deferDecision(Effect.gen(function* () {
-    const decision = yield* caller.request({
-      requestId: request.callId, kind: "budget", description: request.reason,
-      input: { metric: request.metric, amount: request.amount, used: request.used, limit: request.limit },
+    const reply = yield* caller.request({
+      requestId: request.callId, method: "budget",
+      input: { reason: request.reason, metric: request.metric, amount: request.amount, used: request.used, limit: request.limit },
     })
+    const decision = yield* Schema.decodeUnknownEffect(BudgetReply)(reply).pipe(Effect.mapError(RuntimeError.from))
     if (!decision.allowed) return { allowed: false, reason: decision.reason }
-    if (decision.amount === undefined) return yield* Effect.fail(new RuntimeError("Budget grant omitted its amount"))
     return { allowed: true, additional: decision.amount }
   })),
 })

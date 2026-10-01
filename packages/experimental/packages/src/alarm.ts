@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util"
 import { ToolError } from "./errors"
 import { Clock, Effect, Schema } from "effect"
 import { Deadline, EffectExecution, durableAtom, durablePromise } from "@clavia/tardigrade-experimental-core"
-import { Promises } from "@clavia/tardigrade-experimental-host"
+import { Promises } from "@clavia/tardigrade-experimental-core"
 import { tool, promiseTool } from "./tool"
 import { definePackage } from "./package"
 

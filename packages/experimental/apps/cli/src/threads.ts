@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { join } from "node:path"
 import { Effect, Schema } from "effect"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
+import { ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
 import { createBunHost, observeBunSupervisor, bunThreadActivity } from "@clavia/tardigrade-experimental-platform/bun"
 import { actor } from "./actor"
 import { services } from "./services"

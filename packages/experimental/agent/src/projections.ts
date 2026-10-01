@@ -1,4 +1,5 @@
 import { RuntimeError, EffectRef, effectKey, ExecutionResult, type CoreEvent } from "@clavia/tardigrade-experimental-core"
+import { DeliverMessage } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
 import { ToolCall, Decision, BudgetDecision, PermissionPolicy, BudgetPolicy, BudgetMetric, PermissionAction, type Event, type MessageReceived } from "./event"
 
@@ -25,7 +26,7 @@ export function inboxMessage(event: MessageReceived): { readonly turnId: string;
 }
 
 export function trajectoryState(state: typeof TrajectoryState.Type, event: Event): typeof TrajectoryState.Type {
-  if (event.type === "MessageReceived") {
+  if (event.type === "MessageReceived" && "kind" in event) {
     const message = inboxMessage(event)
     return message ? { ...state, entries: [...state.entries, { turnId: message.turnId, message: { role: "user", text: message.text } }] } : state
   }
@@ -64,14 +65,14 @@ export const initialInference: typeof InferenceState.Type = { turns: [], turnId:
 
 export function inferState(state: typeof InferenceState.Type, event: Event | CoreEvent): typeof InferenceState.Type {
   let turns = state.turns
-  if (event.type === "MessageReceived") {
+  if (event.type === "MessageReceived" && "kind" in event) {
     const message = inboxMessage(event)
     if (!message) return state
     if (turns.some(turn => turn.turnId === message.turnId)) throw new RuntimeError(`Duplicate turn: ${message.turnId}`)
     turns = [...turns, { turnId: message.turnId, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }]
   }
-  if (event.type === "AbortReceived") turns = turns.map(turn => turn.turnId === state.turnId && turn.cancellation === null ? { ...turn, cancellation: event.reason } : turn)
-  if (event.type === "EffectRequested") turns = turns.map(turn => turn.turnId === state.turnId ? { ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] } : turn)
+  if (event.type === "AbortReceived" && event.invocation.method === "message") turns = turns.map(turn => turn.turnId === event.invocation.id && turn.settlement === null && turn.cancellation === null ? { ...turn, cancellation: event.reason } : turn)
+  if (event.type === "EffectRequested" && event.request.executor !== DeliverMessage.name) turns = turns.map(turn => turn.turnId === state.turnId ? { ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] } : turn)
   if (event.type === "EffectCancelled" || event.type === "PromiseSettled" || (event.type === "EffectSettled" && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value"))) {
     const key = effectKey(event.ref)
     turns = turns.map(turn => turn.effects.some(work => work.pending && effectKey(work.ref) === key) ? { ...turn, effects: turn.effects.map(work => effectKey(work.ref) === key ? { ...work, pending: false } : work) } : turn)
@@ -104,7 +105,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Cor
     }
     if (event.outcome !== "completed" && turn.outstanding.length) throw new RuntimeError("Outstanding tools must settle before ending a turn")
     if (event.outcome === "cancelled" && (turn.cancellation === null || turn.effects.some(work => work.pending))) throw new RuntimeError("Turn cancellation must drain accepted work before settlement")
-    turns = turns.map(value => value === turn ? { ...value, settlement: event.outcome } : value)
+    turns = turns.map(value => value === turn ? { ...value, settlement: event.outcome, ...(event.outcome === "failed" ? { failure: event.reason } : event.outcome === "cancelled" ? { cancellation: event.reason } : {}) } : value)
   }
   if (event.type === "ToolReturned" && turns.some(turn => turn.outstanding.includes(event.callId))) {
     turns = turns.map(turn => turn.outstanding.includes(event.callId)

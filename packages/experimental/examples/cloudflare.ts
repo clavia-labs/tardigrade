@@ -6,7 +6,7 @@ import { DurableObject } from "cloudflare:workers"
 import { Layer } from "effect"
 import { createCloudflareHost, cloudflareHandler } from "@clavia/tardigrade-experimental-platform/cloudflare"
 
-import { actor } from "./actors/inbox"
+import { actor } from "./agents/inbox"
 
 interface Env { readonly ACTORS: DurableObjectNamespace<ActorDO> }
 

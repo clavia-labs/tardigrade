@@ -1,7 +1,7 @@
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { defineActor, durablePromise, effectKey, EffectExecution, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-experimental-core"
-import { createActorStore, Promises } from "@clavia/tardigrade-experimental-host"
+import { createActorStore, Promises } from "@clavia/tardigrade-experimental-core"
 import { definePackage, promiseTool, tool } from "@clavia/tardigrade-experimental-packages"
 import { packageTools } from "@clavia/tardigrade-experimental-agent/atoms/tools"
 import { ToolCatalog } from "@clavia/tardigrade-experimental-agent/context"
@@ -63,9 +63,9 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
   })
   const first = yield* open()
   yield* Effect.gen(function* () {
-    yield* first.methods.start()
+    yield* first.actions.start()
     yield* Deferred.await(recorded)
-    yield* first.methods.barrier()
+    yield* first.actions.barrier()
     const returned = payloads().find(event => event.type === "ToolReturned")
     const settled = payloads().find(event => event.type === "EffectSettled")
     if (!returned || returned.type !== "ToolReturned" || !returned.promise || !settled || settled.type !== "EffectSettled" || settled.outcome.status !== "fulfilled" || !Schema.is(Schema.Struct({ type: Schema.Literal("promise") }))(settled.outcome.value)) return yield* Effect.fail(new RuntimeError("Tool handle bypassed core deferred execution"))
@@ -76,11 +76,11 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
     const restored = yield* open()
     yield* Effect.gen(function* () {
       yield* restored.wait
-      const replies = payloads().filter(event => event.type === "MessageReceived" && event.kind === "message" && event.turnId === "promise:job")
+      const replies = payloads().filter(event => event.type === "MessageReceived" && !("body" in event) && event.kind === "message" && event.turnId === "promise:job")
       if (executions.length !== (options.executor === "local" ? 2 : 1) || payloads().filter(event => event.type === "ToolReturned").length !== 1 || payloads().filter(event => event.type === "EffectRequested").length !== 1 || payloads().filter(event => event.type === "EffectSettled").length !== 1 || payloads().filter(event => event.type === "PromiseSettled").length !== 1 || replies.length !== 1) return yield* Effect.fail(new RuntimeError("Tool recovery duplicated or lost lifecycle delivery"))
       if (executions.some(ref => effectKey(ref) !== effectKey(executions[0]!)) || (options.executor === "local" ? watches !== 0 : watches !== 2)) return yield* Effect.fail(new RuntimeError("Tool recovery changed execution ownership or identity"))
       const reply = replies[0]!
-      if (reply.type !== "MessageReceived" || reply.kind !== "message") return yield* Effect.fail(new RuntimeError("Expected tool inbox result"))
+      if (reply.type !== "MessageReceived" || "body" in reply || reply.kind !== "message") return yield* Effect.fail(new RuntimeError("Expected tool inbox result"))
       const data: unknown = JSON.parse(reply.text.slice("Tool promise result (data): ".length))
       const expected = options.rejected ? Schema.Struct({ result: Schema.Struct({ status: Schema.Literal("rejected"), reason: Schema.String }) }) : Schema.Struct({ result: Schema.Struct({ status: Schema.Literal("fulfilled"), value: Schema.Literal(options.value) }) })
       if (!Schema.is(expected)(data)) return yield* Effect.fail(new RuntimeError("Tool inbox result changed on recovery"))

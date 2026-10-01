@@ -43,7 +43,6 @@
     "./agent/testing": "./src/agent-testing.ts",
     "./experimental": "./src/experimental.ts",
     "./experimental/event-log": "./src/experimental/event-log.ts",
-    "./experimental/host": "./src/experimental/host.ts",
     "./experimental/bun": "./src/experimental/bun.ts",
     "./experimental/cloudflare": "./src/experimental/cloudflare.ts"
   },
@@ -54,7 +53,6 @@
     "effect": "4.0.0-rc.115",
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-experimental-core": "workspace:*",
-    "@clavia/tardigrade-experimental-host": "workspace:*",
     "@clavia/tardigrade-experimental-platform": "workspace:*"
   },
   "scripts": {

@@ -3,7 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "bin": { "experimental-chat": "./src/main.ts" },
+  "bin": {
+    "experimental-chat": "./src/main.ts"
+  },
   "scripts": {
     "start": "bun run src/main.ts",
     "typecheck": "tsc --noEmit",
@@ -12,7 +14,6 @@
   "dependencies": {
     "@clavia/tardigrade-experimental-agent": "workspace:*",
     "@clavia/tardigrade-experimental-core": "workspace:*",
-    "@clavia/tardigrade-experimental-host": "workspace:*",
     "@clavia/tardigrade-experimental-platform": "workspace:*",
     "@effect/platform-bun": "4.0.0-rc.115",
     "effect": "4.0.0-rc.115",

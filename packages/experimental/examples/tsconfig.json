@@ -2,7 +2,7 @@
   "extends": "../../../tsconfig.base.json",
   "include": [
     "*.ts",
-    "actors/**/*.ts"
+    "agents/**/*.ts"
   ],
   "exclude": [
     "cloudflare.ts"

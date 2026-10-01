@@ -1,7 +1,6 @@
 import { Context, Effect, type Schema } from "effect"
-import type { Getter, Atom } from "../atom"
-import type { FiberHandle, ExecutionHandle } from "../effects"
-import type { EffectRef } from "../effect-ref"
+import type { Getter, Atom } from "../atoms/atom"
+import type { FiberHandle, ExecutionHandle, EffectRef } from "../runtime/effects"
 
 // EffectExecution supplies the current reference, cancellation signal, and execution capabilities.
 export class EffectExecution extends Context.Service<EffectExecution, {

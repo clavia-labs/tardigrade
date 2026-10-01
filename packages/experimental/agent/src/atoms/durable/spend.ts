@@ -29,7 +29,7 @@ function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type
     }
     if (updated) state = { ...state, timeSpend: updated }
   }
-  if (event.type === "MessageReceived") {
+  if (event.type === "MessageReceived" && "kind" in event) {
     const message = inboxMessage(event)
     if (!message || state.toolSpend.some(turn => turn.turnId === message.turnId)) return state
     const turnId = message.turnId
