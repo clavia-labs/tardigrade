@@ -7,6 +7,7 @@ import { ActorDecision, ActorRequest, ActorCall } from "../contracts"
 
 export interface ActorCaller {
   readonly handle: ExecutionHandle
+  readonly cancelled: () => boolean
   readonly notify: (message: Schema.Json) => Effect.Effect<void, Error>
   readonly request: (request: ActorRequest) => Effect.Effect<ActorDecision, Error>
 }
@@ -15,6 +16,7 @@ export interface ActorCaller {
 export class Actor extends Context.Service<Actor, {
   readonly submit: (call: ActorCall) => Effect.Effect<ExecutionHandle, Error>
   readonly poll: (handle: ExecutionHandle) => Effect.Effect<ResolutionState, Error>
+  // cancel fences submission by call identity when the handle has not yet been retained.
   readonly cancel: (handle: ExecutionHandle) => Effect.Effect<void, Error>
   readonly reply: (handle: ExecutionHandle, requestId: string, decision: ActorDecision) => Effect.Effect<void, Error>
 }>()("experimental/host/Actor") {}
@@ -29,8 +31,9 @@ export function localActors(options: {
   return Layer.effect(Actor, Effect.gen(function* () {
     const scope = yield* Scope.Scope
     const endpoint = (yield* Effect.all(Array.from({ length: 4 }, () => Random.nextInt))).join(":")
-    const entries = new Map<string, { call: ActorCall; result: ResolutionState; fiber?: Fiber.Fiber<void, never> }>()
+    const entries = new Map<string, { call: ActorCall; result: ResolutionState; cancelled: boolean; fiber?: Fiber.Fiber<void, never> }>()
     const replies = new Map<string, Deferred.Deferred<ActorDecision, Error>>()
+    const cancelled = new Set<string>()
     const key = (handle: ExecutionHandle, requestId: string) => JSON.stringify([handle.id, requestId])
     const lookup = (handle: ExecutionHandle) => handle.executor === "actor" && handle.endpoint === endpoint ? entries.get(handle.id) : undefined
     return {
@@ -42,10 +45,12 @@ export function localActors(options: {
           if (!isDeepStrictEqual(previous.call, call)) return yield* Effect.fail(new RuntimeError("Actor call identity already used"))
           return handle
         }
-        const entry: { call: ActorCall; result: ResolutionState; fiber?: Fiber.Fiber<void, never> } = { call, result: { status: "pending" } }
+        const entry: { call: ActorCall; result: ResolutionState; cancelled: boolean; fiber?: Fiber.Fiber<void, never> } = { call, result: cancelled.has(call.id) ? { status: "rejected", reason: "Actor call cancelled" } : { status: "pending" }, cancelled: cancelled.has(call.id) }
         entries.set(call.id, entry)
+        if (entry.cancelled) return handle
         const caller: ActorCaller = {
           handle,
+          cancelled: () => entry.cancelled,
           notify: message => options.onMessage(handle, message),
           request: request => Effect.gen(function* () {
             const value = yield* Schema.decodeEffect(ActorRequest)(request)
@@ -62,18 +67,21 @@ export function localActors(options: {
         entry.fiber = yield* options.run(call, caller).pipe(
           Effect.flatMap(value => Schema.decodeEffect(Schema.Json)(value)),
           Effect.exit,
-          Effect.map(exit => { entry.result = Exit.isSuccess(exit) ? { status: "fulfilled", value: exit.value } : { status: "rejected", reason: Cause.prettyErrors(exit.cause).map(error => error.message).join("\n") } }),
+          Effect.map(exit => { if (entry.result.status === "pending") entry.result = Exit.isSuccess(exit) ? { status: "fulfilled", value: exit.value } : { status: "rejected", reason: Cause.prettyErrors(exit.cause).map(error => error.message).join("\n") } }),
           Effect.forkIn(scope),
         )
         return handle
       }),
       poll: handle => Effect.sync(() => lookup(handle)?.result ?? { status: "rejected" as const, reason: "Local actor handle is no longer available" }),
       cancel: handle => Effect.gen(function* () {
-        const entry = lookup(handle)
-        if (!entry) return yield* Effect.fail(new RuntimeError("Unknown actor handle"))
+        if (handle.executor !== "actor") return yield* Effect.fail(new RuntimeError("Invalid actor handle"))
+        if (handle.endpoint !== undefined && handle.endpoint !== endpoint) return
+        const entry = entries.get(handle.id)
+        if (!entry) { cancelled.add(handle.id); return }
         if (entry.result.status !== "pending") return
-        if (entry.fiber) yield* Fiber.interrupt(entry.fiber)
+        entry.cancelled = true
         entry.result = { status: "rejected", reason: "Actor call cancelled" }
+        if (entry.fiber) yield* Fiber.interrupt(entry.fiber)
       }),
       reply: (handle, requestId, decision) => Effect.gen(function* () {
         if (!lookup(handle)) return yield* Effect.fail(new RuntimeError("Unknown actor handle"))

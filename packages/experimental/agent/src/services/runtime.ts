@@ -48,7 +48,12 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
           const reply = child.snapshot().events.filter(Schema.is(Event)).findLast(event => event.type === "TurnSettled")
           if (!reply || reply.type !== "TurnSettled") return yield* Effect.fail(new RuntimeError("Child finished without an answer"))
           return { answer: turnOutput(child.snapshot().events.filter(Schema.is(Event)), reply) }
-        }),
+        }).pipe(Effect.onInterrupt(() => caller.cancelled() ? Effect.gen(function* () {
+          const snapshot = child.snapshot()
+          const refs = [...snapshot.pending().map(work => work.ref), ...snapshot.deferred().map(work => work.ref)]
+          for (const ref of refs) yield* child.cancel(ref, "Parent invocation cancelled")
+          yield* child.wait
+        }) : Effect.void)),
         child => child.close,
 
       )

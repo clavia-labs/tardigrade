@@ -21,6 +21,7 @@ export function agents(options: { readonly budget?: { readonly toolCalls?: numbe
         const actor = yield* Actor
         return yield* actor.submit({ id: call.callId, message, config: { budget } })
       }),
+      cancel: (handle, call) => Actor.use(actor => actor.cancel(handle ?? { executor: "actor", id: call.callId })),
     }), tool({
       name: "cancel", description: "Cancel a child using its execution handle. Its promise will settle with cancellation if still pending.",
       input: Schema.Struct({ handle: ExecutionHandle }),

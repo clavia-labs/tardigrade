@@ -6,6 +6,7 @@ import { reportedCostOf } from "@clavia/tardigrade-model/providers/usage"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
 import type { ModelRef } from "@clavia/tardigrade-model/reference"
 import type { ToolSpec } from "@clavia/tardigrade-experimental-packages"
+import type { ActCancellation } from "@clavia/tardigrade-experimental-core"
 import { ModelLock } from "./model-lock"
 import type { Conversation } from "../projections"
 import type { ModelReply as ReplySchema } from "../event"
@@ -17,7 +18,8 @@ export interface ModelInput { readonly model: ModelRef; readonly system: string;
 
 export class Model extends Context.Service<Model, {
   readonly call: (input: ModelInput) => Effect.Effect<ModelReply, Error>
-  readonly submit?: (input: ModelInput) => Effect.Effect<ExecutionHandle, Error>
+  readonly submit?: (input: ModelInput, context: Pick<ActCancellation, "ref"> & { readonly signal: AbortSignal }) => Effect.Effect<ExecutionHandle, Error>
+  readonly cancel?: (input: ModelInput, context: Omit<ActCancellation, "request">) => Effect.Effect<void, Error>
 }>()("example/Model") {}
 
 export const DEFAULT_MODEL_TIMEOUT_MS = 60_000

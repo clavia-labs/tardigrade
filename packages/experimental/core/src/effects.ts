@@ -2,7 +2,7 @@ import { type Effect, Schema } from "effect"
 import type { EffectExecution } from "./services/effect-execution"
 import type { ActRequest } from "./act"
 import type { EffectRef } from "./effect-ref"
-import type { EffectRequest } from "./lifecycle"
+import { EffectCancelled, type EffectRequest } from "./lifecycle"
 import { atom, type Atom, type Getter } from "./atom"
 
 export { EffectExecution } from "./services/effect-execution"
@@ -25,7 +25,17 @@ export interface EventValue<Event> {
 export interface ActorOutput<View, Event, Services = never> {
   readonly view: View
   readonly events: Readonly<Record<string, EventValue<Event>>>
-  readonly acts: Readonly<Record<string, ActRequest<Schema.Json, Schema.Json, Services>>>
+  readonly acts: Readonly<Record<string, ActRequest<Schema.Json, Schema.Json, Services> | CancelRequest>>
+}
+
+export interface CancelRequest {
+  readonly kind: "cancel"
+  readonly event: EffectCancelled
+}
+
+// cancel proposes durable cancellation of an accepted reference (quint/cancellation.qnt, terminalExclusive).
+export function cancel(ref: EffectRef, reason: Schema.Json): CancelRequest {
+  return { kind: "cancel", event: Schema.decodeSync(EffectCancelled)(structuredClone({ type: "EffectCancelled", ref, reason })) }
 }
 
 // effectAtom derives a view and typed proposals for the runtime.
@@ -49,7 +59,7 @@ export interface EffectWork<Services = never> {
 export interface IdentifiedEffectValue<Services = never> extends EffectWork<Services> {
   readonly ref: EffectRef
 }
-type Proposal = EventValue<unknown> | ActRequest<Schema.Json, Schema.Json, unknown>
+type Proposal = EventValue<unknown> | ActRequest<Schema.Json, Schema.Json, unknown> | CancelRequest
 type CollectedProposals<Value> = Value extends { readonly events: infer Events; readonly acts: infer Acts } ? Events[keyof Events] | Acts[keyof Acts] : never
 export type Proposed<Value> = Extract<NonNullable<CollectedProposals<Value>>, Proposal>
 export type ServicesOf<P> = P extends ActRequest<Schema.Json, Schema.Json, infer Services> ? Services | EffectExecution : never

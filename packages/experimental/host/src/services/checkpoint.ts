@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { RuntimeError, EffectRef, EffectRequested, EffectSettled, PromiseSettled } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, EffectRef, EffectRequested, EffectSettled, PromiseSettled, EffectCancelled } from "@clavia/tardigrade-experimental-core"
 import { Crypto, Effect, Encoding, PlatformError } from "effect"
 import type { EffectCheckpoint } from "@clavia/tardigrade-experimental-core/event-log"
 
@@ -43,9 +43,11 @@ export const decodeCheckpoint = (bytes: Uint8Array): EffectCheckpoint => {
     const item = entry as Record<string, unknown>
     const ref = Schema.decodeUnknownSync(EffectRef)(item.ref)
     const request = Schema.decodeUnknownSync(EffectRequested)(item.request)
-    const settlement = Schema.decodeUnknownSync(Schema.toType(EffectSettled))(item.settlement)
-    if (JSON.stringify(ref) !== JSON.stringify(request.ref) || JSON.stringify(ref) !== JSON.stringify(settlement.ref)) throw new Error("Effect checkpoint references disagree")
-    return { ref, request, settlement }
+    const settlement = item.settlement === undefined ? undefined : Schema.decodeUnknownSync(Schema.toType(EffectSettled))(item.settlement)
+    const cancellation = item.cancellation === undefined ? undefined : Schema.decodeUnknownSync(EffectCancelled)(item.cancellation)
+    if (!settlement && !cancellation) throw new Error("Effect checkpoint contains pending work")
+    if ([request, settlement, cancellation].some(record => record && JSON.stringify(ref) !== JSON.stringify(record.ref))) throw new Error("Effect checkpoint references disagree")
+    return { ref, request, ...(settlement ? { settlement } : {}), ...(cancellation ? { cancellation } : {}) }
   })
   const promises = record.promises.map(entry => Schema.decodeUnknownSync(Schema.toType(PromiseSettled))(entry))
   return { position: record.position as number, durable, effects, promises }

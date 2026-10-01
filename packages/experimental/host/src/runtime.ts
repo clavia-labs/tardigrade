@@ -1,4 +1,4 @@
-import { RuntimeError, PromiseNotReady, createStore, createEventSource, atom, EventLog, EffectExecution, ExecutionResult, EffectRequested, EffectSettled, PromiseSettled, hasCoreEventType, effectKey, type Recorded, type Atom, type Journal, type ActorRuntime, type ActorSetup, type Requirements, type ActorDefinition, type EffectRef } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, PromiseNotReady, createStore, createEventSource, atom, EventLog, EffectExecution, ExecutionResult, EffectRequested, EffectSettled, EffectCancelled, cancelAct, PromiseSettled, hasCoreEventType, effectKey, type Recorded, type Atom, type Journal, type ActorRuntime, type ActorSetup, type Requirements, type ActorDefinition, type EffectRef, type ActCancellation } from "@clavia/tardigrade-experimental-core"
 import { createEventLog, type EffectCheckpoint } from "@clavia/tardigrade-experimental-core/event-log"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue, Schedule } from "effect"
 import { Promises, DEFAULT_PROMISE_POLICY } from "./services/promises"
@@ -9,6 +9,8 @@ export type CheckpointPolicy =
   | { readonly mode: "quiescent"; readonly options?: { readonly maxBytes?: number } }
   | { readonly mode: "threshold"; readonly options: { readonly everyEvents: number; readonly maxBytes?: number } }
   | { readonly mode: "manual"; readonly options?: { readonly maxBytes?: number } }
+
+export const DEFAULT_CANCELLATION_RETRY_INTERVAL_MS = 5_000
 
 export const DEFAULT_CHECKPOINT_POLICY: CheckpointPolicy = { mode: "quiescent" }
 
@@ -24,6 +26,7 @@ export function createActorStore<Event extends object, State, Methods extends ob
   readonly actorContext: (services: Context.Context<Requirements<{ root: Atom<NoInfer<State>> }> | Exclude<NoInfer<Services>, Scope.Scope>>) => Context.Context<Exclude<NoInfer<Services>, Scope.Scope>>
   readonly events?: readonly Recorded<Event>[]
   readonly checkpoint?: CheckpointPolicy
+  readonly cancellation?: { readonly retryIntervalMs?: number }
   readonly promiseDelivery?: { readonly retryIntervalMs?: number }
   readonly journal?: Journal<Event>
   readonly onEvent?: (event: Recorded<Event>) => void
@@ -53,6 +56,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
   readonly actorContext: (services: Context.Context<Requirements<Atoms> | Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
   readonly events?: readonly Recorded<Event>[]
   readonly checkpoint?: CheckpointPolicy
+  readonly cancellation?: { readonly retryIntervalMs?: number }
   readonly promiseDelivery?: { readonly retryIntervalMs?: number }
   readonly journal?: Journal<Event>
   readonly onEvent?: (event: Recorded<Event>) => void
@@ -96,6 +100,16 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const committed: Effect.Effect<void, Error>[] = []
     const ready = Deferred.makeUnsafe<void>()
     const scope = yield* Scope.make()
+    const lifetimes = new Map<string, { readonly scope: Scope.Closeable; readonly signal: AbortSignal }>()
+    const executions = new Map<string, Fiber.Fiber<{ readonly status: "fulfilled"; readonly value: ExecutionResult } | { readonly status: "rejected"; readonly reason: Schema.Json }, never>>()
+    const cleaning = new Set<string>()
+    const pendingCleanup = new Map<string, ActCancellation>()
+    const queueCleanup = (cancellation: ActCancellation) => {
+      const key = JSON.stringify([effectKey(cancellation.ref), cancellation.handle ?? null])
+      if (!cleaning.has(key)) pendingCleanup.set(key, cancellation)
+    }
+    const cancellationRetryIntervalMs = options.cancellation?.retryIntervalMs ?? DEFAULT_CANCELLATION_RETRY_INTERVAL_MS
+    if (!Number.isSafeInteger(cancellationRetryIntervalMs) || cancellationRetryIntervalMs < 1) return yield* Effect.fail(new RuntimeError("Cancellation retryIntervalMs must be a positive safe integer"))
     const background = new Map<string, Fiber.Fiber<void, never>>()
     const errors: Error[] = []
     const subscriptions = new Set<() => void>()
@@ -136,6 +150,29 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }
       if (options.journal && checkpoint) checkpointPosition = next.position
       snapshot = next
+      for (const record of records) {
+        if (Schema.is(PromiseSettled)(record)) {
+          const key = effectKey(record.ref)
+          const lifetime = lifetimes.get(key)
+          if (lifetime) yield* Scope.close(lifetime.scope, Exit.succeed(undefined))
+          lifetimes.delete(key)
+          continue
+        }
+        if (!Schema.is(EffectCancelled)(record) && !Schema.is(EffectSettled)(record)) continue
+        const lifecycle = next.effect(record.ref)
+        const cancellation = lifecycle?.cancellation
+        if (!cancellation) continue
+        const result = lifecycle.settlement?.outcome.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(lifecycle.settlement.outcome.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
+        queueCleanup({ request: lifecycle.request.request, ref: record.ref, reason: cancellation.reason, ...(result?.type === "promise" ? { handle: result.handle } : {}) })
+        const key = effectKey(cancellation.ref)
+        const lifetime = lifetimes.get(key)
+        if (lifetime) yield* Scope.close(lifetime.scope, Exit.succeed(undefined))
+        lifetimes.delete(key)
+        const executing = executions.get(key)
+        const deferred = background.get(key)
+        if (executing) yield* Fiber.interrupt(executing).pipe(Effect.forkIn(scope))
+        if (deferred) yield* Fiber.interrupt(deferred).pipe(Effect.forkIn(scope))
+      }
       yield* Effect.try({ try: sync, catch: RuntimeError.from }).pipe(Effect.catch(error => Effect.sync(() => report(error))))
       yield* Queue.offer(notifications, records)
       yield* schedule
@@ -149,7 +186,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }).pipe(Effect.uninterruptible))
       return yield* Deferred.await(accepted)
     })
-    const appendNow = (event: Recorded<Event>) => Effect.gen(function* () {
+    const appendNow = (event: Recorded<Event>): Effect.Effect<void, Error> => Effect.gen(function* () {
       const updated = yield* Effect.try({ try: () => {
         let next = definition.append(snapshot, event)
         if (next === snapshot) return next
@@ -165,11 +202,12 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         }
       }, catch: RuntimeError.from })
       yield* commit(updated)
+      for (const cancellation of snapshot.cancellations()) yield* appendNow(cancellation)
     })
     const append = (event: Recorded<Event>) => enqueue(appendNow(event))
     let services: Effect.Success<ReturnType<typeof buildServices>>
     function buildServices() {
-      return Layer.build(options.services(runtime)).pipe(Effect.provideService(Scope.Scope, scope))
+      return Layer.build(Layer.fresh(options.services(runtime))).pipe(Effect.provideService(Scope.Scope, scope))
     }
     const dispatched = new Set<string>()
     const watched = new Set<string>()
@@ -178,12 +216,27 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       for (const record of snapshot.events) {
         if (!Schema.is(EffectSettled)(record) || record.outcome.status !== "fulfilled") continue
         const result = yield* Schema.decodeUnknownEffect(ExecutionResult)(record.outcome.value).pipe(Effect.mapError(RuntimeError.from))
-        if (result.type !== "promise" || result.handle.executor === "local" || snapshot.promise(record.ref)) continue
+        if (result.type !== "promise" || result.handle.executor === "local" || snapshot.promise(record.ref) || snapshot.effect(record.ref)?.cancellation) continue
         const key = effectKey(record.ref)
         if (watched.has(key)) continue
         if (Option.isNone(observer)) return yield* Effect.fail(new RuntimeError("Promise execution results require a Promises service"))
         yield* observer.value.watch({ ref: record.ref, handle: result.handle })
         watched.add(key)
+      }
+    })
+    const cleanCancellations = Effect.gen(function* () {
+      for (const [key, cancellation] of pendingCleanup) {
+        pendingCleanup.delete(key)
+        if (cleaning.has(key)) continue
+        cleaning.add(key)
+        const observer = Context.getOption(services, Promises)
+        const cleanup = Effect.gen(function* () {
+          if (cancellation.handle && cancellation.handle.executor !== "local" && Option.isSome(observer)) {
+            yield* observer.value.cancel({ ref: cancellation.ref, handle: cancellation.handle })
+          }
+          yield* cancelAct(cancellation).pipe(Effect.provide(services))
+        }).pipe(Effect.retry({ schedule: Schedule.spaced(cancellationRetryIntervalMs) }))
+        yield* runtime.fork(`cancellation:${key}`, cleanup)
       }
     })
     const afterCommit = () => Effect.gen(function* () {
@@ -197,6 +250,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         }
         for (const work of committed) yield* work.pipe(Effect.catchCause(reportCause))
       }
+      yield* cleanCancellations.pipe(Effect.catchCause(reportCause))
       yield* observePromises.pipe(Effect.catchCause(reportCause))
     })
     const waitFor = <Value>(node: Atom<Value | undefined>) => Effect.gen(function* () {
@@ -219,6 +273,11 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         const next = yield* enqueue(Effect.gen(function* () {
           if (closed) return
           if (persistenceFailure) return yield* Effect.fail(persistenceFailure)
+          const cancellation = snapshot.cancellations()[0]
+          if (cancellation) {
+            yield* appendNow(cancellation)
+            return { kind: "delivery" as const }
+          }
           const delivery = yield* Effect.try({ try: () => snapshot.deliveries()[0], catch: RuntimeError.from })
           if (delivery) {
             yield* appendNow(delivery)
@@ -226,7 +285,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           }
           for (const [key, work] of localRecovery) {
             localRecovery.delete(key)
-            if (snapshot.promise(work.ref)) continue
+            if (snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cancellation) continue
             dispatched.add(key)
             return { kind: "work" as const, work, recovering: true as const }
           }
@@ -246,28 +305,61 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         if (next.kind === "delivery") continue
         const { work } = next
         yield* afterCommit()
+        const key = effectKey(work.ref)
+        let lifetime = lifetimes.get(key)
+        if (!lifetime) {
+          const executionScope = yield* Scope.fork(scope)
+          const signal = yield* Effect.abortSignal.pipe(Effect.provideService(Scope.Scope, executionScope))
+          lifetime = { scope: executionScope, signal }
+          lifetimes.set(key, lifetime)
+        }
+        const signal = lifetime.signal
+        if (snapshot.effect(work.ref)?.cancellation) {
+          dispatched.delete(key)
+          continue
+        }
         const execution: typeof EffectExecution.Service = {
           ref: work.ref,
+          signal: signal,
+          cancel: runtime.cancel,
+          submit: operation => Effect.gen(function* () {
+            if (signal.aborted) return yield* Effect.interrupt
+            const handle = yield* operation
+            yield* append({ type: "EffectSettled", ref: work.ref, outcome: { status: "fulfilled", value: { type: "promise", handle } } })
+            return handle
+          }).pipe(Effect.uninterruptible),
           get: store.get,
           waitFor,
-          record: event => runtime.record(event as unknown as Recorded<Event>),
+          record: event => enqueue(Effect.suspend(() => snapshot.effect(work.ref)?.cancellation ? Effect.void : appendNow(event as unknown as Recorded<Event>))),
           fork: operation => Effect.gen(function* () {
             const context = yield* Effect.context<Effect.Services<typeof operation>>()
             const id = effectKey(work.ref)
+            if (signal.aborted) return yield* Effect.interrupt
             yield* runtime.fork(id, operation.pipe(
               Effect.provide(context),
-              Effect.flatMap(result => runtime.send((Array.isArray(result) ? result : [result]) as readonly Event[])),
+              Effect.flatMap(result => runtime.send((Array.isArray(result) ? result : [result]) as readonly Event[], () => !snapshot.effect(work.ref)?.cancellation)),
             ))
             return { executor: "local" as const, id }
           }),
         }
-        const outcome = yield* work.execute.pipe(
+        const fiber = yield* work.execute.pipe(
           Effect.provideService(EffectExecution, execution),
           Effect.provide(services),
           Effect.flatMap(result => Schema.decodeEffect(ExecutionResult)(result).pipe(Effect.mapError(String))),
           Effect.map(value => ({ status: "fulfilled" as const, value })),
           Effect.catch(reason => Effect.succeed({ status: "rejected" as const, reason })),
+          Effect.forkIn(scope),
         )
+        executions.set(key, fiber)
+        if (signal.aborted) yield* Fiber.interrupt(fiber)
+        const exit = yield* Fiber.await(fiber)
+        executions.delete(key)
+        if (Exit.isFailure(exit)) {
+          dispatched.delete(key)
+          if (snapshot.effect(work.ref)?.cancellation && Cause.hasInterruptsOnly(exit.cause)) continue
+          return yield* Effect.failCause(exit.cause)
+        }
+        const outcome = exit.value
         if (next.recovering) {
           let result: PromiseSettled["result"] | undefined
           if (outcome.status === "rejected") result = outcome
@@ -282,6 +374,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           yield* append(settlement)
         }
         dispatched.delete(effectKey(work.ref))
+        if (outcome.status === "rejected" || outcome.value.type === "value") {
+          yield* Scope.close(lifetime.scope, Exit.succeed(undefined))
+          lifetimes.delete(key)
+        }
       }
     })
     const send = (events: readonly Recorded<Event>[], when?: (get: ActorRuntime<Event>["get"]) => boolean) => Effect.gen(function* () {
@@ -290,6 +386,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       let cursor = 0
       yield* enqueue(Effect.gen(function* () {
         if (persistenceFailure) return yield* Effect.fail(persistenceFailure)
+        if (events.some(event => Schema.is(PromiseSettled)(event) && snapshot.effect(event.ref)?.cancellation)) return
         if (!admitted) {
           if (when && !(yield* Effect.try({ try: () => when(store.get), catch: RuntimeError.from }))) return
           admitted = true
@@ -327,9 +424,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         )
         background.set(id, fiber)
       }),
-      cancel: id => Effect.gen(function* () {
+      cancel: (ref, reason) => send([{ type: "EffectCancelled", ref, reason }]),
+      interrupt: id => Effect.gen(function* () {
         const fiber = background.get(id)
-        if (!fiber) return yield* Effect.fail(new RuntimeError(`No active background work: ${id}`))
+        if (!fiber) return
         yield* Effect.forkIn(Fiber.interrupt(fiber), scope)
       }),
     }
@@ -366,6 +464,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         : options.events ?? []
       definition = createEventLog({ schema: setup.schema, atoms: setup.effects, ...(checkpoint ? { checkpoint } : {}) })
       snapshot = yield* Effect.try({ try: () => definition.replay(history), catch: RuntimeError.from })
+      for (const cancellation of snapshot.cancelled()) queueCleanup(cancellation)
       const deferred = yield* Effect.try({ try: () => snapshot.deferred(), catch: RuntimeError.from })
       for (const work of deferred) if (work.handle.executor === "local") localRecovery.set(effectKey(work.ref), work)
       yield* Effect.try({ try: sync, catch: RuntimeError.from })
@@ -389,6 +488,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           return unsubscribe
         },
         snapshot: () => snapshot,
+        cancel: (ref: EffectRef, reason: Schema.Json) => run(runtime.cancel(ref, reason)),
         resume: run(send([])),
         checkpoint: enqueue(Effect.gen(function* () {
           if (!options.journal) return yield* Effect.fail(new RuntimeError("Checkpointing requires a journal"))

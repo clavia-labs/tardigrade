@@ -17,5 +17,5 @@ export function toolActs<const P extends readonly Package<unknown>[]>(packages: 
     return (method ? method.execute(input.call.input, input.call) : Effect.fail(new RuntimeError(`Unknown tool: ${input.call.name}`))).pipe(
       Effect.map(result => result.type === "promise" ? ExecuteTool.defer(result.handle) : result.value), Effect.mapError(String),
     )
-  }))
+  }, { cancel: (input, context) => registry.get(input.call.name)?.cancel?.(context.handle, input.call) ?? Effect.void }))
 }

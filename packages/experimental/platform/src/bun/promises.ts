@@ -4,7 +4,7 @@ import { ClockHandle, RuntimeError, type ActorRuntime } from "@clavia/tardigrade
 import { Promises, PromiseSettled, ResolutionRequest, resolutionKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-experimental-host"
 
 // bunPromises resolves promises in actor-scoped fibers and retains settlements while delivery is retried.
-export function bunPromises(host: Pick<ActorRuntime<object>, "fork" | "cancel">, options: {
+export function bunPromises(host: Pick<ActorRuntime<object>, "fork" | "interrupt">, options: {
   readonly poll?: ResolutionPoll
   readonly deliver: (settlement: PromiseSettled) => Effect.Effect<void, Error>
   readonly policy?: Partial<PromisePolicy>
@@ -80,7 +80,7 @@ export function bunPromises(host: Pick<ActorRuntime<object>, "fork" | "cancel">,
         entry.cancelled = true
         const timer = timers.get(key)
         if (timer) yield* Fiber.interrupt(timer)
-        else if (entry.expiresAt === undefined) yield* host.cancel(`resolver:${key}`)
+        else if (entry.expiresAt === undefined) yield* host.interrupt(`resolver:${key}`)
       }),
     } satisfies typeof Promises.Service
   }))

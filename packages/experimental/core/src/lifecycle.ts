@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { EffectRef } from "./effect-ref"
+import { EffectCancelled } from "./cancellation"
 import { promiseSchema } from "./promise"
 
 export const EffectRequest = Schema.Struct({ executor: Schema.NonEmptyString, input: Schema.Json })
@@ -13,6 +14,8 @@ export const EffectRequested = Schema.Struct({
 })
 export type EffectRequested = typeof EffectRequested.Type
 
+export { EffectCancelled, Cancelled } from "./cancellation"
+
 // PromiseSettled records the eventual outcome of a durable promise.
 export const PromiseSettled = promiseSchema({ success: Schema.Json, error: Schema.Json })
 export type PromiseSettled = typeof PromiseSettled.Type
@@ -25,10 +28,10 @@ export const EffectSettled = Schema.Struct({
 })
 export type EffectSettled = typeof EffectSettled.Type
 
-export const CoreEvent = Schema.Union([EffectRequested, EffectSettled, PromiseSettled])
+export const CoreEvent = Schema.Union([EffectRequested, EffectSettled, PromiseSettled, EffectCancelled])
 export type CoreEvent = typeof CoreEvent.Type
 
 // hasCoreEventType identifies event names reserved for core lifecycle records.
 export function hasCoreEventType(event: object): boolean {
-  return "type" in event && (event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "PromiseSettled")
+  return "type" in event && (event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "PromiseSettled" || event.type === "EffectCancelled")
 }

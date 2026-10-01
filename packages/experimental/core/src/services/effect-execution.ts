@@ -1,11 +1,15 @@
-import { Context, Effect } from "effect"
+import { Context, Effect, type Schema } from "effect"
 import type { Getter, Atom } from "../atom"
-import type { FiberHandle } from "../effects"
+import type { FiberHandle, ExecutionHandle } from "../effects"
 import type { EffectRef } from "../effect-ref"
 
-// EffectExecution supplies the current effect identity and forks work within the actor's lifetime.
+// EffectExecution supplies the current reference, cancellation signal, and execution capabilities.
 export class EffectExecution extends Context.Service<EffectExecution, {
   readonly ref: EffectRef
+  readonly signal: AbortSignal
+  readonly cancel: (ref: EffectRef, reason: Schema.Json) => Effect.Effect<void, Error>
+  // submit retains an accepted handle before interruption can discard it (quint/cancellation.qnt, submit).
+  readonly submit: <Services>(work: Effect.Effect<ExecutionHandle, Error, Services>) => Effect.Effect<ExecutionHandle, Error, Services>
   readonly get: Getter
   readonly waitFor: <Value>(node: Atom<Value | undefined>) => Effect.Effect<Value, Error>
   readonly record: <Event extends object>(event: Event) => Effect.Effect<void, Error>

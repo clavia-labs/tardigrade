@@ -4,6 +4,7 @@ import { Atom } from "effect/unstable/reactivity"
 import { durableAtom } from "./durable"
 import { EffectRef, effectKey } from "./effect-ref"
 import { RuntimeError } from "./errors"
+import { Cancelled, EffectCancelled } from "./cancellation"
 
 export type PromiseState<Value, Error> =
   | { readonly status: "pending" }
@@ -28,14 +29,16 @@ export function durablePromise<Value, Error = never>(reference: EffectRef, optio
   const schema = promiseSchema(options)
   const result = schema.fields.result
   const validate = Schema.decodeUnknownSync(Schema.toType(schema), { onExcessProperty: "error" })
-  const stateSchema: Schema.Schema<PromiseState<Value, Error>> = Schema.Union([Schema.Struct({ status: Schema.Literal("pending") }), result])
+  const stateSchema: Schema.Schema<PromiseState<Value, Error | Cancelled>> = Schema.Union([Schema.Struct({ status: Schema.Literal("pending") }), result, Schema.Struct({ status: Schema.Literal("rejected"), reason: Cancelled })])
   const state = durableAtom({
     name: `promise:${id}`,
-    input: Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: Schema.Unknown }),
+    input: Schema.Union([Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: Schema.Unknown }), EffectCancelled]),
     schema: stateSchema,
     initial: { status: "pending" },
     reduce: (previous, event) => {
       if (effectKey(event.ref) !== id) return previous
+      if (event.type === "EffectCancelled") return previous.status === "pending" ? { status: "rejected" as const, reason: { _tag: "Cancelled" as const, reason: event.reason } } : previous
+      if (previous.status === "rejected" && Schema.is(Cancelled)(previous.reason)) return previous
       const settlement = validate(event)
       if (previous.status === "pending") return settlement.result
       if (!isDeepStrictEqual(previous, settlement.result)) throw new RuntimeError(`Conflicting promise settlement: ${id}`)

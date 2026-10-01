@@ -4,9 +4,9 @@ import { atom, type Atom } from "./atom"
 import { EventLog } from "./services/event-log"
 import { createStore } from "./store"
 import { createEventSource } from "./event-source"
-import type { ActRequest } from "./act"
+import type { ActRequest, ActCancellation } from "./act"
 import { ExecutionResult } from "./execution-result"
-import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, type PromiseSettled } from "./lifecycle"
+import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, type PromiseSettled, type EffectCancelled } from "./lifecycle"
 import { effectKey, EffectRef } from "./effect-ref"
 import type { Recorded } from "./journal"
 import { type EffectWork, type IdentifiedEffectValue, type ExecutionHandle, type Proposed, type ServicesOf } from "./effects"
@@ -18,7 +18,7 @@ type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<in
 export interface EffectCheckpoint {
   readonly position: number
   readonly durable: readonly { readonly name: string; readonly state: unknown; readonly position: number }[]
-  readonly effects: readonly { readonly ref: EffectRef; readonly request: EffectRequested; readonly settlement: EffectSettled }[]
+  readonly effects: readonly { readonly ref: EffectRef; readonly request: EffectRequested; readonly settlement?: EffectSettled; readonly cancellation?: EffectCancelled }[]
   readonly promises: readonly PromiseSettled[]
 }
 
@@ -56,10 +56,12 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly view: () => Values<Atoms>
     readonly effects: () => readonly Work[]
     readonly deferred: () => readonly DeferredWork[]
+    readonly cancellations: () => readonly EffectCancelled[]
+    readonly cancelled: () => readonly ActCancellation[]
     readonly deliveries: () => readonly Event[]
     readonly followups: (event: Recorded<Event>) => readonly object[]
     readonly pending: () => readonly EffectRequested[]
-    readonly effect: (ref: EffectRef) => { readonly request: EffectRequested; readonly settlement?: EffectSettled } | undefined
+    readonly effect: (ref: EffectRef) => { readonly request: EffectRequested; readonly settlement?: EffectSettled; readonly cancellation?: EffectCancelled } | undefined
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
     readonly checkpoint: () => EffectCheckpoint | undefined
   }
@@ -70,12 +72,13 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const durable = new Map(seed?.durable.map(entry => [entry.name, entry] as const))
     const coreRequests = new Map<string, EffectRequested>()
     const coreSettlements = new Map<string, EffectSettled>()
+    const coreCancellations = new Map<string, EffectCancelled>()
     const promiseSettlements = new Map<string, PromiseSettled>()
     const effect = (ref: EffectRef) => {
       const request = coreRequests.get(effectKey(ref))
       if (!request) return undefined
       const settlement = coreSettlements.get(effectKey(ref))
-      return settlement ? { request, settlement } : { request }
+      return { request, ...(settlement ? { settlement } : {}), ...(coreCancellations.has(effectKey(ref)) ? { cancellation: coreCancellations.get(effectKey(ref))! } : {}) }
     }
     const store = createStore(Context.make(EventLog, {
       events: source.events,
@@ -98,6 +101,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     disposers.add(dispose)
     const acts = new Map<string, ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>>()
     let deliveries: Event[] = []
+    let cancellations: EffectCancelled[] = []
     const owners = new Map<string, string>()
     const executionDeclarations = new Map<object, EffectRequest>()
     const proposals = new Map<string, ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>>()
@@ -107,7 +111,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     for (const entry of seed?.effects ?? []) {
       const key = effectKey(entry.ref)
       coreRequests.set(key, entry.request)
-      coreSettlements.set(key, entry.settlement)
+      if (entry.settlement) coreSettlements.set(key, entry.settlement)
+      if (entry.cancellation) coreCancellations.set(key, entry.cancellation)
       restoredRefs.set(`${entry.ref.atom}\u0000${entry.ref.tag}`, entry.ref)
     }
     for (const entry of seed?.promises ?? []) promiseSettlements.set(effectKey(entry.ref), entry)
@@ -119,16 +124,17 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       store.set(bindings, new Map(actReferences))
     }
     const checkpoint = (): EffectCheckpoint | undefined => {
-      const pendingEffects = [...coreRequests].filter(([key]) => !coreSettlements.has(key))
+      const pendingEffects = [...coreRequests].filter(([key]) => !coreSettlements.has(key) && !coreCancellations.has(key))
       const pendingPromises = [...coreSettlements].some(([key, settlement]) => {
-        if (settlement.outcome.status !== "fulfilled") return false
+        if (coreCancellations.has(key) || settlement.outcome.status !== "fulfilled") return false
         return Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !promiseSettlements.has(key)
       })
       if (pendingEffects.length || pendingPromises) return undefined
       const effects = [...coreRequests].map(([key, request]) => {
         const settlement = coreSettlements.get(key)
-        if (!settlement) throw new Error("Effect checkpoint contains an unsettled request")
-        return { ref: settlement.ref, request, settlement }
+        const cancellation = coreCancellations.get(key)
+        if (!settlement && !cancellation) throw new Error("Effect checkpoint contains an unsettled request")
+        return { ref: request.ref, request, ...(settlement ? { settlement } : {}), ...(cancellation ? { cancellation } : {}) }
       })
       // TODO: Checkpoint capture must preserve recovery for unread durable atoms absent from the registry; suffix-only restore currently loses their prefix state (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent, initSkipPrefix).
       const durable = [...store.nodes().values()].flatMap(node => {
@@ -153,6 +159,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const values = view()
       proposals.clear()
       deliveries = []
+      cancellations = []
       const identify = (name: string, owner: string, value: unknown): [string, unknown] => {
         const prior = owners.get(name)
         if (prior !== undefined && prior !== owner) throw new Error(`Duplicate effect source: ${name}`)
@@ -168,7 +175,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           if (typeof proposals !== "object" || proposals === null || Array.isArray(proposals)) throw new Error(`Invalid ${collection} collection from ${name}`)
           for (const [source, proposal] of Object.entries(proposals)) {
             if (!source || source.includes("/")) throw new Error(`Invalid effect source: ${source}`)
-            if (typeof proposal !== "object" || proposal === null || !("kind" in proposal) || proposal.kind !== (collection === "events" ? "event" : "act")) throw new Error(`Invalid ${collection} proposal from ${name}/${source}`)
+            if (typeof proposal !== "object" || proposal === null || !("kind" in proposal) || (collection === "events" ? proposal.kind !== "event" : proposal.kind !== "act" && proposal.kind !== "cancel")) throw new Error(`Invalid ${collection} proposal from ${name}/${source}`)
             const path = collection === "acts" ? `${name}/${source}` : `${name}/events/${source}`
             entries.push(identify(path, JSON.stringify([name, collection, source]), proposal))
           }
@@ -184,6 +191,16 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const event = eventOf(candidate.event)
           if (Schema.is(CoreEvent)(event)) throw new Error("Domain event proposals cannot emit core events")
           deliveries.push(event as Event)
+          return []
+        }
+        if (typeof candidate === "object" && candidate !== null && "kind" in candidate && candidate.kind === "cancel" && "event" in candidate) {
+          const event = validateCore(candidate.event)
+          if (event.type !== "EffectCancelled") throw new Error("Invalid cancellation proposal")
+          const lifecycle = effect(event.ref)
+          if (!lifecycle) throw new Error("Cancellation requires an accepted effect")
+          const settlement = lifecycle.settlement
+          const finished = promiseSettlements.has(effectKey(event.ref)) || (settlement && (settlement.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "value"))
+          if (!lifecycle.cancellation && !finished) cancellations.push(event)
           return []
         }
         if (!native) throw new Error(`Invalid effect value from ${name}`)
@@ -236,6 +253,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           coreRequests.set(key, event)
           bind(proposal, event.ref)
           accepted.set(key, { ...offered, ref: event.ref, request: event.request })
+        } else if (event.type === "EffectCancelled") {
+          if (!coreRequests.has(key)) throw new Error("Cancellation requires an accepted effect")
+          coreCancellations.set(key, event)
+          accepted.delete(key)
         } else if (event.type === "EffectSettled") {
           if (!coreRequests.has(key)) throw new Error("Effect must be requested before settlement")
           if (coreSettlements.has(key)) throw new Error("Duplicate core effect settlement")
@@ -268,9 +289,17 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       append,
       validatePromise,
       dispose,
+      cancellations: () => cancellations,
+      cancelled: (): readonly ActCancellation[] => [...coreCancellations].map(([key, cancellation]) => {
+        const settlement = coreSettlements.get(key)
+        const result = settlement?.outcome.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value) : undefined
+        return { request: coreRequests.get(key)!.request, ref: cancellation.ref, reason: cancellation.reason,
+          ...(result?.type === "promise" ? { handle: result.handle } : {}) }
+      }),
       deliveries: () => deliveries,
       followups: (event: Recorded<Event>): readonly object[] => {
         if (!Schema.is(CoreEvent)(event)) return []
+        if (event.type === "EffectCancelled" || coreCancellations.has(effectKey(event.ref))) return []
         const request = acts.get(effectKey(event.ref))
         if (!request) return []
         if (event.type === "EffectRequested") return request.onRequested?.(event.ref) ?? []
@@ -296,7 +325,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       view,
       effects,
       deferred: (): readonly DeferredWork[] => [...coreSettlements].flatMap(([key, settlement]) => {
-        if (settlement.outcome.status !== "fulfilled" || promiseSettlements.has(key)) return []
+        if (coreCancellations.has(key) || settlement.outcome.status !== "fulfilled" || promiseSettlements.has(key)) return []
         const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
         if (result.type !== "promise") return []
         const proposal = acts.get(key)
@@ -305,7 +334,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         return [{ kind: "act" as const, id: proposal.id, source: settlement.ref.atom, ref: settlement.ref,
           request: request.request, execute: proposal.execute, handle: result.handle }]
       }),
-      pending: () => [...coreRequests].filter(([key]) => !coreSettlements.has(key)).map(([, record]) => record),
+      pending: () => [...coreRequests].filter(([key]) => !coreSettlements.has(key) && !coreCancellations.has(key)).map(([, record]) => record),
       effect,
       promise: (ref: EffectRef) => promiseSettlements.get(effectKey(ref)),
       checkpoint,
@@ -325,6 +354,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   }
   const snapshotOf = (engine: Engine): Snapshot => {
     const work = Object.freeze([...engine.effects()])
+    const cancellations = Object.freeze([...engine.cancellations()])
     const deliveries = Object.freeze([...engine.deliveries()])
     const values = Object.freeze(engine.view())
     const snapshot: Snapshot = Object.freeze({
@@ -336,6 +366,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       view: () => values,
       effects: () => work,
       deferred: () => engineOf(snapshot).deferred(),
+      cancellations: () => cancellations,
+      cancelled: () => engineOf(snapshot).cancelled(),
       deliveries: () => deliveries,
       followups: (event: Recorded<Event>) => engineOf(snapshot).followups(event),
       pending: () => engineOf(snapshot).pending(),
@@ -363,8 +395,17 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const engine = engineOf(snapshot)
       if (Schema.is(CoreEvent)(record)) {
         const lifecycle = engine.effect(record.ref)
+        if (record.type === "EffectCancelled") {
+          if (!lifecycle) throw new Error("Cancellation requires an accepted effect")
+          if (lifecycle.cancellation || engine.promise(record.ref)) return snapshot
+          const settlement = lifecycle.settlement
+          if (settlement && (settlement.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "value")) return snapshot
+        } else if (lifecycle?.cancellation) {
+          if (record.type === "PromiseSettled") return snapshot
+          if (record.type === "EffectSettled" && (record.outcome.status !== "fulfilled" || Schema.decodeUnknownSync(ExecutionResult)(record.outcome.value).type !== "promise")) return snapshot
+        }
         const prior = record.type === "EffectRequested" ? lifecycle?.request
-          : record.type === "EffectSettled" ? lifecycle?.settlement : engine.promise(record.ref)
+          : record.type === "EffectSettled" ? lifecycle?.settlement : record.type === "EffectCancelled" ? lifecycle?.cancellation : engine.promise(record.ref)
         if (prior) {
           if (!isDeepStrictEqual(prior, record)) throw new Error("Conflicting core event delivery")
           return snapshot

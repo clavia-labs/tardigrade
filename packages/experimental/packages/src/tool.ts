@@ -11,6 +11,7 @@ export interface AgentTool<R = never> {
   readonly spec: ToolSpec
   readonly aliases?: readonly string[]
   readonly execute: (input: unknown, call: ToolInvocation) => Effect.Effect<ExecutionResult, Error, R>
+  readonly cancel?: (handle: ExecutionHandle | undefined, call: ToolInvocation) => Effect.Effect<void, Error, Exclude<R, EffectExecution>>
 }
 
 export const DEFAULT_TOOL_EXECUTION = "sync" as const
@@ -55,12 +56,15 @@ export function promiseTool<Input, R>(options: {
   readonly metadata?: typeof ToolMetadata.Type
   readonly input: Schema.ConstraintDecoder<Input>
   readonly submit: (input: Input, call: ToolInvocation) => Effect.Effect<ExecutionHandle, Error, R>
-}): AgentTool<R> {
+  readonly cancel?: (handle: ExecutionHandle | undefined, call: ToolInvocation) => Effect.Effect<void, Error, Exclude<R, EffectExecution>>
+}): AgentTool<R | EffectExecution> {
   return {
     spec: { name: options.name, description: options.description, inputSchema: Schema.decodeUnknownSync(Schema.Json)(Schema.toJsonSchemaDocument(options.input, { onExcessProperty: "error" }).schema), ...(options.metadata ? { metadata: options.metadata } : {}), execution: "async" },
+    ...(options.cancel ? { cancel: options.cancel } : {}),
     execute: (input, call) => Effect.gen(function* () {
       const value = yield* Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(input)
-      const handle = yield* options.submit(value, call).pipe(Effect.flatMap(Schema.decodeEffect(ExecutionHandle)))
+      const current = yield* EffectExecution
+      const handle = yield* current.submit(options.submit(value, call).pipe(Effect.flatMap(Schema.decodeEffect(ExecutionHandle)), Effect.mapError(ToolError.from)))
       return { type: "promise" as const, handle }
     }).pipe(Effect.mapError(ToolError.from)),
   }
