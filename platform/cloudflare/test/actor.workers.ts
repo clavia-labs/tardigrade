@@ -345,7 +345,7 @@ describe("cloudflare actor", () => {
   })
 
   test("durable publication does not wait for application observers and excludes staged heads", async () => {
-    const commits = await runInDurableObject(threadStub("ag.commit-observer"), async (_instance, state) => {
+    const commits = await runInDurableObject(threadStub("commit-observer"), async (_instance, state) => {
       const seen: Array<number> = []
       const published: Array<number> = []
       let observed = () => {}
@@ -355,7 +355,7 @@ describe("cloudflare actor", () => {
         storage: state.storage,
         actorName: "echo",
         actorInstance: "main",
-        thread: "ag.commit-observer",
+        thread: "commit-observer",
         actor: actorFromProjections({ transitions: [], keyOf: () => undefined }),
         onPublish: (head) => { published.push(head) },
         commitObserver: {
@@ -395,13 +395,13 @@ describe("cloudflare actor", () => {
   })
 
   test("incremental commits decode only the creation record and new tail", async () => {
-    const decoded = await runInDurableObject(threadStub("ag.incremental-ingress"), async (_instance, state) => {
+    const decoded = await runInDurableObject(threadStub("incremental-ingress"), async (_instance, state) => {
       const batches: Array<number> = []
       const host = await createCloudflareThreadHost({
         storage: state.storage,
         actorName: "echo",
         actorInstance: "main",
-        thread: "ag.incremental-ingress",
+        thread: "incremental-ingress",
         actor: actorFromProjections({ transitions: [], keyOf: () => undefined }),
         store: {
           codec: {
@@ -432,12 +432,12 @@ describe("cloudflare actor", () => {
   })
 
   test("a cold empty thread reports rest before settlement", async () => {
-    const resting = await runInDurableObject(threadStub("ag.cold-resting"), async (_instance, state) => {
+    const resting = await runInDurableObject(threadStub("cold-resting"), async (_instance, state) => {
       const host = await createCloudflareThreadHost({
         storage: state.storage,
         actorName: "echo",
         actorInstance: "main",
-        thread: "ag.cold-resting",
+        thread: "cold-resting",
         actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
       })
       const result = await host.resting()
@@ -476,12 +476,12 @@ describe("cloudflare actor", () => {
 
   test("method-less actors retain outgoing call deadlines", async () => {
     const deadlineAt = Date.now() - 1
-    const result = await runInDurableObject(threadStub("ag.method-less-deadline"), async (_instance, state) => {
+    const result = await runInDurableObject(threadStub("method-less-deadline"), async (_instance, state) => {
       const host = await createCloudflareThreadHost({
         storage: state.storage,
         actorName: "echo",
         actorInstance: "main",
-        thread: "ag.method-less-deadline",
+        thread: "method-less-deadline",
         actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
       })
       await host.appendAt([threadCreated(host.identity, undefined, 0)], 0)
@@ -511,7 +511,7 @@ describe("cloudflare actor", () => {
 
   test("an alarm commits its deadline cancellation atomically", async () => {
     await runInDurableObject(threadStub("deadline-atomicity"), async (_instance, state) => {
-      const host = await deadlineThreadHost(state, "ag.deadline-atomicity")
+      const host = await deadlineThreadHost(state, "deadline-atomicity")
       const deadlineAt = Date.now() - 1
       await host.commitRoot(heldInvocation(deadlineAt))
       await host.drive()
@@ -543,7 +543,7 @@ describe("cloudflare actor", () => {
 
   test("a stale deadline cancellation leaves a settled invocation unchanged", async () => {
     await runInDurableObject(threadStub("stale-deadline-cancellation"), async (_instance, state) => {
-      const host = await deadlineThreadHost(state, "ag.stale-deadline-cancellation")
+      const host = await deadlineThreadHost(state, "stale-deadline-cancellation")
       const invocation = { method: "hold", id: "hold-1", epoch: 0 }
       const deadlineAt = Date.now() - 1
       await host.commitRoot(heldInvocation(deadlineAt))
@@ -564,10 +564,10 @@ describe("cloudflare actor", () => {
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
   test("the creation cache follows the record accepted by storage", async () => {
-    const target = { actor: "echo", instance: "main", thread: "ag.creation-cache" }
-    const source = { actor: "echo", instance: "main", thread: "ag.requested-parent" }
-    const storedParent = { actor: "echo", instance: "main", thread: "ag.stored-parent" }
-    const result = await runInDurableObject(threadStub("ag.creation-cache"), async (_instance, state) => {
+    const target = { actor: "echo", instance: "main", thread: "creation-cache" }
+    const source = { actor: "echo", instance: "main", thread: "requested-parent" }
+    const storedParent = { actor: "echo", instance: "main", thread: "stored-parent" }
+    const result = await runInDurableObject(threadStub("creation-cache"), async (_instance, state) => {
       let injected = false
       const host = await createCloudflareThreadHost({
         storage: state.storage,
@@ -1119,8 +1119,8 @@ describe("cloudflare actor", () => {
   test("opaque child addresses execute and round-trip through the public API", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
-    await directory.createThread("ag.opaque-parent")
-    const parent = { actor: "echo", instance: "main", thread: "ag.opaque-parent" }
+    await directory.createThread("opaque-parent")
+    const parent = { actor: "echo", instance: "main", thread: "opaque-parent" }
     const target = { ...parent, thread: "thread_opaque-child" }
     await directory.allocateThread({ kind: "child", parent, child: childKeyOf(target.thread) })
     await directory.deliverChild({
@@ -1197,9 +1197,9 @@ describe("cloudflare actor", () => {
   test("actor supervisor creates a child after durable acceptance", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
-    await directory.createThread("ag.directory-parent")
-    const parent = { actor: "echo", instance: "main", thread: "ag.directory-parent" }
-    const target = { actor: "echo", instance: "main", thread: "ag.directory-child" }
+    await directory.createThread("directory-parent")
+    const parent = { actor: "echo", instance: "main", thread: "directory-parent" }
+    const target = { actor: "echo", instance: "main", thread: "directory-child" }
     const lineage = {
       parent,
       depth: 1,
@@ -1211,7 +1211,7 @@ describe("cloudflare actor", () => {
         `INSERT INTO events (seq, key, event)
          VALUES (
            (SELECT COALESCE(MAX(seq), 0) + 1 FROM events),
-           'thread:requested:ag.directory-child',
+           'thread:requested:directory-child',
            ?
          )`, JSON.stringify({ type: "ThreadRequested", thread: target.thread, parentThread: parent.thread, depth: 1, placement: "independent", at: 1,
           allocationRequest: { kind: "child", parent, child: target.thread, maxDepth: lineage.maxDepth, placement: lineage.placement } })
@@ -1219,9 +1219,9 @@ describe("cloudflare actor", () => {
       return state.storage.sql.exec<{
         key: string
         event: string
-      }>("SELECT key, event FROM events WHERE key = 'thread:requested:ag.directory-child'").toArray()
+      }>("SELECT key, event FROM events WHERE key = 'thread:requested:directory-child'").toArray()
     })
-    expect(requested).toEqual([{ key: "thread:requested:ag.directory-child", event: expect.stringContaining('"type":"ThreadRequested"') }])
+    expect(requested).toEqual([{ key: "thread:requested:directory-child", event: expect.stringContaining('"type":"ThreadRequested"') }])
     const requestedTree = await directory.threadTree()
     expect(requestedTree.find((node) => node.id === "directory-parent")).toEqual({
       id: "directory-parent",
@@ -1240,7 +1240,7 @@ describe("cloudflare actor", () => {
       event: { type: "MessageReceived", id: "directory-child-message", text: "hello", at: 2 },
       lineage
     })
-    const fresh = { actor: "echo", instance: "main", thread: "ag.directory-fresh" }
+    const fresh = { actor: "echo", instance: "main", thread: "directory-fresh" }
     await runInDurableObject(directory, async (instance) => expect(instance.deliverChild({
       link: { source: parent, target: fresh },
       event: { type: "MessageReceived", id: "directory-fresh-message", text: "hello", at: 3 },
@@ -1270,7 +1270,7 @@ describe("cloudflare actor", () => {
         children: []
       }]
     })
-    const childEvents = await threadStub("ag.directory-child").events("ag.directory-child")
+    const childEvents = await threadStub("directory-child").events("directory-child")
     expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     expect(childEvents[0]).toMatchObject({ depth: 1, maxDepth: 2 })
     const actorEvents = await runInDurableObject(directory, (_instance, state) =>
@@ -1278,7 +1278,7 @@ describe("cloudflare actor", () => {
     )
     expect(actorEvents
       .map((row) => JSON.parse(row.event) as { readonly type: string; readonly thread: string })
-      .filter((event) => event.thread.startsWith("ag.directory-"))
+      .filter((event) => event.thread.startsWith("directory-"))
       .map((event) => event.type)).toEqual([
       "ThreadRequested",
       "ThreadRegistered",
@@ -1309,10 +1309,10 @@ describe("cloudflare actor", () => {
         )
       for (const [thread, parent, depth] of claims) {
         insert(
-          `thread:requested:ag.${thread}`,
-          `{"type":"ThreadRequested","thread":"ag.${thread}"${parent === undefined ? "" : `,"parentThread":"ag.${parent}"`},"depth":${depth},"at":1}`
+          `thread:requested:${thread}`,
+          `{"type":"ThreadRequested","thread":"${thread}"${parent === undefined ? "" : `,"parentThread":"${parent}"`},"depth":${depth},"at":1}`
         )
-        insert(`thread:registered:ag.${thread}`, `{"type":"ThreadRegistered","thread":"ag.${thread}","at":2}`)
+        insert(`thread:registered:${thread}`, `{"type":"ThreadRegistered","thread":"${thread}","at":2}`)
       }
       for (const [key, event] of extra) insert(key, event)
     })
@@ -1339,8 +1339,8 @@ describe("cloudflare actor", () => {
       ["loop-a", "deep-4", 5],
       ["loop-b", "loop-a", 6]
     ], [
-      [null, `{"type":"ThreadRequested","thread":"ag.loop-a","parentThread":"ag.loop-b","depth":7,"at":3}`],
-      [null, `{"type":"ThreadRegistered","thread":"ag.loop-a","at":4}`]
+      [null, `{"type":"ThreadRequested","thread":"loop-a","parentThread":"loop-b","depth":7,"at":3}`],
+      [null, `{"type":"ThreadRegistered","thread":"loop-a","at":4}`]
     ])
     const directory = (env as Env).ACTORS.getByName(JSON.stringify(["echo", "tree-bounds"]))
     const nodeOf = (nodes: ReadonlyArray<ActorThreadNode>, id: string): ActorThreadNode | undefined => {
@@ -1404,9 +1404,9 @@ describe("cloudflare actor", () => {
   test("a re-delivery to a registered child delivers instead of recreating", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
-    await directory.createThread("ag.re-delivery-parent")
-    const parent = { actor: "echo", instance: "main", thread: "ag.re-delivery-parent" }
-    const target = { actor: "echo", instance: "main", thread: "ag.re-delivery-child" }
+    await directory.createThread("re-delivery-parent")
+    const parent = { actor: "echo", instance: "main", thread: "re-delivery-parent" }
+    const target = { actor: "echo", instance: "main", thread: "re-delivery-child" }
     await directory.allocateThread({ kind: "child", parent, child: childKeyOf(target.thread) })
     const lineage = { parent, depth: 1, placement: "independent" as const }
     await directory.deliverChild({
@@ -1429,13 +1429,13 @@ describe("cloudflare actor", () => {
       event: { type: "MessageReceived", id: "re-delivery-second", text: "again", at: 3 },
       lineage
     })
-    const childEvents = await threadStub("ag.re-delivery-child").events("ag.re-delivery-child")
+    const childEvents = await threadStub("re-delivery-child").events("re-delivery-child")
     expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "MessageReceived"])
-    let childStatus = await threadStub("ag.re-delivery-child").status()
+    let childStatus = await threadStub("re-delivery-child").status()
     for (let attempt = 0; attempt < 100; attempt++) {
       if (childStatus.dirty === 0 && childStatus.status === "resting") break
       await delay()
-      childStatus = await threadStub("ag.re-delivery-child").status()
+      childStatus = await threadStub("re-delivery-child").status()
     }
     expect(childStatus).toMatchObject({ dirty: 0, status: "resting" })
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
@@ -1443,19 +1443,19 @@ describe("cloudflare actor", () => {
   test("actor supervisor alarm completes a staged child", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
-    await directory.createThread("ag.recovery-parent")
-    const parent = { actor: "echo", instance: "main", thread: "ag.recovery-parent" }
-    const target = { actor: "echo", instance: "main", thread: "ag.recovery-child" }
+    await directory.createThread("recovery-parent")
+    const parent = { actor: "echo", instance: "main", thread: "recovery-parent" }
+    const target = { actor: "echo", instance: "main", thread: "recovery-child" }
     const lineage = { parent, depth: 1, placement: "independent" as const }
-    const child = threadStub("ag.recovery-child")
-    await child.init("echo", "main", "ag.recovery-child")
+    const child = threadStub("recovery-child")
+    await child.init("echo", "main", "recovery-child")
     await runInDurableObject(directory, (_instance, state) => {
       state.storage.sql.exec(
         `INSERT INTO events (seq, key, event)
          VALUES (
            (SELECT COALESCE(MAX(seq), 0) + 1 FROM events),
-           'thread:requested:ag.recovery-child',
-           '{"type":"ThreadRequested","thread":"ag.recovery-child","parentThread":"ag.recovery-parent","depth":1,"placement":"independent","at":4}'
+           'thread:requested:recovery-child',
+           '{"type":"ThreadRequested","thread":"recovery-child","parentThread":"recovery-parent","depth":1,"placement":"independent","at":4}'
          )`
       )
     })

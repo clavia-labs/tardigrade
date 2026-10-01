@@ -12,7 +12,6 @@ import { threadObjectNameOf } from "./transport/directory"
 import { DurableObject } from "cloudflare:workers"
 import { Clock, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import { publicThreadId } from "@clavia/tardigrade-host/thread-compat"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { eventLogFrom } from "@clavia/tardigrade-core/log"
 import { type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
@@ -54,9 +53,8 @@ const threadTreeOf = (
   const children = new Map<string, string[]>()
   const roots: string[] = []
   for (const row of rows) {
-    const id = publicThreadId(row.thread)
-    if (entries.has(id)) throw new Error(`ambiguous public thread id ${JSON.stringify(id)}: multiple stored addresses exist`)
-    const parent = row.parentThread === undefined ? undefined : publicThreadId(row.parentThread)
+    const id = row.thread
+    const parent = row.parentThread
     entries.set(id, {
       id,
       ...(parent === undefined ? {} : { parent }),

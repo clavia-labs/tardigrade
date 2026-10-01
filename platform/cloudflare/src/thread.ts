@@ -4,7 +4,6 @@ import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-core/int
 import { eventTail, inferenceTail } from "@clavia/tardigrade-http/sse"
 import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
 import { summaryOf, type ThreadSummary } from "@clavia/tardigrade-http/projections"
-import { publicThreadId } from "@clavia/tardigrade-host/thread-compat"
 import { CommitSignal, streamPolicyOf } from "./transport/stream"
 import { cloudflareRpcTransport } from "./transport/rpc"
 import { actorObjectNameOf } from "./transport/directory"
@@ -343,9 +342,9 @@ export class ThreadDO extends DurableObject<Env> {
     const parent = threadCreatedOf(events)?.parent
     const resting = await (await this.host()).resting()
     return summaryOf(
-      publicThreadId(this.thread()), events,
+      this.thread(), events,
       () => resting ? "settled" : "running",
-      parent === undefined ? undefined : publicThreadId(parent.thread)
+      parent?.thread
     )
   }
 

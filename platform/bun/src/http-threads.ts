@@ -5,7 +5,6 @@ import { Clock, Context, Effect } from "effect"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { childKeyOf, type ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
-import { withLegacyThreadIds } from "@clavia/tardigrade-http/thread-compat"
 import { Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
 import type { BunHost } from "./host"
 
@@ -17,7 +16,7 @@ export const bunHttpThreads = (host: BunHost, options: {
   readonly storage: ActorThreads["storage"]
   readonly statusOf: ActorThreads["statusOf"]
   readonly allocate: (request: ThreadAllocation) => Promise<ThreadCoordinate>
-}): ActorThreads => withLegacyThreadIds({
+}): ActorThreads => ({
   methods: options.methods,
   storage: options.storage,
   statusOf: options.statusOf,

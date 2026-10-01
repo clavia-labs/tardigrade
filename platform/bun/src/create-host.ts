@@ -1,7 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { IngressActor } from "@clavia/tardigrade-host/transport/ingress"
 import type { Directory } from "@clavia/tardigrade-core/transport/directory"
-import { resolveThreadId } from "@clavia/tardigrade-host/thread-compat"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime/actor"
 import { Clock, Effect } from "effect"
 import { join } from "node:path"
@@ -120,10 +119,9 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
     ? Effect.succeed(undefined as IngressActor | undefined)
     : Effect.map(Effect.promise(() => instanceOf(target.actor, target.instance)), (runtime) => ({
       commit: (envelope) => Effect.gen(function*() {
-        const thread = yield* resolveThreadId(envelope.link.target.thread, (id) => Effect.promise(async () => (await runtime.actorThread(id)) !== undefined))
         const at = yield* Clock.currentTimeMillis
         yield* Effect.promise(() => runtime.commit({
-          ...envelope, link: { ...envelope.link, target: { ...target, thread } },
+          ...envelope, link: { ...envelope.link, target },
           event: envelope.event.at === undefined ? { ...envelope.event, at } : envelope.event
         }))
       }),

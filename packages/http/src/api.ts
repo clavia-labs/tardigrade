@@ -20,7 +20,6 @@ import {
 import { methodHandlers } from "./methods"
 import { catalogHandlers, type CatalogDiscovery } from "./models"
 import { Threads, type ActorThreads } from "./threads"
-import { resolveThreadId } from "./thread-compat"
 import type { InferenceStream } from "./inference-stream"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
@@ -175,9 +174,8 @@ export const layerStream = (options: ApiOptions = {}) => {
       "/v1/actors/:id/threads/:thread/inference/stream",
       Effect.gen(function*() {
         const params = yield* HttpRouter.params
-        const threads = yield* (yield* Threads).ensure(paramOf(params, "id"))
-        const thread = yield* resolveThreadId(paramOf(params, "thread"), (thread) => Effect.map(threads.actorThread(thread), (record) => record !== undefined))
-        return yield* streamResponseOf(inferenceTail(options.inference!, paramOf(params, "id"), thread, heartbeat, bufferCapacity), options.streamShutdownSignal)
+        yield* (yield* Threads).ensure(paramOf(params, "id"))
+        return yield* streamResponseOf(inferenceTail(options.inference!, paramOf(params, "id"), paramOf(params, "thread"), heartbeat, bufferCapacity), options.streamShutdownSignal)
       })
     )])
   )

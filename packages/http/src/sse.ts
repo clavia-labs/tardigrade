@@ -3,7 +3,6 @@ import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
 import type { ActorThread, ThreadAdded, ThreadsSnapshot } from "@clavia/tardigrade-client/contract"
 import type { ActorThreads } from "./threads"
-import { publicThreadId } from "./thread-compat"
 import type { InferenceStream } from "./inference-stream"
 
 // DEFAULT_EVENT_LIMIT supplies the event page size when a caller omits the limit.
@@ -21,10 +20,8 @@ const frameOf = (seq: number, event: unknown): string => `id: ${seq}\ndata: ${JS
 const HEARTBEAT = ": tardigrade\n\n"
 
 const actorThreadOf = (record: ActorThreadRecord): ActorThread => ({
-  id: publicThreadId(record.thread),
-  ...(record.parentThread === undefined
-    ? {}
-    : { parent: publicThreadId(record.parentThread) }),
+  id: record.thread,
+  ...(record.parentThread === undefined ? {} : { parent: record.parentThread }),
   depth: record.depth
 })
 
