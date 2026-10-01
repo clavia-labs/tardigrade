@@ -10,6 +10,7 @@ export * from "./lifecycle"
 export * from "./execution-result"
 export * from "./event-source"
 export * from "./actor"
+export { AbortReceived } from "./cancellation"
 export * from "./runtime"
 export * from "./journal"
 

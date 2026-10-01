@@ -112,7 +112,7 @@ export const agentTurnCancellation = fc.asyncProperty(fc.record({
     if (options.reopen || (options.phase === "deferred" && options.completionRace)) {
       const events = store.snapshot().events
       const started = events.findIndex(event => event.type === "MessageReceived")
-      const boundary = events.findIndex((event, index) => event.type === "TurnCancelRequested" && index > started)
+      const boundary = events.findIndex((event, index) => event.type === "AbortReceived" && index > started)
       const prefix = [...events.slice(0, boundary + 1), ...(options.completionRace && deferred ? [{ type: "PromiseSettled" as const, ref: deferred.ref, result: { status: "fulfilled" as const, value: null } }] : [])]
       yield* store.close
       store = yield* open(prefix)
@@ -124,7 +124,7 @@ export const agentTurnCancellation = fc.asyncProperty(fc.record({
     const terminal = events.filter(event => event.type === "TurnSettled")
     if (terminal.length !== 1 || terminal[0]!.outcome !== "cancelled" || terminal[0]!.reason !== options.reason || store.getState().view.position !== "idle" || store.get(pendingTools).queue.length) return yield* Effect.fail(new RuntimeError("Turn cancellation failed to drain and settle once"))
     const started = events.findIndex(event => event.type === "MessageReceived")
-    const boundary = events.findIndex((event, index) => event.type === "TurnCancelRequested" && index > started)
+    const boundary = events.findIndex((event, index) => event.type === "AbortReceived" && index > started)
     if (events.slice(boundary + 1).some(event => event.type === "EffectRequested")) return yield* Effect.fail(new RuntimeError("Stopped turn accepted new work"))
     const calls = events.filter(event => event.type === "ModelCalled").length
     yield* store.methods.message({ text: "next", turnId: "second" })

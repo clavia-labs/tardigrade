@@ -1,7 +1,7 @@
 import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ActorRequest, ActorDecision, PromiseSettled } from "@clavia/tardigrade-experimental-host/contracts"
 import { Schema } from "effect"
-import { ExecutionHandle, EffectRef } from "@clavia/tardigrade-experimental-core"
+import { AbortReceived, ExecutionHandle, EffectRef } from "@clavia/tardigrade-experimental-core"
 import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
 
 const ProviderToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Json })
@@ -75,7 +75,7 @@ export type ModelReturned = typeof ModelReturned.Type
 
 export const CompactionFailed = Schema.Struct({ type: Schema.Literal("CompactionFailed"), callId: Schema.String, reason: Schema.String })
 export const ModelFailed = Schema.Struct({ type: Schema.Literal("ModelFailed"), callId: Schema.String, reason: Schema.String })
-export const TurnCancelRequested = Schema.Struct({ type: Schema.Literal("TurnCancelRequested"), reason: Schema.String })
+export { AbortReceived } from "@clavia/tardigrade-experimental-core"
 
 export const TurnSettled = Schema.Union([
   Schema.Struct({ type: Schema.Literal("TurnSettled"), turnId: Schema.String, outcome: Schema.Literal("completed"), callId: Schema.String }),
@@ -96,7 +96,7 @@ export const Event = Schema.Union([
   MessageReceived,
   ModelCalled,
   ModelFailed,
-  TurnCancelRequested,
+  AbortReceived,
   CompactionFailed,
   PromiseSettled,
   ModelReturned,
@@ -108,7 +108,7 @@ export const message = (input: { readonly text: string; readonly turnId?: string
   ({ type: "MessageReceived", kind: "message", source: "user", turnId: input.turnId ?? crypto.randomUUID(), text: input.text })
 
 // cancel requests cancellation of the turn active when the event is committed.
-export const cancel = (reason: string): typeof TurnCancelRequested.Type => ({ type: "TurnCancelRequested", reason })
+export const cancel = (reason: string): AbortReceived => ({ type: "AbortReceived", reason })
 
 export const resolveBudget = (metric: string, callId: string, decision: typeof BudgetDecision.Type): BudgetResolved =>
   ({ type: "BudgetResolved", metric, callId, decision })

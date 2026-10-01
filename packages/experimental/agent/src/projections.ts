@@ -52,7 +52,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Cor
     if (turns.some(turn => turn.turnId === message.turnId)) throw new RuntimeError(`Duplicate turn: ${message.turnId}`)
     turns = [...turns, { turnId: message.turnId, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }]
   }
-  if (event.type === "TurnCancelRequested") turns = turns.map(turn => turn.turnId === state.turnId && turn.cancellation === null ? { ...turn, cancellation: event.reason } : turn)
+  if (event.type === "AbortReceived") turns = turns.map(turn => turn.turnId === state.turnId && turn.cancellation === null ? { ...turn, cancellation: event.reason } : turn)
   if (event.type === "EffectRequested") turns = turns.map(turn => turn.turnId === state.turnId ? { ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] } : turn)
   if (event.type === "EffectCancelled" || event.type === "PromiseSettled" || (event.type === "EffectSettled" && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value"))) {
     const key = effectKey(event.ref)
