@@ -1,13 +1,11 @@
-import type { ActService } from "@clavia/tardigrade-experimental-core"
-import { AskBudget, requests, failureMessage } from "../acts"
+import { type ActService, RuntimeError, atom, effectAtom, type Atom, eventValue, type ActorOutput } from "@clavia/tardigrade-experimental-core"
+import { AskBudget, requests, failureMessage } from "../contracts/acts"
 import { toolSpend } from "./durable/spend"
 import { budgetState } from "./durable/budget"
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
-import { atom, effectAtom, type Atom, eventValue, type ActorOutput } from "@clavia/tardigrade-experimental-core"
-import type { ToolState } from "../projections"
-import { BudgetPolicy, BudgetDecision, type Event } from "../event"
-import { ToolBudgetRequestInput } from "../budget-contracts"
+import { type ToolState } from "./durable/tools"
+import { BudgetPolicy, BudgetDecision, type Event } from "../contracts/events"
+import { ToolBudgetRequestInput } from "../contracts/budget"
 
 export type ToolBudgetView<R = never> = ActorOutput<{
   readonly requestTool?: string
@@ -80,3 +78,12 @@ export const budgetInstructions = <R>(budget: Atom<ToolBudgetView<R>>) => atom(g
     : " Further tool execution is waiting for additional budget."
   return `Tool calls remaining: ${view.remaining}/${view.limit}.${exhausted}`
 })
+
+export const requestBudget = {
+  spec: {
+    name: "request_budget",
+    description: "Request additional tool calls when your budget is exhausted. Waits for a decision and consumes no tool budget.",
+    inputSchema: Schema.toJsonSchemaDocument(ToolBudgetRequestInput).schema,
+    execution: "sync" as const,
+  },
+}

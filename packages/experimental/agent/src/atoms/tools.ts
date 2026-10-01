@@ -1,25 +1,20 @@
-import { ExecuteTool, requests, failureMessage } from "../acts"
-import { durableAtom } from "@clavia/tardigrade-experimental-core"
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { pendingTools, ToolState } from "./durable/tools"
+import { ExecuteTool, requests, failureMessage } from "../contracts/acts"
+import { RuntimeError, effectAtom, type Atom, type ActRequest, type ActorOutput } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { effectAtom, type Atom, type ActRequest, type ActorOutput } from "@clavia/tardigrade-experimental-core"
-import { ModelReturned, ToolCalled, ToolReturned, type Event, ToolCall } from "../event"
-import { ToolState, toolState, type PermissionState } from "../projections"
-import { toolPromises } from "./promises"
-import type { ToolBudgetView } from "./budget-request"
-import type { ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
-
-import { ToolCatalog } from "../context"
-
-export const pendingTools = durableAtom({ name: "agent.tools.pending", input: Schema.Union([ModelReturned, ToolCalled, ToolReturned]), schema: ToolState, initial: { queue: [], pending: null, running: false }, reduce: toolState })
+import { ToolCalled, ToolReturned, BudgetResolved, type Event, ToolCall } from "../contracts/events"
+import { type PermissionState } from "./durable/permissions"
+import { toolPromises } from "./tool-promises"
+import { type ToolBudgetView } from "./budget-request"
+import { type ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
+import { ToolCatalog } from "../actor/context"
 
 export type ToolPlan =
   | { readonly position: "waiting" | "blocked"; readonly reason: string }
   | { readonly position: "ready"; readonly counted: boolean; readonly value?: Schema.Json; readonly error?: string }
 
 export interface ToolView<R = never> {
-  readonly validate?: (event: Event) => void
   readonly specs: readonly ToolSpec[]
   readonly request: (input: Parameters<typeof ExecuteTool.request>[0]) => ActRequest<Schema.Json, string, R>
   readonly prepare: (call: typeof ToolCall.Type) => ToolPlan
@@ -50,7 +45,6 @@ export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<A
       acts: { ...inner.acts, ...permission.acts },
       view: {
         request: inner.view.request,
-        validate: event => inner.view.validate?.(event),
         specs: inner.view.specs,
         prepare: call => {
           const plan = inner.view.prepare(call)
@@ -82,10 +76,6 @@ export function withBudget<R, B>(tools: Atom<Tools<R>>, budget: Atom<ToolBudgetV
       acts: { ...inner.acts, ...(authorized ? budgetOutput.acts : {}) },
       view: {
         request: inner.view.request,
-        validate: event => {
-          inner.view.validate?.(event)
-          if (event.type === "BudgetResolved" && event.metric === "toolCalls" && allowance.request?.callId !== event.callId) throw new RuntimeError("No matching pending budget request")
-        },
         specs: allowance.exhausted ? [] : requestTool && allowance.remaining === 0 ? inner.view.specs.filter(tool => tool.name === requestTool) : inner.view.specs,
         prepare: call => {
           const plan = inner.view.prepare(call)
@@ -108,6 +98,12 @@ export function withBudget<R, B>(tools: Atom<Tools<R>>, budget: Atom<ToolBudgetV
         },
       },
     })
+  }, {
+    input: BudgetResolved,
+    validate: (event, get) => {
+      const allowance = get(budget).view
+      if (allowance.configured && event.metric === "toolCalls" && allowance.request?.callId !== event.callId) throw new RuntimeError("No matching pending budget request")
+    },
   })
 }
 

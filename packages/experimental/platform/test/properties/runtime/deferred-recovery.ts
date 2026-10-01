@@ -1,7 +1,7 @@
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, ExecutionHandle, EffectRef as EffectRefSchema, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-experimental-core"
-import { createActorStore } from "../../../../core/src/runtime/execution"
+import { createTestStore } from "./store"
 import { Promises } from "../../../../core/src/services/promises"
 
 const Queued = Schema.Struct({ type: Schema.Literal("Queued") })
@@ -56,12 +56,12 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
       onDeferred: (handle, ref) => [{ type: "Submitted", ref, handle }],
       onSettled: result => [{ type: "Returned", result: result.status === "rejected" ? { ...result, reason: typeof result.reason === "string" ? result.reason : JSON.stringify(result.reason) } : result }],
     })
-    return { atom: Object.assign(effectAtom(get => {
+    return { atom: effectAtom(get => {
       const view = get(state)
       return { view, events: {}, acts: view.queued && !view.running ? { job: request } : {} }
-    }), { schema: Event }), actions: { start: () => ({ type: "Queued" as const }), update: () => ({ type: "Updated" as const }) } }
+    }), schema: Event }
   }))
-  const open = () => createActorStore({ actor, journal, checkpoint: { mode: "manual" }, promiseDelivery: { retryIntervalMs: 1 }, actorContext: () => Context.empty(),
+  const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, promiseDelivery: { retryIntervalMs: 1 }, actorContext: () => Context.empty(),
     services: (host: ActorRuntime<Event>) => Layer.merge(Job.layer(input => Effect.gen(function* () {
       const execution = yield* EffectExecution
       executions.push(execution.ref)
@@ -83,15 +83,15 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
   })
   const first = yield* open()
   yield* Effect.gen(function* () {
-    yield* first.actions.start()
+    yield* first.send([{ type: "Queued" }])
     yield* Deferred.await(recorded)
-    yield* first.actions.update()
+    yield* first.send([{ type: "Updated" }])
     const submissions = first.getState().view.submissions
     if (submissions.length !== 1 || first.getState().view.results.length !== 0 || payloads().some(event => event.type === "PromiseSettled")) return yield* Effect.fail(new RuntimeError("Deferred handle was not delivered before completion"))
     if (submissions[0]!.handle.executor !== executor || effectKey(submissions[0]!.ref) !== effectKey(executions[0]!)) return yield* Effect.fail(new RuntimeError("Deferred notification changed its handle or reference"))
     const settledIndex = payloads().findIndex(event => event.type === "EffectSettled")
     if (records[settledIndex + 1]?.event.type !== "Submitted") return yield* Effect.fail(new RuntimeError("Deferred notification was not committed with settlement"))
-    for (let index = 0; index < options.updates; index++) yield* first.actions.update()
+    for (let index = 0; index < options.updates; index++) yield* first.send([{ type: "Updated" }])
   }).pipe(Effect.ensuring(first.close))
   reopening = true
   for (let cycle = 0; cycle <= options.extraReopens; cycle++) {

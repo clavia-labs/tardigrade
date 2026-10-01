@@ -1,7 +1,6 @@
 import { ModelRef } from "@clavia/tardigrade-model/reference"
-import { ResolutionSettled as PromiseSettled } from "@clavia/tardigrade-experimental-core"
+import { ResolutionSettled as PromiseSettled, event, type DeclaredEvent, ActorRequest, AbortRequested, InvocationRef, ExecutionHandle, EffectRef } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
-import { ActorRequest, AbortReceived, ExecutionHandle, EffectRef } from "@clavia/tardigrade-experimental-core"
 import { ToolPromise } from "@clavia/tardigrade-experimental-packages/types"
 
 const ProviderToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Json })
@@ -49,12 +48,16 @@ export type ToolCalled = typeof ToolCalled.Type
 export const ToolReturned = Schema.Struct({ type: Schema.Literal("ToolReturned"), callId: Schema.String, output: Schema.String, error: Schema.NullOr(Schema.String), promise: Schema.optionalKey(ToolPromise) })
 export type ToolReturned = typeof ToolReturned.Type
 
-export const MessageReceived = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("message"), source: Schema.optionalKey(Schema.Literals(["user", "agent", "tool"])), promiseRef: Schema.optionalKey(EffectRef), turnId: Schema.String, text: Schema.String, outcome: Schema.optionalKey(Schema.Literals(["completed", "failed", "cancelled"])) }),
-  Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("request"), handle: ExecutionHandle, request: ActorRequest }),
-  Schema.Struct({ type: Schema.Literal("MessageReceived"), kind: Schema.Literal("reply"), handle: ExecutionHandle, requestId: Schema.String, result: Schema.Json }),
-])
-export type MessageReceived = typeof MessageReceived.Type
+export const TurnRequested = event({
+  type: "TurnRequested", turnId: Schema.String, text: Schema.String,
+  invocationRef: Schema.optionalKey(InvocationRef),
+  source: Schema.optionalKey(Schema.Literals(["user", "agent", "tool"])),
+  promiseRef: Schema.optionalKey(EffectRef), outcome: Schema.optionalKey(Schema.Literals(["completed", "failed", "cancelled"])),
+})
+export type TurnRequested = typeof TurnRequested.Type
+
+export const ActorRequestReceived = Schema.Struct({ type: Schema.Literal("ActorRequestReceived"), handle: ExecutionHandle, request: ActorRequest })
+export const ActorReplyReceived = Schema.Struct({ type: Schema.Literal("ActorReplyReceived"), handle: ExecutionHandle, requestId: Schema.String, result: Schema.Json })
 
 const ModelMetadata = {
   model: ModelRef,
@@ -75,7 +78,7 @@ export type ModelReturned = typeof ModelReturned.Type
 
 export const CompactionFailed = Schema.Struct({ type: Schema.Literal("CompactionFailed"), callId: Schema.String, reason: Schema.String })
 export const ModelFailed = Schema.Struct({ type: Schema.Literal("ModelFailed"), callId: Schema.String, reason: Schema.String })
-export { AbortReceived } from "@clavia/tardigrade-experimental-core"
+export { AbortRequested } from "@clavia/tardigrade-experimental-core"
 
 export const TurnSettled = Schema.Union([
   Schema.Struct({ type: Schema.Literal("TurnSettled"), turnId: Schema.String, outcome: Schema.Literal("completed"), callId: Schema.String }),
@@ -93,10 +96,12 @@ export const Event = Schema.Union([
   PermissionResolved,
   ToolCalled,
   ToolReturned,
-  MessageReceived,
+  TurnRequested,
+  ActorRequestReceived,
+  ActorReplyReceived,
   ModelCalled,
   ModelFailed,
-  AbortReceived,
+  AbortRequested,
   CompactionFailed,
   PromiseSettled,
   ModelReturned,
@@ -104,11 +109,11 @@ export const Event = Schema.Union([
 ])
 export type Event = typeof Event.Type
 
-export const message = (input: { readonly text: string; readonly turnId?: string }): MessageReceived =>
-  ({ type: "MessageReceived", kind: "message", source: "user", turnId: input.turnId ?? crypto.randomUUID(), text: input.text })
-
-// cancel requests cancellation of the identified message invocation.
-export const cancel = (input: { readonly turnId: string; readonly reason: string }): AbortReceived => ({ type: "AbortReceived", reason: input.reason, invocation: { method: "message", id: input.turnId } })
+// requestTurn proposes inference independently of the actor's public method names.
+export const requestTurn = (input: { readonly text: string; readonly turnId?: string; readonly invocationRef?: InvocationRef }): DeclaredEvent<TurnRequested> => {
+  const turnId = input.turnId ?? crypto.randomUUID()
+  return TurnRequested.make({ source: "user", ...input, turnId })
+}
 
 export const resolveBudget = (metric: string, callId: string, decision: typeof BudgetDecision.Type): BudgetResolved =>
   ({ type: "BudgetResolved", metric, callId, decision })
@@ -123,19 +128,15 @@ export const updatePermission = (policy: typeof PermissionPolicy.Type): typeof P
 export const updateBudget = (metric: string, policy: typeof BudgetPolicy.Type): typeof BudgetUpdated.Type =>
   ({ type: "BudgetUpdated", metric, policy })
 
-// messageSource identifies inbox senders, including synthetic turn identifiers in historical events.
-export function messageSource(event: MessageReceived): "user" | "agent" | "tool" {
-  if (event.kind !== "message") return "agent"
-  if (event.source) return event.source
-  if (event.turnId.startsWith("promise:")) {
-    const prefix = "Tool promise result (data): "
-    if (event.text.startsWith(prefix)) {
-      try {
-        const value: unknown = JSON.parse(event.text.slice(prefix.length))
-        if (Schema.is(Schema.Struct({ handle: Schema.Struct({ executor: Schema.Literal("actor") }) }))(value)) return "agent"
-      } catch { return "tool" }
-    }
-    return "tool"
-  }
-  return event.turnId.includes(":notice:") ? "agent" : "user"
+// turnSource identifies the origin of inference input.
+export function turnSource(event: TurnRequested): "user" | "agent" | "tool" {
+  return event.source ?? "user"
 }
+
+const Message = Schema.Union([
+  Schema.Struct({ role: Schema.Literal("user"), text: Schema.String }),
+  Schema.Struct({ role: Schema.Literal("assistant"), text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
+  Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, providerId: Schema.String, name: Schema.String, text: Schema.String, error: Schema.Boolean }),
+])
+export const Conversation = Schema.Array(Message)
+export const Trajectory = Schema.Array(Schema.Struct({ turnId: Schema.String, message: Message }))

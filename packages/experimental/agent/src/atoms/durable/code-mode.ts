@@ -1,7 +1,10 @@
-import { durableAtom, effectKey, RuntimeError, EffectRequested } from "@clavia/tardigrade-experimental-core"
+import { PackageCalled, PackageReturned, CodeCalled, CodeReturned, DomainEvent, EvaluateCode, EvaluationInput, ExecutePackage, PackageInput, type Event } from "../../contracts/code-mode"
 import { Schema } from "effect"
-import { ModelReturned, ToolReturned } from "../event"
-import { DomainEvent, EvaluateCode, EvaluationInput, ExecutePackage, PackageInput, CodeModeState, type Event } from "./contracts"
+import { EffectRef, durableAtom, effectKey, RuntimeError, EffectRequested } from "@clavia/tardigrade-experimental-core"
+import { ToolCall, ModelReturned, ToolReturned } from "../../contracts/events"
+
+const PackageRecord = Schema.Struct({ ordinal: PackageCalled.fields.ordinal, package: PackageCalled.fields.package, method: PackageCalled.fields.method, input: PackageCalled.fields.input, ref: Schema.NullOr(EffectRef), outcome: Schema.NullOr(PackageReturned.fields.outcome) })
+export const CodeModeState = Schema.Array(Schema.Struct({ call: ToolCall, codeMode: Schema.NullOr(Schema.String), evaluation: Schema.NullOr(EffectRef), ambient: Schema.NullOr(CodeCalled.fields.ambient), returned: Schema.Boolean, calls: Schema.Array(PackageRecord), outcome: Schema.NullOr(CodeReturned.fields.outcome) }))
 
 // codeModeState retains code inputs and package receipts until their tool results are delivered.
 export function codeModeState(state: typeof CodeModeState.Type, event: typeof Event.Type | EffectRequested): typeof CodeModeState.Type {

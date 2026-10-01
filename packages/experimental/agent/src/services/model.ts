@@ -1,18 +1,35 @@
-import { RuntimeError, type ExecutionHandle } from "@clavia/tardigrade-experimental-core"
-import { Context, Effect, JsonSchema, Layer, Schema, SchemaRepresentation } from "effect"
+import { ModelInfo } from "../actor/context"
+import { RuntimeError, type ExecutionHandle, type ActCancellation, durablePromise, EffectExecution } from "@clavia/tardigrade-experimental-core"
+import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit } from "effect"
+import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { AiError, LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
 import { reportedCostOf } from "@clavia/tardigrade-model/providers/usage"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
-import type { ModelRef } from "@clavia/tardigrade-model/reference"
-import type { ToolSpec } from "@clavia/tardigrade-experimental-packages"
-import type { ActCancellation } from "@clavia/tardigrade-experimental-core"
-import { ModelLock } from "./model-lock"
-import type { Conversation } from "../projections"
-import type { ModelReply as ReplySchema } from "../event"
+import { type ModelRef } from "@clavia/tardigrade-model/reference"
+import { type ToolSpec } from "@clavia/tardigrade-experimental-packages"
+import { type Conversation, ModelReply as ModelReplySchema } from "../contracts/events"
+import { Generate, Summarize } from "../contracts/acts"
+
+export { ModelLock }
+
+// resolveModel acquires locked metadata when constructing an atom graph.
+export const resolveModel = Effect.flatMap(ModelLock, lock => Effect.try({
+  try: () => {
+    const resolution = lock.resolve()
+    const contextWindowTokens = resolution.contextWindowTokens
+    if (contextWindowTokens === undefined || !Number.isSafeInteger(contextWindowTokens) || contextWindowTokens < 1) {
+      throw new RuntimeError("ModelLock must provide a positive integer contextWindowTokens")
+    }
+    return { model: resolution.model, contextWindowTokens }
+  },
+  catch: RuntimeError.from,
+}))
+
+export const modelInfo = Layer.effect(ModelInfo, resolveModel)
 
 export type Tool = ToolSpec
-export type ModelReply = typeof ReplySchema.Type
+export type ModelReply = typeof ModelReplySchema.Type
 
 export interface ModelInput { readonly model: ModelRef; readonly system: string; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type }
 
@@ -113,3 +130,22 @@ export function liveModelServices(options: ModelBindingOptions & ModelServiceOpt
   const { timeoutMs, ...binding } = options
   return modelServices(timeoutMs === undefined ? {} : { timeoutMs }).pipe(Layer.provideMerge(modelLayer(binding)))
 }
+
+export const generate = Generate.layer(input => Effect.gen(function* () {
+  const model = yield* Model
+  const execution = yield* EffectExecution
+  if (model.submit) return Generate.defer(yield* execution.submit(model.submit(input, execution)))
+  const reply = durablePromise(execution.ref, { success: ModelReplySchema, error: Schema.String })
+  const handle = yield* execution.fork(model.call(input).pipe(
+    Effect.exit,
+    Effect.map(exit => Exit.isSuccess(exit) ? reply.succeed(exit.value) : reply.fail(Cause.pretty(exit.cause))),
+  ))
+  return Generate.defer(handle)
+}).pipe(Effect.mapError(String)), { cancel: (input, context) => Model.use(model => model.cancel?.(input, context) ?? Effect.void) })
+
+export const summarize = Summarize.layer(input => Model.use(model => model.call(input)).pipe(
+  Effect.flatMap(reply => reply.text.trim() ? Effect.succeed(reply) : Effect.fail("Compaction returned an empty summary")),
+  Effect.mapError(String),
+))
+
+export const modelActs = Layer.merge(generate, summarize)

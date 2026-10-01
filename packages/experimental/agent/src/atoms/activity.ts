@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { atom, durableAtom } from "@clavia/tardigrade-experimental-core"
-import { Event, ModelReply, Decision, messageSource } from "./event"
+import { Event, ModelReply, Decision, turnSource } from "../contracts/events"
 
 export const history = durableAtom({ name: "agent.activity.history", input: Event, schema: Schema.Array(Event), initial: [], reduce: (events, event) => [...events, event] })
 export interface ActivityEntry {
@@ -12,10 +12,12 @@ export interface ActivityEntry {
 
 function describe(event: Event): Pick<ActivityEntry, "summary" | "status"> {
   switch (event.type) {
-    case "MessageReceived": {
-      const source = messageSource(event)
-      return { summary: `${source === "user" ? "" : `${source} · `}${event.kind === "message" ? event.text : event.kind}`, status: source === "user" ? "message" : "notification" }
+    case "TurnRequested": {
+      const source = turnSource(event)
+      return { summary: `${source === "user" ? "" : `${source} · `}${event.text}`, status: source === "user" ? "message" : "notification" }
     }
+    case "ActorRequestReceived": return { summary: `Request ${event.request.requestId}`, status: "notification" }
+    case "ActorReplyReceived": return { summary: `Reply ${event.requestId}`, status: "notification" }
     case "ModelCalled": return { summary: `${event.purpose} · ${event.model.model_id}`, status: "info" }
     case "CompactionFailed": return { summary: event.reason, status: "failed" }
     case "ModelReturned": return { summary: event.text, status: "info" }

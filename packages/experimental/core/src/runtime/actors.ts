@@ -88,9 +88,8 @@ export function localActors(options: {
   }))
 }
 
-export interface ManagedThread<Actions, State, Contracts extends ActorMethods<object>> {
+export interface ManagedThread<State, Contracts extends ActorMethods<object>> {
   readonly contracts: Contracts
-  readonly actions: Actions
   readonly get: <Value>(node: Atom<Value>) => Value
   readonly sub: <Value>(node: Atom<Value>, listener: () => void) => () => void
   readonly getState: () => State
@@ -104,8 +103,8 @@ export interface ActorStorage<Event extends object> {
   readonly thread: (coordinate: ThreadCoordinate) => ThreadJournal<Event>
 }
 
-export interface ActorExecutionOptions<Event extends object, Services, Actions extends object, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
-  readonly actor: ActorDefinition<Event, State, Actions, Services, Contracts>
+export interface ActorExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+  readonly actor: ActorDefinition<Event, State, Services, Contracts>
   readonly storage: ActorStorage<Event>
   readonly services: (coordinate: ThreadCoordinate, runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
   readonly from: MessageMetadata["from"]
@@ -114,10 +113,10 @@ export interface ActorExecutionOptions<Event extends object, Services, Actions e
 }
 
 // createActorExecution retains addressed runtimes and serializes their durable invocation admission within the host lifetime.
-export function createActorExecution<Event extends object, Services, Actions extends Readonly<Record<string, (...args: never[]) => Effect.Effect<void, Error>>>, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorExecutionOptions<Event, Services, Actions, State, Contracts> & {
+export function createActorExecution<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorExecutionOptions<Event, Services, State, Contracts> & {
   readonly run: <Value>(work: Effect.Effect<Value, Error>) => Effect.Effect<Value, Error>
 }) {
-  const threads = new Map<string, Effect.Effect<ManagedThread<Actions, State, Contracts>, Error>>()
+  const threads = new Map<string, Effect.Effect<ManagedThread<State, Contracts>, Error>>()
   const journals = new Map<string, ThreadJournal<Event>>()
   const identity = (coordinate: ThreadCoordinate) => JSON.stringify([coordinate.actor, coordinate.instance, coordinate.thread])
   const journalFor = (coordinate: ThreadCoordinate) => {
@@ -126,12 +125,12 @@ export function createActorExecution<Event extends object, Services, Actions ext
     if (!journal) { journal = options.storage.thread(coordinate); journals.set(key, journal) }
     return journal
   }
-  const open = (coordinate: ThreadCoordinate): Effect.Effect<ManagedThread<Actions, State, Contracts>, Error> => Effect.gen(function* () {
+  const open = (coordinate: ThreadCoordinate): Effect.Effect<ManagedThread<State, Contracts>, Error> => Effect.gen(function* () {
     const key = identity(coordinate)
     let pending = threads.get(key)
     if (!pending) {
       const journal = journalFor(coordinate)
-      pending = yield* Effect.cached(readThreadCreation(journal, coordinate).pipe(Effect.andThen(createActorStore<Event, State, Actions, Services, Contracts>({
+      pending = yield* Effect.cached(readThreadCreation(journal, coordinate).pipe(Effect.andThen(createActorStore<Event, State, Services, Contracts>({
         actor: options.actor, actorContext: options.actorContext, journal, delivery: options.delivery(coordinate), services: runtime => options.services(coordinate, runtime),
       })), Effect.onError(() => Effect.sync(() => { threads.delete(key) }))))
       threads.set(key, pending)
@@ -150,7 +149,7 @@ export function createActorExecution<Event extends object, Services, Actions ext
       const invocation = record?.record.message?.invocation
       const method = thread.contracts[name]
       if (!method || invocation?.method !== name) return yield* Effect.fail(new InvalidMessage("Result requires a matching invocation"))
-      const node = atom(get => method.result(invocation.input, get, { id }))
+      const node = atom(get => method.result(invocation.input, get, { id, ref: { method: name, id } }))
       const settled = yield* Deferred.make<MethodResult<Schema.Json>, Error>()
       const check = () => {
         try {

@@ -1,7 +1,7 @@
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, PromiseNotReady, RuntimeError, type ActorRuntime, type Journal, type PromiseSettled, type Recorded } from "@clavia/tardigrade-experimental-core"
-import { createActorStore } from "../../../../core/src/runtime/execution"
+import { createTestStore } from "./store"
 import { Promises } from "../../../../core/src/services/promises"
 
 const Started = Schema.Struct({ type: Schema.Literal("Started") })
@@ -58,14 +58,13 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
     })
     const request = Job.request({ tag: "job", input: {}, onSettled: result => [{ type: "Returned", value: result.status === "fulfilled" ? result.value : "rejected" }] })
     return {
-      atom: Object.assign(effectAtom(get => {
+      atom: effectAtom(get => {
         const view = get(state)
         return { view, events: {}, acts: view.started && view.results.length === 0 ? { job: request } : {} }
-      }), { schema: Event }),
-      actions: { start: () => ({ type: "Started" as const }) },
+      }), schema: Event
     }
   }))
-  const store = yield* createActorStore({ actor, journal, checkpoint: { mode: "manual" }, promiseDelivery: { retryIntervalMs: 2 },
+  const store = yield* createTestStore({ actor, journal, checkpoint: { mode: "manual" }, promiseDelivery: { retryIntervalMs: 2 },
     actorContext: () => Context.empty(),
     services: host => {
       runtime = host
@@ -87,7 +86,7 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
     },
   })
   return yield* Effect.gen(function* () {
-    yield* store.actions.start()
+    yield* store.send([{ type: "Started" }])
     yield* Deferred.await(executionReady)
     if (mode === "external") {
       yield* runtime.send([{ type: "Marker", name: "before" }, earlyResult, { type: "Marker", name: "after" }]).pipe(

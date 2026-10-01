@@ -1,8 +1,9 @@
-import { EffectExecution, ExecutionHandle, RuntimeError, durablePromise } from "@clavia/tardigrade-experimental-core"
+import { EffectExecution, ExecutionHandle, RuntimeError, durablePromise, type ActorCaller, Actor } from "@clavia/tardigrade-experimental-core"
 import { Cause, Context, Effect, Exit, Layer, Schema } from "effect"
-import type { ActorCaller } from "@clavia/tardigrade-experimental-core"
-import { BudgetReply } from "../budget-contracts"
-import type { BudgetDecision, Decision, PermissionRequest } from "../event"
+import { BudgetReply, ToolBudgetAmount } from "../contracts/budget"
+import { BudgetDecision, Decision, type PermissionRequest } from "../contracts/events"
+import { AskPermission, AskBudget } from "../contracts/acts"
+import { tool } from "@clavia/tardigrade-experimental-packages"
 
 export type RequestResult<Decision> =
   | { readonly type: "decision"; readonly decision: Decision }
@@ -50,4 +51,32 @@ export const parentBudgetRequests = (caller: ActorCaller) => Layer.succeed(Budge
     if (!decision.allowed) return { allowed: false, reason: decision.reason }
     return { allowed: true, additional: decision.amount }
   })),
+})
+
+export const askPermission = AskPermission.layer(input => Effect.gen(function* () {
+  const answer = yield* PermissionRequests.use(service => service.request(input))
+  const result = yield* Schema.decodeEffect(requestResult(Decision))(answer)
+  return result.type === "decision" ? result.decision : AskPermission.defer({ ...result.handle, ...(result.mode ? { mode: result.mode } : {}) })
+}).pipe(Effect.mapError(String)))
+
+export const askBudget = AskBudget.layer(input => Effect.gen(function* () {
+  const answer = yield* BudgetRequests.use(service => service.request(input))
+  const result = yield* Schema.decodeEffect(requestResult(BudgetDecision))(answer)
+  if (result.type === "pending") return AskBudget.defer({ ...result.handle, ...(result.mode ? { mode: result.mode } : {}) })
+  if (result.decision.allowed) {
+    const total = input.limit + result.decision.additional
+    if (!Number.isFinite(total) || (input.metric === "toolCalls" && (!Number.isSafeInteger(result.decision.additional) || !Number.isSafeInteger(total)))) return yield* Effect.fail("Invalid budget grant")
+  }
+  return result.decision
+}).pipe(Effect.mapError(String)))
+
+export const grantBudget = tool({
+  name: "grant_budget",
+  description: "Grant additional tool calls to a child with an outstanding budget request. Use handle and requestId from its message. This grant does not consume tool budget.",
+  input: Schema.Struct({ handle: ExecutionHandle, requestId: Schema.NonEmptyString, amount: ToolBudgetAmount }),
+  run: ({ handle, requestId, amount }) => Effect.gen(function* () {
+    const runtime = yield* Actor
+    yield* runtime.reply(handle, requestId, { allowed: true, amount })
+    return { handle, requestId, granted: amount }
+  }),
 })

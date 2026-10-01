@@ -5,10 +5,11 @@
   "type": "module",
   "description": "An agent composed from durable atoms.",
   "exports": {
-    ".": "./src/agent.ts",
+    ".": "./src/index.ts",
     "./*": "./src/*.ts",
     "./atoms/durable": "./src/atoms/durable/index.ts",
-    "./services": "./src/services/index.ts"
+    "./services": "./src/services/index.ts",
+    "./atoms": "./src/atoms/index.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-code": "workspace:*",

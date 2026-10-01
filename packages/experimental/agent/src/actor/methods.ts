@@ -1,6 +1,7 @@
-import { RuntimeError, type Getter, type MethodResult } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, type Getter, type MethodResult, actorMethod, AbortRequested } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
-import { inferenceState } from "./atoms/durable/inference"
+import { inferenceState } from "../atoms/durable/inference"
+import { TurnRequested } from "../contracts/events"
 
 export const AgentMessageOutput = Schema.Struct({ text: Schema.String })
 export type AgentMessageOutput = typeof AgentMessageOutput.Type
@@ -19,4 +20,14 @@ export function agentReply(id: string, get: Getter): MethodResult<AgentMessageOu
   }
   if (turn.cancellation === null) throw new RuntimeError("Cancelled turn has no reason")
   return { status: "cancelled", reason: turn.cancellation }
+}
+
+export const AgentMessageInput = Schema.Struct({ text: Schema.String })
+export const agentMethods = {
+  message: actorMethod({
+    inputSchema: AgentMessageInput, outputSchema: AgentMessageOutput,
+    onReceive: TurnRequested.from((input, context) => ({ ...input, source: "user", turnId: context.id, invocationRef: context.ref })),
+    result: (_, get, context) => agentReply(context.id, get),
+    onCancel: AbortRequested.from((_, context) => ({ ref: context.ref, reason: context.reason })),
+  }),
 }

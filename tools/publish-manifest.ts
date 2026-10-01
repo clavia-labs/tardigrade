@@ -15,6 +15,8 @@ import manifest13 from "../apps/cli/package.json"
 
 import experimentalPlatform from "../packages/experimental/platform/package.json"
 import experimentalCore from "../packages/experimental/core/package.json"
+import experimentalAgent from "../packages/experimental/agent/package.json"
+import experimentalPackages from "../packages/experimental/packages/package.json"
 
 interface DependencyManifest {
   readonly name: string
@@ -24,6 +26,8 @@ interface DependencyManifest {
 }
 
 export const publishSources = [
+  { dir: "packages/experimental/agent", namespace: "experimental/agent", pkg: experimentalAgent },
+  { dir: "packages/experimental/packages", namespace: "experimental/packages", pkg: experimentalPackages },
   { dir: "packages/experimental/platform", namespace: "experimental/platform", pkg: experimentalPlatform },
   { dir: "packages/experimental/core", namespace: "experimental", pkg: experimentalCore },
   { dir: "packages/tardie", namespace: "tardie", pkg: manifest0 },

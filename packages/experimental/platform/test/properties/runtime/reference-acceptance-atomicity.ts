@@ -2,7 +2,7 @@ import { Context, Deferred, Effect, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, effectAtom, effectKey, RuntimeError, type EffectRef, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-experimental-core"
 import { createEventLog } from "@clavia/tardigrade-experimental-core/runtime/replay"
-import { createActorStore } from "../../../../core/src/runtime/execution"
+import { createTestStore } from "./store"
 import { checkpointDigest, encodeCheckpoint } from "../../../../core/src/services/checkpoint"
 
 const Queued = Schema.Struct({ type: Schema.Literal("Queued"), invocation: Schema.Finite })
@@ -42,7 +42,7 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
         : { ...state, pending: false, completed: [...state.completed, event.invocation] },
     })
     const requests = new Map<number, ReturnType<typeof Job.request>>()
-    return { atom: Object.assign(effectAtom(get => {
+    return { atom: effectAtom(get => {
       const view = get(state)
       if (!view.pending) return { view, events: {}, acts: {} }
       let proposal = requests.get(view.invocation)
@@ -54,7 +54,7 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
       }
       request = proposal
       return { view, events: {}, acts: { send: proposal } }
-    }), { schema: Event }), actions: {} }
+    }), schema: Event }
   }))
   if (options.checkpoint) {
     const setup = yield* actor.setup
@@ -92,7 +92,7 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
     readCheckpoint: Effect.sync(() => stored),
     append, appendWithCheckpoint: append,
   }
-  const open = () => createActorStore({ actor, journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(),
+  const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(),
     services: () => Job.layer((input, { ref }) => Effect.sync(() => { executions.push(ref); return input.invocation })),
   })
   const first = yield* open()

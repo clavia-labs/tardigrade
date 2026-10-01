@@ -1,4 +1,4 @@
-import { actorContext } from "@clavia/tardigrade-experimental-agent/context"
+import { actorContext } from "@clavia/tardigrade-experimental-agent/actor/context"
 import { Cause, Config, Console, Effect, Exit } from "effect"
 import { createBunHost } from "@clavia/tardigrade-experimental-platform/bun"
 import { services } from "./services"

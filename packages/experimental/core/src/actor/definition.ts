@@ -1,15 +1,17 @@
-import type { ActorMethods } from "./method"
+import { eventCatalog } from "./event"
+import type { ActorMethods, ActorMethod } from "./method"
 import { RuntimeError } from "../runtime/effects"
 import { Context, Effect, Schema } from "effect"
 import { AsyncResult } from "effect/unstable/reactivity"
-import { atom, type Atom, type Getter } from "../atoms/atom"
+import { atom, type Atom } from "../atoms/atom"
+import type { EventValue } from "../atoms/effect"
 import type { ActorSetup } from "../runtime/contracts"
 import { createStore } from "../atoms/store"
 import { EventLog } from "../services/event-log"
 import { createEventSource } from "../runtime/event-source"
 
-type Actions<Event> = Readonly<Record<string, (...args: never[]) => Event>>
-type Bound<Definitions> = { readonly [Key in keyof Definitions]: Definitions[Key] extends (...args: infer Args) => unknown ? (...args: Args) => Effect.Effect<void, Error> : never }
+type MethodEvents<Methods> = { readonly [Key in keyof Methods]: Methods[Key] extends ActorMethod<infer Event> ? Event : never }[keyof Methods]
+type ProjectionEvents<Value> = Value extends { readonly events: Readonly<Record<string, EventValue<infer Event>>> } ? Extract<Event, object> : never
 type Resolved<Value> = Value extends AsyncResult.AsyncResult<infer Output, unknown> ? Output : Value
 
 // resolveOutput unwraps synchronously evaluated projections; suspended projections cannot participate in synchronous replay.
@@ -21,46 +23,39 @@ function resolveOutput<Value>(value: Value): Resolved<Value> {
   return value as Resolved<Value>
 }
 
-export interface ActorAtom<Value, Event extends object, Contracts extends ActorMethods<Event> = ActorMethods<Event>> extends Atom<Value> {
-  readonly schema: Schema.Schema<Event>
-  readonly validate?: (event: Event, get: Getter) => void
-  readonly methods?: Contracts
-}
-
-export interface ActorDefinition<Event extends object, State, Actions extends object, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+export interface ActorDefinition<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
   readonly actorName: string
-  readonly setup: Effect.Effect<ActorSetup<Event, Readonly<Record<string, Atom<State>>>, Actions, Contracts> & { readonly root: Atom<State> }, Error, Services>
+  readonly setup: Effect.Effect<ActorSetup<Event, Readonly<Record<string, Atom<State>>>, Contracts> & { readonly root: Atom<State> }, Error, Services>
 }
 
-// defineActor describes an actor graph and its typed actions for instantiation by a host.
-export function defineActor<Event extends object, Value, const Name extends string, const Definitions extends Actions<NoInfer<Event>>, Services, const Contracts extends ActorMethods<NoInfer<Event>> = {}>(name: Name, factory: Effect.Effect<{
-  readonly atom: ActorAtom<Value, Event, Contracts>
-  readonly actions: Definitions
+// defineActor assembles a reactive graph, event contract, and typed methods for instantiation by a host.
+export function defineActor<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never>(name: Name, factory: Effect.Effect<{
+  readonly atom: Atom<Value>
+  readonly schema?: Schema.Schema<Event>
+  readonly methods?: Contracts
 }, Error, Services>) {
   if (!name || name.includes("/")) throw new RuntimeError("Actor name must be nonempty and contain no slash")
+  type DomainEvents = Event | MethodEvents<Contracts> | ProjectionEvents<Resolved<Value>>
   type Output = Resolved<Value>
-  type Atoms = { readonly [Key in Name]: ActorAtom<Output, Event> }
+  type Atoms = { readonly [Key in Name]: Atom<Output> }
   const setup = factory.pipe(Effect.map(definition => {
-    for (const action of ["getState", "subscribe", "methods"]) {
-      if (Object.hasOwn(definition.actions, action)) throw new RuntimeError(`Invalid actor action: ${action}`)
-    }
-    for (const [name, method] of Object.entries(definition.atom.methods ?? {})) {
+    for (const [name, method] of Object.entries(definition.methods ?? {})) {
       if (!name || ["coordinate", "store", "methods", "invoke", "result", "cancel", "get", "getState", "resume", "wait", "receipt"].includes(name)) throw new RuntimeError(`Invalid actor method: ${name}`)
       if (!Schema.isSchema(method.inputSchema) || !Schema.isSchema(method.outputSchema) || typeof method.onReceive !== "function" || typeof method.result !== "function" || (method.onCancel !== undefined && typeof method.onCancel !== "function")) throw new RuntimeError(`Invalid actor method contract: ${name}`)
     }
-    const root = Object.assign(atom(get => resolveOutput(get(definition.atom))), {
-      schema: definition.atom.schema,
-      ...(definition.atom.validate ? { validate: definition.atom.validate } : {}),
-    })
+    const root = atom(get => resolveOutput(get(definition.atom)))
+    const catalog = eventCatalog<DomainEvents>()
+    for (const method of Object.values(definition.methods ?? {})) for (const schema of method.events) catalog.add(schema)
+    const discovery = createStore(Context.make(EventLog, { events: createEventSource().events }))
+    try {
+      // TODO: Discover subscriptions first read after a branch change; setup currently registers the graph observed from initial state.
+      for (const schema of discovery.eventSchemas({ [name]: root })) catalog.add(schema)
+    } finally { discovery.dispose() }
     return {
       root,
-      schema: definition.atom.schema,
-      contracts: definition.atom.methods ?? {} as Contracts,
+      schema: (definition.schema ?? catalog.schema) as Schema.Schema<DomainEvents>,
+      contracts: definition.methods ?? {} as Contracts,
       effects: { [name]: root } as Atoms,
-      validate: (event: Event, get: Getter) => definition.atom.validate?.(event, get),
-      actions: (emit: (event: Event) => Effect.Effect<void, Error>) => Object.fromEntries(Object.entries(definition.actions).map(([name, action]) => [
-        name, (...args: never[]) => Effect.try({ try: () => action(...args), catch: RuntimeError.from }).pipe(Effect.flatMap(emit)),
-      ])) as Bound<Definitions>,
     }
   }))
   const graph = () => Effect.scoped(Effect.gen(function* () {

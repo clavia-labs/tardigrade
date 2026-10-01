@@ -1,5 +1,10 @@
+import { event } from "./event"
 import { Schema } from "effect"
+import { InvocationRef } from "./method"
 
-// AbortReceived records an actor stop signal; its invocation identifies the method operation to stop.
-export const AbortReceived = Schema.Struct({ type: Schema.Literal("AbortReceived"), reason: Schema.String, invocation: Schema.Struct({ method: Schema.NonEmptyString, id: Schema.NonEmptyString }) })
-export type AbortReceived = typeof AbortReceived.Type
+// AbortRequested identifies an accepted method invocation whose domain work should stop.
+export const AbortRequested = event({ type: "AbortRequested", ref: InvocationRef, reason: Schema.String })
+export type AbortRequested = typeof AbortRequested.Type
+
+// abortRequested constructs an invocation-scoped stop request.
+export const abortRequested = (input: { readonly ref: InvocationRef; readonly reason: string }) => AbortRequested.make(input)

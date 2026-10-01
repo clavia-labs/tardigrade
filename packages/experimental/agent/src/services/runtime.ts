@@ -1,19 +1,14 @@
-import { ModelInfo, ToolCatalog, actorContext } from "../context"
-import { modelInfo } from "./model-lock"
-import { modelActs, askPermission } from "./acts"
-import { PermissionRequests } from "./requests"
+import { ModelInfo, ToolCatalog, actorContext } from "../actor/context"
+import { modelInfo, modelActs, ModelLock, Model } from "./model"
+import { askPermission, PermissionRequests } from "./decisions"
 import { toolActs } from "./tools"
-import { Actor, RuntimeError, type ActorCaller } from "@clavia/tardigrade-experimental-core"
+import { Actor, RuntimeError, type ActorCaller, type ActorRuntime, type RuntimeEvent, type ActorDefinition, type ActorOutput, type EffectExecution, type ActService, Promises, localActors, createActorStore } from "@clavia/tardigrade-experimental-core"
 import { Effect, Layer, Schema } from "effect"
 import { Workspace, memoryWorkspace, AgentMessage, AgentBudget, DEFAULT_AGENT_TOOL_CALLS, fetchPackage, alarm, workspace, agents, type Package } from "@clavia/tardigrade-experimental-packages"
-import type { ActorRuntime, RuntimeEvent, ActorDefinition, ActorOutput, EffectExecution, ActService } from "@clavia/tardigrade-experimental-core"
-import { Promises, localActors, createActorStore } from "@clavia/tardigrade-experimental-core"
 import { createActor } from "../agent"
 import { budgetState } from "../atoms/durable/budget"
-import { Event } from "../event"
-import { ModelLock } from "./model-lock"
-import { Model } from "./model"
-import { turnOutput } from "../result"
+import { Event } from "../contracts/events"
+import { turnOutput } from "../atoms/durable/inference"
 
 export interface AssistantContext {
   readonly depth: number
@@ -22,9 +17,7 @@ export interface AssistantContext {
 
 type AgentActs = ActService<"agent.model.generate"> | ActService<"agent.model.summarize"> | ActService<"agent.tool.execute"> | ActService<"agent.permission.request">
 
-type AssistantDefinition<Services> = ActorDefinition<Event, ActorOutput<unknown, Event, Services | AgentActs>, {
-  readonly message: (input: { readonly text: string; readonly turnId?: string }) => Effect.Effect<void, Error>
-}, ModelInfo | ToolCatalog>
+type AssistantDefinition<Services> = ActorDefinition<Event, ActorOutput<unknown, Event, Services | AgentActs>, ModelInfo | ToolCatalog>
 
 export interface AssistantOptions<Services = never> {
   readonly actor?: AssistantDefinition<Services>
@@ -44,10 +37,15 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
       if (call.method !== "message") return yield* Effect.fail(new RuntimeError(`Unknown agent method: ${call.method}`))
       const input = yield* Schema.decodeUnknownEffect(AgentMessage)(call.input).pipe(Effect.mapError(RuntimeError.from))
       const childBudget = input.budget ?? { toolCalls: DEFAULT_AGENT_TOOL_CALLS }
+      let childRuntime!: ActorRuntime<Event>
+      const configuration = assistantRuntime(options, depth + 1, caller, childBudget)
       return yield* Effect.acquireUseRelease(
-        createActorStore({ actor, ...assistantRuntime(options, depth + 1, caller, childBudget) }),
+        createActorStore({ actor, ...configuration, services: runtime => {
+          childRuntime = runtime
+          return configuration.services(runtime)
+        } }),
         child => Effect.gen(function* () {
-          yield* child.actions.message({ text: input.text, turnId: call.id })
+          yield* childRuntime.send([{ type: "TurnRequested", text: input.text, turnId: call.id }])
           yield* child.wait
           const reply = child.snapshot().events.filter(Schema.is(Event)).findLast(event => event.type === "TurnSettled")
           if (!reply || reply.type !== "TurnSettled") return yield* Effect.fail(new RuntimeError("Child finished without an answer"))
@@ -62,9 +60,9 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
 
       )
     }),
-    onRequest: (handle, request) => host.send([{ type: "MessageReceived", kind: "request", handle, request }]),
-    onReply: (handle, requestId, result) => host.record({ type: "MessageReceived", kind: "reply", handle, requestId, result }),
-    onMessage: (handle, message) => host.send([{ type: "MessageReceived", kind: "message", turnId: `${handle.id}:notice:${crypto.randomUUID()}`, text: JSON.stringify({ handle, message }) }]),
+    onRequest: (handle, request) => host.send([{ type: "ActorRequestReceived", handle, request }, { type: "TurnRequested", source: "agent", turnId: `request:${JSON.stringify([handle, request.requestId])}`, text: `Child request (data): ${JSON.stringify({ handle, ...request })}` }]),
+    onReply: (handle, requestId, result) => host.record({ type: "ActorReplyReceived", handle, requestId, result }),
+    onMessage: (handle, message) => host.send([{ type: "TurnRequested", source: "agent", turnId: `${handle.id}:notice:${crypto.randomUUID()}`, text: JSON.stringify({ handle, message }) }]),
   })
   const services = typeof options.services === "function" ? options.services({ depth, parent }, host) : options.services
   const platform = Layer.mergeAll(services, memoryWorkspace, Layer.effectDiscard(budget ? host.onReady(Effect.suspend(() => host.record({

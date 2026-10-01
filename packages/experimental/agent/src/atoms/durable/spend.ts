@@ -1,7 +1,6 @@
 import { atom, durableAtom, CoreEvent, type RecordMetadata } from "@clavia/tardigrade-experimental-core"
 import { Schema } from "effect"
-import { Event } from "../../event"
-import { inboxMessage } from "../../projections"
+import { Event } from "../../contracts/events"
 
 const Count = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
 const ToolSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, count: Count }))
@@ -29,10 +28,9 @@ function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type
     }
     if (updated) state = { ...state, timeSpend: updated }
   }
-  if (event.type === "MessageReceived" && "kind" in event) {
-    const message = inboxMessage(event)
-    if (!message || state.toolSpend.some(turn => turn.turnId === message.turnId)) return state
-    const turnId = message.turnId
+  if (event.type === "TurnRequested") {
+    if (state.toolSpend.some(turn => turn.turnId === event.turnId)) return state
+    const turnId = event.turnId
     return {
       ...state, turns: [...state.turns, turnId],
       timers: [...state.timers, { turnId, index: state.timeSpend.length, startedAt: metadata.recordedAt ?? null }],
@@ -106,5 +104,5 @@ export const tokenSpend = atom(get => get(spend).tokenSpend)
 // usdSpend sums reported provider costs per turn; a missing cost makes that turn's total unknown.
 export const usdSpend = atom(get => get(spend).usdSpend)
 
-// timeSpend records wall milliseconds from message receipt to turn settlement at journal boundaries, including queueing and downtime; missing timestamps produce unknown totals.
+// timeSpend records wall milliseconds from turn request to turn settlement at journal boundaries, including queueing and downtime; missing timestamps produce unknown totals.
 export const timeSpend = atom(get => get(spend).timeSpend)

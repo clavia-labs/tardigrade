@@ -47,7 +47,7 @@ export const Provision = act({ name: "host.thread.provision", input: Allocation,
 
 export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
   const requests = new Map<string, ReturnType<typeof Provision.request>>()
-  const supervisor = Object.assign(effectAtom(get => {
+  const supervisor = effectAtom(get => {
     const directory = get(threads)
     const acts = Object.fromEntries(directory.filter(entry => entry.status === "requested").map(allocation => {
       const tag = allocation.coordinate.thread
@@ -62,6 +62,6 @@ export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
       return [tag, request]
     }))
     return { view: { threads: directory }, events: {}, acts }
-  }), { schema: SupervisorEvent })
-  return { atom: supervisor, actions: { requestThread: (allocation: ThreadAllocation): SupervisorEvent => ({ type: "ThreadRequested", allocation }) } }
+  })
+  return { atom: supervisor, schema: SupervisorEvent }
 }))

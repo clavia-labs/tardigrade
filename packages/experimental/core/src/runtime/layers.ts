@@ -18,7 +18,7 @@ export const HOST_CHILD_PLACEMENTS = ["colocated"] as const satisfies readonly C
 export const DEFAULT_CHILD_PLACEMENT: ChildPlacement = "colocated"
 
 // createThreadHost composes supervision and invocation within a shared storage lifetime.
-export function createThreadHost<Event extends object, Services, Actions extends Readonly<Record<string, (...args: never[]) => Effect.Effect<void, Error>>>, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<ActorExecutionOptions<Event, Services, Actions, State, Contracts>, "from" | "delivery"> & {
+export function createThreadHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<ActorExecutionOptions<Event, Services, State, Contracts>, "from" | "delivery"> & {
   readonly storage: ThreadStorage<Event>
   readonly from?: MessageSender
   readonly actorTransport?: ActorMessageTransport
@@ -44,7 +44,7 @@ export function createThreadHost<Event extends object, Services, Actions extends
     ...(options.generateName ? { generateName: options.generateName } : {}),
     run,
   })
-  const actors: ReturnType<typeof createActorExecution<Event, Services, Actions, State, Contracts>> = createActorExecution({
+  const actors: ReturnType<typeof createActorExecution<Event, Services, State, Contracts>> = createActorExecution({
     ...options, run, from: options.from ?? DEFAULT_EXTERNAL_SENDER,
     delivery: coordinate => ({ ...options.delivery, address: coordinate, send: invocation.forSender(coordinate).send }),
     services: (coordinate, runtime) => options.services(coordinate, runtime).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, supervisor), Layer.succeed(Invocation, invocation.forSender(coordinate))))),

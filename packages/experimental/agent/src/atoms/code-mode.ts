@@ -1,11 +1,11 @@
 import { Effect, Option, Schema } from "effect"
 import { effectAtom, eventValue, RuntimeError, type ActRequest, type ActService, type EventValue } from "@clavia/tardigrade-experimental-core"
-import { failureMessage } from "../acts"
-import { pendingTools } from "./tools"
-import { ToolCatalog } from "../context"
-import { ToolReturned, type ToolCalled } from "../event"
-import { CodeReturned, Event, EvaluateCode, ExecutePackage, PackageReturned } from "../code-mode/contracts"
-import { executions as state } from "../code-mode/projections"
+import { failureMessage } from "../contracts/acts"
+import { pendingTools } from "./durable/tools"
+import { ToolCatalog } from "../actor/context"
+import { ToolReturned, type ToolCalled } from "../contracts/events"
+import { CodeReturned, Event, EvaluateCode, ExecutePackage, PackageReturned } from "../contracts/code-mode"
+import { executions as state } from "./durable/code-mode"
 
 const CodeInput = Schema.Struct({ code: Schema.String })
 

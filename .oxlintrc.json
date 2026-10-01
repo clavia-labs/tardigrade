@@ -17,13 +17,10 @@
     {
       "files": [
         "packages/experimental/agent/src/atoms/**/*.ts",
-        "packages/experimental/agent/src/code-mode/**/*.ts",
+        "packages/experimental/agent/src/actor/**/*.ts",
+        "packages/experimental/agent/src/contracts/**/*.ts",
+        "packages/experimental/agent/src/index.ts",
         "packages/experimental/agent/src/agent.ts",
-        "packages/experimental/agent/src/acts.ts",
-        "packages/experimental/agent/src/context.ts",
-        "packages/experimental/agent/src/event.ts",
-        "packages/experimental/agent/src/projections.ts",
-        "packages/experimental/agent/src/budget-contracts.ts",
         "packages/experimental/apps/*/src/actor.ts",
         "packages/experimental/**/actors/**/*.ts",
         "packages/experimental/core/src/services/supervisor/graph.ts",
@@ -91,7 +88,6 @@
                 "group": [
                   "@clavia/tardigrade-experimental-packages/*",
                   "!@clavia/tardigrade-experimental-packages/types",
-                  "**/budget-tools",
                   "effect/Layer",
                   "effect/Effect",
                   "effect/FileSystem",

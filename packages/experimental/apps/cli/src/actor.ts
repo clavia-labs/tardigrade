@@ -1,8 +1,8 @@
+import { agentMethods } from "@clavia/tardigrade-experimental-agent/actor/methods"
 import { atom, defineActor, effectAtom, eventValue, type ActService } from "@clavia/tardigrade-experimental-core"
-import { compact, infer, systemPrompt, conversation, permissions, pendingTools, codeMode } from "@clavia/tardigrade-experimental-agent/atoms/index"
-import { message, cancel, updatePermission } from "@clavia/tardigrade-experimental-agent/event"
+import { compact, infer, systemPrompt, conversation, permissions, pendingTools, codeMode } from "@clavia/tardigrade-experimental-agent/atoms"
 import { Effect } from "effect"
-import { Event } from "@clavia/tardigrade-experimental-agent/code-mode/contracts"
+import { Event } from "@clavia/tardigrade-experimental-agent/contracts/code-mode"
 
 export const actor = defineActor("tardie", Effect.gen(function* () {
   const available = yield* codeMode({ name: "agent.code-mode" })
@@ -26,5 +26,5 @@ export const actor = defineActor("tardie", Effect.gen(function* () {
   const system = systemPrompt("You are a helpful assistant. Use execute to run JavaScript against the connected packages. Keep answers concise and practical.")
   const context = yield* compact(conversation)
   const agent = yield* infer<ActService<"code-mode.evaluate"> | ActService<"code-mode.package"> | ActService<"agent.permission.request">, typeof Event.Type>(atom(get => ({ system: get(system), tools: get(tools), context: get(context) })))
-  return { atom: Object.assign(atom(get => get(agent)), { schema: Event, methods: agent.methods }), actions: { message, cancel, updatePermission } }
+  return { atom: agent, methods: agentMethods }
 }))

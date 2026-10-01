@@ -2,8 +2,8 @@ import { Effect, Layer, Schema } from "effect"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { packageTools, type Package } from "@clavia/tardigrade-experimental-packages"
 import { ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
-import { ExecuteTool } from "../acts"
-import { ToolCatalog } from "../context"
+import { ExecuteTool } from "../contracts/acts"
+import { ToolCatalog } from "../actor/context"
 
 // toolActs supplies a data catalog and an implementation backed by the configured packages.
 export function toolActs<const P extends readonly Package<unknown>[]>(packages: P, additional: readonly ToolSpec[] = []) {

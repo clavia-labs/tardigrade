@@ -1,8 +1,8 @@
 import { Effect, Random, Queue } from "effect"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { messages, type ChatMessage } from "@clavia/tardigrade-experimental-agent/messages"
-import { history } from "@clavia/tardigrade-experimental-agent/activity"
-import { turnOutput } from "@clavia/tardigrade-experimental-agent/result"
+import { messages, type ChatMessage } from "@clavia/tardigrade-experimental-agent/atoms/messages"
+import { history } from "@clavia/tardigrade-experimental-agent/atoms/activity"
+import { turnOutput } from "@clavia/tardigrade-experimental-agent/atoms/durable/inference"
 import type { PromptMessage } from "./prompt"
 import type { ChatThread } from "./threads"
 

@@ -38,14 +38,13 @@ export const DEFAULT_CANCELLATION_RETRY_INTERVAL_MS = 5_000
 
 export const DEFAULT_CHECKPOINT_POLICY: CheckpointPolicy = { mode: "quiescent" }
 
-export type ActorServices<Definition> = Definition extends ActorDefinition<infer Event, infer State, infer _Methods, infer Services>
+export type ActorServices<Definition> = Definition extends ActorDefinition<infer Event, infer State, infer Services>
   ? (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
   : never
 
 // createActorStore instantiates an actor definition and owns its services, journal commits, and execution lifetime.
-// Actor actions commit local domain events; method contracts define addressed invocations.
-export function createActorStore<Event extends object, State, Actions extends object, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: {
-  readonly actor: ActorDefinition<Event, State, Actions, Services, Contracts>
+export function createActorStore<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: {
+  readonly actor: ActorDefinition<Event, State, Services, Contracts>
   readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
   // actorContext selects setup capabilities explicitly; the execution context is supplied only to effect execution.
   readonly actorContext: (services: Context.Context<Requirements<{ root: Atom<NoInfer<State>> }> | Exclude<NoInfer<Services>, Scope.Scope>>) => Context.Context<Exclude<NoInfer<Services>, Scope.Scope>>
@@ -60,7 +59,7 @@ export function createActorStore<Event extends object, State, Actions extends ob
   return Effect.gen(function* () {
     let root!: Atom<State>
     let contracts!: Contracts
-    const store = yield* createRuntime<Event, Readonly<Record<string, Atom<State>>>, Actions, Services, Contracts>({
+    const store = yield* createRuntime<Event, Readonly<Record<string, Atom<State>>>, Services, Contracts>({
       ...options,
       setup: options.actor.setup.pipe(Effect.map(setup => {
         root = setup.root
@@ -74,8 +73,8 @@ export function createActorStore<Event extends object, State, Actions extends ob
 }
 
 // createRuntime builds services and an atom graph within an isolated actor lifetime.
-function createRuntime<Event extends object, const Atoms extends Readonly<Record<string, Atom<unknown>>>, Actions extends object, Services, Contracts extends ActorMethods<Event>>(options: {
-  readonly setup: Effect.Effect<ActorSetup<Event, Atoms, Actions, Contracts>, Error, Services>
+function createRuntime<Event extends object, const Atoms extends Readonly<Record<string, Atom<unknown>>>, Services, Contracts extends ActorMethods<Event>>(options: {
+  readonly setup: Effect.Effect<ActorSetup<Event, Atoms, Contracts>, Error, Services>
   readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<Atoms> | Exclude<Services, Scope.Scope>, Error>
   readonly actorContext: (services: Context.Context<Requirements<Atoms> | Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
   readonly events?: readonly RuntimeEvent<Event>[]
@@ -90,7 +89,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     if (options.journal && options.events !== undefined) return yield* Effect.fail(new RuntimeError("Supply either a journal or initial events"))
     const deliveryRetryIntervalMs = options.promiseDelivery?.retryIntervalMs ?? DEFAULT_PROMISE_POLICY.retryIntervalMs
     if (!Number.isSafeInteger(deliveryRetryIntervalMs) || deliveryRetryIntervalMs < 1) return yield* Effect.fail(new RuntimeError("Promise delivery retryIntervalMs must be a positive safe integer"))
-    let setup: ActorSetup<Event, Atoms, Actions, Contracts>
+    let setup: ActorSetup<Event, Atoms, Contracts>
     type RuntimeAtoms = Atoms & { readonly "host.message.replies": ReturnType<typeof messageReplies<Event>> }
     let definition: ReturnType<typeof createEventLog<Event, RuntimeAtoms>>
     let snapshot: ReturnType<typeof definition.replay>
@@ -427,7 +426,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         }
         while (cursor < events.length) {
           const event = events[cursor]!
-          if (!hasCoreEventType(event)) yield* Effect.try({ try: () => setup.validate?.(event as Event, store.get), catch: RuntimeError.from })
+          if (!hasCoreEventType(event)) yield* Effect.try({ try: () => store.validate(setup.effects, event), catch: RuntimeError.from })
           yield* appendNow(event)
           cursor++
         }
@@ -542,12 +541,12 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
               const invocation = original?.record.message?.invocation
               if (!invocation || invocation.method !== request.method) return yield* Effect.fail(new InvalidMessage("Cancellation requires a matching invocation"))
               if (!isDeepStrictEqual(original?.record.message?.from, context.from)) return yield* Effect.fail(new InvalidMessage("Cancellation requires the invoking sender"))
-              input = yield* Effect.try({ try: () => method.onCancel!(invocation.input, { id: request.cancel.id, reason: request.cancel.reason }), catch: InvalidMessage.from })
+              input = yield* Effect.try({ try: () => method.onCancel!(invocation.input, { id: request.cancel.id, ref: { method: request.method, id: request.cancel.id }, reason: request.cancel.reason }), catch: InvalidMessage.from })
             } else {
               const invocation = yield* Schema.decodeUnknownEffect(MethodInvocation, { onExcessProperty: "error" })(body).pipe(Effect.mapError(InvalidMessage.from))
               const method = Object.hasOwn(setup.contracts, invocation.method) ? setup.contracts[invocation.method] : undefined
               if (!method) return yield* Effect.fail(new InvalidMessage(`Unknown actor method: ${invocation.method}`))
-              input = yield* Effect.try({ try: () => method.onReceive(invocation.input, { id: context.id }), catch: InvalidMessage.from })
+              input = yield* Effect.try({ try: () => method.onReceive(invocation.input, { id: context.id, ref: { method: invocation.method, id: context.id } }), catch: InvalidMessage.from })
               message = { ...context, invocation }
             }
           } else if (!context.inReplyTo) return yield* Effect.fail(new InvalidMessage("Actor requests require a method invocation"))
@@ -560,7 +559,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             yield* journal.acknowledge
             return { id: message.id, position: previous.position }
           }
-          if (!context.inReplyTo) yield* Effect.try({ try: () => setup.validate?.(event as Event, store.get), catch: InvalidMessage.from })
+          if (!context.inReplyTo) yield* Effect.try({ try: () => store.validate(setup.effects, event as Event), catch: InvalidMessage.from })
           const position = snapshot.position + 1
           const json = yield* Schema.decodeUnknownEffect(Schema.Json)(event).pipe(Effect.mapError(RuntimeError.from))
           yield* appendNow({ type: "MessageReceived", body: json }, { message })
@@ -590,11 +589,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         })),
         close,
       }
-      const actions = setup.actions(event => run(send([event])))
-      for (const [name, action] of Object.entries(actions)) {
-        if (typeof action !== "function") return yield* Effect.fail(new RuntimeError(`Invalid actor action: ${name}`))
-      }
-      return { actions, ...api }
+      return api
     }).pipe(Effect.onError(() => close))
   })
 }

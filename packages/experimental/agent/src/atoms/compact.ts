@@ -1,12 +1,10 @@
-import { durableAtom } from "@clavia/tardigrade-experimental-core"
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { Effect, Schema } from "effect"
+import { createCompactionState } from "./durable/compaction"
+import { RuntimeError, effectAtom, type Atom } from "@clavia/tardigrade-experimental-core"
+import { Effect } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { effectAtom, type Atom } from "@clavia/tardigrade-experimental-core"
-import { CompactionState, compactState, type Conversation } from "../projections"
-import { ModelCalled, ModelReturned, CompactionFailed, TurnSettled } from "../event"
-import { ModelInfo } from "../context"
-import { Summarize, requests, failureMessage } from "../acts"
+import { type Conversation, ModelCalled, ModelReturned, CompactionFailed } from "../contracts/events"
+import { ModelInfo } from "../actor/context"
+import { Summarize, requests, failureMessage } from "../contracts/acts"
 
 export const DEFAULT_COMPACTION_POLICY = {
   triggerRatio: 0.8, retainRatio: 0.5, charsPerToken: 4,
@@ -56,7 +54,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     return text === message.text ? message : { ...message, text }
   })
   const estimate = (messages: typeof Conversation.Type) => Math.ceil(messages.reduce((size, message) => size + JSON.stringify(message).length, 0) / policy.charsPerToken)
-  const compactionState = durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed, TurnSettled]), schema: CompactionState, initial: { through: 0, attempts: 0, summary: "", pending: null, failure: null }, reduce: compactState })
+  const compactionState = createCompactionState()
 
   const request = requests(Summarize.request)
   return Effect.map(ModelInfo, selection => effectAtom(get => {

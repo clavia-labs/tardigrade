@@ -1,11 +1,10 @@
-import type { ActService } from "@clavia/tardigrade-experimental-core"
-import { AskPermission, requests, failureMessage } from "../acts"
-import { permissionState } from "./durable/permissions"
+import { type ActService, effectAtom, type Atom, eventValue, type ActorOutput } from "@clavia/tardigrade-experimental-core"
+import { AskPermission, requests, failureMessage } from "../contracts/acts"
+import { permissionState, PermissionState } from "./durable/permissions"
 import { Schema } from "effect"
-import { effectAtom, type Atom, eventValue, type ActorOutput } from "@clavia/tardigrade-experimental-core"
-import { PermissionState, type ToolState } from "../projections"
-import type { ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
-import { PermissionPolicy, type Event } from "../event"
+import { type ToolState } from "./durable/tools"
+import { type ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
+import { PermissionPolicy, type Event } from "../contracts/events"
 
 type PermissionView<R> = ActorOutput<typeof PermissionState.Type & {
   readonly position: "configuring" | "ready" | "checking" | "waiting"

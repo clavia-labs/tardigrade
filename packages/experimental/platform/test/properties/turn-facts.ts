@@ -1,9 +1,9 @@
 import { Clock, Context, Effect, Layer } from "effect"
 import * as fc from "fast-check"
 import { defineActor, effectAtom, RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-experimental-core"
-import { createActorStore } from "@clavia/tardigrade-experimental-core"
+import { createTestStore } from "./runtime/store"
 import { trajectory, conversation, timeSpend } from "@clavia/tardigrade-experimental-agent/atoms/durable"
-import { Event } from "@clavia/tardigrade-experimental-agent/event"
+import { Event } from "@clavia/tardigrade-experimental-agent/contracts/events"
 
 // turnFactRecovery preserves message order, attribution, and receipt-to-settlement elapsed time across replay and checkpoints.
 export const turnFactRecovery = fc.asyncProperty(fc.record({
@@ -30,32 +30,31 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
     }),
   }
   const actor = defineActor("turn-facts", Effect.sync(() => ({
-    atom: Object.assign(effectAtom(get => ({
+    atom: effectAtom(get => ({
       view: { trajectory: get(trajectory), conversation: get(conversation), timeSpend: get(timeSpend) }, events: {}, acts: {},
-    })), { schema: Event }),
-    actions: { record: (event: Event) => event },
+    })), schema: Event
   })))
-  const open = () => createActorStore({ actor, journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(), services: () => Layer.empty })
+  const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(), services: () => Layer.empty })
   yield* Effect.gen(function* () {
     let store = yield* open()
     const model = { model: { provider: "openrouter" as const, model_id: "test" }, contextWindowTokens: 10_000 }
     yield* Effect.gen(function* () {
-      yield* store.actions.record({ type: "MessageReceived", kind: "message", turnId: "first", text: "first" })
-      yield* store.actions.record({ type: "ModelCalled", purpose: "inference", callId: "m1", turnId: "first", ...model })
-      yield* store.actions.record({ type: "MessageReceived", kind: "message", turnId: "second", text: "second" })
+      yield* store.send([{ type: "TurnRequested", turnId: "first", text: "first" }])
+      yield* store.send([{ type: "ModelCalled", purpose: "inference", callId: "m1", turnId: "first", ...model }])
+      yield* store.send([{ type: "TurnRequested", turnId: "second", text: "second" }])
       if (options.checkpoint) yield* store.checkpoint
       const before = JSON.stringify(store.getState())
       yield* store.close
       now += options.first
       store = yield* open()
       if (JSON.stringify(store.getState()) !== before) return yield* Effect.fail(new RuntimeError("Restore changed turn facts without a new event"))
-      yield* store.actions.record({ type: "ModelReturned", purpose: "inference", callId: "m1", text: "working", toolCalls: [{ callId: "tool", providerId: "provider", name: "job", input: {} }] })
-      yield* store.actions.record({ type: "ModelCalled", purpose: "inference", callId: "m2", turnId: "second", ...model })
-      yield* store.actions.record({ type: "ModelReturned", purpose: "inference", callId: "m2", text: "answer", toolCalls: [] })
-      yield* store.actions.record({ type: "ToolReturned", callId: "tool", output: "late", error: null })
-      yield* store.actions.record({ type: "TurnSettled", turnId: "first", outcome: "cancelled", reason: "stop" })
+      yield* store.send([{ type: "ModelReturned", purpose: "inference", callId: "m1", text: "working", toolCalls: [{ callId: "tool", providerId: "provider", name: "job", input: {} }] }])
+      yield* store.send([{ type: "ModelCalled", purpose: "inference", callId: "m2", turnId: "second", ...model }])
+      yield* store.send([{ type: "ModelReturned", purpose: "inference", callId: "m2", text: "answer", toolCalls: [] }])
+      yield* store.send([{ type: "ToolReturned", callId: "tool", output: "late", error: null }])
+      yield* store.send([{ type: "TurnSettled", turnId: "first", outcome: "cancelled", reason: "stop" }])
       now += options.second
-      yield* store.actions.record({ type: "TurnSettled", turnId: "second", outcome: "completed", callId: "m2" })
+      yield* store.send([{ type: "TurnSettled", turnId: "second", outcome: "completed", callId: "m2" }])
       if (records.some(record => !Number.isSafeInteger(record.recordedAt) || "recordedAt" in record.event)) return yield* Effect.fail(new RuntimeError("Journal metadata leaked into the event payload"))
       const state = store.getState().view
       if (JSON.stringify(state.trajectory.map(entry => entry.turnId)) !== JSON.stringify(["first", "second", "first", "second", "first"])) return yield* Effect.fail(new RuntimeError("Trajectory lost arrival order or turn attribution"))
@@ -68,12 +67,12 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       store = yield* open()
       if (JSON.stringify(store.getState()) !== settled) return yield* Effect.fail(new RuntimeError("Completed turn facts changed after reopening"))
       const completed = store.getState().view.timeSpend
-      yield* store.actions.record({ type: "MessageReceived", kind: "message", turnId: "third", text: "third" })
+      yield* store.send([{ type: "TurnRequested", turnId: "third", text: "third" }])
       now += options.first + options.second
-      yield* store.actions.record({ type: "AbortReceived", reason: "stop", invocation: { method: "message", id: "third" } })
+      yield* store.send([{ type: "AbortRequested", reason: "stop", ref: { method: "turn", id: "third" } }])
       const pending = store.getState().view.timeSpend
       if (pending[0] !== completed[0] || pending[1] !== completed[1] || pending[2]?.ms !== options.first + options.second) return yield* Effect.fail(new RuntimeError("Pending timing changed completed totals or used a stale index"))
-      yield* store.actions.record({ type: "TurnSettled", turnId: "third", outcome: "cancelled", reason: "stop" })
+      yield* store.send([{ type: "TurnSettled", turnId: "third", outcome: "cancelled", reason: "stop" }])
     }).pipe(Effect.ensuring(Effect.suspend(() => store.close)))
   }).pipe(Effect.provideService(Clock.Clock, clock))
 }).pipe(Effect.scoped)))

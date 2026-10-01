@@ -38,7 +38,7 @@ export function messageReplies<Event extends object>(options: {
       if (!request) {
         const method = options.methods[pending.method]
         if (!method) throw new Error(`Unknown actor method: ${pending.method}`)
-        const body = method.result(pending.input, get, { id: pending.id })
+        const body = method.result(pending.input, get, { id: pending.id, ref: { method: pending.method, id: pending.id } })
         if (body === undefined) return []
         request = DeliverMessage.request({
           tag,

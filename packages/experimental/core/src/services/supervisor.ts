@@ -4,6 +4,7 @@ import type { ChildPlacement, ThreadCoordinate } from "../actor/thread"
 import type { Journal } from "./journal"
 import { Provision, supervisorActor, type SupervisorEvent, type ThreadAllocation } from "./supervisor/graph"
 import { createActorStore } from "../runtime/execution"
+import type { ActorRuntime } from "../runtime/contracts"
 import { createSupervisorStore, type SupervisorStore } from "../runtime/stores/supervisor"
 
 export interface ThreadRequest {
@@ -31,11 +32,18 @@ export function createSupervisor(options: {
   readonly run: <Value>(work: Effect.Effect<Value, Error>) => Effect.Effect<Value, Error>
 }) {
   if (!options.supportedChildPlacements.includes(options.defaultChildPlacement)) throw new RuntimeError("Default child placement is unsupported")
-  const openSupervisor = (instance: string) => createActorStore({
-    actor: supervisorActor,
-    journal: options.journal(instance),
-    actorContext: () => Context.empty(),
-    services: () => Provision.layer(allocation => options.provision(allocation).pipe(Effect.as(null), Effect.mapError(String))),
+  const openSupervisor = (instance: string) => Effect.gen(function* () {
+    let runtime!: ActorRuntime<SupervisorEvent>
+    const store = yield* createActorStore({
+      actor: supervisorActor,
+      journal: options.journal(instance),
+      actorContext: () => Context.empty(),
+      services: current => {
+        runtime = current
+        return Provision.layer(allocation => options.provision(allocation).pipe(Effect.as(null), Effect.mapError(String)))
+      },
+    })
+    return { ...store, send: runtime.send }
   })
   const supervisors = new Map<string, ReturnType<typeof openSupervisor>>()
   const locks = new Map<string, Semaphore.Semaphore>()
@@ -79,7 +87,7 @@ export function createSupervisor(options: {
     const thread = directory.some(entry => entry.coordinate.thread === name) ? `${name}-${yield* randomName}` : name
     if (directory.some(entry => entry.coordinate.thread === thread)) return yield* Effect.fail(new RuntimeError("Thread identity collision"))
     const coordinate = { actor: options.actor, instance, thread }
-    yield* supervisor.actions.requestThread({ coordinate, name, parent: parent?.thread ?? null, depth: ancestor ? ancestor.depth + 1 : 0, placement })
+    yield* supervisor.send([{ type: "ThreadRequested", allocation: { coordinate, name, parent: parent?.thread ?? null, depth: ancestor ? ancestor.depth + 1 : 0, placement } }])
     yield* supervisor.wait
     const allocated = supervisor.getState().view.threads.find(entry => entry.coordinate.thread === coordinate.thread)
     if (allocated?.status !== "registered") return yield* Effect.fail(new RuntimeError(allocated?.reason ?? "Thread provisioning did not complete"))

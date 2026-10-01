@@ -1,12 +1,11 @@
 import { isDeepStrictEqual } from "node:util"
 import { Cause, Clock, Effect, Exit, Layer, Schema } from "effect"
 import { atom, durablePromise, EffectExecution, effectKey, Isolate, RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { ToolCatalog } from "../context"
+import { ToolCatalog } from "../actor/context"
 import { type AgentTool, type Package, type PackageRequirements } from "@clavia/tardigrade-experimental-packages"
 import { renderSignature } from "@clavia/tardigrade-code/execution/contract"
-import { CodeCalled, EvaluateCode, ExecutePackage, PackageCalled } from "../code-mode/contracts"
-
-import { executions } from "../code-mode/projections"
+import { CodeCalled, EvaluateCode, ExecutePackage, PackageCalled } from "../contracts/code-mode"
+import { executions } from "../atoms/durable/code-mode"
 
 // codeModeActs supplies tool descriptions, isolate RPC, and independently durable package execution.
 export function codeModeActs<const P extends readonly Package<unknown>[]>(packages: P, options: { readonly signatureDepth?: number } = {}) {

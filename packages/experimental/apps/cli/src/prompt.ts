@@ -1,7 +1,7 @@
 import { styleText, stripVTControlCharacters } from "node:util"
 import { Effect, Option, Queue, Terminal } from "effect"
 import { Prompt } from "effect/unstable/cli"
-import type { ChatMessage } from "@clavia/tardigrade-experimental-agent/messages"
+import { type ChatMessage } from "@clavia/tardigrade-experimental-agent/atoms/messages"
 
 import type { PermissionNotice } from "./permissions"
 

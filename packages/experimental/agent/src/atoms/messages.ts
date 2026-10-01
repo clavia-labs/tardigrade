@@ -1,9 +1,8 @@
 import { Schema } from "effect"
-import { atom } from "@clavia/tardigrade-experimental-core"
-import { ResolutionResult } from "@clavia/tardigrade-experimental-core"
+import { atom, ResolutionResult } from "@clavia/tardigrade-experimental-core"
 import { history } from "./activity"
-import { messageSource } from "./event"
-import { turnOutput } from "./result"
+import { turnSource } from "../contracts/events"
+import { turnOutput } from "./durable/inference"
 
 export interface ChatMessage {
   readonly seq: number
@@ -18,10 +17,10 @@ export const messages = atom(get => {
   const events = get(history)
   return events.flatMap((event, seq): ChatMessage[] => {
     if (event.type === "TurnSettled") return [{ seq, kind: event.outcome === "completed" ? "assistant" : "error", text: event.outcome === "completed" ? turnOutput(events, event) : event.reason }]
-    if (event.type !== "MessageReceived" || messageSource(event) === "user") return []
-    if (event.kind === "request") return [{ seq, kind: "agent", text: `Request ${event.request.requestId} (${event.request.method}): ${JSON.stringify(event.request.input)}` }]
-    if (event.kind === "reply") return [{ seq, kind: "agent", text: `Request ${event.requestId}: ${JSON.stringify(event.result)}` }]
-    const source = messageSource(event)
+    if (event.type === "ActorRequestReceived") return [{ seq, kind: "agent", text: `Request ${event.request.requestId} (${event.request.method}): ${JSON.stringify(event.request.input)}` }]
+    if (event.type === "ActorReplyReceived") return [{ seq, kind: "agent", text: `Request ${event.requestId}: ${JSON.stringify(event.result)}` }]
+    if (event.type !== "TurnRequested" || turnSource(event) === "user") return []
+    const source = turnSource(event)
     const kind = source === "agent" ? "agent" : "tool"
     const prefix = "Tool promise result (data): "
     if (!event.text.startsWith(prefix)) return [{ seq, kind, text: event.text }]

@@ -26,10 +26,8 @@ export interface ActorRuntime<Event extends object> {
   readonly cancel: (ref: EffectRef, reason: Schema.Json) => Effect.Effect<void, Error>
 }
 
-export interface ActorSetup<Event extends object, Atoms extends Readonly<Record<string, Atom<unknown>>>, Actions extends object, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+export interface ActorSetup<Event extends object, Atoms extends Readonly<Record<string, Atom<unknown>>>, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
   readonly schema: Schema.Schema<Event>
   readonly contracts: Contracts
   readonly effects: Atoms
-  readonly actions: (emit: (event: Event) => Effect.Effect<void, Error>) => Actions
-  readonly validate?: (event: Event, get: ActorRuntime<Event>["get"]) => void
 }

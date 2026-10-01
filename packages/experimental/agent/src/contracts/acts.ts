@@ -2,8 +2,7 @@ import { Schema } from "effect"
 import { act } from "@clavia/tardigrade-experimental-core"
 import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
-import { ModelReply, ToolCall, Decision, BudgetDecision, BudgetMetric, PermissionRequest } from "./event"
-import { Conversation } from "./projections"
+import { ModelReply, ToolCall, Decision, BudgetDecision, BudgetMetric, PermissionRequest, Conversation } from "./events"
 
 const ModelInput = Schema.Struct({ model: ModelRef, system: Schema.String, tools: Schema.Array(ToolSpec), context: Conversation })
 export const Generate = act({

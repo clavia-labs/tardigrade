@@ -1,6 +1,6 @@
 import { Context } from "effect"
-import type { ModelRef } from "@clavia/tardigrade-model/reference"
-import type { ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
+import { type ModelRef } from "@clavia/tardigrade-model/reference"
+import { type ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
 
 // ModelInfo supplies resolved model metadata to actor construction.
 export class ModelInfo extends Context.Service<ModelInfo, {

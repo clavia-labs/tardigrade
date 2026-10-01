@@ -14,10 +14,9 @@ export const greeter = defineActor("greeter", Effect.sync(() => {
     onSettled: result => result.status === "fulfilled" ? [{ type: "Greeted", message: result.value }] : [],
   })
   return {
-    atom: Object.assign(effectAtom(get => ({
+    atom: effectAtom(get => ({
       view: get(greeting.result),
       events: {}, acts: { greeting },
-    })), { schema: Schema.Union([Schema.Struct({ type: Schema.Literal("Opened") }), Schema.Struct({ type: Schema.Literal("Greeted"), message: Schema.String })]) }),
-    actions: { open: () => ({ type: "Opened" as const }) },
+    })), schema: Schema.Struct({ type: Schema.Literal("Greeted"), message: Schema.String }),
   }
 }))

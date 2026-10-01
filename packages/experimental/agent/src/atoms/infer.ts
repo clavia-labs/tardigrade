@@ -1,22 +1,19 @@
-import { agentMethods } from "../methods"
-import type { ActService } from "@clavia/tardigrade-experimental-core"
+import { type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { effectAtom, eventValue, cancel, effectKey, type Atom, type Getter, type ActorOutput } from "@clavia/tardigrade-experimental-core"
-import { type Conversation } from "../projections"
-import { ModelInfo } from "../context"
-import { Generate, requests, failureMessage } from "../acts"
+import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled } from "../contracts/events"
+import { ModelInfo } from "../actor/context"
+import { Generate, requests, failureMessage } from "../contracts/acts"
 import { inferenceState } from "./durable/inference"
 import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
-import type { ToolView } from "./tools"
-import { Event, MessageReceived, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled } from "../event"
+import { type ToolView } from "./tools"
 
 export type ContextView = ActorOutput<{ readonly position: "compacting" } | { readonly position: "failed"; readonly reason: string } | {
   readonly position: "ready"; readonly messages: typeof Conversation.Type
 }, Event, ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>
 export interface AgentInput<R, ToolEvents extends object = Event> {
   readonly system: string
-  readonly tools: ActorOutput<Pick<ToolView<R>, "specs" | "validate">, ToolEvents, R>
+  readonly tools: ActorOutput<Pick<ToolView<R>, "specs">, ToolEvents, R>
   readonly context: ContextView
 }
 
@@ -48,7 +45,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
     const proposals = {
       events: Object.fromEntries(Object.entries({ ...input.context.events, ...input.tools.events }).filter(([, proposal]) => {
         const event = proposal.event
-        return !Schema.is(MessageReceived)(event) || event.kind !== "message" || !event.promiseRef || !cancelled.has(effectKey(event.promiseRef))
+        return !Schema.is(TurnRequested)(event) || !event.promiseRef || !cancelled.has(effectKey(event.promiseRef))
       })),
       acts: state.turnId ? { ...input.context.acts, ...input.tools.acts } : {},
     }
@@ -91,9 +88,9 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
       },
     }
   }))
-  return Effect.map(output, node => Object.assign(node.pipe(NativeAtom.withLabel("infer")), {
-    schema: Event,
-    methods: agentMethods,
-    validate: (event: Event, get: Getter) => get(agent).tools.view.validate?.(event),
-  }))
+  return Effect.map(output, node => {
+    type Output = typeof node extends Atom<infer Value> ? Value : never
+    const typed: Atom<Omit<Output, "events"> & { readonly events: Readonly<Record<string, EventValue<Event | ToolEvents>>> }> = node
+    return typed.pipe(NativeAtom.withLabel("infer"))
+  })
 }

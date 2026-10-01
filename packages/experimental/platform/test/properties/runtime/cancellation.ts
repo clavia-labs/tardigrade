@@ -1,7 +1,7 @@
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, type RuntimeEvent, type StoredCheckpoint } from "@clavia/tardigrade-experimental-core"
-import { createActorStore } from "../../../../core/src/runtime/execution"
+import { createTestStore } from "./store"
 import { Promises } from "../../../../core/src/services/promises"
 
 const Started = Schema.Struct({ type: Schema.Literal("Started") })
@@ -12,7 +12,7 @@ const Job = act({ name: "test.cancellation", input: Schema.Finite, success: Sche
 const actor = (id: number) => defineActor("cancellation", Effect.sync(() => {
   const started = durableAtom({ name: "test.cancellation", input: Event, schema: Schema.Boolean, initial: false, reduce: (state, event) => state || event.type === "Started" })
   const request = Job.request({ tag: "job", input: id, onSettled: () => [{ type: "Returned" }] })
-  return { atom: Object.assign(effectAtom(get => ({ view: get(request.result), events: {}, acts: get(started) ? { job: request } : {} })), { schema: Event }), actions: { start: () => ({ type: "Started" as const }) } }
+  return { atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: get(started) ? { job: request } : {} })), schema: Event }
 }))
 
 interface CancellationCase {
@@ -54,7 +54,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
     const promise = durablePromise(reference, { success: Schema.Finite, error: Schema.String })
     return options.rejected ? promise.fail("failed") : promise.succeed(options.value)
   }
-  const open = () => createActorStore({ actor: actor(0), journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(),
+  const open = () => createTestStore({ actor: actor(0), journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(),
     services: host => {
       runtime = host
       return Layer.merge(Job.layer((_input, context) => Effect.gen(function* () {
@@ -84,7 +84,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
   })
   const first = yield* open()
   yield* Effect.gen(function* () {
-    yield* first.actions.start()
+    yield* first.send([{ type: "Started" }])
     yield* Deferred.await(entered)
     if (options.mode === "remote" || options.mode === "local") yield* Deferred.await(settled)
     if (options.completionFirst) {
@@ -145,7 +145,7 @@ export const cancellationForwarding = fc.asyncProperty(fc.record({
   const runtimes = new Map<number, ActorRuntime<Event>>()
   const executions = [0, 0, 0, 0]
   const stores = new Map<number, { readonly cancel: ActorRuntime<Event>["cancel"]; readonly wait: Effect.Effect<void, Error>; readonly close: Effect.Effect<void> }>()
-  const open = (id: number) => createActorStore({ actor: actor(id), events: histories[id]!, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(),
+  const open = (id: number) => createTestStore({ actor: actor(id), events: histories[id]!, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(),
     onEvent: event => { histories[id]!.push(event) },
     services: runtime => {
       runtimes.set(id, runtime)
@@ -161,7 +161,7 @@ export const cancellationForwarding = fc.asyncProperty(fc.record({
     for (let id = 0; id < 4; id++) {
       const store = yield* open(id)
       stores.set(id, store)
-      yield* store.actions.start()
+      yield* store.send([{ type: "Started" }])
       yield* store.wait
     }
     const finish = (id: number) => runtimes.get(id)!.send([durablePromise(references.get(id)!, { success: Schema.Finite }).succeed(id)])
@@ -202,16 +202,16 @@ export const cancellationBatchIsolation = fc.asyncProperty(fc.record({
   const definition = defineActor("batch-cancellation", Effect.sync(() => {
     const started = durableAtom({ name: "test.batch-cancellation", input: Event, schema: Schema.Boolean, initial: false, reduce: (state, event) => state || event.type === "Started" })
     const requests = [0, 1].map(id => Job.request({ tag: String(id), input: id, onSettled: () => [{ type: "Returned" }] }))
-    return { atom: Object.assign(effectAtom(get => ({ view: requests.map(request => get(request.result)), events: {}, acts: get(started) ? Object.fromEntries(requests.map(request => [request.id, request])) : {} })), { schema: Event }), actions: { start: () => ({ type: "Started" as const }) } }
+    return { atom: effectAtom(get => ({ view: requests.map(request => get(request.result)), events: {}, acts: get(started) ? Object.fromEntries(requests.map(request => [request.id, request])) : {} })), schema: Event }
   }))
-  const store = yield* createActorStore({ actor: definition, actorContext: () => Context.empty(),
+  const store = yield* createTestStore({ actor: definition, actorContext: () => Context.empty(),
     services: host => {
       runtime = host
       return Layer.merge(Job.layer(input => Effect.succeed(Job.defer({ executor: "remote", id: String(input) }))), Layer.succeed(Promises, { watch: () => Effect.void, cancel: () => Effect.void }))
     },
   })
   yield* Effect.gen(function* () {
-    yield* store.actions.start()
+    yield* store.send([{ type: "Started" }])
     yield* store.wait
     const refs = store.snapshot().deferred().map(work => work.ref)
     yield* store.cancel(refs[options.cancelled]!, "cancelled")

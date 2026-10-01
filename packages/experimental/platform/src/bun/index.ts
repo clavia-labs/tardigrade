@@ -1,12 +1,10 @@
-import { RuntimeError, type ActorMethods } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, type ActorMethods, createThreadHost, type ThreadStorage, RemoteBackup } from "@clavia/tardigrade-experimental-core"
 import { bunSupervisorPath, bunThreadPath } from "./observe"
 export { observeBunThread, observeBunSupervisor, bunThreadActivity } from "./observe"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { Effect, ManagedRuntime, Semaphore, Exit, type Layer } from "effect"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-core"
-import { RemoteBackup } from "@clavia/tardigrade-experimental-core"
 import { sqlJournal } from "../shared/sql-journal"
 import { captureHostCheckpoint, type CheckpointPolicy } from "./backup"
 export { serve, DEFAULT_SERVE_OPTIONS, type ServeOptions } from "./serve"
@@ -18,7 +16,7 @@ export function bunJournal<Event extends object>(options: SqliteClient.SqliteCli
 }
 
 // createBunHost keeps an instance supervisor database and separate thread databases beneath storage.
-export function createBunHost<Event extends object, Services, Actions extends Readonly<Record<string, (...args: never[]) => Effect.Effect<void, Error>>>, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, Actions, State, Contracts>>[0], "storage"> & {
+export function createBunHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "storage"> & {
   readonly storage: string
   readonly sqlite?: Omit<SqliteClient.SqliteClientConfig, "filename">
   readonly backup?: Layer.Layer<RemoteBackup, Error>

@@ -1,10 +1,9 @@
 import { Effect, Exit } from "effect"
-import type { ActorMethods } from "@clavia/tardigrade-experimental-core"
+import { type ActorMethods, createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-core"
 import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { sqlJournal } from "../shared/sql-journal"
-import { createThreadHost, type ThreadStorage } from "@clavia/tardigrade-experimental-core"
 import { hostRoutes, type HttpHost } from "../shared/http"
 import { HttpRouter } from "effect/unstable/http"
 
@@ -19,7 +18,7 @@ export function cloudflareJournal<Event extends object>(storage: DurableObjectSt
 }
 
 // createCloudflareHost keeps supervisor and thread journals in the supplied Durable Object storage.
-export function createCloudflareHost<Event extends object, Services, Actions extends Readonly<Record<string, (...args: never[]) => Effect.Effect<void, Error>>>, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, Actions, State, Contracts>>[0], "storage"> & {
+export function createCloudflareHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "storage"> & {
   readonly storage: DurableObjectStorage
   readonly alarms?: CloudflareAlarmOptions
 }) {

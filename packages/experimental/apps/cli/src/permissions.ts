@@ -1,10 +1,9 @@
 import { Deferred, Effect, Layer } from "effect"
-import type { ActorRuntime } from "@clavia/tardigrade-experimental-core"
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { PermissionRequests, deferDecision } from "@clavia/tardigrade-experimental-agent/services/requests"
+import { type ActorRuntime, RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { PermissionRequests, deferDecision } from "@clavia/tardigrade-experimental-agent/services/decisions"
 import { permissionState } from "@clavia/tardigrade-experimental-agent/atoms/durable/permissions"
-import { AskPermission } from "@clavia/tardigrade-experimental-agent/acts"
-import { updatePermission, type Decision, type Event, type PermissionPolicy, type PermissionRequest } from "@clavia/tardigrade-experimental-agent/event"
+import { AskPermission } from "@clavia/tardigrade-experimental-agent/contracts/acts"
+import { updatePermission, type Decision, type Event, type PermissionPolicy, type PermissionRequest } from "@clavia/tardigrade-experimental-agent/contracts/events"
 
 export const PERMISSION_MODES = ["ask", "auto", "full-access"] as const
 export type PermissionMode = typeof PERMISSION_MODES[number]
