@@ -199,6 +199,20 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }
       yield* observePromises.pipe(Effect.catchCause(reportCause))
     })
+    const waitFor = <Value>(node: Atom<Value | undefined>) => Effect.gen(function* () {
+      const result = yield* Deferred.make<Value, Error>()
+      const check = () => {
+        try {
+          const value = store.get(node)
+          if (value !== undefined) Deferred.doneUnsafe(result, Effect.succeed(value))
+        } catch (error) { Deferred.doneUnsafe(result, Effect.fail(RuntimeError.from(error))) }
+      }
+      return yield* Effect.acquireUseRelease(
+        Effect.sync(() => { const stop = store.sub(node, check); check(); return stop }),
+        () => Deferred.await(result),
+        stop => Effect.sync(stop),
+      )
+    })
     const drain = () => Effect.gen(function* () {
       while (true) {
         yield* afterCommit()
@@ -235,6 +249,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         const execution: typeof EffectExecution.Service = {
           ref: work.ref,
           get: store.get,
+          waitFor,
           record: event => runtime.record(event as unknown as Recorded<Event>),
           fork: operation => Effect.gen(function* () {
             const context = yield* Effect.context<Effect.Services<typeof operation>>()

@@ -230,6 +230,7 @@
       "name": "@clavia/tardigrade-experimental-agent",
       "version": "0.0.1",
       "dependencies": {
+        "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-experimental-core": "workspace:*",
         "@clavia/tardigrade-experimental-host": "workspace:*",
         "@clavia/tardigrade-experimental-packages": "workspace:*",
@@ -298,7 +299,9 @@
       "name": "@clavia/tardigrade-experimental-platform",
       "version": "0.0.1",
       "dependencies": {
+        "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-cloudflare": "workspace:*",
+        "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-experimental-core": "workspace:*",
         "@clavia/tardigrade-experimental-host": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.115",

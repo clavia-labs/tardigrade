@@ -1,5 +1,4 @@
 export * from "./model"
-export * from "./bifrost"
 export * from "./requests"
 export * from "./runtime"
 export * from "./model-lock"

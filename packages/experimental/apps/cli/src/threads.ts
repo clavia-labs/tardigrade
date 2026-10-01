@@ -11,7 +11,7 @@ import type { Permissions } from "./permissions"
 
 export const DEFAULT_THREAD_DIRECTORY = ".tardigrade/threads"
 export const DEFAULT_INSTANCE = "cli"
-export interface ThreadOptions { readonly directory: string; readonly instance: string; readonly maxChildDepth?: number; readonly permissions?: Permissions }
+export interface ThreadOptions { readonly directory: string; readonly instance: string; readonly permissions?: Permissions }
 export type ChatHost = Effect.Success<ReturnType<typeof openHost>>
 export type ChatThread = Effect.Success<ReturnType<ChatHost["allocateRootThread"]>>
 

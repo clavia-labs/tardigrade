@@ -3,15 +3,14 @@ import { Effect, Layer, Schema } from "effect"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { liveModelServices } from "@clavia/tardigrade-experimental-agent/services/model"
-import { assistantRuntime } from "@clavia/tardigrade-experimental-agent/services/runtime"
-import type { ActService } from "@clavia/tardigrade-experimental-core"
 import { askPermission } from "@clavia/tardigrade-experimental-agent/services/acts"
-import { fetchPackage, workspace, agents } from "@clavia/tardigrade-experimental-packages"
-import { Actor } from "@clavia/tardigrade-experimental-host"
-import { bunPromises } from "@clavia/tardigrade-experimental-platform/bun"
+import { fetchPackage, workspace, memoryWorkspace } from "@clavia/tardigrade-experimental-packages"
+import { bunPromises, bunIsolate } from "@clavia/tardigrade-experimental-platform/bun"
 import { ModelLock, lockedModelConfigOf, modelLockService, parseModelLock, MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelCredentialsFrom } from "@clavia/tardigrade-model/config"
-import { actor } from "./actor"
+import { codeModeActs } from "@clavia/tardigrade-experimental-agent/services/code-mode"
+import { modelInfo } from "@clavia/tardigrade-experimental-agent/services/model-lock"
+import { modelActs } from "@clavia/tardigrade-experimental-agent/services/acts"
 import { createPermissions, type Permissions } from "./permissions"
 
 const Config = Schema.Struct({ vars: Schema.Struct({ TARDIGRADE_CONFIG: Schema.Struct({ models: Schema.Unknown }) }) })
@@ -40,18 +39,14 @@ const modelServices = Layer.unwrap(Effect.gen(function* () {
   })
 }))
 
-export const DEFAULT_MAX_CHILD_DEPTH = 1
-
-// services provides model access, local child actors, and promise delivery for each actor runtime.
-export const services = (options: { readonly maxChildDepth?: number; readonly permissions?: Permissions; readonly label?: string } = {}) => {
+export const services = (options: { readonly permissions?: Permissions; readonly label?: string } = {}) => (host: Parameters<Permissions["layer"]>[0]) => {
   const permissions = options.permissions ?? createPermissions({ interactive: false })
-  return assistantRuntime<ActService<"agent.permission.request">>({
-  actor,
-  packages: [fetchPackage(), workspace(), agents()],
-  maxChildDepth: options.maxChildDepth ?? DEFAULT_MAX_CHILD_DEPTH,
-  services: (context, host) => Layer.mergeAll(askPermission.pipe(Layer.provide(permissions.layer(host, `${options.label ?? "Agent"}${context.depth ? ` / child depth ${context.depth}` : ""}`))), modelServices, Layer.unwrap(Effect.map(Actor, actor => bunPromises(host, {
-    poll: actor.poll,
-    deliver: settlement => host.send([settlement]),
-  })))),
-}).services
+  const platform = Layer.mergeAll(
+    modelServices,
+    bunIsolate(),
+    memoryWorkspace,
+    permissions.layer(host, options.label ?? "Code agent"),
+    bunPromises(host, { deliver: settlement => host.send([settlement]) }),
+  )
+  return Layer.mergeAll(modelInfo, modelActs, askPermission, codeModeActs([fetchPackage(), workspace()])).pipe(Layer.provideMerge(platform))
 }

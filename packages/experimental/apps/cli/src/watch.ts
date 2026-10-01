@@ -1,10 +1,10 @@
 import { styleText, stripVTControlCharacters } from "node:util"
-import { Console, Effect } from "effect"
+import { Console, Effect, Schema } from "effect"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-host"
 import { observeBunThread } from "@clavia/tardigrade-experimental-platform/bun"
-import { Event } from "@clavia/tardigrade-experimental-agent/event"
-import { activity, type ActivityEntry } from "@clavia/tardigrade-experimental-agent/activity"
+const Event = Schema.Record(Schema.String, Schema.Unknown)
+type Event = typeof Event.Type
 
 export const DEFAULT_POLL_MS = 250
 export const DEFAULT_BATCH_SIZE = 100
@@ -16,9 +16,10 @@ const line = (value: unknown) => value == null ? "" : Array.from(stripVTControlC
 }).join("").replace(/\s+/g, " ").trim()
 
 
-function formatEntry(entry: ActivityEntry, width = DEFAULT_WATCH_WIDTH, color = false): string {
+function formatEntry(event: Event, seq: number, width = DEFAULT_WATCH_WIDTH, color = false): string {
   if (!Number.isSafeInteger(width) || width < 1) throw new RuntimeError("Event log width must be a positive integer")
-  const text = `${String(entry.seq).padStart(6, "0")}  ${entry.type.padEnd(22)}  ${line(entry.summary)}`.trimEnd()
+  const { type, ...fields } = event
+  const text = `${String(seq).padStart(6, "0")}  ${String(type).padEnd(22)}  ${line(JSON.stringify(fields))}`.trimEnd()
   let row = text
   if (Bun.stringWidth(text) > width) {
     row = ""
@@ -32,8 +33,7 @@ function formatEntry(entry: ActivityEntry, width = DEFAULT_WATCH_WIDTH, color = 
     row += "…"
   }
   if (!color) return row
-  const tone = entry.status === "failed" ? "red" : entry.status === "notification" ? "magenta" : entry.status === "message" ? "cyan" : entry.status === "completed" ? "green" : "dim"
-  return styleText(tone, row)
+  return styleText("dim", row)
 }
 
 
@@ -52,7 +52,7 @@ export const watchLog = (options: {
   if (!Number.isSafeInteger(options.batchSize) || options.batchSize < 1) return yield* Effect.fail(new RuntimeError("--batch-size must be a positive integer"))
   if (!Number.isSafeInteger(options.after) || options.after < -1) return yield* Effect.fail(new RuntimeError("--after must be an integer of at least -1"))
   if (options.width !== undefined && (!Number.isSafeInteger(options.width) || options.width < 1)) return yield* Effect.fail(new RuntimeError("--width must be a positive integer"))
-  if (!options.json) yield* Console.log("Summaries only; … marks clipped text. Use --json for full events.")
+  if (!options.json) yield* Console.log("All events; … marks clipped text. Use --json for full events.")
   let store: ReturnType<typeof observeBunThread<Event>> | undefined
   let identity: string | undefined
   yield* Effect.addFinalizer(() => Effect.suspend(() => store?.close ?? Effect.void))
@@ -74,11 +74,12 @@ export const watchLog = (options: {
     }
     const current = store!
     yield* current.refresh.pipe(Effect.mapError(RuntimeError.from))
-    const entries = yield* Effect.try({ try: () => current.select(activity).get().slice(after + 1, after + 1 + options.batchSize), catch: RuntimeError.from })
-    for (const entry of entries) {
+    const entries = yield* Effect.try({ try: () => current.events.get().slice(after + 1, after + 1 + options.batchSize), catch: RuntimeError.from })
+    for (const event of entries) {
+      const seq = after + 1
       const width = options.width ?? (process.stdout.columns ? process.stdout.columns - 1 : DEFAULT_WATCH_WIDTH)
-      yield* Console.log(options.json ? JSON.stringify({ seq: entry.seq, event: current.events.get()[entry.seq] }) : formatEntry(entry, Math.max(1, width), !!process.stdout.isTTY))
-      after = entry.seq
+      yield* Console.log(options.json ? JSON.stringify({ seq, event }) : formatEntry(event, seq, Math.max(1, width), !!process.stdout.isTTY))
+      after = seq
     }
     if (entries.length === options.batchSize) continue
     if (options.once) return

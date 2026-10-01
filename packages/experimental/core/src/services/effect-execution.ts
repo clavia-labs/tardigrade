@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import type { Getter } from "../atom"
+import type { Getter, Atom } from "../atom"
 import type { FiberHandle } from "../effects"
 import type { EffectRef } from "../effect-ref"
 
@@ -7,6 +7,7 @@ import type { EffectRef } from "../effect-ref"
 export class EffectExecution extends Context.Service<EffectExecution, {
   readonly ref: EffectRef
   readonly get: Getter
+  readonly waitFor: <Value>(node: Atom<Value | undefined>) => Effect.Effect<Value, Error>
   readonly record: <Event extends object>(event: Event) => Effect.Effect<void, Error>
   readonly fork: <Event extends object, Services>(work: Effect.Effect<Event | readonly Event[], Error, Services>) => Effect.Effect<FiberHandle, Error, Services>
 }>()("experimental/EffectExecution") {}

@@ -10,6 +10,7 @@
     "./services": "./src/services/index.ts"
   },
   "dependencies": {
+    "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-experimental-core": "workspace:*",
     "@clavia/tardigrade-experimental-packages": "workspace:*",
     "effect": "4.0.0-rc.115",

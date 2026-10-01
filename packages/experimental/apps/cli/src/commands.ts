@@ -4,14 +4,12 @@ import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { sendMessage, observeMessages } from "./chat"
 import { createPermissions, DEFAULT_PERMISSION_MODE, PERMISSION_MODES, type Permissions } from "./permissions"
 import { chatPrompt } from "./prompt"
-import { DEFAULT_MAX_CHILD_DEPTH } from "./services"
 import { DEFAULT_BATCH_SIZE, DEFAULT_POLL_MS, DEFAULT_WATCH_WIDTH, watchLog } from "./watch"
 import { DEFAULT_THREAD_DIRECTORY, DEFAULT_INSTANCE, activeThread, activateThread, findThread, listThreads, hostScope, type ChatHost, type ChatThread, type ThreadOptions, type ThreadListing } from "./threads"
 
 const directory = Flag.String("thread-dir").pipe(Flag.withDefault(DEFAULT_THREAD_DIRECTORY), Flag.withDescription("Directory containing host thread storage."))
 const instance = Flag.String("instance").pipe(Flag.withDefault(DEFAULT_INSTANCE), Flag.withDescription("Actor instance whose threads to use."))
 const thread = Flag.String("thread").pipe(Flag.optional, Flag.withDescription("Resume a thread by name or ID."))
-const maxChildDepth = Flag.Int("max-child-depth").pipe(Flag.withDefault(DEFAULT_MAX_CHILD_DEPTH), Flag.withDescription("Maximum child-agent nesting depth; 0 disables delegation."))
 const permissionMode = Flag.Literals("permissions", PERMISSION_MODES).pipe(Flag.withDefault(DEFAULT_PERMISSION_MODE), Flag.withDescription("Tool permissions: ask each time, auto allows read-only tools, full-access allows all tools."))
 const message = Flag.String("message").pipe(Flag.optional, Flag.withDescription("Send one message, print the answer, and exit without prompts."))
 const threadLabel = (item: ThreadListing) => `${item.name}  ·  ${item.status}  ·  last activity ${item.lastActivity === undefined ? "none" : new Date(item.lastActivity).toLocaleString()}`
@@ -124,9 +122,8 @@ const chat = (host: ChatHost, selected: ChatThread, options: ThreadOptions & { r
   }
 }))
 
-export const cli = Command.make("experimental-chat", { thread, directory, instance, message, maxChildDepth, permissionMode }, flags => Effect.scoped(Effect.gen(function* () {
+export const cli = Command.make("experimental-chat", { thread, directory, instance, message, permissionMode }, flags => Effect.scoped(Effect.gen(function* () {
   const options = { ...flags, permissions: createPermissions({ mode: flags.permissionMode, interactive: Option.isNone(flags.message) && !!process.stdin.isTTY }) }
-  if (!Number.isSafeInteger(options.maxChildDepth) || options.maxChildDepth < 0) return yield* Effect.fail(new RuntimeError("--max-child-depth must be a nonnegative integer"))
   if (Option.isSome(options.message) && !options.message.value.trim()) return yield* Effect.fail(new RuntimeError("--message must not be empty"))
   if (Option.isNone(options.message) && !process.stdin.isTTY) return yield* Effect.fail(new RuntimeError("Use --message to chat without an interactive terminal"))
   const host = yield* hostScope(options)

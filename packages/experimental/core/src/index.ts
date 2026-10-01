@@ -17,3 +17,5 @@ export * from "./errors"
 
 
 export * from "./act"
+
+export { Isolate, type IsolateCall, type IsolateInput, type IsolateResult } from "./services/isolate"

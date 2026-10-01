@@ -68,3 +68,5 @@ export function createBunHost<Event extends object, Services, Methods extends Re
   })
 }
 export { bunPromises } from "./promises"
+
+export { bunIsolate, DEFAULT_ISOLATE_POLICY, type IsolatePolicy } from "./isolate"

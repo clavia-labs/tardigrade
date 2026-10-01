@@ -17,6 +17,7 @@
     {
       "files": [
         "packages/experimental/agent/src/atoms/**/*.ts",
+        "packages/experimental/agent/src/code-mode/**/*.ts",
         "packages/experimental/agent/src/agent.ts",
         "packages/experimental/agent/src/acts.ts",
         "packages/experimental/agent/src/context.ts",

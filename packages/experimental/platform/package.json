@@ -8,6 +8,8 @@
     "./cloudflare": "./src/cloudflare/index.ts"
   },
   "dependencies": {
+    "@clavia/tardigrade-bun": "workspace:*",
+    "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-cloudflare": "workspace:*",
     "@clavia/tardigrade-experimental-core": "workspace:*",
     "@clavia/tardigrade-experimental-host": "workspace:*",

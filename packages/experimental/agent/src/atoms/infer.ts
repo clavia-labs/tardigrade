@@ -6,19 +6,19 @@ import { effectAtom, eventValue, type Atom, type Getter, type ActorOutput } from
 import { InferenceState, inferState, initialInference, type Conversation } from "../projections"
 import { ModelInfo } from "../context"
 import { Generate, requests } from "../acts"
-import type { Tools } from "./tools"
+import type { ToolView } from "./tools"
 import { Event, ModelCalled, MessageReceived, ToolReturned, ModelReturned, TurnSettled } from "../event"
 
 export type ContextView = ActorOutput<{ readonly position: "compacting" } | { readonly position: "failed"; readonly reason: string } | {
   readonly position: "ready"; readonly messages: typeof Conversation.Type
 }, Event, ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>
-export interface AgentInput<R> {
+export interface AgentInput<R, ToolEvents extends object = Event> {
   readonly system: string
-  readonly tools: Tools<R>
+  readonly tools: ActorOutput<Pick<ToolView<R>, "specs" | "validate">, ToolEvents, R>
   readonly context: ContextView
 }
 
-export function infer<R>(agent: Atom<AgentInput<R>>) {
+export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>>) {
   const inferenceState = durableAtom({ name: "agent.inference.state", input: Schema.Union([MessageReceived, ModelCalled, ModelReturned, ToolReturned, TurnSettled]),
     schema: InferenceState,
     initial: initialInference, reduce: inferState,
