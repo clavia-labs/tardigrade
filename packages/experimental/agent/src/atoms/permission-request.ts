@@ -1,5 +1,5 @@
 import type { ActService } from "@clavia/tardigrade-experimental-core"
-import { AskPermission, requests } from "../acts"
+import { AskPermission, requests, failureMessage } from "../acts"
 import { permissionState } from "./durable/permissions"
 import { Schema } from "effect"
 import { effectAtom, type Atom, eventValue, type ActorOutput } from "@clavia/tardigrade-experimental-core"
@@ -40,7 +40,7 @@ export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: 
         tag: JSON.stringify(["tool.execute", call.callId]),
         input: { action: "tool.execute", requestId: call.callId, resource: call.name, input: call.input, ...(metadata ? { metadata } : {}) },
         onSettled: result => [{ type: "PermissionResolved", action: "tool.execute", requestId: call.callId, decision: result.status === "fulfilled"
-          ? result.value : { allowed: false, reason: `Permission request failed: ${result.reason}` } } satisfies Event],
+          ? result.value : { allowed: false, reason: `Permission request failed: ${failureMessage(result.reason)}` } } satisfies Event],
       }) },
     }
   })

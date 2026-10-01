@@ -299,9 +299,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       deliveries: () => deliveries,
       followups: (event: Recorded<Event>): readonly object[] => {
         if (!Schema.is(CoreEvent)(event)) return []
-        if (event.type === "EffectCancelled" || coreCancellations.has(effectKey(event.ref))) return []
         const request = acts.get(effectKey(event.ref))
         if (!request) return []
+        if (event.type === "EffectCancelled") {
+          const settled = coreSettlements.get(effectKey(event.ref))
+          const result = settled?.outcome.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(settled.outcome.value) : undefined
+          return request.onSettled?.({ status: "rejected", reason: { _tag: "Cancelled", reason: event.reason } }, event.ref, result?.type === "promise" ? result.handle : undefined) ?? []
+        }
+        if (coreCancellations.has(effectKey(event.ref))) return []
         if (event.type === "EffectRequested") return request.onRequested?.(event.ref) ?? []
         if (event.type === "PromiseSettled") {
           const settled = coreSettlements.get(effectKey(event.ref))

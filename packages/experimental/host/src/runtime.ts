@@ -175,6 +175,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }
       yield* Effect.try({ try: sync, catch: RuntimeError.from }).pipe(Effect.catch(error => Effect.sync(() => report(error))))
       yield* Queue.offer(notifications, records)
+      yield* cleanCancellations.pipe(Effect.catchCause(reportCause))
       yield* schedule
     })
     const enqueue = <Value>(work: Effect.Effect<Value, Error>) => Effect.gen(function* () {
@@ -234,7 +235,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           if (cancellation.handle && cancellation.handle.executor !== "local" && Option.isSome(observer)) {
             yield* observer.value.cancel({ ref: cancellation.ref, handle: cancellation.handle })
           }
-          yield* cancelAct(cancellation).pipe(Effect.provide(services))
+          yield* cancelAct(cancellation, { get: store.get, cancel: runtime.cancel }).pipe(Effect.provide(services))
         }).pipe(Effect.retry({ schedule: Schedule.spaced(cancellationRetryIntervalMs) }))
         yield* runtime.fork(`cancellation:${key}`, cleanup)
       }
@@ -337,7 +338,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             if (signal.aborted) return yield* Effect.interrupt
             yield* runtime.fork(id, operation.pipe(
               Effect.provide(context),
-              Effect.flatMap(result => runtime.send((Array.isArray(result) ? result : [result]) as readonly Event[], () => !snapshot.effect(work.ref)?.cancellation)),
+              Effect.flatMap(result => runtime.deliver(work.ref, (Array.isArray(result) ? result : [result]) as readonly Event[])),
             ))
             return { executor: "local" as const, id }
           }),
@@ -380,13 +381,13 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         }
       }
     })
-    const send = (events: readonly Recorded<Event>[], when?: (get: ActorRuntime<Event>["get"]) => boolean) => Effect.gen(function* () {
+    const send = (events: readonly Recorded<Event>[], when?: (get: ActorRuntime<Event>["get"]) => boolean, owner?: EffectRef) => Effect.gen(function* () {
       yield* Deferred.await(ready)
       let admitted = false
       let cursor = 0
       yield* enqueue(Effect.gen(function* () {
         if (persistenceFailure) return yield* Effect.fail(persistenceFailure)
-        if (events.some(event => Schema.is(PromiseSettled)(event) && snapshot.effect(event.ref)?.cancellation)) return
+        if (owner && snapshot.effect(owner)?.cancellation) return
         if (!admitted) {
           if (when && !(yield* Effect.try({ try: () => when(store.get), catch: RuntimeError.from }))) return
           admitted = true
@@ -424,6 +425,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         )
         background.set(id, fiber)
       }),
+      deliver: (ref, events) => send(events, undefined, ref),
       cancel: (ref, reason) => send([{ type: "EffectCancelled", ref, reason }]),
       interrupt: id => Effect.gen(function* () {
         const fiber = background.get(id)

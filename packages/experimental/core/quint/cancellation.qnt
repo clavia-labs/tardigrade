@@ -81,7 +81,7 @@ module cancellation {
   }
 
   action deliver(ref: int): bool = all {
-    state.online.contains(ref), state.completed.contains(ref),
+    state.online.contains(ref), terminal(ref),
     update(state.with("delivered", state.delivered.union(Set(ref)))),
   }
 
@@ -122,7 +122,7 @@ module cancellation {
   }
 
   val terminalExclusive = state.completed.intersect(state.cancelled) == Set()
-  val deliverySound = state.delivered.subseteq(state.completed) and state.delivered.intersect(state.cancelled) == Set()
+  val deliverySound = state.delivered.subseteq(state.completed.union(state.cancelled))
   val ownershipSound = state.links.forall(link => state.requested.contains(link._1) and state.requested.contains(link._2))
   val cancellationIsolation = state.cancelled.forall(ref => state.direct.contains(ref) or
     state.links.exists(link => link._2 == ref and state.cancelled.contains(link._1)))
@@ -133,7 +133,7 @@ module cancellation {
     running.in(refs.powerset()), online.in(refs.powerset()), links.in(possibleLinks.powerset()),
     guarded == true, state.submitted.subseteq(state.requested),
     state.completed.subseteq(state.requested), state.cancelled.subseteq(state.requested),
-    state.delivered.subseteq(refs), state.direct.subseteq(state.cancelled),
+    state.delivered.subseteq(state.completed.union(state.cancelled)), state.direct.subseteq(state.cancelled),
     state.running.subseteq(state.requested), state.running.subseteq(state.online),
     state.running.intersect(state.completed) == Set(), state.online.subseteq(refs),
     state.links.subseteq(possibleLinks), state.guarded,

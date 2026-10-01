@@ -52,7 +52,7 @@ export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
       let request = requests.get(tag)
       if (!request) {
         request = Provision.request({ tag, input: allocation, onSettled: result => {
-          if (result.status === "rejected") return [{ type: "ThreadFailed", coordinate: allocation.coordinate, reason: result.reason } satisfies SupervisorEvent]
+          if (result.status === "rejected") return [{ type: "ThreadFailed", coordinate: allocation.coordinate, reason: typeof result.reason === "string" ? result.reason : JSON.stringify(result.reason) } satisfies SupervisorEvent]
           return [{ type: "ThreadRegistered", coordinate: allocation.coordinate } satisfies SupervisorEvent]
         } })
         requests.set(tag, request)

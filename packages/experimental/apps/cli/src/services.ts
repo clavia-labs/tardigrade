@@ -46,7 +46,7 @@ export const services = (options: { readonly permissions?: Permissions; readonly
     bunIsolate(),
     memoryWorkspace,
     permissions.layer(host, options.label ?? "Code agent"),
-    bunPromises(host, { deliver: settlement => host.send([settlement]) }),
+    bunPromises(host, { deliver: settlement => host.deliver(settlement.ref, [settlement]) }),
   )
   return Layer.mergeAll(modelInfo, modelActs, askPermission, codeModeActs([fetchPackage(), workspace()])).pipe(Layer.provideMerge(platform))
 }

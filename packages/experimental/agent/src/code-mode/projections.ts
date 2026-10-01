@@ -5,8 +5,9 @@ import { DomainEvent, EvaluateCode, EvaluationInput, ExecutePackage, PackageInpu
 
 // codeModeState retains code inputs and package receipts until their tool results are delivered.
 export function codeModeState(state: typeof CodeModeState.Type, event: typeof Event.Type | EffectRequested): typeof CodeModeState.Type {
-  if (event.type === "ModelReturned" && event.purpose === "inference") return [...state, ...event.toolCalls.map(call => ({ call, codeMode: null, evaluation: null, ambient: null, calls: [], outcome: null }))]
-  if (event.type === "ToolReturned") return state.filter(entry => entry.call.callId !== event.callId)
+  if (event.type === "ModelReturned" && event.purpose === "inference") return [...state, ...event.toolCalls.map(call => ({ call, codeMode: null, evaluation: null, ambient: null, returned: false, calls: [], outcome: null }))]
+  if (event.type === "ToolReturned") return state.flatMap(entry => entry.call.callId !== event.callId ? [entry]
+    : entry.calls.every(call => call.outcome !== null) ? [] : [{ ...entry, returned: true }])
   if (event.type === "EffectRequested") {
     if (event.request.executor === EvaluateCode.name) {
       const input = Schema.decodeUnknownSync(EvaluationInput)(event.request.input)
@@ -23,14 +24,14 @@ export function codeModeState(state: typeof CodeModeState.Type, event: typeof Ev
   }
   if (!("codeMode" in event)) return state
   const entry = state.find(entry => entry.call.callId === event.callId && entry.codeMode === event.codeMode)
-  if (!entry || entry.outcome !== null) throw new RuntimeError(`No pending code execution: ${event.callId}`)
+  if (!entry || (entry.outcome !== null && event.type !== "PackageReturned")) throw new RuntimeError(`No pending code execution: ${event.callId}`)
   let next = entry
   if (event.type === "CodeCalled") {
     if (entry.ambient !== null) throw new RuntimeError("Code ambient is already recorded")
     next = { ...entry, ambient: event.ambient }
   } else if (event.type === "CodeReturned") {
-    if (entry.calls.some(call => call.outcome === null)) throw new RuntimeError("Cannot return code with unsettled package calls")
-    next = { ...entry, outcome: event.outcome }
+    if (event.outcome.status === "fulfilled" && entry.calls.some(call => call.outcome === null)) throw new RuntimeError("Cannot return code with unsettled package calls")
+    next = { ...entry, outcome: event.outcome, calls: event.outcome.status === "rejected" ? entry.calls.filter(call => call.ref !== null) : entry.calls }
   } else if (event.type === "PackageCalled") {
     if (!entry.ambient || entry.calls.some(call => call.ordinal === event.ordinal)) throw new RuntimeError("Invalid package invocation")
     const { ordinal, package: packageName, method, input } = event
@@ -40,7 +41,7 @@ export function codeModeState(state: typeof CodeModeState.Type, event: typeof Ev
     if (!call || call.outcome !== null || !call.ref || effectKey(call.ref) !== effectKey(event.ref)) throw new RuntimeError("Package reference differs from acceptance")
     next = { ...entry, calls: entry.calls.map(value => value === call ? { ...call, outcome: event.outcome } : value) }
   }
-  return state.map(value => value === entry ? next : value)
+  return state.flatMap(value => value !== entry ? [value] : next.returned && next.calls.every(call => call.outcome !== null) ? [] : [next])
 }
 
 export const executions = durableAtom({ name: "agent.code-mode.executions", input: Schema.Union([ModelReturned, ToolReturned, DomainEvent, EffectRequested]), schema: CodeModeState, initial: [], reduce: codeModeState })

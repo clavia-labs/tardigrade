@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Schema, Option } from "effect"
 import { atom, type Atom } from "./atom"
 import { EventLog, eventLogContext } from "./services/event-log"
 import { effectKey, EffectRef } from "./effect-ref"
-import { type EffectRequest, EffectRequested, EffectSettled, PromiseSettled, EffectCancelled, type Cancelled } from "./lifecycle"
+import { type EffectRequest, EffectRequested, EffectSettled, PromiseSettled, EffectCancelled, Cancelled } from "./lifecycle"
 import { ExecutionHandle } from "./effects"
 import { RuntimeError } from "./errors"
 import { EffectExecution } from "./services/effect-execution"
@@ -33,10 +33,10 @@ export interface ActRequest<Value, Failure, Services> {
   onRequested?(ref: EffectRef): readonly object[]
   // onDeferred derives domain events committed with the submitted handle; callbacks must be pure.
   onDeferred?(handle: ExecutionHandle, ref: EffectRef): readonly object[]
-  // onSettled derives domain events committed with the final result; handle identifies deferred completion and callbacks must be pure.
-  onSettled?(result: Exclude<ActState<Value, Failure>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
+  // onSettled derives domain events committed with the terminal decision; handle identifies deferred completion and callbacks must be pure.
+  onSettled?(result: Exclude<ActState<Value, Failure | Cancelled>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
   readonly ref: Atom<EffectRef | undefined>
-  // result exposes cancellation as a rejected Cancelled value; cancellation does not invoke onSettled (quint/cancellation.qnt, deliverySound).
+  // result exposes cancellation as a rejected Cancelled value delivered through onSettled (quint/terminalDelivery.qnt, deliverySound, callbackAtMostOnce).
   readonly result: Atom<ActState<Value, Failure | Cancelled>>
 }
 
@@ -49,16 +49,16 @@ export interface ActCancellation {
 
 interface ImplementationService {
   readonly execute: (input: Schema.Json, ref: EffectRef) => Effect.Effect<ExecutionResult, Schema.Json, EffectExecution>
-  readonly cancel: (request: ActCancellation) => Effect.Effect<void, Error>
+  readonly cancel: (request: ActCancellation, execution: Pick<typeof EffectExecution.Service, "get" | "cancel">) => Effect.Effect<void, Error>
 }
 
 // cancelAct dispatches idempotent cleanup using durable invocation data rather than proposal closures.
-export const cancelAct = (request: ActCancellation): Effect.Effect<void, Error> => Effect.gen(function* () {
+export const cancelAct = (request: ActCancellation, execution: Pick<typeof EffectExecution.Service, "get" | "cancel">): Effect.Effect<void, Error> => Effect.gen(function* () {
   // @effect-diagnostics-next-line serviceNotAsClass:off
   const service = Context.Service<ActService<string>, ImplementationService>(`experimental/act/${request.request.executor}`)
   const implementation = Context.getOption(yield* Effect.context<never>(), service)
   if (Option.isNone(implementation)) return yield* Effect.fail(new RuntimeError(`Missing cancellation implementation: ${request.request.executor}`))
-  yield* implementation.value.cancel(request)
+  yield* implementation.value.cancel(request, execution)
 })
 
 // act defines typed durable work whose implementation is supplied by a layer. Implementations must tolerate redelivery with the same reference after a crash.
@@ -79,12 +79,12 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
   // @effect-diagnostics-next-line serviceNotAsClass:off
   const Implementation = Context.Service<ActService<Name>, ImplementationService>(`experimental/act/${options.name}`)
 
-  const layer = <Services, CancellationServices = never>(implement: (input: Input, context: { readonly ref: EffectRef; readonly signal: AbortSignal }) => Effect.Effect<Value | DeferredAct, Failure, Services>, cancellation?: { readonly cancel: (input: Input, context: Omit<ActCancellation, "request">) => Effect.Effect<void, Error, CancellationServices> }) => Layer.effect(Implementation, Effect.gen(function* () {
+  const layer = <Services, CancellationServices = never>(implement: (input: Input, context: { readonly ref: EffectRef; readonly signal: AbortSignal }) => Effect.Effect<Value | DeferredAct, Failure, Services>, cancellation?: { readonly cancel: (input: Input, context: Omit<ActCancellation, "request"> & Pick<typeof EffectExecution.Service, "get" | "cancel">) => Effect.Effect<void, Error, CancellationServices> }) => Layer.effect(Implementation, Effect.gen(function* () {
     const services = yield* Effect.context<Exclude<Services, EffectExecution> | CancellationServices>()
     return {
-      cancel: request => cancellation ? Schema.decodeUnknownEffect(inputSchema)(request.request.input).pipe(
+      cancel: (request, execution) => cancellation ? Schema.decodeUnknownEffect(inputSchema)(request.request.input).pipe(
         Effect.mapError(RuntimeError.from),
-        Effect.flatMap(input => cancellation.cancel(input, request)), Effect.provide(services),
+        Effect.flatMap(input => cancellation.cancel(input, { ...request, ...execution })), Effect.provide(services),
       ) : Effect.void,
       execute: (input, ref) => Schema.decodeUnknownEffect(inputSchema)(input).pipe(
         Effect.orDie,
@@ -132,10 +132,10 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       kind: "act", identity, id: invocation.tag, request: { executor: options.name, input }, ref, result,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
       ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
-      onSettled: (outcome: Exclude<ActState<Value, Failure>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
+      onSettled: (outcome: Exclude<ActState<Value, Failure | Cancelled>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
         const result = outcome.status === "fulfilled"
           ? { status: "fulfilled" as const, value: decodeSuccess(outcome.value) }
-          : { status: "rejected" as const, reason: decodeFailure(outcome.reason) }
+          : { status: "rejected" as const, reason: Schema.is(Cancelled)(outcome.reason) ? outcome.reason : decodeFailure(outcome.reason) }
         return invocation.onSettled?.(result, ref, handle) ?? []
       },
       execute: EffectExecution.use(({ ref }) => Implementation.use(service => service.execute(input, ref))),

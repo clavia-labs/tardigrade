@@ -17,7 +17,7 @@ export const PackageCalled = Schema.Struct({ type: Schema.Literal("PackageCalled
 export const PackageReturned = Schema.Struct({ type: Schema.Literal("PackageReturned"), ...Owner, ordinal: Ordinal, ref: EffectRef, outcome: Outcome })
 export const DomainEvent = Schema.Union([CodeCalled, CodeReturned, PackageCalled, PackageReturned])
 export const Event = Schema.Union([AgentEvent, DomainEvent])
-export const CodeModeState = Schema.Array(Schema.Struct({ call: ToolCall, codeMode: Schema.NullOr(Schema.String), evaluation: Schema.NullOr(EffectRef), ambient: Schema.NullOr(Ambient), calls: Schema.Array(PackageRecord), outcome: Schema.NullOr(Outcome) }))
+export const CodeModeState = Schema.Array(Schema.Struct({ call: ToolCall, codeMode: Schema.NullOr(Schema.String), evaluation: Schema.NullOr(EffectRef), ambient: Schema.NullOr(Ambient), returned: Schema.Boolean, calls: Schema.Array(PackageRecord), outcome: Schema.NullOr(Outcome) }))
 
 export const EvaluationInput = Schema.Struct({ ...Owner, code: Schema.String })
 export const PackageInput = Schema.Struct({ ...Owner, ...Invocation.fields })

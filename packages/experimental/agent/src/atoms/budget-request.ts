@@ -1,5 +1,5 @@
 import type { ActService } from "@clavia/tardigrade-experimental-core"
-import { AskBudget, requests } from "../acts"
+import { AskBudget, requests, failureMessage } from "../acts"
 import { toolSpend } from "./durable/spend"
 import { budgetState } from "./durable/budget"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
@@ -56,7 +56,7 @@ export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: {
           tag: pending.callId,
           input: { metric: "toolCalls", callId: pending.callId, ...input, used, limit },
           onSettled: result => {
-            const decision = result.status === "fulfilled" ? result.value : { allowed: false as const, reason: `Budget request failed: ${result.reason}` }
+            const decision = result.status === "fulfilled" ? result.value : { allowed: false as const, reason: `Budget request failed: ${failureMessage(result.reason)}` }
             if (decision.allowed && !Number.isSafeInteger(limit + decision.additional)) return [{ type: "BudgetResolved", metric: "toolCalls", callId: pending.callId, decision: { allowed: false, reason: "Total tool budget exceeds safe integer range" } } satisfies Event]
             return [{ type: "BudgetResolved", metric: "toolCalls", callId: pending.callId, decision } satisfies Event]
           },

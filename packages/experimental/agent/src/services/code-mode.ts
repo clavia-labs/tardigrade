@@ -69,6 +69,9 @@ export function codeModeActs<const P extends readonly Package<unknown>[]>(packag
       return yield* Schema.decodeUnknownEffect(Schema.Json)(outcome.value).pipe(Effect.mapError(String))
     }).pipe(Effect.exit, Effect.map(exit => Exit.isSuccess(exit) ? reply.succeed(exit.value) : reply.fail(Cause.pretty(exit.cause))))
     return EvaluateCode.defer(yield* execution.fork(run))
-  }).pipe(Effect.mapError(String)))
+  }).pipe(Effect.mapError(String)), { cancel: (input, context) => Effect.gen(function* () {
+    const owned = context.get(executions).find(entry => entry.call.callId === input.callId && entry.codeMode === input.codeMode)
+    for (const call of owned?.calls ?? []) if (call.ref && call.outcome === null) yield* context.cancel(call.ref, context.reason)
+  }) })
   return Layer.mergeAll(catalog, evaluateCode, executePackage)
 }

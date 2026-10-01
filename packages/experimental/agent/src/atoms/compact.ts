@@ -6,7 +6,7 @@ import { effectAtom, type Atom } from "@clavia/tardigrade-experimental-core"
 import { CompactionState, compactState, type Conversation } from "../projections"
 import { ModelCalled, ModelReturned, CompactionFailed } from "../event"
 import { ModelInfo } from "../context"
-import { Summarize, requests } from "../acts"
+import { Summarize, requests, failureMessage } from "../acts"
 
 export const DEFAULT_COMPACTION_POLICY = {
   triggerRatio: 0.8, retainRatio: 0.5, charsPerToken: 4,
@@ -97,7 +97,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
         },
         onRequested: () => [{ type: "ModelCalled", purpose: "compaction", ...selection, callId, through } satisfies ModelCalled],
         onSettled: result => {
-          if (result.status === "rejected") return [{ type: "CompactionFailed", callId, reason: result.reason } satisfies typeof CompactionFailed.Type]
+          if (result.status === "rejected") return [{ type: "CompactionFailed", callId, reason: failureMessage(result.reason) } satisfies typeof CompactionFailed.Type]
           return [{ type: "ModelReturned", purpose: "compaction", callId, text: result.value.text, ...(result.value.usage ? { usage: result.value.usage } : {}) } satisfies ModelReturned]
         },
       }) },

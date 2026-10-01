@@ -5,7 +5,7 @@ import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { effectAtom, eventValue, type Atom, type Getter, type ActorOutput } from "@clavia/tardigrade-experimental-core"
 import { InferenceState, inferState, initialInference, type Conversation } from "../projections"
 import { ModelInfo } from "../context"
-import { Generate, requests } from "../acts"
+import { Generate, requests, failureMessage } from "../acts"
 import { toolSpend, tokenSpend, usdSpend } from "./durable/spend"
 import type { ToolView } from "./tools"
 import { Event, ModelCalled, MessageReceived, ToolReturned, ModelReturned, TurnSettled } from "../event"
@@ -63,7 +63,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
           input: { model: selection.model, system: input.system, tools: input.tools.view.specs, context: messages },
           onRequested: () => [{ type: "ModelCalled", purpose: "inference", ...selection, callId: state.callId, turnId: state.turnId } satisfies ModelCalled],
           onSettled: (result, ref) => {
-            if (result.status === "rejected") return [{ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: result.reason } satisfies TurnSettled]
+            if (result.status === "rejected") return [{ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: failureMessage(result.reason) } satisfies TurnSettled]
             if (new Set(result.value.toolCalls.map(call => call.callId)).size !== result.value.toolCalls.length) return [{ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: "Duplicate provider tool call IDs" } satisfies TurnSettled]
             return [{ type: "ModelReturned", purpose: "inference", callId: state.callId, text: result.value.text, ...(result.value.usage ? { usage: result.value.usage } : {}),
               toolCalls: result.value.toolCalls.map((call, index) => ({ ...call, providerId: call.callId, callId: JSON.stringify([ref.seq, ref.atom, ref.tag, index]) })),

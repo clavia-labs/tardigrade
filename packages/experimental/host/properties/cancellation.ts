@@ -99,7 +99,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
     yield* first.wait
     for (let index = 0; index <= options.duplicates; index++) {
       yield* first.cancel(reference, "duplicate")
-      if (!options.completionFirst) yield* runtime.send([result(), { type: "Returned" }])
+      if (!options.completionFirst) yield* runtime.deliver(reference, [result(), { type: "Returned" }])
       else if (options.mode !== "inline") yield* runtime.send([result()])
     }
     yield* first.wait
@@ -115,7 +115,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
     yield* Effect.gen(function* () {
       yield* restored.wait
       yield* restored.cancel(reference, "reopened")
-      if (!options.completionFirst) yield* runtime.send([result(), { type: "Returned" }])
+      if (!options.completionFirst) yield* runtime.deliver(reference, [result(), { type: "Returned" }])
       yield* restored.wait
       const state = restored.getState().view
       if (!options.completionFirst && (state.status !== "rejected" || !Schema.is(Schema.TaggedStruct("Cancelled", { reason: Schema.Literal(options.reason) }))(state.reason))) return yield* Effect.fail(new RuntimeError("Recovery lost the durable cancellation outcome"))
@@ -124,11 +124,11 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
   const cancelled = records.filter(event => event.type === "EffectCancelled")
   const completed = records.filter(event => event.type === "PromiseSettled" || (event.type === "EffectSettled" && options.mode === "inline"))
   const delivered = records.filter(event => event.type === "Returned")
-  if (executions !== 1 || records.filter(event => event.type === "EffectRequested").length !== 1 || cancelled.length !== (options.completionFirst ? 0 : 1) || completed.length !== (options.completionFirst ? 1 : 0) || delivered.length !== (options.completionFirst ? 1 : 0)) return yield* Effect.fail(new RuntimeError("Terminal decision changed, duplicated, or delivered after cancellation"))
+  if (executions !== 1 || records.filter(event => event.type === "EffectRequested").length !== 1 || cancelled.length !== (options.completionFirst ? 0 : 1) || completed.length !== (options.completionFirst ? 1 : 0) || delivered.length !== 1) return yield* Effect.fail(new RuntimeError("Terminal decision changed or terminal callback duplicated"))
   if (records.some(event => "ref" in event && effectKey(event.ref) !== effectKey(reference))) return yield* Effect.fail(new RuntimeError("Recovery changed the accepted reference"))
 }).pipe(Effect.scoped, Effect.timeout(5_000)))
 
-// cancellationTerminality checks terminalExclusive, deliverySound, and submissionPreserved from core/quint/cancellation.qnt.
+// cancellationTerminality checks terminalExclusive and submissionPreserved (core/quint/cancellation.qnt), and deliverySound and callbackAtMostOnce (core/quint/terminalDelivery.qnt).
 export const cancellationTerminality = fc.asyncProperty(fc.record({
   mode: fc.constantFrom("inline" as const, "local" as const, "remote" as const, "submitting" as const), completionFirst: fc.boolean(), rejected: fc.boolean(),
   value: fc.integer({ min: -100, max: 100 }), reason: fc.string({ maxLength: 20 }), duplicates: fc.integer({ min: 0, max: 3 }), reopens: fc.integer({ min: 0, max: 2 }), checkpoint: fc.boolean(),
@@ -184,11 +184,45 @@ export const cancellationForwarding = fc.asyncProperty(fc.record({
       if (expected) {
         yield* finish(id)
         yield* stores.get(id)!.wait
-        if (histories[id]!.some(event => event.type === "PromiseSettled" || event.type === "Returned")) return yield* Effect.fail(new RuntimeError("Cancelled descendant delivered a late result"))
+        if (histories[id]!.some(event => event.type === "PromiseSettled")) return yield* Effect.fail(new RuntimeError("Cancelled descendant accepted a late result"))
       }
     }
     yield* finish(3)
     yield* stores.get(3)!.wait
     if (histories[3]!.filter(event => event.type === "Returned").length !== 1) return yield* Effect.fail(new RuntimeError("Unrelated execution was interrupted"))
   }).pipe(Effect.ensuring(Effect.forEach(stores.values(), store => store.close, { discard: true })))
+}).pipe(Effect.scoped, Effect.timeout(5_000))))
+
+// cancellationBatchIsolation checks validBatchPreserved from core/quint/terminalDelivery.qnt.
+export const cancellationBatchIsolation = fc.asyncProperty(fc.record({
+  cancelled: fc.integer({ min: 0, max: 1 }), reverse: fc.boolean(), value: fc.integer({ min: -100, max: 100 }), duplicates: fc.integer({ min: 0, max: 3 }),
+}), options => Effect.runPromise(Effect.gen(function* () {
+  let runtime!: ActorRuntime<Event>
+  const definition = defineActor("batch-cancellation", Effect.sync(() => {
+    const started = durableAtom({ name: "test.batch-cancellation", input: Event, schema: Schema.Boolean, initial: false, reduce: (state, event) => state || event.type === "Started" })
+    const requests = [0, 1].map(id => Job.request({ tag: String(id), input: id, onSettled: () => [{ type: "Returned" }] }))
+    return { atom: Object.assign(effectAtom(get => ({ view: requests.map(request => get(request.result)), events: {}, acts: get(started) ? Object.fromEntries(requests.map(request => [request.id, request])) : {} })), { schema: Event }), actions: { start: () => ({ type: "Started" as const }) } }
+  }))
+  const store = yield* createActorStore({ actor: definition, actorContext: () => Context.empty(),
+    services: host => {
+      runtime = host
+      return Layer.merge(Job.layer(input => Effect.succeed(Job.defer({ executor: "remote", id: String(input) }))), Layer.succeed(Promises, { watch: () => Effect.void, cancel: () => Effect.void }))
+    },
+  })
+  yield* Effect.gen(function* () {
+    yield* store.methods.start()
+    yield* store.wait
+    const refs = store.snapshot().deferred().map(work => work.ref)
+    yield* store.cancel(refs[options.cancelled]!, "cancelled")
+    yield* store.wait
+    const batch = refs.map(ref => durablePromise(ref, { success: Schema.Finite }).succeed(options.value))
+    if (options.reverse) batch.reverse()
+    for (let index = 0; index <= options.duplicates; index++) yield* runtime.send(batch)
+    yield* store.wait
+    const states = store.getState().view
+    const valid = states[1 - options.cancelled]!
+    const cancelled = states[options.cancelled]!
+    if (valid.status !== "fulfilled" || valid.value !== options.value || cancelled.status !== "rejected") return yield* Effect.fail(new RuntimeError("Cancelled batch member consumed an unrelated result"))
+    if (store.snapshot().events.filter(event => event.type === "Returned").length !== 2 || store.snapshot().events.filter(event => event.type === "PromiseSettled").length !== 1) return yield* Effect.fail(new RuntimeError("Batch delivery changed terminal callback multiplicity"))
+  }).pipe(Effect.ensuring(store.close))
 }).pipe(Effect.scoped, Effect.timeout(5_000))))

@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from "effect"
-import { effectAtom, eventValue, RuntimeError, cancel, Cancelled, type CancelRequest, type ActRequest, type ActService, type EventValue } from "@clavia/tardigrade-experimental-core"
+import { effectAtom, eventValue, RuntimeError, type ActRequest, type ActService, type EventValue } from "@clavia/tardigrade-experimental-core"
+import { failureMessage } from "../acts"
 import { pendingTools } from "./tools"
 import { ToolCatalog } from "../context"
 import { ToolReturned, type ToolCalled } from "../event"
@@ -29,7 +30,7 @@ export function codeMode(options: { readonly name: string }) {
         current = call?.callId
       }
       const events: Record<string, EventValue<typeof Event.Type>> = {}
-      const acts: Record<string, ActRequest<Schema.Json, string, ActService<"code-mode.evaluate"> | ActService<"code-mode.package">> | CancelRequest> = {}
+      const acts: Record<string, ActRequest<Schema.Json, string, ActService<"code-mode.evaluate"> | ActService<"code-mode.package">>> = {}
       const view = { specs: catalog.specs, system: spec.description, executions }
       if (!call) return { view, events, acts }
       const parsed = Schema.decodeUnknownOption(CodeInput, { onExcessProperty: "error" })(call.input)
@@ -54,18 +55,11 @@ export function codeMode(options: { readonly name: string }) {
           if (!request) {
             request = EvaluateCode.request({
               tag: key, input: { codeMode: name, callId: call.callId, code: parsed.value.code },
-              onSettled: outcome => [{ type: "CodeReturned", codeMode: name, callId: call.callId, outcome } satisfies typeof CodeReturned.Type],
+              onSettled: outcome => [{ type: "CodeReturned", codeMode: name, callId: call.callId, outcome: outcome.status === "rejected" ? { ...outcome, reason: failureMessage(outcome.reason) } : outcome } satisfies typeof CodeReturned.Type],
             })
             evaluations.set(key, request)
           }
           acts[name] = request
-          const result = get(request.result)
-          if (result.status === "rejected" && Schema.is(Cancelled)(result.reason)) {
-            for (const child of execution.calls) if (child.ref && child.outcome === null) {
-              acts[`${name}.cancel.${child.ordinal}`] = cancel(child.ref, result.reason.reason)
-            }
-            return { view, events, acts }
-          }
         }
         const open = execution.calls.filter(call => call.outcome === null)
         if (open.length) {
@@ -75,7 +69,7 @@ export function codeMode(options: { readonly name: string }) {
             if (!request) {
               request = ExecutePackage.request({
                 tag: key, input: { codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, package: packageCall.package, method: packageCall.method, input: packageCall.input },
-                onSettled: (outcome, ref) => [{ type: "PackageReturned", codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, ref, outcome } satisfies typeof PackageReturned.Type],
+                onSettled: (outcome, ref) => [{ type: "PackageReturned", codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, ref, outcome: outcome.status === "rejected" ? { ...outcome, reason: failureMessage(outcome.reason) } : outcome } satisfies typeof PackageReturned.Type],
               })
               packages.set(key, request)
             }

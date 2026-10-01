@@ -53,7 +53,7 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
     })
     const request = Job.request({ tag: "job", input: { value: options.value }, onRequested: () => [{ type: "Running" }],
       onDeferred: (handle, ref) => [{ type: "Submitted", ref, handle }],
-      onSettled: result => [{ type: "Returned", result }],
+      onSettled: result => [{ type: "Returned", result: result.status === "rejected" ? { ...result, reason: typeof result.reason === "string" ? result.reason : JSON.stringify(result.reason) } : result }],
     })
     return { atom: Object.assign(effectAtom(get => {
       const view = get(state)

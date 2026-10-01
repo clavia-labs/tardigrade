@@ -1,4 +1,4 @@
-import { ExecuteTool, requests } from "../acts"
+import { ExecuteTool, requests, failureMessage } from "../acts"
 import { durableAtom } from "@clavia/tardigrade-experimental-core"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
@@ -132,7 +132,7 @@ function toolValue<R>(state: typeof ToolState.Type, tools: Tools<R>): Tools<R> {
         },
         onSettled: (result, _ref, handle) => handle ? [] : [result.status === "fulfilled"
           ? { type: "ToolReturned", callId: call.callId, output: JSON.stringify(result.value), error: null } satisfies ToolReturned
-          : { type: "ToolReturned", callId: call.callId, output: "", error: result.reason } satisfies ToolReturned],
+          : { type: "ToolReturned", callId: call.callId, output: "", error: failureMessage(result.reason) } satisfies ToolReturned],
       }),
     },
   }

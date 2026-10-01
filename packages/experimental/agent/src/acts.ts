@@ -41,3 +41,6 @@ export function requests<Input extends { readonly tag: string; readonly input: u
     return value
   }
 }
+
+// failureMessage renders structured act failures at text-only domain boundaries.
+export const failureMessage = (reason: Schema.Json): string => typeof reason === "string" ? reason : JSON.stringify(reason)
