@@ -31,7 +31,7 @@ export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: {
   return effectAtom(get => {
     const state = get(budgetState).find(entry => entry.metric === "toolCalls")
     const spend = get(toolSpend)
-    const used = state?.policy.scope === "turn" ? spend.find(turn => turn.turnId === state.turnId)?.count ?? 0 : spend.reduce((total, turn) => total + turn.count, 0)
+    const used = spend.find(turn => turn.turnId === state?.turnId)?.count ?? 0
     if (!state) return {
       view: { configured: false, used, limit: 0, remaining: 0, decision: null, request: null },
       acts: {}, events: initialPolicy ? { budget: eventValue({ type: "BudgetConfigured", metric: "toolCalls", policy: initialPolicy } satisfies Event) } : {},

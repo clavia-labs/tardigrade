@@ -158,14 +158,14 @@ export function budgetState(state: typeof BudgetState.Type, event: Event): typeo
       : [...state, { metric: event.metric, policy: event.policy, granted: 0, decisions: [] }]
   }
   if (event.type === "ModelCalled" && event.purpose === "inference") {
-    if (!state.some(entry => entry.policy.scope === "turn" && entry.turnId !== event.turnId)) return state
-    return state.map(entry => entry.policy.scope === "turn" && entry.turnId !== event.turnId
+    if (!state.some(entry => entry.turnId !== event.turnId)) return state
+    return state.map(entry => entry.turnId !== event.turnId
       ? { ...entry, turnId: event.turnId, granted: 0, decisions: [] } : entry)
   }
   if (event.type === "TurnSettled") {
-    if (!state.some(entry => entry.policy.scope === "turn" && entry.turnId === event.turnId)) return state
+    if (!state.some(entry => entry.turnId === event.turnId)) return state
     return state.map(entry => {
-      if (entry.policy.scope !== "turn" || entry.turnId !== event.turnId) return entry
+      if (entry.turnId !== event.turnId) return entry
       const { turnId: _turnId, ...retained } = entry
       return { ...retained, granted: 0, decisions: [] }
     })

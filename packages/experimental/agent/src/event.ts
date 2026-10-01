@@ -27,7 +27,7 @@ export const PermissionRequest = Schema.Struct({
 })
 // BudgetMetric names a measured quantity and its unit, such as toolCalls, usd, or elapsedMs.
 export const BudgetMetric = Schema.NonEmptyString
-export const BudgetPolicy = Schema.Struct({ limit: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)), requestTool: Schema.optionalKey(Schema.NonEmptyString), scope: Schema.optionalKey(Schema.Literals(["actor", "turn"])), onExhausted: Schema.optionalKey(Schema.Literals(["wait", "deny"])) })
+export const BudgetPolicy = Schema.Struct({ limit: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)), requestTool: Schema.optionalKey(Schema.NonEmptyString), onExhausted: Schema.optionalKey(Schema.Literals(["wait", "deny"])) })
 export const PermissionConfigured = Schema.Struct({ type: Schema.Literal("PermissionConfigured"), policy: PermissionPolicy })
 export const PermissionUpdated = Schema.Struct({ type: Schema.Literal("PermissionUpdated"), policy: PermissionPolicy })
 export const BudgetConfigured = Schema.Struct({ type: Schema.Literal("BudgetConfigured"), metric: BudgetMetric, policy: BudgetPolicy })

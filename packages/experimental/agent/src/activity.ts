@@ -29,7 +29,7 @@ function describe(event: Event): Pick<ActivityEntry, "summary" | "status"> {
       return { summary, status: "info" }
     }
     case "BudgetConfigured":
-    case "BudgetUpdated": return { summary: `${event.policy.limit} ${event.metric} · ${event.policy.scope ?? "actor"}`, status: "info" }
+    case "BudgetUpdated": return { summary: `${event.policy.limit} ${event.metric} · turn`, status: "info" }
     case "PermissionConfigured":
     case "PermissionUpdated": return { summary: `default=${event.policy.default} · actions=${Object.keys(event.policy.actions).join(", ")}`, status: "info" }
     case "PermissionResolved": return { summary: `${event.action} · ${event.decision.allowed ? "allowed" : "denied"} · ${event.decision.reason}`, status: "notification" }

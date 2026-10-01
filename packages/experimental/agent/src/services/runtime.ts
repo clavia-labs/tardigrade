@@ -60,7 +60,7 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
   const services = typeof options.services === "function" ? options.services({ depth, parent }, host) : options.services
   const platform = Layer.mergeAll(services, memoryWorkspace, Layer.effectDiscard(budget ? host.onReady(Effect.suspend(() => host.record({
     type: host.get(budgetState).some(entry => entry.metric === "toolCalls") ? "BudgetUpdated" : "BudgetConfigured",
-    metric: "toolCalls", policy: { limit: budget.toolCalls, scope: "turn", onExhausted: "deny" },
+    metric: "toolCalls", policy: { limit: budget.toolCalls, onExhausted: "deny" },
   }))) : Effect.void)).pipe(Layer.provideMerge(children))
   return Layer.mergeAll(modelInfo, modelActs, askPermission, toolActs(options.packages ?? [fetchPackage(), alarm(), workspace(), agents()])).pipe(Layer.provideMerge(platform))
 }
