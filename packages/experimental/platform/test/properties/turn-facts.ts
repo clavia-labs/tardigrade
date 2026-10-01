@@ -67,6 +67,13 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       now += 100_000
       store = yield* open()
       if (JSON.stringify(store.getState()) !== settled) return yield* Effect.fail(new RuntimeError("Completed turn facts changed after reopening"))
+      const completed = store.getState().view.timeSpend
+      yield* store.methods.record({ type: "MessageReceived", kind: "message", turnId: "third", text: "third" })
+      now += options.first + options.second
+      yield* store.methods.record({ type: "AbortReceived", reason: "stop" })
+      const pending = store.getState().view.timeSpend
+      if (pending[0] !== completed[0] || pending[1] !== completed[1] || pending[2]?.ms !== options.first + options.second) return yield* Effect.fail(new RuntimeError("Pending timing changed completed totals or used a stale index"))
+      yield* store.methods.record({ type: "TurnSettled", turnId: "third", outcome: "cancelled", reason: "stop" })
     }).pipe(Effect.ensuring(Effect.suspend(() => store.close)))
   }).pipe(Effect.provideService(Clock.Clock, clock))
 }).pipe(Effect.scoped)))

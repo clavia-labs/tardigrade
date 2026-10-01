@@ -10,19 +10,24 @@ const UsdSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, usd: Schema
 const TimeSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, ms: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))) }))
 const Calls = Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String }))
 const SpendState = Schema.Struct({
-  toolSpend: ToolSpend, tokenSpend: TokenSpend, usdSpend: UsdSpend, timeSpend: TimeSpend, timers: Schema.Array(Schema.Struct({ turnId: Schema.String, startedAt: Schema.NullOr(Count) })),
+  toolSpend: ToolSpend, tokenSpend: TokenSpend, usdSpend: UsdSpend, timeSpend: TimeSpend, timers: Schema.Array(Schema.Struct({ turnId: Schema.String, index: Count, startedAt: Schema.NullOr(Count) })),
   turns: Schema.Array(Schema.String), models: Calls, tools: Calls,
 })
 const SpendEvent = Schema.Union([Event, CoreEvent])
 
 // spendState retains pending call attribution alongside ordered turn totals across checkpoint recovery.
 function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type, metadata: RecordMetadata): typeof SpendState.Type {
-  if (state.timers.length && metadata.recordedAt !== undefined) {
-    const now = metadata.recordedAt
-    state = { ...state, timeSpend: state.timeSpend.map(turn => {
-      const timer = state.timers.find(timer => timer.turnId === turn.turnId)
-      return timer?.startedAt != null ? { ...turn, ms: Math.max(0, now - timer.startedAt) } : turn
-    }) }
+  if (metadata.recordedAt !== undefined) {
+    let updated: Array<typeof TimeSpend.Type[number]> | undefined
+    for (const timer of state.timers) {
+      if (timer.startedAt === null) continue
+      const turn = state.timeSpend[timer.index]!
+      const ms = Math.max(0, metadata.recordedAt - timer.startedAt)
+      if (turn.ms === ms) continue
+      updated ??= state.timeSpend.slice()
+      updated[timer.index] = { ...turn, ms }
+    }
+    if (updated) state = { ...state, timeSpend: updated }
   }
   if (event.type === "MessageReceived") {
     const message = inboxMessage(event)
@@ -30,7 +35,7 @@ function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type
     const turnId = message.turnId
     return {
       ...state, turns: [...state.turns, turnId],
-      timers: [...state.timers, { turnId, startedAt: metadata.recordedAt ?? null }],
+      timers: [...state.timers, { turnId, index: state.timeSpend.length, startedAt: metadata.recordedAt ?? null }],
       timeSpend: [...state.timeSpend, { turnId, ms: metadata.recordedAt === undefined ? null : 0 }],
       toolSpend: [...state.toolSpend, { turnId, count: 0 }],
       tokenSpend: [...state.tokenSpend, { turnId, input: 0, output: 0 }],
@@ -74,10 +79,14 @@ function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type
   }
   if (event.type !== "TurnSettled") return state
   const timer = state.timers.find(timer => timer.turnId === event.turnId)
+  if (timer && (metadata.recordedAt === undefined || timer.startedAt === null) && state.timeSpend[timer.index]!.ms !== null) {
+    const timeSpend = state.timeSpend.slice()
+    timeSpend[timer.index] = { turnId: event.turnId, ms: null }
+    state = { ...state, timeSpend }
+  }
   return {
     ...state, turns: state.turns.filter(turnId => turnId !== event.turnId),
     timers: state.timers.filter(timer => timer.turnId !== event.turnId),
-    timeSpend: state.timeSpend.map(turn => turn.turnId === event.turnId && (metadata.recordedAt === undefined || timer?.startedAt == null) ? { ...turn, ms: null } : turn),
     models: state.models.filter(call => call.turnId !== event.turnId),
     tools: state.tools.filter(call => call.turnId !== event.turnId),
     usdSpend: state.models.some(call => call.turnId === event.turnId)

@@ -1,5 +1,5 @@
 import { Context, Effect, Semaphore, Schema } from "effect"
-import { createRecordSource, createStore, EventLog, RuntimeError, CoreEvent, hasCoreEventType, type Recorded } from "@clavia/tardigrade-experimental-core"
+import { createRecordSource, createStore, EventLog, RuntimeError, CoreEvent, RecordMetadata, hasCoreEventType, type Recorded } from "@clavia/tardigrade-experimental-core"
 import { select } from "./thread"
 
 // createJournalStore observes an append-only journal without executing actor effects; its caller refreshes and closes it.
@@ -10,6 +10,7 @@ export function createJournalStore<Event extends object>(options: {
   const records = createRecordSource<Event>()
   const source = createStore(Context.make(EventLog, { events: records.events, records: records.records }))
   const decode = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
+  const decodeMetadata = Schema.decodeUnknownSync(RecordMetadata)
   const decodeCore = Schema.decodeUnknownSync(Schema.toType(CoreEvent), { onExcessProperty: "error" })
   let closed = false
   const lock = Semaphore.makeUnsafe(1)
@@ -23,8 +24,9 @@ export function createJournalStore<Event extends object>(options: {
       const current = source.get(records.records)
       const next = yield* options.read(current.length - 1)
       yield* Effect.try({ try: () => {
-        for (const { event, recordedAt } of next) {
-          if (recordedAt !== undefined && (!Number.isSafeInteger(recordedAt) || recordedAt < 0)) throw new RuntimeError("Recorded timestamp must be a nonnegative safe integer")
+        for (const record of next) {
+          decodeMetadata(record)
+          const { event } = record
           if ("effect" in event) throw new RuntimeError("Domain effect metadata is not supported")
           if (hasCoreEventType(event)) decodeCore(event)
           else decode(event)

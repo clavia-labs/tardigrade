@@ -8,7 +8,7 @@ import type { ActRequest, ActCancellation } from "./act"
 import { ExecutionResult } from "./execution-result"
 import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, type PromiseSettled, type EffectCancelled } from "./lifecycle"
 import { effectKey, EffectRef } from "./effect-ref"
-import type { Recorded, RuntimeEvent, RecordMetadata } from "./journal"
+import { RecordMetadata, type Recorded, type RuntimeEvent } from "./journal"
 import { type EffectWork, type IdentifiedEffectValue, type ExecutionHandle, type Proposed, type ServicesOf } from "./effects"
 import { DurableAtomCheckpoint } from "./durable"
 import { PromiseNotReady } from "./errors"
@@ -33,6 +33,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   type DeferredWork = IdentifiedEffectValue<ServicesOf<EffectValues>> & { readonly handle: ExecutionHandle }
   const disposers = new Set<() => void>()
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
+  const validateMetadata = Schema.decodeUnknownSync(RecordMetadata)
   const validateCore = Schema.decodeUnknownSync(Schema.toType(CoreEvent), { onExcessProperty: "error" })
   const freeze = <Value>(value: Value): Value => {
     if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
@@ -48,9 +49,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     return freeze(structuredClone(hasCoreEventType(event) ? validateCore(event) : validate(event)))
   }
   const recordOf = (record: Recorded<Event>): Recorded<Event> => {
-    const { recordedAt } = record
-    if (recordedAt !== undefined && (!Number.isSafeInteger(recordedAt) || recordedAt < 0)) throw new Error("Recorded timestamp must be a nonnegative safe integer")
-    return freeze(recordedAt === undefined ? { event: eventOf(record.event) } : { event: eventOf(record.event), recordedAt })
+    return freeze({ ...validateMetadata(record), event: eventOf(record.event) })
   }
   type Snapshot = {
     readonly events: readonly RuntimeEvent<Event>[]
