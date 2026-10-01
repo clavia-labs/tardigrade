@@ -15,6 +15,7 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
   const recorded = yield* Deferred.make<void>()
   const blocked = yield* Deferred.make<void>()
   const records: Recorded<Event>[] = []
+  const payloads = () => records.map(record => record.event)
   const executions: EffectRef[] = []
   let reopening = false
   let watches = 0
@@ -25,7 +26,7 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
     append: (expected, events) => Effect.gen(function* () {
       if (expected !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal length"))
       records.push(...events)
-      if (events.some(event => event.type === "ToolReturned")) yield* Deferred.succeed(recorded, undefined)
+      if (events.some(({ event }) => event.type === "ToolReturned")) yield* Deferred.succeed(recorded, undefined)
     }),
     appendWithCheckpoint: () => Effect.fail(new RuntimeError("Unexpected checkpoint")),
   }
@@ -65,18 +66,18 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
     yield* first.methods.start()
     yield* Deferred.await(recorded)
     yield* first.methods.barrier()
-    const returned = records.find(event => event.type === "ToolReturned")
-    const settled = records.find(event => event.type === "EffectSettled")
+    const returned = payloads().find(event => event.type === "ToolReturned")
+    const settled = payloads().find(event => event.type === "EffectSettled")
     if (!returned || returned.type !== "ToolReturned" || !returned.promise || !settled || settled.type !== "EffectSettled" || settled.outcome.status !== "fulfilled" || !Schema.is(Schema.Struct({ type: Schema.Literal("promise") }))(settled.outcome.value)) return yield* Effect.fail(new RuntimeError("Tool handle bypassed core deferred execution"))
-    if (records.some(event => event.type === "PromiseSettled") || effectKey(returned.promise.ref) !== effectKey(executions[0]!) || returned.promise.handle.executor !== options.executor) return yield* Effect.fail(new RuntimeError("Tool did not return its pending handle immediately"))
+    if (payloads().some(event => event.type === "PromiseSettled") || effectKey(returned.promise.ref) !== effectKey(executions[0]!) || returned.promise.handle.executor !== options.executor) return yield* Effect.fail(new RuntimeError("Tool did not return its pending handle immediately"))
   }).pipe(Effect.ensuring(first.close))
   reopening = true
   for (let cycle = 0; cycle <= options.extraReopens; cycle++) {
     const restored = yield* open()
     yield* Effect.gen(function* () {
       yield* restored.wait
-      const replies = records.filter(event => event.type === "MessageReceived" && event.kind === "message" && event.turnId === "promise:job")
-      if (executions.length !== (options.executor === "local" ? 2 : 1) || records.filter(event => event.type === "ToolReturned").length !== 1 || records.filter(event => event.type === "EffectRequested").length !== 1 || records.filter(event => event.type === "EffectSettled").length !== 1 || records.filter(event => event.type === "PromiseSettled").length !== 1 || replies.length !== 1) return yield* Effect.fail(new RuntimeError("Tool recovery duplicated or lost lifecycle delivery"))
+      const replies = payloads().filter(event => event.type === "MessageReceived" && event.kind === "message" && event.turnId === "promise:job")
+      if (executions.length !== (options.executor === "local" ? 2 : 1) || payloads().filter(event => event.type === "ToolReturned").length !== 1 || payloads().filter(event => event.type === "EffectRequested").length !== 1 || payloads().filter(event => event.type === "EffectSettled").length !== 1 || payloads().filter(event => event.type === "PromiseSettled").length !== 1 || replies.length !== 1) return yield* Effect.fail(new RuntimeError("Tool recovery duplicated or lost lifecycle delivery"))
       if (executions.some(ref => effectKey(ref) !== effectKey(executions[0]!)) || (options.executor === "local" ? watches !== 0 : watches !== 2)) return yield* Effect.fail(new RuntimeError("Tool recovery changed execution ownership or identity"))
       const reply = replies[0]!
       if (reply.type !== "MessageReceived" || reply.kind !== "message") return yield* Effect.fail(new RuntimeError("Expected tool inbox result"))

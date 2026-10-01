@@ -26,7 +26,7 @@ function reader<Event extends object>(filename: string, actor: string) {
 // observeBunThread reads committed events and projections without starting the actor.
 export function observeBunThread<Event extends object>(options: { readonly storage: string; readonly coordinate: ThreadCoordinate; readonly schema: Schema.Schema<Event> }) {
   const journal = createJournalStore({ schema: options.schema, read: reader<Event>(bunThreadPath(options.storage, options.coordinate), "events") })
-  return { ...createThreadStore(options.coordinate, journal), events: journal.events, refresh: journal.refresh, close: journal.close }
+  return { ...createThreadStore(options.coordinate, journal), events: journal.events, records: journal.records, refresh: journal.refresh, close: journal.close }
 }
 
 // observeBunSupervisor reads the thread directory without provisioning threads.

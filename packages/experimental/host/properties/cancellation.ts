@@ -1,6 +1,6 @@
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
-import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-experimental-core"
+import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, type RuntimeEvent, type StoredCheckpoint } from "@clavia/tardigrade-experimental-core"
 import { createActorStore } from "../src/runtime"
 import { Promises } from "../src/services/promises"
 
@@ -31,6 +31,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
   const release = yield* Deferred.make<void>()
   const settled = yield* Deferred.make<void>()
   const records: Recorded<Event>[] = []
+  const payloads = () => records.map(record => record.event)
   let saved: StoredCheckpoint | undefined
   let runtime!: ActorRuntime<Event>
   let reference!: EffectRef
@@ -43,7 +44,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
     if (position !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal position"))
     records.push(...events)
     if (checkpoint) saved = checkpoint
-    if (events.some(event => event.type === "EffectSettled")) yield* Deferred.succeed(settled, undefined)
+    if (events.some(({ event }) => event.type === "EffectSettled")) yield* Deferred.succeed(settled, undefined)
   })
   const journal: Journal<Event> = {
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
@@ -61,7 +62,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
         reference = context.ref
         signal = context.signal
         signal.addEventListener("abort", () => {
-          if (!options.completionFirst && !records.some(event => event.type === "EffectCancelled")) abortedBeforeCommit = true
+          if (!options.completionFirst && !payloads().some(event => event.type === "EffectCancelled")) abortedBeforeCommit = true
         }, { once: true })
         const execution = yield* EffectExecution
         if (options.mode === "submitting") return Job.defer(yield* execution.submit(Effect.gen(function* () {
@@ -106,7 +107,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
     if (abortedBeforeCommit || (!options.completionFirst && (!signal.aborted || cleanups === 0))) return yield* Effect.fail(new RuntimeError("Cancellation must commit before abort and cleanup"))
     if (!options.completionFirst && options.mode !== "inline" && !cleanedHandle) return yield* Effect.fail(new RuntimeError("Cancellation lost the deferred handle"))
     if (options.mode === "submitting" && !options.completionFirst) {
-      if (records.findIndex(event => event.type === "EffectCancelled") >= records.findIndex(event => event.type === "EffectSettled")) return yield* Effect.fail(new RuntimeError("Submission race did not preserve its late handle"))
+      if (payloads().findIndex(event => event.type === "EffectCancelled") >= payloads().findIndex(event => event.type === "EffectSettled")) return yield* Effect.fail(new RuntimeError("Submission race did not preserve its late handle"))
     }
     if (options.checkpoint) yield* first.checkpoint
   }).pipe(Effect.ensuring(Deferred.succeed(release, undefined).pipe(Effect.andThen(first.close))))
@@ -121,11 +122,11 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
       if (!options.completionFirst && (state.status !== "rejected" || !Schema.is(Schema.TaggedStruct("Cancelled", { reason: Schema.Literal(options.reason) }))(state.reason))) return yield* Effect.fail(new RuntimeError("Recovery lost the durable cancellation outcome"))
     }).pipe(Effect.ensuring(restored.close))
   }
-  const cancelled = records.filter(event => event.type === "EffectCancelled")
-  const completed = records.filter(event => event.type === "PromiseSettled" || (event.type === "EffectSettled" && options.mode === "inline"))
-  const delivered = records.filter(event => event.type === "Returned")
-  if (executions !== 1 || records.filter(event => event.type === "EffectRequested").length !== 1 || cancelled.length !== (options.completionFirst ? 0 : 1) || completed.length !== (options.completionFirst ? 1 : 0) || delivered.length !== 1) return yield* Effect.fail(new RuntimeError("Terminal decision changed or terminal callback duplicated"))
-  if (records.some(event => "ref" in event && effectKey(event.ref) !== effectKey(reference))) return yield* Effect.fail(new RuntimeError("Recovery changed the accepted reference"))
+  const cancelled = payloads().filter(event => event.type === "EffectCancelled")
+  const completed = payloads().filter(event => event.type === "PromiseSettled" || (event.type === "EffectSettled" && options.mode === "inline"))
+  const delivered = payloads().filter(event => event.type === "Returned")
+  if (executions !== 1 || payloads().filter(event => event.type === "EffectRequested").length !== 1 || cancelled.length !== (options.completionFirst ? 0 : 1) || completed.length !== (options.completionFirst ? 1 : 0) || delivered.length !== 1) return yield* Effect.fail(new RuntimeError("Terminal decision changed or terminal callback duplicated"))
+  if (payloads().some(event => "ref" in event && effectKey(event.ref) !== effectKey(reference))) return yield* Effect.fail(new RuntimeError("Recovery changed the accepted reference"))
 }).pipe(Effect.scoped, Effect.timeout(5_000)))
 
 // cancellationTerminality checks terminalExclusive and submissionPreserved (core/quint/cancellation.qnt), and deliverySound and callbackAtMostOnce (core/quint/terminalDelivery.qnt).
@@ -139,7 +140,7 @@ export const cancellationTerminality = fc.asyncProperty(fc.record({
 export const cancellationForwarding = fc.asyncProperty(fc.record({
   completedChild: fc.boolean(), duplicates: fc.integer({ min: 0, max: 3 }), reopens: fc.integer({ min: 0, max: 2 }), reason: fc.string({ maxLength: 20 }),
 }), options => Effect.runPromise(Effect.gen(function* () {
-  const histories: Recorded<Event>[][] = [[], [], [], []]
+  const histories: RuntimeEvent<Event>[][] = [[], [], [], []]
   const references = new Map<number, EffectRef>()
   const runtimes = new Map<number, ActorRuntime<Event>>()
   const executions = [0, 0, 0, 0]

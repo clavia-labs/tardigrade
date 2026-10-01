@@ -56,6 +56,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       yield* store.methods.record({ type: "TurnSettled", turnId: "first", outcome: "cancelled", reason: "stop" })
       now += options.second
       yield* store.methods.record({ type: "TurnSettled", turnId: "second", outcome: "completed", callId: "m2" })
+      if (records.some(record => !Number.isSafeInteger(record.recordedAt) || "recordedAt" in record.event)) return yield* Effect.fail(new RuntimeError("Journal metadata leaked into the event payload"))
       const state = store.getState().view
       if (JSON.stringify(state.trajectory.map(entry => entry.turnId)) !== JSON.stringify(["first", "second", "first", "second", "first"])) return yield* Effect.fail(new RuntimeError("Trajectory lost arrival order or turn attribution"))
       if (JSON.stringify(state.conversation) !== JSON.stringify(state.trajectory.map(entry => entry.message))) return yield* Effect.fail(new RuntimeError("Model conversation diverged from trajectory"))

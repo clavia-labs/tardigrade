@@ -6,7 +6,11 @@ export interface RecordMetadata {
   readonly recordedAt?: number
 }
 
-export type Recorded<Event> = (Event | CoreEvent) & RecordMetadata
+export type RuntimeEvent<Event> = Event | CoreEvent
+
+export interface Recorded<Event> extends RecordMetadata {
+  readonly event: RuntimeEvent<Event>
+}
 
 export interface StoredCheckpoint {
   readonly position: number

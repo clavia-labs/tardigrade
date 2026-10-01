@@ -29,6 +29,7 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
   const allowCommit = yield* Deferred.make<void>()
   const markerCommitted = yield* Deferred.make<void>()
   const records: Recorded<Event>[] = []
+  const payloads = () => records.map(record => record.event)
   let runtime!: ActorRuntime<Event>
   let earlyResult!: PromiseSettled
   let externalAcknowledged = false
@@ -38,13 +39,13 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined; Effect.void has a void result type.
     readCheckpoint: Effect.succeed(undefined),
     append: (expected, events) => Effect.gen(function* () {
-      if (events.some(event => event.type === "EffectSettled")) {
+      if (events.some(({ event }) => event.type === "EffectSettled")) {
         yield* Deferred.succeed(commitEntered, undefined)
         yield* Deferred.await(allowCommit)
       }
       if (expected !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal length"))
       records.push(...events)
-      if (events.some(event => event.type === "Marker" && event.name === "before")) yield* Deferred.succeed(markerCommitted, undefined)
+      if (events.some(({ event }) => event.type === "Marker" && event.name === "before")) yield* Deferred.succeed(markerCommitted, undefined)
     }),
     appendWithCheckpoint: () => Effect.fail(new RuntimeError("Unexpected checkpoint")),
   }
@@ -96,11 +97,11 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
     }
     for (let index = 0; index < options.updates; index++) yield* runtime.send([{ type: "Marker", name: `noise:${index}` }])
     yield* Effect.sleep(options.holdMillis)
-    if (records.some(event => event.type === "PromiseSettled" || event.type === "Returned") || externalAcknowledged) return yield* Effect.fail(new RuntimeError("Result accepted before effect settlement"))
+    if (payloads().some(event => event.type === "PromiseSettled" || event.type === "Returned") || externalAcknowledged) return yield* Effect.fail(new RuntimeError("Result accepted before effect settlement"))
     yield* Deferred.succeed(allowSettlement, undefined)
     yield* Deferred.await(commitEntered)
     yield* Effect.sleep(options.holdMillis)
-    if (records.some(event => event.type === "PromiseSettled" || event.type === "Returned") || store.getState().view.results.length !== 0 || externalAcknowledged) return yield* Effect.fail(new RuntimeError("Result accepted before durable commit"))
+    if (payloads().some(event => event.type === "PromiseSettled" || event.type === "Returned") || store.getState().view.results.length !== 0 || externalAcknowledged) return yield* Effect.fail(new RuntimeError("Result accepted before durable commit"))
     yield* Deferred.succeed(allowCommit, undefined)
     yield* store.wait
     if (mode === "external") {
@@ -110,13 +111,13 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
     for (let index = 0; index < options.duplicates; index++) yield* runtime.send([earlyResult])
     yield* store.wait
     const state = store.getState().view
-    const types = records.map(event => event.type)
+    const types = payloads().map(event => event.type)
     if (types.filter(type => type === "PromiseSettled").length !== 1 || types.filter(type => type === "Returned").length !== 1 || state.results.length !== 1 || state.results[0] !== (options.rejected ? "rejected" : options.value)) return yield* Effect.fail(new RuntimeError("Settlement or callback duplicated"))
     const markers = state.markers.filter(name => !name.startsWith("noise:"))
     if (mode === "external" && markers.join(",") !== "before,after") return yield* Effect.fail(new RuntimeError("Delivery retry repeated committed batch events"))
-    for (const [index, event] of records.entries()) {
+    for (const [index, event] of payloads().entries()) {
       if (event.type !== "PromiseSettled") continue
-      const preceding = records.slice(0, index).find(record => record.type === "EffectSettled" && effectKey(record.ref) === effectKey(event.ref))
+      const preceding = payloads().slice(0, index).find(record => record.type === "EffectSettled" && effectKey(record.ref) === effectKey(event.ref))
       if (preceding?.type !== "EffectSettled" || preceding.outcome.status !== "fulfilled") return yield* Effect.fail(new RuntimeError("Promise settlement requires a preceding successful effect settlement"))
     }
   }).pipe(Effect.ensuring(Deferred.succeed(allowSettlement, undefined).pipe(

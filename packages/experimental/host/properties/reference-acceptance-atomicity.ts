@@ -22,7 +22,8 @@ interface AcceptanceCase {
 
 // runAcceptanceScenario checks publication, failed acceptance, and recovery against the real host.
 const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Effect.gen(function* () {
-  const records: Recorded<Event>[] = [{ type: "Queued", invocation: options.invocation }, ...options.updates.map(amount => ({ type: "Updated" as const, amount }))]
+  const records: Recorded<Event>[] = [{ event: { type: "Queued", invocation: options.invocation } }, ...options.updates.map(amount => ({ event: { type: "Updated" as const, amount } }))]
+  const payloads = () => records.map(record => record.event)
   const position = records.length
   const entered = yield* Deferred.make<void>()
   const release = yield* Deferred.make<void>()
@@ -70,7 +71,7 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
     }
   }
   const append = (expected: number, events: readonly Recorded<Event>[], checkpoint?: StoredCheckpoint) => Effect.gen(function* () {
-    const accepted = events.find(event => event.type === "EffectRequested")
+    const accepted = events.map(record => record.event).find(event => event.type === "EffectRequested")
     if (accepted?.type === "EffectRequested" && blockAcceptance) {
       blockAcceptance = false
       attempted = accepted.ref
@@ -97,7 +98,7 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
   const first = yield* open()
   yield* Effect.gen(function* () {
     yield* Deferred.await(entered)
-    if (!attempted || attempted.seq !== position || first.get(request.ref) !== undefined || first.snapshot().bindings.size !== 0 || executionCount() !== 0 || records.some(event => event.type === "EffectRequested")) return yield* Effect.fail(new RuntimeError("Reference or execution published before request commit"))
+    if (!attempted || attempted.seq !== position || first.get(request.ref) !== undefined || first.snapshot().bindings.size !== 0 || executionCount() !== 0 || payloads().some(event => event.type === "EffectRequested")) return yield* Effect.fail(new RuntimeError("Reference or execution published before request commit"))
     yield* Deferred.succeed(release, undefined)
     const completion = yield* first.wait.pipe(Effect.result)
     if (options.failCommit) {
@@ -114,7 +115,7 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
   const reopened = yield* open()
   return yield* Effect.gen(function* () {
     yield* reopened.wait
-    const accepted = records.filter(event => event.type === "EffectRequested")
+    const accepted = payloads().filter(event => event.type === "EffectRequested")
     if (accepted.length !== 1 || accepted[0]!.type !== "EffectRequested" || accepted[0]!.ref.seq !== position || executions.length !== 1 || effectKey(executions[0]!) !== effectKey(accepted[0]!.ref) || reopened.getState().view.completed.join(",") !== String(options.invocation)) return yield* Effect.fail(new RuntimeError("Recovery changed identity or repeated execution"))
   }).pipe(Effect.ensuring(reopened.close))
 }).pipe(Effect.scoped, Effect.timeout(5_000)))

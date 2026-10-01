@@ -26,6 +26,7 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
   const recorded = yield* Deferred.make<void>()
   const blocked = yield* Deferred.make<void>()
   const records: Recorded<Event>[] = []
+  const payloads = () => records.map(record => record.event)
   const executions: EffectRef[] = []
   let reopening = false
   let watches = 0
@@ -35,8 +36,8 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
     readCheckpoint: Effect.succeed(undefined),
     append: (expected, events) => Effect.gen(function* () {
       if (expected !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal length"))
-      const settling = events.some(event => event.type === "EffectSettled")
-      if (settling && !events.some(event => event.type === "Submitted")) return yield* Effect.fail(new RuntimeError("Deferred notification was not committed with settlement"))
+      const settling = events.some(({ event }) => event.type === "EffectSettled")
+      if (settling && !events.some(({ event }) => event.type === "Submitted")) return yield* Effect.fail(new RuntimeError("Deferred notification was not committed with settlement"))
       records.push(...events)
       if (settling) yield* Deferred.succeed(recorded, undefined)
     }),
@@ -86,10 +87,10 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
     yield* Deferred.await(recorded)
     yield* first.methods.update()
     const submissions = first.getState().view.submissions
-    if (submissions.length !== 1 || first.getState().view.results.length !== 0 || records.some(event => event.type === "PromiseSettled")) return yield* Effect.fail(new RuntimeError("Deferred handle was not delivered before completion"))
+    if (submissions.length !== 1 || first.getState().view.results.length !== 0 || payloads().some(event => event.type === "PromiseSettled")) return yield* Effect.fail(new RuntimeError("Deferred handle was not delivered before completion"))
     if (submissions[0]!.handle.executor !== executor || effectKey(submissions[0]!.ref) !== effectKey(executions[0]!)) return yield* Effect.fail(new RuntimeError("Deferred notification changed its handle or reference"))
-    const settledIndex = records.findIndex(event => event.type === "EffectSettled")
-    if (records[settledIndex + 1]?.type !== "Submitted") return yield* Effect.fail(new RuntimeError("Deferred notification was not committed with settlement"))
+    const settledIndex = payloads().findIndex(event => event.type === "EffectSettled")
+    if (records[settledIndex + 1]?.event.type !== "Submitted") return yield* Effect.fail(new RuntimeError("Deferred notification was not committed with settlement"))
     for (let index = 0; index < options.updates; index++) yield* first.methods.update()
   }).pipe(Effect.ensuring(first.close))
   reopening = true
@@ -99,9 +100,9 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
       yield* restored.wait
       const expectedExecutions = executor === "local" ? 2 : 1
       const results = restored.getState().view.results
-      const settlements = records.filter(event => event.type === "PromiseSettled")
-      const requests = records.filter(event => event.type === "EffectRequested")
-      if (executions.length !== expectedExecutions || results.length !== 1 || restored.getState().view.submissions.length !== 1 || settlements.length !== 1 || requests.length !== 1 || records.filter(event => event.type === "EffectSettled").length !== 1 || records.filter(event => event.type === "Running").length !== 1) return yield* Effect.fail(new RuntimeError("Deferred recovery did not resume exactly once"))
+      const settlements = payloads().filter(event => event.type === "PromiseSettled")
+      const requests = payloads().filter(event => event.type === "EffectRequested")
+      if (executions.length !== expectedExecutions || results.length !== 1 || restored.getState().view.submissions.length !== 1 || settlements.length !== 1 || requests.length !== 1 || payloads().filter(event => event.type === "EffectSettled").length !== 1 || payloads().filter(event => event.type === "Running").length !== 1) return yield* Effect.fail(new RuntimeError("Deferred recovery did not resume exactly once"))
       if (requests[0]!.type !== "EffectRequested" || settlements[0]!.type !== "PromiseSettled" || executions.some(ref => effectKey(ref) !== effectKey(requests[0]!.ref)) || effectKey(settlements[0]!.ref) !== effectKey(requests[0]!.ref)) return yield* Effect.fail(new RuntimeError("Deferred recovery changed the accepted reference"))
       const result = results[0]!
       if (options.completion === "rejected" ? result.status !== "rejected" || result.reason !== "Recovered operation failed" : result.status !== "fulfilled" || result.value !== options.value) return yield* Effect.fail(new RuntimeError("Deferred recovery changed the result"))

@@ -1,6 +1,7 @@
 import { Context } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom } from "../atom"
+import type { Recorded } from "../journal"
 import type { EffectRef } from "../effect-ref"
 import type { DurableAtomCheckpoint } from "../durable"
 import type { EffectRequested, EffectSettled, PromiseSettled, EffectCancelled } from "../lifecycle"
@@ -8,6 +9,7 @@ import type { EffectRequested, EffectSettled, PromiseSettled, EffectCancelled } 
 export class EventLog extends Context.Service<EventLog, {
   // events extends an immutable prefix; another history requires another source atom.
   readonly events: Atom<readonly unknown[]>
+  readonly records?: Atom<readonly Recorded<unknown>[]>
   // position is the absolute log position immediately before events[0].
   readonly position?: number | (() => number)
   readonly durable?: ReadonlyMap<string, DurableAtomCheckpoint> | (() => ReadonlyMap<string, DurableAtomCheckpoint> | undefined)

@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Clock, Effect, Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { RuntimeError, type Journal } from "@clavia/tardigrade-experimental-core"
 
@@ -23,7 +23,7 @@ export type ThreadMethods<Methods> = {
 export function invocationLedger(journal: Journal<InvocationEvent>) {
   return Effect.gen(function* () {
     const decode = Schema.decodeUnknownEffect(InvocationEvent, { onExcessProperty: "error" })
-    let events = yield* Effect.forEach(yield* journal.read, event => decode(event).pipe(Effect.mapError(RuntimeError.from)))
+    let events = yield* Effect.forEach(yield* journal.read, record => decode(record.event).pipe(Effect.mapError(RuntimeError.from)))
     const requests = new Map<string, Extract<InvocationEvent, { type: "InvocationRequested" }>>()
     const receipts = new Map<string, InvocationReceipt>()
     for (const event of events) {
@@ -39,7 +39,8 @@ export function invocationLedger(journal: Journal<InvocationEvent>) {
     let failure: Error | undefined
     const append = (event: InvocationEvent) => Effect.gen(function* () {
       if (failure) return yield* Effect.fail(failure)
-      yield* journal.append(events.length, [event]).pipe(Effect.mapError(cause => {
+      const recordedAt = yield* Clock.currentTimeMillis
+      yield* journal.append(events.length, [{ event, recordedAt }]).pipe(Effect.mapError(cause => {
         failure = new RuntimeError("Invocation journal failed; reopen the host", { cause })
         return failure
       }))

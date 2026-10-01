@@ -6,7 +6,7 @@ import { toolActs } from "./tools"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Layer, Schema } from "effect"
 import { Workspace, memoryWorkspace, AgentBudget, DEFAULT_AGENT_TOOL_CALLS, fetchPackage, alarm, workspace, agents, type Package } from "@clavia/tardigrade-experimental-packages"
-import type { ActorRuntime, Recorded, ActorDefinition, ActorOutput, EffectExecution, ActService } from "@clavia/tardigrade-experimental-core"
+import type { ActorRuntime, RuntimeEvent, ActorDefinition, ActorOutput, EffectExecution, ActService } from "@clavia/tardigrade-experimental-core"
 import { Actor, Promises, localActors, createActorStore, type ActorCaller } from "@clavia/tardigrade-experimental-host"
 import { createActor } from "../agent"
 import { budgetState } from "../atoms/durable/budget"
@@ -31,7 +31,7 @@ export interface AssistantOptions<Services = never> {
   readonly services: Layer.Layer<Model | ModelLock | Promises | PermissionRequests | Services, Error, Actor> | ((context: AssistantContext, host: ActorRuntime<Event>) => Layer.Layer<Model | ModelLock | Promises | PermissionRequests | Services, Error, Actor>)
   readonly packages?: readonly Package<Services | Actor | Workspace | Promises | EffectExecution>[]
   readonly maxChildDepth: number
-  readonly onEvent?: (event: Recorded<Event>, depth: number) => void
+  readonly onEvent?: (event: RuntimeEvent<Event>, depth: number) => void
 }
 
 // assistantServices supplies local child actors while the host chooses model and promise implementations.
@@ -77,6 +77,6 @@ export function assistantRuntime<Services = never>(options: AssistantOptions<Ser
   return {
     actorContext,
     services: (host: ActorRuntime<Event>) => assistantServices(host, options, depth, parent, budget),
-    onEvent: (event: Recorded<Event>) => options.onEvent?.(event, depth),
+    onEvent: (event: RuntimeEvent<Event>) => options.onEvent?.(event, depth),
   }
 }

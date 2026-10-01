@@ -16,10 +16,11 @@ const line = (value: unknown) => value == null ? "" : Array.from(stripVTControlC
 }).join("").replace(/\s+/g, " ").trim()
 
 
-function formatEntry(event: Recorded<Event>, seq: number, width = DEFAULT_WATCH_WIDTH, color = false): string {
+function formatEntry(record: Recorded<Event>, seq: number, width = DEFAULT_WATCH_WIDTH, color = false): string {
   if (!Number.isSafeInteger(width) || width < 1) throw new RuntimeError("Event log width must be a positive integer")
-  const { type, ...fields } = event
-  const text = `${String(seq).padStart(6, "0")}  ${String(type).padEnd(22)}  ${line(JSON.stringify(fields))}`.trimEnd()
+  const { event, recordedAt } = record
+  const { type, ...payload } = event
+  const text = `${String(seq).padStart(6, "0")}  ${String(type).padEnd(22)}  ${recordedAt ?? "unknown"}  ${line(JSON.stringify(payload))}`.trimEnd()
   let row = text
   if (Bun.stringWidth(text) > width) {
     row = ""
@@ -74,11 +75,11 @@ export const watchLog = (options: {
     }
     const current = store!
     yield* current.refresh.pipe(Effect.mapError(RuntimeError.from))
-    const entries = yield* Effect.try({ try: () => current.events.get().slice(after + 1, after + 1 + options.batchSize), catch: RuntimeError.from })
-    for (const event of entries) {
+    const entries = yield* Effect.try({ try: () => current.records.get().slice(after + 1, after + 1 + options.batchSize), catch: RuntimeError.from })
+    for (const record of entries) {
       const seq = after + 1
       const width = options.width ?? (process.stdout.columns ? process.stdout.columns - 1 : DEFAULT_WATCH_WIDTH)
-      yield* Console.log(options.json ? JSON.stringify({ seq, event }) : formatEntry(event, seq, Math.max(1, width), !!process.stdout.isTTY))
+      yield* Console.log(options.json ? JSON.stringify({ seq, ...record }) : formatEntry(record, seq, Math.max(1, width), !!process.stdout.isTTY))
       after = seq
     }
     if (entries.length === options.batchSize) continue
