@@ -1,3 +1,4 @@
+import atoms from "@docs/getting-started/atoms.mdx?doc-source"
 import actorChecking from "@docs/references/actor-checking.mdx?doc-source"
 import components from "@docs/getting-started/components.mdx?doc-source"
 import cli from "@docs/references/cli.mdx?doc-source"
@@ -15,6 +16,7 @@ import why from "@docs/start-here/Why.mdx?doc-source"
 import stateInitialisation from "@docs/migration/state-initialisation.mdx?doc-source"
 
 const sources: Readonly<Record<string, string>> = {
+  "getting-started/atoms.mdx": atoms,
   "references/actor-checking.mdx": actorChecking,
   "getting-started/components.mdx": components,
   "references/cli.mdx": cli,

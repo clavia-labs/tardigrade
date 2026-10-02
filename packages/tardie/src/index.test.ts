@@ -4,10 +4,10 @@ import { AtomState, createEventLog, defineActor, initialiseState } from "tardie/
 import { actor } from "tardie/deprecated"
 import { codeMode } from "tardie/deprecated/component/code"
 import * as legacyAgent from "tardie/deprecated/agent"
-import { definePackage } from "tardie/libraries"
+import { defineLibrary } from "tardie/libraries"
 
 test("public entrypoints expose actor and migration APIs", () => {
-  for (const value of [createEventLog, defineActor, initialiseState, definePackage, actor]) {
+  for (const value of [createEventLog, defineActor, initialiseState, defineLibrary, actor]) {
     expect(typeof value).toBe("function")
   }
   expect(typeof AtomState).toBe("symbol")

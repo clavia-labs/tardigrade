@@ -7,11 +7,11 @@ import { compact } from "./atoms/compact"
 import { infer } from "./atoms/infer"
 import { permissions } from "./atoms/permission-request"
 import { systemPrompt } from "./atoms/system"
-import { packageTools, withPermissions, withBudget } from "./atoms/tools"
+import { tools as libraryTools, withPermissions, withBudget } from "./atoms/tools"
 import { pendingTools } from "./atoms/durable/tools"
 
 export const createActor = defineActor("tardie", Effect.gen(function* () {
-  const available = yield* packageTools
+  const available = yield* libraryTools()
   const permission = permissions(pendingTools, { tools: available })
   const permitted = withPermissions(available, permission)
   const budget = toolBudget(pendingTools, { configure: false })

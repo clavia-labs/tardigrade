@@ -7,32 +7,44 @@ sectionOrder: 3
 order: 2
 ---
 
-Tardigrade runs each actor thread in a SQLite-backed Cloudflare Durable Object. The generated Worker routes requests to actors and threads, stores their event logs, and resumes unfinished work through Durable Object alarms.
+Each actor instance runs in a SQLite-backed Durable Object. The host keeps a supervisor journal and separate logical thread journals in that object's storage. The Worker routes an instance ID to its `ActorDO`:
 
 ```ts title="worker.ts"
+import { DurableObject } from "cloudflare:workers"
+import { actorContext } from "tardie/agent"
+import { createCloudflareHost, methodHttp } from "tardie/platform/cloudflare"
 import definition from "./actor"
-import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/deprecated/worker"
-import { providerLayer } from "tardie/model/providers/openai-compat"
-import modelLock from "./models.lock.json"
+import { services } from "./services"
 
-const services = workerModelServices({
-  model: { providerLayer },
-  scope: modelScopeFrom(modelLock)
-})
+interface Env {
+  readonly ACTORS: DurableObjectNamespace<ActorDO>
+  readonly TARDIGRADE_CONFIG: { readonly models: unknown } | string
+  readonly TARDIGRADE_TOKEN?: string
+  readonly [key: string]: unknown
+}
 
-const host = defineWorkerHost(definition, { services })
-const http = workerHttp(host)
-
-// host exposes the Durable Object classes (platform/cloudflare/test/actor.workers.ts).
-// HTTP request -> Worker handler
-//                  +-- ActorDO: allocates and tracks threads
-//                  +-- ThreadDO: stores events and executes a thread
-export const { ActorDO, ThreadDO } = host
+export class ActorDO extends DurableObject<Env> {
+  private readonly host = createCloudflareHost({
+    actor: definition,
+    actorContext,
+    storage: this.ctx.storage,
+    services: () => services((typeof this.env.TARDIGRADE_CONFIG === "string" ? JSON.parse(this.env.TARDIGRADE_CONFIG) : this.env.TARDIGRADE_CONFIG).models, this.env),
+  })
+  private readonly handler = methodHttp(this.host, {
+    ...(this.env.TARDIGRADE_TOKEN ? { token: this.env.TARDIGRADE_TOKEN } : {}),
+  })
+  fetch(request: Request): Promise<Response> { return this.handler(request) }
+}
 
 export default {
-  fetch: http.fetch
+  fetch(request: Request, env: Env): Promise<Response> | Response {
+    const instance = /^\/v1\/actors\/([^/]+)\/threads(?:\/|$)/.exec(new URL(request.url).pathname)?.[1] ?? "main"
+    return env.ACTORS.getByName(decodeURIComponent(instance)).fetch(request)
+  },
 }
 ```
+
+`services` comes from the generated `services.ts` and supplies model and tool implementations. `actorContext` selects the services visible to agent setup. `methodHttp` uses the methods returned by the actor; it needs no separate method registry.
 
 ## Verify locally
 
@@ -42,16 +54,15 @@ Start with a project from the [Quickstart](/docs/quickstart), then install Wrang
 bun add --dev wrangler@latest
 ```
 
-Add `TARDIGRADE_TOKEN` and each configured provider credential to `.dev.vars`. Interactive `tdg setup` saves credentials there; credentials supplied only through the environment must also be available to Wrangler. Choose a local token and use the same value with the CLI's `--token` option. The Worker requires a token for protected routes, including local requests.
+Add `TARDIGRADE_TOKEN` and each configured provider credential to `.dev.vars`. Interactive `tdg setup` saves credentials there; credentials supplied only through the environment must also be available to Wrangler. Set a token and use the same value with the CLI's `--token` option. The generated Worker enables bearer authentication when `TARDIGRADE_TOKEN` is present.
 
-Apply the local catalog migration, then start the Worker:
+Start the Worker:
 
 ```bash
-bunx wrangler d1 migrations apply CATALOG_DB --local
 bun run dev:cloudflare
 ```
 
-Set `TARDIGRADE_TOKEN` in the calling shell to the value saved in `.dev.vars`. Wrangler reads that file for the Worker; it does not export its values to another shell. Use the URL printed by Wrangler when allocating and calling a thread. `/healthz` is public; the remaining commands require the token from `.dev.vars`:
+Set `TARDIGRADE_TOKEN` in the calling shell to the value saved in `.dev.vars`. Wrangler reads that file for the Worker; it does not export its values to another shell. Use the URL printed by Wrangler when allocating and calling a thread. `/healthz` is public; when authentication is enabled, the remaining commands require the token from `.dev.vars`:
 
 ```bash
 curl http://localhost:8787/healthz
@@ -63,17 +74,7 @@ tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickst
 
 `tdg init` creates `wrangler.jsonc` and the Worker entry for your actor. Run `tdg setup` to select a model and write its visible configuration to the project.
 
-Before the first deployment, create the D1 database named by `database_name` in `wrangler.jsonc`. For a project named `tardie-agent`:
-
-```bash
-bunx wrangler d1 create tardie-agent-catalog
-```
-
-Copy the returned `database_id` into the existing `CATALOG_DB` entry under `d1_databases`; keep its binding name and migrations directory. See [Cloudflare's D1 setup](https://developers.cloudflare.com/d1/get-started/) for database creation and binding details. Apply the schema to the remote database:
-
-```bash
-bunx wrangler d1 migrations apply CATALOG_DB --remote
-```
+The generated manifest binds `ACTORS` to the exported `ActorDO` class and declares its SQLite migration. Model metadata comes from `models.lock.json`, bundled with the Worker.
 
 Store the Tardigrade token and each model provider credential as Wrangler secrets:
 
@@ -90,4 +91,4 @@ Use the credential name configured for your provider in place of `OPENAI_API_KEY
 bunx wrangler deploy
 ```
 
-The deployed Worker exposes the same actor, thread, method, and event routes used during local development.
+The deployed Worker exposes the same thread creation, method invocation, cancellation, and event routes used during local development.

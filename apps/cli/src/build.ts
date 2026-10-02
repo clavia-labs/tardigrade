@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { targetCoordinate } from "@clavia/tardigrade-deprecated-core/actor"
 import { createHash } from "node:crypto"
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
@@ -28,7 +29,7 @@ export interface BuildActorOptions {
 
 export interface BuiltActor {
   readonly directory: string
-  readonly manifest: ActorArtifactManifest
+  readonly manifest: ActorArtifactManifest & { readonly runtime?: "atoms" }
 }
 
 export interface LintedActorMethod {
@@ -43,7 +44,7 @@ export interface LintedActorCall {
 
 export interface LintedActor {
   readonly name: string
-  readonly methods: ReadonlyArray<LintedActorMethod>
+  readonly methods: ReadonlyArray<LintedActorMethod> | null
   readonly calls: ReadonlyArray<LintedActorCall>
 }
 
@@ -74,36 +75,50 @@ const definitionFrom = (loaded: Record<string, unknown>): Actor<unknown> => {
   return candidate as Actor<unknown>
 }
 
-const definitionOf = async (modulePath: string): Promise<Actor<unknown>> =>
-  definitionFrom(await actorModuleOf(modulePath))
+interface AtomActorDefinition {
+  readonly actorName: string
+  readonly setup: Effect.Effect<unknown, unknown, unknown>
+  readonly graph: () => Effect.Effect<unknown, unknown, unknown>
+}
 
-// loadBuiltActor returns the validated definition from one built artifact.
-export const loadBuiltActor = (built: BuiltActor): Promise<Actor<unknown>> =>
-  definitionOf(join(built.directory, ACTOR_MODULE_FILE))
+const atomDefinitionFrom = (loaded: Record<string, unknown>) => {
+  const candidate = loaded.default
+  if (typeof candidate !== "object" || candidate === null || !("actorName" in candidate)) return undefined
+  if (typeof candidate.actorName !== "string" || !ACTOR_NAME_PATTERN.test(candidate.actorName) || !("setup" in candidate) || !Effect.isEffect(candidate.setup) || !("graph" in candidate) || typeof candidate.graph !== "function") throw new Error("invalid atom actor definition")
+  return { name: candidate.actorName, definition: candidate as AtomActorDefinition }
+}
+
+// loadBuiltActor returns a validated component or atom definition from a built artifact.
+export const loadBuiltActor = async (built: BuiltActor): Promise<Actor<unknown> | AtomActorDefinition> => {
+  const loaded = await actorModuleOf(join(built.directory, ACTOR_MODULE_FILE))
+  return atomDefinitionFrom(loaded)?.definition ?? definitionFrom(loaded)
+}
 
 export const tardiePlugin = (entry: string = TARDIE_ENTRY): Bun.BunPlugin => ({
   name: "tardie",
   setup(builder) {
-    builder.onResolve({ filter: /^tardie(?:\/.*)?$/ }, ({ path }) => ({ path: path === "tardie/deprecated" ? entry : Bun.resolveSync(path, dirname(entry)) }))
+    builder.onResolve({ filter: /^tardie\/deprecated(?:\/.*)?$/ }, ({ path }) => ({ path: path === "tardie/deprecated" ? entry : Bun.resolveSync(path, dirname(entry)) }))
   }
 })
 
 const bundleActor = async (source: string, outdir: string): Promise<string> => {
-  const result = await Bun.build({
-    entrypoints: [source],
-    outdir,
-    naming: ACTOR_MODULE_FILE,
-    target: "bun",
-    format: "esm",
-    minify: false,
-    sourcemap: "none",
-    plugins: [tardiePlugin()]
-  })
-  if (!result.success) {
-    const detail = result.logs.map((log) => log.message).join("\n")
-    throw new Error(detail.length > 0 ? detail : `could not build ${source}`)
-  }
-  return join(outdir, ACTOR_MODULE_FILE)
+  const modulePath = join(outdir, ACTOR_MODULE_FILE)
+  const script = `
+    const result = await Bun.build({
+      entrypoints: [${JSON.stringify(source)}], outdir: ${JSON.stringify(outdir)},
+      naming: ${JSON.stringify(ACTOR_MODULE_FILE)}, target: "bun", format: "esm", minify: false, sourcemap: "none",
+      plugins: [{ name: "tardie", setup(build) {
+        build.onResolve({ filter: /^tardie(?:\\/.*)?$/ }, ({ path }) => ({
+          path: path === "tardie/deprecated" ? ${JSON.stringify(TARDIE_ENTRY)} : Bun.resolveSync(path, ${JSON.stringify(dirname(TARDIE_ENTRY))})
+        }));
+      } }],
+    });
+    if (!result.success) throw new AggregateError(result.logs, "Could not build actor");
+  `
+  const compiled = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" })
+  const [code, errors] = await Promise.all([compiled.exited, new Response(compiled.stderr).text(), new Response(compiled.stdout).text()])
+  if (code !== 0) throw new Error(errors.trim() || `Could not build ${source}`)
+  return modulePath
 }
 
 const contractOf = (definition: Actor<unknown>): ActorContract => {
@@ -119,10 +134,16 @@ export const lintActor = async (entry: string, options: Pick<BuildActorOptions, 
   const source = resolve(cwd, entry)
   const temporary = await mkdtemp(join(tmpdir(), "tdg-lint-"))
   try {
-    const definition = await definitionOf(await bundleActor(source, temporary))
+    const loaded = await actorModuleOf(await bundleActor(source, temporary))
+    const modern = atomDefinitionFrom(loaded)
+    if (modern) {
+      return { name: modern.name, methods: null, calls: [] }
+    }
+    const definition = definitionFrom(loaded)
     const contract = contractOf(definition)
     return {
       name: definition.name,
+      ...(modern ? { runtime: "atoms" as const } : {}),
       methods: contract.methods.map((method) => ({ name: method.name, handling: method.handling })),
       calls: contract.calls.map((call) => ({
         method: call.methodName ?? "<undeclared>",
@@ -138,7 +159,7 @@ export const lintActor = async (entry: string, options: Pick<BuildActorOptions, 
 
 export const lintSummary = (linted: LintedActor): string => [
   `linted  ${linted.name}`,
-  `methods ${linted.methods.length}`,
+  `methods ${linted.methods === null ? "validated during actor setup" : linted.methods.length}`,
   `calls   ${linted.calls.length}`
 ].join("\n")
 
@@ -150,11 +171,14 @@ export const buildActor = async (entry: string, options: BuildActorOptions = {})
   const temporary = await mkdtemp(join(dirname(out), ".tdg-build-"))
   try {
     const modulePath = await bundleActor(source, temporary)
-    const definition = await definitionOf(modulePath)
+    const loaded = await actorModuleOf(modulePath)
+    const modern = atomDefinitionFrom(loaded)
+    const definition = modern ?? definitionFrom(loaded)
     const code = await readFile(modulePath)
-    const manifest: ActorArtifactManifest = {
+    const manifest: BuiltActor["manifest"] = {
       schema: ACTOR_ARTIFACT_VERSION,
       name: definition.name,
+      ...(modern ? { runtime: "atoms" as const } : {}),
       module: ACTOR_MODULE_FILE,
       digest: `sha256:${createHash("sha256").update(code).digest("hex")}`
     }

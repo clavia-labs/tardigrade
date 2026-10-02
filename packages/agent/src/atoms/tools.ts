@@ -7,7 +7,8 @@ import { ToolCalled, ToolReturned, BudgetResolved, type Event, ToolCall } from "
 import { type PermissionState } from "./durable/permissions"
 import { toolPromises } from "./tool-promises"
 import { type ToolBudgetView } from "./budget-request"
-import { type ToolSpec } from "@clavia/tardigrade-libraries/types"
+import { type ToolSpec, type LibrarySource } from "@clavia/tardigrade-libraries/types"
+import { selectLibraries } from "../contracts/libraries"
 import { ToolCatalog } from "../actor/context"
 
 export type ToolPlan =
@@ -22,17 +23,23 @@ export interface ToolView<R = never> {
 
 export type Tools<R = never> = ActorOutput<ToolView<R>, Event, R>
 
-// packageTools constructs tool proposals from the platform's data catalog.
-export const packageTools = Effect.map(ToolCatalog, catalog => {
-  const request = requests(ExecuteTool.request, input => JSON.stringify([input.tag, input.input]))
-  return effectAtom(get => toolValue(get(pendingTools), {
-    events: get(toolPromises).events, acts: {},
-    view: {
-      specs: catalog.specs, request,
-      prepare: (call: typeof ToolCall.Type): ToolPlan => ({ position: "ready", counted: catalog.names.includes(call.name) }),
-    },
-  })).pipe(NativeAtom.withLabel("tools"))
-})
+// tools constructs tool proposals from the configured library catalog.
+export function tools(sources?: readonly LibrarySource[]) {
+  return Effect.map(ToolCatalog, catalog => {
+    const libraries = sources ? selectLibraries(sources, catalog.libraries ?? []) : undefined
+    const selected = libraries ? new Set(libraries.flatMap(library => library.specs.map(spec => spec.name))) : undefined
+    const specs = selected ? catalog.specs.filter(spec => selected.has(spec.name)) : catalog.specs
+    const names = libraries ? libraries.flatMap(library => library.specs.flatMap(spec => [spec.name, `${library.name}__${spec.method}`])) : catalog.names
+    const request = requests(ExecuteTool.request, input => JSON.stringify([input.tag, input.input]))
+    return effectAtom(get => toolValue(get(pendingTools), {
+      events: get(toolPromises).events, acts: {},
+      view: {
+        specs, request,
+        prepare: (call: typeof ToolCall.Type): ToolPlan => names.includes(call.name) ? { position: "ready", counted: true } : { position: "ready", counted: false, error: `Unknown tool: ${call.name}` },
+      },
+    })).pipe(NativeAtom.withLabel("tools"))
+  })
+}
 
 // withPermissions waits for a decision and denies execution without counting a call.
 export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<ActorOutput<typeof PermissionState.Type, Event, P>>): Atom<Tools<R | P>> {
@@ -72,8 +79,10 @@ export function withBudget<R, B>(tools: Atom<Tools<R>>, budget: Atom<ToolBudgetV
     const candidate = pending ? inner.view.prepare(pending) : null
     const authorized = candidate?.position === "ready" && candidate.counted
     return toolValue<R | B>(get(pendingTools), {
-      events: { ...inner.events, ...(authorized ? budgetOutput.events : {}) },
-      acts: { ...inner.acts, ...(authorized ? budgetOutput.acts : {}) },
+      events: { ...inner.events, ...(authorized ? budgetOutput.events : {  })
+},
+      acts: { ...inner.acts, ...(authorized ? budgetOutput.acts : {  })
+},
       view: {
         request: inner.view.request,
         specs: allowance.exhausted ? [] : requestTool && allowance.remaining === 0 ? inner.view.specs.filter(tool => tool.name === requestTool) : inner.view.specs,
@@ -120,7 +129,8 @@ function toolValue<R>(state: typeof ToolState.Type, tools: Tools<R>): Tools<R> {
       ...acts,
       execution: tools.view.request({
         tag: call.callId,
-        input: { call, counted: plan.counted, ...(plan.value !== undefined ? { value: plan.value } : {}), ...(plan.error !== undefined ? { error: plan.error } : {}) },
+        input: { call, counted: plan.counted, ...(plan.value !== undefined ? { value: plan.value } : {}), ...(plan.error !== undefined ? { error: plan.error } : {  })
+},
         onRequested: () => [{ type: "ToolCalled", callId: call.callId, counted: plan.counted } satisfies ToolCalled],
         onDeferred: (handle, ref) => {
           const promise = { type: "promise" as const, ref, handle }

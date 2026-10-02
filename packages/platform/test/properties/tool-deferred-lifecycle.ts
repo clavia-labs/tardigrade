@@ -1,9 +1,10 @@
 import { createTestStore } from "./runtime/store"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
+import { Rpc } from "effect/unstable/rpc"
 import * as fc from "fast-check"
-import { defineActor, durablePromise, effectKey, EffectExecution, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, Promises } from "@clavia/tardigrade-core"
-import { definePackage, promiseTool, tool } from "@clavia/tardigrade-libraries"
-import { packageTools } from "@clavia/tardigrade-agent/atoms/tools"
+import { defineActor, durablePromise, effectKey, EffectExecution, ExecutionHandle, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, Promises } from "@clavia/tardigrade-core"
+import { defineLibrary, MethodExecution } from "@clavia/tardigrade-libraries"
+import { tools as libraryTools } from "@clavia/tardigrade-agent/atoms/tools"
 import { ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
 import { Event } from "@clavia/tardigrade-agent/contracts/events"
 import { toolActs } from "@clavia/tardigrade-agent/services/tools"
@@ -32,24 +33,23 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
     appendWithCheckpoint: () => Effect.fail(new RuntimeError("Unexpected checkpoint")),
   }
   const input = Schema.Struct({ value: Schema.Finite })
-  const method = options.executor === "local" ? tool({ name: "job", description: "Local job", input, execution: "async", run: value => Effect.gen(function* () {
-    const current = yield* EffectExecution
-    executions.push(current.ref)
+  const libraries = [defineLibrary({ name: "test", description: "Jobs", methods: [
+    Rpc.make("job", { payload: input, success: options.executor === "local" ? Schema.Finite : ExecutionHandle, error: Schema.String })
+      .annotate(MethodExecution, "background"),
+  ] }).implement({ job: value => Effect.gen(function* () {
+    executions.push((yield* EffectExecution).ref)
+    if (options.executor === "remote") return { executor: "remote", id: "job" }
     if (!reopening) yield* Deferred.await(blocked)
     if (options.rejected) return yield* Effect.fail(new RuntimeError("Job failed"))
     return value.value
-  }) }) : promiseTool({ name: "job", description: "Remote job", input, submit: () => Effect.gen(function* () {
-    executions.push((yield* EffectExecution).ref)
-    return { executor: "remote", id: "job" }
-  }) })
-  const packages = [definePackage({ name: "test", description: "Jobs", methods: [method] })]
+  }).pipe(Effect.mapError(String)) }, { submit: options.executor === "remote" ? ["job"] : [] })]
   const actor = defineActor("tool-recovery", Effect.gen(function* () {
-    const tools = yield* packageTools
+    const tools = yield* libraryTools()
     return { atom: tools, schema: Event }
   }))
   const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, promiseDelivery: { retryIntervalMs: 1 },
     actorContext: services => Context.make(ToolCatalog, Context.get(services, ToolCatalog)),
-    services: (host: ActorRuntime<Event>) => Layer.merge(toolActs(packages), Layer.succeed(Promises, {
+    services: (host: ActorRuntime<Event>) => Layer.merge(toolActs(libraries), Layer.succeed(Promises, {
       watch: registration => Effect.gen(function* () {
         watches++
         yield* Deferred.succeed(registered, undefined)

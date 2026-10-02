@@ -1,11 +1,12 @@
 import { createTestStore } from "./runtime/store"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
+import { Rpc } from "effect/unstable/rpc"
 import * as fc from "fast-check"
 import { defineActor, atom, abortRequested as cancel, Isolate, RuntimeError, type CoreEvent, Promises } from "@clavia/tardigrade-core"
 import { infer } from "@clavia/tardigrade-agent/atoms/infer"
 import { codeMode } from "@clavia/tardigrade-agent/atoms/code-mode"
 import { pendingTools } from "@clavia/tardigrade-agent/atoms/durable/tools"
-import { packageTools, withPermissions, withBudget } from "@clavia/tardigrade-agent/atoms/tools"
+import { tools as libraryTools, withPermissions, withBudget } from "@clavia/tardigrade-agent/atoms/tools"
 import { permissions } from "@clavia/tardigrade-agent/atoms/permission-request"
 import { toolBudget } from "@clavia/tardigrade-agent/atoms/budget-request"
 import { Generate, Summarize, ExecuteTool, AskPermission, AskBudget } from "@clavia/tardigrade-agent/contracts/acts"
@@ -14,7 +15,7 @@ import { ModelInfo, ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
 import { createActor } from "@clavia/tardigrade-agent"
 import { codeModeActs } from "@clavia/tardigrade-agent/services/code-mode"
 import { Event, EvaluateCode } from "@clavia/tardigrade-agent/contracts/code-mode"
-import { definePackage, tool } from "@clavia/tardigrade-libraries"
+import { defineLibrary } from "@clavia/tardigrade-libraries"
 
 // compactionCancellationRecovery checks next-turn progress after stopping a real compaction projection.
 export const compactionCancellationRecovery = fc.asyncProperty(fc.record({ reason: fc.string({ maxLength: 20 }), reopen: fc.boolean(), queued: fc.boolean() }), options => Effect.runPromise(Effect.gen(function* () {
@@ -64,7 +65,7 @@ export const agentTurnCancellation = fc.asyncProperty(fc.record({
   const entered = yield* Deferred.make<void>()
   let generated = 0
   const definition = defineActor("turn-cancellation", Effect.gen(function* () {
-    const available = yield* packageTools
+    const available = yield* libraryTools()
     const governed = withPermissions(available, permissions(pendingTools, { policy: { default: options.phase === "permission" ? "ask" : "allow", actions: {} } }))
     const tools = withBudget(governed, toolBudget(pendingTools, { maxCalls: options.phase === "budget" ? 0 : options.calls, requestTool: "request_budget" }))
     const node = yield* infer(atom(get => ({ system: "", tools: get(tools), context: { view: { position: "ready" as const, messages: [] }, events: {}, acts: {} } })))
@@ -163,19 +164,21 @@ export const agentCancellationRecovery = fc.asyncProperty(fc.record({ reason: fc
 export const codeModeCancellationRecovery = fc.asyncProperty(fc.record({ reason: fc.string({ maxLength: 20 }), value: fc.integer({ min: -100, max: 100 }) }), options => Effect.runPromise(Effect.gen(function* () {
   const entered = yield* Deferred.make<void>()
   let executions = 0
-  const packages = [definePackage({ name: "test", description: "Jobs", methods: [tool({ name: "job", description: "Job", input: Schema.Struct({}), run: () => Effect.gen(function* () {
+  const libraries = [defineLibrary({ name: "test", description: "Jobs", methods: [
+    Rpc.make("job", { payload: Schema.Struct({}), success: Schema.Finite, error: Schema.String }),
+  ] }).implement({ job: () => Effect.gen(function* () {
     executions++
     if (executions === 1) {
       yield* Deferred.succeed(entered, undefined)
       return yield* Effect.never
     }
     return options.value
-  }) })] })]
+  }).pipe(Effect.mapError(String)) })]
   const definition = defineActor("code-cancellation", Effect.gen(function* () {
     const node = yield* codeMode({ name: "code" })
     return { atom: node, schema: Event }
   }))
-  const store = yield* createTestStore({ actor: definition, actorContext: Context.pick(ToolCatalog), services: () => codeModeActs(packages).pipe(Layer.provideMerge(Layer.succeed(Isolate, {
+  const store = yield* createTestStore({ actor: definition, actorContext: Context.pick(ToolCatalog), services: () => codeModeActs(libraries).pipe(Layer.provideMerge(Layer.succeed(Isolate, {
     run: (_input, onCall) => onCall({ ordinal: 0, package: "test", method: "job", input: {} }).pipe(Effect.map(result => ({ result, logs: [] }))),
   }))) })
   yield* Effect.gen(function* () {

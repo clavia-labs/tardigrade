@@ -1,3 +1,4 @@
+export { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 import { Effect, Exit } from "effect"
 import { type ActorMethods, createThreadHost, type ThreadStorage } from "@clavia/tardigrade-core"
 import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"

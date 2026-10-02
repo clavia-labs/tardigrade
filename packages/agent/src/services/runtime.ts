@@ -4,7 +4,7 @@ import { askPermission, PermissionRequests } from "./decisions"
 import { toolActs } from "./tools"
 import { Actor, RuntimeError, type ActorCaller, type ActorRuntime, type RuntimeEvent, type ActorDefinition, type ActorOutput, type EffectExecution, type ActService, Promises, localActors, createActorStore } from "@clavia/tardigrade-core"
 import { Effect, Layer, Schema } from "effect"
-import { Workspace, memoryWorkspace, AgentMessage, AgentBudget, DEFAULT_AGENT_TOOL_CALLS, fetchPackage, alarm, workspace, agents, type Package } from "@clavia/tardigrade-libraries"
+import { Workspace, memoryWorkspace, AgentMessage, AgentBudget, DEFAULT_AGENT_TOOL_CALLS, fetchLibrary, alarm, workspace, agents, type LibraryImplementation } from "@clavia/tardigrade-libraries"
 import { createActor } from "../agent"
 import { budgetState } from "../atoms/durable/budget"
 import { Event } from "../contracts/events"
@@ -22,7 +22,7 @@ type AssistantDefinition<Services> = ActorDefinition<Event, ActorOutput<unknown,
 export interface AssistantOptions<Services = never> {
   readonly actor?: AssistantDefinition<Services>
   readonly services: Layer.Layer<Model | ModelLock | Promises | PermissionRequests | Services, Error, Actor> | ((context: AssistantContext, host: ActorRuntime<Event>) => Layer.Layer<Model | ModelLock | Promises | PermissionRequests | Services, Error, Actor>)
-  readonly packages?: readonly Package<Services | Actor | Workspace | Promises | EffectExecution>[]
+  readonly libraries?: readonly LibraryImplementation<Services | Actor | Workspace | Promises | EffectExecution>[]
   readonly maxChildDepth: number
   readonly onEvent?: (event: RuntimeEvent<Event>, depth: number) => void
 }
@@ -69,7 +69,7 @@ export function assistantServices<Services>(host: ActorRuntime<Event>, options: 
     type: host.get(budgetState).some(entry => entry.metric === "toolCalls") ? "BudgetUpdated" : "BudgetConfigured",
     metric: "toolCalls", policy: { limit: budget.toolCalls, onExhausted: "deny" },
   }))) : Effect.void)).pipe(Layer.provideMerge(children))
-  return Layer.mergeAll(modelInfo, modelActs, askPermission, toolActs(options.packages ?? [fetchPackage(), alarm(), workspace(), agents({ actor: (options.actor ?? createActor).actorName })])).pipe(Layer.provideMerge(platform))
+  return Layer.mergeAll(modelInfo, modelActs, askPermission, toolActs(options.libraries ?? [fetchLibrary(), alarm(), workspace(), agents({ actor: (options.actor ?? createActor).actorName })])).pipe(Layer.provideMerge(platform))
 }
 
 // assistantRuntime configures services and observation for one level of child actors.

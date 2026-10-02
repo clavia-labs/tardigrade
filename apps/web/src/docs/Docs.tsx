@@ -67,7 +67,7 @@ const Sidebar = ({ current }: { readonly current: Doc }): ReactElement => (
     {docSections.map(([section, pages], sectionIndex) => (
       <Fragment key={section}>
         <span className={sectionIndex === 0 ? undefined : "guide-sidebar-section"}>{section}</span>
-        {pages.map((page) => <Link to="/docs/$" params={{ _splat: page.frontmatter.route.slice("/docs/".length) }} aria-current={page === current ? "page" : undefined} key={page.frontmatter.route}>{page.frontmatter.title}</Link>)}
+        {pages.map((page) => <Link to="/docs/$" params={{ _splat: page.frontmatter.route.slice("/docs/".length) }} aria-current={page === current ? "page" : undefined} key={page.frontmatter.route}>{page.frontmatter.title}{page.frontmatter.deprecated === true ? <span className="guide-deprecated">Deprecated</span> : null}</Link>)}
       </Fragment>
     ))}
   </aside>

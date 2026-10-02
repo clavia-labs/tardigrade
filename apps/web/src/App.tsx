@@ -20,8 +20,7 @@ import { WorldGlobe } from "./WorldGlobe"
 import { CheckIcon, CopyIcon, useCopy } from "./ui/copy"
 
 const REPOSITORY = "https://github.com/clavia-labs/tardigrade"
-const SHOW_HARNESS_CONTROLS = import.meta.env.VITE_SHOW_HARNESS_CONTROLS === "true"
-const INIT_COMMAND = "bunx tardie init"
+const INIT_COMMAND = "bun add tardie"
 const STARTER_PROMPT = "Build a durable TypeScript agent with Tardigrade. Start with the quickstart template at https://tardigrade.dev/docs/quickstart and add only the components required for the task."
 
 const eventProjections: Readonly<Record<string, { readonly effect?: string; readonly result: string; readonly target: string | undefined }>> = {
@@ -167,111 +166,45 @@ const PuzzlePiece = (): ReactElement => (
 
 type Tone = "red" | "purple" | "blue" | "number"
 type CodeToken = { readonly text: string; readonly tone?: Tone }
-type Capability = "memory" | "budget" | "code" | "mcp" | "subagents" | "output"
-type CodeLine = { readonly tokens: ReadonlyArray<CodeToken>; readonly capability?: Capability }
-type CapabilityOption = { readonly id: Capability; readonly label: string }
+type CodeLine = { readonly tokens: ReadonlyArray<CodeToken> }
 
 const token = (text: string, tone?: Tone): CodeToken => ({ text, ...(tone === undefined ? {} : { tone }) })
 const plain = (text: string): CodeLine => ({ tokens: [token(text)] })
-const highlight = (capability: Capability, ...tokens: ReadonlyArray<CodeToken>): CodeLine => ({ tokens, capability })
 
-const start = (name: string): ReadonlyArray<CodeLine> => [
-  { tokens: [token("export const", "red"), token(" " + name + " = "), token("actor", "purple"), token("({")] },
-  { tokens: [token("  name: "), token("\"" + name + "\"", "blue"), token(",")] },
-  plain("  methods: agentMethods,"),
-  { tokens: [token("  components: ["), token("infer", "purple"), token("([")] },
-  { tokens: [token("    system", "purple"), token("("), token("\"You are a friendly research assistant.\"", "blue"), token("),")] }
+const agentExample: ReadonlyArray<CodeLine> = [
+  { tokens: [token("import", "red"), token(" { Effect } "), token("from", "red"), token(' "effect"', "blue")] },
+  { tokens: [token("import", "red"), token(" { atom, defineActor } "), token("from", "red"), token(' "tardie/core"', "blue")] },
+  { tokens: [token("import", "red"), token(" { arxiv, workspace } "), token("from", "red"), token(' "tardie/libraries"', "blue")] },
+  { tokens: [token("import", "red"), token(" { system } "), token("from", "red"), token(' "./atoms"', "blue")] },
+  { tokens: [token("import", "red"), token(" { agentMethods, codeMode, compact, infer, messages } "), token("from", "red"), token(' "tardie/agent"', "blue")] },
+  plain(""),
+  { tokens: [token("const", "red"), token(" researcher = "), token("defineActor", "purple"), token("("), token('"researcher"', "blue"), token(", Effect."), token("gen", "purple"), token("("), token("function", "red"), token("* () {")] },
+  { tokens: [token("  const", "red"), token(" tools = "), token("yield", "red"), token("* "), token("codeMode", "purple"), token("(["), token("arxiv", "purple"), token("(), "), token("workspace", "purple"), token("()])")] },
+  { tokens: [token("  const", "red"), token(" context = "), token("yield", "red"), token("* "), token("compact", "purple"), token("(messages, {")] },
+  { tokens: [token("    triggerRatio: "), token("0.8", "number"), token(",")] },
+  { tokens: [token("    retainRatio: "), token("0.5", "number"), token(",")] },
+  plain("  })"),
+  { tokens: [token("  const", "red"), token(" agent = "), token("yield", "red"), token("* "), token("infer", "purple"), token("("), token("atom", "purple"), token("(get => ({")] },
+  { tokens: [token("    system: "), token("get", "purple"), token("(system),")] },
+  { tokens: [token("    tools: "), token("get", "purple"), token("(tools),")] },
+  { tokens: [token("    context: "), token("get", "purple"), token("(context),")] },
+  plain("  })))"),
+  plain(""),
+  { tokens: [token("  return", "red"), token(" { atom: agent, methods: agentMethods }")] },
+  plain("}))")
 ]
 
-const end: ReadonlyArray<CodeLine> = [plain("  ])]"), plain("})")]
-
-const capabilityOptions: ReadonlyArray<CapabilityOption> = [
-  { id: "memory", label: "Compaction" },
-  { id: "budget", label: "Budgets" },
-  { id: "code", label: "Code mode" },
-  { id: "mcp", label: "MCP" },
-  { id: "subagents", label: "Subagents" },
-  { id: "output", label: "Structured output" }
-]
-
-const indent = (depth: number): string => "    " + "  ".repeat(depth)
-
-const codeFor = (active: ReadonlySet<Capability>): ReadonlyArray<CodeLine> => {
-  const lines: Array<CodeLine> = [...start("researcher")]
-  if (active.has("memory")) {
-    lines.push(highlight("memory", token("    compact", "purple"), token("(messages(), { triggerRatio: "), token("0.8", "number"), token(", retainRatio: "), token("0.5", "number"), token(" }),")))
-  }
-
-  let depth = 0
-  if (active.has("budget")) {
-    lines.push(highlight("budget", token(indent(depth) + "budget", "purple"), token("(")))
-    depth += 1
-  }
-  if (active.has("code") || active.has("mcp") || active.has("subagents") || active.has("budget")) {
-    const codeModeLine = [token(indent(depth) + "codeMode", "purple"), token("([")]
-    lines.push(highlight("code", ...codeModeLine))
-    depth += 1
-    if (active.has("code")) {
-      lines.push(highlight("code", token(indent(depth) + "fetch(),")))
-    }
-    if (active.has("mcp")) {
-      lines.push(highlight("code", token(indent(depth) + "mcp", "purple"), token("(),")))
-    }
-    if (active.has("subagents")) {
-      lines.push(highlight("code", token(indent(depth) + "agents", "purple"), token("(),")))
-      lines.push(highlight("code", token(indent(depth) + "workspace()")))
-    }
-    depth -= 1
-    lines.push(highlight("code", token(indent(depth) + "]),")))
-  }
-  if (active.has("budget")) {
-    depth -= 1
-    lines.push(highlight("budget", token(indent(depth) + "{")))
-    lines.push(highlight("budget", token(indent(depth + 1) + "limit: "), token("12", "number"), token(",")))
-    lines.push(highlight("budget", token(indent(depth + 1) + "usage: ({ calls }) => calls.length,")))
-    lines.push(highlight("budget", token(indent(depth + 1) + "onExhausted: (reason, settle) =>")))
-    lines.push(highlight("budget", token(indent(depth + 2) + "settle({ error: reason }),")))
-    lines.push(highlight("budget", token(indent(depth) + "}),")))
-  }
-  if (active.has("output")) {
-    lines.push(plain("    nativeOutput,"))
-  }
-  return [...lines, ...end]
-}
-
-const CodeExample = (): ReactElement => {
-  const [active, setActive] = useState<ReadonlySet<Capability>>(() => new Set(capabilityOptions.map((option) => option.id)))
-  const code = codeFor(active)
-  const toggle = (capability: Capability): void => {
-    setActive((current) => {
-      const next = new Set(current)
-      if (next.has(capability)) next.delete(capability)
-      else next.add(capability)
-      return next
-    })
-  }
-
-  return (
-    <div className="demo">
-      <img className="code-tardie" src={tardieCuriousLeftImage} alt="" aria-hidden="true" />
-      <div className="code-card">
-        <div className="code-filename">
-          <span className="file-icon" />actor.ts
-        </div>
-        <pre><code>{code.map((line, index) => <span className={line.capability === undefined ? "code-line" : `code-line line-${line.capability}`} key={index}>{line.tokens.map((part, partIndex) => <span className={part.tone === undefined ? undefined : `token-${part.tone}`} key={partIndex}>{part.text}</span>)}</span>)}</code></pre>
+const CodeExample = (): ReactElement => (
+  <div className="demo">
+    <img className="code-tardie" src={tardieCuriousLeftImage} alt="" aria-hidden="true" />
+    <div className="code-card">
+      <div className="code-filename">
+        <span className="file-icon" />actor.ts
       </div>
-      {SHOW_HARNESS_CONTROLS ? (
-        <div className="harness-switcher" aria-label="Agent harness capabilities">
-          {capabilityOptions.map((option) => (
-            <button className="harness-button" data-harness={option.id} type="button" aria-pressed={active.has(option.id)} key={option.id} onClick={() => toggle(option.id)}>
-              <span className="toggle-mark" aria-hidden="true">{active.has(option.id) ? "−" : "+"}</span>{option.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <pre><code>{agentExample.map((line, index) => <span className="code-line" key={index}>{line.tokens.map((part, partIndex) => <span className={part.tone === undefined ? undefined : `token-${part.tone}`} key={partIndex}>{part.text}</span>)}</span>)}</code></pre>
     </div>
-  )
-}
+  </div>
+)
 
 const HowItWorks = (): ReactElement => {
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null)
@@ -367,7 +300,7 @@ const HowItWorks = (): ReactElement => {
       <div className="how-inner">
         <div className="how-copy">
           <h2>How it works</h2>
-          <p>Every event is written to a durable log. Each component folds those events into state, then derives a view and enabled transitions. The runtime executes those transitions and appends the results to the log until the turn is complete.</p>
+          <p>Every event is written to a durable log. Durable atoms reduce those events into state. Effect atoms derive views and propose actions. The runtime executes those actions and appends the results to the log until the turn is complete.</p>
         </div>
         <div className="event-table-card">
           <div className={`actor-world-grid${projection === undefined ? "" : " is-tracing"}`} ref={gridRef}>
@@ -798,7 +731,10 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
     <header className="site-header" ref={headerRef}>
       <nav className="nav-inner" aria-label="Main navigation">
         <div className="nav-brand-group">
-          <Link className="brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
+          <div className="nav-brand">
+            <Link className="brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
+            <span className="brand-version" title="Upcoming release" aria-label="Version 0.39.0, upcoming release">v0.39.0</span>
+          </div>
           <Link className="guide-link" to="/docs" aria-current={docs ? "page" : undefined}>Docs</Link>
         </div>
         <div className="nav-actions">
@@ -833,8 +769,8 @@ export const LandingPage = (): ReactElement => (
         <PuzzlePiece />
         <div className="hero-inner">
           <div className="hero-copy">
-            <h1><span>Build stateful agents</span><span>from simple components.</span></h1>
-            <p>Tardigrade is a TypeScript framework for building modular agents around an immutable event log. Built on Effect TS.</p>
+            <h1><span>Atomic state management</span><span>for durable agents.</span></h1>
+            <p>Tardigrade is a TypeScript framework for building composable agents around an immutable event log. Built on Effect TS.</p>
             <div className="hero-cta-stack">
               <div className="hero-actions">
                 <CopyPromptButton />

@@ -1,7 +1,8 @@
 import { ToolError } from "./errors"
 import { EffectExecution, ExecutionHandle, type ExecutionResult, durablePromise } from "@clavia/tardigrade-core"
+import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
 import { Cause, Effect, Exit, Schema } from "effect"
-import type { ToolCall, ToolSpec, ExecutionMode, ToolMetadata } from "./types"
+import { DEFAULT_METHOD_EXECUTION, type ToolCall, type ToolSpec, type ExecutionMode, type MethodAnnotations } from "./types"
 
 export interface ToolInvocation extends ToolCall {
   readonly parentCallId?: string
@@ -14,26 +15,25 @@ export interface AgentTool<R = never> {
   readonly cancel?: (handle: ExecutionHandle | undefined, call: ToolInvocation) => Effect.Effect<void, Error, Exclude<R, EffectExecution>>
 }
 
-export const DEFAULT_TOOL_EXECUTION = "sync" as const
-
 interface ToolOptions<Input, R> {
   readonly name: string
   readonly description: string
-  readonly metadata?: typeof ToolMetadata.Type
+  readonly annotations?: MethodAnnotations
   readonly input: Schema.ConstraintDecoder<Input>
   readonly run: (input: Input, call: ToolInvocation) => Effect.Effect<unknown, Error, R>
 }
 
 // tool executes its handler in the mode declared by its definition.
-export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execution?: "sync" }): AgentTool<R>
-export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execution: "async" }): AgentTool<R | EffectExecution>
+export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execution?: "foreground" }): AgentTool<R>
+export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execution: "background" }): AgentTool<R | EffectExecution>
+export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execution?: ExecutionMode }): AgentTool<R | EffectExecution>
 export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execution?: ExecutionMode }): AgentTool<R | EffectExecution> {
-  const execution = options.execution ?? DEFAULT_TOOL_EXECUTION
+  const execution = options.execution ?? DEFAULT_METHOD_EXECUTION
   return {
-    spec: { name: options.name, description: options.description, inputSchema: Schema.decodeUnknownSync(Schema.Json)(Schema.toJsonSchemaDocument(options.input, { onExcessProperty: "error" }).schema), ...(options.metadata ? { metadata: options.metadata } : {}), execution },
+    spec: { name: options.name, description: options.description, inputSchema: jsonSchemaOf(options.input, { onExcessProperty: "error" }), ...(options.annotations ? { annotations: options.annotations } : {}), execution },
     execute: (input, call) => Effect.gen(function* () {
       const value = yield* Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(input).pipe(Effect.mapError(ToolError.from))
-      if (execution === "sync") {
+      if (execution === "foreground") {
         const result = yield* options.run(value, call).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)), Effect.mapError(ToolError.from))
         return { type: "value" as const, value: result }
       }
@@ -53,13 +53,13 @@ export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execu
 export function promiseTool<Input, R>(options: {
   readonly name: string
   readonly description: string
-  readonly metadata?: typeof ToolMetadata.Type
+  readonly annotations?: MethodAnnotations
   readonly input: Schema.ConstraintDecoder<Input>
   readonly submit: (input: Input, call: ToolInvocation) => Effect.Effect<ExecutionHandle, Error, R>
   readonly cancel?: (handle: ExecutionHandle | undefined, call: ToolInvocation) => Effect.Effect<void, Error, Exclude<R, EffectExecution>>
 }): AgentTool<R | EffectExecution> {
   return {
-    spec: { name: options.name, description: options.description, inputSchema: Schema.decodeUnknownSync(Schema.Json)(Schema.toJsonSchemaDocument(options.input, { onExcessProperty: "error" }).schema), ...(options.metadata ? { metadata: options.metadata } : {}), execution: "async" },
+    spec: { name: options.name, description: options.description, inputSchema: jsonSchemaOf(options.input, { onExcessProperty: "error" }), ...(options.annotations ? { annotations: options.annotations } : {}), execution: "background" },
     ...(options.cancel ? { cancel: options.cancel } : {}),
     execute: (input, call) => Effect.gen(function* () {
       const value = yield* Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(input)

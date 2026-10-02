@@ -1,7 +1,8 @@
 import { Context, Layer } from "effect"
-import { makeActorClient, type ActorClient, type ActorClientOptions } from "@clavia/tardigrade-deprecated-client"
+import { type ActorClientOptions } from "@clavia/tardigrade-deprecated-client"
 
 import type { Env } from "./config"
+import { openCliClient, type CliClient } from "./client"
 
 // CliServices holds the process capabilities used by command handlers. Tests replace them to drive
 // the command tree without network access or child processes (commands.test.ts).
@@ -9,7 +10,7 @@ import type { Env } from "./config"
 export interface CliServices {
   readonly env: Env
   readonly cwd: string
-  readonly openClient: (options: ActorClientOptions) => ActorClient
+  readonly openClient: (options: ActorClientOptions) => CliClient
   readonly fetch: typeof globalThis.fetch
   readonly installProject: (directory: string) => Promise<void>
   // mintId supplies the durable thread and call ids used when a caller states neither.
@@ -36,7 +37,7 @@ const installProject = async (directory: string): Promise<void> => {
 export const layerCli: Layer.Layer<Cli> = Layer.succeed(Cli)({
   env: process.env,
   cwd: process.cwd(),
-  openClient: (options) => makeActorClient(options),
+  openClient: (options) => openCliClient(options),
   fetch: globalThis.fetch,
   installProject,
   mintId: () => crypto.randomUUID()

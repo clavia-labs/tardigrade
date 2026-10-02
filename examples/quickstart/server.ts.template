@@ -1,0 +1,30 @@
+import { Effect, Schema } from "effect"
+import { actorContext } from "tardie/agent"
+import { createBunHost, methodHttp } from "tardie/platform/bun"
+import definition from "./actor"
+import { services } from "./services"
+
+const configPath = process.env.TARDIGRADE_CONFIG_PATH ?? "wrangler.jsonc"
+const Config = Schema.Struct({ vars: Schema.Struct({ TARDIGRADE_CONFIG: Schema.Struct({ models: Schema.Unknown }) }) })
+const config = Schema.decodeUnknownSync(Config)(Bun.JSONC.parse(await Bun.file(configPath).text()))
+const host = await Effect.runPromise(createBunHost({
+  actor: definition,
+  actorContext,
+  storage: process.env.TARDIGRADE_ACTOR_DATA ?? ".tardigrade/data",
+  services: () => services(config.vars.TARDIGRADE_CONFIG.models, process.env),
+}))
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: Number(process.env.PORT ?? 4242),
+  idleTimeout: 0,
+  fetch: methodHttp(host, { ...(process.env.TARDIGRADE_TOKEN ? { token: process.env.TARDIGRADE_TOKEN } : {}) }),
+})
+console.log(`Listening on ${server.url}`)
+
+await new Promise<void>(resolve => {
+  const stop = () => { process.off("SIGINT", stop); process.off("SIGTERM", stop); resolve() }
+  process.once("SIGINT", stop)
+  process.once("SIGTERM", stop)
+})
+await server.stop(true)
+await Effect.runPromise(host.close)

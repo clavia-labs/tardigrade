@@ -29,9 +29,9 @@ describe("actorTemplate", () => {
     expect(DEFAULT_INIT_TEMPLATE).toBe("quickstart")
     expect(INIT_TEMPLATES).toEqual(["quickstart", "rlm"])
     expect(source).toContain('const actorName = "reviewer"')
-    expect(source).toContain("infer([")
-    expect(source).toContain('name: "get_weather"')
-    expect(source).toContain("tool({")
+    expect(source).toContain("defineActor(actorName, Effect.gen")
+    expect(source).toContain('current: "get_weather"')
+    expect(source).toContain("defineLibrary({")
   })
 
   test("builds the RLM template", async () => {

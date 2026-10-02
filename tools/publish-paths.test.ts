@@ -23,6 +23,7 @@ test("template staging excludes local state and secrets, including stale output"
       const source = join(root, "examples", template)
       await mkdir(join(source, ".tardigrade"), { recursive: true })
       await writeFile(join(source, "actor.ts"), `export default "${template}"`)
+      if (template === "quickstart") for (const file of ["services.ts.template", "server.ts.template", "worker.ts.template"]) await writeFile(join(source, file), "export {}")
       await writeFile(join(source, ".env"), "SECRET=fixture")
       await writeFile(join(source, ".tardigrade", "actor.sqlite"), "private conversation")
     }
@@ -32,7 +33,7 @@ test("template staging excludes local state and secrets, including stale output"
     expect((await readdir(join(stage, "examples"))).sort()).toEqual(["quickstart", "rlm"])
     for (const template of ["quickstart", "rlm"]) {
       const target = join(stage, "examples", template)
-      expect(await readdir(target)).toEqual(["actor.ts"])
+      expect((await readdir(target)).sort()).toEqual(template === "quickstart" ? ["actor.ts", "server.ts.template", "services.ts.template", "worker.ts.template"] : ["actor.ts"])
       expect(await readFile(join(target, "actor.ts"), "utf8")).toBe(`export default "${template}"`)
     }
   } finally {

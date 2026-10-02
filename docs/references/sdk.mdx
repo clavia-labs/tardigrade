@@ -19,7 +19,7 @@ Choose an entrypoint for the API you need:
 tardie/core                  atoms, actors, runtime, state initialisation
 tardie/agent                 agent authoring
 tardie/agent/services        execution and wiring
-tardie/libraries             tools and packages
+tardie/libraries             RPC libraries and built-in methods
 tardie/model                 model configuration and provider layers
 tardie/code                  code execution and sandboxes
 tardie/platform/bun          Bun hosting and storage
@@ -34,10 +34,59 @@ Core primitives and runtime APIs share a flat entrypoint. State codecs and initi
 ```ts
 import { AtomState, actorMethod, defineActor, durableAtom, event, initialiseState, type InitialState } from "tardie/core"
 import { agentMethods, messages, infer } from "tardie/agent"
-import { definePackage } from "tardie/libraries"
+import { defineLibrary } from "tardie/libraries"
 ```
 
 [State initialisation](/docs/migration/state-initialisation) shows how to create a thread from an existing actor's state.
+
+## Libraries
+
+A library names a list of Effect RPC methods. Each method declares its payload, success, and error schemas. Attach descriptions, MCP-compatible behaviour hints, and execution mode as RPC annotations:
+
+```ts
+import { Effect, Schema } from "effect"
+import { Rpc } from "effect/unstable/rpc"
+import { defineLibrary, MethodDescription, MethodHints } from "tardie/libraries"
+
+const notes = defineLibrary({
+  name: "notes",
+  description: "Read research notes.",
+  methods: [
+    Rpc.make("read", {
+      payload: Schema.Struct({ key: Schema.String }),
+      success: Schema.String,
+      error: Schema.String,
+    })
+      .annotate(MethodDescription, "Read a note by key.")
+      .annotate(MethodHints, { readOnlyHint: true, openWorldHint: false }),
+  ],
+})
+
+const notesLive = notes.implement({
+  read: ({ key }) => Effect.succeed(`Note: ${key}`),
+})
+```
+
+`notes.methods` is an ordinary `RpcGroup`, so it can also supply handlers to an Effect RPC server. Library adapters support unary methods without RPC middleware and schemas that decode payloads and encode results without services. They validate input before calling a handler and encode its output with the declared success schema.
+
+`MethodHints` supports MCP's `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, and optional `title`. Hints describe behaviour; permission policy controls execution. Treat annotations from remote, untrusted servers as untrusted data.
+
+`MethodExecution` accepts `"foreground"` or `"background"`; `DEFAULT_METHOD_EXECUTION` is `"foreground"`. Foreground calls wait for a result and may perform asynchronous I/O. Background calls return durable handles. For handlers that submit work to another executor, mark the RPC as background, declare `ExecutionHandle` as its success schema, and pass `{ submit: ["methodName"] }` to `implement`. Optional cancellation handlers use the same method names. Code mode accepts foreground methods.
+
+Choose how to expose the configured libraries:
+
+```ts
+import { arxiv, workspace } from "tardie/libraries"
+import { tools, codeMode } from "tardie/agent"
+
+const libraries = [arxiv(), workspace()]
+const directTools = tools(libraries)
+const researchCode = codeMode(libraries)
+```
+
+Yield the chosen Effect during actor setup. Supply matching implementations in host services with `toolActs(libraries)` for direct tools or `codeModeActs(libraries)` for code mode. Both atoms also accept the host's full catalog when no library selection is supplied. Missing or duplicate selected library names fail during setup. Built-ins include `arxiv`, `fetchLibrary`, `workspace`, `agents`, and `alarm`.
+
+`arxiv().search` is exposed as `arxiv.search` inside code mode and `arxiv__search` as a direct tool. It returns the arXiv Atom XML feed with its source URL and applied pagination. `DEFAULT_ARXIV_POLICY` supplies pagination defaults; override them when constructing the library or per search call. `DEFAULT_ARXIV_ENDPOINT` can also be overridden. Applications own request pacing according to the [arXiv API guidance](https://info.arxiv.org/help/api/user-manual.html).
 
 ## Host and services
 

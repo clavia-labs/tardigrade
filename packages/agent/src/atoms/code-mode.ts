@@ -2,6 +2,8 @@ import { Effect, Option, Schema } from "effect"
 import { effectAtom, eventValue, RuntimeError, type ActRequest, type ActService, type EventValue } from "@clavia/tardigrade-core"
 import { failureMessage } from "../contracts/acts"
 import { pendingTools } from "./durable/tools"
+import { type LibrarySource } from "@clavia/tardigrade-libraries/types"
+import { codeModeSpec, selectLibraries } from "../contracts/libraries"
 import { ToolCatalog } from "../actor/context"
 import { ToolReturned, type ToolCalled } from "../contracts/events"
 import { CodeReturned, Event, EvaluateCode, ExecutePackage, PackageReturned } from "../contracts/code-mode"
@@ -10,12 +12,21 @@ import { executions as state } from "./durable/code-mode"
 const CodeInput = Schema.Struct({ code: Schema.String })
 
 // codeMode observes model tool calls and proposes sandbox evaluation, package execution, and tool results.
-export function codeMode(options: { readonly name: string }) {
-  const name = options.name
+export const DEFAULT_CODE_MODE_NAME = "agent.code-mode"
+export interface CodeModeOptions { readonly name?: string; readonly signatureDepth?: number }
+export function codeMode(libraries: readonly LibrarySource[], options?: CodeModeOptions): ReturnType<typeof createCodeMode>
+export function codeMode(options?: CodeModeOptions): ReturnType<typeof createCodeMode>
+export function codeMode(librariesOrOptions: readonly LibrarySource[] | CodeModeOptions = {}, options: CodeModeOptions = {}) {
+  return Array.isArray(librariesOrOptions) ? createCodeMode(options, librariesOrOptions) : createCodeMode(librariesOrOptions as CodeModeOptions)
+}
+
+function createCodeMode(options: CodeModeOptions, sources?: readonly LibrarySource[]) {
+  const name = options.name ?? DEFAULT_CODE_MODE_NAME
   if (!name || name.includes("/")) throw new RuntimeError("Code mode name must be nonempty and contain no slash")
   return Effect.gen(function* () {
     const catalog = yield* ToolCatalog
-    const spec = catalog.specs.find(spec => spec.name === "execute")
+    const libraries = sources ? selectLibraries(sources, catalog.libraries ?? []) : undefined
+    const spec = libraries ? codeModeSpec(libraries, options.signatureDepth) : catalog.specs.find(spec => spec.name === "execute")
     if (!spec) return yield* Effect.fail(new RuntimeError("Code mode requires an execute tool in ToolCatalog"))
     const evaluations = new Map<string, ReturnType<typeof EvaluateCode.request>>()
     const packages = new Map<string, ReturnType<typeof ExecutePackage.request>>()
@@ -31,7 +42,7 @@ export function codeMode(options: { readonly name: string }) {
       }
       const events: Record<string, EventValue<typeof Event.Type>> = {}
       const acts: Record<string, ActRequest<Schema.Json, string, ActService<"code-mode.evaluate"> | ActService<"code-mode.package">>> = {}
-      const view = { specs: catalog.specs, system: spec.description, executions }
+      const view = { specs: [spec], system: spec.description, executions }
       if (!call) return { view, events, acts }
       const parsed = Schema.decodeUnknownOption(CodeInput, { onExcessProperty: "error" })(call.input)
       const error = call.name !== "execute" ? `Unknown tool: ${call.name}` : Option.isNone(parsed) ? "execute requires { code: string }" : undefined
@@ -54,7 +65,7 @@ export function codeMode(options: { readonly name: string }) {
           let request = evaluations.get(key)
           if (!request) {
             request = EvaluateCode.request({
-              tag: key, input: { codeMode: name, callId: call.callId, code: parsed.value.code },
+              tag: key, input: { codeMode: name, callId: call.callId, code: parsed.value.code, ...(libraries ? { libraries: libraries.map(library => library.name) } : {}) },
               onSettled: outcome => [{ type: "CodeReturned", codeMode: name, callId: call.callId, outcome: outcome.status === "rejected" ? { ...outcome, reason: failureMessage(outcome.reason) } : outcome } satisfies typeof CodeReturned.Type],
             })
             evaluations.set(key, request)

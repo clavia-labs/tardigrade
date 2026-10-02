@@ -7,7 +7,7 @@ sectionOrder: 3
 order: 1
 ---
 
-The Bun platform runs a Tardigrade actor as a process backed by SQLite. Each actor instance has a directory database, and each thread has its own event log, workspace, runtime, and alarm state.
+The Bun platform runs an actor backed by SQLite. Each actor instance has a supervisor database, and each thread has its own event journal and runtime.
 
 ## Run locally
 
@@ -25,52 +25,47 @@ Run the Cloudflare Worker locally when you need the Durable Object runtime:
 bun run dev:cloudflare
 ```
 
-## Provide application services
+## Mount an actor
 
-An actor that requires an application Effect service can merge its layer with the model services in `server.ts`:
+The generated server reads model configuration from `wrangler.jsonc` and builds application services through `./services`:
 
 ```ts title="server.ts"
-import { Layer, Schedule } from "effect"
-import { createBunHost, remoteBackupFromKeyValueStore } from "tardie/deprecated/bun"
-import { bunModelServices } from "tardie/deprecated/server/model-services"
-import { AppConfig } from "./application"
-import { remoteStore } from "./remote-store"
+import { Effect, Schema } from "effect"
+import { actorContext } from "tardie/agent"
+import { createBunHost, methodHttp } from "tardie/platform/bun"
 import definition from "./actor"
+import { services } from "./services"
 
-const { config, layers, api } = await bunModelServices({
-  env: process.env
+const configPath = process.env.TARDIGRADE_CONFIG_PATH ?? "wrangler.jsonc"
+const Config = Schema.Struct({
+  vars: Schema.Struct({ TARDIGRADE_CONFIG: Schema.Struct({ models: Schema.Unknown }) }),
 })
-const host = await createBunHost({
+const config = Schema.decodeUnknownSync(Config)(Bun.JSONC.parse(await Bun.file(configPath).text()))
+const host = await Effect.runPromise(createBunHost({
   actor: definition,
-  storage: config.actorData,
-  // backup is optional and publishes local checkpoints in the background.
-  backup: {
-    layer: remoteBackupFromKeyValueStore(definition.name).pipe(
-      Layer.provide(remoteStore)
-    ),
-    schedule: Schedule.spaced("30 seconds")
-  },
-  driver: { maxConcurrentThreads: config.maxConcurrentThreads },
-  layersFor: (thread, instance) => Layer.mergeAll(
-    layers,
-    Layer.succeed(AppConfig, { thread, instance })
-  )
+  actorContext,
+  storage: process.env.TARDIGRADE_ACTOR_DATA ?? ".tardigrade/data",
+  services: () => services(config.vars.TARDIGRADE_CONFIG.models, process.env),
+}))
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: Number(process.env.PORT ?? 4242),
+  idleTimeout: 0,
+  fetch: methodHttp(host, {
+    ...(process.env.TARDIGRADE_TOKEN ? { token: process.env.TARDIGRADE_TOKEN } : {}),
+  }),
 })
 ```
 
-### Application services
+`services(coordinate, runtime)` supplies Effect layers for each thread. Merge application layers with the generated services here or in `services.ts`. `actorContext` selects the services visible to agent setup; actors with custom requirements supply their own selector.
 
-`layersFor(thread, instance)` combines model services with your own services. Here, `AppConfig` makes the thread and instance IDs available to the actor.
+`methodHttp(host)` discovers the methods returned by actor setup and exposes thread creation, invocation, cancellation, and event reads. Set `TARDIGRADE_TOKEN` to require bearer authentication. On shutdown, call `await server.stop(true)` before `await Effect.runPromise(host.close)`; the generated server handles process signals for you.
 
-### HTTP
+## Optional backup
 
-Pass `api` to `serve(host, { port: config.port, api })` for model discovery and live inference output. Close the HTTP server before the host. See the [Actors guide](/docs/actors#serve-over-http).
+Provide a `RemoteBackup` layer through `createBunHost({ backup, ... })`, then call `Effect.runPromise(host.backup)` to capture and save a host checkpoint. Your application chooses when to call it.
 
-### Optional backup
-
-`remoteStore` is your remote `KeyValueStore` layer. You can also provide a custom `RemoteBackup` through `backup.layer`.
-
-Backup snapshots the default local storage layout in a worker and retries uploads in the background. Local commits continue during remote outages.
+For filesystem backups, `bunBackup({ directory, namespace })` from `tardie/platform/bun` supplies the layer. Choose a backup directory outside host storage. `checkpoint.maxBytes` overrides the capture limit in the exported `DEFAULT_CHECKPOINT_POLICY`; capture fails if storage changes while it is being read.
 
 ## Storage
 

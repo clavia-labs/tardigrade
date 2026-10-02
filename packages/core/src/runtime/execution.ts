@@ -45,6 +45,8 @@ export type ActorServices<Definition> = Definition extends ActorDefinition<infer
 
 // createActorStore instantiates an actor definition and owns its services, journal commits, and execution lifetime.
 export function createActorStore<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: {
+  // inspect validates setup without executing proposals or recovery hooks (packages/platform/test/bun/method-http.test.ts).
+  readonly inspect?: boolean
   readonly actor: ActorDefinition<Event, State, Services, Contracts>
   readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
   // actorContext selects setup capabilities explicitly; the execution context is supplied only to effect execution.
@@ -75,6 +77,7 @@ export function createActorStore<Event extends object, State, Services, Contract
 
 // createRuntime builds services and an atom graph within an isolated actor lifetime.
 function createRuntime<Event extends object, const Atoms extends Readonly<Record<string, Atom<unknown>>>, Services, Contracts extends ActorMethods<Event>>(options: {
+  readonly inspect?: boolean
   readonly setup: Effect.Effect<ActorSetup<Event, Atoms, Contracts>, Error, Services>
   readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<Atoms> | Exclude<Services, Scope.Scope>, Error>
   readonly actorContext: (services: Context.Context<Requirements<Atoms> | Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
@@ -207,6 +210,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       yield* schedule
     })
     const enqueue = <Value>(work: Effect.Effect<Value, Error>) => Effect.gen(function* () {
+      if (options.inspect) return yield* Effect.fail(new RuntimeError("Actor inspection cannot admit work"))
       if (closed) return yield* Effect.fail(new RuntimeError("Actor store is closed"))
       const accepted = yield* Deferred.make<Value, Error>()
       yield* Queue.offer(admissions, Effect.gen(function* () {
@@ -416,6 +420,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }
     })
     const send = (events: readonly RuntimeEvent<Event>[], when?: (get: ActorRuntime<Event>["get"]) => boolean, owner?: EffectRef) => Effect.gen(function* () {
+      if (options.inspect) return yield* Effect.fail(new RuntimeError("Actor inspection cannot send events"))
       yield* Deferred.await(ready)
       let admitted = false
       let cursor = 0
@@ -451,6 +456,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       record: append,
       send,
       fork: (id, work) => Effect.gen(function* () {
+        if (options.inspect) return yield* Effect.fail(new RuntimeError("Actor inspection cannot fork work"))
         if (closed || background.has(id)) return yield* Effect.fail(new RuntimeError(`Cannot start background work: ${id}`))
         const fiber = yield* work.pipe(
           Effect.catchCause(cause => Effect.sync(() => { if (!closed && !Cause.hasInterruptsOnly(cause)) errors.push(new RuntimeError(Cause.pretty(cause))) })),
@@ -506,16 +512,18 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       const deferred = yield* Effect.try({ try: () => snapshot.deferred(), catch: RuntimeError.from })
       for (const work of deferred) if (work.handle.executor === "local") localRecovery.set(effectKey(work.ref), work)
       yield* Effect.try({ try: sync, catch: RuntimeError.from })
-      yield* Deferred.succeed(ready, undefined)
-      for (const recover of recovery) yield* recover
-      yield* Effect.gen(function* () {
-        while (true) {
-          const completions = yield* Queue.takeAll(processing)
-          yield* drain().pipe(Effect.catchCause(reportCause))
-          for (const completion of completions) yield* Deferred.succeed(completion, undefined)
-        }
-      }).pipe(Effect.forkIn(scope))
-      yield* schedule
+      if (!options.inspect) {
+        yield* Deferred.succeed(ready, undefined)
+        for (const recover of recovery) yield* recover
+        yield* Effect.gen(function* () {
+          while (true) {
+            const completions = yield* Queue.takeAll(processing)
+            yield* drain().pipe(Effect.catchCause(reportCause))
+            for (const completion of completions) yield* Deferred.succeed(completion, undefined)
+          }
+        }).pipe(Effect.forkIn(scope))
+        yield* schedule
+      }
       const api = {
         get: store.get,
         sub: <Value>(node: Atom<Value>, listener: () => void) => {

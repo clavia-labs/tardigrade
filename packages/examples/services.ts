@@ -4,7 +4,7 @@ import { RuntimeError } from "@clavia/tardigrade-core"
 import { Effect, Layer, Schema } from "effect"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { memoryWorkspace, fetchPackage, workspace } from "@clavia/tardigrade-libraries"
+import { memoryWorkspace, fetchLibrary, workspace } from "@clavia/tardigrade-libraries"
 import { ModelLock, lockedModelConfigOf, modelLockService, parseModelLock, MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelCredentialsFrom } from "@clavia/tardigrade-model/config"
 
@@ -37,4 +37,4 @@ const modelServices = Layer.unwrap(Effect.gen(function* () {
   })
 }))
 
-export const services = Layer.mergeAll(modelInfo, modelActs, toolActs([fetchPackage(), workspace()])).pipe(Layer.provide(modelServices))
+export const services = Layer.mergeAll(modelInfo, modelActs, toolActs([fetchLibrary(), workspace()])).pipe(Layer.provide(modelServices))

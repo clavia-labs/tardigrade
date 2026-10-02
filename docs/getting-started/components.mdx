@@ -1,5 +1,6 @@
 ---
 title: Components
+deprecated: true
 socialImage: /images/components-social.png
 socialImageAlt: A component derives state and describes a model call as an Effect value. The runtime executes it, and the result returns as an event.
 description: Build actor behavior from event projections and enabled transitions.
@@ -7,8 +8,10 @@ hideDescription: true
 route: /docs/components
 section: Getting Started
 sectionOrder: 2
-order: 4
+order: 5
 ---
+
+> **Legacy API:** Components use the `tardie/deprecated` API. Use [atoms](/docs/atoms) for new actors. To migrate existing event logs at a settled boundary, see [state initialisation](/docs/migration/state-initialisation).
 
 In Tardigrade, a component is the smallest unit of an actor's behavior.
 

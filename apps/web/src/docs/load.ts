@@ -1,3 +1,5 @@
+import Atoms, { frontmatter as atomsFrontmatter } from "@docs/getting-started/atoms.mdx"
+import atomsMarkdown from "@docs/getting-started/atoms.mdx?doc-source"
 import Components, { frontmatter as componentsFrontmatter } from "@docs/getting-started/components.mdx"
 import componentsMarkdown from "@docs/getting-started/components.mdx?doc-source"
 import type { ComponentType } from "react"
@@ -39,6 +41,7 @@ type DocFrontmatter = {
   readonly sectionOrder: number
   readonly order: number
   readonly draft?: boolean | undefined
+  readonly deprecated?: boolean | undefined
   readonly articleClass?: string | undefined
   readonly hideDescription?: boolean | undefined
   readonly socialImage?: string | undefined
@@ -60,6 +63,7 @@ type DocModule = {
 }
 
 const modules: ReadonlyArray<DocModule> = [
+  { default: Atoms, frontmatter: atomsFrontmatter, markdown: atomsMarkdown, source: "getting-started/atoms.mdx" },
   { default: ActorChecking, frontmatter: actorCheckingFrontmatter, markdown: actorCheckingMarkdown, source: "references/actor-checking.mdx" },
   { default: Components, frontmatter: componentsFrontmatter, markdown: componentsMarkdown, source: "getting-started/components.mdx" },
   { default: Welcome, frontmatter: welcomeFrontmatter, markdown: welcomeMarkdown, source: "start-here/Welcome.mdx" },
@@ -98,6 +102,8 @@ const readFrontmatter = (value: unknown, source: string): DocFrontmatter => {
   if (articleClass !== undefined && typeof articleClass !== "string") throw new Error(`${source}: frontmatter.articleClass must be a string`)
   const draft = fields.draft
   if (draft !== undefined && typeof draft !== "boolean") throw new Error(`${source}: frontmatter.draft must be a boolean`)
+  const deprecated = fields.deprecated
+  if (deprecated !== undefined && typeof deprecated !== "boolean") throw new Error(`${source}: frontmatter.deprecated must be a boolean`)
   const hideDescription = fields.hideDescription
   if (hideDescription !== undefined && typeof hideDescription !== "boolean") throw new Error(`${source}: frontmatter.hideDescription must be a boolean`)
   return {
@@ -108,6 +114,7 @@ const readFrontmatter = (value: unknown, source: string): DocFrontmatter => {
     sectionOrder: numberField(fields, "sectionOrder", source),
     order: numberField(fields, "order", source),
     draft,
+    deprecated,
     articleClass,
     hideDescription,
     socialImage: fields.socialImage === undefined ? undefined : stringField(fields, "socialImage", source),

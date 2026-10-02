@@ -27,6 +27,7 @@ import {
 
 import { parseProjectConfig, projectConfigPathIn } from "./config"
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigWithVarOf } from "./celld"
+import { PROVIDER_REGISTRY_FILE, providerRegistrySource } from "./provider-registry"
 
 // Interactive `tdg setup` collects provider connections and chooses the project default before writing either file.
 //
@@ -703,6 +704,7 @@ export interface SetupFiles {
   readonly configPath: string
   readonly secretsPath: string
   readonly celldConfigPath?: string
+  readonly providersPath?: string
 }
 
 // providerConfigWithAnswers merges model definitions and replaces connection fields (setup.test.ts).
@@ -766,8 +768,8 @@ const writeSetupChanges = (
     })
     const secretsPath = envPathIn(root)
     const updatedConfig = updatedProject(configRaw, selected, providers)
-    yield* Effect.try({
-      try: () => parseProjectConfig(updatedConfig, configPath),
+    const registry = yield* Effect.try({
+      try: () => providerRegistrySource(parseProjectConfig(updatedConfig, configPath).models.providers),
       catch: (cause) => new SetupConfigError({
         message: cause instanceof Error ? cause.message : String(cause),
         cause
@@ -794,6 +796,9 @@ const writeSetupChanges = (
     if (updatedCelldConfig !== undefined) {
       yield* fs.writeFileString(celldConfigPath, updatedCelldConfig)
     }
+    const providersPath = `${root.replace(/\/$/, "")}/${PROVIDER_REGISTRY_FILE}`
+    yield* fs.makeDirectory(`${root.replace(/\/$/, "")}/generated`, { recursive: true })
+    yield* fs.writeFileString(providersPath, registry)
     const credentials = Object.fromEntries(providers.flatMap((provider) =>
       provider.credential === undefined ? [] : [[provider.env[0]!, provider.credential]]
     ))
@@ -814,13 +819,15 @@ const writeSetupChanges = (
     return {
       configPath,
       secretsPath,
+      providersPath,
       ...(celldConfigRaw.trim().length === 0 ? {} : { celldConfigPath })
     }
   })
 
 const writtenConfigLines = (files: SetupFiles): ReadonlyArray<string> => [
   `wrote ${files.configPath}`,
-  ...(files.celldConfigPath === undefined ? [] : [`wrote ${files.celldConfigPath}`])
+  ...(files.celldConfigPath === undefined ? [] : [`wrote ${files.celldConfigPath}`]),
+  ...(files.providersPath === undefined ? [] : [`wrote ${files.providersPath}`])
 ]
 
 // writeSetup merges one connection and selects its model as the project default.
@@ -898,6 +905,7 @@ export const setupPlanSummary = (files: SetupFiles, plan: SetupPlan): string =>
 export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   readonly configPath: string
   readonly celldConfigPath?: string
+  readonly providersPath?: string
   readonly secretsPath?: string
   readonly baseUrl: string
   readonly provider: string
@@ -909,6 +917,7 @@ export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
 } => ({
   configPath: files.configPath,
   ...(files.celldConfigPath === undefined ? {} : { celldConfigPath: files.celldConfigPath }),
+  ...(files.providersPath === undefined ? {} : { providersPath: files.providersPath }),
   ...(answers.credential === undefined ? {} : { secretsPath: files.secretsPath }),
   provider: answers.provider,
   baseUrl: answers.baseUrl,
@@ -922,6 +931,7 @@ export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
 export const providerSetupJson = (files: SetupFiles, providers: ReadonlyArray<ProviderAnswers>) => ({
   configPath: files.configPath,
   ...(files.celldConfigPath === undefined ? {} : { celldConfigPath: files.celldConfigPath }),
+  ...(files.providersPath === undefined ? {} : { providersPath: files.providersPath }),
   ...(providers.some((provider) => provider.credential !== undefined) ? { secretsPath: files.secretsPath } : {}),
   providers: providers.map((provider) => ({
     provider: provider.provider,
@@ -936,5 +946,6 @@ export const providerSetupJson = (files: SetupFiles, providers: ReadonlyArray<Pr
 export const defaultSetupJson = (files: SetupFiles, selected: NonNullable<ModelConfig["default"]>) => ({
   configPath: files.configPath,
   ...(files.celldConfigPath === undefined ? {} : { celldConfigPath: files.celldConfigPath }),
+  ...(files.providersPath === undefined ? {} : { providersPath: files.providersPath }),
   default: selected
 })

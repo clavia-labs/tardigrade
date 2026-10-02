@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 import { DEFAULT_PROJECT_CONFIG_PATH } from "@clavia/tardigrade-server/config"
 import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflare/catalog-migration"
@@ -10,6 +10,7 @@ import type { SetupAnswers, SetupFiles } from "./setup"
 import { dependencyVersionIn, versionIn } from "./version"
 import { callCommand, RLM_ONBOARDING_BRIEF, shellWord } from "./workflow"
 import { emptyModelLock, MODEL_LOCK_FILE, type ModelLock } from "./model-lock"
+import { PROVIDER_REGISTRY_FILE, providerRegistrySource } from "./provider-registry"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
 export const DEFAULT_INIT_ACTOR_NAME = "my-agent"
@@ -42,7 +43,7 @@ export interface InitializedActor {
   readonly celldManifest: string
   readonly packageManifest: string
   readonly modelLock: string
-  readonly catalogMigration: string
+  readonly catalogMigration?: string
 }
 
 export const defaultInitDirectory = (name: string): string => name
@@ -141,14 +142,18 @@ const packageTemplate = (
   type: "module",
   scripts: {
     dev: `bun --env-file=.dev.vars --watch ${DEFAULT_SERVER_ENTRY}`,
-    "dev:cloudflare": "wrangler dev",
-    "deploy:cloudflare": "wrangler deploy",
+    "dev:cloudflare": "bunx wrangler dev",
+    "deploy:cloudflare": "bunx wrangler deploy",
     "deploy:celld": `celld deploy --config ${CELLD_PROJECT_CONFIG_PATH}`
   },
   dependencies: {
     "@effect/platform-bun": platformBunVersion,
     effect: effectVersion,
     tardie: version
+  },
+  overrides: {
+    "@effect/platform-node-shared": platformBunVersion,
+    effect: effectVersion
   }
 }, undefined, 2)}\n`
 
@@ -167,7 +172,17 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
     name,
     ...(options.template === undefined ? {} : { template: options.template })
   })
-  const manifestSource = manifestTemplate(name, options.now ?? new Date())
+  const modern = (options.template ?? DEFAULT_INIT_TEMPLATE) === "quickstart"
+  const manifestValue = JSON.parse(manifestTemplate(name, options.now ?? new Date()))
+  if (modern) {
+    manifestValue.durable_objects.bindings = [{ name: "ACTORS", class_name: "ActorDO" }]
+    manifestValue.migrations = [{ tag: "v1", new_sqlite_classes: ["ActorDO"] }]
+    delete manifestValue.worker_loaders
+    delete manifestValue.d1_databases
+    manifestValue.vars = { TARDIGRADE_CONFIG: {} }
+  }
+  const manifestSource = `${JSON.stringify(manifestValue, null, 2)}\n`
+  const quickstartFile = (file: string) => readFile(new URL(`../../examples/quickstart/${file}.template`, import.meta.url), "utf8").catch(() => readFile(new URL(`../../../examples/quickstart/${file}.template`, import.meta.url), "utf8"))
   const packageVersion = options.packageVersion ?? await versionIn(import.meta.url)
   if (packageVersion.endsWith("-unknown")) throw new Error("cannot determine the installed Tardigrade version")
   const effectVersion = await dependencyVersionIn("effect", import.meta.url)
@@ -181,20 +196,27 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
 
   try {
     await writeFile(entry, source, "utf8")
-    await writeFile(server, serverTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
-    await writeFile(worker, workerTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
+    await writeFile(server, modern ? await quickstartFile("server.ts") : serverTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
+    await writeFile(worker, modern ? await quickstartFile("worker.ts") : workerTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
+    if (modern) {
+      await writeFile(resolve(directory, "services.ts"), await quickstartFile("services.ts"), "utf8")
+      await mkdir(resolve(directory, "generated"))
+      await writeFile(resolve(directory, PROVIDER_REGISTRY_FILE), providerRegistrySource(options.modelLock?.providers ?? {}), "utf8")
+    }
     await writeFile(manifest, manifestSource, "utf8")
     await writeFile(celldManifest, celldConfigOf(manifestSource, manifest).source, "utf8")
     await writeFile(packageManifest, packageTemplate(packageVersion, effectVersion, platformBunVersion), "utf8")
     await writeFile(modelLock, `${JSON.stringify(options.modelLock ?? emptyModelLock(), null, 2)}\n`, "utf8")
-    await mkdir(resolve(directory, "migrations"))
-    await writeFile(catalogMigration, CLOUDFLARE_MODEL_CATALOG_MIGRATION, "utf8")
+    if (!modern) {
+      await mkdir(resolve(directory, "migrations"))
+      await writeFile(catalogMigration, CLOUDFLARE_MODEL_CATALOG_MIGRATION, "utf8")
+    }
   } catch (error) {
     await rm(directory, { recursive: true, force: true })
     throw error
   }
 
-  return { name, directory, entry, server, worker, manifest, celldManifest, packageManifest, modelLock, catalogMigration, template: options.template ?? DEFAULT_INIT_TEMPLATE }
+  return { name, directory, entry, server, worker, manifest, celldManifest, packageManifest, modelLock, ...(!modern ? { catalogMigration } : {}), template: options.template ?? DEFAULT_INIT_TEMPLATE }
 }
 
 const shownPath = (cwd: string, path: string): string => {
@@ -235,12 +257,13 @@ export const initSummary = (
     styled(`✓ actor ${JSON.stringify(actor.name)} created in ${shownDirectory}`, "1;32", colors),
     summaryField("files", shownPath(actor.directory, actor.entry), colors),
     summaryField("", shownPath(actor.directory, actor.server), colors),
+    ...(actor.template === "quickstart" ? [summaryField("", "services.ts", colors), summaryField("", PROVIDER_REGISTRY_FILE, colors)] : []),
     summaryField("", shownPath(actor.directory, actor.worker), colors),
     summaryField("", shownPath(actor.directory, actor.manifest), colors),
     summaryField("", shownPath(actor.directory, actor.celldManifest), colors),
     summaryField("", shownPath(actor.directory, actor.packageManifest), colors),
     summaryField("", shownPath(actor.directory, actor.modelLock), colors),
-    summaryField("", shownPath(actor.directory, actor.catalogMigration), colors),
+    ...(actor.catalogMigration ? [summaryField("", shownPath(actor.directory, actor.catalogMigration), colors)] : []),
     summaryField("credential", credential, colors),
     ...(answers.region === undefined ? [] : [summaryField("region", answers.region, colors)]),
     "",

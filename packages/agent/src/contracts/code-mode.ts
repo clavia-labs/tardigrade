@@ -17,7 +17,7 @@ export const PackageReturned = Schema.Struct({ type: Schema.Literal("PackageRetu
 export const DomainEvent = Schema.Union([CodeCalled, CodeReturned, PackageCalled, PackageReturned])
 export const Event = Schema.Union([AgentEvent, DomainEvent])
 
-export const EvaluationInput = Schema.Struct({ ...Owner, code: Schema.String })
+export const EvaluationInput = Schema.Struct({ ...Owner, code: Schema.String, libraries: Schema.optionalKey(Schema.Array(Schema.NonEmptyString)) })
 export const PackageInput = Schema.Struct({ ...Owner, ...Invocation.fields })
 export const EvaluateCode = act({ name: "code-mode.evaluate", input: EvaluationInput, success: Schema.Json, failure: Schema.String })
 export const ExecutePackage = act({ name: "code-mode.package", input: PackageInput, success: Schema.Json, failure: Schema.String })

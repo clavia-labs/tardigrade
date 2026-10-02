@@ -1,0 +1,32 @@
+import { DurableObject } from "cloudflare:workers"
+import { actorContext } from "tardie/agent"
+import { createCloudflareHost, methodHttp } from "tardie/platform/cloudflare"
+import definition from "./actor"
+import { services } from "./services"
+
+interface Env {
+  readonly ACTORS: DurableObjectNamespace<ActorDO>
+  readonly TARDIGRADE_CONFIG: { readonly models: unknown } | string
+  readonly TARDIGRADE_TOKEN?: string
+  readonly [key: string]: unknown
+}
+
+export class ActorDO extends DurableObject<Env> {
+  private readonly host = createCloudflareHost({
+    actor: definition,
+    actorContext,
+    storage: this.ctx.storage,
+    services: () => services((typeof this.env.TARDIGRADE_CONFIG === "string" ? JSON.parse(this.env.TARDIGRADE_CONFIG) : this.env.TARDIGRADE_CONFIG).models, this.env),
+  })
+  private readonly handler = methodHttp(this.host, {
+    ...(this.env.TARDIGRADE_TOKEN ? { token: this.env.TARDIGRADE_TOKEN } : {}),
+  })
+  fetch(request: Request): Promise<Response> { return this.handler(request) }
+}
+
+export default {
+  fetch(request: Request, env: Env): Promise<Response> | Response {
+    const instance = /^\/v1\/actors\/([^/]+)\/threads(?:\/|$)/.exec(new URL(request.url).pathname)?.[1] ?? "main"
+    return env.ACTORS.getByName(decodeURIComponent(instance)).fetch(request)
+  },
+}

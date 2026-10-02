@@ -170,9 +170,18 @@ export function createActorExecution<Event extends object, Services, State, Cont
     const cancel = <Name extends keyof Contracts & string>(method: Name, id: string, reason: string) => options.run(thread.receive(
       { method, cancel: { id, reason } }, { id: JSON.stringify(["cancel", method, id]), from: options.from },
     ))
+    // methodState reads a committed invocation without waiting for its result.
+    const methodState = <Name extends keyof Contracts & string>(name: Name, id: string) => options.run(Effect.gen(function* () {
+      const record = yield* journal.readMessage(id)
+      const invocation = record?.record.message?.invocation
+      const method = thread.contracts[name]
+      if (!method || invocation?.method !== name) return yield* Effect.fail(new InvalidMessage("State requires a matching invocation"))
+      return method.result(invocation.input, thread.get, { id, ref: { method: name, id } }) ?? { status: "pending" as const }
+    }))
     type Client = { readonly [Name in keyof Contracts]: (input: MethodInput<Contracts[Name]>, request: { readonly id: string }) => Effect.Effect<MethodOutput<Contracts[Name]>, Error> }
     const methods = Object.fromEntries(Object.keys(thread.contracts).map(name => [name, (input: Schema.Json, request: { readonly id: string }) => invoke(name, input, request).pipe(Effect.andThen(result(name, request.id)), Effect.flatMap(result => result.status === "completed" ? Effect.succeed(result.output) : Effect.fail(result.status === "failed" ? new MethodFailed(result.error) : new MethodCancelled(result.reason))))])) as Client
-    return { ...methods, coordinate: Object.freeze({ ...coordinate }), store: createThreadStore(coordinate, thread), methods, invoke, result, cancel,
+    return { ...methods, coordinate: Object.freeze({ ...coordinate }), store: createThreadStore(coordinate, thread), contracts: thread.contracts, methods, invoke, result, cancel, methodState,
+      records: () => options.run(journal.read),
       get: thread.get, getState: thread.getState, resume: thread.resume, wait: thread.wait,
       receipt: (id: string) => options.run(journal.readMessage(id).pipe(Effect.tap(record => record ? journal.acknowledge : Effect.void), Effect.map(record => record ? { id, position: record.position } : undefined))),
     }

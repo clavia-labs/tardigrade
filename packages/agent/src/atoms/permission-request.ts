@@ -23,7 +23,8 @@ export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: 
     }
     const call = get(pendingTools).pending
     if (!call || state.decisions.some(value => value.action === "tool.execute" && value.requestId === call.callId)) return { view: { ...state, position: "ready" }, events: {}, acts: {} }
-    const metadata = options.tools ? get(options.tools).view.specs.find(tool => tool.name === call.name)?.metadata : undefined
+    const hints = options.tools ? get(options.tools).view.specs.find(tool => tool.name === call.name)?.annotations : undefined
+    const metadata = hints?.readOnlyHint === undefined ? undefined : { readOnly: hints.readOnlyHint }
     const rule = Object.hasOwn(state.policy.actions, "tool.execute") ? state.policy.actions["tool.execute"] : undefined
     const mode = rule && Object.hasOwn(rule.resources, call.name) ? rule.resources[call.name]!
       : metadata?.readOnly === true && rule?.readOnly ? rule.readOnly : rule?.default ?? state.policy.default

@@ -209,7 +209,8 @@ describe("writeSetup", () => {
     const files = await write()
     expect(files).toEqual({
       configPath: projectConfigPathIn(root),
-      secretsPath: envPathIn(root)
+      secretsPath: envPathIn(root),
+      providersPath: join(root, "generated/providers.ts")
     })
     expect((await stat(files.secretsPath)).mode & 0o777).toBe(SECRETS_MODE)
     expect(await readFile(gitignorePathIn(root), "utf8")).toContain(".dev.vars*")

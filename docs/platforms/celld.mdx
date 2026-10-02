@@ -7,32 +7,19 @@ sectionOrder: 3
 order: 3
 ---
 
-Celld runs Wrangler Worker bundles and SQLite Durable Objects on a self-hosted fleet. Tardigrade uses the same actor definition, lifecycle, alarms, and HTTP routes on Celld and Cloudflare.
+Celld runs Worker bundles and SQLite Durable Objects on a self-hosted fleet. Use the same `worker.ts` as the [Cloudflare host](/docs/platforms/cloudflare):
 
-```ts title="worker.ts"
-import definition from "./actor"
-import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/deprecated/worker"
-import { providerLayer } from "tardie/model/providers/openai-compat"
-import modelLock from "./models.lock.json"
-
-const services = workerModelServices({
-  model: { providerLayer },
-  scope: modelScopeFrom(modelLock)
-})
-
-const host = defineWorkerHost(definition, { services })
-const http = workerHttp(host)
-
-// host exposes the Durable Object classes (platform/cloudflare/test/actor.workers.ts).
-// HTTP request -> Worker handler
-//                  +-- ActorDO: allocates and tracks threads
-//                  +-- ThreadDO: stores events and executes a thread
-export const { ActorDO, ThreadDO } = host
-
-export default {
-  fetch: http.fetch
-}
+```text
+Worker fetch
+  |
+  +-- ACTORS.getByName(instance)
+        |
+        +-- ActorDO
+              +-- supervisor journal
+              +-- thread journals and runtimes
 ```
+
+The Worker exports `ActorDO`, mounts the actor with `createCloudflareHost` from `tardie/platform/cloudflare`, and exposes its methods through `methodHttp`. The generated `services.ts` supplies model and tool implementations.
 
 ## Deploy
 
@@ -55,10 +42,9 @@ The first command validates the deployment. The second publishes it.
 
 ## Configure nodes
 
-Each node needs the Worker variables for the Tardigrade token and model provider credentials. Actors that use Code Mode also need the Worker Loader binding. Prefix a variable with `CELLD_VAR_`, or set `CELLD_VARS_FILE` to a file containing the original variable names.
+Each node needs the model provider credentials. Set `TARDIGRADE_TOKEN` to enable bearer authentication. Prefix a variable with `CELLD_VAR_`, or set `CELLD_VARS_FILE` to a file containing the original variable names.
 
 ```bash
-CELLD_WORKER_LOADER=LOADER \
 CELLD_VAR_TARDIGRADE_TOKEN="$TARDIGRADE_TOKEN" \
 CELLD_VAR_OPENAI_API_KEY="$OPENAI_API_KEY" \
 celld \
@@ -70,8 +56,8 @@ celld \
 
 Keep the internal listener on a trusted private network. Running nodes poll for deployment changes and adopt the new version in place. See the [operations guide](https://github.com/denoland/celld/blob/main/docs/README.md#deploy-an-application) for rollout controls.
 
-## Execution model
+## Storage
 
-Celld and Cloudflare persist incoming work and an immediate alarm before acknowledging delivery. Alarm handlers run thread execution and supervisor setup in fresh invocations. Allocation waits for setup and registration to complete before returning a ready thread.
+The generated manifest binds `ACTORS` to `ActorDO`. Each actor instance stores its supervisor and thread journals in that Durable Object's SQLite storage. Opening a thread restores atom state from its checkpoint and recorded events.
 
-The generated Celld manifest uses the `replay` sandbox transport and `request` ownership for background observer tasks. Cloudflare defaults to `direct` transport and `host` ownership. These settings do not change alarm-driven execution. See Celld's [Cloudflare compatibility](https://github.com/denoland/celld/blob/main/docs/cloudflare-compat.md) and [operations documentation](https://github.com/denoland/celld/blob/main/docs/README.md) for platform details.
+Model configuration is stored in `TARDIGRADE_CONFIG`, and model metadata is bundled in `models.lock.json`. Provider secrets are supplied by the fleet nodes.

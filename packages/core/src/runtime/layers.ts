@@ -7,6 +7,7 @@ import type { MessageSender } from "../actor/message"
 import type { SupervisorEvent } from "../services/supervisor/graph"
 import { Effect, Layer, Scope, Exit, Fiber } from "effect"
 import { createActorExecution, type ActorExecutionOptions, type ActorStorage } from "./actors"
+import { createActorStore } from "./execution"
 import { Supervisor, createSupervisor, type ThreadRequest } from "../services/supervisor"
 import { Invocation, createInvocation, DEFAULT_EXTERNAL_SENDER, type MessageTransport, type ActorMessageTransport } from "../services/invocation"
 
@@ -46,10 +47,11 @@ export function createThreadHost<Event extends object, Services, State, Contract
     ...(options.generateName ? { generateName: options.generateName } : {}),
     run,
   })
+  const services: ActorExecutionOptions<Event, Services, State, Contracts>["services"] = (coordinate, runtime) => options.services(coordinate, runtime).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, supervisor), Layer.succeed(Invocation, invocation.forSender(coordinate)))))
   const actors: ReturnType<typeof createActorExecution<Event, Services, State, Contracts>> = createActorExecution({
     ...options, run, from: options.from ?? DEFAULT_EXTERNAL_SENDER,
     delivery: coordinate => ({ ...options.delivery, address: coordinate, send: invocation.forSender(coordinate).send }),
-    services: (coordinate, runtime) => options.services(coordinate, runtime).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, supervisor), Layer.succeed(Invocation, invocation.forSender(coordinate))))),
+    services,
   })
   const invocation = createInvocation({ supervisor, reference: actors.reference, receive: actors.receive, from: options.from ?? DEFAULT_EXTERNAL_SENDER, ...(options.actorTransport ? { actorTransport: options.actorTransport } : {}), ...(options.transports ? { transports: options.transports } : {}), run })
   const closing = Effect.runSync(Effect.cached(Effect.gen(function* () {
@@ -63,6 +65,13 @@ export function createThreadHost<Event extends object, Services, State, Contract
   }).pipe(Effect.uninterruptible)))
   return {
     actor: options.actor.actorName,
+    methodContracts: (input: { readonly instance: string }) => run(Effect.acquireUseRelease(
+      createActorStore({ actor: options.actor, actorContext: options.actorContext, inspect: true,
+        services: runtime => services({ actor: options.actor.actorName, instance: input.instance, thread: "$methods" }, runtime),
+      }),
+      store => Effect.succeed(store.contracts),
+      store => store.close,
+    )),
     supervisorStore: supervisor.store,
     getThread: (input: { readonly instance: string; readonly thread: string }) => invocation.get({ actor: options.actor.actorName, ...input }),
     send: invocation.send,

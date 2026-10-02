@@ -38,6 +38,7 @@ tdg methods --json
 Run every development case with a fresh thread ID, then read the complete event log:
 
 ```bash
+tdg thread create --name "$thread" --json
 tdg call message "$input" --thread "$thread" --json
 tdg events "$thread" --json
 ```
@@ -71,4 +72,4 @@ Select the best prompt from development scores using the declared rule. Run that
 - The minibatch size, rollout count, feedback window, iteration count, and stop condition.
 - Regressions and evaluation gaps.
 
-Promote the selected prompt under the intended actor name after the user accepts the evidence. Rebuild it, verify the digest, and deploy it only to the authorized target.
+Promote the selected prompt under the intended actor name within the user's authorized scope. Rebuild it, verify the digest, and deploy it only to the authorized target.

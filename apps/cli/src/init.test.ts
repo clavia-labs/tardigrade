@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { buildActor } from "./build"
 import { CELLD_PROJECT_CONFIG_PATH } from "./celld"
 import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflare/catalog-migration"
-import { DEFAULT_ACTOR_ENTRY, DEFAULT_CATALOG_MIGRATION, DEFAULT_INIT_ACTOR_NAME, DEFAULT_MODEL_LOCK, DEFAULT_PACKAGE_MANIFEST, DEFAULT_SERVER_ENTRY, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
+import { DEFAULT_ACTOR_ENTRY, DEFAULT_INIT_ACTOR_NAME, DEFAULT_MODEL_LOCK, DEFAULT_PACKAGE_MANIFEST, DEFAULT_SERVER_ENTRY, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 
 let root = ""
 afterEach(async () => {
@@ -35,7 +35,7 @@ describe("initActor", () => {
     const celldManifest = JSON.parse(await readFile(initialized.celldManifest, "utf8")) as Record<string, unknown>
     const packageManifest = JSON.parse(await readFile(initialized.packageManifest, "utf8")) as Record<string, unknown>
     const modelLock = JSON.parse(await readFile(initialized.modelLock, "utf8")) as Record<string, unknown>
-    const catalogMigration = await readFile(initialized.catalogMigration, "utf8")
+    await symlink(new URL("../../../node_modules", import.meta.url).pathname, join(initialized.directory, "node_modules"), "dir")
     const built = await buildActor(initialized.entry, { cwd: initialized.directory, out: "output" })
 
     expect(defaultInitDirectory("reviewer")).toBe("reviewer")
@@ -45,43 +45,31 @@ describe("initActor", () => {
     expect(initialized.celldManifest).toBe(join(cwd, "reviewer", CELLD_PROJECT_CONFIG_PATH))
     expect(initialized.packageManifest).toBe(join(cwd, "reviewer", DEFAULT_PACKAGE_MANIFEST))
     expect(initialized.modelLock).toBe(join(cwd, "reviewer", DEFAULT_MODEL_LOCK))
-    expect(initialized.catalogMigration).toBe(join(cwd, "reviewer", DEFAULT_CATALOG_MIGRATION))
+    expect(initialized.catalogMigration).toBeUndefined()
     expect(source).toContain('const actorName = "reviewer"')
-    expect(source).toContain("infer([")
+    expect(source).toContain("defineActor(actorName, Effect.gen")
     expect(server).toContain('import definition from "./actor"')
-    expect(server).toContain("const host = await createBunHost({")
-    expect(server).toContain("layersFor: () => layers")
-    expect(server).toContain("await host.close()")
-    expect(worker).toContain("defineWorkerHost(definition")
-    expect(worker).toContain("const http = workerHttp(host)")
-    expect(worker).toContain("fetch: http.fetch")
-    expect(worker).toContain('import definition from "./actor"')
-    expect(worker).toContain('from "tardie/deprecated/worker"')
-    expect(worker).toContain('import modelLock from "./models.lock.json"')
-    expect(worker).toContain("scope: modelScopeFrom(modelLock)")
-    expect(worker).toContain('import { providerLayer } from "tardie/model/providers/openrouter"')
-    expect(worker).toContain("  model: { providerLayer },")
+    expect(server).toContain("Effect.runPromise(createBunHost({")
+    expect(server).toContain("methodHttp(host")
+    expect(server).toContain("host.close")
+    expect(worker).toContain("createCloudflareHost({")
+    expect(worker).toContain("methodHttp(this.host")
+    expect(worker).toContain('from "tardie/platform/cloudflare"')
+    expect(await readFile(join(initialized.directory, "services.ts"), "utf8")).toContain("toolActs([tools])")
     expect(manifest).toMatchObject({
       name: "reviewer",
       main: "worker.ts",
       compatibility_date: "2026-08-24",
       durable_objects: { bindings: [
-        { name: "ACTORS", class_name: "ActorDO" },
-        { name: "THREADS", class_name: "ThreadDO" }
+        { name: "ACTORS", class_name: "ActorDO" }
       ] },
-      worker_loaders: [{ binding: "LOADER" }],
-      migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO", "ThreadDO"] }]
+      migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO"] }]
     })
-    expect(manifest).toMatchObject({ d1_databases: [{
-      binding: "CATALOG_DB",
-      database_name: "reviewer-catalog",
-      migrations_dir: "migrations"
-    }] })
+    expect(manifest["d1_databases"]).toBeUndefined()
     expect(Object.keys(celldManifest).sort()).toEqual([
       "$schema",
       "compatibility_date",
       "compatibility_flags",
-      "d1_databases",
       "durable_objects",
       "main",
       "migrations",
@@ -96,18 +84,21 @@ describe("initActor", () => {
       type: "module",
       scripts: {
         dev: "bun --env-file=.dev.vars --watch server.ts",
-        "dev:cloudflare": "wrangler dev",
-        "deploy:cloudflare": "wrangler deploy",
+        "dev:cloudflare": "bunx wrangler dev",
+        "deploy:cloudflare": "bunx wrangler deploy",
         "deploy:celld": "celld deploy --config celld.jsonc"
       },
       dependencies: {
         "@effect/platform-bun": expect.any(String),
         effect: expect.any(String),
         tardie: "0.7.1-test"
+      },
+      overrides: {
+        "@effect/platform-node-shared": expect.any(String),
+        effect: expect.any(String)
       }
     })
     expect(modelLock).toMatchObject({ schema: 2, providers: {}, models: [] })
-    expect(catalogMigration).toBe(CLOUDFLARE_MODEL_CATALOG_MIGRATION)
     expect(built.manifest.name).toBe("reviewer")
   })
 
@@ -134,6 +125,7 @@ describe("initActor", () => {
     const initialized = await initActor("reviewer", { cwd, template: "rlm" })
 
     expect(await readFile(initialized.entry, "utf8")).toContain("codeMode([")
+    expect(await readFile(initialized.catalogMigration!, "utf8")).toBe(CLOUDFLARE_MODEL_CATALOG_MIGRATION)
   })
 
 })
@@ -159,12 +151,13 @@ describe("initSummary", () => {
   ✓ actor "reviewer" created in ./reviewer
     files       actor.ts
                 server.ts
+                services.ts
+                generated/providers.ts
                 worker.ts
                 wrangler.jsonc
                 celld.jsonc
                 package.json
                 models.lock.json
-                migrations/0001_catalog.sql
     credential  OPENROUTER_API_KEY (.dev.vars)
 
   → next

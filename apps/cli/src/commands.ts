@@ -6,19 +6,15 @@ import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
 import { ACTOR_NAME_PATTERN } from "tardie/deprecated"
 import {
-  CATALOG_AVAILABILITY_FILTERS,
-  MODEL_CATALOG_PRICE_SORTS,
-  MODEL_CATALOG_SORT_ORDERS,
-  MODEL_CATALOG_UNPRICED_ORDERS,
   NO_ANSWER,
   ProblemError,
-  type ActorClient,
-  type ActorCallHandle,
+  type ActorCallRef,
   type MethodState
 } from "@clavia/tardigrade-deprecated-client"
 
 import { modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-server/config"
 
+import type { CliClient } from "./client"
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary } from "./build"
 import { readFileConfig, readProjectConfig, resolveRemote } from "./config"
 import { DEFAULT_INIT_ACTOR_NAME, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
@@ -52,10 +48,7 @@ import {
   eventsTable,
   jsonOf,
   methodLines,
-  methodsLines,
-  modelsTable,
-  providersTable,
-  threadsTable
+  methodsLines
 } from "./render"
 import { Cli, type CliServices } from "./services"
 
@@ -152,28 +145,6 @@ const actorInstance = Flag.String("actor").pipe(
 )
 
 const remote = { url, token, json, actor: actorInstance }
-const catalogRemote = { url, token, json }
-
-const catalogSearch = Flag.String("search").pipe(
-  Flag.withDescription("Keep entries whose ID or name contains this text."),
-  Flag.optional
-)
-
-const catalogCursor = Flag.String("cursor").pipe(
-  Flag.withDescription("Continue from a cursor returned by the same catalog query."),
-  Flag.optional
-)
-
-const catalogLimit = Flag.Int("limit").pipe(
-  Flag.withDescription("The page size. Defaults to the server's catalog page size."),
-  Flag.optional
-)
-
-const catalogAvailability = Flag.Literals("availability", CATALOG_AVAILABILITY_FILTERS).pipe(
-  Flag.withDescription("Include every catalog provider or only providers this host can use."),
-  Flag.optional
-)
-
 // clientOf resolves where to call and opens the client, which is the one place the two sources meet
 // (config.ts, resolveRemote).
 const clientOf = (flags: {
@@ -196,8 +167,8 @@ const methodInput = (source: string): Effect.Effect<unknown, CliError.UserError>
   })
 
 const settle = (
-  client: ActorClient,
-  handle: ActorCallHandle,
+  client: CliClient,
+  handle: ActorCallRef,
   pollMillis: number,
   timeoutMillis: number
 ): Effect.Effect<MethodState, CliError.UserError> =>
@@ -557,7 +528,7 @@ export const lintCommand = Command.make("lint", {
     })
     yield* Console.log(flags.json ? jsonOf(linted) : lintSummary(linted))
   })).pipe(
-    Command.withDescription("Validate an actor's component and method seams without writing an artifact."),
+    Command.withDescription("Validate an actor definition; atom method contracts are validated during setup."),
     Command.withExamples([
       { command: "tdg lint actor.ts", description: "Check one actor before building or deploying it" }
     ])
@@ -658,46 +629,9 @@ export const threadCreateCommand = Command.make("create", {
   yield* Console.log(flags.json ? jsonOf(coordinate) : coordinate.thread)
 })).pipe(Command.withDescription("Allocate a root thread and print its assigned identity."))
 
-// threadForkCommand names the checkpoint by row or by event id, never both (commands.test.ts, "fork").
-export const threadForkCommand = Command.make("fork", {
-  thread: Argument.String("thread").pipe(Argument.withDescription("The source thread whose rows are copied")),
-  seq: Flag.Int("seq").pipe(
-    Flag.withDescription("The source row to copy through, 1-based."),
-    Flag.optional
-  ),
-  event: Flag.String("event").pipe(
-    Flag.withDescription("The id of the source event to copy through. A repeated id, such as a callId, names its last row."),
-    Flag.optional
-  ),
-  name: Flag.String("name").pipe(
-    Flag.withDescription("The destination root name. Omit to generate an assigned identity."),
-    Flag.optional
-  ),
-  ...remote
-}, (flags) => Effect.gen(function*() {
-  const seq = Option.getOrUndefined(flags.seq)
-  const event = stated(flags.event)
-  if ((seq === undefined) === (event === undefined)) {
-    return yield* CliError.UserError.make({
-      cause: new Error("checkpoint"),
-      userMessage: "Pass exactly one of --seq <row> or --event <id>."
-    })
-  }
-  const checkpoint = seq === undefined ? { event: event! } : { seq }
-  const client = yield* clientOf(flags)
-  const forked = yield* call(() => client.forkThread(flags.actor, flags.thread, checkpoint, stated(flags.name)))
-  yield* Console.log(flags.json ? jsonOf(forked) : forked.thread)
-})).pipe(
-  Command.withDescription("Copy a thread's rows through a checkpoint onto a new root."),
-  Command.withExamples([
-    { command: "tdg thread fork root --event m1 --name experiment", description: "Fork root through event m1 onto experiment" },
-    { command: "tdg thread fork root --seq 2 --json", description: "Fork root through row 2 and print the coordinate" }
-  ])
-)
-
 export const threadCommand = Command.make("thread").pipe(
   Command.withDescription("Allocate actor threads."),
-  Command.withSubcommands([threadCreateCommand, threadForkCommand])
+  Command.withSubcommands([threadCreateCommand])
 )
 
 export const callCommand = Command.make("call", {
@@ -751,40 +685,6 @@ export const callCommand = Command.make("call", {
     Command.withSubcommands([callStateCommand, callCancelCommand])
   )
 
-export const lsCommand = Command.make("ls", remote, (flags) =>
-  Effect.gen(function*() {
-    const client = yield* clientOf(flags)
-    const threads = yield* call(() => client.list(flags.actor))
-    yield* Console.log(flags.json ? jsonOf(threads) : threadsTable(threads))
-  })).pipe(
-    Command.withDescription("List every thread a store holds, parent before child. An execution that spawned nine children lists ten rows."),
-    Command.withAlias("list")
-  )
-
-export const providersCommand = Command.make("providers", {
-  search: catalogSearch,
-  availability: catalogAvailability,
-  cursor: catalogCursor,
-  limit: catalogLimit,
-  ...catalogRemote
-}, (flags) =>
-  Effect.gen(function*() {
-    const client = yield* clientOf(flags)
-    const page = yield* call(() => client.providers({
-      availability: Option.getOrUndefined(flags.availability),
-      cursor: stated(flags.cursor),
-      limit: Option.getOrUndefined(flags.limit),
-      search: stated(flags.search)
-    }))
-    yield* Console.log(flags.json ? jsonOf(page) : providersTable(page))
-  })).pipe(
-    Command.withDescription("List provider protocols, endpoints, credential names, and required configuration."),
-    Command.withExamples([
-      { command: "tdg providers", description: "List the first provider page" },
-      { command: "tdg providers --search google --json", description: "Search providers and print the page as JSON" }
-    ])
-  )
-
 export const modelLockCommand = Command.make("lock", { json }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
@@ -809,51 +709,10 @@ export const modelLockCommand = Command.make("lock", { json }, (flags) =>
     Command.withExamples([{ command: "tdg models lock", description: "Update the deployment model lock" }])
   )
 
-export const modelsCommand = Command.make("models", {
-  provider: Flag.String("provider").pipe(
-    Flag.withDescription("Keep models from this provider."),
-    Flag.optional
-  ),
-  search: catalogSearch,
-  availability: catalogAvailability,
-  sort: Flag.Literals("sort", MODEL_CATALOG_PRICE_SORTS).pipe(
-    Flag.withDescription("Order models by this token price."),
-    Flag.optional
-  ),
-  order: Flag.Literals("order", MODEL_CATALOG_SORT_ORDERS).pipe(
-    Flag.withDescription("Order selected prices from low to high or high to low."),
-    Flag.optional
-  ),
-  unpriced: Flag.Literals("unpriced", MODEL_CATALOG_UNPRICED_ORDERS).pipe(
-    Flag.withDescription("Place models without the selected price first or last."),
-    Flag.optional
-  ),
-  cursor: catalogCursor,
-  limit: catalogLimit,
-  ...catalogRemote
-}, (flags) =>
-  Effect.gen(function*() {
-    const client = yield* clientOf(flags)
-    const page = yield* call(() => client.models({
-      availability: Option.getOrUndefined(flags.availability),
-      cursor: stated(flags.cursor),
-      limit: Option.getOrUndefined(flags.limit),
-      provider: stated(flags.provider),
-      search: stated(flags.search),
-      sort: Option.getOrUndefined(flags.sort),
-      order: Option.getOrUndefined(flags.order),
-      unpriced: Option.getOrUndefined(flags.unpriced)
-    }))
-    yield* Console.log(flags.json ? jsonOf(page) : modelsTable(page))
-  })).pipe(
-    Command.withDescription("Search and page the public model catalog."),
-    Command.withExamples([
-      { command: "tdg models --provider openrouter --search claude", description: "Search OpenRouter models" },
-      { command: "tdg models --sort completionUsdPerToken --order asc", description: "List the cheapest completion prices first" },
-      { command: "tdg models --cursor <cursor> --json", description: "Read the next page as JSON" }
-    ]),
-    Command.withSubcommands([modelLockCommand])
-  )
+export const modelsCommand = Command.make("models").pipe(
+  Command.withDescription("Manage the deployment model lock."),
+  Command.withSubcommands([modelLockCommand])
+)
 
 export const eventsCommand = Command.make("events", {
   thread: Argument.String("thread").pipe(Argument.withDescription("The thread whose log to read")),
@@ -895,9 +754,8 @@ export const eventsCommand = Command.make("events", {
 export const tdg = Command.make("tdg").pipe(
   Command.withDescription("Build, run, and inspect durable actors."),
   Command.withSubcommands([
-    { group: "CREATE", commands: [initCommand, setupCommand, lintCommand, buildCommand] },
+    { group: "CREATE", commands: [initCommand, setupCommand, lintCommand, buildCommand, modelsCommand] },
     { group: "RUN", commands: [threadCommand, callCommand] },
-    { group: "CATALOG", commands: [providersCommand, modelsCommand, methodsCommand] },
-    { group: "INSPECT", commands: [lsCommand, eventsCommand] }
+    { group: "INSPECT", commands: [methodsCommand, eventsCommand] }
   ])
 )

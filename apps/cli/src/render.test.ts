@@ -1,37 +1,15 @@
 import { describe, expect, test } from "bun:test"
-import type { ThreadSummary, EventRow } from "@clavia/tardigrade-deprecated-client"
+import type { EventRow } from "@clavia/tardigrade-deprecated-client"
 
-import { threadsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, methodLines, methodsLines, table } from "./render"
+import { DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, methodLines, methodsLines, table } from "./render"
 
 // The human rendering. A table is plain aligned text, so these assert on columns rather than on
 // escape sequences, and a value the projection did not carry reads as absent rather than as empty.
-
-const threads: ReadonlyArray<ThreadSummary> = [
-  { id: "root", depth: 0, events: 12, lastAt: 0, status: "settled" },
-  { id: "root.1", parent: "root", depth: 1, events: 3, status: "running" }
-]
 
 describe("table", () => {
   test("columns are padded to the widest cell and the last is not", () => {
     const lines = table(["A", "BB"], [["x", "y"], ["longer", "z"]]).split("\n")
     expect(lines).toEqual(["A       BB", "x       y", "longer  z"])
-  })
-})
-
-describe("threadsTable", () => {
-  test("a run is one row, and an absent field reads as absent", () => {
-    const lines = threadsTable(threads).split("\n")
-    expect(lines[0]).toContain("THREAD")
-    expect(lines[1]).toContain("root")
-    expect(lines[1]).toContain("settled")
-    expect(lines[2]).toContain("1")
-    expect(lines[1]).toContain("1970-01-01T00:00:00.000Z")
-    expect(lines[1]).toContain(ABSENT)
-    expect(lines[2]).toContain("root.1")
-  })
-
-  test("an empty store says so", () => {
-    expect(threadsTable([])).toBe("no threads")
   })
 })
 

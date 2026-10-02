@@ -1,0 +1,17 @@
+import { providerLayer } from "./generated/providers"
+import { Effect, Layer } from "effect"
+import { liveModelServices, modelActs, modelInfo, toolActs } from "tardie/agent/services"
+import { modelConfigOf, modelCredentialsFrom } from "tardie/model/config"
+import { layerModelLock } from "tardie/model/lock"
+import modelLock from "./models.lock.json"
+import { weather } from "./actor"
+
+export function services(models: unknown, env: Readonly<Record<string, unknown>>) {
+  const config = modelConfigOf(models)
+  const lock = layerModelLock(modelLock, config)
+  const model = liveModelServices({ providerLayer, credentials: modelCredentialsFrom(config, env) }).pipe(Layer.provideMerge(lock))
+  const tools = weather.implement({
+    current: ({ city }) => Effect.succeed({ city, temperature: 21 }),
+  })
+  return Layer.mergeAll(modelInfo, modelActs, toolActs([tools])).pipe(Layer.provide(model))
+}

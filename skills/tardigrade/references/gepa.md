@@ -36,6 +36,7 @@ tdg methods --json
 Run every development case with a fresh thread ID, then read the complete event log:
 
 ```bash
+tdg thread create --name "$thread" --json
 tdg call message "$input" --thread "$thread" --json
 tdg events "$thread" --json
 ```
@@ -73,4 +74,4 @@ Run the surviving candidates and the unchanged baseline on the held-out cases. R
 - The limits and stop condition.
 - Regressions and evaluation gaps.
 
-Promote the selected source under the intended actor name after the user accepts the evidence. Rebuild it, verify the digest, and deploy it only to the authorized target.
+Promote the selected source under the intended actor name within the user's authorized scope. Rebuild it, verify the digest, and deploy it only to the authorized target.

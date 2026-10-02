@@ -7,7 +7,7 @@ import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/h
 import { reportedCostOf } from "@clavia/tardigrade-model/providers/usage"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
 import { type ModelRef } from "@clavia/tardigrade-model/reference"
-import { type ToolSpec } from "@clavia/tardigrade-libraries"
+import { DEFAULT_METHOD_EXECUTION, type ToolSpec } from "@clavia/tardigrade-libraries"
 import { type Conversation, ModelReply as ModelReplySchema } from "../contracts/events"
 import { Generate, Summarize } from "../contracts/acts"
 
@@ -84,7 +84,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const timeoutMs = options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
       const toolkit = yield* Effect.try({
         try: () => Toolkit.make(...input.tools.map(tool => AiTool.dynamic(tool.name, {
-          description: `${tool.description} Execution: ${tool.execution ?? "sync"}.`,
+          description: `${tool.description} Execution: ${tool.execution ?? DEFAULT_METHOD_EXECUTION}.`,
           parameters: Schema.toEncoded(SchemaRepresentation.fromJsonSchemaDocument(
             JsonSchema.fromSchemaDraft07(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(tool.inputSchema)),
             settings.schemaImport ?? DEFAULT_SCHEMA_IMPORT_OPTIONS,

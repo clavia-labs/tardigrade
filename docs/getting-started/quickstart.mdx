@@ -7,7 +7,7 @@ sectionOrder: 2
 order: 1
 ---
 
-**Tardigrade** is a TypeScript framework for building durable, modular agents around an immutable event log. By the end of this guide, you will know how to run a Tardigrade agent locally, inspect its trajectory, and deploy it to the cloud.
+**Tardigrade** is a TypeScript framework for building durable, composable agents around an immutable event log. By the end of this guide, you will know how to run a Tardigrade agent locally, inspect its trajectory, and deploy it to the cloud.
 
 ### Prerequisites
 
@@ -34,13 +34,14 @@ tdg init tardie-agent --template quickstart
 After the setup, you should see the following files:
 
 <Filesystem root="tardie-agent/">
-  - `actor.ts` Actor and components
+  - `actor.ts` Actor and atoms
+  - `services.ts` Model and library implementations
+  - `generated/providers.ts` Configured model implementations
   - `server.ts` Bun server entry
   - `worker.ts` Cloudflare and Celld Worker entry
   - `wrangler.jsonc` Cloudflare Worker configuration
   - `celld.jsonc` Self-hosted Celld configuration
-  - `models.lock.json` Resolved deployment model scope
-  - `migrations/0001_catalog.sql` Model catalog database schema
+  - `models.lock.json` Resolved model metadata
   - `package.json` Dependencies and module metadata
 </Filesystem>
 
@@ -65,9 +66,11 @@ These notes explain what Tardigrade is doing behind the scenes. You can skip the
 Within `actor.ts`, you will see the following code:
 
 ```ts expanded
-import { Effect } from "effect"
-import { actor } from "tardie/deprecated/core"
-import { agentMessageMethod, infer, outputValidateOnce, system, tool } from "tardie/deprecated/agent"
+import { Effect, Schema } from "effect"
+import { Rpc } from "effect/unstable/rpc"
+import { atom, defineActor } from "tardie/core"
+import { agentMethods, compact, infer, messages, tools as libraryTools } from "tardie/agent"
+import { defineLibrary, MethodDescription, MethodHints } from "tardie/libraries"
 
 const actorName = "tardie-agent"
 
@@ -76,64 +79,42 @@ Answer questions about the weather.
 Use the weather tool for current conditions.
 `.trim()
 
-const weather = tool({
-  spec: {
-    name: "get_weather",
-    description: "Get the current weather for a city",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false }
-  },
-  run: () => Effect.succeed({ temperature: 21 })
+export const weather = defineLibrary({
+  name: "weather",
+  description: "Weather information",
+  toolNames: { current: "get_weather" },
+  methods: [Rpc.make("current", {
+    payload: Schema.Struct({ city: Schema.String }),
+    success: Schema.Struct({ city: Schema.String, temperature: Schema.Finite }),
+  })
+    .annotate(MethodDescription, "Get example weather data for a city")
+    .annotate(MethodHints, { readOnlyHint: true, openWorldHint: false })],
 })
 
-export default actor({
-  name: actorName,
-  methods: { message: agentMessageMethod },
-  components: [infer([
-    system(actorInstructions),
-    weather,
-    outputValidateOnce
-  ])]
-})
+export default defineActor(actorName, Effect.gen(function* () {
+  const system = atom(actorInstructions)
+  const tools = yield* libraryTools([weather])
+  const context = yield* compact(messages)
+  const agent = yield* infer(atom(get => ({
+    system: get(system),
+    tools: get(tools),
+    context: get(context),
+  })))
+  return { atom: agent, methods: agentMethods }
+}))
 ```
 
-<Tip title="About actor components">
-A Tardigrade component has the following interface:
+`messages` derives message history from the event log. `compact` prepares model context, and `infer` proposes model calls. The actor composes these atoms and exposes `agentMethods`.
+
+The weather library declares a typed method with Effect RPC. Its implementation belongs in `services.ts`:
 
 ```ts
-import type { ComponentOutput, TransitionContext } from "tardie/deprecated/core"
-import type { Event } from "tardie/deprecated/core/event"
-
-interface ComponentDefinition<State, View, Requirements = never, Result = unknown> {
-  readonly name: string
-  readonly initial: () => State
-  readonly step: (state: Readonly<State>, event: Event, context: TransitionContext) => State
-  readonly output: (state: Readonly<State>) => ComponentOutput<View, Requirements, Result>
-}
-```
-
-`initial` creates private component state. `step` folds each event into that state. `output` derives the component's view and enabled transitions. Use the context passed to `step` to declare tagged intents and effects; retain them in state until their completion is observed. When components are composed, Tardigrade combines their views and reconciles their transitions. The `Requirements` type records the Effect services needed to execute those transitions.
-
-The `weather` component contributes `get_weather` to the agent's view and keeps its specification beside its Effect handler:
-
-```ts
-const weather = tool({
-  spec: {
-    name: "get_weather",
-    description: "Get the current weather for a city",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false }
-  },
-  run: () => Effect.succeed({ temperature: 21 })
+const tools = weather.implement({
+  current: ({ city }) => Effect.succeed({ city, temperature: 21 }),
 })
 ```
 
-Tardigrade records each model response as `ModelReturned`, which carries its usage. When the model selects `get_weather`, Tardigrade also records `ToolCalled`, linked to the response by `responseId`. The inference component finds the handler in the current view, runs its Effect, and records `ToolReturned`. The next model request includes the result.
-
-A model response can request several tools. Tardigrade records every call before dispatch, runs native tools concurrently by default, and waits for every result before the next model request. Each call has its own result. The response contributes usage once. Replay reuses committed results and retries unfinished work.
-
-`DEFAULT_TOOL_CONCURRENCY` is `"unbounded"`. Set `infer(components, { toolConcurrency: 4 })` to admit at most four pending calls at a time. Additional calls wait in recorded order. Set `concurrency: 1` on a native tool binding to serialize calls to that tool. These limits appear in the model instructions or tool description.
-
-Code mode defaults to `DEFAULT_CODE_TOOL_CONCURRENCY`, which is `1`. Set `codeMode(components, { toolConcurrency })` to control admission of `execute` calls. Code execution follows the code scheduler. Custom model integrations supply Effect's `LanguageModel` service. The inference component translates its stream into response evidence and tool requests. The interpreter records those requests before tool execution.
-</Tip>
+The example returns dummy weather data. Replace the handler with your weather service. `toolActs([tools])` supplies the handler to the runtime; the actor sees its method schema and annotations.
 
 ### Running it locally
 
@@ -143,7 +124,7 @@ Run the generated Bun API server directly:
 bun run dev
 ```
 
-The server runs on `localhost:4242` by default. Check `curl localhost:4242/healthz` from another shell to confirm it is ready. Edit `server.ts` to change how the actor and API are assembled.
+The server runs on `localhost:4242` by default. Set `PORT` to change it. Check `curl localhost:4242/healthz` from another shell to confirm it is ready. Edit `server.ts` to change how the actor and API are assembled.
 
 ### Send your first message
 
@@ -154,41 +135,7 @@ tdg thread create --name quickstart
 tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickstart
 ```
 
-<Tip title="About actor methods">
-The actor code defines the following method:
-
-```ts highlight="3"
-export default actor({
-  name: actorName,
-  methods: { message: agentMessageMethod },
-  components: [infer([
-    system(actorInstructions),
-    weather,
-    outputValidateOnce
-  ])]
-})
-```
-
-An actor method defines a typed, durable call boundary. Its input and output schemas validate the public API, its event function records the call, and its projection derives the current call state from events. A method can also define how cancellation is recorded.
-
-```ts
-const AgentMessageInput = Schema.Struct({
-  text: Schema.String,
-  input: Schema.optionalKey(Schema.Unknown),
-  model: Schema.optionalKey(ModelRef)
-})
-
-const agentMessageMethod = actorMethod({
-  input: AgentMessageInput,
-  output: Schema.String,
-  event,
-  projection,
-  cancellation: { event: cancellationEvent }
-})
-```
-
-Each `message` call remains pending until the method projection observes a completed, failed, or cancelled turn. The Quickstart command appends `MessageReceived`, and a later `TurnCompleted` resolves the call with its string output.
-</Tip>
+The `message` method records a `TurnRequested` event. Model and tool results update durable atoms, and a `TurnSettled` event completes the call with `{ text: string }`. Each call has an invocation ID. To safely retry a call, supply the same `--id` and the same input.
 
 ### Inspecting the actor logs
 
@@ -204,13 +151,13 @@ A simplified view of the message includes the following events. The log also rec
 
 <EventLog>
   1. `ThreadCreated` `{ address: { ... } }`
-  2. `MessageReceived` `{ text: "What is the weather..." }`
-  3. `ToolCalled` `{ name: "get_weather", arguments: { ... } }`
-  4. `ToolReturned` `{ result: { ... } }`
-  5. `TurnCompleted` `{ output: "..." }`
+  2. `TurnRequested` `{ text: "What is the weather..." }`
+  3. `ToolCalled` `{ callId: "...", counted: true }`
+  4. `ToolReturned` `{ callId: "...", output: "...", error: null }`
+  5. `TurnSettled` `{ settlement: "completed", ... }`
 </EventLog>
 
-These events persist across runs. Each thread has a separate SQLite event database in the `.sqlite.threads/` directory beside its actor instance database. Instance database filenames encode the JSON pair `[actor, instance]` as base64url. Thread database filenames encode the thread ID as base64url. Set `TARDIGRADE_ACTOR_DATA` to change the storage directory.
+These events persist across runs. Each thread has a separate SQLite event database in the `.sqlite.threads/` directory beside its actor instance database. Set `TARDIGRADE_ACTOR_DATA` to change the storage directory.
 
 You can use the following command to view the events:
 
@@ -234,7 +181,13 @@ tdg call message '{"text":"How about San Francisco?"}' --thread quickstart
 
 ### Deploy your agent
 
-Before the first Cloudflare deployment, follow the [Cloudflare setup guide](/docs/platforms/cloudflare#configure) to create the catalog database, apply its migration, and set secrets. Then deploy the agent:
+Set your provider credential as a Worker secret before deploying. For example, with OpenRouter:
+
+```bash variant="single"
+bunx wrangler secret put OPENROUTER_API_KEY
+```
+
+The generated Worker uses an `ActorDO` binding and the same actor, service layer, and model lock as the Bun server. Deploy it:
 
 ```bash variant="single"
 bun run deploy:cloudflare
@@ -257,4 +210,4 @@ tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickst
 
 ### Going further
 
-Congrats! You've got your first durable agent running. In an upcoming guide, you will learn how to build your own Slack or Telegram bot, connect it to external services, and use its logs as a source of durable memory.
+See the [README](https://github.com/clavia-labs/tardigrade#atoms-hold-state) for atom composition and the [SDK reference](/docs/sdk) for custom libraries. To migrate an existing event log at a settled boundary, use [state initialisation](/docs/migration/state-initialisation).

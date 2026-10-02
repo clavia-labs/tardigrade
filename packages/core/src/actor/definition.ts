@@ -40,7 +40,7 @@ export function defineActor<Value, const Name extends string, Services, const Co
   type Atoms = { readonly [Key in Name]: Atom<Output> }
   const setup = factory.pipe(Effect.map(definition => {
     for (const [name, method] of Object.entries(definition.methods ?? {})) {
-      if (!name || ["coordinate", "store", "methods", "invoke", "result", "cancel", "get", "getState", "resume", "wait", "receipt"].includes(name)) throw new RuntimeError(`Invalid actor method: ${name}`)
+      if (!name || ["coordinate", "store", "contracts", "methods", "invoke", "result", "cancel", "get", "getState", "resume", "wait", "receipt", "methodState", "records"].includes(name)) throw new RuntimeError(`Invalid actor method: ${name}`)
       if (!Schema.isSchema(method.inputSchema) || !Schema.isSchema(method.outputSchema) || typeof method.onReceive !== "function" || typeof method.result !== "function" || (method.onCancel !== undefined && typeof method.onCancel !== "function")) throw new RuntimeError(`Invalid actor method contract: ${name}`)
     }
     const root = atom(get => resolveOutput(get(definition.atom)))

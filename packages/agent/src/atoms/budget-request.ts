@@ -6,6 +6,8 @@ import { Schema } from "effect"
 import { type ToolState } from "./durable/tools"
 import { BudgetPolicy, BudgetDecision, type Event } from "../contracts/events"
 import { ToolBudgetRequestInput } from "../contracts/budget"
+import { DEFAULT_METHOD_EXECUTION, type ToolSpec } from "@clavia/tardigrade-libraries/types"
+import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
 
 export type ToolBudgetView<R = never> = ActorOutput<{
   readonly requestTool?: string
@@ -83,7 +85,7 @@ export const requestBudget = {
   spec: {
     name: "request_budget",
     description: "Request additional tool calls when your budget is exhausted. Waits for a decision and consumes no tool budget.",
-    inputSchema: Schema.toJsonSchemaDocument(ToolBudgetRequestInput).schema,
-    execution: "sync" as const,
-  },
+    inputSchema: jsonSchemaOf(ToolBudgetRequestInput),
+    execution: DEFAULT_METHOD_EXECUTION,
+  } satisfies ToolSpec,
 }

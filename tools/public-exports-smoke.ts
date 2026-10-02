@@ -8,7 +8,7 @@ const agent = await load("tardie/agent")
 const services = await load("tardie/agent/services")
 const libraries = await load("tardie/libraries")
 const legacy = await load("tardie/deprecated")
-for (const [scope, name] of [[core, "defineActor"], [core, "createEventLog"], [core, "initialiseState"], [libraries, "definePackage"], [legacy, "actor"]] as const) {
+for (const [scope, name] of [[core, "defineActor"], [core, "createEventLog"], [core, "initialiseState"], [libraries, "defineLibrary"], [legacy, "actor"]] as const) {
   if (typeof scope[name] !== "function") throw new Error(`Missing public API ${name}`)
 }
 if (!("messages" in agent) || "conversation" in agent) throw new Error("Agent message projection exports failed")

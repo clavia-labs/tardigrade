@@ -13,10 +13,7 @@ import {
   type CancellationResult,
   type EventRow,
   type MethodState,
-  type MethodSummary,
-  type ModelCatalogPage,
-  type ProviderCatalogPage,
-  type ThreadSummary
+  type MethodSummary
 } from "@clavia/tardigrade-deprecated-client"
 
 import { problemLine, tdg } from "./commands"
@@ -24,10 +21,6 @@ import { Cli, type CliServices } from "./services"
 
 // The command tree, driven the way a shell drives it: real arguments through the real parser, over
 // a client this file wrote. Nothing here spawns a process, and nothing here reaches a network.
-
-const threads: ReadonlyArray<ThreadSummary> = [
-  { id: "root", depth: 0, events: 2, lastAt: 0, status: "settled" }
-]
 
 const events: ReadonlyArray<EventRow> = [
   { seq: 1, event: { type: "MessageReceived", text: "hello" } },
@@ -57,12 +50,10 @@ const catalogFetch = (): typeof fetch =>
 
 interface Recorded {
   readonly allocated: Array<{ instance: string; name: string | undefined }>
-  readonly forked: Array<{ instance: string; thread: string; checkpoint: { seq: number } | { event: string }; name: string | undefined }>
   readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
   readonly stateRefs: Array<ActorCallRef>
   readonly cancelled: Array<{ invocation: ActorCallRef; reason?: string }>
   readonly asked: Array<{ thread: string; options: unknown }>
-  readonly catalog: Array<{ kind: "models" | "providers"; options: unknown }>
   readonly installed: Array<string>
   methodReads: number
 }
@@ -74,11 +65,8 @@ const refuse = () => Promise.reject(new Error("this command should not have call
 const clientOf = (
   recorded: Recorded,
   answers: {
-    readonly list?: ReadonlyArray<ThreadSummary>
     readonly events?: ReadonlyArray<EventRow>
     readonly methods?: ReadonlyArray<MethodSummary>
-    readonly models?: ModelCatalogPage
-    readonly providers?: ProviderCatalogPage
     readonly states?: ReadonlyArray<MethodState>
     readonly cancellation?: CancellationResult
     readonly fail?: ProblemError
@@ -97,31 +85,9 @@ const clientOf = (
     actors: () => Promise.resolve([]),
     ensureActor: (actor) => Promise.resolve({ id: actor, definition: "test" }),
     actor: (actor) => Promise.resolve({ id: actor, definition: "test" }),
-    providers: (options) => {
-      recorded.catalog.push({ kind: "providers", options })
-      return Promise.resolve(answers.providers ?? {
-        revision: "catalog-1",
-        status: "fresh",
-        refreshed_at: 1,
-        policy: { allow: "*" },
-        total: 0,
-        limit: 50,
-        items: []
-      })
-    },
-    models: (options) => {
-      recorded.catalog.push({ kind: "models", options })
-      return Promise.resolve(answers.models ?? {
-        revision: "catalog-1",
-        status: "fresh",
-        refreshed_at: 1,
-        policy: { allow: "*" },
-        total: 0,
-        limit: 50,
-        items: []
-      })
-    },
-    list: () => (answers.fail === undefined ? Promise.resolve(answers.list ?? []) : Promise.reject(answers.fail)),
+    providers: refuse,
+    models: refuse,
+    list: refuse,
     methods: () => answers.fail === undefined ? Promise.resolve(answers.methods ?? []) : Promise.reject(answers.fail),
     events: (_actor, thread, options) => {
       recorded.asked.push({ thread, options })
@@ -156,12 +122,7 @@ const clientOf = (
       recorded.allocated.push({ instance, name })
       return Promise.resolve({ actor: "agent", instance, thread: name ?? "generated" })
     },
-    forkThread: (instance, thread, checkpoint, name) => {
-      recorded.forked.push({ instance, thread, checkpoint, name })
-      return answers.fail === undefined
-        ? Promise.resolve({ actor: "agent", instance, thread: name ?? "generated", seq: 2 })
-        : Promise.reject(answers.fail)
-    },
+    forkThread: refuse,
     cancel: (invocation, cancellation = {}) => {
       if ("target" in invocation) throw new Error("CLI fixture expects a legacy handle")
       recorded.cancelled.push({
@@ -211,12 +172,10 @@ const drive = async (
   const lines: Array<string> = []
   const recorded: Recorded = {
     allocated: [],
-    forked: [],
     invoked: [],
     stateRefs: [],
     cancelled: [],
     asked: [],
-    catalog: [],
     installed: [],
     methodReads: 0
   }
@@ -288,10 +247,10 @@ describe("parsing", () => {
   // tdg help groups the same command declarations that the parser accepts, without changing their paths.
   test("the tree groups commands, and setup says what it writes", async () => {
     const root = (await drive([])).lines.join("\n")
-    for (const group of ["CREATE:", "RUN:", "CATALOG:", "INSPECT:"]) {
+    for (const group of ["CREATE:", "RUN:", "INSPECT:"]) {
       expect(root).toContain(group)
     }
-    for (const command of ["setup", "init", "lint", "build", "providers", "models", "methods", "call", "thread"]) {
+    for (const command of ["setup", "init", "lint", "build", "models", "methods", "call", "thread"]) {
       expect(root).toContain(command)
     }
     expect(root).not.toContain("push")
@@ -411,8 +370,8 @@ describe("parsing", () => {
       const config = await readFile(join(directory, "wrangler.jsonc"), "utf8")
 
       expect(ran.failed).toBe(false)
-      expect(actor).toContain("infer([")
-      expect(actor).toContain('name: "get_weather"')
+      expect(actor).toContain("defineActor(actorName, Effect.gen")
+      expect(actor).toContain('current: "get_weather"')
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
       expect(ran.recorded.installed).toEqual([directory])
@@ -498,9 +457,22 @@ describe("parsing", () => {
     expect(ran.failed).toBe(true)
   })
 
-  test("removed registry commands fail", async () => {
-    expect((await drive(["push"])).failed).toBe(true)
-    expect((await drive(["actors"])).failed).toBe(true)
+  test("supervisor operations are absent from the actor CLI", async () => {
+    for (const args of [["push"], ["actors"], ["ls"], ["list"], ["providers"], ["models", "--search", "claude"], ["thread", "fork", "root"], ["thread", "list"]]) {
+      const ran = await drive(args)
+      expect(ran.failed).toBe(true)
+      expect(ran.recorded.allocated).toEqual([])
+      expect(ran.recorded.invoked).toEqual([])
+    }
+    const root = (await drive(["--help"])).lines.join("\n")
+    expect(root).not.toMatch(/^\s+providers\s/m)
+    expect(root).not.toContain("List every thread")
+    const thread = (await drive(["thread", "--help"])).lines.join("\n")
+    expect(thread).not.toContain("fork")
+    const models = await drive(["models", "--help"])
+    expect(models.failed).toBe(false)
+    expect(models.lines.join("\n")).toContain("lock")
+    expect(models.lines.join("\n")).not.toContain("--search")
   })
 
   test("a missing argument fails", async () => {
@@ -510,7 +482,7 @@ describe("parsing", () => {
   })
 
   test("an unknown flag fails", async () => {
-    const ran = await drive(["ls", "--loud"])
+    const ran = await drive(["methods", "--loud"])
     expect(ran.failed).toBe(true)
     expect(failureText(ran)).toContain("loud")
   })
@@ -518,91 +490,6 @@ describe("parsing", () => {
   test("a flag that wants a number refuses a word", async () => {
     const ran = await drive(["events", "root", "--after", "soon"])
     expect(ran.failed).toBe(true)
-  })
-})
-
-describe("ls", () => {
-  test("the human rendering is a table", async () => {
-    const ran = await drive(["ls"], { answers: { list: threads } })
-    expect(ran.failed).toBe(false)
-    const lines = (ran.lines[0] ?? "").split("\n")
-    expect(lines[0]).toContain("THREAD")
-    expect(lines[1]).toContain("root")
-  })
-
-  test("--json prints the client's value verbatim", async () => {
-    const ran = await drive(["ls", "--json"], { answers: { list: threads } })
-    expect(JSON.parse(ran.lines[0] ?? "")).toEqual(threads)
-  })
-})
-
-describe("catalog discovery", () => {
-  test("providers forwards search and pagination and prints requirements", async () => {
-    const ran = await drive(["providers", "--availability", "available", "--search", "open", "--limit", "1", "--cursor", "next"], {
-      answers: {
-        providers: {
-          revision: "catalog-2",
-          policy: {
-            default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" },
-            allow: "*"
-          },
-          total: 2,
-          limit: 1,
-          next_cursor: "last",
-          items: [{
-            id: "openrouter",
-            name: "OpenRouter",
-            availability: { status: "available" },
-            protocol: "openai-chat-completions",
-            baseUrl: "https://openrouter.ai/api/v1",
-            env: ["OPENROUTER_API_KEY"],
-            required: ["env"],
-            optional: ["baseUrl"]
-          }]
-        }
-      }
-    })
-    expect(ran.failed).toBe(false)
-    expect(ran.recorded.catalog).toEqual([{
-      kind: "providers",
-      options: { availability: "available", cursor: "next", limit: 1, search: "open" }
-    }])
-    expect(ran.lines.join("\n")).toContain("openrouter")
-    expect(ran.lines.join("\n")).toContain("next cursor last")
-  })
-
-  test("models forwards its provider filter and prints the page as JSON", async () => {
-    const ran = await drive([
-      "models",
-      "--provider",
-      "openrouter",
-      "--search",
-      "claude",
-      "--availability",
-      "available",
-      "--sort",
-      "completionUsdPerToken",
-      "--order",
-      "asc",
-      "--unpriced",
-      "last",
-      "--json"
-    ])
-    expect(ran.failed).toBe(false)
-    expect(ran.recorded.catalog).toEqual([{
-      kind: "models",
-      options: {
-        cursor: undefined,
-        availability: "available",
-        limit: undefined,
-        provider: "openrouter",
-        search: "claude",
-        sort: "completionUsdPerToken",
-        order: "asc",
-        unpriced: "last"
-      }
-    }])
-    expect(JSON.parse(ran.lines[0]!)).toMatchObject({ revision: "catalog-1", items: [] })
   })
 })
 
@@ -671,31 +558,6 @@ describe("thread allocation", () => {
     expect(created.failed).toBe(false)
     expect(created.recorded.allocated).toEqual([{ instance: "main", name: undefined }])
     expect(JSON.parse(created.lines[0]!)).toEqual({ actor: "agent", instance: "main", thread: "generated" })
-  })
-})
-
-describe("thread fork", () => {
-  test("an event id names the checkpoint and the destination prints", async () => {
-    const ran = await drive(["thread", "fork", "root", "--event", "m1", "--name", "experiment", "--actor", "rick"])
-    expect(ran.failed).toBe(false)
-    expect(ran.recorded.forked).toEqual([{ instance: "rick", thread: "root", checkpoint: { event: "m1" }, name: "experiment" }])
-    expect(ran.lines[0]).toBe("experiment")
-  })
-
-  test("a row names the checkpoint and JSON carries the row used", async () => {
-    const ran = await drive(["thread", "fork", "root", "--seq", "2", "--json"])
-    expect(ran.failed).toBe(false)
-    expect(ran.recorded.forked).toEqual([{ instance: "main", thread: "root", checkpoint: { seq: 2 }, name: undefined }])
-    expect(JSON.parse(ran.lines[0]!)).toEqual({ actor: "agent", instance: "main", thread: "generated", seq: 2 })
-  })
-
-  test("both or neither checkpoint flags fail before any call", async () => {
-    for (const args of [["thread", "fork", "root"], ["thread", "fork", "root", "--seq", "2", "--event", "m1"]]) {
-      const ran = await drive(args)
-      expect(ran.failed).toBe(true)
-      expect(ran.recorded.forked).toEqual([])
-      expect(failureText(ran)).toContain("exactly one of --seq")
-    }
   })
 })
 

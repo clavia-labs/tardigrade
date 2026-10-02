@@ -1,10 +1,7 @@
 import type {
   EventRow,
   MethodState,
-  MethodSummary,
-  ModelCatalogPage,
-  ProviderCatalogPage,
-  ThreadSummary
+  MethodSummary
 } from "@clavia/tardigrade-deprecated-client"
 
 // What a command puts on stdout. Two renderings of the same value: aligned text for a person and
@@ -17,9 +14,6 @@ import type {
 // scanned, and one event carrying a whole tool payload would push every other column off screen.
 // `tdg events --width` sets it, and `--json` is the rendering with no cut at all.
 export const DEFAULT_DETAIL_WIDTH = 96
-
-// What stands in a cell whose value the projection did not carry.
-export const ABSENT = "-"
 
 export const jsonOf = (value: unknown): string => JSON.stringify(value, undefined, 2)
 
@@ -41,70 +35,6 @@ export const ELLIPSIS = "..."
 
 const truncate = (value: string, width: number): string =>
   value.length <= width ? value : `${value.slice(0, Math.max(width - ELLIPSIS.length, 0))}${ELLIPSIS}`
-
-const timeOf = (at: number | undefined): string =>
-  at === undefined ? ABSENT : new Date(at).toISOString()
-
-// Every thread a store holds, parent before child. `events` is the count of events in the log, which is the size of the
-// thing every other read projects from, and `last` is when the log last grew.
-export const threadsTable = (threads: ReadonlyArray<ThreadSummary>): string =>
-  threads.length === 0
-    ? "no threads"
-    : table(
-      ["THREAD", "STATUS", "DEPTH", "EVENTS", "LAST", "PARENT"],
-      threads.map((thread) => [
-        thread.id,
-        thread.status,
-        String(thread.depth),
-        String(thread.events),
-        timeOf(thread.lastAt),
-        thread.parent ?? ABSENT
-      ])
-    )
-
-const catalogFooter = (page: {
-  readonly revision: string
-  readonly total: number
-  readonly limit: number
-  readonly next_cursor?: string
-}): string => [
-  `${page.total} total, limit ${page.limit}, revision ${page.revision}`,
-  ...(page.next_cursor === undefined ? [] : [`next cursor ${page.next_cursor}`])
-].join("\n")
-
-export const providersTable = (page: ProviderCatalogPage): string => {
-  const body = page.items.length === 0
-    ? "no providers"
-    : table(
-      ["PROVIDER", "STATUS", "PROTOCOL", "ENDPOINT", "REQUIRED", "ENV"],
-      page.items.map((provider) => [
-        provider.id,
-        provider.availability.status === "available" ? "available" : provider.availability.reason,
-        provider.protocol ?? ABSENT,
-        provider.baseUrl ?? ABSENT,
-        provider.required.join(",") || ABSENT,
-        provider.env.join(",") || ABSENT
-      ])
-    )
-  return `${body}\n\n${catalogFooter(page)}`
-}
-
-export const modelsTable = (page: ModelCatalogPage): string => {
-  const body = page.items.length === 0
-    ? "no models"
-    : table(
-      ["PROVIDER", "MODEL", "NAME", "CONTEXT", "OUTPUT", "TOOLS"],
-      page.items.map((model) => [
-        model.provider,
-        model.id,
-        model.name ?? ABSENT,
-        model.metadata.contextWindowTokens === undefined ? ABSENT : String(model.metadata.contextWindowTokens),
-        model.metadata.maxOutputTokens === undefined ? ABSENT : String(model.metadata.maxOutputTokens),
-        model.metadata.toolCall === undefined ? ABSENT : String(model.metadata.toolCall)
-      ])
-    )
-  return `${body}\n\n${catalogFooter(page)}`
-}
 
 // The fields of an event other than its type, as one compact object. The type is already a column,
 // and what remains is what tells two events of one type apart.
@@ -137,13 +67,13 @@ export const methodLines = (thread: string, call: string, state: MethodState): s
 }
 
 // methodsLines renders each method with the input and output schemas an author calls against.
-export const methodsLines = (methods: ReadonlyArray<MethodSummary>): string =>
+export const methodsLines = (methods: ReadonlyArray<Omit<MethodSummary, "timeoutMs"> & { readonly timeoutMs?: number }>): string =>
   methods.length === 0
     ? "no methods"
     : methods.map((method) => [
       method.name,
       `  cancellable ${method.cancellable ? "yes" : "no"}`,
-      `  timeout ${method.timeoutMs}ms`,
+      ...(method.timeoutMs === undefined ? [] : [`  timeout ${method.timeoutMs}ms`]),
       `  input  ${JSON.stringify(method.inputSchema)}`,
       `  output ${JSON.stringify(method.outputSchema)}`
     ].join("\n")).join("\n\n")
