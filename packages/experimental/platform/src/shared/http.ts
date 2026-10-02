@@ -2,7 +2,7 @@ import { Effect, Layer, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { InitialState, StateInitialisationError, InvalidMessage, MessageConflict, type MessageReceipt } from "@clavia/tardigrade-experimental-core"
 import type { MessageDelivery } from "@clavia/tardigrade-experimental-core"
-import type { ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
+import type { ThreadRequest, ThreadCoordinate } from "@clavia/tardigrade-experimental-core"
 
 interface HttpThread {
   readonly coordinate: ThreadCoordinate
@@ -11,8 +11,8 @@ interface HttpThread {
 export interface HttpHost {
   readonly actor: string
   readonly send: (message: MessageDelivery) => Effect.Effect<MessageReceipt, Error>
-  readonly allocateRootThread: (input: { instance: string; name?: string; initialState?: InitialState }) => Effect.Effect<HttpThread, Error>
-  readonly allocateChildThread: (input: { parent: ThreadCoordinate; name?: string; initialState?: InitialState }) => Effect.Effect<HttpThread, Error>
+  readonly allocateRootThread: (input: Omit<ThreadRequest, "parent" | "placement">) => Effect.Effect<HttpThread, Error>
+  readonly allocateChildThread: (input: Omit<ThreadRequest, "instance" | "parent" | "placement"> & { readonly parent: ThreadCoordinate }) => Effect.Effect<HttpThread, Error>
   readonly getThread: (input: { instance: string; thread: string }) => Effect.Effect<HttpThread | undefined, Error>
 }
 

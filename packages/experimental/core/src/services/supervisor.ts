@@ -68,7 +68,8 @@ export function createSupervisor(options: {
     }
     return yield* pending
   })
-  const allocate = (instance: string, parent: ThreadCoordinate | undefined, suppliedName: string | undefined, requestedPlacement: ChildPlacement | undefined, initialState: InitialState | undefined) => serialize(`allocate:${instance}`, Effect.gen(function* () {
+  const allocate = (request: ThreadRequest) => serialize(`allocate:${request.instance}`, Effect.gen(function* () {
+    const { instance, parent, name: suppliedName, placement: requestedPlacement, initialState } = request
     if (initialState !== undefined) {
       if (!options.validateInitialState) return yield* Effect.fail(new RuntimeError("Initial state validation is not configured"))
       yield* options.validateInitialState(initialState)
@@ -109,9 +110,7 @@ export function createSupervisor(options: {
     return entry ? Object.freeze({ ...entry.coordinate }) : undefined
   })
   return {
-    allocate: (request: ThreadRequest) => options.run(Effect.try({ try: () => structuredClone(request), catch: RuntimeError.from }).pipe(Effect.flatMap(copied =>
-      allocate(copied.instance, copied.parent, copied.name, copied.placement, copied.initialState),
-    ))),
+    allocate: (request: ThreadRequest) => options.run(Effect.try({ try: () => structuredClone(request), catch: RuntimeError.from }).pipe(Effect.flatMap(allocate))),
     lookup: (coordinate: ThreadCoordinate) => options.run(lookup(coordinate)),
     store: (instance: string) => options.run(supervisorFor(instance).pipe(Effect.map(createSupervisorStore))),
     close: Effect.gen(function* () {

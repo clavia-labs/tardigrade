@@ -8,10 +8,7 @@ export type InitialState = typeof InitialState.Type
 export const StateInitialised = Schema.Struct({
   type: Schema.Literal("StateInitialised"),
   version: Schema.Literal(1),
-  durable: Schema.Array(Schema.Struct({ name: Schema.NonEmptyString, state: Schema.Json })),
+  initialState: InitialState,
   source: Schema.optionalKey(Schema.Json),
-}).check(Schema.makeFilter(event => {
-  const names = event.durable.map(entry => entry.name)
-  return names.every(name => name.trim().length > 0) && new Set(names).size === names.length
-}, { title: "Initialised durable atom names are nonempty and unique" }))
+})
 export type StateInitialised = typeof StateInitialised.Type

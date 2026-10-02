@@ -17,7 +17,7 @@ export class StateInitialisationError extends RuntimeError {
 export function prepareInitialState(atoms: readonly InitialisableAtom[], input: InitialState, source?: Schema.Json): Effect.Effect<StateInitialised, Error> {
   return Effect.gen(function* () {
     const copied = yield* Effect.try({ try: () => structuredClone({ initialState: input, source }), catch: StateInitialisationError.from })
-    const state = yield* Schema.decodeEffect(InitialState)(copied.initialState).pipe(Effect.mapError(error => new StateInitialisationError("Invalid initial state map", { cause: error })))
+    const state = yield* Schema.decodeEffect(InitialState)(copied.initialState).pipe(Effect.mapError(StateInitialisationError.from))
     yield* Effect.try({ try: () => {
       const codecs = new Map<string, InitialisableAtom[typeof DurableAtomInitialisation]>()
       for (const atom of atoms) {
@@ -34,7 +34,7 @@ export function prepareInitialState(atoms: readonly InitialisableAtom[], input: 
     }, catch: StateInitialisationError.from })
     return yield* Schema.decodeEffect(StateInitialised, { onExcessProperty: "error" })({
       type: "StateInitialised", version: 1,
-      durable: Object.entries(state).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([name, state]) => ({ name, state })),
+      initialState: state,
       ...(copied.source === undefined ? {} : { source: copied.source }),
     }).pipe(Effect.mapError(StateInitialisationError.from))
   })

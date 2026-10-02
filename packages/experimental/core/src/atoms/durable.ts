@@ -69,8 +69,7 @@ export function durableAtom<State, Event>(options: {
     for (let index = Math.max(0, start); index < events.length; index++) {
       const event = events[index]
       if (Schema.is(StateInitialised)(event)) {
-        const entry = event.durable.find(entry => entry.name === options.name)
-        if (entry) state = decode(entry.state)
+        if (Object.hasOwn(event.initialState, options.name)) state = decode(event.initialState[options.name])
         continue
       }
       if (!accepts(event)) continue

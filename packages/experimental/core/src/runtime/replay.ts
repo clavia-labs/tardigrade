@@ -255,7 +255,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (Schema.is(ThreadCreated)(event) && offset + records.length !== 0) throw new Error("Thread creation must be the first journal record")
       if (Schema.is(StateInitialised)(event)) {
         if (offset !== 0 || records.length > 1 || records.some(record => !Schema.is(ThreadCreated)(record.event))) throw new Error("State initialisation requires a fresh journal")
-        for (const entry of event.durable) initialisedNames.add(entry.name)
+        for (const name of Object.keys(event.initialState)) initialisedNames.add(name)
       }
       if (Schema.is(CoreEvent)(event) && event.type !== "ThreadCreated" && event.type !== "StateInitialised" && event.type !== "MessageDelivered" && !isMessageReceived(event)) {
         const key = effectKey(event.ref)

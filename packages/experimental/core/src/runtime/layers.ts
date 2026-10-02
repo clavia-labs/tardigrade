@@ -1,4 +1,3 @@
-import type { InitialState } from "../initial-state"
 import { prepareInitialState } from "./initialisation"
 import type { ThreadCoordinate, ChildPlacement } from "../actor/thread"
 import type { ActorMethods } from "../actor/method"
@@ -8,7 +7,7 @@ import type { MessageSender } from "../actor/message"
 import type { SupervisorEvent } from "../services/supervisor/graph"
 import { Effect, Layer, Scope, Exit, Fiber } from "effect"
 import { createActorExecution, type ActorExecutionOptions, type ActorStorage } from "./actors"
-import { Supervisor, createSupervisor } from "../services/supervisor"
+import { Supervisor, createSupervisor, type ThreadRequest } from "../services/supervisor"
 import { Invocation, createInvocation, DEFAULT_EXTERNAL_SENDER, type MessageTransport, type ActorMessageTransport } from "../services/invocation"
 
 export interface ThreadStorage<Event extends object> extends ActorStorage<Event> {
@@ -68,8 +67,8 @@ export function createThreadHost<Event extends object, Services, State, Contract
     getThread: (input: { readonly instance: string; readonly thread: string }) => invocation.get({ actor: options.actor.actorName, ...input }),
     send: invocation.send,
     receive: invocation.receive,
-    allocateRootThread: (input: { readonly instance: string; readonly name?: string; readonly placement?: ChildPlacement; readonly initialState?: InitialState }) => run(supervisor.allocate(input).pipe(Effect.flatMap(actors.reference))),
-    allocateChildThread: (input: { readonly parent: ThreadCoordinate; readonly name?: string; readonly placement?: ChildPlacement; readonly initialState?: InitialState }) => run(supervisor.allocate({ instance: input.parent.instance, ...input }).pipe(Effect.flatMap(actors.reference))),
+    allocateRootThread: (input: Omit<ThreadRequest, "parent">) => run(supervisor.allocate(input).pipe(Effect.flatMap(actors.reference))),
+    allocateChildThread: (input: Omit<ThreadRequest, "instance" | "parent"> & { readonly parent: ThreadCoordinate }) => run(supervisor.allocate({ instance: input.parent.instance, ...input }).pipe(Effect.flatMap(actors.reference))),
     close: closing,
   }
 }
