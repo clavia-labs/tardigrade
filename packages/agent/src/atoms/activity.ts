@@ -22,7 +22,7 @@ function describe(event: Event): Pick<ActivityEntry, "summary" | "status"> {
     case "CompactionFailed": return { summary: event.reason, status: "failed" }
     case "ModelReturned": return { summary: event.text, status: "info" }
     case "PromiseSettled": {
-      if (event.result.status === "rejected") return { summary: event.result.reason, status: "failed" }
+      if (event.result.status === "rejected") return { summary: typeof event.result.reason === "string" ? event.result.reason : `Promise timed out at ${event.result.reason.deadlineAt}`, status: "failed" }
       const value = event.result.value
       const summary = Schema.is(ModelReply)(value)
         ? value.toolCalls.length ? `tools · ${value.toolCalls.map(call => call.name).join(", ")}` : value.text

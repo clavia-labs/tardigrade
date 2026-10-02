@@ -24,7 +24,7 @@ export interface LibraryContract {
 }
 export type LibrarySource = LibraryContract | { readonly library: LibraryContract }
 
-export const ToolSpec = Schema.Struct({ name: Schema.String, description: Schema.String, inputSchema: Schema.Json, outputSchema: Schema.optionalKey(Schema.Json), annotations: Schema.optionalKey(MethodAnnotations), execution: Schema.optionalKey(ExecutionMode) })
+export const ToolSpec = Schema.Struct({ name: Schema.String, description: Schema.String, inputSchema: Schema.Json, outputSchema: Schema.optionalKey(Schema.Json), annotations: Schema.optionalKey(MethodAnnotations), execution: Schema.optionalKey(ExecutionMode), promiseTimeoutMs: Schema.optionalKey(Schema.Int) })
 export type ToolSpec = typeof ToolSpec.Type
 
 export const ToolPromise = Schema.Struct({ type: Schema.Literal("promise"), ref: EffectRef, handle: ExecutionHandle })

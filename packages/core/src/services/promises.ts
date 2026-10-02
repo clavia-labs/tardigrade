@@ -1,9 +1,9 @@
 import { Context, Effect, Schema } from "effect"
-import { EffectRef, ExecutionHandle } from "../runtime/effects"
+import { Deadline, EffectRef, ExecutionHandle } from "../runtime/effects"
 import { promiseSchema } from "../atoms/promise"
 import { ThreadCoordinate } from "../actor/thread"
 
-export const ResolutionRequest = Schema.Struct({ ref: EffectRef, handle: ExecutionHandle, mode: Schema.optionalKey(Schema.Literals(["poll", "push"])) })
+export const ResolutionRequest = Schema.Struct({ ref: EffectRef, handle: ExecutionHandle, deadlineAt: Schema.optionalKey(Deadline), mode: Schema.optionalKey(Schema.Literals(["poll", "push"])) })
 export type ResolutionRequest = typeof ResolutionRequest.Type
 export const ResolutionRegistration = Schema.Struct({ ...ResolutionRequest.fields, recipient: ThreadCoordinate })
 export type ResolutionRegistration = typeof ResolutionRegistration.Type
@@ -26,8 +26,13 @@ export class Promises extends Context.Service<Promises, {
   readonly cancel: (request: ResolutionRequest) => Effect.Effect<void, Error>
 }>()("experimental/Promises") {}
 
-export const DEFAULT_PROMISE_POLICY = { pollIntervalMs: 1_000, retryIntervalMs: 5_000, attemptTimeoutMs: 30_000, retentionMs: 86_400_000 } as const
-export interface PromisePolicy { readonly pollIntervalMs: number; readonly retryIntervalMs: number; readonly attemptTimeoutMs: number; readonly retentionMs: number }
+export const DEFAULT_PROMISE_POLICY = { timeoutMs: 60_000, pollIntervalMs: 1_000, retryIntervalMs: 5_000, attemptTimeoutMs: 30_000, retentionMs: 86_400_000 } as const
+export interface PromisePolicy { readonly timeoutMs: number; readonly pollIntervalMs: number; readonly retryIntervalMs: number; readonly attemptTimeoutMs: number; readonly retentionMs: number }
+
+// promiseDeadline preserves recorded expiry; clock promises receive their waiting budget after the scheduled time.
+export function promiseDeadline(handle: ExecutionHandle, startedAt: number, policy: PromisePolicy, recorded?: number): number {
+  return Schema.decodeSync(Deadline)(recorded ?? Math.max(startedAt, handle.executor === "clock" ? handle.at ?? startedAt : startedAt) + policy.timeoutMs)
+}
 
 // promisePolicy validates scheduling and attempt bounds supplied by the host.
 export function promisePolicy(overrides: Partial<PromisePolicy> = {}): PromisePolicy {

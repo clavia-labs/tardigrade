@@ -10,6 +10,7 @@ export function sqlJournal<Event extends object>(options: {
   readonly actor: string
   readonly layer: Layer.Layer<SqlClient.SqlClient, Error>
   readonly flush?: Effect.Effect<void, Error>
+  readonly commit?: (work: Effect.Effect<void, Error>, records: readonly Recorded<Event>[], position: number) => Effect.Effect<void, Error>
 }): ThreadJournal<Event> & { readonly close: Effect.Effect<void, Error> } {
   if (!options.actor) throw new RuntimeError("Journal actor identity must be nonempty")
   const runtime = ManagedRuntime.make(options.layer)
@@ -35,7 +36,7 @@ export function sqlJournal<Event extends object>(options: {
     }), catch: RuntimeError.from })
     if (checkpoint && checkpoint.digest !== (yield* checkpointDigest(checkpoint.payload))) return yield* Effect.fail(new RuntimeError("Invalid checkpoint digest"))
     const sql = yield* client
-    yield* sql.withTransaction(Effect.gen(function* () {
+    const work = Effect.gen(function* () {
       const rows = yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM experimental_events WHERE actor = ${options.actor}`
       const count = rows[0]?.count
       if (count !== expectedLength) return yield* Effect.fail(new JournalConflict(`Journal conflict for ${options.actor}: expected ${expectedLength}, found ${String(count)}`))
@@ -48,7 +49,8 @@ export function sqlJournal<Event extends object>(options: {
         const payload = Encoding.encodeBase64(checkpoint.payload)
         yield* sql`INSERT INTO experimental_checkpoints (actor, position, payload, digest) VALUES (${options.actor}, ${checkpoint.position}, ${payload}, ${checkpoint.digest}) ON CONFLICT(actor) DO UPDATE SET position = excluded.position, payload = excluded.payload, digest = excluded.digest`
       }
-    }))
+    }).pipe(Effect.mapError(RuntimeError.from))
+    yield* options.commit ? options.commit(work, events, expectedLength + events.length) : sql.withTransaction(work)
     if (options.flush) yield* options.flush
   })
   return {

@@ -2,18 +2,18 @@ import { isDeepStrictEqual } from "node:util"
 import { Schema } from "effect"
 import { Atom } from "effect/unstable/reactivity"
 import { durableAtom } from "./durable"
-import { EffectRef, effectKey, RuntimeError, Cancelled, EffectCancelled } from "../runtime/effects"
+import { EffectRef, effectKey, RuntimeError, Cancelled, EffectCancelled, PromiseTimedOut } from "../runtime/effects"
 
 export type PromiseState<Value, Error> =
   | { readonly status: "pending" }
   | { readonly status: "fulfilled"; readonly value: Value }
-  | { readonly status: "rejected"; readonly reason: Error }
+  | { readonly status: "rejected"; readonly reason: Error | PromiseTimedOut }
 
 // promiseSchema describes settlement events for promises sharing success and error types.
 export function promiseSchema<Value, Error = never>(options: { readonly success: Schema.Schema<Value>; readonly error?: Schema.Schema<Error> }) {
   return Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: Schema.Union([
     Schema.Struct({ status: Schema.Literal("fulfilled"), value: options.success }),
-    Schema.Struct({ status: Schema.Literal("rejected"), reason: options.error ?? Schema.Never }),
+    Schema.Struct({ status: Schema.Literal("rejected"), reason: Schema.Union([options.error ?? Schema.Never, PromiseTimedOut]) }),
   ]) })
 }
 
@@ -27,7 +27,7 @@ export function durablePromise<Value, Error = never>(reference: EffectRef, optio
   const schema = promiseSchema(options)
   const result = schema.fields.result
   const validate = Schema.decodeUnknownSync(Schema.toType(schema), { onExcessProperty: "error" })
-  const stateSchema: Schema.Schema<PromiseState<Value, Error | Cancelled>> = Schema.Union([Schema.Struct({ status: Schema.Literal("pending") }), result, Schema.Struct({ status: Schema.Literal("rejected"), reason: Cancelled })])
+  const stateSchema: Schema.Schema<PromiseState<Value, Error | Cancelled | PromiseTimedOut>> = Schema.Union([Schema.Struct({ status: Schema.Literal("pending") }), result, Schema.Struct({ status: Schema.Literal("rejected"), reason: Cancelled })])
   const state = durableAtom({
     name: `promise:${id}`,
     input: Schema.Union([Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: Schema.Unknown }), EffectCancelled]),

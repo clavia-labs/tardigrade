@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema, Option } from "effect"
 import { atom, type Atom } from "./atom"
 import { EventLog, eventLogContext } from "../services/event-log"
-import { effectKey, EffectRef, EffectCancelled, Cancelled, ExecutionHandle, RuntimeError, ExecutionResult } from "../runtime/effects"
+import { effectKey, EffectRef, EffectCancelled, Cancelled, PromiseTimedOut, ExecutionHandle, RuntimeError, ExecutionResult } from "../runtime/effects"
 import { type EffectRequest, EffectRequested, EffectSettled, PromiseSettled } from "../runtime/events"
 import { EffectExecution } from "../services/effect-execution"
 
@@ -31,10 +31,10 @@ export interface ActRequest<Value, Failure, Services> {
   // onDeferred derives domain events committed with the submitted handle; callbacks must be pure.
   onDeferred?(handle: ExecutionHandle, ref: EffectRef): readonly object[]
   // onSettled derives domain events committed with the terminal decision; handle identifies deferred completion and callbacks must be pure.
-  onSettled?(result: Exclude<ActState<Value, Failure | Cancelled>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
+  onSettled?(result: Exclude<ActState<Value, Failure | Cancelled | PromiseTimedOut>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
   readonly ref: Atom<EffectRef | undefined>
   // result exposes cancellation as a rejected Cancelled value delivered through onSettled (quint/terminalDelivery.qnt, deliverySound, callbackAtMostOnce).
-  readonly result: Atom<ActState<Value, Failure | Cancelled>>
+  readonly result: Atom<ActState<Value, Failure | Cancelled | PromiseTimedOut>>
 }
 
 export interface ActCancellation {
@@ -105,7 +105,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       const bindings = Context.get(context, EventLog).bindings
       return bindings ? get(bindings).get(identity) : undefined
     })
-    const result = atom((get): ActState<Value, Failure | Cancelled> => {
+    const result = atom((get): ActState<Value, Failure | Cancelled | PromiseTimedOut> => {
       const reference = get(ref)
       const context = get(eventLogContext)
       if (!reference || !context) return { status: "pending" }
@@ -123,16 +123,16 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       if (!Schema.is(PromiseSettled)(resolved)) return { status: "pending" }
       return resolved.result.status === "fulfilled"
         ? { status: "fulfilled", value: decodeSuccess(resolved.result.value) }
-        : { status: "rejected", reason: decodeFailure(resolved.result.reason) }
+        : { status: "rejected", reason: Schema.is(PromiseTimedOut)(resolved.result.reason) ? resolved.result.reason : decodeFailure(resolved.result.reason) }
     })
     const handle: ActRequest<Value, Failure, ActService<Name>> = Object.freeze({
       kind: "act", identity, id: invocation.tag, request: { executor: options.name, input }, ref, result,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
       ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
-      onSettled: (outcome: Exclude<ActState<Value, Failure | Cancelled>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
+      onSettled: (outcome: Exclude<ActState<Value, Failure | Cancelled | PromiseTimedOut>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
         const result = outcome.status === "fulfilled"
           ? { status: "fulfilled" as const, value: decodeSuccess(outcome.value) }
-          : { status: "rejected" as const, reason: Schema.is(Cancelled)(outcome.reason) ? outcome.reason : decodeFailure(outcome.reason) }
+          : { status: "rejected" as const, reason: (Schema.is(Cancelled)(outcome.reason) || Schema.is(PromiseTimedOut)(outcome.reason)) ? outcome.reason : decodeFailure(outcome.reason) }
         return invocation.onSettled?.(result, ref, handle) ?? []
       },
       execute: EffectExecution.use(({ ref }) => Implementation.use(service => service.execute(input, ref))),

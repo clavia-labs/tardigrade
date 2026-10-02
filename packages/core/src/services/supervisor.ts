@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from "node:util"
+import type { RecoveryState } from "./watchdog"
+import type { PromisePolicy } from "./promises"
 import type { InitialState } from "../initialise"
 import { Context, Effect, Exit, Random, Semaphore } from "effect"
 import { RuntimeError } from "../runtime/effects"
@@ -27,6 +29,8 @@ export class Supervisor extends Context.Service<Supervisor, {
 // createSupervisor manages per-instance directory actors and provisions their requested threads.
 export function createSupervisor(options: {
   readonly actor: string
+  readonly promises?: Partial<PromisePolicy>
+  readonly canDrive?: (instance: string) => Effect.Effect<boolean, Error>
   readonly journal: (instance: string) => Journal<SupervisorEvent>
   readonly provision: (allocation: ThreadAllocation) => Effect.Effect<void, Error>
   readonly validateInitialState?: (state: InitialState) => Effect.Effect<void, Error>
@@ -40,6 +44,8 @@ export function createSupervisor(options: {
     let runtime!: ActorRuntime<SupervisorEvent>
     const store = yield* createActorStore({
       actor: supervisorActor,
+      ...(options.canDrive ? { canDrive: options.canDrive(instance) } : {}),
+      ...(options.promises ? { promises: options.promises } : {}),
       journal: options.journal(instance),
       actorContext: () => Context.empty(),
       services: current => {
@@ -113,6 +119,17 @@ export function createSupervisor(options: {
     allocate: (request: ThreadRequest) => options.run(Effect.try({ try: () => structuredClone(request), catch: RuntimeError.from }).pipe(Effect.flatMap(allocate))),
     lookup: (coordinate: ThreadCoordinate) => options.run(lookup(coordinate)),
     store: (instance: string) => options.run(supervisorFor(instance).pipe(Effect.map(createSupervisorStore))),
+    recover: (instance: string) => options.run(Effect.gen(function* () {
+      const supervisor = yield* supervisorFor(instance)
+      yield* supervisor.resume
+      yield* supervisor.wait
+      return supervisor.recoveryState()
+    })),
+    invalidate: (instance: string) => options.run(Effect.gen(function* () {
+      const pending = supervisors.get(instance)
+      supervisors.delete(instance)
+      if (pending) yield* pending.pipe(Effect.flatMap(store => store.close), Effect.ignore)
+    })),
     close: Effect.gen(function* () {
       const results = yield* Effect.forEach(supervisors.values(), pending =>
         Effect.exit(Effect.gen(function* () { const supervisor = yield* pending; yield* supervisor.close })),
@@ -120,5 +137,5 @@ export function createSupervisor(options: {
       const failure = results.find(Exit.isFailure)
       if (failure && Exit.isFailure(failure)) return yield* Effect.failCause(failure.cause)
     }),
-  } satisfies typeof Supervisor.Service & { readonly close: Effect.Effect<void, Error> }
+  } satisfies typeof Supervisor.Service & { readonly close: Effect.Effect<void, Error>; readonly recover: (instance: string) => Effect.Effect<RecoveryState, Error>; readonly invalidate: (instance: string) => Effect.Effect<void, Error> }
 }

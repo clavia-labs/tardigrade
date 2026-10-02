@@ -5,8 +5,8 @@ import { EventLog } from "../services/event-log"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "../atoms/act"
-import { ExecutionResult, type EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
-import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, type PromiseSettled } from "./events"
+import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
+import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, PromiseSettled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
@@ -443,6 +443,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const prior = record.type === "EffectRequested" ? lifecycle?.request
           : record.type === "EffectSettled" ? lifecycle?.settlement : record.type === "EffectCancelled" ? lifecycle?.cancellation : engine.promise(record.ref)
         if (prior) {
+          if (record.type === "PromiseSettled" && Schema.is(PromiseSettled)(prior) &&
+            ((record.result.status === "rejected" && Schema.is(PromiseTimedOut)(record.result.reason)) ||
+              (prior.result.status === "rejected" && Schema.is(PromiseTimedOut)(prior.result.reason)))) return snapshot
           if (!isDeepStrictEqual(prior, record)) throw new Error("Conflicting core event delivery")
           return snapshot
         }
