@@ -3,6 +3,8 @@ import { EffectRef, EffectCancelled } from "./effects"
 import { promiseSchema } from "../atoms/promise"
 import { MessageReceived, MessageDelivered, isMessageReceived } from "../actor/message"
 import { ThreadCreated } from "../actor/thread"
+import { StateInitialised } from "../initial-state"
+export { StateInitialised } from "../initial-state"
 
 export const EffectRequest = Schema.Struct({ executor: Schema.NonEmptyString, input: Schema.Json })
 export type EffectRequest = typeof EffectRequest.Type
@@ -29,10 +31,10 @@ export const EffectSettled = Schema.Struct({
 })
 export type EffectSettled = typeof EffectSettled.Type
 
-export const CoreEvent = Schema.Union([EffectRequested, EffectSettled, PromiseSettled, EffectCancelled, ThreadCreated, MessageDelivered, MessageReceived])
+export const CoreEvent = Schema.Union([EffectRequested, EffectSettled, PromiseSettled, EffectCancelled, ThreadCreated, MessageDelivered, MessageReceived, StateInitialised])
 export type CoreEvent = typeof CoreEvent.Type
 
 // hasCoreEventType identifies event names reserved for framework records.
 export function hasCoreEventType(event: object): boolean {
-  return isMessageReceived(event) || "type" in event && (event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "PromiseSettled" || event.type === "EffectCancelled" || event.type === "ThreadCreated" || event.type === "MessageDelivered")
+  return isMessageReceived(event) || "type" in event && (event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "PromiseSettled" || event.type === "EffectCancelled" || event.type === "ThreadCreated" || event.type === "MessageDelivered" || event.type === "StateInitialised")
 }

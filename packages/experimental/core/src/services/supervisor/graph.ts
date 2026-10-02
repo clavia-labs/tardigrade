@@ -3,6 +3,7 @@ import { act } from "../../atoms/act"
 import { effectAtom } from "../../atoms/effect"
 import { ChildPlacement, ThreadDepth, ThreadCoordinate } from "../../actor/thread"
 import { defineActor } from "../../actor/definition"
+import { InitialState } from "../../initial-state"
 import { durableAtom } from "../../atoms/durable"
 
 
@@ -12,6 +13,7 @@ const Allocation = Schema.Struct({
   parent: Schema.NullOr(Schema.NonEmptyString),
   depth: ThreadDepth,
   placement: ChildPlacement,
+  initialState: Schema.optionalKey(InitialState),
 })
 export type ThreadAllocation = typeof Allocation.Type
 const Thread = Schema.Struct({ ...Allocation.fields, status: Schema.Literals(["requested", "registered", "failed"]), reason: Schema.optionalKey(Schema.String) })

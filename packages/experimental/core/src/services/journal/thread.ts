@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util"
 import { Clock, Effect, Schema } from "effect"
 import { RecordMetadata, JournalConflict, type MessageJournal, type Recorded } from "../journal"
 import { RuntimeError } from "../../runtime/effects"
+import { StateInitialised } from "../../initial-state"
 import { ThreadCreated, type ThreadCoordinate } from "../../actor/thread"
 
 export interface ThreadJournal<Event extends object> extends MessageJournal<Event> {
@@ -23,19 +24,24 @@ export const readThreadCreation = <Event extends object>(journal: ThreadJournal<
 })
 
 // initializeThread conditionally commits creation at position zero and validates the recorded lineage on reuse.
-export const initializeThread = <Event extends object>(journal: ThreadJournal<Event>, input: ThreadCreated) => Effect.gen(function* () {
+export const initializeThread = <Event extends object>(journal: ThreadJournal<Event>, input: ThreadCreated, initialState?: StateInitialised) => Effect.gen(function* () {
   const created = yield* Schema.decodeEffect(ThreadCreated)(input).pipe(Effect.mapError(RuntimeError.from))
+  const seeded = initialState === undefined ? undefined : yield* Schema.decodeEffect(StateInitialised)(initialState).pipe(Effect.mapError(RuntimeError.from))
   const validate = (record: Recorded<Event>) => decodeCreation(record).pipe(Effect.flatMap(previous =>
     isDeepStrictEqual(previous, created) ? Effect.void : Effect.fail(new RuntimeError("Thread creation lineage differs from its allocation")),
   ))
+  const validateInitialState = seeded === undefined ? Effect.void : journal.readAfter(1).pipe(Effect.flatMap(records =>
+    isDeepStrictEqual(records[0]?.event, seeded) ? Effect.void : Effect.fail(new RuntimeError("Thread initial state differs from its allocation")),
+  ))
   const first = yield* journal.readFirst
-  if (first) return yield* validate(first).pipe(Effect.andThen(journal.acknowledge))
+  if (first) return yield* validate(first).pipe(Effect.andThen(validateInitialState), Effect.andThen(journal.acknowledge))
   const recordedAt = yield* Clock.currentTimeMillis
-  yield* journal.append(0, [{ recordedAt, event: created }]).pipe(Effect.catch(error => Effect.gen(function* () {
+  yield* journal.append(0, [{ recordedAt, event: created }, ...(seeded === undefined ? [] : [{ recordedAt, event: seeded }])]).pipe(Effect.catch(error => Effect.gen(function* () {
     if (!(error instanceof JournalConflict)) return yield* Effect.fail(error)
     const recorded = yield* journal.readFirst
     if (!recorded) return yield* Effect.fail(error)
     yield* validate(recorded)
+    yield* validateInitialState
     yield* journal.acknowledge
   })))
 }).pipe(Effect.uninterruptible)

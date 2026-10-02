@@ -28,6 +28,8 @@ import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/start-here/Wel
 import welcomeMarkdown from "@docs/start-here/Welcome.mdx?doc-source"
 import Why, { frontmatter as whyFrontmatter } from "@docs/start-here/Why.mdx"
 import whyMarkdown from "@docs/start-here/Why.mdx?doc-source"
+import StateInitialisation, { frontmatter as stateInitialisationFrontmatter } from "@docs/migration/state-initialisation.mdx"
+import stateInitialisationMarkdown from "@docs/migration/state-initialisation.mdx?doc-source"
 
 type DocFrontmatter = {
   readonly title: string
@@ -71,7 +73,8 @@ const modules: ReadonlyArray<DocModule> = [
   { default: Celld, frontmatter: celldFrontmatter, markdown: celldMarkdown, source: "platforms/celld.mdx" },
   { default: Cli, frontmatter: cliFrontmatter, markdown: cliMarkdown, source: "references/cli.mdx" },
   { default: Sdk, frontmatter: sdkFrontmatter, markdown: sdkMarkdown, source: "references/sdk.mdx" },
-  { default: Rlm, frontmatter: rlmFrontmatter, markdown: rlmMarkdown, source: "examples/rlm.mdx" }
+  { default: Rlm, frontmatter: rlmFrontmatter, markdown: rlmMarkdown, source: "examples/rlm.mdx" },
+  { default: StateInitialisation, frontmatter: stateInitialisationFrontmatter, markdown: stateInitialisationMarkdown, source: "migration/state-initialisation.mdx" }
 ]
 
 const stringField = (value: Record<string, unknown>, field: string, source: string): string => {

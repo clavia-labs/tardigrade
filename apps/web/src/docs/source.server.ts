@@ -12,6 +12,7 @@ import quickstart from "@docs/getting-started/quickstart.mdx?doc-source"
 import sdk from "@docs/references/sdk.mdx?doc-source"
 import welcome from "@docs/start-here/Welcome.mdx?doc-source"
 import why from "@docs/start-here/Why.mdx?doc-source"
+import stateInitialisation from "@docs/migration/state-initialisation.mdx?doc-source"
 
 const sources: Readonly<Record<string, string>> = {
   "references/actor-checking.mdx": actorChecking,
@@ -27,7 +28,8 @@ const sources: Readonly<Record<string, string>> = {
   "getting-started/quickstart.mdx": quickstart,
   "references/sdk.mdx": sdk,
   "start-here/Welcome.mdx": welcome,
-  "start-here/Why.mdx": why
+  "start-here/Why.mdx": why,
+  "migration/state-initialisation.mdx": stateInitialisation
 }
 
 export const docSource = (source: string): string | undefined => sources[source]

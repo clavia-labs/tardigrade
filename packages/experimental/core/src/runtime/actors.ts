@@ -10,6 +10,9 @@ import type { ActorDefinition } from "../actor/definition"
 import type { ActorRuntime, Requirements } from "./contracts"
 import type { ResolutionState } from "../services/promises"
 
+import type { InitialisableAtom } from "../atoms/durable"
+import type { InitialState } from "../initial-state"
+import { prepareInitialState } from "./initialisation"
 import { createActorStore, type DeliveryOptions } from "./execution"
 import { createThreadStore } from "./stores/thread"
 import { initializeThread, readThreadCreation, type ThreadJournal } from "../services/journal/thread"
@@ -104,6 +107,8 @@ export interface ActorStorage<Event extends object> {
 }
 
 export interface ActorExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+  // initialStateAtoms supplies destination codecs for state accepted during thread creation.
+  readonly initialStateAtoms?: readonly InitialisableAtom[]
   readonly actor: ActorDefinition<Event, State, Services, Contracts>
   readonly storage: ActorStorage<Event>
   readonly services: (coordinate: ThreadCoordinate, runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
@@ -175,7 +180,11 @@ export function createActorExecution<Event extends object, Services, State, Cont
   })
   return {
     open,
-    provision: (created: ThreadCreated) => initializeThread(journalFor(created.address), created).pipe(Effect.andThen(open(created.address)), Effect.asVoid),
+    provision: (created: ThreadCreated, initialState?: InitialState) => Effect.gen(function* () {
+      const seeded = initialState === undefined ? undefined : yield* prepareInitialState(options.initialStateAtoms ?? [], initialState)
+      yield* initializeThread(journalFor(created.address), created, seeded)
+      yield* open(created.address)
+    }).pipe(Effect.asVoid),
     reference,
     receive: (coordinate: ThreadCoordinate, body: Schema.Json, metadata: MessageMetadata) => open(coordinate).pipe(Effect.flatMap(thread => thread.receive(body, metadata))),
     close: Effect.gen(function* () {

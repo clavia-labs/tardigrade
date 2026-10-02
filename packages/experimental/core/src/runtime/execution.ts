@@ -570,7 +570,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         checkpoint: enqueue(Effect.gen(function* () {
           if (!options.journal) return yield* Effect.fail(new RuntimeError("Checkpointing requires a journal"))
           const checkpoint = snapshot.checkpoint()
-          if (!checkpoint) return yield* Effect.fail(new RuntimeError("Cannot checkpoint while work is pending"))
+          if (!checkpoint) return yield* Effect.fail(new RuntimeError("Cannot checkpoint while work is pending or initialised atoms are unread"))
           const payload = yield* Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from })
           const digest = yield* checkpointDigest(payload).pipe(Effect.mapError(RuntimeError.from))
           yield* options.journal.appendWithCheckpoint(snapshot.position, [], { position: snapshot.position, payload, digest }).pipe(Effect.mapError(RuntimeError.from))

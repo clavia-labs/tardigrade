@@ -1,0 +1,54 @@
+---
+title: State initialisation
+description: Create a thread from caller supplied serialised state.
+route: /docs/migration/state-initialisation
+section: Migration
+sectionOrder: 6
+order: 1
+---
+
+Thread creation accepts an optional `initialState` map. Each key is a destination durable atom's name and each value is its serialised state. Your application reads its old logs and converts them at a settled boundary, where no work is pending.
+
+## Create a thread
+
+Configure the destination host's `initialStateAtoms` with the durable atoms whose state callers may supply. This applies to `createThreadHost`, `createBunHost`, and `createCloudflareHost`; without that list, nonempty initial state fails with an unknown atom error.
+
+```ts
+const host = createCloudflareHost({
+  ...actorOptions,
+  storage,
+  initialStateAtoms: [counter],
+})
+
+const thread = await Effect.runPromise(host.allocateRootThread({
+  instance: "destination",
+  name: "migrated",
+  initialState: { "example.counter": { count: 42 } },
+}))
+```
+
+`counter` is the destination durable atom named `example.counter`; `actorOptions` contains your actor and service wiring. `InitialState` is exported from experimental core for typing converters. Child allocation accepts the same map.
+
+Unknown names, duplicate destination atom names, and values that fail their atom's state schema return errors before an allocation request is recorded. State errors identify the atom. Omitted atoms retain their defaults. Creation commits `ThreadCreated` and `StateInitialised` together to the destination journal before opening its runtime or registering the thread. Repeating a named allocation with identical state reuses the thread; conflicting state fails.
+
+## Migrate remote logs
+
+Read and convert logs in your own code. For Cloudflare, send the resulting JSON to the destination host's existing creation route:
+
+```http
+POST /v1/actors/destination/threads
+Content-Type: application/json
+
+{
+  "name": "migrated",
+  "initialState": { "example.counter": { "count": 42 } }
+}
+```
+
+The route returns the created thread coordinate. Invalid state returns HTTP 400. Pause writes to the source while choosing the settled boundary, then switch message routing after successful creation. Source access, conversion, and routing belong to your application.
+
+## Resume and checkpoint
+
+The new runtime loads each supplied atom's state before reducing subsequent events. Effects, execution handles, and pending replies are not transferred; the resumed graph can propose work from the supplied state. Normal checkpointing takes over, and capture waits until all supplied atoms have been read. Keep the initialisation event as durable history so the state can be rebuilt without a checkpoint.
+
+For custom journal wiring, core also exports `initialiseState({ journal, atoms, initialState, source? })`. Invoke it before opening the runtime; the journal must be empty or contain only `ThreadCreated`. `source` is optional JSON provenance.

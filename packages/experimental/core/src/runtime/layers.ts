@@ -1,3 +1,5 @@
+import type { InitialState } from "../initial-state"
+import { prepareInitialState } from "./initialisation"
 import type { ThreadCoordinate, ChildPlacement } from "../actor/thread"
 import type { ActorMethods } from "../actor/method"
 import { RuntimeError } from "./effects"
@@ -34,11 +36,12 @@ export function createThreadHost<Event extends object, Services, State, Contract
   const supervisor = createSupervisor({
     actor: options.actor.actorName,
     journal: instance => options.storage.supervisor(options.actor.actorName, instance),
+    validateInitialState: state => prepareInitialState(options.initialStateAtoms ?? [], state).pipe(Effect.asVoid),
     provision: allocation => actors.provision({
       type: "ThreadCreated", address: allocation.coordinate,
       parent: allocation.parent === null ? null : { ...allocation.coordinate, thread: allocation.parent },
       depth: allocation.depth, placement: allocation.placement,
-    }),
+    }, allocation.initialState),
     defaultChildPlacement: options.defaultChildPlacement ?? DEFAULT_CHILD_PLACEMENT,
     supportedChildPlacements: HOST_CHILD_PLACEMENTS,
     ...(options.generateName ? { generateName: options.generateName } : {}),
@@ -65,8 +68,8 @@ export function createThreadHost<Event extends object, Services, State, Contract
     getThread: (input: { readonly instance: string; readonly thread: string }) => invocation.get({ actor: options.actor.actorName, ...input }),
     send: invocation.send,
     receive: invocation.receive,
-    allocateRootThread: (input: { readonly instance: string; readonly name?: string; readonly placement?: ChildPlacement }) => run(supervisor.allocate(input).pipe(Effect.flatMap(actors.reference))),
-    allocateChildThread: (input: { readonly parent: ThreadCoordinate; readonly name?: string; readonly placement?: ChildPlacement }) => run(supervisor.allocate({ instance: input.parent.instance, ...input }).pipe(Effect.flatMap(actors.reference))),
+    allocateRootThread: (input: { readonly instance: string; readonly name?: string; readonly placement?: ChildPlacement; readonly initialState?: InitialState }) => run(supervisor.allocate(input).pipe(Effect.flatMap(actors.reference))),
+    allocateChildThread: (input: { readonly parent: ThreadCoordinate; readonly name?: string; readonly placement?: ChildPlacement; readonly initialState?: InitialState }) => run(supervisor.allocate({ instance: input.parent.instance, ...input }).pipe(Effect.flatMap(actors.reference))),
     close: closing,
   }
 }

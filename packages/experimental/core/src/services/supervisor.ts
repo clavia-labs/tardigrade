@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util"
+import type { InitialState } from "../initial-state"
 import { Context, Effect, Exit, Random, Semaphore } from "effect"
 import { RuntimeError } from "../runtime/effects"
 import type { ChildPlacement, ThreadCoordinate } from "../actor/thread"
@@ -12,6 +14,7 @@ export interface ThreadRequest {
   readonly parent?: ThreadCoordinate
   readonly name?: string
   readonly placement?: ChildPlacement
+  readonly initialState?: InitialState
 }
 
 // Supervisor allocates threads and exposes their durable registration directory within a hosted actor type.
@@ -26,6 +29,7 @@ export function createSupervisor(options: {
   readonly actor: string
   readonly journal: (instance: string) => Journal<SupervisorEvent>
   readonly provision: (allocation: ThreadAllocation) => Effect.Effect<void, Error>
+  readonly validateInitialState?: (state: InitialState) => Effect.Effect<void, Error>
   readonly generateName?: () => string
   readonly defaultChildPlacement: ChildPlacement
   readonly supportedChildPlacements: readonly ChildPlacement[]
@@ -64,7 +68,11 @@ export function createSupervisor(options: {
     }
     return yield* pending
   })
-  const allocate = (instance: string, parent: ThreadCoordinate | undefined, suppliedName: string | undefined, requestedPlacement: ChildPlacement | undefined) => serialize(`allocate:${instance}`, Effect.gen(function* () {
+  const allocate = (instance: string, parent: ThreadCoordinate | undefined, suppliedName: string | undefined, requestedPlacement: ChildPlacement | undefined, initialState: InitialState | undefined) => serialize(`allocate:${instance}`, Effect.gen(function* () {
+    if (initialState !== undefined) {
+      if (!options.validateInitialState) return yield* Effect.fail(new RuntimeError("Initial state validation is not configured"))
+      yield* options.validateInitialState(initialState)
+    }
     const placement = requestedPlacement ?? options.defaultChildPlacement
     if (!options.supportedChildPlacements.includes(placement)) return yield* Effect.fail(new RuntimeError(`Unsupported child placement: ${placement}`))
     if (parent && (parent.actor !== options.actor || parent.instance !== instance)) return yield* Effect.fail(new RuntimeError("Parent belongs to another actor instance"))
@@ -76,6 +84,7 @@ export function createSupervisor(options: {
     if (!name || name.includes("/")) return yield* Effect.fail(new RuntimeError("Thread name must be nonempty and contain no slash"))
     const existing = directory.find(entry => entry.name === name && entry.parent === (parent?.thread ?? null))
     if (existing) {
+      if (initialState !== undefined && !isDeepStrictEqual(existing.initialState, initialState)) return yield* Effect.fail(new RuntimeError("Named thread already has different initial state"))
       if (requestedPlacement !== undefined && existing.placement !== requestedPlacement) return yield* Effect.fail(new RuntimeError("Named thread already has different placement"))
       if (suppliedName === undefined) return yield* Effect.fail(new RuntimeError("Generated thread name already exists; supply a different name or generator"))
       yield* supervisor.resume
@@ -87,7 +96,7 @@ export function createSupervisor(options: {
     const thread = directory.some(entry => entry.coordinate.thread === name) ? `${name}-${yield* randomName}` : name
     if (directory.some(entry => entry.coordinate.thread === thread)) return yield* Effect.fail(new RuntimeError("Thread identity collision"))
     const coordinate = { actor: options.actor, instance, thread }
-    yield* supervisor.send([{ type: "ThreadRequested", allocation: { coordinate, name, parent: parent?.thread ?? null, depth: ancestor ? ancestor.depth + 1 : 0, placement } }])
+    yield* supervisor.send([{ type: "ThreadRequested", allocation: { coordinate, name, parent: parent?.thread ?? null, depth: ancestor ? ancestor.depth + 1 : 0, placement, ...(initialState === undefined ? {} : { initialState }) } }])
     yield* supervisor.wait
     const allocated = supervisor.getState().view.threads.find(entry => entry.coordinate.thread === coordinate.thread)
     if (allocated?.status !== "registered") return yield* Effect.fail(new RuntimeError(allocated?.reason ?? "Thread provisioning did not complete"))
@@ -100,7 +109,9 @@ export function createSupervisor(options: {
     return entry ? Object.freeze({ ...entry.coordinate }) : undefined
   })
   return {
-    allocate: (request: ThreadRequest) => options.run(allocate(request.instance, request.parent, request.name, request.placement)),
+    allocate: (request: ThreadRequest) => options.run(Effect.try({ try: () => structuredClone(request), catch: RuntimeError.from }).pipe(Effect.flatMap(copied =>
+      allocate(copied.instance, copied.parent, copied.name, copied.placement, copied.initialState),
+    ))),
     lookup: (coordinate: ThreadCoordinate) => options.run(lookup(coordinate)),
     store: (instance: string) => options.run(supervisorFor(instance).pipe(Effect.map(createSupervisorStore))),
     close: Effect.gen(function* () {
