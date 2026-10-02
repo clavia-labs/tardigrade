@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { DurableObject } from "cloudflare:workers"
 import { actorContext } from "tardie/agent"
 import { createCloudflareHost, methodHttp } from "tardie/platform/cloudflare"
@@ -21,6 +22,7 @@ export class ActorDO extends DurableObject<Env> {
   private readonly handler = methodHttp(this.host, {
     ...(this.env.TARDIGRADE_TOKEN ? { token: this.env.TARDIGRADE_TOKEN } : {}),
   })
+  alarm(): Promise<void> { return Effect.runPromise(this.host.alarm) }
   fetch(request: Request): Promise<Response> { return this.handler(request) }
 }
 

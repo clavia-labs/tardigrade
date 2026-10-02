@@ -14,6 +14,8 @@ export class MethodDescription extends Context.Service<MethodDescription, string
 export class MethodHints extends Context.Service<MethodHints, MethodAnnotations>()("tardie/library/MethodHints") {}
 // MethodExecution selects whether a call waits for a value or returns a durable background handle.
 export class MethodExecution extends Context.Service<MethodExecution, ExecutionMode>()("tardie/library/MethodExecution") {}
+// MethodPromiseTimeout sets the background promise waiting budget in milliseconds; omission inherits the host policy.
+export class MethodPromiseTimeout extends Context.Service<MethodPromiseTimeout, number>()("tardie/library/MethodPromiseTimeout") {}
 
 export interface Library<Rpcs extends Rpc.Any = Rpc.Any> extends LibraryContract {
   readonly methods: RpcGroup.RpcGroup<Rpcs>
@@ -54,13 +56,16 @@ export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definiti
     const hints = Context.getOrUndefined(rpc.annotations, MethodHints)
     const annotations = hints ? Schema.decodeSync(MethodAnnotations)(hints) : undefined
     const execution = Schema.decodeSync(ExecutionMode)(Context.getOrUndefined(rpc.annotations, MethodExecution) ?? DEFAULT_METHOD_EXECUTION)
+    const promiseTimeoutMs = Context.getOrUndefined(rpc.annotations, MethodPromiseTimeout)
+    if (promiseTimeoutMs !== undefined && (!Number.isSafeInteger(promiseTimeoutMs) || promiseTimeoutMs < 1)) throw new Error("MethodPromiseTimeout must be a positive safe integer")
+    if (promiseTimeoutMs !== undefined && execution !== "background") throw new Error("MethodPromiseTimeout requires background execution")
     const name = definition.toolNames?.[rpc._tag as Rpcs[number]["_tag"]] ?? `${definition.name}__${rpc._tag}`
     if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) throw new Error(`Invalid tool name: ${name}`)
     return {
       name, method: rpc._tag, description,
       inputSchema: jsonSchemaOf(rpc.payloadSchema === Schema.Void ? Schema.Struct({}) : rpc.payloadSchema, { onExcessProperty: "error" }),
       outputSchema: jsonSchemaOf(rpc.successSchema === Schema.Void ? Schema.Null : rpc.successSchema),
-      ...(annotations ? { annotations } : {}), execution,
+      ...(annotations ? { annotations } : {}), execution, ...(promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs }),
     }
   })
   for (const name of Object.keys(definition.toolNames ?? {})) if (!names.includes(name)) throw new Error(`Unknown method in ${definition.name}: ${name}`)
@@ -96,12 +101,14 @@ export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definiti
       if (options.submit?.includes(rpc._tag)) {
         if (spec.execution !== "background") throw new Error(`Submitted method must use background execution: ${rpc._tag}`)
         return promiseTool({ name: rpc._tag, description, input,
+          ...(spec.promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs: spec.promiseTimeoutMs }),
           submit: (payload, call) => run(payload, call).pipe(Effect.flatMap(Schema.decodeUnknownEffect(ExecutionHandle))),
           ...(options.cancel?.[rpc._tag as Rpcs[number]["_tag"]] ? { cancel: options.cancel[rpc._tag as Rpcs[number]["_tag"]] } : {}),
           ...(spec.annotations ? { annotations: spec.annotations } : {}),
         })
       }
       return tool({ name: rpc._tag, description, input, run,
+        ...(spec.promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs: spec.promiseTimeoutMs }),
         ...(spec.annotations ? { annotations: spec.annotations } : {}), execution: spec.execution,
       })
     })

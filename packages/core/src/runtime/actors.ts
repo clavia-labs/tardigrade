@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util"
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Random, Schema, Scope } from "effect"
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Random, Schema, Scope, Semaphore } from "effect"
 import { Actor, ActorRequest, ActorCall, type ActorCaller } from "../services/actor"
 import { atom, type Atom } from "../atoms/atom"
 import { InvalidMessage, type MessageMetadata, type MessageReceipt } from "../actor/message"
@@ -8,7 +8,9 @@ import { RuntimeError, type ExecutionHandle } from "./effects"
 import type { ThreadCoordinate, ThreadCreated } from "../actor/thread"
 import type { ActorDefinition } from "../actor/definition"
 import type { ActorRuntime, Requirements } from "./contracts"
+import { WatchdogTerminalError, type WatchdogTarget, type RecoveryState } from "../services/watchdog"
 import type { ResolutionState } from "../services/promises"
+import type { PromisePolicy } from "../services/promises"
 
 import type { InitialState, StatefulAtom } from "../initialise"
 import { prepareInitialState } from "./initialisation"
@@ -95,7 +97,9 @@ export interface ManagedThread<State, Contracts extends ActorMethods<object>> {
   readonly get: <Value>(node: Atom<Value>) => Value
   readonly sub: <Value>(node: Atom<Value>, listener: () => void) => () => void
   readonly getState: () => State
+  readonly recoveryState: () => RecoveryState
   readonly resume: Effect.Effect<void, Error>
+  readonly recover: Effect.Effect<void, Error>
   readonly wait: Effect.Effect<void, Error>
   readonly close: Effect.Effect<void, Error>
   readonly receive: (body: Schema.Json, metadata: MessageMetadata) => Effect.Effect<MessageReceipt, Error>
@@ -106,6 +110,8 @@ export interface ActorStorage<Event extends object> {
 }
 
 export interface ActorExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+  readonly promises?: Partial<PromisePolicy>
+  readonly canDrive?: (target: WatchdogTarget) => Effect.Effect<boolean, Error>
   // initialStateAtoms supplies destination codecs for state accepted during thread creation.
   readonly initialStateAtoms?: readonly StatefulAtom[]
   readonly actor: ActorDefinition<Event, State, Services, Contracts>
@@ -120,8 +126,42 @@ export interface ActorExecutionOptions<Event extends object, Services, State, Co
 export function createActorExecution<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorExecutionOptions<Event, Services, State, Contracts> & {
   readonly run: <Value>(work: Effect.Effect<Value, Error>) => Effect.Effect<Value, Error>
 }) {
+  let closed = false
+  const lifecycleLocks = new Map<string, Semaphore.Semaphore>()
+  const serialize = <Value>(coordinate: ThreadCoordinate, work: Effect.Effect<Value, Error>) => Effect.suspend(() => {
+    const key = identity(coordinate)
+    let lock = lifecycleLocks.get(key)
+    if (!lock) { lock = Semaphore.makeUnsafe(1); lifecycleLocks.set(key, lock) }
+    return lock.withPermit(work)
+  })
   const threads = new Map<string, Effect.Effect<ManagedThread<State, Contracts>, Error>>()
+  const liveThreads = new Map<string, ManagedThread<State, Contracts>>()
   const journals = new Map<string, ThreadJournal<Event>>()
+  const subscriptions = new Map<string, Set<{ bind: (thread: ManagedThread<State, Contracts>) => void; detach: () => void }>>()
+  const current = (coordinate: ThreadCoordinate) => {
+    const thread = liveThreads.get(identity(coordinate))
+    if (!thread) throw new RuntimeError("Thread runtime is unavailable during recovery")
+    return thread
+  }
+  const projection = (coordinate: ThreadCoordinate) => ({
+    get: <Value>(node: Atom<Value>) => current(coordinate).get(node),
+    sub: <Value>(node: Atom<Value>, listener: () => void) => {
+      if (closed) throw new RuntimeError("Actor execution is closed")
+      const key = identity(coordinate)
+      let entries = subscriptions.get(key)
+      if (!entries) { entries = new Set(); subscriptions.set(key, entries) }
+      let stop: (() => void) | undefined
+      const notify = () => { try { listener() } catch (error) { console.error("Subscription error:", error) } }
+      const entry = {
+        bind: (thread: ManagedThread<State, Contracts>) => { stop?.(); stop = thread.sub(node, notify); notify() },
+        detach: () => { stop?.(); stop = undefined },
+      }
+      entries.add(entry)
+      const thread = liveThreads.get(key)
+      if (thread) entry.bind(thread)
+      return () => { entry.detach(); entries.delete(entry); if (!entries.size) subscriptions.delete(key) }
+    },
+  })
   const identity = (coordinate: ThreadCoordinate) => JSON.stringify([coordinate.actor, coordinate.instance, coordinate.thread])
   const journalFor = (coordinate: ThreadCoordinate) => {
     const key = identity(coordinate)
@@ -129,49 +169,60 @@ export function createActorExecution<Event extends object, Services, State, Cont
     if (!journal) { journal = options.storage.thread(coordinate); journals.set(key, journal) }
     return journal
   }
-  const open = (coordinate: ThreadCoordinate): Effect.Effect<ManagedThread<State, Contracts>, Error> => Effect.gen(function* () {
+  const open = (coordinate: ThreadCoordinate): Effect.Effect<ManagedThread<State, Contracts>, Error> => serialize(coordinate, Effect.gen(function* () {
+    if (closed) return yield* Effect.fail(new RuntimeError("Actor execution is closed"))
     const key = identity(coordinate)
     let pending = threads.get(key)
     if (!pending) {
       const journal = journalFor(coordinate)
       pending = yield* Effect.cached(readThreadCreation(journal, coordinate).pipe(Effect.andThen(createActorStore<Event, State, Services, Contracts>({
-        actor: options.actor, actorContext: options.actorContext, journal, delivery: options.delivery(coordinate), services: runtime => options.services(coordinate, runtime),
+        actor: options.actor, actorContext: options.actorContext, journal, ...(options.canDrive ? { canDrive: options.canDrive(coordinate) } : {}), ...(options.promises ? { promises: options.promises } : {}), delivery: options.delivery(coordinate), services: runtime => options.services(coordinate, runtime),
       })), Effect.onError(() => Effect.sync(() => { threads.delete(key) }))))
       threads.set(key, pending)
     }
-    return yield* pending
-  })
+    const thread = yield* pending
+    if (closed) { yield* thread.close; return yield* Effect.fail(new RuntimeError("Actor execution is closed")) }
+    if (threads.get(key) === pending && liveThreads.get(key) !== thread) {
+      liveThreads.set(key, thread)
+      for (const subscription of subscriptions.get(key) ?? []) subscription.bind(thread)
+    }
+    return thread
+  }))
   const reference = (coordinate: ThreadCoordinate) => Effect.gen(function* () {
     const thread = yield* open(coordinate)
     const journal = journalFor(coordinate)
+    const source = projection(coordinate)
     const invoke = <Name extends keyof Contracts & string>(method: Name, input: MethodInput<Contracts[Name]>, request: { readonly id: string }) => options.run(Effect.gen(function* () {
       const body = yield* Schema.decodeUnknownEffect(Schema.Json)({ method, input }).pipe(Effect.mapError(InvalidMessage.from))
-      return yield* thread.receive(body, { id: request.id, from: options.from })
+      const current = yield* open(coordinate)
+      return yield* current.receive(body, { id: request.id, from: options.from })
     }))
     const result = <Name extends keyof Contracts & string>(name: Name, id: string): Effect.Effect<MethodResult<MethodOutput<Contracts[Name]>>, Error> => options.run(Effect.gen(function* () {
+      const thread = yield* open(coordinate)
       const record = yield* journal.readMessage(id)
       const invocation = record?.record.message?.invocation
       const method = thread.contracts[name]
       if (!method || invocation?.method !== name) return yield* Effect.fail(new InvalidMessage("Result requires a matching invocation"))
-      const node = atom(get => method.result(invocation.input, get, { id, ref: { method: name, id } }))
+      const node = atom(get => current(coordinate).contracts[name]!.result(invocation.input, get, { id, ref: { method: name, id } }))
       const settled = yield* Deferred.make<MethodResult<Schema.Json>, Error>()
       const check = () => {
         try {
-          const value = thread.get(node)
+          const value = source.get(node)
           if (value !== undefined) Deferred.doneUnsafe(settled, Effect.succeed(value))
         } catch (error) { Deferred.doneUnsafe(settled, Effect.fail(RuntimeError.from(error))) }
       }
       const output = yield* Effect.acquireUseRelease(
-        Effect.sync(() => { const stop = thread.sub(node, check); check(); return stop }),
+        Effect.sync(() => { const stop = source.sub(node, check); check(); return stop }),
         () => Deferred.await(settled), stop => Effect.sync(stop),
       )
       return output as MethodResult<MethodOutput<Contracts[Name]>>
     }))
-    const cancel = <Name extends keyof Contracts & string>(method: Name, id: string, reason: string) => options.run(thread.receive(
+    const cancel = <Name extends keyof Contracts & string>(method: Name, id: string, reason: string) => options.run(open(coordinate).pipe(Effect.flatMap(thread => thread.receive(
       { method, cancel: { id, reason } }, { id: JSON.stringify(["cancel", method, id]), from: options.from },
-    ))
+    ))))
     // methodState reads a committed invocation without waiting for its result.
     const methodState = <Name extends keyof Contracts & string>(name: Name, id: string) => options.run(Effect.gen(function* () {
+      const thread = yield* open(coordinate)
       const record = yield* journal.readMessage(id)
       const invocation = record?.record.message?.invocation
       const method = thread.contracts[name]
@@ -180,14 +231,23 @@ export function createActorExecution<Event extends object, Services, State, Cont
     }))
     type Client = { readonly [Name in keyof Contracts]: (input: MethodInput<Contracts[Name]>, request: { readonly id: string }) => Effect.Effect<MethodOutput<Contracts[Name]>, Error> }
     const methods = Object.fromEntries(Object.keys(thread.contracts).map(name => [name, (input: Schema.Json, request: { readonly id: string }) => invoke(name, input, request).pipe(Effect.andThen(result(name, request.id)), Effect.flatMap(result => result.status === "completed" ? Effect.succeed(result.output) : Effect.fail(result.status === "failed" ? new MethodFailed(result.error) : new MethodCancelled(result.reason))))])) as Client
-    return { ...methods, coordinate: Object.freeze({ ...coordinate }), store: createThreadStore(coordinate, thread), contracts: thread.contracts, methods, invoke, result, cancel, methodState,
+    return { ...methods, coordinate: Object.freeze({ ...coordinate }), store: createThreadStore(coordinate, source), contracts: thread.contracts, methods, invoke, result, cancel, methodState,
       records: () => options.run(journal.read),
-      get: thread.get, getState: thread.getState, resume: thread.resume, wait: thread.wait,
+      get: source.get, getState: () => current(coordinate).getState(), resume: options.run(open(coordinate).pipe(Effect.flatMap(thread => thread.resume))), wait: options.run(open(coordinate).pipe(Effect.flatMap(thread => thread.wait))),
       receipt: (id: string) => options.run(journal.readMessage(id).pipe(Effect.tap(record => record ? journal.acknowledge : Effect.void), Effect.map(record => record ? { id, position: record.position } : undefined))),
     }
   })
   return {
     open,
+    probe: (coordinate: ThreadCoordinate) => Effect.try({ try: () => liveThreads.get(identity(coordinate))?.recoveryState(), catch: error => error instanceof WatchdogTerminalError ? error : RuntimeError.from(error) }),
+    invalidate: (coordinate: ThreadCoordinate) => serialize(coordinate, Effect.gen(function* () {
+      const key = identity(coordinate)
+      const pending = threads.get(key)
+      threads.delete(key)
+      liveThreads.delete(key)
+      for (const subscription of subscriptions.get(key) ?? []) subscription.detach()
+      if (pending) yield* pending.pipe(Effect.flatMap(thread => thread.close), Effect.ignore)
+    })),
     provision: (created: ThreadCreated, initialState?: InitialState) => Effect.gen(function* () {
       const seeded = initialState === undefined ? undefined : yield* prepareInitialState(options.initialStateAtoms ?? [], initialState)
       yield* initializeThread(journalFor(created.address), created, seeded)
@@ -196,6 +256,10 @@ export function createActorExecution<Event extends object, Services, State, Cont
     reference,
     receive: (coordinate: ThreadCoordinate, body: Schema.Json, metadata: MessageMetadata) => open(coordinate).pipe(Effect.flatMap(thread => thread.receive(body, metadata))),
     close: Effect.gen(function* () {
+      closed = true
+      liveThreads.clear()
+      for (const entries of subscriptions.values()) for (const subscription of entries) subscription.detach()
+      subscriptions.clear()
       const results = yield* Effect.forEach(threads.values(), pending =>
         Effect.exit(Effect.gen(function* () { const thread = yield* pending; yield* thread.close })),
       )

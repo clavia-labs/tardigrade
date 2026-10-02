@@ -78,3 +78,7 @@ The host persists events before running the work they enable, so it can resume u
 `tdg setup` writes model configuration to `wrangler.jsonc` and local credentials to `.dev.vars`. The generated development script loads `.dev.vars`. A hosted process can provide the same credential names through its environment.
 
 Set `PORT` to change the HTTP port and `TARDIGRADE_ACTOR_DATA` to change the storage directory used by the generated server.
+
+`createBunHost({ promises: { timeoutMs: 60_000, pollIntervalMs: 1_000 }, ... })` configures deferred work at the host. `bunPromises(runtime, ...)` inherits this policy; its `policy` option can override resolver scheduling. `DEFAULT_PROMISE_POLICY` is exported from `tardie/core`. Each promise records an absolute deadline, so a restart preserves its expiry. Expiry rejects with `PromiseTimedOut` without invoking backend cancellation; scheduled clocks receive the timeout budget after their scheduled time.
+
+Background library methods override the host waiting budget with `.annotate(MethodPromiseTimeout, timeoutMs)` from `tardie/libraries`. `modelServices({ timeoutMs })` carries the configured model timeout into inference promises. Overrides become fixed recorded deadlines, so replay does not renew the waiting budget.

@@ -1,3 +1,4 @@
+import type { WatchdogTarget } from "../services/watchdog"
 import { prepareInitialState } from "./initialisation"
 import type { ThreadCoordinate, ChildPlacement } from "../actor/thread"
 import type { ActorMethods } from "../actor/method"
@@ -35,6 +36,8 @@ export function createThreadHost<Event extends object, Services, State, Contract
   const run = <Value>(work: Effect.Effect<Value, Error>) => check.pipe(Effect.andThen(Effect.acquireUseRelease(work.pipe(Effect.forkIn(scope)), Fiber.join, Fiber.interrupt)))
   const supervisor = createSupervisor({
     actor: options.actor.actorName,
+    ...(options.canDrive ? { canDrive: (instance: string) => options.canDrive!({ actor: options.actor.actorName, instance }) } : {}),
+    ...(options.promises ? { promises: options.promises } : {}),
     journal: instance => options.storage.supervisor(options.actor.actorName, instance),
     validateInitialState: state => prepareInitialState(options.initialStateAtoms ?? [], state).pipe(Effect.asVoid),
     provision: allocation => actors.provision({
@@ -65,6 +68,17 @@ export function createThreadHost<Event extends object, Services, State, Contract
   }).pipe(Effect.uninterruptible)))
   return {
     actor: options.actor.actorName,
+    recover: (target: WatchdogTarget) => run(Effect.gen(function* () {
+      if (target.actor !== options.actor.actorName) return yield* Effect.fail(new RuntimeError("Watchdog target belongs to another actor"))
+      if (target.thread === undefined) return yield* supervisor.recover(target.instance)
+      const thread = yield* actors.open({ actor: target.actor, instance: target.instance, thread: target.thread })
+      yield* thread.resume
+      yield* thread.recover
+      return thread.recoveryState()
+    })),
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off: Watchdog probes require an absent state with an undefined result type.
+    probe: (target: WatchdogTarget) => target.thread === undefined ? Effect.succeed(undefined) : run(actors.probe({ actor: target.actor, instance: target.instance, thread: target.thread })),
+    invalidate: (target: WatchdogTarget) => target.thread === undefined ? supervisor.invalidate(target.instance) : run(actors.invalidate({ actor: target.actor, instance: target.instance, thread: target.thread })),
     methodContracts: (input: { readonly instance: string }) => run(Effect.acquireUseRelease(
       createActorStore({ actor: options.actor, actorContext: options.actorContext, inspect: true,
         services: runtime => services({ actor: options.actor.actorName, instance: input.instance, thread: "$methods" }, runtime),

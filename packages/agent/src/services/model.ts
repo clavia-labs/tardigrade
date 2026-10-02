@@ -35,6 +35,7 @@ export interface ModelInput { readonly model: ModelRef; readonly system: string;
 
 export class Model extends Context.Service<Model, {
   readonly call: (input: ModelInput) => Effect.Effect<ModelReply, Error>
+  readonly promiseTimeoutMs?: number | ((input: ModelInput) => Effect.Effect<number, Error>)
   readonly submit?: (input: ModelInput, context: Pick<ActCancellation, "ref"> & { readonly signal: AbortSignal }) => Effect.Effect<ExecutionHandle, Error>
   readonly cancel?: (input: ModelInput, context: Omit<ActCancellation, "request">) => Effect.Effect<void, Error>
 }>()("example/Model") {}
@@ -78,13 +79,18 @@ export function modelServices(options: ModelServiceOptions = {}) {
     const languageModel = yield* LanguageModel.LanguageModel
     const selection = yield* ModelSelection
     const fallback = yield* BindingSettings
-    return { call: input => Effect.gen(function* () {
+    const promiseTimeoutMs = (input: ModelInput) => Effect.gen(function* () {
+      const resolved = lock.resolve(input.model)
+      const settings = yield* (selection.settings?.(resolved.model) ?? Effect.succeed(fallback))
+      return options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
+    })
+    return { promiseTimeoutMs, call: input => Effect.gen(function* () {
       const resolved = lock.resolve(input.model)
       const settings = yield* (selection.settings?.(resolved.model) ?? Effect.succeed(fallback))
       const timeoutMs = options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
       const toolkit = yield* Effect.try({
         try: () => Toolkit.make(...input.tools.map(tool => AiTool.dynamic(tool.name, {
-          description: `${tool.description} Execution: ${tool.execution ?? DEFAULT_METHOD_EXECUTION}.`,
+          description: `${tool.description} Execution: ${tool.execution ?? DEFAULT_METHOD_EXECUTION}.${tool.promiseTimeoutMs === undefined ? "" : ` Promise timeout: ${tool.promiseTimeoutMs}ms.`}`,
           parameters: Schema.toEncoded(SchemaRepresentation.fromJsonSchemaDocument(
             JsonSchema.fromSchemaDraft07(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(tool.inputSchema)),
             settings.schemaImport ?? DEFAULT_SCHEMA_IMPORT_OPTIONS,
@@ -134,12 +140,13 @@ export function liveModelServices(options: ModelBindingOptions & ModelServiceOpt
 export const generate = Generate.layer(input => Effect.gen(function* () {
   const model = yield* Model
   const execution = yield* EffectExecution
-  if (model.submit) return Generate.defer(yield* execution.submit(model.submit(input, execution)))
+  const timeoutMs = typeof model.promiseTimeoutMs === "function" ? yield* model.promiseTimeoutMs(input) : model.promiseTimeoutMs
+  if (model.submit) return Generate.defer(yield* execution.submit(model.submit(input, execution), { timeoutMs }))
   const reply = durablePromise(execution.ref, { success: ModelReplySchema, error: Schema.String })
   const handle = yield* execution.fork(model.call(input).pipe(
     Effect.exit,
     Effect.map(exit => Exit.isSuccess(exit) ? reply.succeed(exit.value) : reply.fail(Cause.pretty(exit.cause))),
-  ))
+  ), { timeoutMs })
   return Generate.defer(handle)
 }).pipe(Effect.mapError(String)), { cancel: (input, context) => Model.use(model => model.cancel?.(input, context) ?? Effect.void) })
 

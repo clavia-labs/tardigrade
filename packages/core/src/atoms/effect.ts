@@ -5,7 +5,7 @@ import { type EffectRef, EffectCancelled } from "../runtime/effects"
 import type { EffectRequest } from "../runtime/events"
 import { atom, type Atom, type Getter } from "./atom"
 
-export { EffectExecution } from "../services/effect-execution"
+export { EffectExecution, type PromiseOptions } from "../services/effect-execution"
 
 // EventValue proposes a domain event for direct journal delivery.
 export interface EventValue<Event> {
