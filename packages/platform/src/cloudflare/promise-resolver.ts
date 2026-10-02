@@ -6,17 +6,17 @@ import type { DurableObjectStorage, DurableObjectTransaction } from "@cloudflare
 import { isDeepStrictEqual } from "node:util"
 import { Clock, Effect, Layer, Schema, Semaphore } from "effect"
 import { ClockHandle, ExecutionHandle, RuntimeError } from "@clavia/tardigrade-core"
-import { Promises, ResolutionSettled as PromiseSettled, ResolutionResult, ResolutionRegistration, registrationKey, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-core"
+import { Promises, ResolutionSettled as PromiseSettled, ResolutionResult, ResolutionRegistration, registrationKey, promiseDeadline, promisePolicy, type ResolutionPoll, type PromisePolicy } from "@clavia/tardigrade-core"
 
-export interface InboxStub {
+export interface PromiseResolverStub {
   readonly watch: (request: ResolutionRegistration) => Promise<void>
   readonly cancel: (request: ResolutionRegistration) => Promise<void>
 }
 
-// cloudflarePromises binds an actor's promise service to an Inbox DO; registration acknowledges durable acceptance by that DO.
+// cloudflarePromises binds an actor's promise service to a promise resolver DO; registration acknowledges durable acceptance by that DO.
 export function cloudflarePromises(options: {
   readonly recipient: ThreadCoordinate
-  readonly namespace: { readonly getByName: (name: string) => InboxStub }
+  readonly namespace: { readonly getByName: (name: string) => PromiseResolverStub }
   readonly name: string
   readonly rpc?: DurableObjectRpcOptions & CloudflareRetryOptions
   readonly policy?: Partial<PromisePolicy>
@@ -29,29 +29,29 @@ export function cloudflarePromises(options: {
   return Layer.succeed(Promises, { watch: request => invoke("watch", request), cancel: request => invoke("cancel", request) })
 }
 
-export const InboxCompletion = Schema.Struct({ handle: ExecutionHandle, result: ResolutionResult })
-export type InboxCompletion = typeof InboxCompletion.Type
-export const InboxNotification = Schema.Struct({ id: Schema.NonEmptyString, handle: ExecutionHandle, result: Schema.optionalKey(ResolutionResult) })
-export type InboxNotification = typeof InboxNotification.Type
+export const PromiseResolverCompletion = Schema.Struct({ handle: ExecutionHandle, result: ResolutionResult })
+export type PromiseResolverCompletion = typeof PromiseResolverCompletion.Type
+export const PromiseResolverNotification = Schema.Struct({ id: Schema.NonEmptyString, handle: ExecutionHandle, result: Schema.optionalKey(ResolutionResult) })
+export type PromiseResolverNotification = typeof PromiseResolverNotification.Type
 const Entry = Schema.Struct({
   request: ResolutionRegistration, nextAt: Schema.NullOr(Schema.Finite), done: Schema.Boolean,
-  settlement: Schema.optionalKey(PromiseSettled), error: Schema.optionalKey(Schema.String),
+  settlement: Schema.optionalKey(PromiseSettled), polling: Schema.optionalKey(Schema.Boolean), error: Schema.optionalKey(Schema.String),
 })
 type Entry = typeof Entry.Type
-const Incoming = Schema.Struct({ handle: ExecutionHandle, result: Schema.optionalKey(ResolutionResult), notified: Schema.optionalKey(Schema.Boolean), expiresAt: Schema.Finite })
+const Incoming = Schema.Struct({ handle: ExecutionHandle, result: Schema.optionalKey(ResolutionResult), resultReceivedAt: Schema.optionalKey(Schema.Finite), notified: Schema.optionalKey(Schema.Boolean), expiresAt: Schema.Finite })
 type Incoming = typeof Incoming.Type
 const prefix = "inbox:job:"
 const incomingPrefix = "inbox:result:"
 const receiptPrefix = "inbox:webhook:"
 const handleKey = (handle: ExecutionHandle) => JSON.stringify([handle.executor, handle.id, handle.endpoint ?? null, handle.at ?? null, handle.value === undefined ? [] : [handle.value]])
 
-// createCloudflareInbox owns a dedicated DO's storage; acknowledged payloads are discarded and deduplication receipts expire by policy.
-export function createCloudflareInbox(options: {
+// createCloudflarePromiseResolver owns a dedicated DO's storage; acknowledged payloads are discarded and deduplication receipts expire by policy.
+export function createCloudflarePromiseResolver(options: {
   readonly storage: DurableObjectStorage
   readonly alarms?: DurableObjectAlarmsOptions
   readonly poll?: ResolutionPoll
   readonly deliver: (recipient: ThreadCoordinate, settlement: PromiseSettled) => Effect.Effect<void, Error>
-  readonly verifyWebhook?: (request: Request) => Effect.Effect<InboxNotification, Error>
+  readonly verifyWebhook?: (request: Request) => Effect.Effect<PromiseResolverNotification, Error>
   readonly policy?: Partial<PromisePolicy>
 }) {
   const policy = promisePolicy(options.policy)
@@ -87,49 +87,58 @@ export function createCloudflareInbox(options: {
     yield* schedule(tx)
   }).pipe(Effect.mapError(RuntimeError.from)))
   const register = (input: ResolutionRegistration, cancelled: boolean) => transaction(tx => Effect.gen(function* () {
-    const request = yield* Schema.decodeEffect(ResolutionRegistration)(input)
+    let request = yield* Schema.decodeEffect(ResolutionRegistration)(input)
     const now = yield* Clock.currentTimeMillis
     const key = prefix + registrationKey(request)
     const raw = yield* io(() => tx.get<Entry>(key))
     const previous = raw ? yield* decode(raw) : undefined
+    request = { ...request, deadlineAt: promiseDeadline(request.handle, now, policy, request.deadlineAt ?? previous?.request.deadlineAt) }
     if (previous && !isDeepStrictEqual(previous.request, request)) return yield* Effect.fail(new RuntimeError("Promise reference already registered with another handle"))
     if (cancelled) yield* io(() => tx.put(key, { request, done: true, nextAt: now + policy.retentionMs } satisfies Entry))
     else if (!previous) {
       const clock = request.handle.executor === "clock" ? yield* Schema.decodeUnknownEffect(ClockHandle)(request.handle) : undefined
-      if (!clock && (request.mode ?? request.handle.mode) !== "push" && !options.poll) return yield* Effect.fail(new RuntimeError("Inbox has no polling adapter; use push mode"))
+      if (!clock && (request.mode ?? request.handle.mode) !== "push" && !options.poll) return yield* Effect.fail(new RuntimeError("Promise resolver has no polling adapter; use push mode"))
       const incoming = yield* io(() => tx.get<Incoming>(incomingPrefix + handleKey(request.handle)))
       const active = incoming && incoming.expiresAt > now ? incoming : undefined
-      const result = active?.result
+      // resultReceivedAt preserves the first completion's arrival; legacy buffers retain their accepted result (test/workerd/promise-resolver.workers.ts).
+      const result = active?.result && (active.resultReceivedAt === undefined || active.resultReceivedAt < request.deadlineAt!) ? active.result : undefined
       yield* io(() => tx.put(key, {
-        request, done: false, nextAt: result || active?.notified ? now : clock ? Math.max(now, clock.at) : (request.mode ?? request.handle.mode) !== "push" ? now : null,
+        request, done: false, ...(active?.notified ? { polling: true } : {}), nextAt: result || active?.notified ? now : clock ? Math.min(request.deadlineAt!, Math.max(now, clock.at)) : (request.mode ?? request.handle.mode) !== "push" ? now : request.deadlineAt!,
         ...(result ? { settlement: { type: "PromiseSettled", ref: request.ref, result } as PromiseSettled } : {}),
       } satisfies Entry))
     }
     yield* schedule(tx)
   }).pipe(Effect.mapError(RuntimeError.from)))
   // accept receives trusted completions from RPC or an authenticated webhook adapter and retains early arrivals.
-  const accept = (input: InboxCompletion | InboxNotification) => transaction(tx => Effect.gen(function* () {
-    const completion = "id" in input ? yield* Schema.decodeEffect(InboxNotification)(input) : yield* Schema.decodeEffect(InboxCompletion)(input)
+  const accept = (input: PromiseResolverCompletion | PromiseResolverNotification) => transaction(tx => Effect.gen(function* () {
+    const completion = "id" in input ? yield* Schema.decodeEffect(PromiseResolverNotification)(input) : yield* Schema.decodeEffect(PromiseResolverCompletion)(input)
     const now = yield* Clock.currentTimeMillis
     const receipt = "id" in completion ? receiptPrefix + completion.id : undefined
     if (receipt && ((yield* io(() => tx.get<number>(receipt))) ?? 0) > now) return
-    if (!completion.result && !options.poll) return yield* Effect.fail(new RuntimeError("Inbox notification requires a polling adapter"))
+    if (!completion.result && !options.poll) return yield* Effect.fail(new RuntimeError("Promise resolver notification requires a polling adapter"))
     const id = handleKey(completion.handle)
     const key = incomingPrefix + id
     const previous = yield* io(() => tx.get<Incoming>(key))
-    if (previous && previous.expiresAt > now && previous.result && completion.result && !isDeepStrictEqual(previous.result, completion.result)) return yield* Effect.fail(new RuntimeError("Conflicting inbox completion"))
+    if (previous && previous.expiresAt > now && previous.result && completion.result && !isDeepStrictEqual(previous.result, completion.result)) return yield* Effect.fail(new RuntimeError("Conflicting promise completion"))
     const entries = yield* io(() => tx.list<Entry>({ prefix }))
     const matching = [...entries].filter(([, value]) => handleKey(value.request.handle) === id)
     let needed = matching.length === 0
     for (const [jobKey, value] of matching) {
       const entry = yield* decode(value)
       if (entry.done) continue
+      if (entry.settlement?.result.status === "rejected" && typeof entry.settlement.result.reason !== "string" && entry.settlement.result.reason._tag === "PromiseTimedOut") continue
+      if (!entry.settlement && entry.request.deadlineAt !== undefined && entry.request.deadlineAt <= now) {
+        yield* io(() => tx.put(jobKey, { ...entry, nextAt: now, settlement: { type: "PromiseSettled", ref: entry.request.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: entry.request.deadlineAt! } } } } satisfies Entry))
+        continue
+      }
       needed = true
-      if (entry.settlement && completion.result && !isDeepStrictEqual(entry.settlement.result, completion.result)) return yield* Effect.fail(new RuntimeError("Conflicting inbox completion"))
-      yield* io(() => tx.put(jobKey, { ...entry, nextAt: now, ...(completion.result ? { settlement: { type: "PromiseSettled", ref: entry.request.ref, result: completion.result } as PromiseSettled } : {}) } satisfies Entry))
+      if (entry.settlement && completion.result && !isDeepStrictEqual(entry.settlement.result, completion.result)) return yield* Effect.fail(new RuntimeError("Conflicting promise completion"))
+      yield* io(() => tx.put(jobKey, { ...entry, nextAt: now, ...(!completion.result ? { polling: true } : {}), ...(completion.result ? { settlement: { type: "PromiseSettled", ref: entry.request.ref, result: completion.result } as PromiseSettled } : {}) } satisfies Entry))
     }
-    const result = completion.result ?? (previous && previous.expiresAt > now ? previous.result : undefined)
-    yield* io(() => tx.put(key, { handle: completion.handle, ...(needed ? { ...(result ? { result } : {}), notified: true } : {}), expiresAt: (previous && previous.expiresAt > now ? previous.expiresAt : now + policy.retentionMs) } satisfies Incoming))
+    const active = previous && previous.expiresAt > now ? previous : undefined
+    const result = completion.result ?? active?.result
+    const resultReceivedAt = active?.result ? active.resultReceivedAt : completion.result ? now : undefined
+    yield* io(() => tx.put(key, { handle: completion.handle, ...(needed ? { ...(result ? { result, ...(resultReceivedAt !== undefined ? { resultReceivedAt } : {}) } : {}), notified: true } : {}), expiresAt: active?.expiresAt ?? now + policy.retentionMs } satisfies Incoming))
     if (receipt) yield* io(() => tx.put(receipt, now + policy.retentionMs))
     yield* schedule(tx)
   }).pipe(Effect.mapError(RuntimeError.from)))
@@ -172,22 +181,26 @@ export function createCloudflareInbox(options: {
         const entry = yield* decode(raw)
         const now = yield* Clock.currentTimeMillis
         if (entry.done || entry.nextAt === null || entry.nextAt > now) continue
-        yield* update(key, (current, now) => ({ ...current, nextAt: now + policy.retryIntervalMs }))
+        const deadlineAt = promiseDeadline(entry.request.handle, now, policy, entry.request.deadlineAt)
+        yield* update(key, (current, now) => ({ ...current, request: { ...current.request, deadlineAt }, nextAt: current.settlement ? now + policy.retryIntervalMs : Math.min(deadlineAt, now + policy.retryIntervalMs) }))
         yield* Effect.gen(function* () {
-          if (!entry.settlement) {
+          if (!entry.settlement && deadlineAt <= (yield* Clock.currentTimeMillis)) {
+            yield* update(key, (current, now) => current.settlement ? current : ({ ...current, nextAt: now, settlement: { type: "PromiseSettled", ref: current.request.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt } } } }))
+          } else if (!entry.settlement) {
             const clock = entry.request.handle.executor === "clock" ? yield* Schema.decodeUnknownEffect(ClockHandle)(entry.request.handle) : undefined
             const result = clock
               ? { status: "fulfilled" as const, value: clock.value === undefined ? { at: clock.at } : clock.value }
-              : yield* options.poll!(entry.request.handle).pipe(Effect.timeout(policy.attemptTimeoutMs))
+              : (entry.request.mode ?? entry.request.handle.mode) === "push" && !entry.polling ? { status: "pending" as const }
+              : yield* options.poll!(entry.request.handle).pipe(Effect.timeout(Math.max(1, Math.min(policy.attemptTimeoutMs, deadlineAt - (yield* Clock.currentTimeMillis)))))
             if (result.status !== "pending") yield* accept({ handle: entry.request.handle, result })
-            else yield* update(key, (current, now) => ({ ...current, nextAt: current.settlement ? now : now + policy.pollIntervalMs }))
+            else yield* update(key, (current, now) => ({ ...current, nextAt: current.settlement ? now : (current.request.mode ?? current.request.handle.mode) === "push" && !current.polling ? deadlineAt : Math.min(deadlineAt, now + policy.pollIntervalMs) }))
           }
           const latest = yield* io(() => storage.get<Entry>(key))
           if (!latest || latest.done || !latest.settlement) return
           const current = yield* decode(latest)
           yield* options.deliver(current.request.recipient, current.settlement!).pipe(Effect.timeout(policy.attemptTimeoutMs))
           yield* update(key, (current, now) => ({ request: current.request, done: true, nextAt: now + policy.retentionMs }))
-        }).pipe(Effect.catch(error => update(key, (current, now) => ({ ...current, error: String(error), nextAt: now + policy.retryIntervalMs }))))
+        }).pipe(Effect.catch(error => update(key, (current, now) => ({ ...current, error: String(error), nextAt: current.settlement ? now + policy.retryIntervalMs : Math.min(deadlineAt, now + policy.retryIntervalMs) }))))
       }
       yield* discard
       yield* lock.withPermit(Effect.gen(function* () {

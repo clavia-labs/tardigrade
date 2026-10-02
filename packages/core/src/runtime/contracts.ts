@@ -4,10 +4,12 @@ import type { Atom } from "../atoms/atom"
 import type { RuntimeEvent } from "../services/journal"
 import type { Proposed, ServicesOf, EffectExecution } from "../atoms/effect"
 import type { EffectRef } from "./effects"
+import type { PromisePolicy } from "../services/promises"
 
 export type Requirements<Atoms> = Exclude<ServicesOf<Proposed<Atoms[keyof Atoms] extends Atom<infer Value> ? Value : never>>, EffectExecution>
 
 export interface ActorRuntime<Event extends object> {
+  readonly promisePolicy: PromisePolicy
   readonly ready: Effect.Effect<void>
   // onReady registers recovery during service construction, after replay and before the store opens.
   readonly onReady: (recover: Effect.Effect<void, Error>) => Effect.Effect<void>

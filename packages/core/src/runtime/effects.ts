@@ -26,6 +26,8 @@ export class PromiseNotReady extends RuntimeError {
 }
 
 export const Deadline = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(8_640_000_000_000_000))
+export const PromiseTimedOut = Schema.TaggedStruct("PromiseTimedOut", { deadlineAt: Deadline })
+export type PromiseTimedOut = typeof PromiseTimedOut.Type
 export const ClockHandle = Schema.Struct({ executor: Schema.Literal("clock"), id: Schema.NonEmptyString, at: Deadline, value: Schema.optionalKey(Schema.Json) })
 export type ClockHandle = typeof ClockHandle.Type
 export const ExecutionHandle = Schema.Struct({ executor: Schema.NonEmptyString, id: Schema.NonEmptyString, endpoint: Schema.optionalKey(Schema.NonEmptyString), mode: Schema.optionalKey(Schema.Literals(["poll", "push"])), at: Schema.optionalKey(Deadline), value: Schema.optionalKey(Schema.Json) }).check(Schema.makeFilter(handle => handle.executor !== "clock" || handle.at !== undefined, { title: "Clock handles require a deadline" }))
@@ -37,7 +39,7 @@ export type FiberHandle = typeof FiberHandle.Type
 // ExecutionResult distinguishes an immediate value from a handle to an eventual result.
 export const ExecutionResult = Schema.Union([
   Schema.Struct({ type: Schema.Literal("value"), value: Schema.Json }),
-  Schema.Struct({ type: Schema.Literal("promise"), handle: ExecutionHandle }),
+  Schema.Struct({ type: Schema.Literal("promise"), handle: ExecutionHandle, deadlineAt: Schema.optionalKey(Deadline) }),
 ])
 export type ExecutionResult = typeof ExecutionResult.Type
 

@@ -10,6 +10,7 @@ order: 2
 Each actor instance runs in a SQLite-backed Durable Object. The host keeps a supervisor journal and separate logical thread journals in that object's storage. The Worker routes an instance ID to its `ActorDO`:
 
 ```ts title="worker.ts"
+import { Effect } from "effect"
 import { DurableObject } from "cloudflare:workers"
 import { actorContext } from "tardie/agent"
 import { createCloudflareHost, methodHttp } from "tardie/platform/cloudflare"
@@ -33,6 +34,7 @@ export class ActorDO extends DurableObject<Env> {
   private readonly handler = methodHttp(this.host, {
     ...(this.env.TARDIGRADE_TOKEN ? { token: this.env.TARDIGRADE_TOKEN } : {}),
   })
+  alarm(): Promise<void> { return Effect.runPromise(this.host.alarm) }
   fetch(request: Request): Promise<Response> { return this.handler(request) }
 }
 
@@ -92,3 +94,50 @@ bunx wrangler deploy
 ```
 
 The deployed Worker exposes the same thread creation, method invocation, cancellation, and event routes used during local development.
+
+## Recovery
+
+The host commits a watchdog record and an immediate alarm with journal admission, then awaits `storage.sync()` before acknowledging the commit or starting execution. Forward the Durable Object's `alarm()` handler to `host.alarm` as shown above. Each recovery attempt commits its counters and replacement alarm, then synchronizes storage before driving the runtime.
+
+`host.watchdog.status` reads recovery records keyed by supervisor or thread. Effect and promise settlements advance the progress cursor and reset consecutive failures. Settled runtimes clear their wake; remote promises park until their recorded deadline. Terminal failures and exhausted budgets retain a blocked record and clear the wake. New messages preserve the block; `host.watchdog.resume({ actor, instance, thread })` explicitly starts a fresh recovery budget. Omit `thread` for the supervisor.
+
+Configure recovery at host construction:
+
+```ts
+createCloudflareHost({
+  // actor, storage, services, actorContext
+  watchdog: {
+    policy: {
+      attemptTimeoutMs: 30_000,
+      keepAliveIntervalMs: 30_000,
+      retryIntervalMs: 1_000,
+      maxRetryIntervalMs: 30_000,
+      maxAttempts: 20,
+      maxNoProgressAttempts: 5,
+    },
+  },
+  promises: { timeoutMs: 60_000, pollIntervalMs: 1_000 },
+})
+```
+
+`DEFAULT_WATCHDOG_POLICY` and `DEFAULT_PROMISE_POLICY` are exported from `tardie/core`. The watchdog retries typed failures by default; defects and `WatchdogTerminalError` block recovery. Supply `watchdog.retryable(error)` to classify application failures. Promise expiry records `PromiseTimedOut` without requesting backend cancellation. A scheduled clock receives its timeout budget after its scheduled time. Configure a dedicated promise resolver's observation cadence with `createCloudflarePromiseResolver({ policy: { pollIntervalMs }, ... })`; the host supplies each recorded absolute deadline.
+
+Background library methods can override the host's promise timeout. The override is recorded as an absolute deadline when the handle is accepted; replay retains that deadline.
+
+```ts
+import { Schema } from "effect"
+import { Rpc } from "effect/unstable/rpc"
+import { MethodExecution, MethodPromiseTimeout } from "tardie/libraries"
+
+const research = Rpc.make("research", {
+  payload: Schema.Struct({ question: Schema.String }),
+  success: Schema.String,
+  error: Schema.String,
+})
+  .annotate(MethodExecution, "background")
+  .annotate(MethodPromiseTimeout, 300_000)
+```
+
+The host keeps live local fibres active with alarm heartbeats at `keepAliveIntervalMs`. Alarm handlers return while recovery runs. Heartbeats preserve the promise deadline and recovery counters; completion releases the wake, and a process crash returns to budgeted recovery. Remote promises park without keeping the local fibre alive. `modelServices({ timeoutMs })` uses the configured model timeout for inference promises too.
+
+Local promise recovery reruns the originating act with its recorded reference and deadline. The act must recreate its producer and tolerate repeated execution; external operations must deduplicate by the reference. Cloudflare's finite alarm redeliveries leave a coverage gap if repeated crashes occur before the replacement alarm becomes durable.
