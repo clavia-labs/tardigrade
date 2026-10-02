@@ -99,14 +99,18 @@ jobs:
         with:
           bun-version: canary
       - run: bun install --frozen-lockfile
-      - run: bun run gate --jobs=2
+      - name: Read candidate version
+        id: candidate
+        run: echo "version=$(jq -r .version package.json)-${RC_TYPE}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      # CI runs the full gate on the release PR before merge. Publication only needs to validate
+      # the assembled package again; rerunning the repository test matrix makes npm publishing
+      # depend on unrelated network and worker tests.
+      - name: Validate candidate package
+        run: bun run tools/publish.ts --pack-only --version ${{ steps.candidate.outputs.version }} --tag ${RC_NPM_TAG} --source-tree ${{ steps.candidate-tree.outputs.sha }}
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      - name: Read candidate version
-        id: candidate
-        run: echo "version=$(jq -r .version package.json)-${RC_TYPE}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - name: Publish candidate
         run: bun run tools/publish.ts --version ${{ steps.candidate.outputs.version }} --tag ${RC_NPM_TAG} --source-tree ${{ steps.candidate-tree.outputs.sha }}
       - name: Record release PR checks
@@ -139,11 +143,12 @@ jobs:
         with:
           bun-version: canary
       - run: bun install --frozen-lockfile
-      - run: bun run gate --jobs=2
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+      - name: Validate stable package
+        run: bun run tools/publish.ts --pack-only --source-tree ${{ steps.stable-tree.outputs.sha }}
       - name: Verify release candidate
         if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
         env:
