@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-agent/projection/cost"
+export * from "@clavia/tardigrade-deprecated-agent/projection/cost"

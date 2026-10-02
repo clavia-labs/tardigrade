@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-agent/component/repair"
+export * from "@clavia/tardigrade-deprecated-agent/component/repair"

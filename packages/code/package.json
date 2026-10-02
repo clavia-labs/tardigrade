@@ -33,7 +33,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-deprecated-core": "workspace:*",
     "effect": "4.0.0-rc.115"
   },
   "devDependencies": {

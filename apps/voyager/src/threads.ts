@@ -1,4 +1,4 @@
-import type { ActorThreadsEvent, ActorThread } from "@clavia/tardigrade-client"
+import type { ActorThreadsEvent, ActorThread } from "@clavia/tardigrade-deprecated-client"
 
 export const applyActorEvent = (
   current: ReadonlyArray<ActorThread>,

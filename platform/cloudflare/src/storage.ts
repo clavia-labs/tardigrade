@@ -2,8 +2,8 @@ import { Effect, Encoding, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteMigrator } from "@effect/sql-sqlite-do"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { AppendOptions, AppendResult, ThreadEventStore } from "@clavia/tardigrade-core/log"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import type { AppendOptions, AppendResult, ThreadEventStore } from "@clavia/tardigrade-deprecated-core/log"
 
 export interface EventRow {
   readonly seq: number

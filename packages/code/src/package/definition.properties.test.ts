@@ -1,9 +1,9 @@
-import { machineOf } from "../../../core/src/component/runtime"
-import { replayProjection } from "@clavia/tardigrade-core/projection"
+import { machineOf } from "../../../deprecated/core/src/component/runtime"
+import { replayProjection } from "@clavia/tardigrade-deprecated-core/projection"
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import fc from "fast-check"
-import { composeComponents } from "@clavia/tardigrade-core/actor"
+import { composeComponents } from "@clavia/tardigrade-deprecated-core/actor"
 import {
   CODE_VIEW_ALGEBRA,
   definePackage,

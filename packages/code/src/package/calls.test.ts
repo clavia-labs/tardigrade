@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { eventAt, type Event } from "@clavia/tardigrade-core/event"
-import { replayProjection } from "@clavia/tardigrade-core/projection"
-import { machineOf } from "../../../core/src/component/runtime"
+import { eventAt, type Event } from "@clavia/tardigrade-deprecated-core/event"
+import { replayProjection } from "@clavia/tardigrade-deprecated-core/projection"
+import { machineOf } from "../../../deprecated/core/src/component/runtime"
 import type { PackageDefinition } from "./definition"
 import { packageCalls } from "./calls"
 

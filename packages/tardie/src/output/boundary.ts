@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-agent/output/boundary"
+export * from "@clavia/tardigrade-deprecated-agent/output/boundary"

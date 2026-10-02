@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { EventRow } from "@clavia/tardigrade-client"
+import type { EventRow } from "@clavia/tardigrade-deprecated-client"
 import { momentsOf } from "./narrative"
 import { DEFAULT_WINDOW_EVENTS, WINDOW_MIN_GAP } from "./policy"
 import { axisOf, bucketsOf, copyTextOf, defaultWindowOf, moved, shownIn } from "./window"

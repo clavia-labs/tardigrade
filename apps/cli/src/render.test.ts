@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { ThreadSummary, EventRow } from "@clavia/tardigrade-client"
+import type { ThreadSummary, EventRow } from "@clavia/tardigrade-deprecated-client"
 
 import { threadsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, methodLines, methodsLines, table } from "./render"
 

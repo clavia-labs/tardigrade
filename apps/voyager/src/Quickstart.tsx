@@ -1,6 +1,6 @@
 import { ArrowUpRight, Check, Copy } from "@phosphor-icons/react"
 import { useEffect, useState, type ReactElement } from "react"
-import type { ActorMetadata } from "@clavia/tardigrade-client"
+import type { ActorMetadata } from "@clavia/tardigrade-deprecated-client"
 
 import { COPY_CONFIRM_MS, ICON_SIZE } from "./policy"
 import { client, docsUrl } from "./client"

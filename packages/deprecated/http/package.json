@@ -1,0 +1,24 @@
+{
+  "name": "@clavia/tardigrade-deprecated-http",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-deprecated-core": "workspace:*",
+    "@clavia/tardigrade-deprecated-host": "workspace:*",
+    "@clavia/tardigrade-deprecated-client": "workspace:*",
+    "@clavia/tardigrade-deprecated-agent": "workspace:*",
+    "@clavia/tardigrade-model": "workspace:*",
+    "effect": "4.0.0-rc.115"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@effect/platform-bun": "4.0.0-rc.115"
+  }
+}

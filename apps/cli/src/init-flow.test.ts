@@ -4,14 +4,14 @@ import { join } from "node:path"
 import { Cause, Console, Effect, Layer, Option, Queue, Terminal } from "effect"
 import { Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
-import { makeActorClient } from "@clavia/tardigrade-client"
+import { makeActorClient } from "@clavia/tardigrade-deprecated-client"
 import { tdg } from "./commands"
 import { Cli } from "./services"
 
 const repository = new URL("../../../", import.meta.url).pathname
 const namespaces: Readonly<Record<string, string>> = {
-  core: "packages/core/src/index.ts", agent: "packages/agent/src/index.ts", code: "packages/code/src/index.ts",
-  http: "packages/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/index.ts", server: "apps/server/src/index.ts"
+  core: "packages/deprecated/core/src/index.ts", agent: "packages/deprecated/agent/src/index.ts", code: "packages/code/src/index.ts",
+  http: "packages/deprecated/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/index.ts", server: "apps/server/src/index.ts"
 }
 
 // bundleServer resolves the public package namespaces against their publish sources.

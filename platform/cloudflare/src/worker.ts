@@ -1,6 +1,6 @@
 import type { ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
 import { cloudflareHttp, DEFAULT_CLOUDFLARE_AUTHENTICATION } from "./transport/http"
-import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
+import type { Actor, ActorMethods } from "@clavia/tardigrade-deprecated-core/actor"
 import type { Env } from "./env"
 import { mountedActor, directory, modelListingFrom, methodsOf, type CloudflareWorkerArguments, type CloudflareWorkerOptions, type DeploymentModelScope, mountActor } from "./assembly"
 import { ActorDO } from "./actor"

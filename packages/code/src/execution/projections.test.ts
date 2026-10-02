@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { factsOf } from "./projections"
 
 test("distinct transition owners keep executions separate when payload IDs repeat within a turn", () => {

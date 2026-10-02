@@ -1,5 +1,5 @@
 import { executionKeyOf, executionRefOf, packageKeyOf } from "./events"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { turnTerminalOf } from "./turns"
 
 // The code thread's projections: pure functions over the event SET, the TypeScript half of

@@ -1,0 +1,40 @@
+import { modelActs, modelInfo, liveModelServices } from "@clavia/tardigrade-agent/services/model"
+import { toolActs } from "@clavia/tardigrade-agent/services/tools"
+import { RuntimeError } from "@clavia/tardigrade-core"
+import { Effect, Layer, Schema } from "effect"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+import { memoryWorkspace, fetchPackage, workspace } from "@clavia/tardigrade-libraries"
+import { ModelLock, lockedModelConfigOf, modelLockService, parseModelLock, MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
+import { modelCredentialsFrom } from "@clavia/tardigrade-model/config"
+
+const Config = Schema.Struct({ vars: Schema.Struct({ TARDIGRADE_CONFIG: Schema.Struct({ models: Schema.Unknown }) }) })
+
+const env = { ...process.env }
+const modelServices = Layer.unwrap(Effect.gen(function* () {
+  const configPath = resolve(env.TARDIGRADE_CONFIG_PATH?.trim() || fileURLToPath(new URL("./wrangler.jsonc", import.meta.url)))
+  const lockPath = join(dirname(configPath), MODEL_LOCK_FILE)
+  if (!(yield* Effect.tryPromise({ try: () => Bun.file(configPath).exists(), catch: RuntimeError.from }))) return yield* Effect.fail(new RuntimeError(`Model configuration does not exist: ${configPath}`))
+  if (!(yield* Effect.tryPromise({ try: () => Bun.file(lockPath).exists(), catch: RuntimeError.from }))) return yield* Effect.fail(new RuntimeError(`Model lock is missing: ${lockPath}. Run tdg models lock from ${dirname(configPath)}.`))
+  const [configText, lockText] = yield* Effect.all([
+    Effect.tryPromise({ try: () => Bun.file(configPath).text(), catch: RuntimeError.from }),
+    Effect.tryPromise({ try: () => Bun.file(lockPath).text(), catch: RuntimeError.from }),
+  ], { concurrency: "unbounded" })
+  const raw = yield* Effect.try({ try: () => Bun.JSONC.parse(configText), catch: RuntimeError.from })
+  const manifest = yield* Schema.decodeUnknownEffect(Config)(raw)
+  return yield* Effect.try({
+    try: () => {
+      const definitions = parseModelLock(lockText, lockPath)
+      const config = lockedModelConfigOf(manifest.vars.TARDIGRADE_CONFIG.models, definitions)
+      const { providers: _providers, ...policy } = config
+      const lock = Layer.succeed(ModelLock, modelLockService(definitions, policy))
+      return Layer.merge(
+        liveModelServices({ credentials: modelCredentialsFrom(config, env) }).pipe(Layer.provideMerge(lock)),
+        memoryWorkspace,
+      )
+    },
+    catch: RuntimeError.from,
+  })
+}))
+
+export const services = Layer.mergeAll(modelInfo, modelActs, toolActs([fetchPackage(), workspace()])).pipe(Layer.provide(modelServices))

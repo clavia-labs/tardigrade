@@ -3,7 +3,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { definePackage, type Package } from "./definition"
 
 // The fetch package: one HTTP request, made through `HttpClient` rather than through a global
-// fetch. The service is the same one the derived client speaks (packages/client), so a consumer
+// fetch. The service is the same one the derived client speaks (packages/deprecated/client), so a consumer
 // that swapped the client's transport swapped this package's too, and a test binds a client that
 // answers from a server it booted itself (fetch.test.ts).
 //

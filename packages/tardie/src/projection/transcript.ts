@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-agent/projection/transcript"
+export * from "@clavia/tardigrade-deprecated-agent/projection/transcript"

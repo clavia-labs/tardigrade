@@ -1,5 +1,5 @@
 import { Chunk, HashMap, HashSet, Option } from "effect"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { eventEpochOf, turnOf } from "./turns"
 
 interface TurnRecord {

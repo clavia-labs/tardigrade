@@ -5,7 +5,7 @@ import type {
   ModelCatalogPage,
   ProviderCatalogPage,
   ThreadSummary
-} from "@clavia/tardigrade-client"
+} from "@clavia/tardigrade-deprecated-client"
 
 // What a command puts on stdout. Two renderings of the same value: aligned text for a person and
 // the client's own value for a pipe (`--json`), which is why every function here takes what the

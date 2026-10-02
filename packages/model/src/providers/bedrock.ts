@@ -24,7 +24,7 @@ export function providerLayer(options: BedrockProviderOptions | ProviderOptions)
   } })
 }
 
-// inferenceLayer supplies Bedrock SDK clients with the shared inference policy (packages/agent/src/model/integration/providers/bedrock.test.ts).
+// inferenceLayer supplies Bedrock SDK clients with the shared inference policy (packages/deprecated/agent/src/model/integration/providers/bedrock.test.ts).
 export const inferenceLayer = (options: BedrockProviderOptions & Omit<Parameters<typeof sharedInferenceLayer>[0], "provider" | "client" | "model">) => sharedInferenceLayer({ ...options, client: {} }, (configured) => {
   if (configured.provider !== "bedrock") throw new Error(`The Bedrock layer cannot serve ${configured.provider}; supply the matching providerLayer`)
   return providerLayer({ ...configured, client: options.client })

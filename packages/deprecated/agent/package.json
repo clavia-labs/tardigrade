@@ -1,0 +1,69 @@
+{
+  "name": "@clavia/tardigrade-deprecated-agent",
+  "version": "0.0.1",
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "A durable agent harness. State is a pure function of the log.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "packages/deprecated/agent"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "files": [
+    "src",
+    "fixtures",
+    "!src/**/*.test.ts"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./actor/*": "./src/actor/*.ts",
+    "./component/infer": "./src/component/infer/index.ts",
+    "./component/code": "./src/component/code/index.ts",
+    "./component/compaction": "./src/component/compact/index.ts",
+    "./component/context": "./src/component/compact/context.ts",
+    "./component/permissions": "./src/component/permissions/index.ts",
+    "./component/escalation": "./src/component/escalate/index.ts",
+    "./component/budget": "./src/component/budget/index.ts",
+    "./component/tool": "./src/component/tool/index.ts",
+    "./component/*": "./src/component/*.ts",
+    "./component/infer/*": "./src/component/infer/*.ts",
+    "./model/*": "./src/model/*.ts",
+    "./log/*": "./src/log/*.ts",
+    "./output/*": "./src/output/*.ts",
+    "./packages/*": "./src/packages/*.ts",
+    "./projection/*": "./src/projection/*.ts",
+    "./runtime/*": "./src/runtime/*.ts",
+    "./testing/model": "./src/testing/model.ts",
+    "./component/escalate": "./src/component/escalate/index.ts",
+    "./component/compact": "./src/component/compact/index.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-deprecated-core": "workspace:*",
+    "@clavia/tardigrade-code": "workspace:*",
+    "@cfworker/json-schema": "^4.1.1",
+    "effect": "4.0.0-rc.115",
+    "@clavia/tardigrade-model": "workspace:*"
+  },
+  "devDependencies": {
+    "@clavia/tardigrade-deprecated-host": "workspace:*",
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@tardie/ai-openai": "4.0.0-rc.113-clavia.6",
+    "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.7",
+    "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.6",
+    "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.3",
+    "fast-check": "^4.9.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "private": true
+}

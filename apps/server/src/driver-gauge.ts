@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-http/driver-gauge"
+export * from "@clavia/tardigrade-deprecated-http/driver-gauge"

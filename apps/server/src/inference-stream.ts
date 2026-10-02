@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-http/inference-stream"
+export * from "@clavia/tardigrade-deprecated-http/inference-stream"

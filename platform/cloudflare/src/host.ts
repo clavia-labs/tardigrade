@@ -1,33 +1,33 @@
 import { makeRetryingAlarmPersistence, type CloudflareRetryPolicy } from "./retry"
-import { actorExecution } from "@clavia/tardigrade-host/execution"
-import { commitTracedDelivery } from "@clavia/tardigrade-host/delivery"
+import { actorExecution } from "@clavia/tardigrade-deprecated-host/execution"
+import { commitTracedDelivery } from "@clavia/tardigrade-deprecated-host/delivery"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom, type ThreadEventRow, type AppendOptions } from "@clavia/tardigrade-core/log"
-import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
-import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
-import type { Transport } from "@clavia/tardigrade-core/transport/transport"
-import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/interaction/envelope"
-import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
-import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
-import type { Link } from "@clavia/tardigrade-core/transport/link"
-import { alarmFiredForLog, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
-import { Alarm, alarmFromLog, nextAlarmOf } from "@clavia/tardigrade-core/alarm"
-import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
-import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { EventLog, eventLogFrom, type ThreadEventRow, type AppendOptions } from "@clavia/tardigrade-deprecated-core/log"
+import { mappedDirectory } from "@clavia/tardigrade-deprecated-core/transport/directory"
+import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-deprecated-core/transport/router"
+import type { Transport } from "@clavia/tardigrade-deprecated-core/transport/transport"
+import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-deprecated-core/interaction/envelope"
+import { ThreadAllocator } from "@clavia/tardigrade-deprecated-core/actor/allocation"
+import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
+import type { Link } from "@clavia/tardigrade-deprecated-core/transport/link"
+import { alarmFiredForLog, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-deprecated-core/interaction/timeout"
+import { Alarm, alarmFromLog, nextAlarmOf } from "@clavia/tardigrade-deprecated-core/alarm"
+import { hostEventKeyOf } from "@clavia/tardigrade-deprecated-host/event-key"
+import { type ActorMethods } from "@clavia/tardigrade-deprecated-core/actor/method"
 import {
   EffectInterruptions,
   Self,
   effectInterruptionRegistry,
   type ActorSource as Actor
-} from "@clavia/tardigrade-core/runtime"
-import { sameThreadAddress, threadCreated, threadCreatedForDelivery, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
-import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/transport/provider"
-import { hostDrive, createThreadDriver } from "@clavia/tardigrade-host/driver"
-import { CommitDispatcher, type CommitObserver } from "@clavia/tardigrade-host/commit"
-import type { HostPorts } from "@clavia/tardigrade-host/ports"
+} from "@clavia/tardigrade-deprecated-core/runtime"
+import { sameThreadAddress, threadCreated, threadCreatedForDelivery, type ThreadLineage } from "@clavia/tardigrade-deprecated-core/interaction/relations"
+import { providerTransportFrom, type Provider } from "@clavia/tardigrade-deprecated-host/transport/provider"
+import { hostDrive, createThreadDriver } from "@clavia/tardigrade-deprecated-host/driver"
+import { CommitDispatcher, type CommitObserver } from "@clavia/tardigrade-deprecated-host/commit"
+import type { HostPorts } from "@clavia/tardigrade-deprecated-host/ports"
 import { CloudflareEventStore, layerWorkspace, type CloudflareThreadStorePolicy } from "./storage"
 
 export type CloudflarePorts = HostPorts | KeyValueStore.KeyValueStore
@@ -62,7 +62,7 @@ export interface CloudflareThreadHost {
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly commitRoot: (event: Event) => Promise<void>
-  // appendAt commits a batch only when the log head equals expectedHead, without driving (packages/core/src/log/service.ts, AppendOptions).
+  // appendAt commits a batch only when the log head equals expectedHead, without driving (packages/deprecated/core/src/log/service.ts, AppendOptions).
   readonly appendAt: (events: ReadonlyArray<Event>, expectedHead: number) => Promise<{ readonly appended: number; readonly head: number }>
   readonly stageRoot: (event: Event) => Promise<void>
   readonly publishStaged: () => void

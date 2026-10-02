@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import type { EventRow, InferDelta } from "@clavia/tardigrade-client"
+import type { EventRow, InferDelta } from "@clavia/tardigrade-deprecated-client"
 
 import { actor, client } from "./chat-client"
 import { endsResponse } from "./events"

@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-http/contract"
+export * from "@clavia/tardigrade-deprecated-http/contract"

@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-experimental-platform/cloudflare"
+export * from "@clavia/tardigrade-platform/cloudflare"

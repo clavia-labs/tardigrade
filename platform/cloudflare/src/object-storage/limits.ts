@@ -1,4 +1,4 @@
-import { SQL_OBJECT_CACHE_ROW_HEADROOM_BYTES } from "@clavia/tardigrade-agent"
+import { SQL_OBJECT_CACHE_ROW_HEADROOM_BYTES } from "@clavia/tardigrade-deprecated-agent"
 
 // CLOUDFLARE_SQLITE_MAX_ROW_BYTES bounds a complete row (https://developers.cloudflare.com/durable-objects/platform/limits/).
 export const CLOUDFLARE_SQLITE_MAX_ROW_BYTES = 2_000_000

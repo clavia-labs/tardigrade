@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { componentPurityViolations } from "./component-purity"
 
-const file = "packages/agent/src/component/example.ts"
+const file = "packages/deprecated/agent/src/component/example.ts"
 const apis = (source: string, path = file) => componentPurityViolations(path, source).map((finding) => finding.api)
 
 test("rejects clocks, randomness, I/O, environment reads, and effect execution", () => {
@@ -20,7 +20,7 @@ test("follows local aliases and destructured effect runners", () => {
 })
 
 test("component factories outside component modules establish a purity boundary", () => {
-  const source = `import { component as define } from '@clavia/tardigrade-core/component';
+  const source = `import { component as define } from '@clavia/tardigrade-deprecated-core/component';
     const timestamp = () => Date.now();
     fetch('/bootstrap');
     define({ initial: () => 0, step: state => state, output: () => ({ view: { timestamp: timestamp(), random: Math.random() }, transitions: [] }) });`

@@ -1,4 +1,4 @@
-import type { Actor } from "@clavia/tardigrade-core/actor"
+import type { Actor } from "@clavia/tardigrade-deprecated-core/actor"
 import {
   actor,
   agentMethods,
@@ -16,13 +16,13 @@ import {
   workspacePackage,
   type AgentCatalog
 } from "tardie"
-import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
+import { RESERVED_ACTOR } from "@clavia/tardigrade-deprecated-client/contract"
 
 
 // The actor this build serves: the reactors it runs, and the projections it declares over the logs
 // they write. Both halves belong together, because a projection is only meaningful to whoever knows
 // what the events mean, and that is the assembly that emitted them. The platform holds the log and
-// mounts what is declared here by name (packages/client/src/contract.ts, apiOf).
+// mounts what is declared here by name (packages/deprecated/client/src/contract.ts, apiOf).
 
 // The assembly, one for every thread: code mode with four packages in scope, plus the policy
 // components. v1 runs this one assembly and forking is the customization path (apps-server-spec.md,

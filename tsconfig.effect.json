@@ -121,7 +121,7 @@
           // A decision recorded once here is a decision a reader can find and change.
 
           // The host, the client, and an actor's own `act` are Promise surfaces on purpose: a
-          // caller holding a thread does not have to hold an Effect runtime (packages/host/src/
+          // caller holding a thread does not have to hold an Effect runtime (packages/deprecated/host/src/
           // host.ts, drive and wake; docs/getting-started/quickstart.mdx).
           "asyncFunction": "off",
           "newPromise": "off",
@@ -130,7 +130,7 @@
           "missingPipeableSignature": "off",
           "missedPipeableOpportunity": "off",
           // Service keys are named for the framework, not for the package path that happens to hold
-          // them: `tardigrade/Self` outlives a file move, `@clavia/tardigrade-core/actor/Self` does
+          // them: `tardigrade/Self` outlives a file move, `@clavia/tardigrade-deprecated-core/actor/Self` does
           // not.
           "deterministicKeys": "off",
           // The event log is JSON by contract. It is read by `clickhouse local`, by a SQLite
@@ -147,7 +147,7 @@
           // by `globalErrorInEffectFailure`, `globalErrorInEffectCatch`, and `unknownInEffectCatch`,
           // which stay on. An error thrown across a Promise boundary to a JavaScript caller never
           // reaches that channel, and it is an `Error` because that is what a caller catches
-          // (packages/client/src/problem.ts, ProblemError).
+          // (packages/deprecated/client/src/problem.ts, ProblemError).
           "extendsNativeError": "off",
           // The clock, the environment, and the network, outside Effect code. Build scripts, the
           // browser bundle, and terminal rendering are not replayed, and the `InEffect` halves above

@@ -3,7 +3,7 @@ import { FileSystem } from "effect/FileSystem"
 import type { PlatformError } from "effect/PlatformError"
 import { isAbsolute, join } from "node:path"
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser"
-import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
+import { DEFAULT_BASE_URL } from "@clavia/tardigrade-deprecated-client"
 import {
   projectConfigOf,
   projectConfigPathOf,

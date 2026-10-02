@@ -5,7 +5,7 @@ import { FileSystem, type FileSystem as FileSystemService } from "effect/FileSys
 import { Prompt } from "effect/unstable/cli"
 import { applyEdits, modify, parse } from "jsonc-parser"
 import { BunFileSystem } from "@effect/platform-bun"
-import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
+import type { ModelCatalog } from "@clavia/tardigrade-deprecated-client/contract"
 import {
   MODEL_PROTOCOLS,
   MODEL_PROVIDER_CONNECTIONS,

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react"
 import { X } from "@phosphor-icons/react"
 
-import { NO_ANSWER, ProblemError, type EventRow } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, type EventRow } from "@clavia/tardigrade-deprecated-client"
 
 import { actorInstance, client } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Field, type Moment } from "./narrative"
@@ -21,7 +21,7 @@ const lastSeq = (rows: ReadonlyArray<EventRow>): number => rows[rows.length - 1]
 
 // useLog holds the pane's rows. The first read is the whole log and the stream carries it forward
 // from that seq; when the browser gives up reconnecting, the same rows keep filling from `events`,
-// which is an ordinary fetch and survives what EventSource cannot (packages/client/src/stream.ts).
+// which is an ordinary fetch and survives what EventSource cannot (packages/deprecated/client/src/stream.ts).
 const useLog = (id: string, pollMs: number) => {
   const [rows, setRows] = useState<ReadonlyArray<EventRow>>([])
   const [problem, setProblem] = useState<ProblemError | undefined>(undefined)

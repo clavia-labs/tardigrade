@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-agent/component/infer/contract"
+export * from "@clavia/tardigrade-deprecated-agent/component/infer/contract"

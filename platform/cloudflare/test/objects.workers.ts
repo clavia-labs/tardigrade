@@ -1,7 +1,7 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
 import { Effect } from "effect"
-import { ObjectStorage, DEFAULT_MAX_LOCAL_OBJECT_BYTES } from "@clavia/tardigrade-agent"
+import { ObjectStorage, DEFAULT_MAX_LOCAL_OBJECT_BYTES } from "@clavia/tardigrade-deprecated-agent"
 import { CLOUDFLARE_OBJECT_CACHE_CAPABILITIES, objectStorageFromR2 } from "../src/object-storage/r2"
 import type { Env } from "../src/env"
 import { objectStorageFromSqlite } from "../src/object-storage/sqlite"

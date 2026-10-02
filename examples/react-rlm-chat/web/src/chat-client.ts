@@ -1,4 +1,4 @@
-import { makeActorClient } from "@clavia/tardigrade-client"
+import { makeActorClient } from "@clavia/tardigrade-deprecated-client"
 import { agentMethods } from "tardie/agent"
 
 import { actorInstance, apiUrl } from "./config"

@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-experimental-core/runtime/replay"
+export * from "@clavia/tardigrade-core/runtime/replay"

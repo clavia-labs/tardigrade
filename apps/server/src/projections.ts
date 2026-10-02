@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-http/projections"
+export * from "@clavia/tardigrade-deprecated-http/projections"

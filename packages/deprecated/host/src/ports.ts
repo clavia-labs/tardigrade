@@ -1,0 +1,14 @@
+import type { Layer } from "effect"
+import type { EventLog } from "@clavia/tardigrade-deprecated-core/log"
+import type { Router } from "@clavia/tardigrade-deprecated-core/transport/router"
+import type { Self } from "@clavia/tardigrade-deprecated-core/runtime"
+import type { ThreadAllocator } from "@clavia/tardigrade-deprecated-core/actor/allocation"
+import type { Alarm } from "@clavia/tardigrade-deprecated-core/alarm"
+
+// HostPorts supplies each thread's log, router, coordinate, and child allocator.
+// layersFor may require them and must not provide them.
+export type HostPorts = EventLog | Router | Self | ThreadAllocator | Alarm
+
+// ThreadEnv is the rest of an actor's R: what the host does not bind.
+// Construction may require HostPorts; Layer.provideMerge discharges them.
+export type ThreadEnv<R> = Layer.Layer<Exclude<R, HostPorts>, never, HostPorts>

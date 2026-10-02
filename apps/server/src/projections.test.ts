@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { childCreated, threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { childCreated, threadCreated } from "@clavia/tardigrade-deprecated-core/interaction/relations"
 
 import { summaryOf as summarize, treeOf as tree, type ThreadNode } from "./projections"
-import type { TreeBounds } from "@clavia/tardigrade-client/contract"
+import type { TreeBounds } from "@clavia/tardigrade-deprecated-client/contract"
 const summaryOf = (id: string, events: ReadonlyArray<Event>, parent?: string) => summarize(id, events, () => "settled", parent)
 const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>, bounds?: TreeBounds) => tree(logs, () => "running", bounds)
 
 // The projections are functions of an event array, so the fixtures are event arrays: the shapes
-// below are the ones an assembled thread writes (packages/agent/src/index.test.ts and
+// below are the ones an assembled thread writes (packages/deprecated/agent/src/index.test.ts and
 // packages/code/src/execution/events.ts), trimmed to the fields a projection reads.
 
 let clock = 0

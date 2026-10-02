@@ -1,7 +1,7 @@
 import { Button } from "@base-ui/react/button"
 import { ChatCircle, Plus } from "@phosphor-icons/react"
 import type { ReactElement } from "react"
-import type { ThreadSummary } from "@clavia/tardigrade-client"
+import type { ThreadSummary } from "@clavia/tardigrade-deprecated-client"
 
 const threadLabel = (lastAt: number | undefined): string => lastAt === undefined
   ? "New thread"

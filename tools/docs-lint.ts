@@ -58,7 +58,7 @@ const NOT_BUT = /\bnot\s+[^.,;:]{1,60},\s*but\b/i
 
 // Text that names a rule or a symbol rather than using it. A document is allowed to quote the
 // phrasing it forbids, so quoted spans and inline code drop out before the prose rules run.
-const used = (line: string) => line.replace(/`[^`]*`/g, "").replace(/"[^"]*"/g, "")
+const used = (line: string) => line.replace(/\[([^\]]*)\]\([^)]+\)/g, "$1").replace(/`[^`]*`/g, "").replace(/"[^"]*"/g, "")
 
 const check = (file: string, text: string): ReadonlyArray<Problem> => {
   const problems: Array<Problem> = []

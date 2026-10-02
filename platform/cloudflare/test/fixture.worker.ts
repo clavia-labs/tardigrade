@@ -1,8 +1,8 @@
-import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { bindTransitionContext } from "@clavia/tardigrade-deprecated-core/transition/transition"
 import { Context, Effect, Encoding, Layer, Schema } from "effect"
-import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
-import { allocateRootThread } from "@clavia/tardigrade-core/actor"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { actor, actorMethod, component } from "@clavia/tardigrade-deprecated-core/actor"
+import { allocateRootThread } from "@clavia/tardigrade-deprecated-core/actor"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import {
   defineWorkerHost,
   workerHttp,

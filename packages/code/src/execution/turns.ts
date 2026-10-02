@@ -1,4 +1,4 @@
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 
 // Turn attribution. A turn is headed by one MessageReceived; every event serving it carries
 // turn: <head id>. Attribution is a fact the event carries, never a derivation from position,

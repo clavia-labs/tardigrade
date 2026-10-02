@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { ActorThread } from "@clavia/tardigrade-client"
+import type { ActorThread } from "@clavia/tardigrade-deprecated-client"
 import { latestRootOf, listOf, matches } from "./list"
 
 // The rail's decisions: which threads are rows, how big each root's family is, what a row's counts

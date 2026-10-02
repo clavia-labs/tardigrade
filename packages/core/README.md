@@ -1,36 +1,32 @@
+# Core
+
+Atoms compose actor state and proposed work. The runtime commits and executes that work through services supplied by platform layers.
+
 ```text
-core/src/
-├── event.ts
-├── machine.ts
-├── projection/
-├── component/
-├── transition/
-├── log/
-│
-├── actor/
-│   ├── definition.ts       # Name, methods, components
-│   ├── coordinate.ts       # Actor instance and thread coordinates
-│   ├── reference.ts        # Typed reference to a thread
-│   ├── allocation.ts       # Host allocation contract
-│   └── method.ts           # Typed method declarations
-│
-├── interaction/
-│   ├── invocation.ts       # Invocation identity and context
-│   ├── events.ts           # Request, response, cancellation records
-│   ├── state.ts            # Derive invocation lifecycle from events
-│   ├── invoke.ts           # Plan and dispatch a call
-│   ├── respond.ts          # Complete a call and return its result
-│   ├── cancellation.ts
-│   ├── timeout.ts
-│   └── relations.ts        # Parent/child and invocation relationships
-│
-├── transport/
-│   ├── envelope.ts         # Addressed payload
-│   ├── directory.ts        # Logical coordinate → destination
-│   ├── router.ts           # Select delivery route
-│   └── transport.ts        # Host-implemented delivery contract
-│
-└── runtime/
-    ├── actor.ts            # Compile definition into executable machinery
-    └── reconciler.ts       # Execute transitions and persist results
+src/
+├── atoms/                 authoring primitives
+│   ├── atom.ts            reactive values
+│   ├── durable.ts         event reducers and state codecs
+│   ├── effect.ts          views and proposed events or acts
+│   ├── act.ts             external work declarations
+│   ├── promise.ts         durable results
+│   ├── graph.ts           graph inspection
+│   └── store.ts           live atom registry
+├── initialise.ts          state contract, atom codecs, seed resolver
+├── actor/                 definitions, methods, messages, cancellation, threads
+├── runtime/
+│   ├── effects.ts         references, execution handles, outcomes, errors
+│   ├── events.ts          framework lifecycle records
+│   ├── execution.ts       commit, execute, settle, cancel, checkpoint
+│   ├── replay.ts          event validation and graph recovery
+│   ├── event-source.ts    journal projections
+│   ├── actors.ts          addressed runtime lifetimes
+│   ├── messages.ts        reply obligations
+│   ├── layers.ts          service composition
+│   ├── contracts.ts       actor runtime interfaces
+│   └── stores/            observable journal and thread views
+├── services/              journal, execution, promises, isolate,
+│                          actor, invocation, supervisor, checkpoint, backup
+└── index.ts               public exports
+quint/                     safety and liveness models
 ```

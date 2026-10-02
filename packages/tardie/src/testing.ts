@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-core/testing"
+export * from "@clavia/tardigrade-deprecated-core/testing"

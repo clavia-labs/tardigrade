@@ -1,92 +1,73 @@
-import type { Self } from "@clavia/tardigrade-core/runtime/reconciler"
-import type { Component, ComponentRequirements } from "@clavia/tardigrade-core/component"
-import type { Router } from "../transport/router"
-import { actorContractErrors, actorContractOf, type ActorContract } from "./contract"
-import { actorMethodsOf, type ActorMethods } from "./method"
-import { childCancellationTimeoutOf } from "../interaction/cancellation"
-import { allocateRootThread, allocateChildThread, type ActorAllocation } from "./allocation"
-import type { InvocationScope } from "../interaction/execution"
+import { eventCatalog } from "./event"
+import type { ActorMethods, ActorMethod } from "./method"
+import { RuntimeError } from "../runtime/effects"
+import { Context, Effect, Schema } from "effect"
+import { AsyncResult } from "effect/unstable/reactivity"
+import { atom, type Atom } from "../atoms/atom"
+import type { EventValue } from "../atoms/effect"
+import type { ActorSetup } from "../runtime/contracts"
+import { createStore } from "../atoms/store"
+import { EventLog } from "../services/event-log"
+import { createEventSource } from "../runtime/event-source"
 
-export const ACTOR_NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u
+type MethodEvents<Methods> = { readonly [Key in keyof Methods]: Methods[Key] extends ActorMethod<infer Event> ? Event : never }[keyof Methods]
+type ProjectionEvents<Value> = Value extends { readonly events: Readonly<Record<string, EventValue<infer Event>>> } ? Extract<Event, object> : never
+type Resolved<Value> = Value extends AsyncResult.AsyncResult<infer Output, unknown> ? Output : Value
 
-// ActorDefinition names the methods and components that describe an actor's behavior.
-export interface ActorDefinition<Methods extends ActorMethods = ActorMethods> {
-  readonly name: string
-  readonly methods: Methods
-  readonly components: ReadonlyArray<Component<unknown, unknown>>
-}
-
-// Actor describes behavior and the services required to execute it.
-export interface Actor<R = never, Methods extends ActorMethods = ActorMethods> extends ActorDefinition<Methods> {
-  readonly components: ReadonlyArray<Component<unknown, R>>
-  readonly cancellation?: ActorCancellationPolicy
-  readonly contract?: ActorContract
-}
-
-type ActorComponents = ReadonlyArray<Component<unknown, never> | Component<unknown, unknown>>
-
-// ActorCancellationPolicy bounds cancellation coordination owned by the actor runtime.
-export interface ActorCancellationPolicy {
-  readonly childTimeoutMs: number
-}
-
-// ActorOptions declares the complete public and private shape of an actor.
-export interface ActorOptions<
-  Methods extends ActorMethods,
-  Components extends ActorComponents
-> {
-  readonly name: string
-  readonly methods: Methods
-  readonly components: Components
-  readonly cancellation?: Partial<ActorCancellationPolicy>
-}
-
-type ActorOf<
-  Methods extends ActorMethods,
-  Components extends ActorComponents
-> = Actor<Exclude<ComponentRequirements<Components[number]>, InvocationScope> | Router | Self, Methods> & ActorAllocation<Methods> & {
-  readonly cancellation: ActorCancellationPolicy
-  readonly contract: ActorContract
-}
-
-// actor constructs a named actor from methods and components.
-export const actor = <
-  const Methods extends ActorMethods,
-  const Components extends ActorComponents
->(options: ActorOptions<Methods, Components>): ActorOf<Methods, Components> => {
-  if (!ACTOR_NAME_PATTERN.test(options.name)) {
-    throw new Error(`actor name must match ${String(ACTOR_NAME_PATTERN)}, got ${JSON.stringify(options.name)}`)
+// resolveOutput unwraps synchronously evaluated projections; suspended projections cannot participate in synchronous replay.
+function resolveOutput<Value>(value: Value): Resolved<Value> {
+  if (AsyncResult.isAsyncResult(value)) {
+    if (value.waiting || AsyncResult.isInitial(value)) throw new RuntimeError("Actor projections must resolve synchronously; return asynchronous work as an effect value")
+    return AsyncResult.getOrThrow(value) as Resolved<Value>
   }
-  const methods = actorMethodsOf(options.methods)
-  const cancellation = {
-    childTimeoutMs: childCancellationTimeoutOf(options.cancellation?.childTimeoutMs)
-  }
-  type R = Exclude<ComponentRequirements<Components[number]>, InvocationScope> | Router | Self
-  const components = options.components as ReadonlyArray<Component<unknown, R>>
-  const definition = { name: options.name, methods, components }
-  const contract = actorContractOf(methods, definition.components)
-  return {
-    ...definition,
-    allocateRootThread: (request) => allocateRootThread(definition, request),
-    allocateChildThread: (request) => allocateChildThread(definition, request),
-    cancellation,
-    contract
-  }
+  return value as Resolved<Value>
 }
 
-// defineActor describes a named actor without constructing its runtime.
-export const defineActor = <const Methods extends ActorMethods, const Components extends ActorComponents>(
-  name: string,
-  methods: Methods,
-  components: Components,
-  options: Pick<ActorOptions<Methods, Components>, "cancellation"> = {}
-): ActorOf<Methods, Components> => actor({ name, methods, components, ...options })
+export interface ActorDefinition<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+  readonly actorName: string
+  readonly setup: Effect.Effect<ActorSetup<Event, Readonly<Record<string, Atom<State>>>, Contracts> & { readonly root: Atom<State> }, Error, Services>
+}
 
-// validateActor refuses an actor whose declared method surface and component seams disagree.
-export const validateActor = <A extends ActorDefinition & { readonly contract: ActorContract }>(definition: A): A => {
-  const errors = actorContractErrors(definition.contract)
-  if (errors.length > 0) {
-    throw new Error(`actor ${JSON.stringify(definition.name)} has invalid method seams:\n${errors.map((error) => `- ${error}`).join("\n")}`)
-  }
-  return definition
+// defineActor assembles a reactive graph, event contract, and typed methods for instantiation by a host.
+export function defineActor<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never>(name: Name, factory: Effect.Effect<{
+  readonly atom: Atom<Value>
+  readonly schema?: Schema.Schema<Event>
+  readonly methods?: Contracts
+}, Error, Services>) {
+  if (!name || name.includes("/")) throw new RuntimeError("Actor name must be nonempty and contain no slash")
+  type DomainEvents = Event | MethodEvents<Contracts> | ProjectionEvents<Resolved<Value>>
+  type Output = Resolved<Value>
+  type Atoms = { readonly [Key in Name]: Atom<Output> }
+  const setup = factory.pipe(Effect.map(definition => {
+    for (const [name, method] of Object.entries(definition.methods ?? {})) {
+      if (!name || ["coordinate", "store", "methods", "invoke", "result", "cancel", "get", "getState", "resume", "wait", "receipt"].includes(name)) throw new RuntimeError(`Invalid actor method: ${name}`)
+      if (!Schema.isSchema(method.inputSchema) || !Schema.isSchema(method.outputSchema) || typeof method.onReceive !== "function" || typeof method.result !== "function" || (method.onCancel !== undefined && typeof method.onCancel !== "function")) throw new RuntimeError(`Invalid actor method contract: ${name}`)
+    }
+    const root = atom(get => resolveOutput(get(definition.atom)))
+    const catalog = eventCatalog<DomainEvents>()
+    for (const method of Object.values(definition.methods ?? {})) for (const schema of method.events) catalog.add(schema)
+    const discovery = createStore(Context.make(EventLog, { events: createEventSource().events }))
+    try {
+      // TODO: Discover subscriptions first read after a branch change; setup currently registers the graph observed from initial state.
+      for (const schema of discovery.eventSchemas({ [name]: root })) catalog.add(schema)
+    } finally { discovery.dispose() }
+    return {
+      root,
+      schema: (definition.schema ?? catalog.schema) as Schema.Schema<DomainEvents>,
+      contracts: definition.methods ?? {} as Contracts,
+      effects: { [name]: root } as Atoms,
+    }
+  }))
+  const graph = () => Effect.scoped(Effect.gen(function* () {
+    const definition = yield* factory
+    const root = atom(get => resolveOutput(get(definition.atom)))
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => createStore(Context.make(EventLog, {
+        events: createEventSource().events,
+      }))),
+      store => Effect.try({ try: () => store.graph({ [name]: root }), catch: RuntimeError.from }),
+      store => Effect.sync(() => store.dispose()),
+    )
+  }))
+  return { actorName: name, setup, graph }
 }

@@ -1445,6 +1445,43 @@ h1 span { display: block; white-space: nowrap; }
 .agent-composition-policies text { fill: var(--ink-2); font: 10px var(--mono); text-anchor: middle; }
 .agent-composition-status { margin-top: 18px; color: var(--ink-2); font: 12px var(--mono); text-align: center; }
 
+.state-initialisation { width: min(100%, 720px); margin: 32px 0 40px; padding: 28px 0 20px; border-top: 1px dashed rgb(var(--accent-rgb) / 28%); border-bottom: 1px dashed rgb(var(--accent-rgb) / 28%); container-type: inline-size; }
+.state-initialisation-flow { display: grid; grid-template-columns: minmax(0, 1fr) 132px minmax(0, 1.14fr); gap: 28px; align-items: center; }
+.state-initialisation-flow section { min-width: 0; }
+.state-initialisation-flow header { margin-bottom: 14px; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-family: var(--mono); }
+.state-initialisation-flow header > span { color: var(--moss-ink); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.state-initialisation-flow header small { color: var(--faint); font-size: 10px; }
+.state-initialisation-events { margin: 0; padding: 0; border: 1px solid rgb(var(--accent-rgb) / 34%); list-style: none; background: var(--surface); }
+.state-initialisation-history .state-initialisation-events { border-bottom: 3px solid var(--moss-ink); }
+.state-initialisation-events li { min-height: 58px; margin: 0; padding: 14px; display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.state-initialisation-events li + li { border-top: 1px dashed rgb(var(--accent-rgb) / 24%); }
+.state-initialisation-events li > div { display: grid; gap: 7px; }
+.state-initialisation-position { color: var(--faint); font: 10px/1.5 var(--mono); }
+.state-initialisation-events strong { color: var(--ink-2); font: 12px/1.5 var(--mono); }
+.state-initialisation-events code { color: var(--faint); font: 11px/1.5 var(--mono); }
+.state-initialisation-events .state-initialisation-seed { position: relative; margin: 0 -1px; padding-left: 12px; border: 1px solid var(--moss); border-left-width: 3px; background: var(--moss-wash); }
+.state-initialisation-seed + li { border-top: 0; }
+.state-initialisation-seed :is(strong, code, .state-initialisation-position) { color: var(--moss-ink); }
+.state-initialisation-seed strong { font-size: 13px; }
+.state-initialisation-atom { color: var(--ink-2); font: 10px/1.5 var(--mono); }
+.state-initialisation-boundary, .state-initialisation-continuation { margin-top: 12px; display: flex; align-items: center; gap: 8px; color: var(--faint); font: 10px/1.5 var(--mono); }
+.state-initialisation-boundary, .state-initialisation-continuation { justify-content: center; }
+.state-initialisation-conversion { text-align: center; }
+.state-initialisation-conversion > span { color: var(--ink-2); font: 10px/1.5 var(--mono); }
+.state-initialisation-conversion small { display: block; margin-top: 10px; color: var(--faint); font: 9px/1.5 var(--mono); }
+.state-initialisation-transfer { width: calc(100% + 36px); margin: 12px -18px 0; display: grid; grid-template-columns: 18px minmax(0, 1fr) 18px; gap: 8px; align-items: center; }
+.state-initialisation-transfer svg { width: 100%; fill: none; stroke: var(--moss); stroke-width: 1.3; }
+.state-initialisation-transfer code { padding: 12px 6px; border: 1px solid rgb(var(--accent-rgb) / 42%); background: var(--surface); color: var(--moss-ink); font: 11px/1.5 var(--mono); white-space: nowrap; }
+.state-initialisation figcaption { margin-top: 24px; color: var(--ink-2); text-align: center; font: 11px/1.7 var(--mono); text-wrap: balance; }
+@container (max-width: 560px) {
+  .state-initialisation-flow { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .state-initialisation-conversion { width: 180px; justify-self: center; }
+  .state-initialisation-transfer { width: 100%; margin: 12px 0 0; grid-template-columns: minmax(0, 1fr); gap: 12px; justify-items: center; }
+  .state-initialisation-transfer svg { width: 20px; transform: rotate(90deg); }
+  .state-initialisation-transfer code { width: 100%; padding: 12px; }
+  .state-initialisation-conversion small { display: none; }
+}
+
 .state-snapshot { margin: 36px 0; }
 .state-snapshot-comparison { display: grid; grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr); gap: 24px; align-items: center; }
 .state-snapshot-history > .ship-projection-label, .state-snapshot-current > .ship-projection-label { display: block; margin-bottom: 20px; }

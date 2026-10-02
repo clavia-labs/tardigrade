@@ -19,11 +19,11 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@clavia/tardigrade-agent": "workspace:*",
-    "@clavia/tardigrade-client": "workspace:*",
-    "@clavia/tardigrade-core": "workspace:*",
-    "@clavia/tardigrade-host": "workspace:*",
-    "@clavia/tardigrade-http": "workspace:*",
+    "@clavia/tardigrade-deprecated-agent": "workspace:*",
+    "@clavia/tardigrade-deprecated-client": "workspace:*",
+    "@clavia/tardigrade-deprecated-core": "workspace:*",
+    "@clavia/tardigrade-deprecated-host": "workspace:*",
+    "@clavia/tardigrade-deprecated-http": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
     "@clavia/tardigrade-worker-loader": "workspace:*",
     "@effect/sql-sqlite-do": "4.0.0-rc.115",

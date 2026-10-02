@@ -1,4 +1,4 @@
-import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/model"
+import { testInferenceLayer } from "@clavia/tardigrade-deprecated-agent/testing/model"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"

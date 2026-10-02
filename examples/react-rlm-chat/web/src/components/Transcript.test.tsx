@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import type { Event, EventRow } from "@clavia/tardigrade-client"
+import type { Event, EventRow } from "@clavia/tardigrade-deprecated-client"
 import { Transcript } from "./Transcript"
 
 test("attachment messages preserve text, filenames, and file-only history", () => {

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { Alarm, alarmFromLog, alarmSet } from "@clavia/tardigrade-core/alarm"
-import { component, interactionScope } from "@clavia/tardigrade-core/actor"
-import { machineOf } from "../../../core/src/component/runtime"
-import { replayProjection } from "@clavia/tardigrade-core/projection"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { Alarm, alarmFromLog, alarmSet } from "@clavia/tardigrade-deprecated-core/alarm"
+import { component, interactionScope } from "@clavia/tardigrade-deprecated-core/actor"
+import { machineOf } from "../../../deprecated/core/src/component/runtime"
+import { replayProjection } from "@clavia/tardigrade-deprecated-core/projection"
+import type { Event } from "@clavia/tardigrade-deprecated-core/event"
 import { alarm } from "./alarm"
 
 describe("alarm package", () => {

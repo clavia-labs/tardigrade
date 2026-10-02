@@ -28,7 +28,7 @@ export const EVENT_STAMP_WIDTH = 164
 export const EVENT_INSPECTOR_WIDTH = 480
 
 // How often the event list re-reads the log after the stream is gone for good. The stream is the
-// live path and this is the fallback (packages/client/src/stream.ts).
+// live path and this is the fallback (packages/deprecated/client/src/stream.ts).
 export const LOG_POLL_MS = 2000
 
 // How many bars the window's density strip holds. Each bar counts the events whose time falls in

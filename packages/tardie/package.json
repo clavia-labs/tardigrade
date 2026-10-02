@@ -47,13 +47,13 @@
     "./experimental/cloudflare": "./src/experimental/cloudflare.ts"
   },
   "dependencies": {
-    "@clavia/tardigrade-agent": "workspace:*",
-    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-deprecated-agent": "workspace:*",
+    "@clavia/tardigrade-deprecated-core": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "effect": "4.0.0-rc.115",
     "@clavia/tardigrade-bun": "workspace:*",
-    "@clavia/tardigrade-experimental-core": "workspace:*",
-    "@clavia/tardigrade-experimental-platform": "workspace:*"
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-platform": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

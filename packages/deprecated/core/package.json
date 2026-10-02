@@ -1,0 +1,82 @@
+{
+  "name": "@clavia/tardigrade-deprecated-core",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "Event, projection, component, actor, and runtime contracts for Tardigrade.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "packages/deprecated/core"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "type": "module",
+  "exports": {
+    "./alarm": "./src/alarm.ts",
+    "./actor": "./src/actor/index.ts",
+    "./actor/*": "./src/actor/*.ts",
+    "./interaction": "./src/interaction/index.ts",
+    "./interaction/*": "./src/interaction/*.ts",
+    "./transport": "./src/transport/index.ts",
+    "./transport/*": "./src/transport/*.ts",
+    "./component": "./src/component/index.ts",
+    "./component/runtime": null,
+    "./component/composition/parent": null,
+    "./component/compose": "./src/component/composition/siblings.ts",
+    "./component/children": "./src/component/composition/children.ts",
+    "./component/reconciliation": "./src/component/composition/reconciliation.ts",
+    "./component/tree": "./src/component/composition/tree.ts",
+    "./component/*": "./src/component/*.ts",
+    "./effect": "./src/effect.ts",
+    "./event": "./src/event.ts",
+    "./intent": "./src/intent.ts",
+    "./log": "./src/log/index.ts",
+    "./log/event": "./src/event.ts",
+    "./log/*": "./src/log/*.ts",
+    "./machine": "./src/machine.ts",
+    "./projection": "./src/projection/projection.ts",
+    "./projection/*": "./src/projection/*.ts",
+    "./reconciliation": "./src/compatibility/reconciliation.ts",
+    "./reconciliation/reconciler": "./src/compatibility/reconciler.ts",
+    "./reconciliation/transition": "./src/compatibility/transition.ts",
+    "./runtime": "./src/runtime/index.ts",
+    "./runtime/*": "./src/runtime/*.ts",
+    "./transition": "./src/transition/index.ts",
+    "./transition/*": "./src/transition/*.ts",
+    "./view": "./src/view.ts",
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/check.ts"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.115"
+  },
+  "peerDependencies": {
+    "fast-check": "^4.9.0"
+  },
+  "peerDependenciesMeta": {
+    "fast-check": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "fast-check": "^4.9.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}

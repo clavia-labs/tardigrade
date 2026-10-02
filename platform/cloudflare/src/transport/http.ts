@@ -2,19 +2,19 @@ import { cloudflareRetryPolicy, makeRetryingRpc } from "../retry"
 import { actorObjectNameOf, threadObjectNameOf } from "./directory"
 import { Context, Effect, Layer, Schema } from "effect"
 import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { ForkRequest, forkCheckpointOf, UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
-import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
-import type { ModelPolicy } from "@clavia/tardigrade-agent"
+import { ForkRequest, forkCheckpointOf, UnknownThread, type TreeBounds } from "@clavia/tardigrade-deprecated-client/contract"
+import type { ActorMethods } from "@clavia/tardigrade-deprecated-core/actor/method"
+import type { ModelPolicy } from "@clavia/tardigrade-deprecated-agent"
 import type { ModelListingState } from "@clavia/tardigrade-model/catalog/schema"
 import type { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { ActorInstanceId } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrade-http/methods"
-import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-http/models"
-import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
-import { layerApiDocs, UNAUTHENTICATED_PATHS } from "@clavia/tardigrade-http/docs"
-import { streamCursorOf } from "@clavia/tardigrade-http/sse"
+import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrade-deprecated-http/methods"
+import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-deprecated-http/models"
+import { layerRequestProblems } from "@clavia/tardigrade-deprecated-http/contract"
+import { layerApiDocs, UNAUTHENTICATED_PATHS } from "@clavia/tardigrade-deprecated-http/docs"
+import { streamCursorOf } from "@clavia/tardigrade-deprecated-http/sse"
 import { WorkerApi, workerRoutes } from "./contract"
 import type { Env } from "../env"
 import type { CloudflareDirectory } from "./directory"
@@ -49,7 +49,7 @@ interface CloudflareHttpOptions {
   readonly directory: CloudflareDirectory
 }
 
-// FORK_REFUSAL_STATUS maps a fork refusal to its HTTP status (packages/host/src/fork.ts, ForkRefusal).
+// FORK_REFUSAL_STATUS maps a fork refusal to its HTTP status (packages/deprecated/host/src/fork.ts, ForkRefusal).
 const FORK_REFUSAL_STATUS = { "unknown-source": 404, checkpoint: 400, occupied: 409 } as const
 
 // cloudflareHttp adapts HTTP requests to the mounted host's methods and directory.

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from "react"
 
 import { Thread } from "./Thread"
-import { type ActorMetadata, type ActorThread, type ProblemError } from "@clavia/tardigrade-client"
+import { type ActorMetadata, type ActorThread, type ProblemError } from "@clavia/tardigrade-deprecated-client"
 
 import { actorInstance, client } from "./client"
 import { navigate, useRoute } from "./nav"

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
 import { BunFileSystem } from "@effect/platform-bun"
-import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
+import { DEFAULT_BASE_URL } from "@clavia/tardigrade-deprecated-client"
 import { readConfig } from "@clavia/tardigrade-server/config"
 
 import {

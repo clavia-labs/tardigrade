@@ -1,12 +1,12 @@
 import type { LanguageModel } from "effect/unstable/ai"
-import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/model"
+import { testInferenceLayer } from "@clavia/tardigrade-deprecated-agent/testing/model"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
-import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
-import { Ingress } from "@clavia/tardigrade-host/transport/ingress"
-import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import type { ActorEnvelope } from "@clavia/tardigrade-deprecated-core/interaction/envelope"
+import type { MessageReceived } from "@clavia/tardigrade-deprecated-core/interaction/provider-message"
+import { Ingress } from "@clavia/tardigrade-deprecated-host/transport/ingress"
+import { RESERVED_ACTOR } from "@clavia/tardigrade-deprecated-client/contract"
 import { type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
@@ -27,7 +27,7 @@ setDefaultTimeout(BOOT_MS)
 
 // The scripted mind answers the brief in one attempt. It honors the inferenceClient contract by ending the
 // turn rather than calling a tool, which is all these assertions need
-// (packages/agent/src/index.test.ts, the scripted mind).
+// (packages/deprecated/agent/src/index.test.ts, the scripted mind).
 const briefOf = (trajectory: ReadonlyArray<Event>): string => {
   for (let i = trajectory.length - 1; i >= 0; i--) {
     const event = trajectory[i]!
@@ -74,7 +74,7 @@ const running = <A, E>(
   ) as Promise<A>
 
 // One brief, as the event it is. The platform requires only `type`; `id` and `text` are the
-// assembly's fields, and `id` is the key its own `keyOf` dedups on (packages/core/src/communication/message.ts).
+// assembly's fields, and `id` is the key its own `keyOf` dedups on (packages/deprecated/core/src/communication/message.ts).
 const brief = (id: string, text = "hello") => ({ type: "MessageReceived", id, text })
 
 describe("the threads service", () => {

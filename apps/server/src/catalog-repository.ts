@@ -2,7 +2,7 @@ import { Effect, Layer, Schema } from "effect"
 import { FileSystem } from "effect/FileSystem"
 import { createHash, randomUUID } from "node:crypto"
 import { dirname } from "node:path"
-import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
+import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-deprecated-client/contract"
 import {
   ModelRegistryError,
   modelCatalogScopeOf,

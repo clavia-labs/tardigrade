@@ -1,0 +1,28 @@
+{
+  "name": "@clavia/tardigrade-examples",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./services": "./services.ts",
+    "./agents": "./agents/index.ts"
+  },
+  "scripts": {
+    "cloudflare": "wrangler dev --config wrangler.cloudflare.jsonc",
+    "models:lock": "bun ../../apps/cli/src/main.ts models lock",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.cloudflare.json",
+    "bun": "bun bun.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "wrangler": "^4.119.0"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-agent": "workspace:*",
+    "@clavia/tardigrade-libraries": "workspace:*",
+    "@clavia/tardigrade-platform": "workspace:*",
+    "@clavia/tardigrade-model": "workspace:*",
+    "effect": "4.0.0-rc.115"
+  }
+}

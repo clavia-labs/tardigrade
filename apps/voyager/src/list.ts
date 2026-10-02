@@ -1,4 +1,4 @@
-import type { ActorThread } from "@clavia/tardigrade-client"
+import type { ActorThread } from "@clavia/tardigrade-deprecated-client"
 
 // RootRow describes one root and the family it started.
 export interface RootRow {

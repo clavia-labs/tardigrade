@@ -17,7 +17,7 @@ import {
   type ModelCatalogPage,
   type ProviderCatalogPage,
   type ThreadSummary
-} from "@clavia/tardigrade-client"
+} from "@clavia/tardigrade-deprecated-client"
 
 import { problemLine, tdg } from "./commands"
 import { Cli, type CliServices } from "./services"
@@ -70,7 +70,7 @@ interface Recorded {
 const refuse = () => Promise.reject(new Error("this command should not have called that"))
 
 // A client whose answers are stated per case. Its methods are the derived client's own, so a
-// handler that compiles against this one compiles against the real one (packages/client).
+// handler that compiles against this one compiles against the real one (packages/deprecated/client).
 const clientOf = (
   recorded: Recorded,
   answers: {

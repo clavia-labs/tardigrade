@@ -1,9 +1,9 @@
-import { upcastError } from "@clavia/tardigrade-agent/log/upcast"
+import { upcastError } from "@clavia/tardigrade-deprecated-agent/log/upcast"
 import { Button } from "@base-ui/react/button"
 import { CaretRight, CircleNotch, Code, Package as PackageIcon } from "@phosphor-icons/react"
 import { Worm } from "lucide-react"
 import type { ReactElement } from "react"
-import type { Event, EventRow } from "@clavia/tardigrade-client"
+import type { Event, EventRow } from "@clavia/tardigrade-deprecated-client"
 
 import { childThread, pendingChildCount, toolContent, toolTitle, value, waitingForResponse } from "../events"
 import { MarkdownMessage } from "./MarkdownMessage"

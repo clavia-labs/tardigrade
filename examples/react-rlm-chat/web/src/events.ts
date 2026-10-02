@@ -1,4 +1,4 @@
-import { ProblemError, type Event, type EventRow } from "@clavia/tardigrade-client"
+import { ProblemError, type Event, type EventRow } from "@clavia/tardigrade-deprecated-client"
 
 import { actor, client } from "./chat-client"
 

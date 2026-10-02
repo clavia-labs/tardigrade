@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState, type ReactElement } from "react"
-import type { EventRow } from "@clavia/tardigrade-client"
+import type { EventRow } from "@clavia/tardigrade-deprecated-client"
 
 import { actor, client } from "../chat-client"
 import { allocateChatThread } from "../allocate-thread"

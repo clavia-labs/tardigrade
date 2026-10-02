@@ -243,8 +243,8 @@ const root = join(import.meta.dir, "..")
 const directoryOf = (directory: Check["directory"]): string => directory === "cloudflare"
   ? join(root, "platform", "cloudflare", "tla")
   : directory === "host"
-    ? join(root, "packages", "host", "tla")
-    : join(root, "packages", "core", "tla", directory)
+    ? join(root, "packages", "deprecated", "host", "tla")
+    : join(root, "packages", "deprecated", "core", "tla", directory)
 const declaredConfigs = checks.map((check) => `${check.directory}/${check.config}`)
 const declarations = new Set(declaredConfigs)
 if (declarations.size !== declaredConfigs.length) throw new Error("the TLA manifest contains a duplicate configuration")
@@ -273,7 +273,7 @@ try {
       [
         java,
         "-XX:+UseParallelGC",
-        `-DTLA-Library=${join(root, "packages", "core", "tla", "log")}`,
+        `-DTLA-Library=${join(root, "packages", "deprecated", "core", "tla", "log")}`,
         "-cp",
         jar,
         "tlc2.TLC",

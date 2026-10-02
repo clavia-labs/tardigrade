@@ -1,5 +1,5 @@
 import { Context, Layer } from "effect"
-import { makeActorClient, type ActorClient, type ActorClientOptions } from "@clavia/tardigrade-client"
+import { makeActorClient, type ActorClient, type ActorClientOptions } from "@clavia/tardigrade-deprecated-client"
 
 import type { Env } from "./config"
 

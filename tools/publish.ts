@@ -172,8 +172,8 @@ try {
   ])
 
   const rewrites = new Map([
-    ["@clavia/tardigrade-experimental-platform/bun", "tardie/experimental/bun"],
-    ["@clavia/tardigrade-experimental-platform/cloudflare", "tardie/experimental/cloudflare"],
+    ["@clavia/tardigrade-platform/bun", "tardie/experimental/bun"],
+    ["@clavia/tardigrade-platform/cloudflare", "tardie/experimental/cloudflare"],
     ...packages
       .filter((source) => source.namespace !== "tardie")
       .map((source) => [source.pkg.name, `${publicSource.pkg.name}/${source.namespace}`] as const)

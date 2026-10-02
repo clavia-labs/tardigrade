@@ -1,1 +1,1 @@
-export { testInferenceLayer } from "@clavia/tardigrade-agent/testing/model"
+export { testInferenceLayer } from "@clavia/tardigrade-deprecated-agent/testing/model"

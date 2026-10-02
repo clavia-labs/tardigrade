@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { ioRetryPolicy, retryIo, type IoRetryPolicy } from "@clavia/tardigrade-host/retry"
+import { ioRetryPolicy, retryIo, type IoRetryPolicy } from "@clavia/tardigrade-deprecated-host/retry"
 import type { CloudflareErrorClassification } from "./layers/error"
 import { makeAlarmPersistence, makeDurableObjectAlarms, type AlarmStorage, type DurableObjectAlarmsOptions } from "./layers/alarms"
 import { makeDurableObjectRpc, type DurableObjectRpcOptions } from "./layers/rpc"

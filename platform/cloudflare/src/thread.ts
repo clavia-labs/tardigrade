@@ -1,25 +1,25 @@
 import { cloudflareRetryPolicy, makeRetryingAlarms, makeRetryingRpc } from "./retry"
 import { AlarmScheduler } from "./alarm-scheduler"
-import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-core/interaction/relations"
-import { eventTail, inferenceTail } from "@clavia/tardigrade-http/sse"
-import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
-import { summaryOf, type ThreadSummary } from "@clavia/tardigrade-http/projections"
-import { publicThreadId } from "@clavia/tardigrade-host/thread-compat"
+import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-deprecated-core/interaction/relations"
+import { eventTail, inferenceTail } from "@clavia/tardigrade-deprecated-http/sse"
+import { makeInferenceStream } from "@clavia/tardigrade-deprecated-http/inference-stream"
+import { summaryOf, type ThreadSummary } from "@clavia/tardigrade-deprecated-http/projections"
+import { publicThreadId } from "@clavia/tardigrade-deprecated-host/thread-compat"
 import { CommitSignal, streamPolicyOf } from "./transport/stream"
 import { cloudflareRpcTransport } from "./transport/rpc"
 import { actorObjectNameOf } from "./transport/directory"
-import { forkOutcomeOf } from "@clavia/tardigrade-host/fork"
-import { validateDelivery } from "@clavia/tardigrade-host/delivery"
+import { forkOutcomeOf } from "@clavia/tardigrade-deprecated-host/fork"
+import { validateDelivery } from "@clavia/tardigrade-deprecated-host/delivery"
 import { DurableObject } from "cloudflare:workers"
 import { Effect, Layer, Schema, Stream } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
-import { directoryRoute } from "@clavia/tardigrade-core/transport/router"
-import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
-import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { mappedDirectory } from "@clavia/tardigrade-deprecated-core/transport/directory"
+import { directoryRoute } from "@clavia/tardigrade-deprecated-core/transport/router"
+import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-deprecated-core/interaction/envelope"
+import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
+import { actorRuntimeOf } from "@clavia/tardigrade-deprecated-core/runtime"
 import { layerWorkerLoaderSandbox, type WorkerLoaderSandboxLimits } from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareThreadSchema } from "./storage"
@@ -252,7 +252,7 @@ export class ThreadDO extends DurableObject<Env> {
     return true
   }
 
-  // appendAt admits the complete fork batch before alarm-driven execution (packages/core/tla/interaction/Fork.tla, AtomicPublication).
+  // appendAt admits the complete fork batch before alarm-driven execution (packages/deprecated/core/tla/interaction/Fork.tla, AtomicPublication).
   async appendAt(events: ReadonlyArray<Event>, expectedHead: number): Promise<{ readonly appended: number; readonly head: number }> {
     if (!this.initialized()) throw new Error("Thread DO has not been initialized")
     const host = await this.host()

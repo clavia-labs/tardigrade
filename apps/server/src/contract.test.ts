@@ -5,7 +5,7 @@ import { OpenApi } from "effect/unstable/httpapi"
 import { BunHttpServer } from "@effect/platform-bun"
 
 import { layerConfig, readConfig } from "./config"
-import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
+import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-deprecated-client/contract"
 import { ServerApi } from "./api"
 import { Threads, type ActorThreads } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"

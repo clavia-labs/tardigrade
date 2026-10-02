@@ -19,14 +19,14 @@
   },
   "type": "module",
   "dependencies": {
-    "@clavia/tardigrade-client": "workspace:*",
+    "@clavia/tardigrade-deprecated-client": "workspace:*",
     "@phosphor-icons/react": "^2.1.10",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "tardie": "workspace:*",
-    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-deprecated-core": "workspace:*",
     "@clavia/tardigrade-server": "workspace:*",
     "@effect/platform-bun": "4.0.0-rc.115",
     "@types/react": "^19.2.16",

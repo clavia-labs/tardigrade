@@ -1,5 +1,5 @@
-import { upcastError } from "@clavia/tardigrade-agent/log/upcast"
-import type { Event, EventRow } from "@clavia/tardigrade-client"
+import { upcastError } from "@clavia/tardigrade-deprecated-agent/log/upcast"
+import type { Event, EventRow } from "@clavia/tardigrade-deprecated-client"
 import { DEFAULT_JSON_PARSE_DEPTH, FIELD_INLINE_CHARS, SUMMARY_CHARS } from "./policy"
 
 // The event list's projections: what a row says, what color its stamp carries, how long the thing
@@ -48,7 +48,7 @@ const STAMPS: Readonly<Record<string, Stamp>> = {
 
 // stampOf is a row's chip color. A type the app has never heard of is neutral: an unknown event
 // still renders, because the log's alphabet is open and a reader must see what landed
-// (packages/core/src/log/event.ts).
+// (packages/deprecated/core/src/log/event.ts).
 export const stampOf = (type: string): Stamp => STAMPS[type] ?? NEUTRAL
 
 const str = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined)
@@ -111,7 +111,7 @@ const line = (parts: ReadonlyArray<string | undefined>, chars: number): string =
   truncate(parts.filter((part) => part !== undefined && part !== "").join(" · "), chars)
 
 // summaryOf is the one line a row shows for an event: what a reader needs to decide whether to open
-// it. The known alphabet is the agent thread's and the code thread's (packages/agent/src/log/events.ts,
+// it. The known alphabet is the agent thread's and the code thread's (packages/deprecated/agent/src/log/events.ts,
 // packages/code/src/execution/events.ts); a type from neither renders its field names, so an event the app has
 // never seen still says what it carries rather than nothing.
 /** @internal */
@@ -123,7 +123,7 @@ export const summaryOf = (
   switch (event.type) {
     case "MessageReceived": {
       // A reply is an inbound message answering an id this thread sent out, and it reads as the
-      // answer it is (packages/core/src/communication/message.ts, boundaryEvent).
+      // answer it is (packages/deprecated/core/src/communication/message.ts, boundaryEvent).
       const outcome = str(event.outcome)
       const from = str(event.from)
       if (outcome !== undefined) {
@@ -214,8 +214,8 @@ const STAMP: ReadonlyArray<string> = ["turn", "traceparent", "at"]
 
 // The field order per event type: what names the event, then when it happened, then what it
 // carries. A reader opens a row to find an id to follow or a payload to read, and those are the two
-// ends of the list. The orders name the threads' own fields (packages/core/src/communication/message.ts,
-// packages/agent/src/log/events.ts, packages/code/src/execution/events.ts). A field an order does not name still
+// ends of the list. The orders name the threads' own fields (packages/deprecated/core/src/communication/message.ts,
+// packages/deprecated/agent/src/log/events.ts, packages/code/src/execution/events.ts). A field an order does not name still
 // renders, after the named ones and in the event's own key order, so a type this table is behind on
 // hides nothing; a type it lists not at all falls back to that order entirely.
 const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
@@ -357,7 +357,7 @@ const endsOf = (rows: ReadonlyArray<EventRow>) => {
 // momentsOf is the whole list: the log in log order, with the pair-halves folded away and each
 // remaining row carrying the span it opened. A `CodeDispatched` spans to its `CodeSettled`, a
 // `PackageCalled` to its `PackageReturned`, and a `TurnCompleted` back to the `MessageReceived`
-// that opened its turn (packages/code/src/execution/events.ts, packages/agent/src/log/events.ts). The three ids
+// that opened its turn (packages/code/src/execution/events.ts, packages/deprecated/agent/src/log/events.ts). The three ids
 // are the threads' own correlation keys, so nothing here parses an id or guesses a pairing, and a
 // span whose other half is outside the rows the screen holds simply has no duration.
 export const momentsOf = (rows: ReadonlyArray<EventRow>): ReadonlyArray<Moment> => {

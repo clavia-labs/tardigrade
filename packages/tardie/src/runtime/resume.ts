@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-agent/runtime/resume"
+export * from "@clavia/tardigrade-deprecated-agent/runtime/resume"

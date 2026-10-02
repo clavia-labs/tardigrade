@@ -1,188 +1,61 @@
-import type { TransitionContext } from "../transition/transition"
 import { Schema } from "effect"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { replayProjection, type Projection } from "@clavia/tardigrade-core/projection"
-import type { Transition } from "@clavia/tardigrade-core/transition"
-import type { ActorMethodCall, InvocationRef } from "../interaction/invocation"
+import { RuntimeError } from "../runtime/effects"
+import { constructedEvent, type EventHandler } from "./event"
+import type { Getter } from "../atoms/atom"
 
-import type { InvocationCancellation } from "../interaction/events"
-import { eraseActorMethodProjection, type ActorMethodProjection, type ErasedActorMethodProjection, type ActorMethodState } from "../interaction/state"
+export const MethodInvocation = Schema.Struct({ method: Schema.NonEmptyString, input: Schema.Json })
+export type MethodInvocation = typeof MethodInvocation.Type
+export const MethodCancellation = Schema.Struct({ method: Schema.NonEmptyString, cancel: Schema.Struct({ id: Schema.NonEmptyString, reason: Schema.String }) })
+export type MethodCancellation = typeof MethodCancellation.Type
+export const InvocationRef = Schema.Struct({ method: Schema.NonEmptyString, id: Schema.NonEmptyString })
+export type InvocationRef = typeof InvocationRef.Type
+export interface MethodContext { readonly id: string; readonly ref: InvocationRef }
 
-// ActorMethodCancellation declares how one method records a terminal cancellation.
-export interface ActorMethodCancellation {
-  readonly event: (cancellation: InvocationCancellation, at: number) => Event
+export type MethodResult<Output> =
+  | { readonly status: "completed"; readonly output: Output }
+  | { readonly status: "failed"; readonly error: string }
+  | { readonly status: "cancelled"; readonly reason: string }
+
+export const methodResult = <Output extends Schema.Json>(output: Schema.Schema<Output>) => Schema.Union([
+  Schema.Struct({ status: Schema.Literal("completed"), output: Schema.toType(output) }),
+  Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String }),
+  Schema.Struct({ status: Schema.Literal("cancelled"), reason: Schema.String }),
+])
+
+export class MethodFailed extends RuntimeError {}
+export class MethodCancelled extends RuntimeError {}
+
+export interface ActorMethod<Event extends object, Input extends Schema.Json = Schema.Json, Output extends Schema.Json = Schema.Json> {
+  readonly inputSchema: Schema.Schema<Input>
+  readonly outputSchema: Schema.Schema<Output>
+  readonly events: readonly Schema.Top[]
+  readonly onReceive: (input: unknown, context: MethodContext) => Event
+  readonly result: (input: unknown, get: Getter, context: MethodContext) => MethodResult<Output> | undefined
+  readonly onCancel?: (input: unknown, context: MethodContext & { readonly reason: string }) => Event
 }
+export type ActorMethods<Event extends object> = Readonly<Record<string, ActorMethod<Event>>>
+export type MethodInput<Method extends ActorMethod<object>> = Method["inputSchema"]["Type"]
+export type MethodOutput<Method extends ActorMethod<object>> = Method["outputSchema"]["Type"]
 
-export const ACTOR_METHOD_NAME_PATTERN = /^[a-z][A-Za-z0-9-]{0,62}$/u
-
-export const DEFAULT_ACTOR_METHOD_TIMEOUT_MS = 300_000
-
-export const actorMethodTimeoutOf = (timeoutMs: number | undefined): number => {
-  const resolved = timeoutMs ?? DEFAULT_ACTOR_METHOD_TIMEOUT_MS
-  if (!Number.isSafeInteger(resolved) || resolved < 1) {
-    throw new Error("actor method timeoutMs must be a positive safe integer")
-  }
-  return resolved
-}
-
-export interface InvalidDurableMethodInput {
-  readonly event: Event
-  readonly index: number
-  readonly log: ReadonlyArray<Event>
-  readonly error: string
-}
-
-// DurableMethodInput declares how a method recognizes and rejects an invocation already present in a log.
-export interface DurableMethodInput {
-  readonly schema: Schema.ConstraintDecoder<unknown>
-  readonly matches: (event: Event) => boolean
-  readonly reject: (input: InvalidDurableMethodInput, at: number) => Event
-  readonly projection?: ErasedDurableInputProjection
-}
-
-export interface DurableInputProjection<State>
-  extends Omit<Projection<State, ReadonlyArray<Transition<never>>>, "step"> {
-  readonly step: (state: State, event: Event, context: TransitionContext) => State
-}
-
-export interface ErasedDurableInputProjection
-  extends DurableInputProjection<unknown> {}
-
-// durableInputProjection preserves a typed validation quotient behind the heterogeneous method contract.
-export const durableInputProjection = <State>(
-  projection: DurableInputProjection<State>
-): ErasedDurableInputProjection => ({
-  initial: projection.initial,
-  step: (state, event, context) => projection.step(state as State, event, context),
-  output: (state) => projection.output(state as State)
-})
-
-// ActorMethodDeclaration is the erased shape a heterogeneous method table preserves. eventOf validates unknown input before constructing the durable event.
-export interface ActorMethodDeclaration {
-  readonly input: Schema.ConstraintDecoder<unknown>
-  readonly output: Schema.ConstraintDecoder<unknown>
-  readonly timeoutMs: number
-  readonly durableInput?: DurableMethodInput
-  readonly cancellation?: ActorMethodCancellation
-  readonly projection: ErasedActorMethodProjection
-  readonly currentEpoch: (events: ReadonlyArray<Event>, id: string) => number
-  readonly eventOf: (call: ActorMethodCall<unknown>) => Event
-  readonly state: (events: ReadonlyArray<Event>, invocation: InvocationRef) => ActorMethodState<unknown> | undefined
-}
-
-// ActorMethodDefinition is the typed author surface for a method projection.
-export interface ActorMethodDefinition<
-  Input extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
-  Output extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
-  State = never
-> {
-  readonly input: Input
-  readonly output: Output
-  readonly timeoutMs?: number
-  readonly durableInput?: DurableMethodInput
-  readonly event: (call: ActorMethodCall<Input["Type"]>) => Event
-  readonly projection: ActorMethodProjection<State, Output["Type"]>
-  readonly cancellation?: ActorMethodCancellation
-}
-
-/** @deprecated Use ActorMethodDefinition. The primary definition now describes the projected method contract. */
-export type IncrementalActorMethodDefinition<
-  Input extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
-  Output extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
-  State = never
-> = ActorMethodDefinition<Input, Output, State>
-
-// ActorMethod carries a typed definition and its dynamically callable event builder.
-export type ActorMethod<
-  Input extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
-  Output extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>
-> = Omit<ActorMethodDeclaration, "input" | "output" | "state"> & {
-  readonly input: Input
-  readonly output: Output
-  readonly event: (call: ActorMethodCall<Input["Type"]>) => Event
-  readonly state: (events: ReadonlyArray<Event>, invocation: InvocationRef) => ActorMethodState<Output["Type"]> | undefined
-}
-
-export type ActorMethods = Readonly<Record<string, ActorMethodDeclaration>>
-
-export type ActorMethodInput<Method extends ActorMethodDeclaration> = Method["input"]["Type"]
-
-export type ActorMethodOutput<Method extends ActorMethodDeclaration> = Method["output"]["Type"]
-
-// actorMethod constructs a method from its typed projection.
-export function actorMethod<
-  Input extends Schema.ConstraintDecoder<unknown>,
-  Output extends Schema.ConstraintDecoder<unknown>,
-  State = never
->(definition: ActorMethodDefinition<Input, Output, State> & {
-  readonly cancellation: ActorMethodCancellation
-}): ActorMethod<Input, Output> & { readonly cancellation: ActorMethodCancellation }
-export function actorMethod<
-  Input extends Schema.ConstraintDecoder<unknown>,
-  Output extends Schema.ConstraintDecoder<unknown>,
-  State = never
->(definition: ActorMethodDefinition<Input, Output, State> & {
-  readonly cancellation?: undefined
-}): ActorMethod<Input, Output> & { readonly cancellation?: undefined }
-export function actorMethod(
-  definition: ActorMethodDefinition<Schema.ConstraintDecoder<unknown>, Schema.ConstraintDecoder<unknown>, unknown>
-): ActorMethod<Schema.ConstraintDecoder<unknown>, Schema.ConstraintDecoder<unknown>> {
-  const projection = eraseActorMethodProjection(definition.projection)
-  const currentEpoch = (events: ReadonlyArray<Event>, id: string): number =>
-    replayProjection(projection, events).currentEpoch(id)
-  const state = (events: ReadonlyArray<Event>, invocation: InvocationRef): ActorMethodState<unknown> | undefined =>
-    replayProjection(projection, events).invocationState(invocation)
+// actorMethod binds input, output, and invocation-scoped domain behavior; undefined replies remain pending.
+export function actorMethod<Input extends Schema.Json, Output extends Schema.Json, Event extends object, CancellationEvent extends object = never>(definition: {
+  readonly inputSchema: Schema.Schema<Input>
+  readonly outputSchema: Schema.Schema<Output>
+  readonly onReceive: EventHandler<Event, [input: Input, context: MethodContext]>
+  readonly result: (input: Input, get: Getter, context: MethodContext) => MethodResult<Output> | undefined
+  readonly onCancel?: EventHandler<CancellationEvent, [input: Input, context: MethodContext & { readonly reason: string }]>
+}): ActorMethod<Event | CancellationEvent, Input, Output> {
+  if (!Schema.isSchema(definition.onReceive.schema) || (definition.onCancel && !Schema.isSchema(definition.onCancel.schema))) throw new RuntimeError("Method handlers require declaration-backed mappings")
+  const decodeInput = Schema.decodeUnknownSync(Schema.toType(definition.inputSchema), { onExcessProperty: "error" })
+  const decodeOutput = Schema.decodeSync(methodResult(definition.outputSchema), { onExcessProperty: "error" })
   return {
-    input: definition.input,
-    output: definition.output,
-    timeoutMs: actorMethodTimeoutOf(definition.timeoutMs),
-    ...(definition.durableInput === undefined ? {} : { durableInput: definition.durableInput }),
-    ...(definition.cancellation === undefined ? {} : { cancellation: definition.cancellation }),
-    projection,
-    currentEpoch,
-    event: definition.event,
-    eventOf: (call) => definition.event({
-      ...call,
-      input: Schema.decodeUnknownSync(definition.input)(call.input)
-    }),
-    state
+    inputSchema: definition.inputSchema, outputSchema: definition.outputSchema,
+    events: [definition.onReceive.schema, ...(definition.onCancel ? [definition.onCancel.schema] : [])],
+    onReceive: (input, context) => constructedEvent(definition.onReceive(decodeInput(input), context)),
+    result: (input, get, context) => {
+      const output = definition.result(decodeInput(input), get, context)
+      return output === undefined ? undefined : decodeOutput(output)
+    },
+    ...(definition.onCancel ? { onCancel: (input: unknown, context: MethodContext & { readonly reason: string }) => constructedEvent(definition.onCancel!(decodeInput(input), context)) } : {}),
   }
-}
-
-// actorMethodsOf validates names and declarations at the actor boundary.
-export const actorMethodsOf = <const Methods extends ActorMethods>(methods: Methods): Methods => {
-  const names = new Map<ActorMethodDeclaration, string>()
-  for (const [name, declaration] of Object.entries(methods)) {
-    if (!ACTOR_METHOD_NAME_PATTERN.test(name)) {
-      throw new Error(`actor method name must match ${String(ACTOR_METHOD_NAME_PATTERN)}, got ${JSON.stringify(name)}`)
-    }
-    if (typeof declaration !== "object" || declaration === null) {
-      throw new Error(`actor method ${JSON.stringify(name)} must be a declaration`)
-    }
-    const candidate = declaration as Partial<ActorMethodDeclaration>
-    if (!Schema.isSchema(candidate.input) || !Schema.isSchema(candidate.output)) {
-      throw new Error(`actor method ${JSON.stringify(name)} must declare input and output schemas`)
-    }
-    actorMethodTimeoutOf(candidate.timeoutMs)
-    if (typeof candidate.eventOf !== "function" || typeof candidate.state !== "function" ||
-      typeof candidate.currentEpoch !== "function") {
-      throw new Error(`actor method ${JSON.stringify(name)} must declare eventOf, state, and currentEpoch functions`)
-    }
-    if (candidate.projection === undefined || typeof candidate.projection.initial !== "function" ||
-      typeof candidate.projection.step !== "function" || typeof candidate.projection.output !== "function") {
-      throw new Error(`actor method ${JSON.stringify(name)} must declare a projection`)
-    }
-    if (candidate.cancellation !== undefined && (
-      typeof candidate.cancellation !== "object" || candidate.cancellation === null ||
-      typeof candidate.cancellation.event !== "function"
-    )) {
-      throw new Error(`actor method ${JSON.stringify(name)} cancellation must declare an event function`)
-    }
-    const previous = names.get(declaration)
-    if (previous !== undefined) {
-      throw new Error(`actor methods ${JSON.stringify(previous)} and ${JSON.stringify(name)} share one declaration`)
-    }
-    names.set(declaration, name)
-  }
-  return methods
 }

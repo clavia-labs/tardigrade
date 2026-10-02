@@ -1,6 +1,6 @@
 import { ModelRegistry, modelRegistry } from "@clavia/tardigrade-model/catalog"
 import { Effect, Layer, Schema } from "effect"
-import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
+import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-deprecated-client/contract"
 import {
   ModelRegistryError,
   modelCatalogScopeOf,

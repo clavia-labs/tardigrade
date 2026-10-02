@@ -7,33 +7,119 @@ sectionOrder: 6
 order: 1
 ---
 
-Thread creation accepts an optional `initialState` map. Each key is a destination durable atom's name and each value is its serialised state. Your application reads its old logs and converts them at a settled boundary, where no work is pending.
+Sometimes, we want to update our actor code without breaking continuity with an old event log, or start a fresh log while keeping our state. State initialisation makes this possible.
 
-## Create a thread
+Tardigrade records a `StateInitialised` event at the start of the new thread to seed its atoms. Your application extracts state from the old log and converts it to the destination atoms' state codecs. Choose a settled boundary, where no work or replies are pending.
 
-Configure the destination host's `initialStateAtoms` with the durable atoms whose state callers may supply. This applies to `createThreadHost`, `createBunHost`, and `createCloudflareHost`; without that list, nonempty initial state fails with an unknown atom error.
+<StateInitialisationDiagram />
+
+## Example: a simple counter actor
+
+### Old logs and logic
+
+The old actor stores a number. Its events add `delta` to that number:
 
 ```ts
-const host = createCloudflareHost({
-  ...actorOptions,
-  storage,
-  initialStateAtoms: [counter],
+import { Schema } from "effect"
+
+const OldEvent = Schema.Struct({
+  type: Schema.Literal("Incremented"),
+  delta: Schema.Finite,
 })
+
+const oldLog = [
+  { type: "Incremented", delta: 2 },
+  { type: "Incremented", delta: 3 },
+]
+
+const oldReduce = (count: number, event: typeof OldEvent.Type) =>
+  count + event.delta
+```
+
+Replaying this log from `0` gives `5`.
+
+### Find the destination state codec
+
+The destination counter stores `{ count }` and accepts a different event shape:
+
+```ts
+import { Effect } from "effect"
+import { AtomState, actorMethod, defineActor, durableAtom, event, type InitialState } from "@clavia/tardigrade-core"
+
+const Added = event({ type: "Added", amount: Schema.Finite })
+const CounterState = Schema.Struct({ count: Schema.Finite })
+
+const counter = durableAtom({
+  name: "example.counter",
+  input: Added,
+  schema: CounterState,
+  initial: { count: 0 },
+  reduce: (state, event) => ({ count: state.count + event.amount }),
+})
+
+const actor = defineActor("counter", Effect.succeed({
+  atom: counter,
+  methods: {
+    add: actorMethod({
+      inputSchema: Schema.Finite,
+      outputSchema: Schema.Finite,
+      onReceive: Added.from(amount => ({ amount })),
+      result: (_, get) => ({ status: "completed", output: get(counter).count }),
+    }),
+  },
+}))
+```
+
+The durable atom's `name` is the key in the initial state map; its `schema` is the state codec. `counter[AtomState]` exposes the name, decoder, and checkpoint encoder. Supply the encoded shape accepted by that codec, `{ count: number }` here. Actors with several durable atoms use one map entry per supplied atom; omitted atoms retain their defaults.
+
+### Extract state
+
+Replay the source events with their old logic, then convert the result to the destination shape:
+
+```ts
+function extractState(log: unknown): InitialState {
+  const events = Schema.decodeUnknownSync(Schema.Array(OldEvent))(log)
+  const count = events.reduce(oldReduce, 0)
+  return { [counter[AtomState].name]: { count } }
+}
+
+const initialState = extractState(oldLog)
+// { "example.counter": { count: 5 } }
+```
+
+Your converter owns source formats and schema versions. For a real actor, include the state needed by each destination atom.
+
+### Create a thread with initial state
+
+Register the destination atoms in `initialStateAtoms`, then pass the map during creation:
+
+```ts
+import { Context, Layer } from "effect"
+import { createBunHost } from "@clavia/tardigrade-platform/bun"
+
+const host = await Effect.runPromise(createBunHost({
+  actor,
+  actorContext: () => Context.empty(),
+  services: () => Layer.empty,
+  storage: ".tardigrade/counter",
+  initialStateAtoms: [counter],
+}))
 
 const thread = await Effect.runPromise(host.allocateRootThread({
   instance: "destination",
   name: "migrated",
-  initialState: { "example.counter": { count: 42 } },
+  initialState,
 }))
+
+console.log(thread.getState()) // { count: 5 }
+await Effect.runPromise(host.close)
 ```
 
-`counter` is the destination durable atom named `example.counter`; `actorOptions` contains your actor and service wiring. `InitialState` is exported from experimental core for typing converters. Child allocation accepts the same map.
+`createThreadHost` and `createCloudflareHost` accept the same `initialStateAtoms` option. Child allocation also accepts `initialState`. Unknown atom names, duplicate destination names, and incompatible state fail before allocation is recorded. Identical named retries reuse the thread; conflicting state fails.
 
-Unknown names, duplicate destination atom names, and values that fail their atom's state schema return errors before an allocation request is recorded. State errors identify the atom. Omitted atoms retain their defaults. Creation commits `ThreadCreated` and `StateInitialised` together to the destination journal before opening its runtime or registering the thread. Repeating a named allocation with identical state reuses the thread; conflicting state fails.
+## Remote logs, including Cloudflare
 
-## Migrate remote logs
-
-Read and convert logs in your own code. For Cloudflare, send the resulting JSON to the destination host's existing creation route:
+Read or export the old log using your application's storage access, then call `extractState` on its counter events. Configure the destination Cloudflare host with `initialStateAtoms: [counter]` and send the resulting map to its creation route:
 
 ```http
 POST /v1/actors/destination/threads
@@ -41,14 +127,14 @@ Content-Type: application/json
 
 {
   "name": "migrated",
-  "initialState": { "example.counter": { "count": 42 } }
+  "initialState": { "example.counter": { "count": 5 } }
 }
 ```
 
-The route returns the created thread coordinate. Invalid state returns HTTP 400. Pause writes to the source while choosing the settled boundary, then switch message routing after successful creation. Source access, conversion, and routing belong to your application.
+The route returns the created thread coordinate; invalid state returns HTTP 400. Pause source writes while choosing the settled boundary and extracting state, then switch message routing after successful creation. Source access, conversion, and routing belong to your application.
 
 ## Resume and checkpoint
 
-Checkpoint restoration and `StateInitialised` feed the same atom seed mechanism. Each durable atom exposes an `AtomState` codec for encoding and decoding; the runtime loads supplied state before reducing subsequent events. Effects, execution handles, and pending replies are not transferred; the resumed graph can propose work from the supplied state. Normal checkpointing takes over, and capture waits until all supplied atoms have been read. Keep the initialisation event as durable history so the state can be rebuilt without a checkpoint.
+The new thread starts from your supplied state. New events update it, and checkpointing continues normally. Pending work and replies are not transferred.
 
-For custom journal wiring, core also exports `initialiseState({ journal, atoms, initialState, source? })`. Invoke it before opening the runtime; the journal must be empty or contain only `ThreadCreated`. `source` is optional JSON provenance.
+For custom journals, call `initialiseState({ journal, atoms, initialState })` before opening the runtime. The journal must be empty or contain only `ThreadCreated`.

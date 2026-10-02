@@ -31,7 +31,7 @@ CI installs with `bun install --frozen-lockfile` and runs the full `bun run gate
 
 ## Actor capabilities
 
-Experimental actor modules propose acts and read data services. Act implementations and platform wiring own I/O. The overrides in [.oxlintrc.json](.oxlintrc.json) apply to agent atoms and contracts, CLI actor entrypoints, the supervisor, and experimental `actors/` directories. Keep actor definitions in these locations and put implementation layers in `services/` modules or platform entrypoints. Import shared schemas from data contract modules.
+Actor modules propose acts and read data services. Act implementations and platform wiring own I/O. The overrides in [.oxlintrc.json](.oxlintrc.json) apply to agent atoms and contracts, CLI actor entrypoints, the supervisor, and `actors/` directories. Keep actor definitions in these locations and put implementation layers in `services/` modules or platform entrypoints. Import shared schemas from data contract modules.
 
 Oxlint's built-in restricted-import, restricted-global, and restricted-property rules reject service imports, Node built-ins, ambient I/O, timers, act layer wiring, and direct Effect execution in these modules. The global checks include `globalThis`, `window`, `self`, and `global`. These checks are syntactic: they do not establish transitive helper purity or prevent every computed import or aliased property access. Capability selection in the runtime remains a separate boundary.
 

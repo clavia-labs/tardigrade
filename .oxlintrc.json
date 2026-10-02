@@ -16,15 +16,15 @@
   "overrides": [
     {
       "files": [
-        "packages/experimental/agent/src/atoms/**/*.ts",
-        "packages/experimental/agent/src/actor/**/*.ts",
-        "packages/experimental/agent/src/contracts/**/*.ts",
-        "packages/experimental/agent/src/index.ts",
-        "packages/experimental/agent/src/agent.ts",
-        "packages/experimental/apps/*/src/actor.ts",
-        "packages/experimental/**/actors/**/*.ts",
-        "packages/experimental/core/src/services/supervisor/graph.ts",
-        "packages/experimental/**/agents/**/*.ts"
+        "packages/agent/src/atoms/**/*.ts",
+        "packages/agent/src/actor/**/*.ts",
+        "packages/agent/src/contracts/**/*.ts",
+        "packages/agent/src/index.ts",
+        "packages/agent/src/agent.ts",
+        "packages/apps/*/src/actor.ts",
+        "packages/**/actors/**/*.ts",
+        "packages/core/src/services/supervisor/graph.ts",
+        "packages/**/agents/**/*.ts"
       ],
       "plugins": [
         "typescript",
@@ -39,12 +39,12 @@
           {
             "paths": [
               {
-                "name": "@clavia/tardigrade-experimental-packages",
-                "message": "Import data contracts from experimental-packages/types. Configure executable packages in a service layer.",
+                "name": "@clavia/tardigrade-libraries",
+                "message": "Import data contracts from libraries/types. Configure executable packages in a service layer.",
                 "allowTypeImports": true
               },
               {
-                "name": "@clavia/tardigrade-experimental-core",
+                "name": "@clavia/tardigrade-core",
                 "importNames": [
                   "EffectExecution",
                   "runtimeAtom",
@@ -80,14 +80,14 @@
             ],
             "patterns": [
               {
-                "regex": "(^|/)(services|platform)(/|$)|^@effect/platform|^@clavia/tardigrade-experimental-platform(/|$)|^bun(:|$)|^cloudflare:|^@clavia/tardigrade-experimental-core/runtime/(execution|actors|layers|stores)(/|$)",
+                "regex": "(^|/)(services|platform)(/|$)|^@effect/platform|^@clavia/tardigrade-platform(/|$)|^bun(:|$)|^cloudflare:|^@clavia/tardigrade-core/runtime/(execution|actors|layers|stores)(/|$)",
                 "allowTypeImports": true,
                 "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
               },
               {
                 "group": [
-                  "@clavia/tardigrade-experimental-packages/*",
-                  "!@clavia/tardigrade-experimental-packages/types",
+                  "@clavia/tardigrade-libraries/*",
+                  "!@clavia/tardigrade-libraries/types",
                   "effect/Layer",
                   "effect/Effect",
                   "effect/FileSystem",

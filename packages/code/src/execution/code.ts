@@ -1,11 +1,11 @@
-import { OperationScope } from "@clavia/tardigrade-core/runtime/context"
-import { bindTransitionContext, type TransitionRef } from "@clavia/tardigrade-core/transition/transition"
+import { OperationScope } from "@clavia/tardigrade-deprecated-core/runtime/context"
+import { bindTransitionContext, type TransitionRef } from "@clavia/tardigrade-deprecated-core/transition/transition"
 import { Clock, Deferred, Effect, Fiber } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
-import { EventLog } from "@clavia/tardigrade-core/log"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { transitionProjection, type TransitionProjection } from "@clavia/tardigrade-core/transition"
-import { component, composeComponents, type Component, type ComponentOutput, type ComponentResult, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { EventLog } from "@clavia/tardigrade-deprecated-core/log"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { transitionProjection, type TransitionProjection } from "@clavia/tardigrade-deprecated-core/transition"
+import { component, composeComponents, type Component, type ComponentOutput, type ComponentResult, type ComponentRequirements } from "@clavia/tardigrade-deprecated-core/actor"
 import { CODE_VIEW_ALGEBRA, type CodeComponent, type CodeView } from "../package/definition"
 import type { PackageView } from "../package/definition"
 import { packageCallPolicyOf, type PackageCallPolicy, type CodePolicy } from "./policy"
@@ -288,7 +288,7 @@ const codeExecutionProjection = (
   })
 }
 
-// codeExecution adapts sandbox requests to child-owned calls (packages/agent/integration/package-permissions.test.ts).
+// codeExecution adapts sandbox requests to child-owned calls (packages/deprecated/agent/integration/package-permissions.test.ts).
 export const codeExecution = <const Cs extends ReadonlyArray<CodeComponent<unknown>>>(
   children: Cs,
   policy: Partial<CodePolicy> = {}
@@ -308,7 +308,7 @@ export const codeExecution = <const Cs extends ReadonlyArray<CodeComponent<unkno
       const output = child.output()
       return {
         ...output, transitions: [...codeExecutionProjection(policy, output.view.packages).output(state), ...output.transitions], interactions: {
-          cancel: (cancellation): ReadonlyArray<import("@clavia/tardigrade-core/transition").Transition<never, KeyValueStore.KeyValueStore | ComponentRequirements<Cs[number]>>> => {
+          cancel: (cancellation): ReadonlyArray<import("@clavia/tardigrade-deprecated-core/transition").Transition<never, KeyValueStore.KeyValueStore | ComponentRequirements<Cs[number]>>> => {
             const cleanup = child.output().interactions?.cancel?.(cancellation) ?? []
             if (cleanup.length > 0)
               return cleanup

@@ -6,6 +6,7 @@ import { WorldEffectDiagram } from "./diagrams/WorldEffectDiagram"
 import { ComponentCycleDiagram } from "./diagrams/ComponentCycleDiagram"
 import { AgentProjectionDiagram } from "./diagrams/AgentProjectionDiagram"
 import { StateSnapshotDiagram } from "./diagrams/StateSnapshotDiagram"
+import { StateInitialisationDiagram } from "./diagrams/StateInitialisationDiagram"
 import { StateSpaceSamplingDiagram } from "./diagrams/StateSpaceSamplingDiagram"
 import { AgentCompositionDiagram } from "./diagrams/AgentCompositionDiagram"
 import { ComponentCompositionDiagram } from "./diagrams/ComponentCompositionDiagram"
@@ -341,6 +342,7 @@ export const mdxComponents = {
   ComponentCycleDiagram,
   AgentProjectionDiagram,
   StateSnapshotDiagram,
+  StateInitialisationDiagram,
   StateSpaceSamplingDiagram,
   AgentCompositionDiagram,
   ComponentCompositionDiagram,

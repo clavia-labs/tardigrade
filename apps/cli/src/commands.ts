@@ -15,7 +15,7 @@ import {
   type ActorClient,
   type ActorCallHandle,
   type MethodState
-} from "@clavia/tardigrade-client"
+} from "@clavia/tardigrade-deprecated-client"
 
 import { modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-server/config"
 
@@ -62,7 +62,7 @@ import { Cli, type CliServices } from "./services"
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
 // are values, so the help a person reads and the completions a shell installs are generated from
 // the same tree the parser runs (commands.test.ts). A handler is a few lines over the derived
-// client (packages/client) and holds no wire knowledge of its own.
+// client (packages/deprecated/client) and holds no wire knowledge of its own.
 
 // DEFAULT_POLL_MILLIS is how often `tdg call` asks whether a method call has left `pending`.
 export const DEFAULT_POLL_MILLIS = 200
@@ -71,7 +71,7 @@ export const DEFAULT_POLL_MILLIS = 200
 export const DEFAULT_TIMEOUT_MILLIS = 300_000
 
 // problemLine is the whole of what a failed call prints. The four fields are the server's own words
-// (packages/client/src/problem.ts), and a status of NO_ANSWER means the call never reached a
+// (packages/deprecated/client/src/problem.ts), and a status of NO_ANSWER means the call never reached a
 // response, so there is no status line to quote.
 export const problemLine = (error: ProblemError): string => {
   const where = error.status === NO_ANSWER ? error.title : `${error.title} (${error.status})`

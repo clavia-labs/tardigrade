@@ -5,7 +5,7 @@ import { defineConfig } from "vite"
 // the output is a directory apps/server can serve at `/` (voyager-spec.md, build phase 4).
 
 // The bundle, written down because effect and Schema now ship to the browser on purpose: the app
-// reads the server through the derived client (packages/client) instead of a hand-written fetch
+// reads the server through the derived client (packages/deprecated/client) instead of a hand-written fetch
 // wrapper, and a later regression needs a number to fail against.
 //
 //                        JS        JS gzipped

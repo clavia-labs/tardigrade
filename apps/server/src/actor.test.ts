@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { builtInActor } from "./actor"
 
 test("the built-in actor declares message and budget methods", () => {

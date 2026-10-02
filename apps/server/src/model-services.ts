@@ -6,13 +6,13 @@ import { Layer } from "effect"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { FetchHttpClient } from "effect/unstable/http"
 import { modelLayer, type ModelIntegrationOptions } from "@clavia/tardigrade-model/host"
-import type { InferenceObserver } from "@clavia/tardigrade-agent"
+import type { InferenceObserver } from "@clavia/tardigrade-deprecated-agent"
 import type { LanguageModel } from "effect/unstable/ai"
 import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
 import type { ModelListingState } from "@clavia/tardigrade-model/catalog/schema"
-import { catalogDiscoveryOf } from "@clavia/tardigrade-http/models"
+import { catalogDiscoveryOf } from "@clavia/tardigrade-deprecated-http/models"
 import { projectModelsOf, projectConfigPathOf, readConfig } from "./config"
-import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
+import { makeInferenceStream } from "@clavia/tardigrade-deprecated-http/inference-stream"
 
 type InferenceLayerFactory = (config: ModelHostConfig, catalog: ModelListingState, observer: InferenceObserver) => Layer.Layer<LanguageModel.LanguageModel | ModelLock, never, ModelLock>
 

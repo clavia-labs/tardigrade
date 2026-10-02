@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-agent/actor/message"
+export * from "@clavia/tardigrade-deprecated-agent/actor/message"

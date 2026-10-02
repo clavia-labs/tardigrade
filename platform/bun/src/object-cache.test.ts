@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { objectRefOf, sqlObjectCache } from "@clavia/tardigrade-agent"
+import { objectRefOf, sqlObjectCache } from "@clavia/tardigrade-deprecated-agent"
 
 test("SQL cache enforces byte budgets, LRU order, namespace isolation, and reopened policy", async () => {
   await Effect.runPromise(Effect.gen(function* () {

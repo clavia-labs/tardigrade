@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
+import type { ModelCatalog } from "@clavia/tardigrade-deprecated-client/contract"
 
 import {
   DEFAULT_CATALOG_PAGE_LIMIT,

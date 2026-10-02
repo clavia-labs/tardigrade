@@ -1,7 +1,7 @@
 import { packageCalls, type PackageCall } from "./calls"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Effect } from "effect"
-import type { Component, ViewAlgebra } from "@clavia/tardigrade-core/actor"
+import type { Component, ViewAlgebra } from "@clavia/tardigrade-deprecated-core/actor"
 import type { Park } from "../execution/errors"
 
 // DoorRequest is a request through a connection's door: method, a RELATIVE path (the door
@@ -60,7 +60,7 @@ export interface Connection {
 // MethodDoc documents one method for `packages.describe` and the dispatch funnel's contract
 // gate (contract.ts). `input` and `output` are JSON Schemas of the args object and the returned
 // value. The input is enforced at the funnel, and both shapes are rendered into code mode's
-// system contract (packages/agent/src/component/code/index.ts).
+// system contract (packages/deprecated/agent/src/component/code/index.ts).
 export interface MethodDoc {
   readonly description: string
   readonly input: unknown // JSON schema of the args object
@@ -86,7 +86,7 @@ export const ANNOTATION_DEFAULTS: Required<MethodAnnotations> = {
   openWorldHint: true
 }
 
-// CodeView exposes method descriptions, current-turn calls, and available call proposals (packages/agent/integration/package-budget.test.ts).
+// CodeView exposes method descriptions, current-turn calls, and available call proposals (packages/deprecated/agent/integration/package-budget.test.ts).
 export interface CodeView {
   readonly packages: ReadonlyArray<PackageView>
   readonly calls: ReadonlyArray<PackageCall>
@@ -113,7 +113,7 @@ export const annotationsOf = (pkg: Package<unknown>, method: string): Required<M
   ...pkg.annotations?.[method]
 })
 
-// Package owns method execution behind its component boundary (packages/agent/integration/package-permissions.test.ts).
+// Package owns method execution behind its component boundary (packages/deprecated/agent/integration/package-permissions.test.ts).
 // ctx.callId identifies the recorded request across retries and is suitable for downstream idempotency.
 export interface Package<R = never> extends CodeComponent<R | KeyValueStore.KeyValueStore, unknown> {
   readonly name: string

@@ -1,5 +1,5 @@
 import { Duration, Effect } from "effect"
-import { DEFAULT_EVENT_LIMIT, DEFAULT_SSE_HEARTBEAT, DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY } from "@clavia/tardigrade-http/sse"
+import { DEFAULT_EVENT_LIMIT, DEFAULT_SSE_HEARTBEAT, DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY } from "@clavia/tardigrade-deprecated-http/sse"
 
 export interface CloudflareStreamPolicy {
   readonly heartbeatMillis: number

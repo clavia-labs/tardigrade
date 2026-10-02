@@ -3,9 +3,9 @@ import { Layer, ManagedRuntime, Result } from "effect"
 import * as NetAddress from "effect/unstable/net/NetAddress"
 import { BunHttpServer } from "@effect/platform-bun"
 import { HttpServer } from "effect/unstable/http"
-import { serve as serveHttp } from "@clavia/tardigrade-http/http"
-import type { ApiOptions } from "@clavia/tardigrade-http/api"
-import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
+import { serve as serveHttp } from "@clavia/tardigrade-deprecated-http/http"
+import type { ApiOptions } from "@clavia/tardigrade-deprecated-http/api"
+import type { ActorMethods } from "@clavia/tardigrade-deprecated-core/actor/method"
 import type { Host } from "./create-host"
 
 export const DEFAULT_HOST_IDLE_TIMEOUT_SECONDS = 10

@@ -1,10 +1,10 @@
 import type { LanguageModel } from "effect/unstable/ai"
-import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/model"
+import { testInferenceLayer } from "@clavia/tardigrade-deprecated-agent/testing/model"
 import { Effect, Layer } from "effect"
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { layerConfig, readConfig } from "@clavia/tardigrade-server/config"
 import { layerThreads } from "@clavia/tardigrade-server/host"
 import { serve } from "@clavia/tardigrade-server/http"
@@ -17,7 +17,7 @@ import { serve } from "@clavia/tardigrade-server/http"
 // Every thread this fixture serves is invented by the script below. Nothing here is imported by the
 // app; the app only ever speaks HTTP.
 
-// DEFAULT_FIXTURE_PORT matches the client's DEFAULT_BASE_URL (packages/client/src/client.ts).
+// DEFAULT_FIXTURE_PORT matches the client's DEFAULT_BASE_URL (packages/deprecated/client/src/client.ts).
 export const DEFAULT_FIXTURE_PORT = 4242
 
 // FIXTURE_PORT lets concurrent development sessions select another local listener.
@@ -54,7 +54,7 @@ const briefOf = (trajectory: ReadonlyArray<Event>): string => {
 // The scripted mind researches the onboarding brief through two child threads. A `spawn <name>`
 // brief keeps the same development seam available for arbitrary forests. The tool call id is the
 // brief's own name, so the children's ids are stated by the caller rather than by a counter
-// (packages/agent/src/packages/agents.ts, `sibling`).
+// (packages/deprecated/agent/src/packages/agents.ts, `sibling`).
 const scripted = ({ trajectory }: InferRequest): Action => {
   const brief = briefOf(trajectory)
   const start = trajectory.reduce((n, event, i) => (event.type === "MessageReceived" ? i : n), 0)

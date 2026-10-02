@@ -1,7 +1,7 @@
 import { Button } from "@base-ui/react/button"
 import { ArrowLeft, CircleNotch, X } from "@phosphor-icons/react"
 import type { ReactElement } from "react"
-import type { EventRow } from "@clavia/tardigrade-client"
+import type { EventRow } from "@clavia/tardigrade-deprecated-client"
 
 import { Composer } from "./Composer"
 import { Transcript } from "./Transcript"

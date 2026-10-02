@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": [
+    "*.ts",
+    "agents/**/*.ts"
+  ],
+  "exclude": [
+    "cloudflare.ts"
+  ]
+}

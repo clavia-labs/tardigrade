@@ -1,13 +1,13 @@
-import { DEFAULT_ACTOR_INSTANCE, DEFAULT_BASE_URL, makeActorClient, type ActorClient } from "@clavia/tardigrade-client"
-import { DOCS_PATH } from "@clavia/tardigrade-client/contract"
+import { DEFAULT_ACTOR_INSTANCE, DEFAULT_BASE_URL, makeActorClient, type ActorClient } from "@clavia/tardigrade-deprecated-client"
+import { DOCS_PATH } from "@clavia/tardigrade-deprecated-client/contract"
 
 // Where the app reads the server. The calls and the wire types are the client package's, derived
-// from the server's own declaration (packages/client/src/contract.ts), so the app holds no second
+// from the server's own declaration (packages/deprecated/client/src/contract.ts), so the app holds no second
 // idea of what a thread is. What is decided here is only what a browser decides: which server this
 // tab talks to, and which token it holds.
 
 // Where the server listens when VITE_API_URL is absent, which is the client's own default
-// (packages/client/src/client.ts, DEFAULT_BASE_URL).
+// (packages/deprecated/client/src/client.ts, DEFAULT_BASE_URL).
 export const DEFAULT_API_URL = DEFAULT_BASE_URL
 
 // The localStorage key the bearer token is pasted into. The token is the server's whole auth story

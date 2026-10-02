@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
+import type { ActorThreadRecord } from "@clavia/tardigrade-deprecated-core/actor"
 import type { ActorThreads } from "./host"
 import { publicThreadId, resolveThreadId, withLegacyThreadIds } from "./thread-compat"
 

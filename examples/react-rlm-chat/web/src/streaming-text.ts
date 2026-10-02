@@ -1,4 +1,4 @@
-import type { InferDelta } from "@clavia/tardigrade-client"
+import type { InferDelta } from "@clavia/tardigrade-deprecated-client"
 
 export interface StreamingText {
   readonly physicalAttempt: string

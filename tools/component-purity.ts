@@ -128,6 +128,6 @@ export const componentPurityViolations = (file: string, source: string): Readonl
     if (pure && node.type === "MemberExpression" && /^(process\.env|globalThis\.process\.env)(\.|$)/.test(nameOf(node))) report(node, "process.env")
     for (const child of Object.values(node)) walk(child, pure)
   }
-  walk(parsed.program, /packages\/(core|agent)\/src\/component\//.test(file) && file !== "packages/core/src/component/runtime.ts")
+  walk(parsed.program, /packages\/deprecated\/(core|agent)\/src\/component\//.test(file) && file !== "packages/deprecated/core/src/component/runtime.ts")
   return [...violations.values()].sort((a, b) => a.line - b.line)
 }

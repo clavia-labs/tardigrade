@@ -172,7 +172,7 @@ export default class extends WorkerEntrypoint {
 };
 `
 
-// REPLAY_HARNESS_SOURCE returns JSON call boundaries and refuses positional drift (packages/core/tla/runtime/Replay.tla, RightAnswer).
+// REPLAY_HARNESS_SOURCE returns JSON call boundaries and refuses positional drift (packages/deprecated/core/tla/runtime/Replay.tla, RightAnswer).
 const REPLAY_HARNESS_SOURCE = `${HARNESS_PREAMBLE}
 const canonicalJson = (value) => JSON.stringify(value, (_key, entry) => {
   if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;

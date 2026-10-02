@@ -16,7 +16,7 @@ coverage/
 .wrangler/
 .eslintcache
 .oxlintcache
-packages/core/tla/states/
+packages/deprecated/core/tla/states/
 
 # Local files
 .DS_Store

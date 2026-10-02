@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { apiUrl, defaultApiUrl, DEFAULT_API_URL, docsUrl, token, TOKEN_KEY } from "./client"
 
 // The two things a browser decides: which server this tab talks to, and which token it holds.
-// Everything else the app does with the server is the client package's (packages/client).
+// Everything else the app does with the server is the client package's (packages/deprecated/client).
 
 const withGlobal = (name: string, value: unknown, body: () => void) => {
   const held = Reflect.get(globalThis, name)

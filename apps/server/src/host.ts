@@ -1,5 +1,5 @@
 import { bunHttpServices } from "@clavia/tardigrade-bun/http-threads"
-import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
+import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-deprecated-http/threads"
 import { createHost, hostBackend, type HostOptions, type Host } from "@clavia/tardigrade-bun/create-host"
 import { Context, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -9,8 +9,8 @@ import { watch, type FSWatcher } from "node:fs"
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import { Ingress, ingressFrom, type IngressActor } from "@clavia/tardigrade-host/transport/ingress"
-import type { Provider } from "@clavia/tardigrade-host/transport/provider"
+import { Ingress, ingressFrom, type IngressActor } from "@clavia/tardigrade-deprecated-host/transport/ingress"
+import type { Provider } from "@clavia/tardigrade-deprecated-host/transport/provider"
 import {
   applyModelPolicy,
   ACTOR_ARTIFACT_VERSION,
@@ -22,13 +22,13 @@ import {
   type Actor
 } from "tardie"
 import { type BunHostOptions } from "@clavia/tardigrade-bun/host"
-import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { ThreadAllocator } from "@clavia/tardigrade-deprecated-core/actor/allocation"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import {
   RESERVED_ACTOR,
   type ActorArtifact,
   type ActorSummary
-} from "@clavia/tardigrade-client/contract"
+} from "@clavia/tardigrade-deprecated-client/contract"
 
 import { builtInActor, type ServerR } from "./actor"
 import { ServerConfig, type ServerConfigValue } from "./config"
@@ -40,7 +40,7 @@ import { DriverGauge } from "./driver-gauge"
 // ActorPushRefused is why a pushed actor was not accepted, in the sentence the route prints. The
 // artifact checks and the swap both raise it, so a caller reads one failure rather than telling a
 // validation `Error` apart from a filesystem one by its message (api.ts, pushActor).
-export { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
+export { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-deprecated-http/threads"
 // The thread environment: everything the assembly needs that the bun host does not bind. The model
 // binding is one of them, and so are the platform services the files and fetch packages reach
 // through, bound here to their bun implementations. The union comes off the assembly's own type

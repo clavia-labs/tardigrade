@@ -21,7 +21,7 @@ The package uses `@tardie/ai` and the scoped provider packages. Bedrock hosts in
 
 The agent inference component translates turns in `src/inference/model/`. Compaction owns its summary translation in `src/component/compaction/model.ts`. Both consume Effect's `LanguageModel` service. Provider assembly and catalog selection stay in this package. Other libraries connect through a bridge that implements `LanguageModel`.
 
-Provider integration tests live under `providers/`. Bedrock wire translation and its tests live in the Effect fork’s `@tardie/ai-bedrock` package. Agent integration tests live under `packages/agent/src/inference/integration/`. Request policy and observer tests live under `stream/`.
+Provider integration tests live under `providers/`. Bedrock wire translation and its tests live in the Effect fork’s `@tardie/ai-bedrock` package. Agent integration tests live under `packages/deprecated/agent/src/inference/integration/`. Request policy and observer tests live under `stream/`.
 
 ## Request configuration
 

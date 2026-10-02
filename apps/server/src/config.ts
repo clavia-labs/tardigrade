@@ -4,13 +4,13 @@ import { Context, Layer } from "effect"
 import {
   DEFAULT_MAX_CONCURRENT_THREADS,
   driverPolicyOf
-} from "@clavia/tardigrade-host/driver"
+} from "@clavia/tardigrade-deprecated-host/driver"
 import {
   DEFAULT_MODEL_POLICY
-} from "@clavia/tardigrade-agent/model/access"
+} from "@clavia/tardigrade-deprecated-agent/model/access"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/catalog/metadata"
 
-export { DEFAULT_MAX_CONCURRENT_THREADS } from "@clavia/tardigrade-host/driver"
+export { DEFAULT_MAX_CONCURRENT_THREADS } from "@clavia/tardigrade-deprecated-host/driver"
 
 // The server combines ordinary project configuration with environment credentials and host
 // settings. Every default is exported, and every resolved value is visible on ServerConfig

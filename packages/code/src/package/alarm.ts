@@ -1,8 +1,8 @@
 import { Chunk, Effect } from "effect"
-import { component, type InteractionRequest } from "@clavia/tardigrade-core/actor"
-import { Alarm } from "@clavia/tardigrade-core/alarm"
-import type { Event } from "@clavia/tardigrade-core/event"
-import type { TransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { component, type InteractionRequest } from "@clavia/tardigrade-deprecated-core/actor"
+import { Alarm } from "@clavia/tardigrade-deprecated-core/alarm"
+import type { Event } from "@clavia/tardigrade-deprecated-core/event"
+import type { TransitionContext } from "@clavia/tardigrade-deprecated-core/transition/transition"
 import { definePackage, type Package } from "./definition"
 
 const ALARM_ID_PREFIX = "alarms/"

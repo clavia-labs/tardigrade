@@ -1,10 +1,10 @@
 import { Effect, Layer } from "effect"
-import { serve as serveHttp, layerApp as layerHttpApp } from "@clavia/tardigrade-http/http"
-import { catalogDiscoveryOf } from "@clavia/tardigrade-http/models"
-import type { ApiOptions } from "@clavia/tardigrade-http/api"
+import { serve as serveHttp, layerApp as layerHttpApp } from "@clavia/tardigrade-deprecated-http/http"
+import { catalogDiscoveryOf } from "@clavia/tardigrade-deprecated-http/models"
+import type { ApiOptions } from "@clavia/tardigrade-deprecated-http/api"
 import { ServerConfig } from "./config"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
-export * from "@clavia/tardigrade-http/http"
+export * from "@clavia/tardigrade-deprecated-http/http"
 
 const httpOptions = (options?: ApiOptions) => Effect.gen(function* () {
   const config = yield* ServerConfig

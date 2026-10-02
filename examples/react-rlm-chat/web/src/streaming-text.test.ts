@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { InferDelta } from "@clavia/tardigrade-client"
+import type { InferDelta } from "@clavia/tardigrade-deprecated-client"
 import { appendAnswerDelta } from "./streaming-text"
 
 const delta = (sequence: number, kind: "text" | "reasoning", text: string, physicalAttempt = "p1"): InferDelta => ({

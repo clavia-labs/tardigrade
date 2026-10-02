@@ -92,7 +92,7 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 
 ### Create a component
 
-The [`ComponentDefinition` interface](packages/core/src/component/machine.ts#L40) defines `initial`, `step`, and `output`. `tool` is a helper that creates a component from a tool specification and an Effect handler:
+The [`ComponentDefinition` interface](packages/deprecated/core/src/component/machine.ts#L40) defines `initial`, `step`, and `output`. `tool` is a helper that creates a component from a tool specification and an Effect handler:
 
 ```ts
 import { Effect } from "effect"

@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-http/problem"
+export * from "@clavia/tardigrade-deprecated-http/problem"

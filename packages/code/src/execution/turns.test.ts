@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { eventEpochOf, trajectoryOf, turnEpochOf, turnHead, turnTerminalOf, turnView } from "./turns"
 
 describe("turnHead: message and response events", () => {

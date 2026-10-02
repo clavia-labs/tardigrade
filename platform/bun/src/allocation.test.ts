@@ -2,11 +2,11 @@ import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
+import { childKeyOf } from "@clavia/tardigrade-deprecated-core/actor/coordinate"
 import { createBunHost } from "./host"
 import { Database } from "bun:sqlite"
-import { actorThreadsOf } from "@clavia/tardigrade-core/actor/events"
-import { threadAllocationKey } from "@clavia/tardigrade-host/allocation"
+import { actorThreadsOf } from "@clavia/tardigrade-deprecated-core/actor/events"
+import { threadAllocationKey } from "@clavia/tardigrade-deprecated-host/allocation"
 
 test("the actor directory retains root and child assignments across restarts", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tardigrade-allocation-"))

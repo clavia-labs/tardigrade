@@ -3,7 +3,7 @@ import { boundaryViolations, cycleGroups, importsOf } from "./analyze"
 import type { GraphEdge, GraphNode, PackageNode } from "./types"
 
 const node = (id: string, layer: string, test = false): GraphNode => ({
-  id, package: id.split("/").slice(0, 2).join("/"), layer, test,
+  id, package: id.split("/").slice(0, id.startsWith("packages/deprecated/") ? 3 : 2).join("/"), layer, test,
   lines: 1, source: "", external: []
 })
 const edge = (source: string, target: string, typeOnly = false): GraphEdge => ({
@@ -86,9 +86,9 @@ describe("cycleGroups", () => {
 })
 
 describe("boundaryViolations", () => {
-  const core = node("packages/core/src/actor.ts", "core")
-  const host = node("packages/host/src/execution.ts", "host")
-  const http = node("packages/http/src/server.ts", "http")
+  const core = node("packages/deprecated/core/src/actor.ts", "core")
+  const host = node("packages/deprecated/host/src/execution.ts", "host")
+  const http = node("packages/deprecated/http/src/server.ts", "http")
   const bun = node("platform/bun/src/serve.ts", "platform")
   const app = node("apps/server/src/index.ts", "app")
   const facade = node("packages/tardie/src/index.ts", "facade")
@@ -102,9 +102,9 @@ describe("boundaryViolations", () => {
   test("model stays independent through internal helpers and erased type imports", () => {
     const model = node("packages/model/src/stream/collect.ts", "model")
     const helper = node("packages/model/src/settings.ts", "model")
-    const inference = node("packages/agent/src/model/execution/index.ts", "agent")
-    const compaction = node("packages/agent/src/component/compact/model.ts", "agent")
-    const client = node("packages/client/src/contract.ts", "client")
+    const inference = node("packages/deprecated/agent/src/model/execution/index.ts", "agent")
+    const compaction = node("packages/deprecated/agent/src/component/compact/model.ts", "agent")
+    const client = node("packages/deprecated/client/src/contract.ts", "client")
     const graph = [model, helper, inference, compaction, client]
     const inward = [edge(inference.id, model.id), edge(compaction.id, model.id), edge(model.id, helper.id)]
     expect(boundaryViolations(graph, inward, [])).toEqual([])
@@ -118,12 +118,12 @@ describe("boundaryViolations", () => {
   })
 
   test("model cannot acquire workspace dependencies through its production manifest", () => {
-    const graph = [pkg("packages/model", "model", ["packages/client"]),
-      pkg("packages/client", "client", ["packages/agent"]), pkg("packages/agent", "agent")]
+    const graph = [pkg("packages/model", "model", ["packages/deprecated/client"]),
+      pkg("packages/deprecated/client", "client", ["packages/deprecated/agent"]), pkg("packages/deprecated/agent", "agent")]
     expect(boundaryViolations([], [], graph)).toEqual([{
       rule: "manifest:model-independent", source: "packages/model/package.json",
-      target: "packages/client/package.json", line: 1,
-      message: "packages/model declares a production dependency on packages/client"
+      target: "packages/deprecated/client/package.json", line: 1,
+      message: "packages/model declares a production dependency on packages/deprecated/client"
     }])
   })
 
@@ -140,17 +140,17 @@ describe("boundaryViolations", () => {
   })
 
   test("checks type dependencies for layering but permits test harnesses to cross layers", () => {
-    const spec = node("packages/core/src/actor.test.ts", "core", true)
+    const spec = node("packages/deprecated/core/src/actor.test.ts", "core", true)
     expect(boundaryViolations([...nodes, spec], [edge(core.id, host.id, true), edge(spec.id, bun.id)], [])
       .map((violation) => violation.rule)).toEqual(["core-only"])
   })
 
   test("checks production manifests even without source imports, excluding development tooling", () => {
-    const packages = [pkg("packages/core", "core", [], ["platform/bun"]),
-      pkg("packages/host", "host", ["packages/http"]), pkg("packages/http", "http"),
+    const packages = [pkg("packages/deprecated/core", "core", [], ["platform/bun"]),
+      pkg("packages/deprecated/host", "host", ["packages/deprecated/http"]), pkg("packages/deprecated/http", "http"),
       pkg("platform/bun", "platform", ["apps/server"]), pkg("apps/server", "app")]
     expect(boundaryViolations([], [], packages).map(({ rule, source, target }) => ({ rule, source, target }))).toEqual([
-      { rule: "manifest:host-inward", source: "packages/host/package.json", target: "packages/http/package.json" },
+      { rule: "manifest:host-inward", source: "packages/deprecated/host/package.json", target: "packages/deprecated/http/package.json" },
       { rule: "manifest:platform-no-apps", source: "platform/bun/package.json", target: "apps/server/package.json" }
     ])
   })
@@ -175,8 +175,8 @@ describe("boundaryViolations", () => {
 })
 
 test("generic HTTP permits model policy data but rejects transitive agent execution", () => {
-  const http = "packages/http/src/http.ts", catalog = "packages/model/src/catalog/page.ts"
-  const policy = "packages/model/src/access.ts", runtime = "packages/agent/src/index.ts"
+  const http = "packages/deprecated/http/src/http.ts", catalog = "packages/model/src/catalog/page.ts"
+  const policy = "packages/model/src/access.ts", runtime = "packages/deprecated/agent/src/index.ts"
   const nodes = [node(http, "http"), node(catalog, "model"), node(policy, "model"), node(runtime, "agent")]
   const edges = [edge(http, catalog), edge(catalog, policy)]
   expect(boundaryViolations(nodes, edges, [])).toEqual([])
@@ -187,7 +187,7 @@ test("generic HTTP permits model policy data but rejects transitive agent execut
 })
 
 test("local host invocation cannot import HTTP helpers from inside the host package", () => {
-  const host = "platform/bun/src/create-host.ts", adapter = "packages/host/src/transport/http/method-request.ts"
+  const host = "platform/bun/src/create-host.ts", adapter = "packages/deprecated/host/src/transport/http/method-request.ts"
   expect(boundaryViolations([node(host, "platform"), node(adapter, "host")], [edge(host, adapter)], [])).toContainEqual({
     rule: "host-without-http", source: host, target: adapter, line: 1, message: [host, adapter].join(" → ")
   })
@@ -195,16 +195,16 @@ test("local host invocation cannot import HTTP helpers from inside the host pack
 })
 
 test.each([
-  "packages/core/src/component/runtime.ts",
-  "packages/core/src/component/composition/parent.ts"
+  "packages/deprecated/core/src/component/runtime.ts",
+  "packages/deprecated/core/src/component/composition/parent.ts"
 ])("private component imports are restricted: %s", (path) => {
   const runtime = node(path, "core")
-  const core = node("packages/core/src/component/machine.ts", "core")
-  const agent = node("packages/agent/src/component/tool/machine.ts", "agent")
+  const core = node("packages/deprecated/core/src/component/machine.ts", "core")
+  const agent = node("packages/deprecated/agent/src/component/tool/machine.ts", "agent")
   const code = node("packages/code/src/package/definition.ts", "code")
   const app = node("apps/server/src/actor.ts", "app")
   const facade = node("packages/tardie/src/index.ts", "facade")
-  const spec = node("packages/host/src/event-key.test.ts", "host", true)
+  const spec = node("packages/deprecated/host/src/event-key.test.ts", "host", true)
   const nodes = [runtime, core, agent, code, app, facade, spec]
   expect(boundaryViolations(nodes, [core, spec].map((source) => edge(source.id, runtime.id)), [])).toEqual([])
   expect(boundaryViolations(nodes, [edge(app.id, runtime.id), edge(facade.id, runtime.id, true), edge(agent.id, runtime.id), edge(code.id, runtime.id)], []).map((violation) => violation.rule))
@@ -213,10 +213,10 @@ test.each([
 
 
 test("component authors cannot import activation or test helpers", () => {
-  const author = node("packages/agent/src/component/example.ts", "agent")
-  const replay = node("packages/agent/src/runtime/render.ts", "agent")
-  const testing = node("packages/agent/fixtures/component.ts", "agent")
-  const runtime = node("packages/core/src/component/runtime.ts", "core")
+  const author = node("packages/deprecated/agent/src/component/example.ts", "agent")
+  const replay = node("packages/deprecated/agent/src/runtime/render.ts", "agent")
+  const testing = node("packages/deprecated/agent/fixtures/component.ts", "agent")
+  const runtime = node("packages/deprecated/core/src/component/runtime.ts", "core")
   const nodes = [author, replay, testing, runtime]
   expect(boundaryViolations(nodes, [edge(replay.id, runtime.id), edge(testing.id, runtime.id)], [])).toEqual([])
   expect(boundaryViolations(nodes, [edge(author.id, replay.id), edge(author.id, testing.id)], []).map(v => v.rule))
@@ -224,9 +224,9 @@ test("component authors cannot import activation or test helpers", () => {
 })
 
 test.each(["budget", "permissions"])("%s policies cannot import child implementations", (policy) => {
-  const source = `packages/agent/src/component/${policy}/index.ts`
+  const source = `packages/deprecated/agent/src/component/${policy}/index.ts`
   for (const child of ["tool", "code", "infer"]) {
-    const target = `packages/agent/src/component/${child}/index.ts`
+    const target = `packages/deprecated/agent/src/component/${child}/index.ts`
     const nodes = [node(source, "agent"), node(target, "agent")]
     for (const typeOnly of [false, true]) {
       expect(boundaryViolations(nodes, [edge(source, target, typeOnly)], []).map(v => v.rule))

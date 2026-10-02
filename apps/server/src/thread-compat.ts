@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-http/thread-compat"
+export * from "@clavia/tardigrade-deprecated-http/thread-compat"

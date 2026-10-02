@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from "react"
 
-import type { ProblemError } from "@clavia/tardigrade-client"
+import type { ProblemError } from "@clavia/tardigrade-deprecated-client"
 import { ArrowUpRight, CaretLeft, CaretRight, GithubLogo, Plus } from "@phosphor-icons/react"
 import { docsUrl } from "./client"
 import { navigate } from "./nav"

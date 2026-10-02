@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { ActorThread } from "@clavia/tardigrade-client"
+import type { ActorThread } from "@clavia/tardigrade-deprecated-client"
 import { applyActorEvent } from "./threads"
 
 const thread = (id: string): ActorThread => ({

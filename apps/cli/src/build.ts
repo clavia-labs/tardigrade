@@ -1,4 +1,4 @@
-import { targetCoordinate } from "@clavia/tardigrade-core/actor"
+import { targetCoordinate } from "@clavia/tardigrade-deprecated-core/actor"
 import { createHash } from "node:crypto"
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"

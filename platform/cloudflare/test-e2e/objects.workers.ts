@@ -1,7 +1,7 @@
 import { SELF, env, evictDurableObject } from "cloudflare:test"
 import { expect, test, vi } from "vitest"
 import { Effect } from "effect"
-import { ObjectStorage } from "@clavia/tardigrade-agent"
+import { ObjectStorage } from "@clavia/tardigrade-deprecated-agent"
 import { objectStorageFromR2, DEFAULT_R2_OBJECT_PREFIX } from "../src/object-storage/r2"
 
 test("HTTP attachments warm the DO cache and replay after eviction with the backing object absent", async () => {

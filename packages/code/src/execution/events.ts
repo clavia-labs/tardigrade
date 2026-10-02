@@ -1,9 +1,9 @@
 import type { CallPolicy } from "./policy"
-import type { OwnerRef } from "@clavia/tardigrade-core/runtime/context"
-import { TransitionRef } from "@clavia/tardigrade-core/transition/transition"
+import type { OwnerRef } from "@clavia/tardigrade-deprecated-core/runtime/context"
+import { TransitionRef } from "@clavia/tardigrade-deprecated-core/transition/transition"
 import { Schema } from "effect"
-import type { KeyFragment } from "@clavia/tardigrade-core/log"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { KeyFragment } from "@clavia/tardigrade-deprecated-core/log"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 
 // The code thread's domain events. Consumers connect through these and never call in: the
 // agent's execute tool dispatches and awaits, the task's policy dispatches and awaits, and
@@ -46,7 +46,7 @@ export const PackageReturned = Schema.Struct({
 
 // BlockedOn is evidence, never a state: one attempt observed one reply absent. It suppresses
 // re-deriving the blocked work until `awaiting` appears in the event set (a membership check,
-// tla/projection/Projection.tla), and it feeds the waits-for graph (packages/host/src/deadlock.ts). The
+// tla/projection/Projection.tla), and it feeds the waits-for graph (packages/deprecated/host/src/deadlock.ts). The
 // raiser knows what it awaits (Park carries it); no method table exists.
 export const BlockedOn = Schema.Struct({
   type: Schema.Literal("BlockedOn"),
