@@ -24,7 +24,7 @@
     "lint:effect": "bun run gate --only=lint:effect",
     "tla": "bun run tools/tla.ts",
     "typecheck": "tsc --noEmit && bun run --filter './packages/*' typecheck && bun run --filter './packages/deprecated/*' typecheck && bun run --filter './packages/apps/*' typecheck",
-    "test": "bun run --filter './packages/*' --filter './packages/deprecated/*' test",
+    "test": "bun run --filter './packages/*' test",
     "web": "bun run --cwd apps/web dev",
     "knip": "knip --no-progress --treat-config-hints-as-errors --treat-tag-hints-as-errors",
     "setup": "git config core.hooksPath .githooks",
