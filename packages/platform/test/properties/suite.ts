@@ -1,3 +1,4 @@
+import { promiseDeadline } from "./runtime/promise-deadline"
 import * as fc from "fast-check"
 import { RUNTIME_PROPERTY_OPTIONS } from "./runtime/config"
 import { promiseSettlementOrder } from "./runtime/promise-settlement-order"
@@ -12,6 +13,7 @@ import { toolDeferredLifecycle } from "./tool-deferred-lifecycle"
 import { agentTurnCancellation, agentCancellationRecovery, codeModeCancellationRecovery, compactionCancellationRecovery } from "./agent-cancellation"
 
 export const propertyCases = {
+  promiseDeadline,
   turnFactRecovery: () => fc.assert(turnFactRecovery, RUNTIME_PROPERTY_OPTIONS),
   compactionCancellationRecovery: () => fc.assert(compactionCancellationRecovery, RUNTIME_PROPERTY_OPTIONS),
   agentTurnCancellation: () => fc.assert(agentTurnCancellation, RUNTIME_PROPERTY_OPTIONS),
