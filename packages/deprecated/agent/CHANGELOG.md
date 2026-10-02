@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.39.0](https://github.com/clavia-labs/tardigrade/compare/v0.38.0...v0.39.0) (2026-10-02)
+
+
+### Features
+
+* **agent:** attribute turn facts ([#583](https://github.com/clavia-labs/tardigrade/issues/583)) ([d7553b5](https://github.com/clavia-labs/tardigrade/commit/d7553b5115373ead287accd1e5a274d78840a4cf))
+* **agent:** cancel active turns ([#582](https://github.com/clavia-labs/tardigrade/issues/582)) ([ed537ad](https://github.com/clavia-labs/tardigrade/commit/ed537ad8e52f77a34684a9ff5f84f1fe78b27faf))
+* **agent:** separate durable state ([#580](https://github.com/clavia-labs/tardigrade/issues/580)) ([3522c86](https://github.com/clavia-labs/tardigrade/commit/3522c8658038621894bcd6d4e489d972b08a09e7))
+* compose RPC agent libraries ([#592](https://github.com/clavia-labs/tardigrade/issues/592)) ([1a35ba1](https://github.com/clavia-labs/tardigrade/commit/1a35ba101fa89af5d4a60d0df7ab894d13725d8a))
+* **core:** compose actor services ([#584](https://github.com/clavia-labs/tardigrade/issues/584)) ([796d1ab](https://github.com/clavia-labs/tardigrade/commit/796d1ab5a498585d25531bc256d7ee3001f5e481))
+* **experimental:** add durable cancellation ([#581](https://github.com/clavia-labs/tardigrade/issues/581)) ([19c2e3b](https://github.com/clavia-labs/tardigrade/commit/19c2e3b23b9b6fd08b8dfe7ba89a0d34c0d2c601))
+* **experimental:** add durable checkpoints ([#575](https://github.com/clavia-labs/tardigrade/issues/575)) ([fbe00d8](https://github.com/clavia-labs/tardigrade/commit/fbe00d86b486c94af36598263137b8e0da6a00f0))
+* **experimental:** add durable codeMode ([#579](https://github.com/clavia-labs/tardigrade/issues/579)) ([0f13554](https://github.com/clavia-labs/tardigrade/commit/0f13554a47fd15f87bd7cd70f092f3040e932a74))
+* **experimental:** initialise thread state ([#588](https://github.com/clavia-labs/tardigrade/issues/588)) ([233002b](https://github.com/clavia-labs/tardigrade/commit/233002b5e46df6d6d8ff28f8f976447afb8227f9))
+* organise public exports ([#590](https://github.com/clavia-labs/tardigrade/issues/590)) ([dc76606](https://github.com/clavia-labs/tardigrade/commit/dc7660679db07fe1730ffef1c5ac793cbd757990))
+
+
+### Bug Fixes
+
+* **experimental:** resolve packaged imports ([#585](https://github.com/clavia-labs/tardigrade/issues/585)) ([a91cba0](https://github.com/clavia-labs/tardigrade/commit/a91cba06f1f3d6bd48857f86ff595b17c591382a))
+
+
+### Performance Improvements
+
+* **experimental:** retain append registries ([#570](https://github.com/clavia-labs/tardigrade/issues/570)) ([b99c63e](https://github.com/clavia-labs/tardigrade/commit/b99c63e1f6118047924bc4de5e8c89fd0db1b51c))
+* **experimental:** track reducer cursors ([#568](https://github.com/clavia-labs/tardigrade/issues/568)) ([9abfcd8](https://github.com/clavia-labs/tardigrade/commit/9abfcd8917ba69e093a22e0e7dcfb52c32048abe))
+
 ## [0.38.0](https://github.com/clavia-labs/tardigrade/compare/v0.37.0...v0.38.0) (2026-09-28)
 
 
