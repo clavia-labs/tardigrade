@@ -82,7 +82,7 @@ const manifestTemplate = (name: string, now: Date): string => `${JSON.stringify(
 
 const workerTemplate = (provider: string): string => `import { providerLayer } from "tardie/model/providers/${provider}"
 import definition from "./actor"
-import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/worker"
+import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom } from "tardie/deprecated/worker"
 import modelLock from "./models.lock.json"
 
 const services = workerModelServices({
@@ -101,8 +101,8 @@ export default {
 `
 
 const serverTemplate = (provider: string): string => `import { providerLayer } from "tardie/model/providers/${provider}"
-import { createBunHost, serve } from "tardie/bun"
-import { bunModelServices } from "tardie/server/model-services"
+import { createBunHost, serve } from "tardie/deprecated/bun"
+import { bunModelServices } from "tardie/deprecated/server/model-services"
 import definition from "./actor"
 
 const { config, layers, api } = await bunModelServices({

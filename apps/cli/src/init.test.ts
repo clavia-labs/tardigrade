@@ -56,7 +56,7 @@ describe("initActor", () => {
     expect(worker).toContain("const http = workerHttp(host)")
     expect(worker).toContain("fetch: http.fetch")
     expect(worker).toContain('import definition from "./actor"')
-    expect(worker).toContain('from "tardie/worker"')
+    expect(worker).toContain('from "tardie/deprecated/worker"')
     expect(worker).toContain('import modelLock from "./models.lock.json"')
     expect(worker).toContain("scope: modelScopeFrom(modelLock)")
     expect(worker).toContain('import { providerLayer } from "tardie/model/providers/openrouter"')

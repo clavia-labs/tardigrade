@@ -7,8 +7,8 @@ import type { ActorEnvelope } from "@clavia/tardigrade-deprecated-core/interacti
 import type { MessageReceived } from "@clavia/tardigrade-deprecated-core/interaction/provider-message"
 import { Ingress } from "@clavia/tardigrade-deprecated-host/transport/ingress"
 import { RESERVED_ACTOR } from "@clavia/tardigrade-deprecated-client/contract"
-import { type InferRequest } from "tardie"
-import type { Action } from "tardie/log/events"
+import { type InferRequest } from "tardie/deprecated"
+import type { Action } from "tardie/deprecated/log/events"
 
 import { layerConfig, readConfig, ServerConfig } from "./config"
 import { Threads, layerThreads } from "./host"

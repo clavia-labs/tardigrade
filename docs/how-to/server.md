@@ -133,7 +133,7 @@ Place `models` beside the provider's `baseUrl`, `protocol`, and `env`. These ent
 
 OpenAI Responses also accepts native reasoning summary settings. Anthropic accepts adaptive, disabled, or enabled thinking; enabled thinking requires at least 1024 budget tokens. The installed Effect version accepts Anthropic effort values `low`, `medium`, `high`, or `null`. Providers validate support for the selected model. Bedrock's additional fields are provider-specific JSON and follow the selected model's request contract.
 
-Bedrock requires the optional `@tardie/ai-bedrock`, `@smithy/fetch-http-handler`, and `@smithy/node-http-handler` packages. Shared model settings use Tardie-owned types. For SDK client configuration, import `providerLayer` or `inferenceLayer` and their `BedrockProviderOptions`, `ClientOptions`, `ModelConfig`, or `Send` types from `tardie/model/providers/bedrock`. This entry point accepts SDK credentials, region providers, and custom clients. Other providers and the root `tardie` entry point typecheck without Bedrock installed.
+Bedrock requires the optional `@tardie/ai-bedrock`, `@smithy/fetch-http-handler`, and `@smithy/node-http-handler` packages. Shared model settings use Tardie-owned types. For SDK client configuration, import `providerLayer` or `inferenceLayer` and their `BedrockProviderOptions`, `ClientOptions`, `ModelConfig`, or `Send` types from `tardie/model/providers/bedrock`. This entry point accepts SDK credentials, region providers, and custom clients. Other providers and `tardie/core` typecheck without Bedrock installed.
 
 Built-in Bun and Worker model services apply these settings through Effect `modelLayer`. Regenerate the model lock after changing provider configuration.
 
@@ -149,7 +149,7 @@ For another WebSocket, Redis, pub/sub, or telemetry transport, supply an observe
 
 ```ts
 import { Effect } from "effect"
-import type { InferenceObserver } from "tardie/agent"
+import type { InferenceObserver } from "tardie/deprecated/agent"
 
 const observer: InferenceObserver = {
   policy: { bufferCapacity: 128, deliveryTimeoutMs: 250 },
@@ -157,7 +157,7 @@ const observer: InferenceObserver = {
 }
 ```
 
-Replace the logging handler with your transport. `makeInferenceStream(observer)` from `tardie/http/inference-stream` combines this observer with an HTTP stream; pass its `observer` to `modelLayer` and the stream as `api.inference` to `serve`. The `bunModelServices` helper supplies the HTTP stream for the standard setup.
+Replace the logging handler with your transport. `makeInferenceStream(observer)` from `tardie/deprecated/http/inference-stream` combines this observer with an HTTP stream; pass its `observer` to `modelLayer` and the stream as `api.inference` to `serve`. The `bunModelServices` helper supplies the HTTP stream for the standard setup.
 
 The observer queue drops new deltas when it is full. Each accepted delivery has the configured timeout. Each SSE connection also drops unread frames past `inferenceBufferCapacity`, which defaults to the exported `DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY`. Observer failure, timeout, and dropped deltas leave inference and the durable event log unchanged. A completed or failed turn remains authoritative. Replaying settled history emits no deltas. A recovery call that opens a new provider stream uses a fresh `physicalAttempt` under the same durable `logicalAttempt`. `DEFAULT_INFERENCE_OBSERVER_POLICY` exports the observer queue and timeout defaults.
 
@@ -165,11 +165,11 @@ The inference binding fails a turn with `output_limit` when the provider exhaust
 
 ## Clients
 
-`tardie/client` is generated from the same declaration this server implements, so `/openapi.json` and the client cannot drift from it.
+`tardie/deprecated/client` is generated from the same declaration this server implements, so `/openapi.json` and the client cannot drift from it.
 
 ```ts
-import { agentMethods } from "tardie/agent"
-import { makeActorClient } from "tardie/client"
+import { agentMethods } from "tardie/deprecated/agent"
+import { makeActorClient } from "tardie/deprecated/client"
 
 const client = makeActorClient({ baseUrl: "http://localhost:4242", methods: agentMethods })
 const thread = await client.allocateRoot("main", "inv-81")

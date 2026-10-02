@@ -273,7 +273,7 @@ describe("parsing", () => {
     const cwd = await mkdtemp(join(tmpdir(), "tdg-lint-command-"))
     try {
       await writeFile(join(cwd, "actor.ts"), `
-        import { actor } from "tardie"
+        import { actor } from "tardie/deprecated"
         export default actor({ name: "researcher", methods: {}, components: [] })
       `, "utf8")
       const ran = await drive(["lint", "actor.ts"], { cwd })

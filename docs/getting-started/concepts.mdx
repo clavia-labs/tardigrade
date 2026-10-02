@@ -62,7 +62,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
     ```ts
     import type {
       ComponentOutput, Event, TransitionContext
-    } from "tardie/core"
+    } from "tardie/deprecated/core"
 
     // LeafComponent shows the required fields for a leaf component.
     interface LeafComponent<State, View, Requirements = never> {
@@ -80,7 +80,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <ConceptInterface>
     ```ts
-    import { component } from "tardie/core"
+    import { component } from "tardie/deprecated/core"
 
     const counter = component({
       name: "counter",
@@ -131,7 +131,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <ConceptInterface>
     ```ts
-    import { component, type TransitionContext, type Transition } from "tardie/core"
+    import { component, type TransitionContext, type Transition } from "tardie/deprecated/core"
 
     type Pending = {
       context: TransitionContext
@@ -179,8 +179,8 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <ConceptInterface>
     ```ts
-    import { actor } from "tardie/core"
-    import { agentMessageMethod, infer, outputValidateOnce } from "tardie/agent"
+    import { actor } from "tardie/deprecated/core"
+    import { agentMessageMethod, infer, outputValidateOnce } from "tardie/deprecated/agent"
 
     const assistant = actor({
       name: "assistant",
@@ -202,7 +202,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <ConceptInterface>
     ```ts
-    import { actorMethod } from "tardie/core"
+    import { actorMethod } from "tardie/deprecated/core"
     import { input, output, event, projection } from "./message-contract"
 
     const message = actorMethod({

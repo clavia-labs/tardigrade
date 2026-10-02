@@ -14,12 +14,12 @@ import {
   type ActorMethods,
   type ActorArtifactManifest,
   type Actor
-} from "tardie"
+} from "tardie/deprecated"
 
 export const DEFAULT_BUILD_DIRECTORY = ".tardigrade/build"
 export const ACTOR_MODULE_FILE = "actor.mjs"
 export const ACTOR_MANIFEST_FILE = "manifest.json"
-export const TARDIE_ENTRY = fileURLToPath(import.meta.resolve("tardie"))
+export const TARDIE_ENTRY = fileURLToPath(import.meta.resolve("tardie/deprecated"))
 
 export interface BuildActorOptions {
   readonly out?: string
@@ -84,7 +84,7 @@ export const loadBuiltActor = (built: BuiltActor): Promise<Actor<unknown>> =>
 export const tardiePlugin = (entry: string = TARDIE_ENTRY): Bun.BunPlugin => ({
   name: "tardie",
   setup(builder) {
-    builder.onResolve({ filter: /^tardie(?:\/.*)?$/ }, ({ path }) => ({ path: path === "tardie" ? entry : Bun.resolveSync(path, dirname(entry)) }))
+    builder.onResolve({ filter: /^tardie(?:\/.*)?$/ }, ({ path }) => ({ path: path === "tardie/deprecated" ? entry : Bun.resolveSync(path, dirname(entry)) }))
   }
 })
 

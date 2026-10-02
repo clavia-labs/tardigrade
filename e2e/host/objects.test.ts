@@ -6,9 +6,9 @@ import { join } from "node:path"
 import { Effect, Layer, ManagedRuntime, Stream } from "effect"
 import { LanguageModel, Response } from "effect/unstable/ai"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { defineActor } from "tardie/core"
-import { createHost, objectStorageFromSqlite } from "tardie/bun"
-import { NativeOutputSupport, ObjectStorage, agentMessageMethod, cachedObjectStorage, infer, makeObjectStorage, nativeOutput, sqlObjectCache, type ObjectRef } from "tardie/agent"
+import { defineActor } from "tardie/deprecated/core"
+import { createHost, objectStorageFromSqlite } from "tardie/deprecated/bun"
+import { NativeOutputSupport, ObjectStorage, agentMessageMethod, cachedObjectStorage, infer, makeObjectStorage, nativeOutput, sqlObjectCache, type ObjectRef } from "tardie/deprecated/agent"
 
 const objectKeyOf = (object: ObjectRef) => `${object.algorithm}:${object.digest}`
 

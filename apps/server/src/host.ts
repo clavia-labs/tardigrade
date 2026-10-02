@@ -20,7 +20,7 @@ import {
   type InferenceObserver,
   type ActorArtifactManifest,
   type Actor
-} from "tardie"
+} from "tardie/deprecated"
 import { type BunHostOptions } from "@clavia/tardigrade-bun/host"
 import { ThreadAllocator } from "@clavia/tardigrade-deprecated-core/actor/allocation"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"

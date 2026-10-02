@@ -44,7 +44,7 @@ The destination counter stores `{ count }` and accepts a different event shape:
 
 ```ts
 import { Effect } from "effect"
-import { AtomState, actorMethod, defineActor, durableAtom, event, type InitialState } from "@clavia/tardigrade-core"
+import { AtomState, actorMethod, defineActor, durableAtom, event, type InitialState } from "tardie/core"
 
 const Added = event({ type: "Added", amount: Schema.Finite })
 const CounterState = Schema.Struct({ count: Schema.Finite })
@@ -95,7 +95,7 @@ Register the destination atoms in `initialStateAtoms`, then pass the map during 
 
 ```ts
 import { Context, Layer } from "effect"
-import { createBunHost } from "@clavia/tardigrade-platform/bun"
+import { createBunHost } from "tardie/platform/bun"
 
 const host = await Effect.runPromise(createBunHost({
   actor,

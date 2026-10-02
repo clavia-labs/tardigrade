@@ -1,8 +1,8 @@
 import { providerLayer } from "../../packages/model/src/providers/openai-compat"
 import assert from "node:assert/strict"
 import { Effect } from "effect"
-import { actor } from "tardie/core"
-import { agentMethods, infer, tool, outputValidateOnce } from "tardie/agent"
+import { actor } from "tardie/deprecated/core"
+import { agentMethods, infer, tool, outputValidateOnce } from "tardie/deprecated/agent"
 import { fixtureModelLayer as configuredModelLayer } from "../../packages/model/src/testing/host"
 
 export const definition = actor({ name: "inference-test", methods: agentMethods, components: [infer([outputValidateOnce, tool({

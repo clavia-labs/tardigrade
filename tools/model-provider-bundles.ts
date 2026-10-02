@@ -21,8 +21,8 @@ const exists = async (path: string): Promise<boolean> => {
   }
 }
 
-const workerSource = (provider: string): string => `import { actor } from "tardie"
-import { defineWorkerHost, workerHttp, workerModelServices } from "tardie/worker"
+const workerSource = (provider: string): string => `import { actor } from "tardie/deprecated"
+import { defineWorkerHost, workerHttp, workerModelServices } from "tardie/deprecated/worker"
 import { providerLayer } from "tardie/model/providers/${provider}"
 
 const host = defineWorkerHost(actor({ name: "bundle-proof", methods: {}, components: [] }), {
@@ -70,7 +70,7 @@ const main = async (): Promise<void> => {
         dependencies: { tardie: `file:${tarball}` },
         devDependencies: { "@types/node": dependencies["@types/node"] }
       }, undefined, 2)}\n`)
-      await writeFile(join(directory, "index.ts"), 'import { actor } from "tardie"\nexport default actor\n')
+      await writeFile(join(directory, "index.ts"), 'import { actor } from "tardie/deprecated"\nexport default actor\n')
       await writeFile(join(directory, "tsconfig.json"), `${JSON.stringify({
         compilerOptions: {
           target: "ES2023", lib: ["ES2023", "DOM"], module: "Preserve", moduleResolution: "bundler",
@@ -95,7 +95,7 @@ const main = async (): Promise<void> => {
 
       await run([process.execPath, join(root, "node_modules/typescript/bin/tsc"), "--project", "tsconfig.json"], directory)
 
-      await run([process.execPath, "-e", "await import('tardie/server/host'); await import('tardie/model/host')"], directory)
+      await run([process.execPath, "-e", "await import('tardie/deprecated/server/host'); await import('tardie/model/host')"], directory)
       await run([process.execPath, "-e", `
         import { Effect, Layer } from "effect";
         import { FetchHttpClient } from "effect/unstable/http";

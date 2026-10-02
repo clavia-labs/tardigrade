@@ -1,5 +1,5 @@
-import { actor } from "tardie/core"
-import { agentMethods, infer, nativeOutput, system, tools } from "tardie/agent"
+import { actor } from "tardie/deprecated/core"
+import { agentMethods, infer, nativeOutput, system, tools } from "tardie/deprecated/agent"
 import { alarm } from "tardie/code"
 
 export default actor({

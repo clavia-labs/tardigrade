@@ -96,7 +96,7 @@ The [`ComponentDefinition` interface](packages/deprecated/core/src/component/mac
 
 ```ts
 import { Effect } from "effect"
-import { tool } from "tardie/agent"
+import { tool } from "tardie/deprecated/agent"
 
 const papers = tool({
   spec: {
@@ -136,8 +136,8 @@ An offered tool follows this lifecycle:
 Mount the component beside the built-in parts that this task needs:
 
 ```ts
-import { actor } from "tardie/core"
-import { agentMethods, agents, budget, compact, messages, infer, outputValidateOnce, system, tools } from "tardie/agent"
+import { actor } from "tardie/deprecated/core"
+import { agentMethods, agents, budget, compact, messages, infer, outputValidateOnce, system, tools } from "tardie/deprecated/agent"
 import { fetch, workspace } from "tardie/code"
 
 const researcher = actor({
@@ -185,8 +185,8 @@ Each action and result becomes an event that every component can interpret.
 The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment. The model services select the provider implementation from the configured protocol.
 
 ```ts
-import { createBunHost } from "tardie/bun"
-import { bunModelServices } from "tardie/server/model-services"
+import { createBunHost } from "tardie/deprecated/bun"
+import { bunModelServices } from "tardie/deprecated/server/model-services"
 
 const { layers } = await bunModelServices({
   env: process.env

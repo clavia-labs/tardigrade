@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { ObjectStorage } from "tardie/agent"
+import type { ObjectStorage } from "tardie/deprecated/agent"
 
 export const DEFAULT_MAX_UPLOAD_BYTES = 10_000_000
 const UPLOAD_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"] as const

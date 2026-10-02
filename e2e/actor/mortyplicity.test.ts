@@ -5,7 +5,7 @@ import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { threadAddressOf } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
 import { alarmFired } from "@clavia/tardigrade-deprecated-core/interaction/timeout"
 import { threadCreatedOf } from "@clavia/tardigrade-deprecated-core/interaction/relations"
-import type { Action } from "tardie/log/events"
+import type { Action } from "tardie/deprecated/log/events"
 import {
   actor,
   agentMethods,
@@ -20,8 +20,8 @@ import {
   permissions,
   requestPermissionMethod,
   validateActor
-} from "tardie"
-import { agentsPackage } from "tardie/packages/agents"
+} from "tardie/deprecated"
+import { agentsPackage } from "tardie/deprecated/packages/agents"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
 import { actorScenario, childThreadsOf, ROOT_THREAD, TEST_MODEL, type Mind } from "./harness"
 

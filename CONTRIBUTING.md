@@ -11,6 +11,8 @@ bun install
 bun run setup
 ```
 
+`bun install` generates the workspace public facades from `tools/public-exports.json`. Run `bun run exports` after editing the export declaration; the gate checks that the workspace facade matches the published package.
+
 `bun run setup` points git at the tracked hooks directory (`git config core.hooksPath .githooks`). Two hooks run there. `pre-commit` checks the prose rules when a commit touches markdown, which takes milliseconds and catches a wrapped paragraph before you write the commit message. `pre-push` runs the same gate as CI, so a local failure surfaces before the remote round trip. Use narrow gate commands while you iterate. `--no-verify` bypasses either hook for exceptional workflows.
 
 ## Before you open a PR

@@ -66,8 +66,8 @@ Within `actor.ts`, you will see the following code:
 
 ```ts expanded
 import { Effect } from "effect"
-import { actor } from "tardie/core"
-import { agentMessageMethod, infer, outputValidateOnce, system, tool } from "tardie/agent"
+import { actor } from "tardie/deprecated/core"
+import { agentMessageMethod, infer, outputValidateOnce, system, tool } from "tardie/deprecated/agent"
 
 const actorName = "tardie-agent"
 
@@ -100,8 +100,8 @@ export default actor({
 A Tardigrade component has the following interface:
 
 ```ts
-import type { ComponentOutput, TransitionContext } from "tardie/core"
-import type { Event } from "tardie/core/event"
+import type { ComponentOutput, TransitionContext } from "tardie/deprecated/core"
+import type { Event } from "tardie/deprecated/core/event"
 
 interface ComponentDefinition<State, View, Requirements = never, Result = unknown> {
   readonly name: string

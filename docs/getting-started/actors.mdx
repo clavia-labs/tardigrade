@@ -34,7 +34,7 @@ interface Actor {
 For example, an actor named `meeseeks` exposes a message method and uses components for inference and code execution with an MCP package. The `./components`, `./methods`, `./packages`, and `./layers` modules in this guide belong to your application. For a runnable project with these services already assembled, start with the [Quickstart](/docs/quickstart).
 
 ```ts
-import { defineActor } from "tardie/core"
+import { defineActor } from "tardie/deprecated/core"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"
 import { mcpPackage } from "./packages"
@@ -51,8 +51,8 @@ const meeseeks = defineActor(
 A host runs the actor and owns its storage, threads, and message delivery. The Bun host can run inside a script or application.
 
 ```ts
-import { defineActor } from "tardie/core"
-import { createBunHost } from "tardie/bun"
+import { defineActor } from "tardie/deprecated/core"
+import { createBunHost } from "tardie/deprecated/bun"
 import { layersFor } from "./layers"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"
@@ -177,7 +177,7 @@ Calls through the host use ordinary `await` calls. The `key` identifies the invo
 Expose the host to other processes with an HTTP server. The host continues to own execution and storage; the server provides network access.
 
 ```ts
-import { serve } from "tardie/bun"
+import { serve } from "tardie/deprecated/bun"
 
 const server = await serve(host, { port: 4242 })
 ```
@@ -200,8 +200,8 @@ Remote applications connect through the Client SDK. A local script can use `host
 This script defines an actor, creates its host, invokes two threads, and closes the host when the work finishes. The imported components, methods, and packages belong to your application.
 
 ```ts expanded
-import { defineActor } from "tardie/core"
-import { createBunHost } from "tardie/bun"
+import { defineActor } from "tardie/deprecated/core"
+import { createBunHost } from "tardie/deprecated/bun"
 import { layersFor } from "./layers"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"

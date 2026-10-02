@@ -3,6 +3,8 @@ import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { rewriteComponentRuntimeImports, stageInitTemplates } from "./publish-paths"
+import publicExports from "./public-exports.json"
+import { syncPublicExports } from "./public-exports"
 import { publishDependencies, publishSources } from "./publish-manifest"
 
 type PkgJson = {
@@ -32,7 +34,7 @@ const option = (name: string) => {
 // server, the UI, and the command (sdk-and-cli-spec.md, "Phase 3").
 const BIN_NAME = "tdg"
 
-const BIN_ENTRY = "./src/cli/main.ts"
+const BIN_ENTRY = "./src/deprecated/cli/main.ts"
 
 const STAGED_EXAMPLES = "examples"
 
@@ -102,25 +104,42 @@ const published = async (name: string, version: string) => {
   return true
 }
 
-const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>, sourceRoot = dir): Promise<void> => {
+const rewriteSources = async (dir: string, sourceRoot = dir): Promise<void> => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) {
-      await rewriteSources(path, rewrites, sourceRoot)
+      await rewriteSources(path, sourceRoot)
       continue
     }
     if (!entry.isFile() || !entry.name.endsWith(".ts")) continue
     let source = await readFile(path, "utf8")
-    for (const [from, to] of rewrites) {
-      source = source.replaceAll(`${from}/`, `${to}/`).replaceAll(`"${from}"`, `"${to}"`).replaceAll(`'${from}'`, `'${to}'`)
-    }
-    source = source.replace(/(["'])tardie\/experimental\/internal\/([^"']+)\1/g, (_match, quote: string, module: string) => {
-      const target = relative(dirname(path), join(sourceRoot, "experimental/internal", module))
-      return `${quote}${target.startsWith(".") ? target : `./${target}`}${quote}`
+    source = source.replace(/(["'])(@clavia\/[^"']+)\1/g, (match, quote: string, specifier: string) => {
+      for (const source of publishSources) {
+        if (specifier !== source.pkg.name && !specifier.startsWith(`${source.pkg.name}/`)) continue
+        const key = specifier === source.pkg.name ? "." : `.${specifier.slice(source.pkg.name.length)}`
+        const exports: Readonly<Record<string, string | null>> = source.pkg.exports
+        let target = exports[key]
+        if (target === undefined) {
+          const pattern = Object.keys(exports).filter(key => key.includes("*")).sort((a, b) => b.length - a.length).find(pattern => {
+            const [prefix, suffix] = pattern.split("*")
+            return key.startsWith(prefix!) && key.endsWith(suffix!)
+          })
+          if (pattern !== undefined) {
+            const [prefix, suffix] = pattern.split("*")
+            target = exports[pattern]?.replace("*", key.slice(prefix!.length, suffix!.length === 0 ? undefined : -suffix!.length))
+          }
+        }
+        if (target == null) throw new Error(`No workspace export for ${specifier} in ${path}`)
+        const destination = relative(dirname(path), join(sourceRoot, source.namespace, target.replace(/^\.\/src\//, "").replace(/\.ts$/, "")))
+        return `${quote}${destination.startsWith(".") ? destination : `./${destination}`}${quote}`
+      }
+      return match
     })
     await writeFile(path, rewriteComponentRuntimeImports(source, path, sourceRoot))
   }
 }
+
+await syncPublicExports(true)
 
 const packages = publishSources
 const publicSource = packages.find((source) => source.namespace === "tardie")!
@@ -166,19 +185,12 @@ try {
     ...packages.map(async (source) => {
       await cp(join(root, source.dir, "src"), join(stage, "src", source.namespace), {
         recursive: true,
-        filter: (path) => !path.endsWith(".test.ts") && path !== join(root, "packages/model/src/testing")
+        filter: (path) => !path.endsWith(".test.ts") && path !== join(root, "packages/model/src/testing") && path !== join(root, "packages/tardie/src/generated")
       })
     })
   ])
 
-  const rewrites = new Map([
-    ["@clavia/tardigrade-platform/bun", "tardie/experimental/bun"],
-    ["@clavia/tardigrade-platform/cloudflare", "tardie/experimental/cloudflare"],
-    ...packages
-      .filter((source) => source.namespace !== "tardie")
-      .map((source) => [source.pkg.name, `${publicSource.pkg.name}/${source.namespace}`] as const)
-  ])
-  await rewriteSources(join(stage, "src"), rewrites)
+  await rewriteSources(join(stage, "src"))
 
   const repository = publicSource.pkg.repository
   const publishManifest = {
@@ -199,108 +211,16 @@ try {
     engines: publicSource.pkg.engines,
     type: "module",
     bin: { [BIN_NAME]: BIN_ENTRY },
-    exports: {
-      ".": "./src/tardie/index.ts",
-      "./agent": "./src/agent/index.ts",
-      "./agent/*": "./src/agent/*.ts",
-      "./agent/testing/model": "./src/agent/testing/model.ts",
-      "./agent/testing": "./src/tardie/agent-testing.ts",
-      "./core": "./src/core/index.ts",
-      "./experimental": "./src/experimental/index.ts",
-      "./experimental/event-log": "./src/experimental/runtime/replay.ts",
-      "./experimental/agent": "./src/experimental/agent/index.ts",
-      "./experimental/agent/*": "./src/experimental/agent/*.ts",
-      "./experimental/agent/atoms": "./src/experimental/agent/atoms/index.ts",
-      "./experimental/agent/atoms/durable": "./src/experimental/agent/atoms/durable/index.ts",
-      "./experimental/agent/services": "./src/experimental/agent/services/index.ts",
-      "./experimental/packages": "./src/experimental/packages/index.ts",
-      "./experimental/packages/*": "./src/experimental/packages/*.ts",
-      "./experimental/bun": "./src/experimental/platform/bun/index.ts",
-      "./experimental/cloudflare": "./src/experimental/platform/cloudflare/index.ts",
-      "./core/testing": "./src/core/testing/check.ts",
-      "./testing": "./src/tardie/testing.ts",
-      "./code": "./src/code/index.ts",
-      "./package.json": "./package.json",
-      "./actor/*": "./src/agent/actor/*.ts",
-      "./component/*": "./src/agent/component/*.ts",
-      "./component/infer/*": "./src/agent/component/infer/*.ts",
-      "./log/*": "./src/agent/log/*.ts",
-      "./output/*": "./src/agent/output/*.ts",
-      "./packages/*": "./src/agent/packages/*.ts",
-      "./projection/*": "./src/agent/projection/*.ts",
-      "./runtime/*": "./src/agent/runtime/*.ts",
-      "./core/actor": "./src/core/actor/index.ts",
-      "./core/actor/*": "./src/core/actor/*.ts",
-      "./core/alarm": "./src/core/alarm.ts",
-      "./core/interaction": "./src/core/interaction/index.ts",
-      "./core/interaction/*": "./src/core/interaction/*.ts",
-      "./core/transport": "./src/core/transport/index.ts",
-      "./core/transport/*": "./src/core/transport/*.ts",
-      "./core/component": "./src/core/component/index.ts",
-      "./core/component/runtime": null,
-      "./core/component/composition/parent": null,
-      "./core/component/compose": "./src/core/component/composition/siblings.ts",
-      "./core/component/children": "./src/core/component/composition/children.ts",
-      "./core/component/reconciliation": "./src/core/component/composition/reconciliation.ts",
-      "./core/component/tree": "./src/core/component/composition/tree.ts",
-      "./core/component/*": "./src/core/component/*.ts",
-      "./core/effect": "./src/core/effect.ts",
-      "./core/event": "./src/core/event.ts",
-      "./core/intent": "./src/core/intent.ts",
-      "./core/log": "./src/core/log/index.ts",
-      "./core/log/event": "./src/core/event.ts",
-      "./core/log/*": "./src/core/log/*.ts",
-      "./core/machine": "./src/core/machine.ts",
-      "./core/projection": "./src/core/projection/projection.ts",
-      "./core/projection/*": "./src/core/projection/*.ts",
-      "./core/reconciliation": "./src/core/compatibility/reconciliation.ts",
-      "./core/reconciliation/reconciler": "./src/core/compatibility/reconciler.ts",
-      "./core/reconciliation/transition": "./src/core/compatibility/transition.ts",
-      "./core/runtime": "./src/core/runtime/index.ts",
-      "./core/runtime/*": "./src/core/runtime/*.ts",
-      "./core/transition": "./src/core/transition/index.ts",
-      "./core/transition/*": "./src/core/transition/*.ts",
-      "./core/view": "./src/core/view.ts",
-      "./code/execution/*": "./src/code/execution/*.ts",
-      "./code/package/*": "./src/code/package/*.ts",
-      "./code/sandbox/*": "./src/code/sandbox/*.ts",
-      "./code/storage/*": "./src/code/storage/*.ts",
-      "./host/*": "./src/host/*.ts",
-      "./channels": "./src/channels/index.ts",
-      "./channels/*": "./src/channels/*.ts",
-      "./client": "./src/client/index.ts",
-      "./client/*": "./src/client/*.ts",
-      "./bun": "./src/bun/index.ts",
-      "./bun/*": "./src/bun/*.ts",
-      "./worker-loader/*": "./src/worker-loader/*.ts",
-      "./worker": "./src/cloudflare/index.ts",
-      "./worker/*": "./src/cloudflare/*.ts",
-      "./cloudflare": "./src/cloudflare/index.ts",
-      "./cloudflare/*": "./src/cloudflare/*.ts",
-      "./http/*": "./src/http/*.ts",
-      "./server/*": "./src/server/*.ts",
-      "./cli/*": "./src/cli/*.ts",
-      "./model": "./src/model/index.ts",
-      "./model/catalog": "./src/model/catalog/index.ts",
-      "./model/catalog-store": "./src/model/catalog/repository.ts",
-      "./model/catalog-page": "./src/model/catalog/page.ts",
-      "./model/catalog-availability": "./src/model/catalog/availability.ts",
-      "./model/metadata": "./src/model/catalog/metadata.ts",
-      "./model/directory": "./src/model/providers/directory.ts",
-      "./model/reasoning": "./src/model/providers/options.ts",
-      "./model/request-policy": "./src/model/stream/policy.ts",
-      "./model/output": "./src/model/output.ts",
-      "./model/*": "./src/model/*.ts"
-    },
+    exports: publicExports,
     ...dependencies
   }
   await writeFile(join(stage, "package.json"), `${JSON.stringify(publishManifest, null, 2)}\n`)
 
-  // The staged package must resolve its rewritten self-imports through the public export map.
+  // The staged package validates public imports before packing (public-exports-smoke.ts).
   const stagedModules = join(stage, "node_modules")
   await symlink(join(root, "node_modules"), stagedModules, "dir")
   try {
-    await run([process.execPath, "-e", "const root = await import('tardie'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const code = await import('tardie/code'); if (root.defineActor !== core.defineActor || root.infer !== agent.infer || root.definePackage !== code.definePackage) throw new Error('scoped export compatibility failed'); const testing = await import('tardie/testing'); const agentTesting = await import('tardie/agent/testing'); if (typeof testing.checkActor !== 'function' || typeof testing.replayActor !== 'function' || typeof agentTesting.testInferenceLayer !== 'function') throw new Error('testing exports failed'); const eventLog = await import('tardie/experimental/event-log'); if (typeof eventLog.createEventLog !== 'function') throw new Error('experimental event-log export failed'); await import('tardie/bun'); await import('tardie/client'); for (const path of ['tardie/core/component/runtime', 'tardie/core/component/composition/parent']) { let blocked = false; try { await import(path) } catch { blocked = true } if (!blocked) throw new Error(path + ' is publicly importable') }"], stage)
+    await run([process.execPath, join(root, "tools/public-exports-smoke.ts")], stage)
   } finally {
     await rm(stagedModules)
   }

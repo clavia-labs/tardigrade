@@ -7,7 +7,7 @@ sectionOrder: 4
 order: 8
 ---
 
-Install `fast-check` in the project that runs the checks with `bun add -d fast-check`, then import from `tardie/testing`. The runtime package declares `fast-check` as an optional peer dependency. [Full example](/docs/verifying-actors).
+Install `fast-check` in the project that runs the checks with `bun add -d fast-check`, then import from `tardie/deprecated/testing`. The runtime package declares `fast-check` as an optional peer dependency. [Full example](/docs/verifying-actors).
 
 ## checkActor
 
@@ -36,7 +36,7 @@ Each case starts fresh. `services` supplies fake, real, or mixed dependencies. `
 ## Rules
 
 ```ts
-import type { Event } from "tardie/core"
+import type { Event } from "tardie/deprecated/core"
 
 type Rule = (context: {
   readonly events: ReadonlyArray<Event>

@@ -1,4 +1,4 @@
-import type { MessageContentPart, ObjectRef } from "tardie/agent"
+import type { MessageContentPart, ObjectRef } from "tardie/deprecated/agent"
 
 export interface UploadPolicy {
   readonly maxUploadBytes: number

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { ACTOR_ARTIFACT_VERSION } from "tardie"
+import { ACTOR_ARTIFACT_VERSION } from "tardie/deprecated"
 
 import {
   ACTOR_MANIFEST_FILE,
@@ -30,7 +30,7 @@ const entry = async (source: string): Promise<string> => {
 describe("buildActor", () => {
   test("writes a named portable artifact", async () => {
     const path = await entry(`
-      import { actor } from "tardie"
+      import { actor } from "tardie/deprecated"
       export default actor({
         name: "researcher",
         methods: {},
@@ -62,7 +62,7 @@ describe("buildActor", () => {
 
   test("the summary identifies the artifact", async () => {
     const path = await entry(`
-      import { actor } from "tardie"
+      import { actor } from "tardie/deprecated"
       export default actor({
         name: "researcher",
         methods: {},
@@ -84,7 +84,7 @@ describe("lintActor", () => {
     const path = await entry(`
       import {
         actor, agentMethods, budget, caller, escalate, codeMode, infer, nativeOutput
-      } from "tardie"
+      } from "tardie/deprecated"
       export default actor({
         name: "researcher",
         methods: agentMethods,
@@ -113,7 +113,7 @@ describe("lintActor", () => {
 
   test("refuses a declared method with no component handler", async () => {
     const path = await entry(`
-      import { actor, agentMessageMethod } from "tardie"
+      import { actor, agentMessageMethod } from "tardie/deprecated"
       export default actor({ name: "researcher", methods: { message: agentMessageMethod }, components: [] })
     `)
     await expect(lintActor(path, { cwd: root })).rejects.toThrow('method "message" has no handler')

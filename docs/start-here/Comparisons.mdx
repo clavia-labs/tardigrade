@@ -46,7 +46,7 @@ Tardigrade stores messages, model responses, tool requests, and tool results as 
 A component is a reusable part of your harness that handles one behavior. This assistant combines the built-in `budget` and `compaction` components:
 
 ```ts
-import { actor } from "tardie/core"
+import { actor } from "tardie/deprecated/core"
 import {
   agentMessageMethod,
   budget,
@@ -55,7 +55,7 @@ import {
   infer,
   outputValidateOnce,
   system
-} from "tardie/agent"
+} from "tardie/deprecated/agent"
 import { repositoryTools } from "./tools"
 
 export default actor({
@@ -144,7 +144,7 @@ Tardigrade makes state management functional. Each recorded event goes through `
 This component reads the application's `ModeChanged` events and returns a `canEdit` flag:
 
 ```ts
-import { component, deriveComponent } from "tardie/core"
+import { component, deriveComponent } from "tardie/deprecated/core"
 
 const editMode = component({
   name: "edit-mode",

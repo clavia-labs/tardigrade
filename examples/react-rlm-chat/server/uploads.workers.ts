@@ -1,6 +1,6 @@
 import { SELF, env, evictDurableObject, runInDurableObject } from "cloudflare:test"
 import { expect, test, vi } from "vitest"
-import type { ObjectRef } from "tardie/agent"
+import type { ObjectRef } from "tardie/deprecated/agent"
 
 test("chat uploads to R2 without sign-in and replays attachments after DO eviction", async () => {
   const fetch = (path: string, method = "GET", body?: unknown) => SELF.fetch(`https://chat.test${path}`, {

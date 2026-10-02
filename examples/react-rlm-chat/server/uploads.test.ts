@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import { makeObjectStorage } from "tardie/agent"
+import { makeObjectStorage } from "tardie/deprecated/agent"
 import { DEFAULT_MAX_UPLOAD_BYTES, uploadLimit, uploadResponse } from "./uploads"
 
 test("uploads validate type and size and persist before returning a reference", async () => {

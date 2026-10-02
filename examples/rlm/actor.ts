@@ -1,5 +1,5 @@
-import { defineActor } from "tardie/core"
-import { agentMethods, agents, budget, caller, escalate, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/agent"
+import { defineActor } from "tardie/deprecated/core"
+import { agentMethods, agents, budget, caller, escalate, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/deprecated/agent"
 import { fetch, workspace } from "tardie/code"
 
 const actorName = "researcher"

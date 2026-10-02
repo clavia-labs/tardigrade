@@ -4,7 +4,7 @@ import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
-import { ACTOR_NAME_PATTERN } from "tardie"
+import { ACTOR_NAME_PATTERN } from "tardie/deprecated"
 import {
   CATALOG_AVAILABILITY_FILTERS,
   MODEL_CATALOG_PRICE_SORTS,

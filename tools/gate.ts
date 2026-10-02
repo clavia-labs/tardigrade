@@ -63,6 +63,7 @@ const effectLint = (project: string): ReadonlyArray<string> => [
 ]
 
 const tasks: ReadonlyArray<Task> = [
+  { id: "exports", cmd: ["bun", "run", "tools/public-exports.ts", "--check"] },
   { id: "lint:component-purity", cmd: ["bun", "run", "tools/lint-component-purity.ts"] },
   { id: "test:component-purity", cmd: ["bun", "test", "tools/component-purity.test.ts"] },
   { id: "lint:boundaries", cmd: ["bun", "run", "tools/code-graph.ts", "--check"] },

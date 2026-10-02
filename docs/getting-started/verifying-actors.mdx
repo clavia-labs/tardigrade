@@ -39,8 +39,8 @@ The actor code would look like this:
 <CodeFile name="factory.ts">
 
 ```ts
-import { actor } from "tardie/core"
-import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/agent"
+import { actor } from "tardie/deprecated/core"
+import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/deprecated/agent"
 import { inspectWaterTank, producePaperClip, treatWasteWater } from "./factory-tools"
 
 const clippy = actor({
@@ -61,7 +61,7 @@ const clippy = actor({
 
 ```ts expanded
 import { Effect } from "effect"
-import { tool } from "tardie/agent"
+import { tool } from "tardie/deprecated/agent"
 
 const factorySpec = (name: string) => ({
   name,
@@ -90,11 +90,11 @@ export const producePaperClip = tool({
 
 ```ts expanded
 import { Schema } from "effect"
-import type { Event } from "tardie/core"
+import type { Event } from "tardie/deprecated/core"
 import {
   replayProjection,
   type Projection,
-} from "tardie/core"
+} from "tardie/deprecated/core"
 
 const FactoryResult = Schema.Union([
   Schema.Struct({ action: Schema.Literal("inspected") }),
@@ -183,7 +183,7 @@ A nice workaround is to verify only a sample of trajectories. Tardigrade uses [f
 We define a safety rule as a function that receives the event log and asserts a condition that must always hold:
 
 ```ts
-import type { Event } from "tardie/core"
+import type { Event } from "tardie/deprecated/core"
 
 type Rule = (context: {
   readonly events: ReadonlyArray<Event>
@@ -196,7 +196,7 @@ Here, `factoryState(events)` is a projection function that reconstructs the tank
 
 ```ts
 import { expect } from "bun:test"
-import type { ActorInvariants } from "tardie/testing"
+import type { ActorInvariants } from "tardie/deprecated/testing"
 import { factoryState } from "./projections"
 
 const rules = {
@@ -219,11 +219,11 @@ In `projections.ts`, define a projection that applies successful factory actions
 
 ```ts expanded
 import { Schema } from "effect"
-import type { Event } from "tardie/core"
+import type { Event } from "tardie/deprecated/core"
 import {
   replayProjection,
   type Projection,
-} from "tardie/core"
+} from "tardie/deprecated/core"
 
 const FactoryResult = Schema.Union([
   Schema.Struct({ action: Schema.Literal("inspected") }),
@@ -299,7 +299,7 @@ Pass the rules to the checker:
 
 ```ts expanded
 import fc from "fast-check"
-import { checkActor } from "tardie/testing"
+import { checkActor } from "tardie/deprecated/testing"
 import { testServices } from "./factory-test-model"
 
 const report = await checkActor(clippy, {
@@ -323,10 +323,10 @@ In `factory-test-model.ts`, define a generated `LanguageModel`. The factory tool
 ```ts collapsed
 import fc from "fast-check"
 import { Effect } from "effect"
-import type { ActorCheckContext } from "tardie/testing"
-import { testInferenceLayer } from "tardie/agent/testing"
-import type { Action } from "tardie/log/events"
-import type { InferRequest } from "tardie/agent"
+import type { ActorCheckContext } from "tardie/deprecated/testing"
+import { testInferenceLayer } from "tardie/deprecated/agent/testing"
+import type { Action } from "tardie/deprecated/log/events"
+import type { InferRequest } from "tardie/deprecated/agent"
 
 const responseArbitrary = (request: InferRequest): fc.Arbitrary<Action> => {
   const complete = fc.constant<Action>({ kind: "complete", output: "Done." })
@@ -357,7 +357,7 @@ export const testServices = ({ generate }: ActorCheckContext) => {
 
 ```ts expanded
 import { Effect } from "effect"
-import { tool } from "tardie/agent"
+import { tool } from "tardie/deprecated/agent"
 
 const factorySpec = (name: string) => ({
   name,
@@ -406,8 +406,8 @@ Once we've seen the counterexample to our safety rule, we can have conditions wi
 <CodeFile name="factory.ts">
 
 ```ts
-import { actor } from "tardie/core"
-import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/agent"
+import { actor } from "tardie/deprecated/core"
+import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/deprecated/agent"
 import { inspectWaterTank, producePaperClip, treatWasteWater } from "./factory-tools"
 
 const clippy = actor({
@@ -428,7 +428,7 @@ const clippy = actor({
 
 ```ts expanded highlight="25-31"
 import { Effect } from "effect"
-import { tool } from "tardie/agent"
+import { tool } from "tardie/deprecated/agent"
 import { factoryState } from "./projections"
 
 const factorySpec = (name: string) => ({
@@ -468,11 +468,11 @@ export const producePaperClip = tool({
 
 ```ts expanded
 import { Schema } from "effect"
-import type { Event } from "tardie/core"
+import type { Event } from "tardie/deprecated/core"
 import {
   replayProjection,
   type Projection,
-} from "tardie/core"
+} from "tardie/deprecated/core"
 
 const FactoryResult = Schema.Union([
   Schema.Struct({ action: Schema.Literal("inspected") }),
@@ -565,9 +565,9 @@ This test brings Clippy, the simulated tools, and the safety rules together. It 
 ```ts expanded
 import { expect, test } from "bun:test"
 import fc from "fast-check"
-import { actor } from "tardie/core"
-import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/agent"
-import { checkActor, type ActorInvariants } from "tardie/testing"
+import { actor } from "tardie/deprecated/core"
+import { agentMessageMethod, infer, outputValidateOnce, system } from "tardie/deprecated/agent"
+import { checkActor, type ActorInvariants } from "tardie/deprecated/testing"
 import { inspectWaterTank, producePaperClip, treatWasteWater } from "./factory-tools"
 import { factoryState } from "./projections"
 import { testServices } from "./factory-test-model"

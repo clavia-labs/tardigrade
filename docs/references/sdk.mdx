@@ -13,31 +13,53 @@ order: 2
 bun add tardie
 ```
 
-Most applications can import their actor definition, agent components, policies, and public types from `tardie/core` and `tardie/agent`:
+Choose an entrypoint for the API you need:
 
-```ts
-import { actor } from "tardie/core"
-import { agentMethods, budget, codeMode, compact, messages, infer, nativeOutput, system, tool } from "tardie/agent"
+```text
+tardie/core                  atoms, actors, runtime, state initialisation
+tardie/agent                 agent authoring
+tardie/agent/services        execution and wiring
+tardie/libraries             tools and packages
+tardie/model                 model configuration and provider layers
+tardie/code                  code execution and sandboxes
+tardie/platform/bun          Bun hosting and storage
+tardie/platform/cloudflare   Cloudflare hosting and storage
+tardie/deprecated            component APIs
 ```
 
-## Core primitives
+## Author an actor
 
-The `tardie/core` entry point exports the common actor and component types. Lower-level integrations can import each primitive directly:
-
-<div className="sdk-reference-list">
-  <div><code>tardie/core/event</code><span><code>Event</code></span></div>
-  <div><code>tardie/core/machine</code><span><code>Machine</code></span></div>
-  <div><code>tardie/core/projection</code><span><code>Projection</code>, materialization, and replay</span></div>
-  <div><code>tardie/core/component</code><span>Components, component output, and composition</span></div>
-  <div><code>tardie/core/view</code><span><code>ViewAlgebra</code></span></div>
-  <div><code>tardie/core/intent</code><span>Intent transitions</span></div>
-  <div><code>tardie/core/effect</code><span>External effect transitions</span></div>
-  <div><code>tardie/core/transition</code><span>The transition union and transition projections</span></div>
-  <div><code>tardie/core/actor</code><span>Actors, methods, contracts, and references</span></div>
-</div>
+Core primitives and runtime APIs share a flat entrypoint. State codecs and initialisation are available from the same module:
 
 ```ts
-import type { Machine } from "tardie/core/machine"
-import type { Projection } from "tardie/core/projection"
-import type { ComponentOutput } from "tardie/core/component"
+import { AtomState, actorMethod, defineActor, durableAtom, event, initialiseState, type InitialState } from "tardie/core"
+import { agentMethods, conversation, infer } from "tardie/agent"
+import { definePackage } from "tardie/libraries"
 ```
+
+[State initialisation](/docs/migration/state-initialisation) shows how to create a thread from an existing actor's state.
+
+## Host and services
+
+Import hosting separately from actor definitions. Agent implementations live in the services entrypoint:
+
+```ts
+import { createBunHost } from "tardie/platform/bun"
+import { runtimeLayer } from "tardie/agent/services"
+import { modelLayer } from "tardie/model"
+import { providerLayer } from "tardie/model/providers/openrouter"
+```
+
+For Cloudflare, import `createCloudflareHost` from `tardie/platform/cloudflare`. Provider modules have individual entrypoints so applications can choose their provider dependencies.
+
+## Component APIs
+
+Component actors use the compatibility entrypoints:
+
+```ts
+import { actor } from "tardie/deprecated/core"
+import { agentMethods, infer, system, tool } from "tardie/deprecated/agent"
+import { createBunHost } from "tardie/deprecated/bun"
+```
+
+The package has no API at bare `tardie`. Source folders inside core and agent are private; use their flat entrypoints.

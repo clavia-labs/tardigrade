@@ -6,13 +6,13 @@ import { rewriteComponentRuntimeImports, stageInitTemplates } from "./publish-pa
 
 test("private runtime imports resolve inside the assembled package", () => {
   expect(rewriteComponentRuntimeImports('import { machineOf } from "../../../../deprecated/core/src/component/runtime"',
-    "/stage/src/agent/component/budget/index.ts", "/stage/src"))
+    "/stage/src/deprecated/agent/component/budget/index.ts", "/stage/src"))
     .toBe('import { machineOf } from "../../../core/component/runtime"')
   expect(rewriteComponentRuntimeImports("import { registerComponent } from '../../../deprecated/core/src/component/runtime'",
     "/stage/src/code/package/definition.ts", "/stage/src"))
-    .toBe("import { registerComponent } from '../../core/component/runtime'")
+    .toBe("import { registerComponent } from '../../deprecated/core/component/runtime'")
   const withinCore = 'import { machineOf } from "./runtime"'
-  expect(rewriteComponentRuntimeImports(withinCore, "/stage/src/core/component/machine.ts", "/stage/src")).toBe(withinCore)
+  expect(rewriteComponentRuntimeImports(withinCore, "/stage/src/deprecated/core/component/machine.ts", "/stage/src")).toBe(withinCore)
 })
 
 test("template staging excludes local state and secrets, including stale output", async () => {

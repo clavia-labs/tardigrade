@@ -5,6 +5,10 @@
     "@clavia/tardigrade-ui"
   ],
   "workspaces": {
+    "packages/tardie": {
+      "entry": ["src/generated/**/*.ts!", "src/deprecated/*.ts!"],
+      "project": ["src/**/*.ts"]
+    },
     "packages/platform": {
       "entry": ["test/workerd/fixture.worker.ts"],
       "project": ["src/**/*.ts!", "test/**/*.ts"]

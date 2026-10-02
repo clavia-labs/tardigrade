@@ -112,8 +112,8 @@ Composition is possible because each component is defined as a typed state machi
 A component has the following interface:
 
 ```ts
-import type { ComponentOutput, TransitionContext } from "tardie/core"
-import type { Event } from "tardie/core/event"
+import type { ComponentOutput, TransitionContext } from "tardie/deprecated/core"
+import type { Event } from "tardie/deprecated/core/event"
 
 interface ComponentDefinition<State, View, Requirements = never, Result = unknown> {
   readonly name: string

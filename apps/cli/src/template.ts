@@ -1,4 +1,4 @@
-import { ACTOR_NAME_PATTERN } from "tardie"
+import { ACTOR_NAME_PATTERN } from "tardie/deprecated"
 import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"

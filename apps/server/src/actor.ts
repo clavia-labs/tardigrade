@@ -15,7 +15,7 @@ import {
   outputValidateOnce,
   workspacePackage,
   type AgentCatalog
-} from "tardie"
+} from "tardie/deprecated"
 import { RESERVED_ACTOR } from "@clavia/tardigrade-deprecated-client/contract"
 
 

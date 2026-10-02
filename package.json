@@ -31,7 +31,9 @@
     "pack": "bun run tools/publish.ts --dry-run",
     "graph": "bun run tools/code-graph.ts",
     "graph:check": "bun run tools/code-graph.ts --check",
-    "chat": "bun run packages/apps/cli/src/main.ts"
+    "chat": "bun run packages/apps/cli/src/main.ts",
+    "exports": "bun run tools/public-exports.ts",
+    "postinstall": "bun run exports"
   },
   "dependencies": {
     "@types/node": "^24",

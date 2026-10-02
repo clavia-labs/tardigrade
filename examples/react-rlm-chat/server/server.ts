@@ -1,7 +1,7 @@
 import { providerLayer } from "tardie/model/providers/openrouter"
 import { join } from "node:path"
-import { createBunHost, serve } from "tardie/bun"
-import { bunModelServices } from "tardie/server/model-services"
+import { createBunHost, serve } from "tardie/deprecated/bun"
+import { bunModelServices } from "tardie/deprecated/server/model-services"
 import definition from "./actor"
 
 const { config, layers, api } = await bunModelServices({

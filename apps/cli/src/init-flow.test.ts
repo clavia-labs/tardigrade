@@ -9,11 +9,6 @@ import { tdg } from "./commands"
 import { Cli } from "./services"
 
 const repository = new URL("../../../", import.meta.url).pathname
-const namespaces: Readonly<Record<string, string>> = {
-  core: "packages/deprecated/core/src/index.ts", agent: "packages/deprecated/agent/src/index.ts", code: "packages/code/src/index.ts",
-  http: "packages/deprecated/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/index.ts", server: "apps/server/src/index.ts"
-}
-
 // bundleServer resolves the public package namespaces against their publish sources.
 const bundleServer = async (directory: string) => {
   const packed = process.env.TARDIE_TEST_PACKAGE
@@ -30,11 +25,7 @@ const bundleServer = async (directory: string) => {
           if (wildcard === undefined) throw new Error(`missing published export: ${path}`)
           return { path: join(packed, exports[wildcard]!.replace("*", key.slice(wildcard.length - 1))) }
         }
-        const [, namespace, ...tail] = path.split("/")
-        const entry = namespaces[namespace!]
-        if (entry === undefined) return
-        const source = tail.length === 0 ? entry : entry.replace(/[^/]+$/, `${tail.join("/")}.ts`)
-        return { path: join(repository, source) }
+        return { path: Bun.resolveSync(path, join(repository, "apps/cli/src")) }
       })
     } }]
   }).catch((error: unknown) => { throw new Error(error instanceof AggregateError ? error.errors.map(String).join("\n") : String(error)) })

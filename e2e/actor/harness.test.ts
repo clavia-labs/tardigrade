@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test"
-import { actor, agentMethods, infer, nativeOutput } from "tardie"
+import { actor, agentMethods, infer, nativeOutput } from "tardie/deprecated"
 import { actorScenario, ROOT_THREAD, TEST_MODEL } from "./harness"
 
 test("scenario ingress allocates before delivery and uses the declared method protocol", async () => {

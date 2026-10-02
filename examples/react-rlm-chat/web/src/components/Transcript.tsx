@@ -8,7 +8,7 @@ import type { Event, EventRow } from "@clavia/tardigrade-deprecated-client"
 import { childThread, pendingChildCount, toolContent, toolTitle, value, waitingForResponse } from "../events"
 import { MarkdownMessage } from "./MarkdownMessage"
 import { Schema } from "effect"
-import { MessageContent } from "tardie/agent"
+import { MessageContent } from "tardie/deprecated/agent"
 
 export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
   readonly empty: string

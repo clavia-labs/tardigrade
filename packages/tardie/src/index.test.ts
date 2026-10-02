@@ -1,19 +1,22 @@
 import { expect, test } from "bun:test"
-import * as root from "tardie"
-import * as core from "tardie/core"
-import * as agent from "tardie/agent"
-import * as code from "tardie/code"
-import { codeMode } from "tardie/component/code"
-import { codeMode as scopedCodeMode } from "tardie/agent/component/code"
+import { createActor } from "tardie/agent"
+import { AtomState, createEventLog, defineActor, initialiseState } from "tardie/core"
+import { actor } from "tardie/deprecated"
+import { codeMode } from "tardie/deprecated/component/code"
+import * as legacyAgent from "tardie/deprecated/agent"
+import { definePackage } from "tardie/libraries"
 
-test("public scopes retain the compatibility exports", () => {
-  for (const scope of [core, agent, code]) {
-    for (const [name, value] of Object.entries(scope)) {
-      expect(root[name as keyof typeof root]).toBe(value)
-    }
+test("public entrypoints expose actor and migration APIs", () => {
+  for (const value of [createEventLog, defineActor, initialiseState, definePackage, actor]) {
+    expect(typeof value).toBe("function")
   }
-  expect(codeMode).toBe(agent.codeMode)
-  expect(scopedCodeMode).toBe(agent.codeMode)
-  expect("infer" in core).toBe(false)
-  expect("defineActor" in agent).toBe(false)
+  expect(typeof AtomState).toBe("symbol")
+  expect(createActor.actorName).toBe("tardie")
+  expect(codeMode).toBe(legacyAgent.codeMode)
+})
+
+test("public imports hide implementation modules", () => {
+  for (const path of ["tardie", "tardie/experimental", "tardie/core/atoms/atom", "tardie/agent/atoms", "tardie/deprecated/core/component/runtime", "tardie/deprecated/core/component/composition/parent"]) {
+    expect(() => import.meta.resolve(path)).toThrow()
+  }
 })
