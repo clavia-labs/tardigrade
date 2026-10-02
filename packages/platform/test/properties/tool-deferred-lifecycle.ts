@@ -2,8 +2,8 @@ import { createTestStore } from "./runtime/store"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/unstable/rpc"
 import * as fc from "fast-check"
-import { defineActor, durablePromise, effectKey, EffectExecution, ExecutionHandle, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, Promises } from "@clavia/tardigrade-core"
-import { defineLibrary, MethodExecution } from "@clavia/tardigrade-libraries"
+import { defineActor, durablePromise, effectKey, EffectExecution, ExecutionHandle, ExecutionResult, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, Promises } from "@clavia/tardigrade-core"
+import { defineLibrary, MethodExecution, MethodPromiseTimeout } from "@clavia/tardigrade-libraries"
 import { tools as libraryTools } from "@clavia/tardigrade-agent/atoms/tools"
 import { ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
 import { Event } from "@clavia/tardigrade-agent/contracts/events"
@@ -35,7 +35,7 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
   const input = Schema.Struct({ value: Schema.Finite })
   const libraries = [defineLibrary({ name: "test", description: "Jobs", methods: [
     Rpc.make("job", { payload: input, success: options.executor === "local" ? Schema.Finite : ExecutionHandle, error: Schema.String })
-      .annotate(MethodExecution, "background"),
+      .annotate(MethodExecution, "background").annotate(MethodPromiseTimeout, 120_000),
   ] }).implement({ job: value => Effect.gen(function* () {
     executions.push((yield* EffectExecution).ref)
     if (options.executor === "remote") return { executor: "remote", id: "job" }
@@ -47,11 +47,14 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
     const tools = yield* libraryTools()
     return { atom: tools, schema: Event }
   }))
-  const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, promiseDelivery: { retryIntervalMs: 1 },
+  const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, promises: { timeoutMs: reopening ? 1_000 : 60_000 }, promiseDelivery: { retryIntervalMs: 1 },
     actorContext: services => Context.make(ToolCatalog, Context.get(services, ToolCatalog)),
     services: (host: ActorRuntime<Event>) => Layer.merge(toolActs(libraries), Layer.succeed(Promises, {
       watch: registration => Effect.gen(function* () {
         watches++
+        const settled = payloads().find(event => event.type === "EffectSettled")
+        const envelope = yield* Schema.decodeUnknownEffect(ExecutionResult)(settled?.type === "EffectSettled" && settled.outcome.status === "fulfilled" ? settled.outcome.value : null)
+        if (envelope.type !== "promise" || registration.deadlineAt !== envelope.deadlineAt) return yield* Effect.fail(new RuntimeError("Resolver did not retain the recorded method deadline"))
         yield* Deferred.succeed(registered, undefined)
         if (options.executor === "local") return yield* Effect.fail(new RuntimeError("Local tool delegated to resolver"))
         if (!reopening) return

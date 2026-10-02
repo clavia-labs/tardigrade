@@ -91,11 +91,12 @@ Compose the atoms into an agent actor.
 
 ```ts
 import { Effect } from "effect"
-import { defineActor } from "tardie/core"
-import { agentMethods, compact, infer, tools as libraryTools } from "tardie/agent"
+import { atom, defineActor } from "tardie/core"
+import { workspace, fetch } from "tardie/libraries"
+import { agentMethods, codeMode, compact, infer, messages } from "tardie/agent"
 
 const researcher = defineActor("researcher", Effect.gen(function* () {
-  const tools = yield* libraryTools()
+  const tools = yield* codeMode([workspace(), fetch()])
   const context = yield* compact(messages, {
     triggerRatio: 0.8,
     retainRatio: 0.5,

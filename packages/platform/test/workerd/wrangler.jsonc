@@ -2,5 +2,7 @@
   "name": "tardigrade-experimental-test",
   "main": "fixture.worker.ts",
   "compatibility_date": "2026-08-08",
+  "durable_objects": { "bindings": [{ "name": "PROMISE_RESOLVER", "class_name": "TestPromiseResolver" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TestPromiseResolver"] }],
   "compatibility_flags": ["nodejs_compat"]
 }
