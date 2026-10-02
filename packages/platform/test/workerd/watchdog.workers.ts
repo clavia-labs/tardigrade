@@ -10,6 +10,17 @@ import type { TestPromiseResolver } from "./fixture.worker"
 const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
 const address = { actor: "test", instance: "main", thread: "one" }
 
+// deferAlarms keeps staged alarms at least a minute out so the fixture's no-op alarm handler cannot consume them while a scenario drives the host alarm explicitly.
+const deferAlarms = (storage: DurableObjectStorage) => new Proxy(storage, { get(target, property) {
+  if (property === "transaction") return <Value>(callback: (tx: DurableObjectTransaction) => Promise<Value>) => target.transaction(tx => callback(new Proxy(tx, { get(transaction, key) {
+    if (key === "setAlarm") return (at: number) => transaction.setAlarm(Math.max(at, Date.now() + 60_000))
+    const value = Reflect.get(transaction, key)
+    return typeof value === "function" ? value.bind(transaction) : value
+  } })))
+  const value = Reflect.get(target, property)
+  return typeof value === "function" ? value.bind(target) : value
+} })
+
 test("watchdog synchronizes the replacement before recovery", async () => {
   await runInDurableObject(namespace.getByName("watchdog-sync"), async (_instance, state) => {
     let flushed = false
@@ -55,16 +66,7 @@ test("Cloudflare host recovers accepted work after runtime restart", async () =>
       const job = Job.request({ tag: "job", input: null, onSettled: () => [Finished.make({})] })
       return { atom: effectAtom(get => { const view = get(progress); return { view, events: {}, acts: view.started && !view.done ? { job } : {} } }), methods: { start: actorMethod({ inputSchema: Schema.Null, outputSchema: Schema.Boolean, onReceive: Started.from(() => ({})), result: (_, get) => get(progress).done ? { status: "completed" as const, output: true } : undefined }) } }
     }))
-    // storage delays automatic delivery while this scenario drives the alarm handler explicitly.
-    const storage = new Proxy(state.storage, { get(target, property) {
-      if (property === "transaction") return <Value>(callback: (tx: DurableObjectTransaction) => Promise<Value>) => target.transaction(tx => callback(new Proxy(tx, { get(transaction, key) {
-        if (key === "setAlarm") return (at: number) => transaction.setAlarm(Math.max(at, Date.now() + 60_000))
-        const value = Reflect.get(transaction, key)
-        return typeof value === "function" ? value.bind(transaction) : value
-      } })))
-      const value = Reflect.get(target, property)
-      return typeof value === "function" ? value.bind(target) : value
-    } })
+    const storage = deferAlarms(state.storage)
     const entered = Deferred.makeUnsafe<void>()
     const first = createCloudflareHost({ actor, storage, actorContext: Context.pick(), services: () => Job.layer(() => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))) })
     const thread = await Effect.runPromise(first.allocateRootThread({ instance: "main", name: "one" }))
@@ -133,7 +135,7 @@ test("Cloudflare heartbeats keep live local work without renewing its deadline",
     }))
     const release = Deferred.makeUnsafe<void>()
     let executions = 0
-    const host = createCloudflareHost({ actor, storage: state.storage, promises: { timeoutMs: 10 }, watchdog: { policy: { keepAliveIntervalMs: 5, attemptTimeoutMs: 20 } }, actorContext: Context.pick(), services: () => Job.layer(() => Effect.gen(function* () {
+    const host = createCloudflareHost({ actor, storage: deferAlarms(state.storage), promises: { timeoutMs: 10 }, watchdog: { policy: { keepAliveIntervalMs: 5, attemptTimeoutMs: 20 } }, actorContext: Context.pick(), services: () => Job.layer(() => Effect.gen(function* () {
       executions++
       const execution = yield* EffectExecution
       const promise = durablePromise(execution.ref, { success: Schema.Null, error: Schema.String })
