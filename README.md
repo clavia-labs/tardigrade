@@ -15,7 +15,7 @@
 
 Tardigrade is a typescript framework for building composable agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and takes a functional approach to managing agent state and effects, drawing inspiration from [Elm](https://elm-lang.org/), and [Jotai](https://jotai.org/).
 
-<p align="center"><code>{ view, effects } = f(event log)</code></p>
+<p align="center"><img src="assets/event-log-equation.svg" alt="{ view, effects } = f(event log)"></p>
 
 ## Quickstart
 
