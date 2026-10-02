@@ -3,7 +3,7 @@ import { act } from "../../atoms/act"
 import { effectAtom } from "../../atoms/effect"
 import { ChildPlacement, ThreadDepth, ThreadCoordinate } from "../../actor/thread"
 import { defineActor } from "../../actor/definition"
-import { InitialState } from "../../initial-state"
+import { InitialState } from "../../initialise"
 import { durableAtom } from "../../atoms/durable"
 
 

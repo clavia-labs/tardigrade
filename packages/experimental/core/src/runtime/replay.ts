@@ -9,10 +9,9 @@ import { ExecutionResult, type EffectCancelled, effectKey, EffectRef, type Execu
 import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, type PromiseSettled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
-import { DurableAtomCheckpoint } from "../atoms/durable"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
 import { ThreadCreated } from "../actor/thread"
-import { StateInitialised } from "../initial-state"
+import { AtomState, initialStateSeed, StateInitialised, type StatefulAtom, type StateSeed } from "../initialise"
 
 type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<infer Value> ? Value : never }
 
@@ -83,7 +82,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const offset = seed?.position ?? 0
     const source = createRecordSource<Event>()
     const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
-    const durable = new Map(seed?.durable.map(entry => [entry.name, entry] as const))
+    let initialState: StateSeed | undefined
     const initialisedNames = new Set(seed?.durable.map(entry => entry.name))
     const coreRequests = new Map<string, EffectRequested>()
     const coreSettlements = new Map<string, EffectSettled>()
@@ -100,7 +99,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       records: source.records,
       bindings,
       position: seed?.position ?? 0,
-      durable,
+      initialState: () => initialState ??= initialStateSeed(store.get(source.records), seed),
       effect,
       promise: ref => promiseSettlements.get(effectKey(ref)),
     }))
@@ -154,9 +153,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       })
       // TODO: Checkpoint capture must preserve recovery for unread durable atoms absent from the registry; suffix-only restore currently loses their prefix state (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent, initSkipPrefix).
       const durable = [...store.nodes().values()].flatMap(node => {
-        const capture = (node.atom as Partial<Record<typeof DurableAtomCheckpoint, unknown>>)[DurableAtomCheckpoint]
-        if (typeof capture !== "function") return []
-        return [capture(store.get, offset + records.length) as { readonly name: string; readonly state: unknown; readonly position: number }]
+        const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
+        return codec ? [{ name: codec.name, state: codec.encode(store.get), position: offset + records.length }] : []
       })
       const names = new Set<string>()
       for (const entry of durable) {

@@ -10,8 +10,7 @@ import type { ActorDefinition } from "../actor/definition"
 import type { ActorRuntime, Requirements } from "./contracts"
 import type { ResolutionState } from "../services/promises"
 
-import type { InitialisableAtom } from "../atoms/durable"
-import type { InitialState } from "../initial-state"
+import type { InitialState, StatefulAtom } from "../initialise"
 import { prepareInitialState } from "./initialisation"
 import { createActorStore, type DeliveryOptions } from "./execution"
 import { createThreadStore } from "./stores/thread"
@@ -108,7 +107,7 @@ export interface ActorStorage<Event extends object> {
 
 export interface ActorExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
   // initialStateAtoms supplies destination codecs for state accepted during thread creation.
-  readonly initialStateAtoms?: readonly InitialisableAtom[]
+  readonly initialStateAtoms?: readonly StatefulAtom[]
   readonly actor: ActorDefinition<Event, State, Services, Contracts>
   readonly storage: ActorStorage<Event>
   readonly services: (coordinate: ThreadCoordinate, runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>

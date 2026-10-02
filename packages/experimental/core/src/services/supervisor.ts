@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util"
-import type { InitialState } from "../initial-state"
+import type { InitialState } from "../initialise"
 import { Context, Effect, Exit, Random, Semaphore } from "effect"
 import { RuntimeError } from "../runtime/effects"
 import type { ChildPlacement, ThreadCoordinate } from "../actor/thread"

@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util"
 import { Clock, Effect, Schema } from "effect"
 import { RecordMetadata, JournalConflict, type MessageJournal, type Recorded } from "../journal"
 import { RuntimeError } from "../../runtime/effects"
-import { StateInitialised } from "../../initial-state"
+import { StateInitialised } from "../../initialise"
 import { ThreadCreated, type ThreadCoordinate } from "../../actor/thread"
 
 export interface ThreadJournal<Event extends object> extends MessageJournal<Event> {

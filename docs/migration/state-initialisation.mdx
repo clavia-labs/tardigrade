@@ -49,6 +49,6 @@ The route returns the created thread coordinate. Invalid state returns HTTP 400.
 
 ## Resume and checkpoint
 
-The new runtime loads each supplied atom's state before reducing subsequent events. Effects, execution handles, and pending replies are not transferred; the resumed graph can propose work from the supplied state. Normal checkpointing takes over, and capture waits until all supplied atoms have been read. Keep the initialisation event as durable history so the state can be rebuilt without a checkpoint.
+Checkpoint restoration and `StateInitialised` feed the same atom seed mechanism. Each durable atom exposes an `AtomState` codec for encoding and decoding; the runtime loads supplied state before reducing subsequent events. Effects, execution handles, and pending replies are not transferred; the resumed graph can propose work from the supplied state. Normal checkpointing takes over, and capture waits until all supplied atoms have been read. Keep the initialisation event as durable history so the state can be rebuilt without a checkpoint.
 
 For custom journal wiring, core also exports `initialiseState({ journal, atoms, initialState, source? })`. Invoke it before opening the runtime; the journal must be empty or contain only `ThreadCreated`. `source` is optional JSON provenance.

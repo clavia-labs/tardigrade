@@ -3,8 +3,8 @@ import { EffectRef, EffectCancelled } from "./effects"
 import { promiseSchema } from "../atoms/promise"
 import { MessageReceived, MessageDelivered, isMessageReceived } from "../actor/message"
 import { ThreadCreated } from "../actor/thread"
-import { StateInitialised } from "../initial-state"
-export { StateInitialised } from "../initial-state"
+import { StateInitialised } from "../initialise"
+export { StateInitialised } from "../initialise"
 
 export const EffectRequest = Schema.Struct({ executor: Schema.NonEmptyString, input: Schema.Json })
 export type EffectRequest = typeof EffectRequest.Type

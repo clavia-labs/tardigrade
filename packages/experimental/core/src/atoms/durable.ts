@@ -1,26 +1,12 @@
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { atom, type Atom } from "./atom"
+import { atom, type Atom, type Getter } from "./atom"
 import type { RecordMetadata } from "../services/journal"
 import { EventLog, eventLogContext } from "../services/event-log"
-import { StateInitialised } from "../initial-state"
+import { AtomState, type StatefulAtom } from "../initialise"
 
-export interface DurableAtomCheckpoint<State = unknown> {
-  readonly name: string
-  readonly state: State
-  readonly position: number
-}
-
-export const DurableAtomCheckpoint = Symbol("DurableAtomCheckpoint")
-export const DurableAtomInitialisation = Symbol("DurableAtomInitialisation")
-
-export interface InitialisableAtom {
-  readonly [DurableAtomInitialisation]: { readonly name: string; readonly validate: (state: unknown) => void }
-}
-
-export interface DurableAtom<State, Event> extends Atom<State>, InitialisableAtom {
+export interface DurableAtom<State, Event> extends Atom<State>, StatefulAtom {
   readonly input: Schema.Schema<Event>
-  readonly [DurableAtomCheckpoint]: (get: (atom: Atom<State>) => State, position: number) => DurableAtomCheckpoint<State>
 }
 
 /*
@@ -46,6 +32,7 @@ export function durableAtom<State, Event>(options: {
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
   const decode = (Schema.decodeUnknownSync as unknown as (schema: unknown, options: { readonly onExcessProperty: "error" }) => (value: unknown) => unknown)(options.schema, { onExcessProperty: "error" }) as (value: unknown) => State
   const encode = (Schema.encodeUnknownSync as unknown as (schema: unknown) => (value: unknown) => unknown)(options.schema) as (value: State) => unknown
+  const restore = (state: unknown): State => validate(decode(state))
   const initial = structuredClone(options.initial)
   validate(initial)
   type Frame = { readonly source: Atom<readonly unknown[]>; readonly position: number; readonly state: State }
@@ -56,22 +43,19 @@ export function durableAtom<State, Event>(options: {
     const source = service.events
     const configuredPosition = service.position
     const offset = (typeof configuredPosition === "function" ? configuredPosition() : configuredPosition) ?? 0
-    const configuredDurable = service.durable
-    const seed = (typeof configuredDurable === "function" ? configuredDurable()?.get(options.name) : configuredDurable?.get(options.name)) as DurableAtomCheckpoint<State> | undefined
+    const configuredSeed = service.initialState
+    const seed = typeof configuredSeed === "function" ? configuredSeed() : configuredSeed
     const events = get(source)
     const records = service.records ? get(service.records) : undefined
     const previous = Option.getOrUndefined(get.self<Frame>())
     const sameSource = previous !== undefined && previous.source === source
     if (sameSource && previous.position > offset + events.length) throw new Error("EventLog source must be append-only")
-    if (seed && seed.position !== offset) throw new Error(`Durable atom checkpoint position differs from event source: ${options.name}`)
-    let state = sameSource ? previous.state : seed ? decode(seed.state) : structuredClone(initial)
-    const start = sameSource ? previous.position - offset : 0
+    if (seed && (seed.position < offset || seed.position > offset + events.length)) throw new Error(`Atom seed position is outside the event source: ${options.name}`)
+    const continued = sameSource && previous.position >= (seed?.position ?? offset)
+    let state = continued ? previous.state : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : structuredClone(initial)
+    const start = (continued ? previous.position : seed?.position ?? offset) - offset
     for (let index = Math.max(0, start); index < events.length; index++) {
       const event = events[index]
-      if (Schema.is(StateInitialised)(event)) {
-        if (Object.hasOwn(event.initialState, options.name)) state = decode(event.initialState[options.name])
-        continue
-      }
       if (!accepts(event)) continue
       const record = records?.[index]
       const metadata: RecordMetadata = record ? { ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), ...(record.message ? { message: record.message } : {}) } : {}
@@ -84,7 +68,6 @@ export function durableAtom<State, Event>(options: {
   const output = atom(get => get(reduced).state)
   return Object.assign(output, {
     input: options.input,
-    [DurableAtomInitialisation]: { name: options.name, validate: (state: unknown) => { validate(decode(state)) } },
-    [DurableAtomCheckpoint]: (get: (atom: Atom<State>) => State, position: number): DurableAtomCheckpoint<State> => ({ name: options.name, state: encode(get(output)) as State, position }),
+    [AtomState]: { name: options.name, decode: restore, encode: (get: Getter) => encode(get(output)) },
   })
 }
