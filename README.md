@@ -142,7 +142,10 @@ export class ActorDO extends DurableObject<Env> {
     storage: this.ctx.storage,
     services: () => {
       const config = this.env.TARDIGRADE_CONFIG
-      return services((typeof config === "string" ? JSON.parse(config) : config).models, this.env)
+      return services(
+        (typeof config === "string" ? JSON.parse(config) : config).models,
+        this.env,
+      )
     },
   })
   private readonly handler = methodHttp(this.host)
@@ -152,7 +155,9 @@ export class ActorDO extends DurableObject<Env> {
 
 export default {
   fetch(request: Request, env: Env) {
-    const instance = /^\/v1\/actors\/([^/]+)\/threads(?:\/|$)/.exec(new URL(request.url).pathname)?.[1] ?? "main"
+    const pathname = new URL(request.url).pathname
+    const instance =
+      /^\/v1\/actors\/([^/]+)\/threads(?:\/|$)/.exec(pathname)?.[1] ?? "main"
     return env.ACTORS.getByName(decodeURIComponent(instance)).fetch(request)
   },
 }
