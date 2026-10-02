@@ -12,7 +12,7 @@ const root = fileURLToPath(new URL("../", import.meta.url))
 const pkg = (name: string) => `${root}packages/${name}`
 const deprecated = ["core", "agent", "host", "channels", "client", "http"].map((name) => `deprecated/${name}`)
 const packages = ["tardie", "core", "code", "agent", "libraries", "platform", "examples", "apps/cli", "model", ...deprecated]
-const testedPackages = ["tardie", "code", "model", ...deprecated]
+const testedPackages = ["tardie", "code", "agent", "model", ...deprecated]
 const packageId = (name: string) => name.replaceAll("/", "-")
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["bun", "worker-loader", "cloudflare"]

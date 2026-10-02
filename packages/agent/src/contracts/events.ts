@@ -10,7 +10,16 @@ export const ModelUsage = Schema.Struct({
   input: Schema.optionalKey(TokenCount), output: Schema.optionalKey(TokenCount),
   usd: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
 })
-export const ModelReply = Schema.Struct({ text: Schema.String, toolCalls: Schema.Array(ProviderToolCall), usage: Schema.optionalKey(ModelUsage) })
+export const ProviderContinuation = Schema.Struct({
+  provider: Schema.String, protocol: Schema.String, model: Schema.String,
+  payload: Schema.Json,
+})
+export type ProviderContinuation = typeof ProviderContinuation.Type
+const ModelReasoning = {
+  reasoning: Schema.optionalKey(Schema.String),
+  continuation: Schema.optionalKey(ProviderContinuation),
+}
+export const ModelReply = Schema.Struct({ ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ProviderToolCall), usage: Schema.optionalKey(ModelUsage) })
 export const Decision = Schema.Struct({ allowed: Schema.Boolean, reason: Schema.String })
 
 export const PermissionMode = Schema.Literals(["allow", "deny", "ask"])
@@ -71,8 +80,8 @@ export const ModelCalled = Schema.Union([
 export type ModelCalled = typeof ModelCalled.Type
 
 export const ModelReturned = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("inference"), callId: Schema.String, text: Schema.String, toolCalls: Schema.Array(ToolCall), usage: Schema.optionalKey(ModelUsage) }),
-  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("compaction"), callId: Schema.String, text: Schema.String, usage: Schema.optionalKey(ModelUsage) }),
+  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("inference"), callId: Schema.String, ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall), usage: Schema.optionalKey(ModelUsage) }),
+  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("compaction"), callId: Schema.String, ...ModelReasoning, text: Schema.String, usage: Schema.optionalKey(ModelUsage) }),
 ])
 export type ModelReturned = typeof ModelReturned.Type
 
@@ -135,7 +144,7 @@ export function turnSource(event: TurnRequested): "user" | "agent" | "tool" {
 
 const Message = Schema.Union([
   Schema.Struct({ role: Schema.Literal("user"), text: Schema.String }),
-  Schema.Struct({ role: Schema.Literal("assistant"), text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
+  Schema.Struct({ role: Schema.Literal("assistant"), ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
   Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, providerId: Schema.String, name: Schema.String, text: Schema.String, error: Schema.Boolean }),
 ])
 export const Conversation = Schema.Array(Message)

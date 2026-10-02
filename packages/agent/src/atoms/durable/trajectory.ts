@@ -19,7 +19,7 @@ export function trajectoryState(state: typeof TrajectoryState.Type, event: Event
     const call = state.models.find(call => call.callId === event.callId)
     if (!call) return state
     return {
-      entries: [...state.entries, { turnId: call.turnId, message: { role: "assistant", text: event.text, toolCalls: event.toolCalls } }],
+      entries: [...state.entries, { turnId: call.turnId, message: { role: "assistant", text: event.text, toolCalls: event.toolCalls, ...(event.reasoning === undefined ? {} : { reasoning: event.reasoning }), ...(event.continuation === undefined ? {} : { continuation: event.continuation }) } }],
       models: state.models.filter(value => value !== call),
     }
   }

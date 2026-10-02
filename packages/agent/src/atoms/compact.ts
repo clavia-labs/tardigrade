@@ -96,7 +96,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
         onRequested: () => [{ type: "ModelCalled", purpose: "compaction", ...selection, callId, through } satisfies ModelCalled],
         onSettled: result => {
           if (result.status === "rejected") return [{ type: "CompactionFailed", callId, reason: failureMessage(result.reason) } satisfies typeof CompactionFailed.Type]
-          return [{ type: "ModelReturned", purpose: "compaction", callId, text: result.value.text, ...(result.value.usage ? { usage: result.value.usage } : {}) } satisfies ModelReturned]
+          return [{ type: "ModelReturned", purpose: "compaction", callId, text: result.value.text, ...(result.value.reasoning === undefined ? {} : { reasoning: result.value.reasoning }), ...(result.value.continuation === undefined ? {} : { continuation: result.value.continuation }), ...(result.value.usage ? { usage: result.value.usage } : {}) } satisfies ModelReturned]
         },
       }) },
     }
