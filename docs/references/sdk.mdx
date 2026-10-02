@@ -84,7 +84,7 @@ const directTools = tools(libraries)
 const researchCode = codeMode(libraries)
 ```
 
-Yield the chosen Effect during actor setup. Supply matching implementations in host services with `toolActs(libraries)` for direct tools or `codeModeActs(libraries)` for code mode. Both atoms also accept the host's full catalog when no library selection is supplied. Missing or duplicate selected library names fail during setup. Built-ins include `arxiv`, `fetchLibrary`, `workspace`, `agents`, and `alarm`.
+Yield the chosen Effect during actor setup. Supply matching implementations in host services with `toolActs(libraries)` for direct tools or `codeModeActs(libraries)` for code mode. Both atoms also accept the host's full catalog when no library selection is supplied. Missing or duplicate selected library names fail during setup. Built-ins include `arxiv`, `fetch`, `workspace`, `agents`, and `alarm`.
 
 `arxiv().search` is exposed as `arxiv.search` inside code mode and `arxiv__search` as a direct tool. It returns the arXiv Atom XML feed with its source URL and applied pagination. `DEFAULT_ARXIV_POLICY` supplies pagination defaults; override them when constructing the library or per search call. `DEFAULT_ARXIV_ENDPOINT` can also be overridden. Applications own request pacing according to the [arXiv API guidance](https://info.arxiv.org/help/api/user-manual.html).
 
