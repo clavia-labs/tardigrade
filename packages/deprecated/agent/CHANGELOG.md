@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.40.0](https://github.com/clavia-labs/tardigrade/compare/v0.39.0...v0.40.0) (2026-10-02)
+
+
+### Features
+
+* add recovery watchdog ([#598](https://github.com/clavia-labs/tardigrade/issues/598)) ([c65522d](https://github.com/clavia-labs/tardigrade/commit/c65522d361bfd8f0d474e267581a4527486442d8))
+* **libraries:** simplify fetch examples ([#599](https://github.com/clavia-labs/tardigrade/issues/599)) ([293292e](https://github.com/clavia-labs/tardigrade/commit/293292eb2d54233e142933f8bb5c6556266c89cb))
+* **stream:** add execution stream ([#608](https://github.com/clavia-labs/tardigrade/issues/608)) ([fca33a0](https://github.com/clavia-labs/tardigrade/commit/fca33a0c0e528ea3d1f0eddbc44a7ccc713bc7d0))
+
+
+### Bug Fixes
+
+* **agent:** preserve provider reasoning ([#605](https://github.com/clavia-labs/tardigrade/issues/605)) ([33a893d](https://github.com/clavia-labs/tardigrade/commit/33a893d61e2d5c2a9c29061d21715192d7604e42))
+* **publish:** skip duplicate gate ([#607](https://github.com/clavia-labs/tardigrade/issues/607)) ([7685763](https://github.com/clavia-labs/tardigrade/commit/76857638781fcf23fadca574a023b2d9803fb602))
+* skip deprecated package tests ([#610](https://github.com/clavia-labs/tardigrade/issues/610)) ([9eb3af7](https://github.com/clavia-labs/tardigrade/commit/9eb3af74f25aa5a237e95781c48b132b261d26ea))
+
 ## [0.39.0](https://github.com/clavia-labs/tardigrade/compare/v0.38.0...v0.39.0) (2026-10-02)
 
 
