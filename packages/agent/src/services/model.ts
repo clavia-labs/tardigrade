@@ -101,13 +101,17 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const response = yield* languageModel.generateText({
         prompt: Prompt.fromMessages([
           Prompt.makeMessage("system", { content: input.system }),
-          ...input.context.map((message): Prompt.Message => {
-            if (message.role === "user") return Prompt.makeMessage("user", { content: [Prompt.makePart("text", { text: message.text })] })
-            if (message.role === "tool") return Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, result: message.text, isFailure: message.error, providerExecuted: false })] })
-            return Prompt.makeMessage("assistant", { content: [
+          ...input.context.flatMap((message): readonly Prompt.Message[] => {
+            if (message.role === "user") return [Prompt.makeMessage("user", { content: [Prompt.makePart("text", { text: message.text })] })]
+            if (message.role === "tool") return [Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, result: message.text, isFailure: message.error, providerExecuted: false })] })]
+            const continuation = message.continuation
+            if (continuation && continuation.provider === settings.provider && continuation.protocol === settings.protocol && continuation.model === resolved.model.model_id) {
+              return Schema.decodeUnknownSync(Prompt.Prompt)(continuation.payload).content
+            }
+            return [Prompt.makeMessage("assistant", { content: [
               ...(message.text ? [Prompt.makePart("text", { text: message.text })] : []),
               ...message.toolCalls.map(call => Prompt.makePart("tool-call", { id: call.providerId, name: call.name, params: call.input, providerExecuted: false })),
-            ] })
+            ] })]
           }),
         ]),
         toolkit,
@@ -122,7 +126,15 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: Schema.decodeUnknownSync(Schema.Json)(call.params) }))
       const finish = response.content.find(part => part.type === "finish")
       const usd = finish ? reportedCostOf(finish) : undefined
-      return { text: response.text, toolCalls, usage: {
+      const reasoning = response.reasoningText
+      const continuation = response.reasoning.length === 0 ? undefined : {
+        provider: settings.provider, protocol: settings.protocol, model: resolved.model.model_id,
+        payload: yield* Schema.encodeEffect(Prompt.Prompt)(Prompt.fromResponseParts(response.content)).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json))),
+      }
+      return { text: response.text, toolCalls,
+        ...(reasoning === undefined ? {} : { reasoning }),
+        ...(continuation === undefined ? {} : { continuation }),
+        usage: {
         ...(response.usage.inputTokens.total === undefined ? {} : { input: response.usage.inputTokens.total }),
         ...(response.usage.outputTokens.total === undefined ? {} : { output: response.usage.outputTokens.total }),
         usd: usd ?? null,
