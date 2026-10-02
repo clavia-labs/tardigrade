@@ -2,7 +2,7 @@ import { Clock, Context, Effect, Layer } from "effect"
 import * as fc from "fast-check"
 import { defineActor, effectAtom, RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
 import { createTestStore } from "./runtime/store"
-import { trajectory, conversation, timeSpend } from "@clavia/tardigrade-agent/atoms/durable"
+import { trajectory, messages, timeSpend } from "@clavia/tardigrade-agent/atoms/durable"
 import { Event } from "@clavia/tardigrade-agent/contracts/events"
 
 // turnFactRecovery preserves message order, attribution, and receipt-to-settlement elapsed time across replay and checkpoints.
@@ -31,7 +31,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
   }
   const actor = defineActor("turn-facts", Effect.sync(() => ({
     atom: effectAtom(get => ({
-      view: { trajectory: get(trajectory), conversation: get(conversation), timeSpend: get(timeSpend) }, events: {}, acts: {},
+      view: { trajectory: get(trajectory), messages: get(messages), timeSpend: get(timeSpend) }, events: {}, acts: {},
     })), schema: Event
   })))
   const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(), services: () => Layer.empty })
@@ -58,7 +58,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       if (records.some(record => !Number.isSafeInteger(record.recordedAt) || "recordedAt" in record.event)) return yield* Effect.fail(new RuntimeError("Journal metadata leaked into the event payload"))
       const state = store.getState().view
       if (JSON.stringify(state.trajectory.map(entry => entry.turnId)) !== JSON.stringify(["first", "second", "first", "second", "first"])) return yield* Effect.fail(new RuntimeError("Trajectory lost arrival order or turn attribution"))
-      if (JSON.stringify(state.conversation) !== JSON.stringify(state.trajectory.map(entry => entry.message))) return yield* Effect.fail(new RuntimeError("Model conversation diverged from trajectory"))
+      if (JSON.stringify(state.messages) !== JSON.stringify(state.trajectory.map(entry => entry.message))) return yield* Effect.fail(new RuntimeError("Model messages diverged from trajectory"))
       if (JSON.stringify(state.timeSpend) !== JSON.stringify([{ turnId: "first", ms: options.first }, { turnId: "second", ms: options.first + options.second }])) return yield* Effect.fail(new RuntimeError("Turn timing omitted queue time or downtime"))
       if (options.checkpoint) yield* store.checkpoint
       const settled = JSON.stringify(store.getState())

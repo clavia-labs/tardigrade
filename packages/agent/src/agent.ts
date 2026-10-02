@@ -1,7 +1,7 @@
 import { agentMethods } from "./actor/methods"
 import { Effect } from "effect"
 import { atom, defineActor } from "@clavia/tardigrade-core"
-import { conversation } from "./atoms/durable/index"
+import { messages } from "./atoms/durable/index"
 import { toolBudget, budgetInstructions } from "./atoms/budget-request"
 import { compact } from "./atoms/compact"
 import { infer } from "./atoms/infer"
@@ -20,7 +20,7 @@ export const createActor = defineActor("tardie", Effect.gen(function* () {
     "You are a friendly assistant.",
     budgetInstructions(budget),
   )
-  const context = yield* compact(conversation)
+  const context = yield* compact(messages)
 
   const input = atom(get => ({
     system: get(system),

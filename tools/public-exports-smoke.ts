@@ -11,6 +11,7 @@ const legacy = await load("tardie/deprecated")
 for (const [scope, name] of [[core, "defineActor"], [core, "createEventLog"], [core, "initialiseState"], [libraries, "definePackage"], [legacy, "actor"]] as const) {
   if (typeof scope[name] !== "function") throw new Error(`Missing public API ${name}`)
 }
+if (!("messages" in agent) || "conversation" in agent) throw new Error("Agent message projection exports failed")
 if (typeof agent.createActor !== "object") throw new Error("Missing agent actor definition")
 if (Object.keys(services).length === 0) throw new Error("Agent services entrypoint is empty")
 await load("tardie/platform/bun")
