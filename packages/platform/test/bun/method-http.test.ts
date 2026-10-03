@@ -59,7 +59,7 @@ test("HTTP discovers and invokes actor-owned methods without opening a durable t
     await Effect.runPromise(thread!.wait)
     expect(executions).toBe(1)
     expect(recoveries).toBe(1)
-    expect(await (await request(`${route}/calls/one`)).json()).toEqual({ status: "completed", output: 2 })
+    expect(await (await request(`${route}/calls/one`)).json()).toEqual({ id: "one", method: "increase", status: "completed", output: 2 })
     expect((await request(route, { method: "POST", headers: { "idempotency-key": "invalid" }, body: '"bad"' })).status).toBe(400)
     expect((await request("/v1/actors/main/threads/counter/methods/message", { method: "POST", headers: { "idempotency-key": "unknown" }, body: "2" })).status).toBe(404)
   } finally { await Effect.runPromise(host.close) }
@@ -98,8 +98,8 @@ test("HTTP discovery retains named and nested method schemas", async () => {
     expect((await request(route, { method: "POST", headers: { "idempotency-key": "one" }, body: JSON.stringify({ place: { city: "Singapore" } }) })).status).toBe(202)
     const thread = await Effect.runPromise(host.getThread({ instance: "main", thread: "echo" }))
     await Effect.runPromise(thread!.wait)
-    const result = Schema.decodeUnknownSync(Schema.Struct({ status: Schema.String, output: Schema.Json }))(await (await request(`${route}/calls/one`)).json())
-    expect(result).toEqual({ status: "completed", output: { result: { city: "Singapore" } } })
+    const result = Schema.decodeUnknownSync(Schema.Struct({ id: Schema.String, method: Schema.String, status: Schema.String, output: Schema.Json }))(await (await request(`${route}/calls/one`)).json())
+    expect(result).toEqual({ id: "one", method: "echo", status: "completed", output: { result: { city: "Singapore" } } })
     expect(output.validate(result.output).valid).toBe(true)
   } finally { await Effect.runPromise(host.close) }
 })
@@ -110,3 +110,4 @@ test("budget request specifications can enter a model act", () => {
   } })
   expect(request.request.input).toMatchObject({ tools: [{ name: "request_budget", execution: "foreground" }] })
 })
+

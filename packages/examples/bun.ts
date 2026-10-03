@@ -17,7 +17,7 @@ const run = Effect.scoped(Effect.gen(function* () {
 
   yield* Console.log("Threads:", [thread].map(thread => thread.coordinate))
 
-  const response = yield* thread.message({
+  const response = yield* thread.methods.message({
     text: yield* Config.String("EXPERIMENTAL_MESSAGE").pipe(Config.withDefault("Hello")),
   }, { id: "example-message" })
 

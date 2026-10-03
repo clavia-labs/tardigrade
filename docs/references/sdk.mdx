@@ -39,6 +39,16 @@ import { defineLibrary } from "tardie/libraries"
 
 [State initialisation](/docs/migration/state-initialisation) shows how to create a thread from an existing actor's state.
 
+## Thread methods
+
+Call declared actor methods through `thread.methods`. Thread controls such as `invoke`, `result`, `cancel`, and `getState` remain on the thread handle. Actor method names can match thread control names because the callable methods occupy a separate namespace.
+
+```ts
+const output = yield* thread.methods.message({ text: "Hello" }, { id: "message-1" })
+const receipt = yield* thread.invoke("message", { text: "Hello" }, { id: "message-2" })
+const state = yield* thread.result("message", receipt.id)
+```
+
 ## Libraries
 
 A library names a list of Effect RPC methods. Each method declares its payload, success, and error schemas. Attach descriptions, MCP-compatible behaviour hints, and execution mode as RPC annotations:
