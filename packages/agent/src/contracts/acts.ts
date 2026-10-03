@@ -5,10 +5,18 @@ import { ToolSpec } from "@clavia/tardigrade-libraries/types"
 import { ModelReply, ToolCall, Decision, BudgetDecision, BudgetMetric, PermissionRequest, Conversation } from "./events"
 
 const ModelInput = Schema.Struct({ model: ModelRef, system: Schema.String, tools: Schema.Array(ToolSpec), context: Conversation })
+export const ModelFailure = Schema.Struct({ message: Schema.String, retryable: Schema.Boolean, retry: Schema.optionalKey(Schema.Struct({ delayMs: Schema.Finite, dueAt: Schema.Finite })) })
+export type ModelFailure = typeof ModelFailure.Type
 export const Generate = act({
   name: "agent.model.generate",
-  input: ModelInput,
+  input: Schema.Struct({ ...ModelInput.fields, retryIndex: Schema.optionalKey(Schema.Int) }),
   success: ModelReply,
+  failure: Schema.Union([Schema.String, ModelFailure]),
+})
+export const RetryWait = act({
+  name: "agent.model.retry.wait",
+  input: Schema.Struct({ at: Schema.Finite }),
+  success: Schema.Struct({ at: Schema.Finite }),
   failure: Schema.String,
 })
 export const Summarize = act({ name: "agent.model.summarize", input: ModelInput, success: ModelReply, failure: Schema.String })

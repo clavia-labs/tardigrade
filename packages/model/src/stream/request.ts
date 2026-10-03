@@ -4,6 +4,14 @@ import { DEFAULT_TIMEOUT, DEFAULT_BACKOFF_MS, DEFAULT_MAX_RETRY_AFTER_MS, DEFAUL
 import type { RequestPolicy } from "./policy"
 export type { RequestPolicy } from "./policy"
 
+// retryDelayOf chooses a policy delay without reading ambient randomness; the caller journals the result.
+export const retryDelayOf = (policy: RequestPolicy, index: number, retryAfterMs: number | undefined, jitterFraction: number): number | undefined => {
+  const base = policy.retry.backoffMs[index]
+  if (base === undefined) return undefined
+  if (retryAfterMs !== undefined && retryAfterMs <= policy.retry.maxRetryAfterMs) return Math.ceil(retryAfterMs + jitterFraction * policy.retry.retryAfterJitterMs)
+  return Math.ceil(base)
+}
+
 export type RequestOptions = {
   readonly maxOutputTokens?: number
   readonly timeout?: Partial<StreamBounds>

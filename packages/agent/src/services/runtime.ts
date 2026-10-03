@@ -15,7 +15,7 @@ export interface AssistantContext {
   readonly parent: ActorCaller | undefined
 }
 
-type AgentActs = ActService<"agent.model.generate"> | ActService<"agent.model.summarize"> | ActService<"agent.tool.execute"> | ActService<"agent.permission.request">
+type AgentActs = ActService<"agent.model.generate"> | ActService<"agent.model.retry.wait"> | ActService<"agent.model.summarize"> | ActService<"agent.tool.execute"> | ActService<"agent.permission.request">
 
 type AssistantDefinition<Services> = ActorDefinition<Event, ActorOutput<unknown, Event, Services | AgentActs>, ModelInfo | ToolCatalog>
 

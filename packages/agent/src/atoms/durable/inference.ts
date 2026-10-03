@@ -1,12 +1,12 @@
 import { Schema } from "effect"
 import { durableAtom, CoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage } from "@clavia/tardigrade-core"
-import { TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled, AbortRequested, type Event } from "../../contracts/events"
+import { TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled, AbortRequested, ModelRetryScheduled, ModelRetryReady, type Event } from "../../contracts/events"
 
 const Turn = Schema.Struct({
   turnId: Schema.String, invocationRef: Schema.NullOr(InvocationRef), settlement: Schema.NullOr(Schema.Literals(["completed", "failed", "cancelled"])), answer: Schema.NullOr(Schema.String), answerCallId: Schema.NullOr(Schema.String),
   calls: Schema.Array(Schema.Struct({ callId: Schema.String, returned: Schema.Boolean })),
   outstanding: Schema.Array(Schema.String),
-  effects: Schema.Array(Schema.Struct({ ref: EffectRef, pending: Schema.Boolean })), failure: Schema.NullOr(Schema.String), cancellation: Schema.NullOr(Schema.String),
+  effects: Schema.Array(Schema.Struct({ ref: EffectRef, pending: Schema.Boolean })), retryIndex: Schema.optionalKey(Schema.Int), retry: Schema.optionalKey(Schema.NullOr(Schema.Struct({ callId: Schema.String, index: Schema.Int, delayMs: Schema.Finite, dueAt: Schema.Finite }))), failure: Schema.NullOr(Schema.String), cancellation: Schema.NullOr(Schema.String),
 })
 export const InferenceState = Schema.Struct({
   turns: Schema.Array(Turn),
@@ -18,7 +18,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Cor
   let turns = state.turns
   if (event.type === "TurnRequested") {
     if (turns.some(turn => turn.turnId === event.turnId)) throw new RuntimeError(`Duplicate turn: ${event.turnId}`)
-    turns = [...turns, { turnId: event.turnId, invocationRef: event.invocationRef ?? null, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }]
+    turns = [...turns, { turnId: event.turnId, invocationRef: event.invocationRef ?? null, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [], effects: [], retryIndex: 0, retry: null, failure: null, cancellation: null }]
   }
   if (event.type === "AbortRequested") turns = turns.map(turn => turn.invocationRef?.method === event.ref.method && turn.invocationRef.id === event.ref.id && turn.settlement === null && turn.cancellation === null ? { ...turn, cancellation: event.reason } : turn)
   if (event.type === "EffectRequested" && event.request.executor !== DeliverMessage.name) turns = turns.map(turn => turn.turnId === state.turnId ? { ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] } : turn)
@@ -32,11 +32,21 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Cor
     }
     turns = turns.map(turn => turn.turnId === event.turnId ? { ...turn, calls: [...turn.calls, { callId: event.callId, returned: false }] } : turn)
   }
+  if (event.type === "ModelRetryScheduled") {
+    const turn = turns.find(value => value.turnId === event.turnId)
+    if (!turn || turn.settlement !== null || !turn.calls.some(call => call.callId === event.callId && !call.returned) || event.index < 0 || event.delayMs < 0) throw new RuntimeError(`Model retry is unavailable: ${event.callId}`)
+    turns = turns.map(value => value === turn ? { ...value, retryIndex: event.index + 1, retry: { callId: event.callId, index: event.index, delayMs: event.delayMs, dueAt: event.dueAt }, calls: value.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call) } : value)
+  }
+  if (event.type === "ModelRetryReady") {
+    const turn = turns.find(value => value.turnId === event.turnId)
+    if (!turn || turn.retry?.callId !== event.callId) throw new RuntimeError(`Model retry wake is unavailable: ${event.callId}`)
+    turns = turns.map(value => value === turn ? { ...value, retry: null } : value)
+  }
   if (event.type === "ModelReturned" && event.purpose === "inference") {
     if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
     if (new Set(event.toolCalls.map(call => call.callId)).size !== event.toolCalls.length) throw new RuntimeError("Duplicate tool call IDs in model reply")
     turns = turns.map(turn => turn.calls.some(call => call.callId === event.callId) ? {
-      ...turn, answer: event.toolCalls.length === 0 ? event.text : null,
+      ...turn, retryIndex: 0, answer: event.toolCalls.length === 0 ? event.text : null,
       answerCallId: event.toolCalls.length === 0 ? event.callId : null,
       calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call),
       outstanding: event.toolCalls.map(call => call.callId),
@@ -83,7 +93,7 @@ export function turnOutput(events: readonly Event[], settlement: TurnSettled): s
 
 export const inferenceState = durableAtom({
   name: "agent.inference.state",
-  input: Schema.Union([TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled, AbortRequested, CoreEvent]),
+  input: Schema.Union([TurnRequested, ModelCalled, ModelFailed, ModelRetryScheduled, ModelRetryReady, ModelReturned, ToolReturned, TurnSettled, AbortRequested, CoreEvent]),
   schema: InferenceState,
   initial: initialInference,
   reduce: inferState,

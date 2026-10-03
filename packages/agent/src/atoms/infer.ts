@@ -1,9 +1,9 @@
 import { type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled } from "../contracts/events"
+import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelRetryScheduled, ModelRetryReady, ModelReturned, ToolReturned, TurnSettled } from "../contracts/events"
 import { ModelInfo } from "../actor/context"
-import { Generate, requests, failureMessage } from "../contracts/acts"
+import { Generate, RetryWait, requests, failureMessage } from "../contracts/acts"
 import { inferenceState } from "./durable/inference"
 import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
 import { type ToolView } from "./tools"
@@ -19,6 +19,7 @@ export interface AgentInput<R, ToolEvents extends object = Event> {
 
 export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>>) {
   const request = requests(Generate.request)
+  const retryWait = requests(RetryWait.request)
 
   const output = Effect.map(ModelInfo, selection => effectAtom(get => {
     get(toolSpend)
@@ -50,6 +51,14 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
       acts: state.turnId ? { ...input.context.acts, ...input.tools.acts } : {},
     }
     if (state.running) return { view: { position: "running" as const }, ...proposals }
+    if (turn?.retry) {
+      const retry = turn.retry
+      return {
+        view: { position: "waiting" as const },
+        acts: { ...proposals.acts, retry: retryWait({ tag: `retry:${retry.callId}`, input: { at: retry.dueAt }, onSettled: () => [{ type: "ModelRetryReady", turnId: turn.turnId, callId: retry.callId } satisfies typeof ModelRetryReady.Type] }) },
+        events: proposals.events,
+      }
+    }
     if (turn && turn.failure !== null) return {
       view: { position: "settling" as const }, acts: proposals.acts,
       events: { ...proposals.events, inference: eventValue({ type: "TurnSettled", turnId: turn.turnId, outcome: "failed", reason: turn.failure } satisfies TurnSettled) },
@@ -75,10 +84,14 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
         ...proposals.acts,
         inference: request({
           tag: state.callId,
-          input: { model: selection.model, system: input.system, tools: input.tools.view.specs, context: messages },
+          input: { retryIndex: turn?.retryIndex ?? 0, model: selection.model, system: input.system, tools: input.tools.view.specs, context: messages },
           onRequested: () => [{ type: "ModelCalled", purpose: "inference", ...selection, callId: state.callId, turnId: state.turnId } satisfies ModelCalled],
           onSettled: (result, ref) => {
-            if (result.status === "rejected") return [{ type: "ModelFailed", callId: state.callId, reason: failureMessage(result.reason) } satisfies typeof ModelFailed.Type]
+            if (result.status === "rejected") {
+              const failure = result.reason
+              if (typeof failure === "object" && "retry" in failure && failure.retry) return [{ type: "ModelRetryScheduled", turnId: state.turnId, callId: state.callId, index: turn?.retryIndex ?? 0, ...failure.retry } satisfies typeof ModelRetryScheduled.Type]
+              return [{ type: "ModelFailed", callId: state.callId, reason: failure && typeof failure === "object" && "message" in failure && typeof failure.message === "string" ? failure.message : failureMessage(failure) } satisfies typeof ModelFailed.Type]
+            }
             if (new Set(result.value.toolCalls.map(call => call.callId)).size !== result.value.toolCalls.length) return [{ type: "ModelFailed", callId: state.callId, reason: "Duplicate provider tool call IDs" } satisfies typeof ModelFailed.Type]
             return [{ type: "ModelReturned", purpose: "inference", callId: state.callId, text: result.value.text, ...(result.value.reasoning === undefined ? {} : { reasoning: result.value.reasoning }), ...(result.value.continuation === undefined ? {} : { continuation: result.value.continuation }), ...(result.value.usage ? { usage: result.value.usage } : {}),
               toolCalls: result.value.toolCalls.map((call, index) => ({ ...call, providerId: call.callId, callId: JSON.stringify([ref.seq, ref.atom, ref.tag, index]) })),

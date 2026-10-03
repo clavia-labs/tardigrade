@@ -1,15 +1,16 @@
 import { ModelInfo } from "../actor/context"
 import { RuntimeError, type ExecutionHandle, type ActCancellation, durablePromise, EffectExecution } from "@clavia/tardigrade-core"
-import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit } from "effect"
+import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit, Clock, Random, Duration } from "effect"
+import { retryDelayOf } from "@clavia/tardigrade-model/stream/request"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { AiError, LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
 import { reportedCostOf } from "@clavia/tardigrade-model/providers/usage"
-import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
+import { BindingSettings, CurrentModel, ModelSelection, modelSettingsFor } from "@clavia/tardigrade-model/settings"
 import { type ModelRef } from "@clavia/tardigrade-model/reference"
 import { DEFAULT_METHOD_EXECUTION, type ToolSpec } from "@clavia/tardigrade-libraries"
 import { type Conversation, ModelReply as ModelReplySchema } from "../contracts/events"
-import { Generate, Summarize } from "../contracts/acts"
+import { Generate, RetryWait, Summarize, ModelFailure } from "../contracts/acts"
 import { collectModelStream, type ModelCallContext } from "./model-stream"
 
 export { type ModelCallContext, type ModelDelta } from "./model-stream"
@@ -156,15 +157,30 @@ export function liveModelServices(options: Omit<ModelBindingOptions, "observer">
   return modelServices(timeoutMs === undefined ? {} : { timeoutMs }).pipe(Layer.provideMerge(modelLayer(binding)))
 }
 
+export const retryWait = RetryWait.layer((input, { ref }) => Effect.gen(function* () {
+  const execution = yield* EffectExecution
+  const handle = yield* execution.submit(Effect.succeed({ executor: "clock" as const, id: `retry:${ref.seq}:${ref.atom}:${ref.tag}`, at: input.at }))
+  return RetryWait.defer(handle)
+}).pipe(Effect.mapError(String)))
+
 export const generate = Generate.layer(input => Effect.gen(function* () {
   const model = yield* Model
   const execution = yield* EffectExecution
   const timeoutMs = typeof model.promiseTimeoutMs === "function" ? yield* model.promiseTimeoutMs(input) : model.promiseTimeoutMs
   if (model.submit) return Generate.defer(yield* execution.submit(model.submit(input, execution), { timeoutMs }))
-  const reply = durablePromise(execution.ref, { success: ModelReplySchema, error: Schema.String })
+  const reply = durablePromise(execution.ref, { success: ModelReplySchema, error: Schema.Union([Schema.String, ModelFailure]) })
   const handle = yield* execution.fork(model.call(input, { publish: execution.publish, purpose: "inference" }).pipe(
     Effect.exit,
-    Effect.map(exit => Exit.isSuccess(exit) ? reply.succeed(exit.value) : reply.fail(Cause.pretty(exit.cause))),
+    Effect.flatMap(exit => Effect.gen(function* () {
+      if (Exit.isSuccess(exit)) return reply.succeed(exit.value)
+      const failure = Cause.squash(exit.cause)
+      const ai = AiError.isAiError(failure) ? failure : failure instanceof RuntimeError && AiError.isAiError(failure.cause) ? failure.cause : undefined
+      if (!ai?.isRetryable) return reply.fail(Cause.pretty(exit.cause))
+      const settings = yield* modelSettingsFor(input.model)
+      const delayMs = retryDelayOf(settings.policy, input.retryIndex ?? 0, ai.retryAfter === undefined ? undefined : Duration.toMillis(ai.retryAfter), yield* Random.next)
+      if (delayMs === undefined) return reply.fail(Cause.pretty(exit.cause))
+      return reply.fail({ message: Cause.pretty(exit.cause), retryable: true, retry: { delayMs, dueAt: (yield* Clock.currentTimeMillis) + delayMs } })
+    })),
   ), { timeoutMs })
   return Generate.defer(handle)
 }).pipe(Effect.mapError(String)), { cancel: (input, context) => Model.use(model => model.cancel?.(input, context) ?? Effect.void) })
@@ -178,4 +194,4 @@ export const summarize = Summarize.layer(input => Effect.gen(function* () {
   Effect.mapError(String),
 ))
 
-export const modelActs = Layer.merge(generate, summarize)
+export const modelActs = Layer.mergeAll(generate, retryWait, summarize)

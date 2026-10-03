@@ -86,6 +86,8 @@ export const ModelReturned = Schema.Union([
 export type ModelReturned = typeof ModelReturned.Type
 
 export const CompactionFailed = Schema.Struct({ type: Schema.Literal("CompactionFailed"), callId: Schema.String, reason: Schema.String })
+export const ModelRetryScheduled = Schema.Struct({ type: Schema.Literal("ModelRetryScheduled"), turnId: Schema.String, callId: Schema.String, index: Schema.Int, delayMs: Schema.Finite, dueAt: Schema.Finite })
+export const ModelRetryReady = Schema.Struct({ type: Schema.Literal("ModelRetryReady"), turnId: Schema.String, callId: Schema.String })
 export const ModelFailed = Schema.Struct({ type: Schema.Literal("ModelFailed"), callId: Schema.String, reason: Schema.String })
 export { AbortRequested } from "@clavia/tardigrade-core"
 
@@ -110,6 +112,8 @@ export const Event = Schema.Union([
   ActorReplyReceived,
   ModelCalled,
   ModelFailed,
+  ModelRetryScheduled,
+  ModelRetryReady,
   AbortRequested,
   CompactionFailed,
   PromiseSettled,
