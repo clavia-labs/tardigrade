@@ -1,5 +1,10 @@
 import { Cause, Data, Schema } from "effect"
 
+export const EffectInputReference = Schema.TaggedStruct("EffectInputReference", {
+  throughPosition: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+})
+export type EffectInputReference = typeof EffectInputReference.Type
+
 export const EffectRef = Schema.Struct({
   seq: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
   atom: Schema.NonEmptyString,

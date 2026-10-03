@@ -5,7 +5,7 @@ import { EventLog } from "../services/event-log"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "../atoms/act"
-import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
+import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, EffectRef, EffectInputReference, type ExecutionHandle, PromiseNotReady } from "./effects"
 import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, PromiseSettled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
@@ -149,7 +149,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const settlement = coreSettlements.get(key)
         const cancellation = coreCancellations.get(key)
         if (!settlement && !cancellation) throw new Error("Effect checkpoint contains an unsettled request")
-        return { ref: request.ref, request, ...(settlement ? { settlement } : {}), ...(cancellation ? { cancellation } : {}) }
+        const compact = { ...request, request: { ...request.request, input: { _tag: "EffectInputReference" as const, throughPosition: request.ref.seq } } }
+        return { ref: request.ref, request: compact, ...(settlement ? { settlement } : {}), ...(cancellation ? { cancellation } : {}) }
       })
       // TODO: Checkpoint capture must preserve recovery for unread durable atoms absent from the registry; suffix-only restore currently loses their prefix state (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent, initSkipPrefix).
       const durable = [...store.nodes().values()].flatMap(node => {
@@ -232,7 +233,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         executionDeclarations.set(proposal.identity, executionRequest)
         if (ref) {
           const recorded = coreRequests.get(effectKey(ref))
-          if (!recorded || !isDeepStrictEqual(recorded.request, executionRequest)) throw new Error("Restored effect request differs from its proposal")
+          const recordedInput = recorded?.request.input
+          const replayReference = Schema.is(EffectInputReference)(recordedInput)
+          if (!recorded || (!replayReference && !isDeepStrictEqual(recorded.request, executionRequest)) || (replayReference && recorded.request.executor !== executionRequest.executor)) throw new Error("Restored effect request differs from its proposal")
           if (!assigned) bind(proposal, ref)
           return []
         }
