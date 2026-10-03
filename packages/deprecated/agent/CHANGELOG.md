@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.41.2](https://github.com/clavia-labs/tardigrade/compare/v0.41.1...v0.41.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **core:** namespace actor methods ([#617](https://github.com/clavia-labs/tardigrade/issues/617)) ([9fc2c36](https://github.com/clavia-labs/tardigrade/commit/9fc2c3698b6ea87ae84c2e17146151e67b4ce091))
+* **model:** validate config eagerly ([#619](https://github.com/clavia-labs/tardigrade/issues/619)) ([6f47172](https://github.com/clavia-labs/tardigrade/commit/6f47172d3f3adbef2740a864e76c02a51ac214dd))
+
 ## [0.41.1](https://github.com/clavia-labs/tardigrade/compare/v0.41.0...v0.41.1) (2026-10-03)
 
 
