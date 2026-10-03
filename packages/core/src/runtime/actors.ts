@@ -235,7 +235,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
     }))
     type Client = { readonly [Name in keyof Contracts]: (input: MethodInput<Contracts[Name]>, request: { readonly id: string }) => Effect.Effect<MethodOutput<Contracts[Name]>, Error> }
     const methods = Object.fromEntries(Object.keys(thread.contracts).map(name => [name, (input: Schema.Json, request: { readonly id: string }) => invoke(name, input, request).pipe(Effect.andThen(result(name, request.id)), Effect.flatMap(result => result.status === "completed" ? Effect.succeed(result.output) : Effect.fail(result.status === "failed" ? new MethodFailed(result.error) : new MethodCancelled(result.reason))))])) as Client
-    return { ...methods, coordinate: Object.freeze({ ...coordinate }), execution: thread.execution, store: createThreadStore(coordinate, source), contracts: thread.contracts, methods, invoke, result, cancel, methodState,
+    return { coordinate: Object.freeze({ ...coordinate }), execution: thread.execution, store: createThreadStore(coordinate, source), contracts: thread.contracts, methods, invoke, result, cancel, methodState,
       records: () => options.run(journal.read),
       get: source.get, getState: () => current(coordinate).getState(), resume: options.run(open(coordinate).pipe(Effect.flatMap(thread => thread.resume))), wait: options.run(open(coordinate).pipe(Effect.flatMap(thread => thread.wait))),
       receipt: (id: string) => options.run(journal.readMessage(id).pipe(Effect.tap(record => record ? journal.acknowledge : Effect.void), Effect.map(record => record ? { id, position: record.position } : undefined))),

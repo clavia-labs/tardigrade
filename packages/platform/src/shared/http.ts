@@ -2,7 +2,7 @@ import { Effect, Layer, Schema, type Stream } from "effect"
 import type { ExecutionStreamPolicy, ExecutionUpdate } from "@clavia/tardigrade-core"
 import { executionStreamSse } from "./execution-stream-sse"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { ActorCommitError, InitialState, StateInitialisationError, InvalidMessage, MessageConflict, type MessageReceipt } from "@clavia/tardigrade-core"
+import { ActorCommitError, InitialState, StateInitialisationError, InvalidMessage, MessageConflict, WatchdogTerminalError, type MessageReceipt } from "@clavia/tardigrade-core"
 import type { MessageDelivery } from "@clavia/tardigrade-core"
 import type { ThreadRequest, ThreadCoordinate } from "@clavia/tardigrade-core"
 
@@ -28,6 +28,7 @@ type PublicHttpError = Readonly<{ code: string; message: string }>
 // publicError converts internal failures into the stable error contract exposed by HTTP hosts.
 export const publicError = (error: unknown): Readonly<{ status: number; body: PublicHttpError }> => {
   if (error instanceof HttpError) return { status: error.status, body: { code: error.code, message: error.message } }
+  if (error instanceof WatchdogTerminalError) return { status: 500, body: { code: "actor_boot_failed", message: error.message || "Actor failed during startup" } }
   if (error instanceof ActorCommitError) return { status: 500, body: { code: "actor_commit_failed", message: error.message } }
   if (error instanceof InvalidMessage) return { status: 400, body: { code: "invalid_message", message: error.message } }
   if (error instanceof StateInitialisationError) return { status: 400, body: { code: "invalid_initial_state", message: error.message } }

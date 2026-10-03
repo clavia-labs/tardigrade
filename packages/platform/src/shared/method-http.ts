@@ -102,7 +102,10 @@ export function methodHttp<Contracts extends ActorMethods<object>>(
         await run(thread.invoke(method as keyof Contracts & string, Schema.decodeUnknownSync(Schema.toType(thread.contracts[method]!.inputSchema))(await request.json()) as MethodInput<Contracts[keyof Contracts & string]>, { id }))
         return json({ actor: instance, thread: name, method, id }, 202)
       }
-      if (call !== undefined && request.method === "GET" && !methodPath[3]) return json(await run(thread.methodState(method as keyof Contracts & string, call)))
+      if (call !== undefined && request.method === "GET" && !methodPath[3]) {
+        const state = await run(thread.methodState(method as keyof Contracts & string, call))
+        return json({ id: call, method, ...state })
+      }
       if (call !== undefined && request.method === "PUT" && methodPath[3]) {
         if (!thread.contracts[method]?.onCancel) return failure(400, "cancellation_unsupported", "Method does not support cancellation")
         const input = Schema.decodeUnknownSync(Schema.Struct({ reason: Schema.String }), { onExcessProperty: "error" })(await request.json())

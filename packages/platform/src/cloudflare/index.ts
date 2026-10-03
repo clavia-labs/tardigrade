@@ -11,6 +11,7 @@ import { sqlJournal } from "../shared/sql-journal"
 export { sqlJournal } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
 import { hostRoutes, type HttpHost } from "../shared/http"
+import { methodHttp } from "../shared/method-http"
 import { HttpRouter } from "effect/unstable/http"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
@@ -97,8 +98,11 @@ export function createActorObject<Env extends object = Record<string, unknown>, 
   return class ActorObject extends DurableObject<Env> {
     private readonly host = createActorHost({ ...options, actorContext, services: (coordinate, runtime) => options.services(this.env, coordinate, runtime), storage: this.ctx.storage })
     private readonly http = cloudflareHandler(this.host)
+    private readonly methods = methodHttp(this.host)
 
     fetch(request: Request) {
+      const pathname = new URL(request.url).pathname
+      if (pathname === "/healthz" || pathname === "/v1/methods" || pathname === "/v1/metadata" || pathname.includes("/methods/")) return this.methods(request)
       return this.http.handler(request)
     }
 
