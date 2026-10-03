@@ -1,4 +1,5 @@
-import { cloudflareRetryPolicy, makeRetryingAlarms, makeRetryingRpc } from "./retry"
+import { cloudflareRetryPolicy, makeRetryingAlarms, makeRetryingRpc, retryCloudflareOperation } from "./retry"
+import type { CloudflareErrorClassification } from "./layers/error"
 import { AlarmScheduler } from "./alarm-scheduler"
 import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-deprecated-core/interaction/relations"
 import { eventTail, inferenceTail } from "@clavia/tardigrade-deprecated-http/sse"
@@ -202,8 +203,22 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   private host(): Promise<CloudflareThreadHost> {
-    this.runtime ??= this.openHost()
-    return this.runtime
+    if (this.runtime !== undefined) return this.runtime
+    const opening = Effect.runPromise(retryCloudflareOperation(
+      Effect.tryPromise({
+        try: () => this.openHost(),
+        catch: (cause): CloudflareErrorClassification & { readonly cause: unknown } => ({ classification: "transient", cause })
+      }),
+      { retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG), operation: "ThreadDO.openHost", replaySafe: true }
+    )).catch((failure: unknown) => {
+      if (this.runtime === opening) this.runtime = undefined
+      if (typeof failure === "object" && failure !== null && "classification" in failure && "cause" in failure) {
+        throw failure.cause
+      }
+      throw failure
+    })
+    this.runtime = opening
+    return opening
   }
 
   private scheduler(): AlarmScheduler {
@@ -367,14 +382,16 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    const host = await this.host()
+    let host: CloudflareThreadHost | undefined
     await this.scheduler().run(async () => {
+      const openedHost = await this.host()
+      host = openedHost
       const identity = this.identity()
       await Effect.runPromise(makeRetryingRpc({ retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG) }).call(
         this.env.ACTORS, actorObjectNameOf(identity.actor, identity.instance), "ensureThreadReady", stub => stub.ensureThreadReady(identity.thread), true
       ))
-      await host.recordAlarm(Date.now())
-      await host.recover()
-    }, () => this.synchronizeAlarm(host))
+      await openedHost.recordAlarm(Date.now())
+      await openedHost.recover()
+    }, () => host === undefined ? Promise.resolve() : this.synchronizeAlarm(host))
   }
 }

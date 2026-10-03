@@ -32,6 +32,7 @@ import { ModelSelection } from "@clavia/tardigrade-model/settings"
 import { modelLayer, modelsFrom, mountedActor, modelStateFrom, publicCatalog } from "../src/assembly"
 import { cloudflareModelRegistryCache } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
+import { ThreadDO } from "../src/thread"
 import { plaintextEventCodec } from "../src/storage"
 
 const authorization = { authorization: "Bearer workers-test-token" }
@@ -64,6 +65,56 @@ const methodState = async (thread: string, call: string): Promise<unknown> => {
 
 const hasHoldEvent = (events: ReadonlyArray<Event>, type: string, id: string): boolean =>
   events.some((event) => event.type === type && String((event as { readonly id?: unknown }).id) === id)
+
+test("a failed host open retries on the next alarm and preserves its watchdog", async () => {
+  const thread = "host-open-retry"
+  const stub = threadStub(thread)
+  await runInDurableObject(stub, (instance) => instance.init("echo", "main", thread))
+  await evictDurableObject(stub)
+  try {
+    await runInDurableObject(stub, async (instance, state) => {
+      const runtime = instance as unknown as ThreadDO & { openHost(): Promise<never> }
+      const originalEnv = runtime.env
+      Object.defineProperty(runtime, "env", {
+        configurable: true,
+        value: {
+          ...originalEnv,
+          TARDIGRADE_CONFIG: {
+            ioRetry: {
+              maxAttempts: 1,
+              initialDelayMillis: 0,
+              maxDelayMillis: 0,
+              backoffFactor: 1,
+              jitter: 0,
+              attemptTimeoutMillis: 1_000,
+              totalTimeoutMillis: 1_000
+            }
+          }
+        }
+      })
+      try {
+        let attempts = 0
+        runtime.openHost = async () => {
+          attempts++
+          throw new Error(`transient host failure ${attempts}`)
+        }
+        await expect(instance.alarm()).rejects.toThrow("transient host failure 1")
+        expect(attempts).toBe(1)
+        expect(await state.storage.getAlarm()).not.toBeNull()
+        await expect(instance.alarm()).rejects.toThrow("transient host failure 2")
+        expect(attempts).toBe(2)
+        expect(await state.storage.getAlarm()).not.toBeNull()
+        await state.storage.deleteAlarm()
+      } finally {
+        Object.defineProperty(runtime, "env", { configurable: true, value: originalEnv })
+      }
+    }
+    )
+  } finally {
+    await evictDurableObject(stub)
+  }
+}, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
 test("thread initialization blocks registration and survives Durable Object eviction", async () => {
   const directory = (env as Env).ACTORS.getByName(JSON.stringify(["echo", "initialization"]))
   const previous = mountedActor!.supervisor
