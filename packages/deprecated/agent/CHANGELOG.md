@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.1](https://github.com/clavia-labs/tardigrade/compare/v0.41.0...v0.41.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **cloudflare:** retry host opens ([#615](https://github.com/clavia-labs/tardigrade/issues/615)) ([abffa64](https://github.com/clavia-labs/tardigrade/commit/abffa640155f339d5a57e2507d54c79d1dfce02a))
+
 ## [0.41.0](https://github.com/clavia-labs/tardigrade/compare/v0.40.0...v0.41.0) (2026-10-03)
 
 
