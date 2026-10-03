@@ -136,8 +136,10 @@ export const parseModelLock = (raw: string, path = MODEL_LOCK_FILE): ModelLockDa
 }
 
 // layerModelLock validates an in-memory definition without reading a file (lock.test.ts).
-export const layerModelLock = (value: unknown, policy: ModelPolicy): Layer.Layer<ModelLock, ModelLockError> =>
-  Layer.effect(ModelLock)(Effect.try({ try: () => modelLockService(modelLockOf(value), policy), catch: modelLockErrorOf }))
+export const layerModelLock = (value: unknown, policy: ModelPolicy): Layer.Layer<ModelLock, ModelLockError> => {
+  const definitions = modelLockOf(value)
+  return Layer.succeed(ModelLock, modelLockService(definitions, policy))
+}
 
 // layerFileModelLock reads the same schema through an injected filesystem (lock.test.ts).
 export const layerFileModelLock = (path: string, policy: ModelPolicy): Layer.Layer<ModelLock, ModelLockError, FileSystem> =>

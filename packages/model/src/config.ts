@@ -90,7 +90,6 @@ export const modelProvidersOf = (value: unknown): Record<string, ModelProviderCo
     const region = stringOf(provider["region"])
     if (baseUrl === undefined) throw new Error(`provider ${JSON.stringify(name)} must declare baseUrl`)
     if (protocol === undefined) throw new Error(`provider ${JSON.stringify(name)} must declare protocol`)
-    if (env.length === 0) throw new Error(`provider ${JSON.stringify(name)} must declare env`)
     const invalidEnv = env.find((entry) => !ENV_NAME.test(entry))
     if (invalidEnv !== undefined) throw new Error(`provider ${JSON.stringify(name)} env contains invalid name ${JSON.stringify(invalidEnv)}`)
     const selectedProtocol = modelProtocolOf(protocol)
