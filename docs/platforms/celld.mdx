@@ -19,7 +19,7 @@ Worker fetch
               +-- thread journals and runtimes
 ```
 
-The Worker exports `ActorDO`, mounts the actor with `createCloudflareHost` from `tardie/platform/cloudflare`, and exposes its methods through `methodHttp`. The generated `services.ts` supplies model and tool implementations.
+The Worker exports `ActorDO`, mounts the actor with `createActorObject` from `tardie/platform/cloudflare`, and routes requests to its Durable Object namespace. The generated `services.ts` supplies model and tool implementations. Use `createActorHost` when a custom host lifecycle is required.
 
 ## Deploy
 

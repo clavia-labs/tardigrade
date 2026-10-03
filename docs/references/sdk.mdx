@@ -99,7 +99,29 @@ import { modelLayer } from "tardie/model"
 import { providerLayer } from "tardie/model/providers/openrouter"
 ```
 
-For Cloudflare, import `createCloudflareHost` from `tardie/platform/cloudflare`. Provider modules have individual entrypoints so applications can choose their provider dependencies.
+For Cloudflare, import `createActorObject` from `tardie/platform/cloudflare`. Use `createActorHost` when an application needs to assemble the Durable Object lifecycle itself. Provider modules have individual entrypoints so applications can choose their provider dependencies.
+
+Pass a fully provided Effect telemetry layer as `telemetry` to any host. The layer is inherited by host-managed fibers, actor runtimes, commit logging, and recovery work. Effect 4 exposes OTLP integrations from `effect/unstable/observability`; provide their HTTP client and serialization dependencies in the application layer before passing it to the host.
+
+```ts
+import { createActorWorker } from "tardie/platform/cloudflare"
+import { telemetryLayer } from "./telemetry"
+
+const worker = createActorWorker({ actor, services, telemetry: telemetryLayer })
+```
+
+## HTTP errors
+
+Platform HTTP adapters return failures as `{ code, message }`. The `code` is stable for programmatic handling and `message` is safe to show to callers. Internal causes stay in the Effect log and are not included in the response.
+
+```json
+{
+  "code": "actor_commit_failed",
+  "message": "Actor state could not be persisted; recreate the actor store before retrying"
+}
+```
+
+Applications should branch on `code` and treat `message` as descriptive text. Unknown failures use `internal_error` so implementation details do not cross the HTTP boundary.
 
 ## Component APIs
 

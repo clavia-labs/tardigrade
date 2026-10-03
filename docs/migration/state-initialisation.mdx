@@ -115,7 +115,7 @@ console.log(thread.getState()) // { count: 5 }
 await Effect.runPromise(host.close)
 ```
 
-`createThreadHost` and `createCloudflareHost` accept the same `initialStateAtoms` option. Child allocation also accepts `initialState`. Unknown atom names, duplicate destination names, and incompatible state fail before allocation is recorded. Identical named retries reuse the thread; conflicting state fails.
+`createThreadHost` and `createActorHost` accept the same `initialStateAtoms` option. Child allocation also accepts `initialState`. Unknown atom names, duplicate destination names, and incompatible state fail before allocation is recorded. Identical named retries reuse the thread; conflicting state fails.
 
 ## Remote logs, including Cloudflare
 

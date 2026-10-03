@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Cause, Data, Schema } from "effect"
 
 export const EffectRef = Schema.Struct({
   seq: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
@@ -17,6 +17,14 @@ export class RuntimeError extends Error {
     return cause instanceof RuntimeError ? cause : new RuntimeError(cause instanceof Error ? cause.message : String(cause), { cause })
   }
 }
+
+// ActorCommitError latches a failed journal commit and retains its full Effect cause for diagnostics.
+export class ActorCommitError extends Data.TaggedError("ActorCommitError")<{
+  readonly message: "Actor state could not be persisted; recreate the actor store before retrying"
+  readonly position: number
+  readonly operation: "append" | "checkpoint"
+  readonly cause: Cause.Cause<unknown>
+}> {}
 
 // PromiseNotReady rejects delivery until the accepted effect has a recorded settlement.
 export class PromiseNotReady extends RuntimeError {

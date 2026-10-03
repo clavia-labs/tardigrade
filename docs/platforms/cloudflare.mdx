@@ -10,43 +10,21 @@ order: 2
 Each actor instance runs in a SQLite-backed Durable Object. The host keeps a supervisor journal and separate logical thread journals in that object's storage. The Worker routes an instance ID to its `ActorDO`:
 
 ```ts title="worker.ts"
-import { Effect } from "effect"
-import { DurableObject } from "cloudflare:workers"
 import { actorContext } from "tardie/agent"
-import { createCloudflareHost, methodHttp } from "tardie/platform/cloudflare"
+import { createActorWorker } from "tardie/platform/cloudflare"
 import definition from "./actor"
 import { services } from "./services"
 
-interface Env {
-  readonly ACTORS: DurableObjectNamespace<ActorDO>
-  readonly TARDIGRADE_CONFIG: { readonly models: unknown } | string
-  readonly TARDIGRADE_TOKEN?: string
-  readonly [key: string]: unknown
-}
-
-export class ActorDO extends DurableObject<Env> {
-  private readonly host = createCloudflareHost({
-    actor: definition,
-    actorContext,
-    storage: this.ctx.storage,
-    services: () => services((typeof this.env.TARDIGRADE_CONFIG === "string" ? JSON.parse(this.env.TARDIGRADE_CONFIG) : this.env.TARDIGRADE_CONFIG).models, this.env),
-  })
-  private readonly handler = methodHttp(this.host, {
-    ...(this.env.TARDIGRADE_TOKEN ? { token: this.env.TARDIGRADE_TOKEN } : {}),
-  })
-  alarm(): Promise<void> { return Effect.runPromise(this.host.alarm) }
-  fetch(request: Request): Promise<Response> { return this.handler(request) }
-}
-
-export default {
-  fetch(request: Request, env: Env): Promise<Response> | Response {
-    const instance = /^\/v1\/actors\/([^/]+)\/threads(?:\/|$)/.exec(new URL(request.url).pathname)?.[1] ?? "main"
-    return env.ACTORS.getByName(decodeURIComponent(instance)).fetch(request)
-  },
-}
+const worker = createActorWorker({
+  actor: definition,
+  actorContext,
+  services: () => services(),
+})
+export const ActorDO = worker.ActorObject
+export default worker
 ```
 
-`services` comes from the generated `services.ts` and supplies model and tool implementations. `actorContext` selects the services visible to agent setup. `methodHttp` uses the methods returned by the actor; it needs no separate method registry.
+`services` comes from the generated `services.ts` and supplies model and tool implementations. `actorContext` selects the services visible to agent setup. `createActorWorker` supplies the outer Worker router and an `ActorObject` with the Durable Object storage, fetch handler, alarm handler, and disposal lifecycle. Use `createActorHost` when an application needs to assemble those pieces itself.
 
 ## Verify locally
 
@@ -97,14 +75,14 @@ The deployed Worker exposes the same thread creation, method invocation, cancell
 
 ## Recovery
 
-The host commits a watchdog record and an immediate alarm with journal admission, then awaits `storage.sync()` before acknowledging the commit or starting execution. Forward the Durable Object's `alarm()` handler to `host.alarm` as shown above. Each recovery attempt commits its counters and replacement alarm, then synchronizes storage before driving the runtime.
+The host commits a watchdog record and an immediate alarm with journal admission, then awaits `storage.sync()` before acknowledging the commit or starting execution. `createActorObject` forwards the Durable Object's `alarm()` handler to the host. Advanced hosts that call `createActorHost` directly must forward `alarm()` themselves. Each recovery attempt commits its counters and replacement alarm, then synchronizes storage before driving the runtime.
 
 `host.watchdog.status` reads recovery records keyed by supervisor or thread. Effect and promise settlements advance the progress cursor and reset consecutive failures. Settled runtimes clear their wake; remote promises park until their recorded deadline. Terminal failures and exhausted budgets retain a blocked record and clear the wake. New messages preserve the block; `host.watchdog.resume({ actor, instance, thread })` explicitly starts a fresh recovery budget. Omit `thread` for the supervisor.
 
 Configure recovery at host construction:
 
 ```ts
-createCloudflareHost({
+createActorHost({
   // actor, storage, services, actorContext
   watchdog: {
     policy: {

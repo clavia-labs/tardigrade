@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/clavia-labs/tardigrade/compare/v0.40.0...v0.41.0) (2026-10-03)
+
+
+### Features
+
+* **platform:** improve actor hosting ([#612](https://github.com/clavia-labs/tardigrade/issues/612)) ([2b3b4f8](https://github.com/clavia-labs/tardigrade/commit/2b3b4f89f9fc93117bd75470569c230b720163a8))
+
 ## [0.40.0](https://github.com/clavia-labs/tardigrade/compare/v0.39.0...v0.40.0) (2026-10-02)
 
 

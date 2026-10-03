@@ -126,47 +126,23 @@ event log -> history -> messages -> compact --+
 Host each actor instance in a SQLite-backed Durable Object on Cloudflare or a self-hosted [Celld fleet](https://github.com/denoland/celld/blob/main/docs/README.md). The same Worker entrypoint runs on both.
 
 ```ts
-import { DurableObject } from "cloudflare:workers"
 import { actorContext } from "tardie/agent"
-import { createCloudflareHost, methodHttp } from "tardie/platform/cloudflare"
+import { createActorWorker } from "tardie/platform/cloudflare"
 import { researcher } from "./actor"
 import { services } from "./services"
 
-interface Env {
-  readonly ACTORS: DurableObjectNamespace<ActorDO>
-  readonly TARDIGRADE_CONFIG: { readonly models: unknown } | string
-  readonly [key: string]: unknown
-}
-
-export class ActorDO extends DurableObject<Env> {
-  private readonly host = createCloudflareHost({
-    actor: researcher,
-    actorContext,
-    storage: this.ctx.storage,
-    services: () => {
-      const config = this.env.TARDIGRADE_CONFIG
-      return services(
-        (typeof config === "string" ? JSON.parse(config) : config).models,
-        this.env,
-      )
-    },
-  })
-  private readonly handler = methodHttp(this.host)
-
-  fetch(request: Request) { return this.handler(request) }
-}
-
-export default {
-  fetch(request: Request, env: Env) {
-    const pathname = new URL(request.url).pathname
-    const instance =
-      /^\/v1\/actors\/([^/]+)\/threads(?:\/|$)/.exec(pathname)?.[1] ?? "main"
-    return env.ACTORS.getByName(decodeURIComponent(instance)).fetch(request)
-  },
-}
+const worker = createActorWorker({
+  actor: researcher,
+  actorContext,
+  services: () => services(),
+})
+export const ActorDO = worker.ActorObject
+export default worker
 ```
 
 The [Quickstart](docs/getting-started/quickstart.mdx) generates the services and deployment configs. Set your model and provider credentials before running.
+
+`createActorWorker` owns the outer Worker routing and creates an `ActorObject` with the Durable Object storage, HTTP, alarm, and disposal lifecycle. Use `createActorHost` when you need to assemble that lifecycle yourself.
 
 Run locally with `bunx wrangler dev`; see [local setup](docs/platforms/cloudflare.mdx#verify-locally).
 

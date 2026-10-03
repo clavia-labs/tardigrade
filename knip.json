@@ -11,7 +11,10 @@
     },
     "packages/platform": {
       "entry": ["test/workerd/fixture.worker.ts"],
-      "project": ["src/**/*.ts!", "test/**/*.ts"]
+      "project": ["src/**/*.ts!", "test/**/*.ts"],
+      "ignoreIssues": {
+        "src/cloudflare/index.ts": ["duplicates"]
+      }
     },
     "packages/examples": {
       "entry": ["*.ts!"],

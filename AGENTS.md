@@ -21,6 +21,7 @@ TLAPS needs process inspection to launch its backends; a sandbox error from `/bi
 
 - Title a pull request in the commit format, the same as any commit: `type(scope?): message`, 3 to 5 words. The title becomes the squash commit subject, so it lands in the log as written.
 - The pull request body follows the rules in the global writing style. It is read cold, so it states the change and the reason in full.
+- Prefer compact PR bodies: use minimal prose, an ASCII flow or architecture diagram, a logical file tree with per-file `+/-` counts, and one brief change note.
 
 ## Commits
 

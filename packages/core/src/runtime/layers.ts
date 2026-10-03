@@ -24,6 +24,8 @@ export const DEFAULT_CHILD_PLACEMENT: ChildPlacement = "colocated"
 // createThreadHost composes supervision and invocation within a shared storage lifetime.
 export function createThreadHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<ActorExecutionOptions<Event, Services, State, Contracts>, "from" | "delivery" | "executionStreamBus"> & {
   readonly storage: ThreadStorage<Event>
+  // telemetry supplies Effect observability services to host-managed fibers and their child runtimes.
+  readonly telemetry?: Layer.Layer<{}, never, never>
   readonly from?: MessageSender
   readonly actorTransport?: ActorMessageTransport
   readonly transports?: Readonly<Record<string, MessageTransport>>
@@ -33,9 +35,13 @@ export function createThreadHost<Event extends object, Services, State, Contract
 }) {
   const scope = Scope.makeUnsafe()
   const executionStream = Effect.runSync(createExecutionStream(options.executionStream))
+  const telemetryContext = options.telemetry === undefined ? undefined : Effect.runSync(Layer.buildWithScope(options.telemetry, scope))
   let closed = false
   const check = Effect.suspend(() => closed ? Effect.fail(new RuntimeError("Thread host is closed")) : Effect.void)
-  const run = <Value>(work: Effect.Effect<Value, Error>) => check.pipe(Effect.andThen(Effect.acquireUseRelease(work.pipe(Effect.forkIn(scope)), Fiber.join, Fiber.interrupt)))
+  const run = <Value>(work: Effect.Effect<Value, Error>) => {
+    const instrumented = telemetryContext === undefined ? work : Effect.provide(work, telemetryContext)
+    return check.pipe(Effect.andThen(Effect.acquireUseRelease(instrumented.pipe(Effect.forkIn(scope)), Fiber.join, Fiber.interrupt)))
+  }
   const supervisor = createSupervisor({
     actor: options.actor.actorName,
     ...(options.canDrive ? { canDrive: (instance: string) => options.canDrive!({ actor: options.actor.actorName, instance }) } : {}),

@@ -1,5 +1,5 @@
 import { initialStateSeed, type StateSeed } from "../initialise"
-import { RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, effectKey, type EffectRef } from "./effects"
+import { ActorCommitError, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, effectKey, type EffectRef } from "./effects"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import { atom, type Atom } from "../atoms/atom"
@@ -158,7 +158,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const errors: Error[] = []
     const subscriptions = new Set<() => void>()
     let closed = false
-    let persistenceFailure: RuntimeError | undefined
+    let persistenceFailure: ActorCommitError | undefined
     const admissions = yield* Queue.make<Effect.Effect<void>>()
     const processing = yield* Queue.make<Deferred.Deferred<void>>()
     const notifications = yield* Queue.make<readonly RuntimeEvent<Event>[]>()
@@ -174,7 +174,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       yield* Queue.offer(processing, completion)
     })
     const commit = (next: typeof snapshot) => Effect.gen(function* () {
-      if (persistenceFailure) return yield* Effect.fail(persistenceFailure)
+      if (persistenceFailure) return yield* persistenceFailure
       if (next === snapshot) return
       const records = next.records.slice(snapshot.records.length)
       const eligible = checkpointPolicy.mode === "quiescent" || (checkpointPolicy.mode === "threshold" && next.position - checkpointPosition >= checkpointPolicy.options.everyEvents)
@@ -186,11 +186,22 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             Effect.flatMap(payload => checkpointDigest(payload).pipe(Effect.flatMap(digest => journal.appendWithCheckpoint(snapshot.position, records, { position: next.position, payload, digest })))),
           )
           : journal.append(snapshot.position, records)
-        yield* persistence.pipe(Effect.catchCause(cause => {
+        yield* persistence.pipe(Effect.catchCause(cause => Effect.gen(function* () {
+          const operation = checkpoint ? "checkpoint" as const : "append" as const
+          yield* Effect.logError("Actor journal commit failed").pipe(Effect.annotateLogs({
+            operation,
+            position: snapshot.position,
+            cause: Cause.pretty(cause),
+          }))
           definition.discard(next)
-          persistenceFailure = new RuntimeError("Journal commit failed; reopen the actor before continuing", { cause })
-          return Effect.fail(persistenceFailure)
-        }))
+          persistenceFailure = new ActorCommitError({
+            message: "Actor state could not be persisted; recreate the actor store before retrying",
+            position: snapshot.position,
+            operation,
+            cause,
+          })
+          return yield* persistenceFailure
+        })))
       }
       if (options.journal && checkpoint) checkpointPosition = next.position
       snapshot = next
@@ -360,7 +371,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         yield* afterCommit()
         const next = yield* enqueue(Effect.gen(function* () {
           if (closed) return
-          if (persistenceFailure) return yield* Effect.fail(persistenceFailure)
+          if (persistenceFailure) return yield* persistenceFailure
           const cancellation = snapshot.cancellations()[0]
           if (cancellation) {
             yield* appendNow(cancellation)
@@ -494,7 +505,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       let admitted = false
       let cursor = 0
       yield* enqueue(Effect.gen(function* () {
-        if (persistenceFailure) return yield* Effect.fail(persistenceFailure)
+        if (persistenceFailure) return yield* persistenceFailure
         if (owner && snapshot.effect(owner)?.cancellation) return
         if (!admitted) {
           if (when && !(yield* Effect.try({ try: () => when(store.get), catch: RuntimeError.from }))) return
@@ -609,7 +620,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         },
         snapshot: () => snapshot,
         receive: (body: Schema.Json, metadata: DeliveryMetadata): Effect.Effect<MessageReceipt, Error> => enqueue(Effect.gen(function* () {
-          if (persistenceFailure) return yield* Effect.fail(persistenceFailure)
+          if (persistenceFailure) return yield* persistenceFailure
           const journal = options.journal
           if (!journal || !("readMessage" in journal)) return yield* Effect.fail(new RuntimeError("Message admission requires an indexed journal"))
           const context = yield* Schema.decodeEffect(MessageMetadata, { onExcessProperty: "error" })(metadata).pipe(Effect.mapError(InvalidMessage.from))
