@@ -142,16 +142,14 @@ export default worker
 ```
 
 ```text
-Worker
-  +-- ActorDO         supervisor DB (directory and allocation)
-  +-- ThreadDO parent thread DB (state, journal and alarm)
-  +-- ThreadDO child  thread DB (state, journal and alarm)
-
-Logical lineage: parent --> child
-Physical layout: separate DOs in a flat thread namespace
+ActorDO [supervisor DB]
+`-- directory
+    |-- ThreadDO A [thread DB]
+    |-- ThreadDO B [thread DB, parent: A]
+    `-- ThreadDO C [thread DB, parent: B]
 ```
 
-ActorDO allocates and routes to threads. A child's parent coordinate records its lineage; each thread owns its database independently.
+The tree shows directory entries in a flat thread namespace. ActorDO allocates and routes to threads; each ThreadDO owns a separate database with its state, journal and alarm. Parent coordinates record logical lineage, here A -> B -> C.
 
 The [Quickstart](docs/getting-started/quickstart.mdx) generates the services and deployment configs. Set your model and provider credentials before running.
 
