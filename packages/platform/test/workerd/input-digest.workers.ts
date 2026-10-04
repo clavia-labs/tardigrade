@@ -7,7 +7,7 @@ import { ModelInfo, ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
 import { Generate, Summarize, ExecuteTool, AskPermission } from "@clavia/tardigrade-agent/contracts/acts"
 import type { Event } from "@clavia/tardigrade-agent/contracts/events"
 import { InputDigest } from "@clavia/tardigrade-core"
-import { cloudflareJournal } from "../../src/cloudflare"
+import { cloudflareJournal, DEFAULT_CHECKPOINT_CHUNK_BYTES } from "../../src/cloudflare"
 import { createTestStore } from "../properties/runtime/store"
 import type { TestPromiseResolver } from "./fixture.worker"
 
@@ -59,14 +59,23 @@ test("stock agent reaches 10k events with bounded SQLite checkpoints and linear 
       while (position < 10_000) await next()
       sample()
       const records = await Effect.runPromise(journal.read)
-      const modelRequests = records.filter(record => record.event.type === "EffectRequested" && record.event.request.executor === Generate.name)
+      const modelRequests = records.filter(record => record.event.type === "EffectRequested" && record.event.request.act === Generate.name)
       expect(modelRequests.length).toBeGreaterThan(500)
       expect(modelRequests.slice(9).every(record => record.event.type === "EffectRequested" && Schema.is(InputDigest)(record.event.request.input))).toBe(true)
-      const checkpoint = state.storage.sql.exec<{ bytes: number }>("SELECT length(payload) AS bytes FROM experimental_checkpoints WHERE actor = ?", "digest-long-thread").one()
-      expect(checkpoint.bytes).toBeLessThan(2 * 1024 * 1024)
+      const checkpoint = state.storage.sql.exec<{ bytes: number; chunks: number; max: number; blobs: number }>("SELECT SUM(length(payload)) AS bytes, COUNT(*) AS chunks, MAX(length(payload)) AS max, SUM(typeof(payload) = 'blob') AS blobs FROM checkpoint_chunks").one()
+      expect(checkpoint.chunks).toBeGreaterThan(1)
+      expect(checkpoint.blobs).toBe(checkpoint.chunks)
+      expect(checkpoint.max).toBeLessThanOrEqual(DEFAULT_CHECKPOINT_CHUNK_BYTES)
       expect(samples[2]!.bytes / samples[1]!.bytes).toBeLessThan(2.2)
       expect(samples[1]!.bytes / samples[0]!.bytes).toBeLessThan(2.2)
-      console.log(JSON.stringify({ samples, checkpointBytes: checkpoint.bytes, eventsPerTurn }))
+      const view = store.getState().view
+      await Effect.runPromise(store.close)
+      store = await open()
+      await Effect.runPromise(store.wait)
+      expect(store.snapshot().position).toBe(position)
+      expect(store.getState().view).toEqual(view)
+      expect(await Effect.runPromise(journal.read)).toEqual(records)
+      console.log(JSON.stringify({ samples, checkpointBytes: checkpoint.bytes, checkpointChunks: checkpoint.chunks, maxChunkBytes: checkpoint.max, eventsPerTurn }))
     } finally { await Effect.runPromise(store.close); await Effect.runPromise(journal.close) }
   })
-}, 180_000)
+}, 240_000)

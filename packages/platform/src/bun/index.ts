@@ -7,21 +7,22 @@ import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { Effect, ManagedRuntime, Semaphore, Exit, type Layer } from "effect"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { sqlJournal } from "../shared/sql-journal"
-export { sqlJournal } from "../shared/sql-journal"
+import { sqlJournal, type CheckpointChunkOptions } from "../shared/sql-journal"
+export { sqlJournal, DEFAULT_CHECKPOINT_CHUNK_BYTES, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
 import { captureHostCheckpoint, type CheckpointPolicy } from "./backup"
 export { serve, DEFAULT_SERVE_OPTIONS, type ServeOptions } from "./serve"
 export { bunBackup, restoreHostCheckpoint, DEFAULT_CHECKPOINT_POLICY, type CheckpointPolicy } from "./backup"
 
 // bunJournal opens a SQLite event journal; its caller closes it after closing the actor.
-export function bunJournal<Event extends object>(options: SqliteClient.SqliteClientConfig & { readonly actor: string }) {
-  return sqlJournal<Event>({ actor: options.actor, layer: SqliteClient.layer(options) })
+export function bunJournal<Event extends object>(options: SqliteClient.SqliteClientConfig & CheckpointChunkOptions & { readonly actor: string }) {
+  return sqlJournal<Event>({ actor: options.actor, checkpointChunkBytes: options.checkpointChunkBytes, layer: SqliteClient.layer(options) })
 }
 
 // createBunHost keeps an instance supervisor database and separate thread databases beneath storage.
 export function createBunHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "storage"> & {
   readonly storage: string
+  readonly checkpointChunkBytes?: number
   readonly sqlite?: Omit<SqliteClient.SqliteClientConfig, "filename">
   readonly backup?: Layer.Layer<RemoteBackup, Error>
   readonly checkpoint?: Partial<CheckpointPolicy>
@@ -30,7 +31,7 @@ export function createBunHost<Event extends object, Services, State, Contracts e
     const connections = new Set<Effect.Effect<void, Error>>()
     const journal = <Entry extends object>(filename: string, actor: string) => {
       mkdirSync(dirname(filename), { recursive: true })
-      const opened = bunJournal<Entry>({ ...options.sqlite, filename, actor })
+      const opened = bunJournal<Entry>({ ...options.sqlite, filename, actor, checkpointChunkBytes: options.checkpointChunkBytes })
       connections.add(opened.close)
       return opened
     }

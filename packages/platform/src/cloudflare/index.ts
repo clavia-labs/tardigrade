@@ -7,17 +7,18 @@ import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigr
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { cloudflareWatchdogStorage } from "./watchdog"
-import { sqlJournal } from "../shared/sql-journal"
-export { sqlJournal } from "../shared/sql-journal"
+import { sqlJournal, type CheckpointChunkOptions } from "../shared/sql-journal"
+export { sqlJournal, DEFAULT_CHECKPOINT_CHUNK_BYTES, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
 import { hostRoutes, type HttpHost } from "../shared/http"
 import { HttpRouter } from "effect/unstable/http"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
-export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string, options: CloudflareAlarmOptions = {}) {
+export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string, options: CloudflareAlarmOptions & CheckpointChunkOptions = {}) {
   const alarms = makeRetryingAlarms(storage, options)
   return sqlJournal<Event>({
     actor,
+    checkpointChunkBytes: options.checkpointChunkBytes,
     layer: SqliteClient.layer({ storage }),
     flush: alarms.sync,
   })
@@ -27,6 +28,7 @@ export function cloudflareJournal<Event extends object>(storage: DurableObjectSt
 // createActorHost keeps supervisor and thread journals in the supplied Durable Object storage.
 export function createActorHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "storage"> & {
   readonly storage: DurableObjectStorage
+  readonly checkpointChunkBytes?: number
   readonly alarms?: CloudflareAlarmOptions
   readonly watchdog?: { readonly policy?: Partial<WatchdogPolicy>; readonly retryable?: (error: Error) => boolean }
 }) {
@@ -40,7 +42,7 @@ export function createActorHost<Event extends object, Services, State, Contracts
     }), ...options.watchdog })
   const connections = new Set<Effect.Effect<void, Error>>()
   const journal = <Entry extends object>(key: readonly string[], target: WatchdogTarget) => {
-    const opened = objectJournal<Entry>({ storage: options.storage, key: JSON.stringify(key), target, watchdog, alarms: options.alarms })
+    const opened = objectJournal<Entry>({ storage: options.storage, key: JSON.stringify(key), checkpointChunkBytes: options.checkpointChunkBytes, target, watchdog, alarms: options.alarms })
     connections.add(opened.close)
     return opened
   }

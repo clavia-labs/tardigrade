@@ -40,6 +40,7 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
   readonly alarms?: CloudflareAlarmOptions
   readonly watchdog?: { readonly policy?: Partial<WatchdogPolicy>; readonly retryable?: (error: Error) => boolean }
   readonly http?: (env: Env) => MethodHttpOptions
+  readonly checkpointChunkBytes?: number
   readonly generateName?: () => string
 }
 
@@ -50,12 +51,13 @@ export const cloudflareThreadName = (coordinate: ThreadCoordinate): string => JS
 export function objectJournal<Event extends object>(options: {
   readonly storage: DurableObjectStorage
   readonly key: string
+  readonly checkpointChunkBytes?: number | undefined
   readonly target: WatchdogTarget
   readonly alarms?: CloudflareAlarmOptions | undefined
   readonly watchdog: ReturnType<typeof createWatchdog>
 }) {
   const alarms = makeRetryingAlarms(options.storage, options.alarms)
-  return sqlJournal<Event>({ actor: options.key, layer: SqliteClient.layer({ storage: options.storage }), flush: alarms.sync,
+  return sqlJournal<Event>({ actor: options.key, checkpointChunkBytes: options.checkpointChunkBytes, layer: SqliteClient.layer({ storage: options.storage }), flush: alarms.sync,
     commit: (work, records, position) => Effect.gen(function* () {
       const context = yield* Effect.context<never>()
       yield* Effect.tryPromise({ try: () => options.storage.transaction(tx => Effect.runPromiseWith(context)(Effect.gen(function* () {
@@ -130,7 +132,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     private supervisor(instance: string) {
       if (this.instance !== instance) throw new RuntimeError("Actor DO instance is not initialized")
       if (!this.directory) {
-        this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
+        this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
         this.directory = createSupervisor({ actor: options.actor.actorName, journal: () => this.journal!, run: this.run,
           canDrive: () => this.watchdog.status.pipe(Effect.flatMap(entries => entries.get(watchdogKey({ actor: options.actor.actorName, instance }))?.status === "blocked" ? Effect.succeed(false) : options.canDrive ? options.canDrive({ actor: options.actor.actorName, instance }) : Effect.succeed(true))),
           defaultChildPlacement: DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, supportedChildPlacements: CLOUDFLARE_CHILD_PLACEMENTS,
@@ -239,7 +241,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     })
     private address() { if (!this.coordinate) throw new RuntimeError("Thread DO is not provisioned"); return this.coordinate }
     private storage() {
-      if (!this.journal) this.journal = objectJournal({ storage: this.ctx.storage, key: "events", target: this.address(), watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
+      if (!this.journal) this.journal = objectJournal({ storage: this.ctx.storage, key: "events", checkpointChunkBytes: options.checkpointChunkBytes, target: this.address(), watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
       return this.journal
     }
     async provision(input: ThreadCreated, initialState?: InitialState): Promise<void> {

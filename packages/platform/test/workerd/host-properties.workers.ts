@@ -1,4 +1,17 @@
 import { test } from "vitest"
 import { propertyCases } from "../properties/suite"
+import { env } from "cloudflare:workers"
+import { runInDurableObject } from "cloudflare:test"
+import { cloudflareJournal } from "../../src/cloudflare"
+import { checkpointStorage } from "../properties/checkpoint-storage"
+import type { TestPromiseResolver } from "./fixture.worker"
 
 for (const [name, run] of Object.entries(propertyCases)) test(name, run)
+
+
+test("checkpointStorage", async () => {
+  const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
+  await runInDurableObject(namespace.getByName("checkpoint-storage"), async (_instance, state) => {
+    await checkpointStorage({ open: checkpointChunkBytes => cloudflareJournal(state.storage, "events", { checkpointChunkBytes }), execute: async query => state.storage.sql.exec(query).toArray() })
+  })
+})
