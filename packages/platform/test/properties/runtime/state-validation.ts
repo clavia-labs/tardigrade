@@ -60,15 +60,17 @@ export function stateValidation() {
   const cached = incrementalValidator(Schema.Array(counted))
   const first = { name: "first" }
   if (!cached([first]) || !cached([first, { name: "second" }]) || checks !== 2) throw new Error("Shared subtree was revalidated")
-  let name: unknown = "ok"
+  let fallbacks = 0
+  let name: unknown = 1
   const accessor = { get name() { return name } }
-  const fallback = incrementalValidator(shape)
-  if (!fallback(accessor)) throw new Error("Accessor fallback rejected valid state")
+  const fallback = incrementalValidator(shape, () => { fallbacks++ })
+  if (fallback(accessor) || fallbacks !== 0) throw new Error("Invalid fallback emitted a warning")
+  name = "ok"
+  if (!fallback(accessor) || !fallback(accessor) || Number(fallbacks) !== 1) throw new Error("Valid fallback was silent or repeated its warning")
   name = 1
   if (fallback(accessor)) throw new Error("Accessor fallback reused mutable state")
   const plain = { name: "ok" }
-  const unsupported = { plain, date: new Date() }
-  incrementalValidator(Schema.Unknown)(unsupported)
+  incrementalValidator(Schema.Unknown)({ plain, date: new Date() })
   if (Object.isFrozen(plain)) throw new Error("Fallback partially froze state")
 
   const errorOf = (run: () => unknown) => {
@@ -76,16 +78,21 @@ export function stateValidation() {
     throw new Error("Invalid state was accepted")
   }
   const Added = Schema.Struct({ type: Schema.Literal("Added"), count: Schema.Finite })
-  const state = durableAtom({ name: "test.validation", input: Added, schema: State, initial: { items: [] }, reduce: (state, event) => ({ items: [...state.items, { count: event.count, label: "ok" }] }) })
+  let restoreChecks = 0
+  const stateSchema = State.check(Schema.makeFilter(() => { restoreChecks++; return true }))
+  const state = durableAtom({ name: "test.validation", input: Added, schema: stateSchema, initial: { items: [] }, reduce: (state, event) => ({ items: [...state.items, { count: event.count, label: "ok" }] }) })
   const log = createEventLog({ schema: Added, atoms: { root: effectAtom(get => ({ view: get(state), events: {}, acts: {} })) } })
   try {
     const current = log.append(log.initial, { type: "Added", count: 1 })
     const value = current.get(state)
+    restoreChecks = 0
     const restored = state[AtomState].decode(value)
+    if (restoreChecks > 2) throw new Error("Restore repeated its full validation")
     if (!isDeepStrictEqual(restored, value) || !Object.isFrozen(restored)) throw new Error("Restored state differs")
     errorOf(() => Object.assign(value.items[0]!, { count: -1 }))
     if (!Object.isFrozen(log.initial.get(state).items)) throw new Error("Initial state is mutable")
-    const expected = errorOf(() => Schema.decodeSync(State, STRICT)({ items: [...value.items, { count: -1, label: "ok" }] }))
-    if (errorOf(() => log.append(current, { type: "Added", count: -1 }).get(state)) !== expected) throw new Error("Invalid reduction lost Effect's error")
+    const invalid = { items: [...value.items, { count: -1, label: "ok" }] }
+    const expected = errorOf(() => Schema.decodeSync(stateSchema, STRICT)(invalid))
+    if (errorOf(() => log.append(current, { type: "Added", count: -1 }).get(state)) !== expected || errorOf(() => state[AtomState].decode(invalid)) !== expected) throw new Error("Invalid state lost Effect's error")
   } finally { log.dispose() }
 }

@@ -31,14 +31,14 @@ export function durableAtom<State, Event>(options: {
   const accepts = Schema.is(options.input)
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
-  const fast = incrementalValidator(options.schema)
+  const fast = incrementalValidator(options.schema, () => console.warn(`Durable atom "${options.name}" state is not plain data; validation is O(state)`))
   const check = (state: State): State => {
     if (!fast(state)) validate(state)
     return state
   }
   const decode = (Schema.decodeUnknownSync as unknown as (schema: unknown, options: { readonly onExcessProperty: "error" }) => (value: unknown) => unknown)(options.schema, { onExcessProperty: "error" }) as (value: unknown) => State
   const encode = (Schema.encodeUnknownSync as unknown as (schema: unknown) => (value: unknown) => unknown)(options.schema) as (value: State) => unknown
-  const restore = (state: unknown): State => check(validate(decode(state)))
+  const restore = (state: unknown): State => check(decode(state))
   const initial = structuredClone(options.initial)
   validate(initial)
   check(initial)

@@ -4,7 +4,7 @@ const STRICT = { onExcessProperty: "error" } as const
 type Check = (value: unknown) => boolean
 
 // incrementalValidator reuses successful checks for frozen plain-data subtrees under pure type-side schemas (packages/platform/test/properties/runtime/state-validation.ts).
-export function incrementalValidator(schema: Schema.Top): Check {
+export function incrementalValidator(schema: Schema.Top, onFallback?: () => void): Check {
   const immutable = new WeakSet<object>()
   const freeze = (value: unknown): boolean => {
     const pending: object[] = []
@@ -70,5 +70,14 @@ export function incrementalValidator(schema: Schema.Top): Check {
   const ast = SchemaAST.toType(schema.ast)
   const fast = compile(ast)
   const decode = Schema.decodeUnknownExit(Schema.toType(Schema.make(ast)), STRICT)
-  return value => freeze(value) ? fast(value) : Exit.isSuccess(decode(value))
+  let reported = false
+  return value => {
+    if (freeze(value)) return fast(value)
+    const valid = Exit.isSuccess(decode(value))
+    if (valid && !reported) {
+      reported = true
+      onFallback?.()
+    }
+    return valid
+  }
 }
