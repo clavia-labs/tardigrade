@@ -26,12 +26,17 @@ export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode),
   let step = 0
   const pad = () => { for (let i = 0; i < padding[step++ % padding.length]!; i++) append({ type: "Tick", value: step }) }
   const answers = (snapshot: Snapshot) => refs.map(ref => ({ effect: snapshot.effect(ref), promise: snapshot.promise(ref) }))
+  const expected = new WeakMap<Snapshot, ReturnType<typeof answers>>()
+  const oracles = new Map<EffectCheckpoint | undefined, ReturnType<typeof open>>()
   const check = (snapshot: Snapshot) => {
-    const oracle = open(snapshot.seed)
-    try {
-      const expected = answers(oracle.replay(snapshot.records))
-      if (!isDeepStrictEqual(answers(snapshot), expected)) throw new Error(`Snapshot lookup differs from replay at ${snapshot.position}`)
-    } finally { oracle.dispose() }
+    let lookup = expected.get(snapshot)
+    if (!lookup) {
+      let oracle = oracles.get(snapshot.seed)
+      if (!oracle) { oracle = open(snapshot.seed); oracles.set(snapshot.seed, oracle) }
+      lookup = answers(oracle.replay(snapshot.records))
+      expected.set(snapshot, lookup)
+    }
+    if (!isDeepStrictEqual(answers(snapshot), lookup)) throw new Error(`Snapshot lookup differs from replay at ${snapshot.position}`)
   }
   try {
     for (const index of reverse ? [1, 0] : [0, 1]) {
@@ -50,7 +55,7 @@ export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode),
       }
       append({ type: "Tick", value: step })
     }
-    refs.push({ seq: current.position + 1, atom: "missing", act: Job.name })
+    refs.push({ seq: current.position, atom: "suffix", act: Job.name }, { seq: current.position + 1, atom: "missing", act: Job.name })
     const before = evaluations
     for (const snapshot of snapshots) answers(snapshot)
     if (evaluations !== before) throw new Error("Prefix lookups rebuilt an engine")
@@ -69,8 +74,7 @@ export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode),
     const recovered = open(decodeCheckpoint(encodeCheckpoint(checkpoint)))
     try {
       const initial = recovered.initial
-      const ref = { seq: initial.position, atom: "suffix", act: Job.name }
-      refs.push(ref)
+      const ref = refs.find(ref => ref.atom === "suffix")!
       const suffix = [initial]
       const advance = (event: JournalEvent<typeof Tick.Type>) => suffix.push(recovered.append(suffix.at(-1)!, event))
       advance({ type: "EffectRequested", ref, request: { act: Job.name, input: { _tag: "InlineInput", value: input } } })
@@ -82,10 +86,12 @@ export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode),
       if (evaluations !== before) throw new Error("Recovered prefix lookups rebuilt an engine")
       for (const snapshot of suffix) check(snapshot)
       recovered.discard(suffix.at(-1)!)
-      for (const snapshot of suffix) check(snapshot)
+      check(initial)
+      check(suffix.at(-1)!)
     } finally { recovered.dispose() }
 
     log.discard(current)
-    for (const snapshot of snapshots) check(snapshot)
-  } finally { log.dispose() }
+    check(prefix)
+    check(current)
+  } finally { log.dispose(); for (const oracle of oracles.values()) oracle.dispose() }
 })
