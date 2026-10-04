@@ -47,8 +47,8 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     const chunks = checkpoint ? encodeCheckpointChunks(checkpoint.payload, chunkBytes) : []
     const sql = yield* client
     const work = Effect.gen(function* () {
-      const rows = yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM experimental_events WHERE actor = ${options.actor}`
-      const count = rows[0]?.count
+      const rows = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
+      const count = rows.length === 0 ? 0 : rows[0]!.seq + 1
       if (count !== expectedLength) return yield* Effect.fail(new JournalConflict(`Journal conflict for ${options.actor}: expected ${expectedLength}, found ${String(count)}`))
       for (const [index, event] of encoded.entries()) {
         yield* sql`INSERT INTO experimental_events (actor, seq, event) VALUES (${options.actor}, ${expectedLength + index}, ${event})`
