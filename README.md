@@ -15,23 +15,23 @@
 
 Tardigrade is a typescript framework for building composable agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and takes a functional approach to managing agent state and effects, drawing inspiration from [Elm](https://elm-lang.org/), and [Jotai](https://jotai.org/).
 
-If you use the legacy component API, see the [migration guide](docs/migration/state-initialisation.mdx) for moving existing state to atoms.
-
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/event-log-equation-dark.svg"><img src="assets/event-log-equation.svg" alt="{ view, effects } = f(event log)" width="240" height="34"></picture></p>
 
 ## Quickstart
 
+If you use the legacy component API, see the [migration guide](docs/migration/state-initialisation.mdx) for moving existing state to atoms.
+
 ```sh
-bunx tardie init tardie-agent --template quickstart
+bunx tardie init meeseeks --template quickstart
 ```
 
 For coding agents, use the [Tardigrade skill](https://github.com/clavia-labs/tardigrade/blob/main/skills/tardigrade/SKILL.md).
 
+### Atoms hold state
+
 ```sh
 bun add tardie
 ```
-
-### Atoms hold state
 
 Use atoms to store values for other atoms to use.
 
@@ -145,19 +145,19 @@ export const ThreadDO = worker.ThreadObject
 export default worker
 ```
 
+`createActorWorker` routes requests and provides the ActorDO and ThreadDO classes.
+
+ActorDO allocates and routes to threads; each ThreadDO owns a separate database with its state and journal. Each thread records its parent, through which we derive the logical lineage, here A -> B -> C.
+
 ```text
-ActorDO [supervisor DB]
-└── directory
-    ├── A [DO, thread DB]
-    ├── B [DO, thread DB, parent: A]
-    └── C [DO, thread DB, parent: B]
+ActorWorker -> ActorDO [supervisor DB]
+               └── directory
+                   ├── A [ThreadDO, thread DB]
+                   ├── B [ThreadDO, thread DB, parent: A]
+                   └── C [ThreadDO, thread DB, parent: B]
 ```
 
-The tree shows directory entries in a flat thread namespace. ActorDO allocates and routes to threads; each ThreadDO owns a separate database with its state, journal and alarm. Parent coordinates record logical lineage, here A -> B -> C.
-
-The [Quickstart](docs/getting-started/quickstart.mdx) generates the services and deployment configs. Set your model and provider credentials before running.
-
-`createActorWorker` owns the outer Worker routing and creates the `ActorObject` and `ThreadObject` classes with their storage, HTTP, alarm, and disposal lifecycles. Bind both exported classes in your deployment configuration; the [Quickstart](docs/getting-started/quickstart.mdx) generates these bindings.
+The [Quickstart](docs/getting-started/quickstart.mdx) generates services and deployment configs with both DO bindings. Configure your model and credentials, then run or deploy.
 
 Run locally with `bunx wrangler dev`; see [local setup](docs/platforms/cloudflare.mdx#verify-locally).
 
