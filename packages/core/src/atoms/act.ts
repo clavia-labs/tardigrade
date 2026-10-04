@@ -60,6 +60,9 @@ export const cancelAct = (request: ActCancellation, execution: Pick<typeof Effec
   yield* implementation.value.cancel(request, execution)
 })
 
+// actInputs holds request inputs that request() decoded against their act's input schema and checked as JSON.
+export const actInputs = new WeakSet<object>()
+
 // act defines typed durable work whose implementation is supplied by a layer. Implementations must tolerate redelivery with the same reference after a crash.
 // Cancellation handlers must tolerate repeated cleanup after reopening; deferred submissions use EffectExecution.submit to retain handles before interruption.
 export function act<const Name extends string, Input extends Schema.Json, Value extends Schema.Json, Failure extends Schema.Json>(options: {
@@ -104,6 +107,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
   const request = (invocation: { readonly origin?: number; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
     const decoded = decodeInput(invocation.input)
     const input = decoded ? decoded.value as Schema.Json : Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
+    if (typeof input === "object" && input !== null) actInputs.add(input)
     const origin = invocation.origin === undefined ? undefined : Schema.decodeSync(EffectRef.fields.seq)(invocation.origin)
     const identity = {}
     const ref = atom(get => {

@@ -1,3 +1,4 @@
+import { actInputs } from "../atoms/act"
 import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
 import { Context, Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
@@ -59,7 +60,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   const prepareRequest = (source: EffectRequest) => {
     const previous = preparedRequests.get(source)
     if (previous) return previous
-    const request = freeze(Schema.decodeSync(EffectRequest)(freeze(source)))
+    freeze(source)
+    const trusted = typeof source.input === "object" && source.input !== null && actInputs.has(source.input) && typeof source.act === "string" && source.act.length > 0 && Object.keys(source).length === 2
+    const request = trusted ? source : freeze(Schema.decodeSync(EffectRequest)(source))
     const stored = freeze(storeRequest(request, digestMinBytes))
     const prepared = { request, stored }
     preparedRequests.set(source, prepared)
