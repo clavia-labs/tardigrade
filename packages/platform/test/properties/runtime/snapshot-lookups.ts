@@ -11,9 +11,10 @@ const mode = fc.constantFrom("value", "failure", "promise", "cancel", "cancelPro
 export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode), fc.array(fc.integer({ min: 0, max: 2 }), { minLength: 8, maxLength: 8 }), fc.boolean(), (value, modes, padding, reverse) => {
   const input = Schema.decodeUnknownSync(Schema.Json)(value)
   let evaluations = 0
-  const open = (checkpoint?: EffectCheckpoint) => createEventLog({ schema: Tick, ...(checkpoint ? { checkpoint } : {}), digestMinBytes: 0,
+  const open = (checkpoint?: EffectCheckpoint) => createEventLog({ schema: Tick, ...(checkpoint ? { checkpoint } : {}), digestMinBytes: reverse ? 0 : Number.MAX_SAFE_INTEGER,
     atoms: Object.fromEntries(["left", "right", "suffix"].map(name => {
       const request = Job.request({ input })
+      if (typeof request.request.input === "object" && request.request.input !== null) Object.freeze(request.request.input)
       return [name, effectAtom(() => { evaluations++; return { view: null, events: {}, acts: { job: request } } })]
     })),
   })
@@ -43,7 +44,18 @@ export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode),
       pad()
       const ref = { seq: current.position, atom: index === 0 ? "left" : "right", act: Job.name }
       refs.push(ref)
-      append({ type: "EffectRequested", ref, request: { act: Job.name, input: { _tag: "InlineInput", value: input } } })
+      const offered = current.effects().find(work => !work.ref && work.atom === ref.atom)!
+      const request = log.requestEvent(ref, offered.request, offered.origin)
+      if (current.effects().find(work => !work.ref && work.atom === ref.atom)!.request !== offered.request || log.requestEvent(ref, offered.request, offered.origin).request !== request.request) throw new Error("Live request preparation repeated its payload work")
+      immutable(offered.request)
+      immutable(request)
+      for (const malformed of [{ ...request, extra: true }, { ...request, origin: -1 }, { ...request, ref: { ...ref, act: "wrong" } }, { ...request, request: { act: Job.name, input: null } }]) {
+        rejects(() => log.append(current, malformed as typeof request))
+      }
+      rejects(() => log.requestEvent({ ...ref, act: "wrong" }, offered.request))
+      rejects(() => log.requestEvent(ref, { act: Job.name, input: Object.freeze({ get value() { return input } }) }))
+      append(request)
+      if (current.records.at(-1)!.event !== request) throw new Error("Live request acceptance copied its processed event")
       pad()
       const selected = modes[index]!
       if (selected === "cancel") append({ type: "EffectCancelled", ref, reason: input })
@@ -95,3 +107,14 @@ export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode),
     check(current)
   } finally { log.dispose(); for (const oracle of oracles.values()) oracle.dispose() }
 })
+
+function immutable(value: unknown): void {
+  if (typeof value !== "object" || value === null) return
+  if (!Object.isFrozen(value)) throw new Error("Trusted request contains mutable data")
+  Object.values(value).forEach(immutable)
+}
+
+function rejects(run: () => unknown): void {
+  try { run() } catch { return }
+  throw new Error("Live request trust bypassed event validation")
+}

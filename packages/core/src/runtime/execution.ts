@@ -20,7 +20,7 @@ import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Op
 import { WatchdogTerminalError, type RecoveryState } from "../services/watchdog"
 import { Promises, DEFAULT_PROMISE_POLICY, promiseDeadline, promisePolicy, type PromisePolicy } from "../services/promises"
 import { DEFAULT_CHECKPOINT_MAX_BYTES, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "../services/checkpoint"
-import { observeRequest, storeRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
+import { observeRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
 import { messageReplies } from "./messages"
 import { DeliverMessage, type MessageDelivery } from "../services/invocation"
 import { select } from "./stores/thread"
@@ -413,7 +413,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           if (!work) return
           const ref = work.ref ?? { seq: snapshot.position, atom: work.atom, act: work.request.act }
           if (!work.ref) {
-            const request = yield* Schema.decodeEffect(EffectRequested)({ type: "EffectRequested", ref, ...(work.origin === undefined ? {} : { origin: work.origin }), request: storeRequest(work.request, digestMinBytes) }).pipe(Effect.mapError(RuntimeError.from))
+            const request = yield* Effect.try({ try: () => definition.requestEvent(ref, work.request, work.origin), catch: RuntimeError.from })
             yield* appendNow(request)
           }
           const recorded = snapshot.effect(ref)?.request

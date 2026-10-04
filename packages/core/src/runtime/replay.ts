@@ -7,7 +7,7 @@ import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "../atoms/act"
 import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
-import { StoredEffectRequested, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, type EffectSettled, PromiseSettled } from "./events"
+import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, type EffectSettled, PromiseSettled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
@@ -39,16 +39,36 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
   const validateMetadata = Schema.decodeUnknownSync(RecordMetadata)
   const validateCore = Schema.decodeUnknownSync(Schema.toType(CoreEvent), { onExcessProperty: "error" })
+  const frozen = new WeakSet<object>()
+  const processedRequests = new WeakSet<object>()
+  const preparedRequests = new WeakMap<EffectRequest, { readonly request: EffectRequest; readonly stored: StoredEffectRequested["request"] }>()
   const freeze = <Value>(value: Value): Value => {
-    if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
-      if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) throw new Error("Domain events must be plain data")
-      Object.values(value).forEach(freeze)
+    if (typeof value === "object" && value !== null && !frozen.has(value)) {
+      const prototype = Object.getPrototypeOf(value)
+      if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) throw new Error("Domain events must be plain data")
+      for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+        if (descriptor.get || descriptor.set) throw new Error("Domain events must be plain data")
+        freeze(descriptor.value)
+      }
       Object.freeze(value)
+      frozen.add(value)
     }
     return value
   }
+  // prepareRequest retains validated representations after making the source graph immutable (snapshotLookups).
+  const prepareRequest = (source: EffectRequest) => {
+    const previous = preparedRequests.get(source)
+    if (previous) return previous
+    const request = freeze(Schema.decodeSync(EffectRequest)(freeze(source)))
+    const stored = freeze(storeRequest(request, digestMinBytes))
+    const prepared = { request, stored }
+    preparedRequests.set(source, prepared)
+    preparedRequests.set(request, prepared)
+    return prepared
+  }
   const eventOf = (event: unknown, reply = false): JournalEvent<Event> => {
     if (typeof event !== "object" || event === null || Array.isArray(event)) throw new Error("Domain event must be an object")
+    if (processedRequests.has(event)) return event as StoredEffectRequested
     if ("effect" in event) throw new Error("Domain effect metadata is not supported")
     if (isMessageReceived(event)) {
       const inbox = Schema.decodeSync(MessageReceived, { onExcessProperty: "error" })(event)
@@ -56,7 +76,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (typeof inbox.body !== "object" || inbox.body === null || hasCoreEventType(inbox.body)) throw new Error("Actor inputs must be domain events")
       return freeze({ type: "MessageReceived", body: structuredClone(validate(inbox.body)) }) as JournalEvent<Event>
     }
-    return freeze(structuredClone(hasCoreEventType(event) ? validateCore(event) : validate(event)))
+    const result = freeze(structuredClone(hasCoreEventType(event) ? validateCore(event) : validate(event)))
+    if ("type" in result && result.type === "EffectRequested") processedRequests.add(result)
+    return result
   }
   const recordOf = (record: Recorded<Event>): Recorded<Event> => {
     const metadata = validateMetadata(record)
@@ -284,13 +306,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const owner = actOwners.get(proposal.identity)
         if (owner !== undefined && owner !== name) throw new Error("An act request must belong to one source")
         actOwners.set(proposal.identity, name)
-        const executionRequest = freeze(Schema.decodeSync(EffectRequest)(proposal.request))
+        const prepared = prepareRequest(proposal.request)
+        const executionRequest = prepared.request
         const previousRequest = executionDeclarations.get(proposal.identity)
-        if (previousRequest && !matchesRequest(previousRequest, executionRequest)) throw new Error("Effect identity reused with a different request")
-        executionDeclarations.set(proposal.identity, storeRequest(executionRequest, digestMinBytes))
+        if (previousRequest && previousRequest !== prepared.stored && !matchesRequest(previousRequest, executionRequest)) throw new Error("Effect identity reused with a different request")
+        executionDeclarations.set(proposal.identity, prepared.stored)
         if (ref) {
           const recorded = coreRequests.get(effectKey(ref))
-          if (!recorded || recorded.origin !== proposal.origin || !matchesRequest(recorded.request, executionRequest)) throw new Error("Restored effect request differs from its proposal")
+          if (!recorded || recorded.origin !== proposal.origin || (recorded.request !== prepared.stored && !matchesRequest(recorded.request, executionRequest))) throw new Error("Restored effect request differs from its proposal")
           const key = effectKey(ref)
           const settlement = coreSettlements.get(key)
           const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !promiseSettlements.has(key)
@@ -342,7 +365,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const candidates = effects().filter(work => !work.ref && work.atom === event.ref.atom && work.request.act === event.ref.act && work.origin === event.origin)
           if (candidates.length > 1) throw new Error("Calls to the same act require distinct origins")
           const offered = candidates[0]
-          if (!offered || !matchesRequest(event.request, offered.request)) throw new Error("Effect request differs from its proposal")
+          if (!offered || (preparedRequests.get(offered.request)?.stored !== event.request && !matchesRequest(event.request, offered.request))) throw new Error("Effect request differs from its proposal")
           const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
           rememberOrigin(event)
@@ -511,6 +534,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   return {
     get initial() { return replay([]) },
     replay,
+    // requestEvent validates acceptance coordinates and reuses this log's immutable request representation (snapshotLookups).
+    requestEvent: (ref: EffectRef, request: EffectRequest, origin?: number): StoredEffectRequested => {
+      const prepared = prepareRequest(request)
+      const acceptance = freeze(Schema.decodeSync(EffectAcceptance, { onExcessProperty: "error" })({ type: "EffectRequested", ref, act: prepared.request.act, ...(origin === undefined ? {} : { origin }) }))
+      const event = freeze({ type: acceptance.type, ref: acceptance.ref, ...(acceptance.origin === undefined ? {} : { origin: acceptance.origin }), request: prepared.stored })
+      processedRequests.add(event)
+      return event
+    },
     append: (snapshot: Snapshot, event: JournalEvent<Event>, metadata: RecordMetadata = {}): Snapshot => {
       const record = eventOf(event, metadata.message?.inReplyTo !== undefined)
       const engine = engineOf(snapshot)
