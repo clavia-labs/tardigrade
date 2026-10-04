@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.42.0](https://github.com/clavia-labs/tardigrade/compare/v0.41.2...v0.42.0) (2026-10-04)
+
+
+### Features
+
+* **core:** bound effect input storage ([#641](https://github.com/clavia-labs/tardigrade/issues/641)) ([2daddf6](https://github.com/clavia-labs/tardigrade/commit/2daddf65fbae85d673921ce13d7b384826682226))
+
+
+### Bug Fixes
+
+* isolate threads and models ([#637](https://github.com/clavia-labs/tardigrade/issues/637)) ([82ba498](https://github.com/clavia-labs/tardigrade/commit/82ba49892ae2b75e6882e35090aef4ad5778cb4c))
+
+
+### Performance Improvements
+
+* **core:** avoid snapshot replay ([#642](https://github.com/clavia-labs/tardigrade/issues/642)) ([834753e](https://github.com/clavia-labs/tardigrade/commit/834753e742c808a49754972d8cc34374ff39392b))
+
 ## [0.41.2](https://github.com/clavia-labs/tardigrade/compare/v0.41.1...v0.41.2) (2026-10-03)
 
 
