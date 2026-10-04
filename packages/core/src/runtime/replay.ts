@@ -89,6 +89,15 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     let initialState: StateSeed | undefined
     const initialisedNames = new Set(seed?.durable.map(entry => entry.name))
     const coreRequests = new Map<string, StoredEffectRequested>()
+    // addedAt places checkpoint entries before the suffix and journal entries at their global index (packages/platform/test/properties/runtime/snapshot-lookups.ts).
+    const addedAt = new Map<string, number>()
+    // retiredRequests preserves the request form visible before retirement (packages/platform/test/properties/runtime/snapshot-lookups.ts).
+    const retiredRequests = new Map<string, { readonly position: number; readonly before: StoredEffectRequested }>()
+    const visible = (kind: string, key: string, position: number) => (addedAt.get(`${kind}\0${key}`) ?? Infinity) < position
+    const remember = (kind: string, key: string, position: number) => {
+      const id = `${kind}\0${key}`
+      if (!addedAt.has(id)) addedAt.set(id, position)
+    }
     const loadedInputs = new Map<string, EffectRequest>()
     const inputOf = (key: string): EffectRequest => {
       const input = loadedInputs.get(key)
@@ -104,6 +113,19 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (!request) return undefined
       const settlement = coreSettlements.get(effectKey(ref))
       return { request, ...(settlement ? { settlement } : {}), ...(coreCancellations.has(effectKey(ref)) ? { cancellation: coreCancellations.get(effectKey(ref))! } : {}) }
+    }
+    const effectAt = (ref: EffectRef, position: number) => {
+      const key = effectKey(ref)
+      if (!visible("request", key, position)) return undefined
+      const retired = retiredRequests.get(key)
+      const request = retired && position <= retired.position ? retired.before : coreRequests.get(key)!
+      const settlement = visible("settlement", key, position) ? coreSettlements.get(key) : undefined
+      const cancellation = visible("cancellation", key, position) ? coreCancellations.get(key) : undefined
+      return { request, ...(settlement ? { settlement } : {}), ...(cancellation ? { cancellation } : {}) }
+    }
+    const promiseAt = (ref: EffectRef, position: number) => {
+      const key = effectKey(ref)
+      return visible("promise", key, position) ? promiseSettlements.get(key) : undefined
     }
     const store = createStore(Context.make(EventLog, {
       events: source.observedEvents,
@@ -151,11 +173,18 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const key = effectKey(entry.ref)
       rememberOrigin(entry.request)
       coreRequests.set(key, entry.request)
+      remember("request", key, offset - 1)
+      if (entry.settlement) remember("settlement", key, offset - 1)
+      if (entry.cancellation) remember("cancellation", key, offset - 1)
       if (entry.cancellation && entry.request.request.input._tag === "InlineInput") loadedInputs.set(key, { act: entry.request.request.act, input: entry.request.request.input.value })
       if (entry.settlement) coreSettlements.set(key, entry.settlement)
       if (entry.cancellation) coreCancellations.set(key, entry.cancellation)
     }
-    for (const entry of seed?.promises ?? []) promiseSettlements.set(effectKey(entry.ref), entry)
+    for (const entry of seed?.promises ?? []) {
+      const key = effectKey(entry.ref)
+      promiseSettlements.set(key, entry)
+      remember("promise", key, offset - 1)
+    }
     const bind = (proposal: ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>, ref: EffectRef) => {
       const prior = acts.get(effectKey(ref))
       if (prior && prior.identity !== proposal.identity) throw new Error("Duplicate effect binding")
@@ -286,7 +315,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       for (const key of retire) {
         if (Schema.is(MessageDelivered)(event) && key === effectKey(event.ref)) continue
         const request = coreRequests.get(key)!
-        coreRequests.set(key, { ...request, request: request.request.input._tag === "InlineInput" ? storeRequest({ act: request.request.act, input: request.request.input.value }, digestMinBytes) : request.request })
+        const stored = request.request.input._tag === "InlineInput" ? storeRequest({ act: request.request.act, input: request.request.input.value }, digestMinBytes) : request.request
+        if (stored.input._tag !== request.request.input._tag) retiredRequests.set(key, { position: offset + records.length, before: request })
+        coreRequests.set(key, { ...request, request: stored })
         loadedInputs.delete(key)
         acts.delete(key)
         retire.delete(key)
@@ -316,6 +347,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           if (!proposal) throw new Error("Effect proposal is missing")
           rememberOrigin(event)
           coreRequests.set(key, event)
+          remember("request", key, offset + records.length)
           loadedInputs.set(key, offered.request)
           bind(proposal, event.ref)
           accepted.set(key, { ...offered, ref: event.ref, request: offered.request })
@@ -323,11 +355,13 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           if (!coreRequests.has(key)) throw new Error("Cancellation requires an accepted effect")
           retire.delete(key)
           coreCancellations.set(key, event)
+          remember("cancellation", key, offset + records.length)
           accepted.delete(key)
         } else if (event.type === "EffectSettled") {
           if (!coreRequests.has(key)) throw new Error("Effect must be requested before settlement")
           if (coreSettlements.has(key)) throw new Error("Duplicate core effect settlement")
           coreSettlements.set(key, event)
+          remember("settlement", key, offset + records.length)
           if (!coreCancellations.has(key) && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value")) retire.add(key)
           accepted.delete(key)
         } else {
@@ -335,6 +369,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const prior = promiseSettlements.get(key)
           if (prior && !isDeepStrictEqual(prior, event)) throw new Error("Conflicting promise settlement")
           promiseSettlements.set(key, event)
+          remember("promise", key, offset + records.length)
           if (!coreCancellations.has(key)) retire.add(key)
         }
       }
@@ -417,6 +452,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       }),
       pending: () => [...coreRequests].filter(([key]) => !coreSettlements.has(key) && !coreCancellations.has(key)).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
       effect,
+      effectAt,
+      promiseAt,
       promise: (ref: EffectRef) => promiseSettlements.get(effectKey(ref)),
       checkpoint,
     }
@@ -433,6 +470,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     engines.set(snapshot, restored)
     return restored
   }
+  const extends_ = (engine: Engine, snapshot: Snapshot) => !engine.disposed && engine.seed === snapshot.seed && engine.position >= snapshot.position &&
+    (snapshot.records.length === 0 || engine.records[snapshot.records.length - 1] === snapshot.records[snapshot.records.length - 1])
   const snapshotOf = (engine: Engine): Snapshot => {
     const work = Object.freeze([...engine.effects()])
     const cancellations = Object.freeze([...engine.cancellations()])
@@ -453,8 +492,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       deliveries: () => deliveries,
       followups: (event: JournalEvent<Event>) => engineOf(snapshot).followups(event),
       pending: () => engineOf(snapshot).pending(),
-      effect: (ref: EffectRef) => engineOf(snapshot).effect(ref),
-      promise: (ref: EffectRef) => engineOf(snapshot).promise(ref),
+      effect: (ref: EffectRef) => extends_(engine, snapshot) ? engine.effectAt(ref, snapshot.position) : engineOf(snapshot).effect(ref),
+      promise: (ref: EffectRef) => extends_(engine, snapshot) ? engine.promiseAt(ref, snapshot.position) : engineOf(snapshot).promise(ref),
       checkpoint: () => engineOf(snapshot).checkpoint(),
     })
     engines.set(snapshot, engine)
