@@ -38,7 +38,11 @@ export function durableAtom<State, Event>(options: {
   }
   const decode = (Schema.decodeUnknownSync as unknown as (schema: unknown, options: { readonly onExcessProperty: "error" }) => (value: unknown) => unknown)(options.schema, { onExcessProperty: "error" }) as (value: unknown) => State
   const encode = (Schema.encodeUnknownSync as unknown as (schema: unknown) => (value: unknown) => unknown)(options.schema) as (value: State) => unknown
-  const restore = (state: unknown): State => check(decode(state))
+  const restore = (state: unknown): State => {
+    const decoded = decode(state)
+    fast.trust(decoded)
+    return decoded
+  }
   const initial = structuredClone(options.initial)
   validate(initial)
   check(initial)

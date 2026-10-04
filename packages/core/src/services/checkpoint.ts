@@ -34,7 +34,7 @@ export const decodeCheckpoint = (bytes: Uint8Array): EffectCheckpoint => {
   const durable = record.durable.map(entry => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error("Invalid durable checkpoint entry")
     const item = entry as Record<string, unknown>
-    if (typeof item.name !== "string" || !item.name || !Number.isSafeInteger(item.position) || (item.position as number) < 0 || !Schema.is(Schema.Json)(item.state)) throw new Error("Invalid durable checkpoint entry")
+    if (typeof item.name !== "string" || !item.name || !Number.isSafeInteger(item.position) || (item.position as number) < 0 || item.state === undefined) throw new Error("Invalid durable checkpoint entry")
     if (item.position !== record.position) throw new Error("Durable entry position differs from checkpoint position")
     return { name: item.name, state: item.state, position: item.position as number }
   })
