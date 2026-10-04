@@ -8,13 +8,13 @@
 // Run backend verification in a temporary directory to keep checker artifacts outside the repository.
 // quint verify /absolute/path/to/effectRecovery.qnt --inductive-invariant invariant --invariants recoveryEquivalent retryIdentity deferredPreserved executionAdmission localRestartOnly checkpointQuiescent
 module effectRecovery {
-  type Ref = { seq: int, atom: str, tag: str }
+  type Ref = { seq: int, atom: str, act: str }
   type Index = (int, int)
   type State = {
     stored: Index, checkpoint: Index, recovered: Index, recovering: bool,
     cursor: int, inFlight: int, origin: int, restartQueue: Set[int],
   }
-  pure val refs = List({ seq: 0, atom: "tool", tag: "call" }, { seq: 1, atom: "tool", tag: "call" })
+  pure val refs = List({ seq: 0, atom: "tool", act: "call" }, { seq: 1, atom: "tool", act: "call" })
   // statuses encodes absent, requested, immediate fulfillment, rejection, local deferred, promise fulfillment, promise rejection, and remote deferred.
   pure val statuses = 0.to(7)
   pure val indexes = tuples(statuses, statuses)

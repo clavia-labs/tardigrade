@@ -21,7 +21,7 @@ test("library promise timeout validates annotations and survives tool compilatio
 
 test("inference promise uses its model waiting budget", async () => {
   const actor = defineActor("inference-timeout", Effect.sync(() => {
-    const request = Generate.request({ tag: "model", input: { model: { provider: "openrouter", model_id: "test" }, system: "", tools: [], context: [] } })
+    const request = Generate.request({ input: { model: { provider: "openrouter", model_id: "test" }, system: "", tools: [], context: [] } })
     return { schema: Schema.Struct({ type: Schema.Literal("Unused") }), atom: effectAtom(get => {
       const view = get(request.result)
       return { view, events: {}, acts: view.status === "pending" ? { generate: request } : {} }

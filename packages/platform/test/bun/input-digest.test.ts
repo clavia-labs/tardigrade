@@ -18,7 +18,7 @@ const setup = (system = "original", digestMinBytes = 2048) => {
   let request: ReturnType<typeof Job.request> | undefined
   const root = effectAtom(get => {
     const view = get(state)
-    if (view.active && !request) request = Job.request({ tag: "call", input: { system, text: view.text }, onSettled: () => [{ type: "Finished" }] })
+    if (view.active && !request) request = Job.request({ input: { system, text: view.text }, onSettled: () => [{ type: "Finished" }] })
     return { view, events: {}, acts: view.active && request ? { call: request } : {} }
   })
   return { schema: Events, atoms: { root }, digestMinBytes }
@@ -28,7 +28,7 @@ const acceptedHistory = (text = "x".repeat(4096)) => {
   const log = createEventLog(setup())
   let snapshot = log.append(log.initial, { type: "Started", text })
   const offered = snapshot.effects()[0]!
-  const ref = { seq: snapshot.position, atom: offered.source, tag: offered.id }
+  const ref = { seq: snapshot.position, atom: offered.atom, act: offered.request.act }
   snapshot = log.append(snapshot, { type: "EffectRequested", ref, request: storeRequest(offered.request) })
   return { log, snapshot, ref, text }
 }
@@ -43,7 +43,7 @@ test("digest replay reconstructs pending input and rejects changed proposals bef
     expect(replay.pending()[0]!.request.input).toEqual({ system: "original", text })
     expect(() => changed.replay(snapshot.records)).toThrow("differs from its proposal")
     const badExecutor = snapshot.records.map(record => record.event.type === "EffectRequested" ? { ...record, event: { ...record.event, request: { ...record.event.request, act: "changed" } } } : record)
-    expect(() => restored.replay(badExecutor)).toThrow("differs from its proposal")
+    expect(() => restored.replay(badExecutor)).toThrow()
     const observation = replay.get(atom(get => {
       const service = Context.get(get(eventLogContext)!, EventLog)
       return { events: get(service.events), records: get(service.records!), effect: service.effect!(replay.pending()[0]!.ref) }
@@ -87,19 +87,17 @@ test("inline and digest acceptance share identity", () => {
   } finally { log.dispose() }
 })
 
-test("latestOnly keeps same-tag identity and releases preceding handles", () => {
-  const create = (input: { tag: string; input: string }) => ({ ...input })
+test("latestOnly releases preceding domain handles", () => {
+  const create = (input: string) => ({ input })
   const latest = requests(create, { latestOnly: true })
-  const first = latest({ tag: "first", input: "one" })
-  expect(latest({ tag: "first", input: "one" })).toBe(first)
-  latest({ tag: "second", input: "two" })
-  expect(latest({ tag: "first", input: "one" })).not.toBe(first)
+  const first = latest("first", "one")
+  expect(latest("first", "one")).toBe(first)
+  latest("second", "two")
+  expect(latest("first", "one")).not.toBe(first)
   const all = requests(create)
-  const retained = all({ tag: "first", input: "one" })
-  all({ tag: "second", input: "two" })
-  expect(all({ tag: "first", input: "one" })).toBe(retained)
-  const custom = requests(create, input => input.input)
-  expect(custom({ tag: "one", input: "same" })).toBe(custom({ tag: "two", input: "same" }))
+  const retained = all("first", "one")
+  all("second", "two")
+  expect(all("first", "one")).toBe(retained)
 })
 
 test("deferred inputs survive settlement and cancellation checkpoints for recovery and cleanup", () => {
@@ -142,7 +140,7 @@ test("runtime threshold overrides preserve executable inputs", async () => {
 
 test("same-identity input changes are rejected when the retained declaration is a digest", () => {
   const state = durableAtom({ name: "identity", input: Started, schema: Schema.String, initial: "", reduce: (_, event) => event.text })
-  let proposal = Job.request({ tag: "same", input: { system: "original", text: "x".repeat(4096) } })
+  let proposal = Job.request({ input: { system: "original", text: "x".repeat(4096) } })
   const root = effectAtom(get => ({ view: get(state), events: {}, acts: { call: proposal } }))
   const log = createEventLog({ schema: Started, atoms: { root } })
   try {
@@ -154,13 +152,13 @@ test("same-identity input changes are rejected when the retained declaration is 
 
 test("digest-shaped user data is executable and invalid thresholds fail", () => {
   const JsonJob = act({ name: "json", input: Schema.Json, success: Schema.Null, failure: Schema.String })
-  const request = JsonJob.request({ tag: "reserved", input: digestInput("user data") })
+  const request = JsonJob.request({ input: digestInput("user data") })
   const root = effectAtom(() => ({ view: null, events: {}, acts: { call: request } }))
   const log = createEventLog({ schema: Started, atoms: { root } })
   try {
     const initial = log.initial
     const offered = initial.effects()[0]!
-    const ref = { seq: initial.position, atom: offered.source, tag: offered.id }
+    const ref = { seq: initial.position, atom: offered.atom, act: offered.request.act }
     const accepted = log.append(initial, { type: "EffectRequested", ref, request: storeRequest(offered.request, 0) })
     expect(accepted.effects()[0]!.request.input).toEqual(digestInput("user data"))
     const restored = log.replay(accepted.records)

@@ -14,14 +14,16 @@ export type StoredEffectRequest = typeof StoredEffectRequest.Type
 export const StoredEffectRequested = Schema.Struct({
   type: Schema.Literal("EffectRequested"),
   ref: EffectRef,
+  origin: Schema.optionalKey(EffectRef.fields.seq),
   request: StoredEffectRequest,
-})
+}).check(Schema.makeFilter(record => record.ref.act === record.request.act, { title: "Effect reference must match its act" }))
 export type StoredEffectRequested = typeof StoredEffectRequested.Type
 
 // EffectAcceptance exposes identity and act independently of input (quint/checkpoint/inputLifecycle.qnt, observationIndependent).
 export const EffectAcceptance = Schema.Struct({
   type: Schema.Literal("EffectRequested"),
   ref: EffectRef,
+  origin: Schema.optionalKey(EffectRef.fields.seq),
   act: Schema.NonEmptyString,
-})
+}).check(Schema.makeFilter(record => record.ref.act === record.act, { title: "Acceptance reference must match its act" }))
 export type EffectAcceptance = typeof EffectAcceptance.Type

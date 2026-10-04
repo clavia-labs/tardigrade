@@ -42,7 +42,7 @@ export function durablePromise<Value, Error = never>(reference: EffectRef, optio
       if (!isDeepStrictEqual(previous, settlement.result)) throw new RuntimeError(`Conflicting promise settlement: ${id}`)
       return previous
     },
-  }).pipe(Atom.withLabel(`promise ${ref.atom}/${ref.tag}@${ref.seq}`))
+  }).pipe(Atom.withLabel(`promise ${ref.atom}/${ref.act}@${ref.seq}`))
   return {
     ref,
     id,

@@ -36,8 +36,8 @@ export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: 
     }
     return {
       view: { ...state, position: "checking" },
-      events: {}, acts: { permission: request({
-        tag: JSON.stringify(["tool.execute", call.callId]),
+      events: {}, acts: { permission: request(JSON.stringify(["tool.execute", call.callId]), {
+        ...(get(pendingTools).origin === null ? {} : { origin: get(pendingTools).origin! }),
         input: { action: "tool.execute", requestId: call.callId, resource: call.name, input: call.input, ...(metadata ? { metadata } : {}) },
         onSettled: result => [{ type: "PermissionResolved", action: "tool.execute", requestId: call.callId, decision: result.status === "fulfilled"
           ? result.value : { allowed: false, reason: `Permission request failed: ${failureMessage(result.reason)}` } } satisfies Event],

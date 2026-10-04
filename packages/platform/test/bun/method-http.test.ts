@@ -21,7 +21,7 @@ test("HTTP discovers and invokes actor-owned methods without opening a durable t
   const count = durableAtom({ name: "http.count", input: Added, schema: Schema.Finite, initial: 0, reduce: (state, event) => state + event.amount })
   const actor = defineActor("counter", Effect.gen(function* () {
     const name = yield* ContractName
-    const request = External.request({ tag: "startup", input: null })
+    const request = External.request({ input: null })
     return {
       atom: effectAtom(get => ({ view: get(count), events: {}, acts: { external: request } })),
       methods: {
@@ -105,7 +105,7 @@ test("HTTP discovery retains named and nested method schemas", async () => {
 })
 
 test("budget request specifications can enter a model act", () => {
-  const request = Generate.request({ tag: "budget", input: {
+  const request = Generate.request({ input: {
     model: { provider: "test", model_id: "test" }, system: "", context: [], tools: [requestBudget.spec],
   } })
   expect(request.request.input).toMatchObject({ tools: [{ name: "request_budget", execution: "foreground" }] })

@@ -10,11 +10,11 @@ const Turn = Schema.Struct({
 })
 export const InferenceState = Schema.Struct({
   turns: Schema.Array(Turn),
-  turnId: Schema.String, callId: Schema.String, needsReply: Schema.Boolean, running: Schema.Boolean, waiting: Schema.Boolean,
+  turnId: Schema.String, callId: Schema.String, origin: Schema.NullOr(Schema.Finite), needsReply: Schema.Boolean, running: Schema.Boolean, waiting: Schema.Boolean,
 })
-export const initialInference: typeof InferenceState.Type = { turns: [], turnId: "", callId: "model::0", needsReply: false, running: false, waiting: false }
+export const initialInference: typeof InferenceState.Type = { turns: [], turnId: "", callId: "model::0", origin: null, needsReply: false, running: false, waiting: false }
 
-export function inferState(state: typeof InferenceState.Type, event: Event | ObservedCoreEvent): typeof InferenceState.Type {
+export function inferState(state: typeof InferenceState.Type, event: Event | ObservedCoreEvent, _metadata?: unknown, position?: number): typeof InferenceState.Type {
   let turns = state.turns
   if (event.type === "TurnRequested") {
     if (turns.some(turn => turn.turnId === event.turnId)) throw new RuntimeError(`Duplicate turn: ${event.turnId}`)
@@ -65,7 +65,8 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Obs
   const turn = turns.find(turn => turn.settlement === null)
   const running = turn?.calls.find(call => !call.returned)
   const turnId = turn?.turnId ?? ""
-  return { turns, turnId, callId: running?.callId ?? `model:${turnId}:${turn?.calls.length ?? 0}`, needsReply: turn !== undefined && turn.answer === null, running: running !== undefined, waiting: (turn?.outstanding.length ?? 0) > 0 }
+  const callId = running?.callId ?? `model:${turnId}:${turn?.calls.length ?? 0}`
+  return { turns, turnId, callId, origin: callId === state.callId ? state.origin : position ?? null, needsReply: turn !== undefined && turn.answer === null, running: running !== undefined, waiting: (turn?.outstanding.length ?? 0) > 0 }
 }
 
 // turnOutput reads the answer of a completed turn.

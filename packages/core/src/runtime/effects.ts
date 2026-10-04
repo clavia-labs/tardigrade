@@ -3,24 +3,11 @@ import { Cause, Data, Schema } from "effect"
 export const EffectRef = Schema.Struct({
   seq: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
   atom: Schema.NonEmptyString,
-  tag: Schema.NonEmptyString,
+  act: Schema.NonEmptyString,
 })
 export type EffectRef = typeof EffectRef.Type
 
-export const effectKey = (ref: EffectRef) => JSON.stringify([ref.seq, ref.atom, ref.tag])
-
-// effectSource names work within an atom root; source names cannot contain a slash (referenceCoordinates).
-export function effectSource(atom: string, name: string): string {
-  if (!name || name.includes("/")) throw new RuntimeError(`Invalid effect source: ${name}`)
-  return `${atom}/${name}`
-}
-
-// effectSourceName recovers the source name from a runtime coordinate (referenceCoordinates).
-export function effectSourceName(ref: EffectRef): string {
-  const separator = ref.atom.lastIndexOf("/")
-  if (separator < 0 || separator === ref.atom.length - 1) throw new RuntimeError("Invalid effect source coordinate")
-  return ref.atom.slice(separator + 1)
-}
+export const effectKey = (ref: EffectRef) => JSON.stringify([ref.seq, ref.atom, ref.act])
 
 // RuntimeError preserves a typed failure at the runtime boundary.
 export class RuntimeError extends Error {

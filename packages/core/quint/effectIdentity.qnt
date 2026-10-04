@@ -1,5 +1,5 @@
-// effectIdentity models fresh (seq, atom, tag) allocation with per-sequence duplicate rejection (uniqueReferences).
-// The namespace contains two atoms and two tags; positions and transition counts are unbounded.
+// effectIdentity models fresh (seq, atom, act) allocation with per-sequence duplicate rejection (uniqueReferences).
+// The namespace contains two atoms and two acts; positions and transition counts are unbounded.
 // The observer remembers an arbitrary earlier allocation and checks subsequent allocations for collision.
 // Replay is assumed to preserve existing references; execution, settlement, and TypeScript refinement are outside this model.
 // Quint 0.32.0 with Apalache 0.56.1 checks initialization, inductive preservation, and implication of uniqueReferences.
@@ -11,11 +11,11 @@
 
 module effectIdentity {
   type Key = (str, str)
-  type Ref = { seq: int, atom: str, tag: str }
+  type Ref = { seq: int, atom: str, act: str }
 
   pure val atoms = Set("model", "tool")
-  pure val tags = Set("call", "other")
-  pure val operationKeys = tuples(atoms, tags)
+  pure val acts = Set("call", "other")
+  pure val operationKeys = tuples(atoms, acts)
 
   var position: int
   var allocatedHere: Set[Key]
@@ -24,7 +24,7 @@ module effectIdentity {
   var rememberedKey: Key
   var collision: int
 
-  def reference(seq: int, key: Key): Ref = { seq: seq, atom: key._1, tag: key._2 }
+  def reference(seq: int, key: Key): Ref = { seq: seq, atom: key._1, act: key._2 }
 
   action init = all {
     position' = 0,

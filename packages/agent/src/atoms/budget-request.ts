@@ -52,8 +52,8 @@ export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: {
       catch (error) { return { view: { ...base, decision: null, request: null, response: { error: String(error) } }, events: {}, acts: {} } }
       return {
         view: waiting,
-        events: {}, acts: { budget: request({
-          tag: pending.callId,
+        events: {}, acts: { budget: request(pending.callId, {
+          ...(get(pendingTools).origin === null ? {} : { origin: get(pendingTools).origin! }),
           input: { metric: "toolCalls", callId: pending.callId, ...input, used, limit },
           onSettled: result => {
             const decision = result.status === "fulfilled" ? result.value : { allowed: false as const, reason: `Budget request failed: ${failureMessage(result.reason)}` }

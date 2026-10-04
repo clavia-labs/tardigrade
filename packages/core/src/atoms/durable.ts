@@ -19,13 +19,13 @@ const count = durableAtom({
 })
 */
 
-// durableAtom folds matching input events into validated state; reducers must preserve unchanged references and leave their input state unchanged.
+// durableAtom folds matching input events into validated state and supplies their zero-based journal positions. Reducers must preserve unchanged references and leave their input state unchanged.
 export function durableAtom<State, Event>(options: {
   readonly name: string
   readonly input: Schema.Schema<Event>
   readonly schema: Schema.Schema<State>
   readonly initial: NoInfer<State>
-  readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata) => NoInfer<State>
+  readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<State>
 }): DurableAtom<State, Event> {
   const accepts = Schema.is(options.input)
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
@@ -59,7 +59,7 @@ export function durableAtom<State, Event>(options: {
       if (!accepts(event)) continue
       const record = records?.[index]
       const metadata: RecordMetadata = record ? { ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), ...(record.message ? { message: record.message } : {}) } : {}
-      const next = options.reduce(state, event, metadata)
+      const next = options.reduce(state, event, metadata, offset + index)
       if (!Object.is(next, state)) validate(next)
       state = next
     }

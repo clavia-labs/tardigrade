@@ -11,28 +11,29 @@ const decodeAcceptance = Schema.decodeUnknownSync(EffectAcceptance, { onExcessPr
 
 // inputRepresentation checks encoding, observation, and verification across arbitrary inputs and atom coordinates (quint/checkpoint/inputLifecycle.qnt).
 export const inputRepresentation = fc.property(fc.record({
-  input: json, act: name,
-  ref: fc.record({ seq: fc.integer({ min: 0, max: Number.MAX_SAFE_INTEGER - 1 }), atom: name, tag: name }),
-}), ({ input, act, ref: coordinate }) => {
-  const ref = { ...coordinate }
+  input: json, act: name, hasOrigin: fc.boolean(),
+  ref: fc.record({ seq: fc.integer({ min: 0, max: Number.MAX_SAFE_INTEGER - 1 }), atom: name, act: name }),
+}), ({ input, act, hasOrigin, ref: coordinate }) => {
+  const ref = { ...coordinate, act }
+  const origin = hasOrigin && ref.seq > 0 ? { origin: ref.seq - 1 } : {}
   const proposal = { act: act, input }
   const digest = digestInput(input)
   const before = canonicalInput(proposal)
-  const expected = { type: "EffectRequested" as const, ref, act }
+  const expected = { type: "EffectRequested" as const, ref, act, ...origin }
   for (const minBytes of [0, digest.bytes, digest.bytes + 1]) {
     const request = storeRequest(proposal, minBytes)
-    const record = decodeStored(JSON.parse(JSON.stringify({ type: "EffectRequested", ref, request })))
+    const record = decodeStored(JSON.parse(JSON.stringify({ type: "EffectRequested", ref, ...origin, request })))
     if (!isDeepStrictEqual(record.ref, expected.ref) || !matchesRequest(record.request, proposal) || !sameStoredRequest(record.request, storeRequest(proposal, 0))) throw new Error("Stored request failed round-trip verification")
     if (record.request.input._tag !== (minBytes <= digest.bytes ? "InputDigest" : "InlineInput")) throw new Error("UTF-8 threshold changed representation at the wrong boundary")
     const observed = observeRequest(record)
-    if (!isDeepStrictEqual(decodeAcceptance(observed), expected) || Object.keys(observed).sort().join(",") !== "act,ref,type") throw new Error("Acceptance exposed stored payload")
+    if (!isDeepStrictEqual(decodeAcceptance(observed), expected) || Object.keys(observed).sort().join(",") !== ("origin" in origin ? "act,origin,ref,type" : "act,ref,type")) throw new Error("Acceptance exposed stored payload")
     if (matchesRequest(record.request, { act: `${act}/changed`, input }) || matchesRequest(record.request, { act: act, input: [input] })) throw new Error("Mismatched reconstruction passed verification")
     if (record.request.input._tag === "InputDigest" && matchesRequest({ ...record.request, input: { ...record.request.input, bytes: digest.bytes + 1 } }, proposal)) throw new Error("Digest byte mismatch passed verification")
   }
   const source = createRecordSource()
   const store = createStore()
   try {
-    const original = { type: "EffectRequested" as const, ref, request: storeRequest(proposal, Number.MAX_SAFE_INTEGER) }
+    const original = { type: "EffectRequested" as const, ref, ...origin, request: storeRequest(proposal, Number.MAX_SAFE_INTEGER) }
     for (const request of [original, { ...original, request: storeRequest(proposal, 0) }]) {
       const previous = store.get(source.observedRecords)
       source.append(store, [{ event: request, recordedAt: ref.seq }])
@@ -41,10 +42,10 @@ export const inputRepresentation = fc.property(fc.record({
       if (!Object.isFrozen(observed.event) || store.get(source.records).at(-1)!.event !== request || previous.length !== store.get(source.observedRecords).length - 1) throw new Error("Observation mutated the stored prefix")
     }
   } finally { store.dispose() }
-  const changedInput = observeRequest({ type: "EffectRequested", ref, request: storeRequest({ act: act, input: [input] }, 0) })
+  const changedInput = observeRequest({ type: "EffectRequested", ref, ...origin, request: storeRequest({ act: act, input: [input] }, 0) })
   if (!isDeepStrictEqual(changedInput, expected)) throw new Error("Input changed acceptance observation")
   if (canonicalInput(proposal) !== before) throw new Error("Encoding mutated the live proposal")
-  for (const other of [{ ...ref, seq: ref.seq + 1 }, { ...ref, atom: `${ref.atom}/other` }, { ...ref, tag: `${ref.tag}/other` }]) {
+  for (const other of [{ ...ref, seq: ref.seq + 1 }, { ...ref, atom: `${ref.atom}/other` }, { ...ref, act: `${ref.act}/other` }]) {
     if (effectKey(ref) === effectKey(other)) throw new Error("Distinct coordinates share identity")
   }
   if (canonicalInput({ z: input, a: "é" }) !== canonicalInput({ a: "é", z: input })) throw new Error("Object key order changed canonical input")

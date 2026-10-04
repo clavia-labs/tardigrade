@@ -52,7 +52,7 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
         : event.type === "Updated" ? { ...state, updates: state.updates + 1 }
         : { ...state, queued: false, running: false, results: [...state.results, event.result] },
     })
-    const request = Job.request({ tag: "job", input: { value: options.value }, onRequested: () => [{ type: "Running" }],
+    const request = Job.request({ input: { value: options.value }, onRequested: () => [{ type: "Running" }],
       onDeferred: (handle, ref) => [{ type: "Submitted", ref, handle }],
       onSettled: result => [{ type: "Returned", result: result.status === "rejected" ? { ...result, reason: typeof result.reason === "string" ? result.reason : JSON.stringify(result.reason) } : result }],
     })

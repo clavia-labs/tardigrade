@@ -43,5 +43,5 @@ export function promisePolicy(overrides: Partial<PromisePolicy> = {}): PromisePo
   return policy
 }
 
-export const resolutionKey = (request: ResolutionRequest) => JSON.stringify([request.ref.atom, request.ref.seq, request.ref.tag])
+export const resolutionKey = (request: ResolutionRequest) => JSON.stringify([request.ref.atom, request.ref.seq, request.ref.act])
 export const registrationKey = (request: ResolutionRegistration) => JSON.stringify([request.recipient.actor, request.recipient.instance, request.recipient.thread, resolutionKey(request)])

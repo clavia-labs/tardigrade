@@ -6,7 +6,7 @@ import { EventLog } from "../services/event-log"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "../atoms/act"
-import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, effectSource, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
+import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
 import { StoredEffectRequested, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, type EffectSettled, PromiseSettled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
@@ -132,23 +132,33 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     let deliveries: Event[] = []
     let cancellations: EffectCancelled[] = []
     const owners = new Map<string, string>()
+    const roots = new Map<string, string>()
     const executionDeclarations = new WeakMap<object, StoredEffectRequested["request"]>()
     const proposals = new Map<string, ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>>()
     const accepted = new Map<string, IdentifiedEffectValue<ServicesOf<EffectValues>>>()
-    // restoredRefs rebinds handles during the initial checkpoint projection and is cleared before suffix replay.
-    const restoredRefs = new Map<string, EffectRef>()
+    // originRefs preserves acceptance bindings through checkpoints and suffix replay (quint/checkpoint/acceptanceBinding.qnt, recoveryEquivalent).
+    const originRefs = new Map<string, EffectRef>()
+    const originKey = (atom: string, act: string, origin: number | undefined) => JSON.stringify([atom, act, origin ?? null])
+    const rememberOrigin = (record: StoredEffectRequested) => {
+      if (record.ref.act !== record.request.act) throw new Error("Effect reference differs from its act")
+      if (record.origin !== undefined && record.origin >= record.ref.seq) throw new Error("Effect origin must precede acceptance")
+      const key = originKey(record.ref.atom, record.request.act, record.origin)
+      const prior = originRefs.get(key)
+      if (prior && effectKey(prior) !== effectKey(record.ref)) throw new Error("Effect origin already has an accepted reference")
+      originRefs.set(key, record.ref)
+    }
     for (const entry of seed?.effects ?? []) {
       const key = effectKey(entry.ref)
+      rememberOrigin(entry.request)
       coreRequests.set(key, entry.request)
       if (entry.cancellation && entry.request.request.input._tag === "InlineInput") loadedInputs.set(key, { act: entry.request.request.act, input: entry.request.request.input.value })
       if (entry.settlement) coreSettlements.set(key, entry.settlement)
       if (entry.cancellation) coreCancellations.set(key, entry.cancellation)
-      restoredRefs.set(`${entry.ref.atom}\u0000${entry.ref.tag}`, entry.ref)
     }
     for (const entry of seed?.promises ?? []) promiseSettlements.set(effectKey(entry.ref), entry)
     const bind = (proposal: ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>, ref: EffectRef) => {
       const prior = acts.get(effectKey(ref))
-      if (prior && prior.identity !== proposal.identity) throw new Error("Duplicate effect atom and tag at this sequence")
+      if (prior && prior.identity !== proposal.identity) throw new Error("Duplicate effect binding")
       actReferences.set(proposal.identity, ref)
       acts.set(effectKey(ref), proposal)
       store.set(bindings, new Map(actReferences))
@@ -206,9 +216,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const proposals = collection === "events" ? ("events" in value ? value.events : undefined) : ("acts" in value ? value.acts : undefined)
           if (typeof proposals !== "object" || proposals === null || Array.isArray(proposals)) throw new Error(`Invalid ${collection} collection from ${name}`)
           for (const [source, proposal] of Object.entries(proposals)) {
-            if (!source || source.includes("/")) throw new Error(`Invalid effect source: ${source}`)
+            if (!source) throw new Error(`Invalid effect source: ${source}`)
             if (typeof proposal !== "object" || proposal === null || !("kind" in proposal) || (collection === "events" ? proposal.kind !== "event" : proposal.kind !== "act" && proposal.kind !== "cancel")) throw new Error(`Invalid ${collection} proposal from ${name}/${source}`)
-            const path = effectSource(collection === "acts" ? name : `${name}/events`, source)
+            const path = JSON.stringify([name, collection, source])
+            roots.set(path, name)
             entries.push(identify(path, JSON.stringify([name, collection, source]), proposal))
           }
         }
@@ -237,9 +248,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         }
         if (!native) throw new Error(`Invalid effect value from ${name}`)
         const proposal = candidate as ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>
-        if (typeof proposal.id !== "string" || !proposal.id) throw new Error("Effect identity must not be empty")
+        const root = roots.get(name)!
         const assigned = actReferences.get(proposal.identity)
-        const ref = assigned ?? restoredRefs.get(`${name}\u0000${proposal.id}`)
+        const ref = assigned ?? originRefs.get(originKey(root, proposal.request.act, proposal.origin))
+        if (ref && (ref.atom !== root || ref.act !== proposal.request.act)) throw new Error("Accepted reference belongs to a different atom or act")
         const owner = actOwners.get(proposal.identity)
         if (owner !== undefined && owner !== name) throw new Error("An act request must belong to one source")
         actOwners.set(proposal.identity, name)
@@ -249,7 +261,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         executionDeclarations.set(proposal.identity, storeRequest(executionRequest, digestMinBytes))
         if (ref) {
           const recorded = coreRequests.get(effectKey(ref))
-          if (!recorded || !matchesRequest(recorded.request, executionRequest)) throw new Error("Restored effect request differs from its proposal")
+          if (!recorded || recorded.origin !== proposal.origin || !matchesRequest(recorded.request, executionRequest)) throw new Error("Restored effect request differs from its proposal")
           const key = effectKey(ref)
           const settlement = coreSettlements.get(key)
           const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !promiseSettlements.has(key)
@@ -258,7 +270,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           return []
         }
         proposals.set(name, proposal)
-        return [{ kind: "act" as const, id: proposal.id, source: name, request: executionRequest, execute: proposal.execute }]
+        return [{ kind: "act" as const, atom: root, ...(proposal.origin === undefined ? {} : { origin: proposal.origin }), source: name, request: executionRequest, execute: proposal.execute }]
       })
       return [...accepted.values(), ...work]
     }
@@ -289,17 +301,20 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (event.type === "EffectRequested") {
           if (coreRequests.has(key)) {
             const prior = coreRequests.get(key)
-            if (!prior || !isDeepStrictEqual(prior.ref, event.ref) || !sameStoredRequest(prior.request, event.request)) throw new Error("Conflicting core effect request")
+            if (!prior || !isDeepStrictEqual(prior.ref, event.ref) || prior.origin !== event.origin || !sameStoredRequest(prior.request, event.request)) throw new Error("Conflicting core effect request")
             source.append(store, [record])
             records = store.get(source.records)
             effects()
             return
           }
           if (event.ref.seq !== offset + records.length) throw new Error("Effect reference must match its request position")
-          const offered = effects().find(work => !work.ref && work.source === event.ref.atom && work.id === event.ref.tag)
+          const candidates = effects().filter(work => !work.ref && work.atom === event.ref.atom && work.request.act === event.ref.act && work.origin === event.origin)
+          if (candidates.length > 1) throw new Error("Calls to the same act require distinct origins")
+          const offered = candidates[0]
           if (!offered || !matchesRequest(event.request, offered.request)) throw new Error("Effect request differs from its proposal")
-          const proposal = proposals.get(event.ref.atom)
+          const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
+          rememberOrigin(event)
           coreRequests.set(key, event)
           loadedInputs.set(key, offered.request)
           bind(proposal, event.ref)
@@ -336,7 +351,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     try {
       effects()
-      restoredRefs.clear()
       for (const raw of history) append(recordOf(raw))
     } catch (error) {
       dispose()
@@ -385,7 +399,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       restoreBindings: (previous: ReadonlyMap<object, EffectRef>) => {
         for (const [identity, ref] of previous) {
           actReferences.set(identity, ref)
-          actOwners.set(identity, ref.atom)
         }
         store.set(bindings, new Map(actReferences))
       },
@@ -399,7 +412,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const proposal = acts.get(key)
         const request = coreRequests.get(key)
         if (!proposal || !request) throw new Error("Deferred work requires its reconstructed execution")
-        return [{ kind: "act" as const, id: proposal.id, source: settlement.ref.atom, ref: settlement.ref,
+        return [{ kind: "act" as const, atom: settlement.ref.atom, source: actOwners.get(proposal.identity)!, ref: settlement.ref,
           request: inputOf(key), execute: proposal.execute, handle: result.handle }]
       }),
       pending: () => [...coreRequests].filter(([key]) => !coreSettlements.has(key) && !coreCancellations.has(key)).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
@@ -480,7 +493,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
             ((record.result.status === "rejected" && Schema.is(PromiseTimedOut)(record.result.reason)) ||
               (prior.result.status === "rejected" && Schema.is(PromiseTimedOut)(prior.result.reason)))) return snapshot
           const equal = record.type === "EffectRequested" && Schema.is(EffectRequested)(prior)
-            ? isDeepStrictEqual(prior.ref, record.ref) && sameStoredRequest(prior.request, record.request)
+            ? isDeepStrictEqual(prior.ref, record.ref) && prior.origin === record.origin && sameStoredRequest(prior.request, record.request)
             : isDeepStrictEqual(prior, record)
           if (!equal) throw new Error("Conflicting core event delivery")
           return snapshot

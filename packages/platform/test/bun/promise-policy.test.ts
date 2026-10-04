@@ -27,7 +27,7 @@ test("Bun inherits host polling policy and expires pending results", async () =>
     })
     const services = yield* Layer.build(resolver)
     const promises = Context.get(services, Promises)
-    const request = { ref: { atom: "a", seq: 1, tag: "job" }, handle: { executor: "remote", id: "job" } }
+    const request = { ref: { atom: "a", seq: 1, act: "job" }, handle: { executor: "remote", id: "job" } }
     yield* promises.watch(request)
     yield* promises.watch(request)
     while (!delivered.length) yield* Effect.sleep(2)
@@ -53,7 +53,7 @@ test("Bun honors cancellation before optional-deadline registration", async () =
       deliver: () => Effect.sync(() => { deliveries++ }),
     }))
     const promises = Context.get(services, Promises)
-    const request = { ref: { atom: "a", seq: 1, tag: "job" }, handle: { executor: "remote", id: "job" } }
+    const request = { ref: { atom: "a", seq: 1, act: "job" }, handle: { executor: "remote", id: "job" } }
     yield* promises.cancel(request)
     yield* promises.watch(request)
     yield* promises.cancel(request)

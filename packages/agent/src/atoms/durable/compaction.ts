@@ -3,10 +3,11 @@ import { Schema } from "effect"
 import { type Event, ModelCalled, ModelReturned, CompactionFailed, TurnSettled } from "../../contracts/events"
 
 export const CompactionState = Schema.Struct({
-  through: Schema.Finite, attempts: Schema.Finite, summary: Schema.String, failure: Schema.NullOr(Schema.String),
+  origin: Schema.NullOr(Schema.Finite), through: Schema.Finite, attempts: Schema.Finite, summary: Schema.String, failure: Schema.NullOr(Schema.String),
   pending: Schema.NullOr(Schema.Struct({ callId: Schema.String, through: Schema.Finite })),
 })
-export function compactState(state: typeof CompactionState.Type, event: Event): typeof CompactionState.Type {
+export function compactState(state: typeof CompactionState.Type, event: Event, _metadata?: unknown, position?: number): typeof CompactionState.Type {
+  if (position !== undefined && (event.type === "TurnSettled" || event.type === "ModelReturned" || event.type === "CompactionFailed")) state = { ...state, origin: position }
   if (event.type === "TurnSettled" && state.failure !== null) return { ...state, failure: null }
   if (event.type === "CompactionFailed") {
     if (state.pending?.callId !== event.callId) throw new RuntimeError(`No matching running compaction: ${event.callId}`)
@@ -25,5 +26,5 @@ export function compactState(state: typeof CompactionState.Type, event: Event): 
 
 // createCompactionState constructs the durable summary state for a compaction projection.
 export function createCompactionState() {
-  return durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed, TurnSettled]), schema: CompactionState, initial: { through: 0, attempts: 0, summary: "", pending: null, failure: null }, reduce: compactState })
+  return durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed, TurnSettled]), schema: CompactionState, initial: { origin: null, through: 0, attempts: 0, summary: "", pending: null, failure: null }, reduce: compactState })
 }

@@ -1,6 +1,6 @@
 import { Context, Deferred, Effect, Schema } from "effect"
 import * as fc from "fast-check"
-import { act, defineActor, durableAtom, effectAtom, effectKey, RuntimeError, type EffectRef, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
+import { act, defineActor, durableAtom, effectAtom, effectKey, RuntimeError, EffectRef, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
 import { createEventLog } from "@clavia/tardigrade-core/runtime/replay"
 import { createTestStore } from "./store"
 import { checkpointDigest, encodeCheckpoint } from "../../../../core/src/services/checkpoint"
@@ -10,7 +10,7 @@ const Updated = Schema.Struct({ type: Schema.Literal("Updated"), amount: Schema.
 const Returned = Schema.Struct({ type: Schema.Literal("Returned"), invocation: Schema.Finite })
 const Event = Schema.Union([Queued, Updated, Returned])
 type Event = typeof Event.Type
-const State = Schema.Struct({ invocation: Schema.Finite, pending: Schema.Boolean, updates: Schema.Finite, completed: Schema.Array(Schema.Finite) })
+const State = Schema.Struct({ invocation: Schema.Finite, pending: Schema.Boolean, updates: Schema.Finite, completed: Schema.Array(Schema.Finite), origin: Schema.NullOr(EffectRef.fields.seq) })
 const Job = act({ name: "test.acceptance", input: Schema.Struct({ invocation: Schema.Finite }), success: Schema.Finite, failure: Schema.String })
 
 interface AcceptanceCase {
@@ -36,18 +36,18 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
   const executionCount = () => executions.length
   const actor = defineActor("acceptance", Effect.sync(() => {
     const state = durableAtom({ name: "test.acceptance", input: Event, schema: State,
-      initial: { invocation: 0, pending: false, updates: 0, completed: [] },
-      reduce: (state, event) => event.type === "Queued" ? { ...state, invocation: event.invocation, pending: true }
+      initial: { invocation: 0, pending: false, updates: 0, completed: [], origin: null },
+      reduce: (state, event, _metadata, position) => event.type === "Queued" ? { ...state, invocation: event.invocation, pending: true, origin: position }
         : event.type === "Updated" ? { ...state, updates: state.updates + event.amount }
         : { ...state, pending: false, completed: [...state.completed, event.invocation] },
     })
     const requests = new Map<number, ReturnType<typeof Job.request>>()
     return { atom: effectAtom(get => {
       const view = get(state)
-      if (!view.pending) return { view, events: {}, acts: {} }
+      if (!view.pending && view.origin === null) return { view, events: {}, acts: {} }
       let proposal = requests.get(view.invocation)
       if (!proposal) {
-        proposal = Job.request({ tag: "send", input: { invocation: view.invocation },
+        proposal = Job.request({ origin: view.origin!, input: { invocation: view.invocation },
           onSettled: result => result.status === "fulfilled" ? [{ type: "Returned", invocation: result.value }] : [],
         })
         requests.set(view.invocation, proposal)
@@ -80,6 +80,7 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
       if (failCommit) return yield* Effect.fail(new RuntimeError("Injected request commit failure"))
     }
     if (expected !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal length"))
+    if (accepted?.type === "EffectRequested" && accepted.origin !== 0) return yield* Effect.fail(new RuntimeError("Acceptance lost its originating request"))
     records.push(...events)
     if (checkpoint) stored = checkpoint
   })
@@ -112,9 +113,22 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
     yield* Deferred.succeed(release, undefined)
     yield* first.close
   })))
+  if (!options.failCommit) {
+    const setup = yield* actor.setup
+    const log = createEventLog({ schema: Event, atoms: setup.effects })
+    try {
+      const snapshot = log.replay(records)
+      const checkpoint = snapshot.checkpoint()
+      if (!checkpoint) return yield* Effect.fail(new RuntimeError("Settled acceptance cannot be checkpointed"))
+      const payload = encodeCheckpoint(checkpoint)
+      stored = { position: records.length, payload, digest: yield* checkpointDigest(payload) }
+    } finally { log.dispose() }
+  }
   const reopened = yield* open()
   return yield* Effect.gen(function* () {
     yield* reopened.wait
+    const receipt = reopened.get(request.ref)
+    if (!receipt || reopened.getState().view.origin !== 0 || !attempted || effectKey(receipt) !== effectKey(attempted)) return yield* Effect.fail(new RuntimeError("Reconstructed request lost its durable receipt"))
     const accepted = payloads().filter(event => event.type === "EffectRequested")
     if (accepted.length !== 1 || accepted[0]!.type !== "EffectRequested" || accepted[0]!.ref.seq !== position || executions.length !== 1 || effectKey(executions[0]!) !== effectKey(accepted[0]!.ref) || reopened.getState().view.completed.join(",") !== String(options.invocation)) return yield* Effect.fail(new RuntimeError("Recovery changed identity or repeated execution"))
   }).pipe(Effect.ensuring(reopened.close))

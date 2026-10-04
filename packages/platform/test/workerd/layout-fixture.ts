@@ -10,8 +10,8 @@ const SpawnCompleted = event({ type: "SpawnCompleted", id: Schema.String, child:
 const Event = Schema.Union([Changed, SpawnRequested, SpawnCompleted, ReadRequested])
 const value = durableAtom({ name: "layout.value", input: Changed, schema: Schema.Finite, initial: 0, reduce: (_, event) => event.value })
 const spawns = durableAtom({ name: "layout.spawns", input: Schema.Union([SpawnRequested, SpawnCompleted]),
-  schema: Schema.Array(Schema.Struct({ id: Schema.String, value: Schema.Finite, child: Schema.NullOr(ThreadCoordinate) })), initial: [],
-  reduce: (state, event) => event.type === "SpawnRequested" ? [...state, { id: event.id, value: event.value, child: null }]
+  schema: Schema.Array(Schema.Struct({ id: Schema.String, origin: Schema.Finite, value: Schema.Finite, child: Schema.NullOr(ThreadCoordinate) })), initial: [],
+  reduce: (state, event, _metadata, position) => event.type === "SpawnRequested" ? [...state, { id: event.id, origin: position, value: event.value, child: null }]
     : state.map(entry => entry.id === event.id ? { ...entry, child: event.child } : entry),
 })
 const Spawn = act({ name: "layout.spawn", input: Schema.Struct({ id: Schema.String, value: Schema.Finite }), success: ThreadCoordinate, failure: Schema.String })
@@ -22,7 +22,7 @@ const actor = defineActor("layout", Effect.sync(() => {
     return { view: get(value), events: {}, acts: Object.fromEntries(pending.filter(entry => !entry.child).map(entry => {
       let request = requests.get(entry.id)
       if (!request) {
-        request = Spawn.request({ tag: entry.id, input: { id: entry.id, value: entry.value }, onSettled: result => result.status === "fulfilled" ? [{ type: "SpawnCompleted", id: entry.id, child: result.value }] : [] })
+        request = Spawn.request({ origin: entry.origin, input: { id: entry.id, value: entry.value }, onSettled: result => result.status === "fulfilled" ? [{ type: "SpawnCompleted", id: entry.id, child: result.value }] : [] })
         requests.set(entry.id, request)
       }
       return [entry.id, request]

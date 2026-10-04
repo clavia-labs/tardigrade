@@ -191,7 +191,7 @@ describe("RPC libraries", () => {
       expect(returned).toMatchObject({ error: null })
       if (!returned || returned.type !== "ToolReturned") throw new Error("Research result was not recorded")
       expect(JSON.parse(returned.output).result.value).toContain("Durable agents")
-      expect(store.snapshot().events.filter(event => event.type === "PackageCalled").map(event => `${event.package}.${event.method}`)).toEqual(["arxiv.search", "workspace.write", "workspace.read"])
+      expect(store.snapshot().events.filter(event => event.type === "MethodRequested").map(event => `${event.package}.${event.method}`)).toEqual(["arxiv.search", "workspace.write", "workspace.read"])
     } finally { await Effect.runPromise(store.close) }
   })
 

@@ -1,8 +1,8 @@
 // lifecycleCheckpoint composes request acceptance, producer ownership, promise admission, and checkpoint recovery over a shared journal.
-// Entries contain their effect reference; a fresh request uses its acceptance position with fixed atom and tag names.
+// Entries contain their effect reference; a fresh request uses its acceptance position with fixed atom and act names.
 // Two durable Boolean roots and their derived projection advance at a global consumed-entry position.
 // Storage commits atomically, codecs preserve state, projections are deterministic, and captured durable roots are complete.
-// The finite instance has four-entry journals and one active effect; terminal requests permit reuse of the same atom and tag.
+// The finite instance has four-entry journals and one active effect; terminal requests permit reuse of the same atom and act.
 // prepare maps proposalCheckpoint.qnt acceptance to runtimeCheckpoint.qnt preparation; commit and publish retain the storage boundary.
 // restart and observe share effectRecovery.qnt ownership; arrive and retry share promiseDelivery.qnt admission ordering.
 // TLC exhaustively checks the finite composed state space; this does not establish an unbounded composition theorem.

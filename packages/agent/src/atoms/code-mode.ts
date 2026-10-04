@@ -6,8 +6,7 @@ import { type LibrarySource } from "@clavia/tardigrade-libraries/types"
 import { codeModeSpec, selectLibraries } from "../contracts/libraries"
 import { ToolCatalog } from "../actor/context"
 import { ToolReturned, type ToolCalled } from "../contracts/events"
-import { CodeReturned, Event, EvaluateCode, ExecutePackage, PackageReturned } from "../contracts/code-mode"
-import { CodeModeName, codeModeCoordinate } from "../contracts/code-mode-reference"
+import { CodeModeName, CodeReturned, Event, EvaluateCode, ExecutePackage, MethodReturned } from "../contracts/code-mode"
 import { executions as state } from "./durable/code-mode"
 
 const CodeInput = Schema.Struct({ code: Schema.String })
@@ -47,7 +46,7 @@ function createCodeMode(options: CodeModeOptions, sources?: readonly LibrarySour
       const parsed = Schema.decodeUnknownOption(CodeInput, { onExcessProperty: "error" })(call.input)
       const error = call.name !== "execute" ? `Unknown tool: ${call.name}` : Option.isNone(parsed) ? "execute requires { code: string }" : undefined
       if (!queue.running) {
-        events.called = eventValue({ type: "ToolCalled", callId: call.callId, counted: error === undefined } satisfies ToolCalled)
+        events.called = eventValue({ type: "ToolCalled", callId: call.callId, codeMode: name, counted: error === undefined } satisfies ToolCalled)
         return { view, events, acts }
       }
       const execution = executions.find(entry => entry.call.callId === call.callId)
@@ -61,32 +60,30 @@ function createCodeMode(options: CodeModeOptions, sources?: readonly LibrarySour
         } satisfies ToolReturned)
       } else if (Option.isSome(parsed)) {
         {
-          const coordinate = codeModeCoordinate({ codeMode: name, callId: call.callId })
-          const key = coordinate.tag
+          const key = call.callId
           let request = evaluations.get(key)
           if (!request) {
             request = EvaluateCode.request({
-              tag: key, input: { codeMode: name, callId: call.callId, code: parsed.value.code, ...(libraries ? { libraries: libraries.map(library => library.name) } : {}) },
+              origin: execution.origin!, input: { codeMode: name, callId: call.callId, code: parsed.value.code, ...(libraries ? { libraries: libraries.map(library => library.name) } : {}) },
               onSettled: outcome => [{ type: "CodeReturned", codeMode: name, callId: call.callId, outcome: outcome.status === "rejected" ? { ...outcome, reason: failureMessage(outcome.reason) } : outcome } satisfies typeof CodeReturned.Type],
             })
             evaluations.set(key, request)
           }
-          acts[coordinate.source] = request
+          acts[name] = request
         }
         const open = execution.calls.filter(call => call.outcome === null)
         if (open.length) {
           for (const packageCall of open) {
-            const coordinate = codeModeCoordinate({ codeMode: name, callId: call.callId }, packageCall.ordinal)
-            const key = coordinate.tag
+            const key = JSON.stringify([call.callId, packageCall.ordinal])
             let request = packages.get(key)
             if (!request) {
               request = ExecutePackage.request({
-                tag: key, input: { codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, package: packageCall.package, method: packageCall.method, input: packageCall.input },
-                onSettled: (outcome, ref) => [{ type: "PackageReturned", codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, ref, outcome: outcome.status === "rejected" ? { ...outcome, reason: failureMessage(outcome.reason) } : outcome } satisfies typeof PackageReturned.Type],
+                origin: packageCall.origin, input: { codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, package: packageCall.package, method: packageCall.method, input: packageCall.input },
+                onSettled: (outcome, ref) => [{ type: "MethodReturned", codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, ref, outcome: outcome.status === "rejected" ? { ...outcome, reason: failureMessage(outcome.reason) } : outcome } satisfies typeof MethodReturned.Type],
               })
               packages.set(key, request)
             }
-            acts[coordinate.source] = request
+            acts[`${name}.package.${packageCall.ordinal}`] = request
           }
         }
 

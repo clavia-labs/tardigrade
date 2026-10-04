@@ -38,7 +38,7 @@ cancel: stop fence -> terminal callbacks + owned cleanup -> drain
 invoke: stable key -> receiver deduplication -> durable reply
 ```
 
-`ref = {seq, atom, tag}` identifies an accepted effect across every atom. `seq` is its acceptance position; `atom` identifies the proposal source; `tag` identifies work within that source. An input digest validates a reconstructed proposal. It supplies no execution payload or additional identity.
+`ref = {seq, atom, act}` identifies an accepted effect across every atom. `seq` is its acceptance position; `atom` identifies the registered atom; `act` identifies the operation. Framework acceptance retains the originating journal position to bind reconstructed requests without using their inputs as identity. An input digest validates a reconstructed proposal. It supplies no execution payload or additional identity.
 
 ## Contracts and dependencies
 
@@ -75,7 +75,7 @@ inputLifecycle
 
 Every `inputLifecycle` transition executes an imported lifecycle action. Hydration and release leave lifecycle state unchanged. The combined invariant checks journal acceptance positions, unchanged observer output, payload independence, verified execution, retained input, and the imported recovery/commit properties in the same reachable state space.
 
-The finite instance has four journal entries, one active effect, two atom names, two tags, two act values, and two input values. Every acceptance chooses its source/tag and inline/digest form independently. `original(position)` is a deterministic witness for proposal reconstruction; it assumes the atom and graph recovery contracts rather than importing their transition systems. Hash collisions, canonical JSON, byte size, arbitrary concurrency, and concrete codecs are outside this abstraction.
+The finite instance has four journal entries, one active effect, two atom names, two act names, and two input values. Every acceptance chooses its atom and inline/digest form; its act agrees with the reconstructed proposal. `original(position)` is a deterministic witness for proposal reconstruction; it assumes the atom and graph recovery contracts rather than importing their transition systems. Hash collisions, canonical JSON, byte size, arbitrary concurrency, and concrete codecs are outside this abstraction.
 
 Preparation while a live request is nonterminal requires its input to be loaded. This guard abstracts input-dependent callbacks and strengthens the imported lifecycle's allowed behavior. The composition establishes safety under that guard; it supplies no equivalence theorem for all leaf-model traces and no liveness theorem for hydration.
 
@@ -123,3 +123,5 @@ quint verify "$input_model" --backend tlc --step stepEarlyRelease --invariant in
 ```
 
 The positive command must complete without a violation. Both negative commands must report an invariant counterexample: accepting mismatched reconstruction permits wrong execution, and premature release removes input while an obligation remains. A parser, compiler, or checker error does not satisfy either negative check.
+
+`checkpoint/acceptanceBinding.qnt` checks atomic acceptance bindings, distinct identical calls, checkpoint retention, and recovery. The finite model explores two invocations in one atom and another invocation in a second atom. Split commits, dropped bindings, and swapped ownership are negative cases.

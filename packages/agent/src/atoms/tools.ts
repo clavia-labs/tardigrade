@@ -30,7 +30,8 @@ export function tools(sources?: readonly LibrarySource[]) {
     const selected = libraries ? new Set(libraries.flatMap(library => library.specs.map(spec => spec.name))) : undefined
     const specs = selected ? catalog.specs.filter(spec => selected.has(spec.name)) : catalog.specs
     const names = libraries ? libraries.flatMap(library => library.specs.flatMap(spec => [spec.name, `${library.name}__${spec.method}`])) : catalog.names
-    const request = requests(ExecuteTool.request, input => JSON.stringify([input.tag, input.input]))
+    const cached = requests(ExecuteTool.request)
+    const request = (input: Parameters<typeof ExecuteTool.request>[0]) => cached(JSON.stringify([input.input.call.callId, input.input]), input)
     return effectAtom(get => toolValue(get(pendingTools), {
       events: get(toolPromises).events, acts: {},
       view: {
@@ -128,7 +129,7 @@ function toolValue<R>(state: typeof ToolState.Type, tools: Tools<R>): Tools<R> {
     acts: {
       ...acts,
       execution: tools.view.request({
-        tag: call.callId,
+        ...(state.origin === null ? {} : { origin: state.origin }),
         input: { call, counted: plan.counted, ...(plan.value !== undefined ? { value: plan.value } : {}), ...(plan.error !== undefined ? { error: plan.error } : {  })
 },
         onRequested: () => [{ type: "ToolCalled", callId: call.callId, counted: plan.counted } satisfies ToolCalled],

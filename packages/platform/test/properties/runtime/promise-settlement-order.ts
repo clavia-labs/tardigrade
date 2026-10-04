@@ -56,7 +56,7 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
         : event.type === "Returned" ? { ...state, results: [...state.results, event.value] }
         : { ...state, markers: [...state.markers, event.name] },
     })
-    const request = Job.request({ tag: "job", input: {}, onSettled: result => [{ type: "Returned", value: result.status === "fulfilled" ? result.value : "rejected" }] })
+    const request = Job.request({ input: {}, onSettled: result => [{ type: "Returned", value: result.status === "fulfilled" ? result.value : "rejected" }] })
     return {
       atom: effectAtom(get => {
         const view = get(state)

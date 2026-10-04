@@ -10,7 +10,7 @@ export const Greet = act({
 
 export const greeter = defineActor("greeter", Effect.sync(() => {
   const greeting = Greet.request({
-    tag: "greeting", input: { name: "Arjun" },
+    input: { name: "Arjun" },
     onSettled: result => result.status === "fulfilled" ? [{ type: "Greeted", message: result.value }] : [],
   })
   return {

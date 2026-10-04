@@ -14,7 +14,7 @@ import { DEFAULT_TIMEOUT } from "@clavia/tardigrade-model/stream/policy"
 import { executionStreamSse } from "../../src/shared/execution-stream-sse"
 
 const address = { actor: "spike", instance: "main", thread: "root" }
-const update = (sequence: number): ExecutionUpdate => ({ address, ref: { seq: 0, atom: "job", tag: "run" }, attemptId: "attempt", sequence, payload: { type: "tool.progress", completed: sequence } })
+const update = (sequence: number): ExecutionUpdate => ({ address, ref: { seq: 0, atom: "job", act: "run" }, attemptId: "attempt", sequence, payload: { type: "tool.progress", completed: sequence } })
 
 test("execution stream fans out and a slow subscriber retains the configured recent updates", async () => {
   await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -45,7 +45,7 @@ test("runtime execution updates are ephemeral and stops publishing after cancell
   const Job = act({ name: "test.progress", input: Schema.Null, success: Schema.Null, failure: Schema.String })
   const started = durableAtom({ name: "progress.started", input: Start, schema: Schema.Boolean, initial: false, reduce: () => true })
   const actor = defineActor(address.actor, Effect.sync(() => {
-    const request = Job.request({ tag: "job", input: null })
+    const request = Job.request({ input: null })
     return { schema: Start, atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: get(started) ? { job: request } : {} })) }
   }))
   await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -84,7 +84,7 @@ test("model generation publishes through execution and preserves the durable rep
   const model = { provider: "fixture", model_id: "stream" }
   const started = durableAtom({ name: "model.progress.started", input: Start, schema: Schema.Boolean, initial: false, reduce: () => true })
   const actor = defineActor(address.actor, Effect.sync(() => {
-    const request = Generate.request({ tag: "model", input: { model, system: "", tools: [], context: [] } })
+    const request = Generate.request({ input: { model, system: "", tools: [], context: [] } })
     return { schema: Start, atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: get(started) ? { generate: request } : {} })) }
   }))
   const parts = [Response.makePart("text-start", { id: "text" }), Response.makePart("text-delta", { id: "text", delta: "hello" }), Response.makePart("text-end", { id: "text" }), Response.makePart("finish", { reason: "stop", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) })]
@@ -131,7 +131,7 @@ test("host SSE identifies the thread and client disconnect leaves execution runn
   const Job = act({ name: "test.progress.http", input: Schema.Null, success: Schema.Null, failure: Schema.String })
   const started = durableAtom({ name: "progress.http.started", input: Start, schema: Schema.Boolean, initial: false, reduce: () => true })
   const actor = defineActor(address.actor, Effect.sync(() => {
-    const request = Job.request({ tag: "job", input: null })
+    const request = Job.request({ input: null })
     return {
       schema: Start,
       atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: get(started) ? { job: request } : {} })),
@@ -160,7 +160,7 @@ test("host SSE identifies the thread and client disconnect leaves execution runn
     const data = JSON.parse(chunk.split("data: ")[1]!.trim())
     expect(data.address).toEqual(address)
     expect(data.sequence).toBe(0)
-    expect(data.ref.tag).toBe("job")
+    expect(data.ref.act).toBe(Job.name)
     await reader.cancel()
     await Effect.runPromise(Deferred.succeed(release, undefined))
     await Effect.runPromise(thread.wait)

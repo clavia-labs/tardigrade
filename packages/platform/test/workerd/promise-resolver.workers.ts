@@ -8,7 +8,7 @@ import { RuntimeError, type ResolutionSettled } from "@clavia/tardigrade-core"
 import type { TestPromiseResolver } from "./fixture.worker"
 
 const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
-const request = { recipient: { actor: "test", instance: "main", thread: "one" }, ref: { atom: "a", seq: 1, tag: "job" }, handle: { executor: "remote", id: "job", mode: "push" as const } }
+const request = { recipient: { actor: "test", instance: "main", thread: "one" }, ref: { atom: "a", seq: 1, act: "job" }, handle: { executor: "remote", id: "job", mode: "push" as const } }
 
 async function controlledClock() {
   const base = await Effect.runPromise(Clock.Clock)
@@ -72,7 +72,7 @@ test("Promise resolver chooses early completion and observes push notifications 
     await time.run(resolver.watch(request))
     await time.run(resolver.alarm)
     expect(delivered[0]!.result).toEqual({ status: "fulfilled", value: "early" })
-    const other = { ...request, ref: { ...request.ref, tag: "two" }, handle: { ...request.handle, id: "two" } }
+    const other = { ...request, ref: { ...request.ref, act: "two" }, handle: { ...request.handle, id: "two" } }
     await time.run(resolver.watch(other))
     await time.run(resolver.accept({ id: "notification", handle: other.handle }))
     await time.run(resolver.alarm)

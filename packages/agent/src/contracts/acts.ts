@@ -28,17 +28,14 @@ export const ExecuteTool = act({
   success: Schema.Json, failure: Schema.String,
 })
 
-// requests retains invocation handles by domain identity; latestOnly releases preceding handles when a new tag arrives (packages/platform/test/bun/input-digest.test.ts).
-export function requests<Input extends { readonly tag: string; readonly input: unknown }, Output>(create: (input: Input) => Output, identityOrOptions: ((input: Input) => string) | { readonly latestOnly?: boolean } = input => input.tag) {
-  const identity = typeof identityOrOptions === "function" ? identityOrOptions : (input: Input) => input.tag
-  const latestOnly = typeof identityOrOptions !== "function" && identityOrOptions.latestOnly
+// requests retains handles by domain identity; latestOnly releases preceding handles (packages/platform/test/bun/input-digest.test.ts).
+export function requests<Input, Output>(create: (input: Input) => Output, options: { readonly latestOnly?: boolean } = {}) {
   const cache = new Map<string, Output>()
-  return (input: Input): Output => {
-    const key = identity(input)
+  return (key: string, input: Input): Output => {
     const existing = cache.get(key)
     if (existing !== undefined) return existing
     const value = create(input)
-    if (latestOnly) cache.clear()
+    if (options.latestOnly) cache.clear()
     cache.set(key, value)
     return value
   }

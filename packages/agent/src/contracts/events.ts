@@ -51,7 +51,7 @@ export type BudgetResolved = typeof BudgetResolved.Type
 export const PermissionResolved = Schema.Struct({ type: Schema.Literal("PermissionResolved"), action: PermissionAction, requestId: Schema.NonEmptyString, decision: Decision })
 export type PermissionResolved = typeof PermissionResolved.Type
 
-export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), callId: Schema.String, counted: Schema.Boolean })
+export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), callId: Schema.String, codeMode: Schema.optionalKey(Schema.NonEmptyString), counted: Schema.Boolean })
 export type ToolCalled = typeof ToolCalled.Type
 
 export const ToolReturned = Schema.Struct({ type: Schema.Literal("ToolReturned"), callId: Schema.String, output: Schema.String, error: Schema.NullOr(Schema.String), promise: Schema.optionalKey(ToolPromise) })

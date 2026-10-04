@@ -21,7 +21,8 @@ export interface DeferredAct {
 }
 
 export interface ActRequest<Value, Failure, Services> {
-  readonly id: string
+  // origin identifies the journal event that made this invocation ready (quint/checkpoint/acceptanceBinding.qnt, recoveryEquivalent). Omission identifies a startup invocation scoped to its atom and act.
+  readonly origin?: number
   readonly request: EffectRequest
   readonly kind: "act"
   readonly identity: object
@@ -95,9 +96,9 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
   }))
 
   // request creates an invocation handle retained across reevaluation; another invocation requires another handle.
-  const request = (invocation: { readonly tag: string; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
-    if (!invocation.tag) throw new Error("Act tag must not be empty")
+  const request = (invocation: { readonly origin?: number; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
     const input = Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
+    const origin = invocation.origin === undefined ? undefined : Schema.decodeSync(EffectRef.fields.seq)(invocation.origin)
     const identity = {}
     const ref = atom(get => {
       const context = get(eventLogContext)
@@ -126,7 +127,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
         : { status: "rejected", reason: Schema.is(PromiseTimedOut)(resolved.result.reason) ? resolved.result.reason : decodeFailure(resolved.result.reason) }
     })
     const handle: ActRequest<Value, Failure, ActService<Name>> = Object.freeze({
-      kind: "act", identity, id: invocation.tag, request: { act: options.name, input }, ref, result,
+      kind: "act", identity, ...(origin === undefined ? {} : { origin }), request: { act: options.name, input }, ref, result,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
       ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
       onSettled: (outcome: Exclude<ActState<Value, Failure | Cancelled | PromiseTimedOut>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {

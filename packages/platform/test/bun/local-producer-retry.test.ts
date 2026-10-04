@@ -8,7 +8,7 @@ test("reopening retries the local effect and recreates its producer with the ori
   type Event = typeof Event.Type
   const Job = act({ name: "producer.retry", input: Schema.Null, success: Schema.String, failure: Schema.String })
   const actor = defineActor("producer-retry", Effect.sync(() => {
-    const request = Job.request({ tag: "job", input: null })
+    const request = Job.request({ input: null })
     return { schema: Event, atom: effectAtom(get => {
       const view = get(request.result)
       return { view, events: {}, acts: view.status === "pending" ? { job: request } : {} }

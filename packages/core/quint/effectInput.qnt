@@ -4,15 +4,15 @@
 module effectInput {
   import effectIdentity as identity from "./effectIdentity"
 
-  type Proposal = { act: int, input: int }
-  type Stored = { ref: identity::Ref, act: int, digest: int, inline: Set[int] }
-  type Acceptance = { ref: identity::Ref, act: int }
+  type Proposal = { act: str, input: int }
+  type Stored = { ref: identity::Ref, act: str, digest: int, inline: Set[int] }
+  type Acceptance = { ref: identity::Ref, act: str }
 
-  pure val proposals = tuples(Set(0, 1), Set(0, 1)).map(pair => { act: pair._1, input: pair._2 })
+  pure val proposals = tuples(Set("call", "other"), Set(0, 1)).map(pair => { act: pair._1, input: pair._2 })
   pure def digest(input: int): int = input
   pure val operationKeys = identity::operationKeys
   pure def reference(position: int, key: (str, str)): identity::Ref = identity::reference(position, key)
-  pure def original(position: int): Proposal = { act: position % 2, input: (position / 2) % 2 }
+  pure def original(position: int): Proposal = { act: if (position % 2 == 0) "call" else "other", input: (position / 2) % 2 }
 
   // encode preserves identity and act while permitting either input storage representation.
   pure def encode(ref: identity::Ref, proposal: Proposal, inline: bool): Stored = {

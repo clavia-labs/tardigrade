@@ -62,7 +62,8 @@ export function eventValue<Event extends object>(event: Event): EventValue<Event
 
 export interface EffectWork<Services = never> {
   readonly kind: "act"
-  readonly id: string
+  readonly atom: string
+  readonly origin?: number
   readonly request: EffectRequest
   readonly source: string
   readonly ref?: EffectRef

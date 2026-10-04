@@ -16,7 +16,7 @@ const Allocation = Schema.Struct({
   initialState: Schema.optionalKey(InitialState),
 })
 export type ThreadAllocation = typeof Allocation.Type
-const Thread = Schema.Struct({ ...Allocation.fields, status: Schema.Literals(["requested", "registered", "failed"]), reason: Schema.optionalKey(Schema.String) })
+const Thread = Schema.Struct({ ...Allocation.fields, origin: Schema.Finite, status: Schema.Literals(["requested", "registered", "failed"]), reason: Schema.optionalKey(Schema.String) })
 export const SupervisorEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("ThreadRequested"), allocation: Allocation }),
   Schema.Struct({ type: Schema.Literal("ThreadRegistered"), coordinate: ThreadCoordinate }),
@@ -29,7 +29,7 @@ export const threads = durableAtom({ name: "host.supervisor.threads",
   input: SupervisorEvent,
   schema: Schema.Array(Thread),
   initial: [],
-  reduce: (state, event: SupervisorEvent) => {
+  reduce: (state, event: SupervisorEvent, _metadata, position) => {
     if (event.type === "ThreadRequested") {
       const next = event.allocation
       if (state.some(entry => entry.coordinate.thread === next.coordinate.thread || (entry.parent === next.parent && entry.name === next.name))) throw new Error("Duplicate thread allocation")
@@ -37,7 +37,7 @@ export const threads = durableAtom({ name: "host.supervisor.threads",
       if (next.parent !== null && !parent) throw new Error("Unknown parent thread")
       if (next.depth !== (parent ? parent.depth + 1 : 0)) throw new Error("Invalid thread depth")
       if (state.some(entry => entry.coordinate.actor !== next.coordinate.actor || entry.coordinate.instance !== next.coordinate.instance)) throw new Error("Supervisor instance mismatch")
-      return [...state, { ...next, status: "requested" as const }]
+      return [...state, { ...next, origin: position, status: "requested" as const }]
     }
     const current = state.find(entry => entry.coordinate.thread === event.coordinate.thread)
     if (!current || current.status !== "requested" || current.coordinate.actor !== event.coordinate.actor || current.coordinate.instance !== event.coordinate.instance) throw new Error("Unknown thread registration")
@@ -52,16 +52,16 @@ export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
   const supervisor = effectAtom(get => {
     const directory = get(threads)
     const acts = Object.fromEntries(directory.filter(entry => entry.status === "requested").map(allocation => {
-      const tag = allocation.coordinate.thread
-      let request = requests.get(tag)
+      const key = allocation.coordinate.thread
+      let request = requests.get(key)
       if (!request) {
-        request = Provision.request({ tag, input: allocation, onSettled: result => {
+        request = Provision.request({ origin: allocation.origin, input: allocation, onSettled: result => {
           if (result.status === "rejected") return [{ type: "ThreadFailed", coordinate: allocation.coordinate, reason: typeof result.reason === "string" ? result.reason : JSON.stringify(result.reason) } satisfies SupervisorEvent]
           return [{ type: "ThreadRegistered", coordinate: allocation.coordinate } satisfies SupervisorEvent]
         } })
-        requests.set(tag, request)
+        requests.set(key, request)
       }
-      return [tag, request]
+      return [key, request]
     }))
     return { view: { threads: directory }, events: {}, acts }
   })

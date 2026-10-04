@@ -11,7 +11,7 @@ type Event = typeof Event.Type
 const Job = act({ name: "test.cancellation", input: Schema.Finite, success: Schema.Finite, failure: Schema.String })
 const actor = (id: number) => defineActor("cancellation", Effect.sync(() => {
   const started = durableAtom({ name: "test.cancellation", input: Event, schema: Schema.Boolean, initial: false, reduce: (state, event) => state || event.type === "Started" })
-  const request = Job.request({ tag: "job", input: id, onSettled: () => [{ type: "Returned" }] })
+  const request = Job.request({ input: id, onSettled: () => [{ type: "Returned" }] })
   return { atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: get(started) ? { job: request } : {} })), schema: Event }
 }))
 
@@ -200,9 +200,9 @@ export const cancellationBatchIsolation = fc.asyncProperty(fc.record({
 }), options => Effect.runPromise(Effect.gen(function* () {
   let runtime!: ActorRuntime<Event>
   const definition = defineActor("batch-cancellation", Effect.sync(() => {
-    const started = durableAtom({ name: "test.batch-cancellation", input: Event, schema: Schema.Boolean, initial: false, reduce: (state, event) => state || event.type === "Started" })
-    const requests = [0, 1].map(id => Job.request({ tag: String(id), input: id, onSettled: () => [{ type: "Returned" }] }))
-    return { atom: effectAtom(get => ({ view: requests.map(request => get(request.result)), events: {}, acts: get(started) ? Object.fromEntries(requests.map(request => [request.id, request])) : {} })), schema: Event }
+    const started = durableAtom({ name: "test.batch-cancellation", input: Event, schema: Schema.Array(Schema.Finite), initial: [], reduce: (state, event, _metadata, position) => event.type === "Started" ? [...state, position] : state })
+    const requests = [0, 1].map(id => Job.request({ origin: id, input: id, onSettled: () => [{ type: "Returned" }] }))
+    return { atom: effectAtom(get => ({ view: requests.map(request => get(request.result)), events: {}, acts: get(started).length === 2 ? Object.fromEntries(requests.map((request, index) => [String(index), request])) : {} })), schema: Event }
   }))
   const store = yield* createTestStore({ actor: definition, actorContext: () => Context.empty(),
     services: host => {
@@ -211,7 +211,7 @@ export const cancellationBatchIsolation = fc.asyncProperty(fc.record({
     },
   })
   yield* Effect.gen(function* () {
-    yield* store.send([{ type: "Started" }])
+    yield* store.send([{ type: "Started" }, { type: "Started" }])
     yield* store.wait
     const refs = store.snapshot().deferred().map(work => work.ref)
     yield* store.cancel(refs[options.cancelled]!, "cancelled")

@@ -405,9 +405,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           }
           const work = yield* Effect.try({ try: () => snapshot.effects().find(work => !work.ref || !dispatched.has(effectKey(work.ref))), catch: RuntimeError.from })
           if (!work) return
-          const ref = work.ref ?? { seq: snapshot.position, atom: work.source, tag: work.id }
+          const ref = work.ref ?? { seq: snapshot.position, atom: work.atom, act: work.request.act }
           if (!work.ref) {
-            const request = yield* Schema.decodeEffect(EffectRequested)({ type: "EffectRequested", ref, request: storeRequest(work.request, digestMinBytes) }).pipe(Effect.mapError(RuntimeError.from))
+            const request = yield* Schema.decodeEffect(EffectRequested)({ type: "EffectRequested", ref, ...(work.origin === undefined ? {} : { origin: work.origin }), request: storeRequest(work.request, digestMinBytes) }).pipe(Effect.mapError(RuntimeError.from))
             yield* appendNow(request)
           }
           const recorded = snapshot.effect(ref)?.request

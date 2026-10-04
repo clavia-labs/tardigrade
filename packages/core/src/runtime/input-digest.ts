@@ -40,7 +40,7 @@ export function storeRequest(request: EffectRequest, minBytes = DEFAULT_EFFECT_I
 
 // observeRequest projects acceptance without copying stored input (quint/checkpoint/inputLifecycle.qnt, observationIndependent).
 export function observeRequest(record: StoredEffectRequested): EffectAcceptance {
-  return { type: record.type, ref: record.ref, act: record.request.act }
+  return { type: record.type, ref: record.ref, act: record.request.act, ...(record.origin === undefined ? {} : { origin: record.origin }) }
 }
 
 // matchesRequest validates the act and reconstructed input across storage representations (properties/runtime/input-representation.ts).

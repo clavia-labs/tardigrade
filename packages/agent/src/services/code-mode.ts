@@ -4,7 +4,7 @@ import { atom, durablePromise, EffectExecution, effectKey, Isolate, RuntimeError
 import { ToolCatalog } from "../actor/context"
 import { type AgentTool, type LibraryImplementation, type LibraryRequirements } from "@clavia/tardigrade-libraries"
 import { codeModeSpec } from "../contracts/libraries"
-import { CodeCalled, EvaluateCode, ExecutePackage, PackageCalled } from "../contracts/code-mode"
+import { CodeCalled, EvaluateCode, ExecutePackage, MethodRequested } from "../contracts/code-mode"
 import { executions } from "../atoms/durable/code-mode"
 
 // codeModeActs supplies tool descriptions, isolate RPC, and independently durable library execution.
@@ -48,7 +48,7 @@ export function codeModeActs<const L extends readonly LibraryImplementation<unkn
           drift = `Nondeterministic code mode: library call ${call.ordinal} differs from its recorded method or arguments`
           return yield* Effect.fail(drift)
         }
-        if (!recorded) yield* execution.record({ type: "PackageCalled", codeMode: input.codeMode, callId: input.callId, ...call } satisfies typeof PackageCalled.Type)
+        if (!recorded) yield* execution.record({ type: "MethodRequested", codeMode: input.codeMode, callId: input.callId, ...call } satisfies typeof MethodRequested.Type)
         const result = yield* execution.waitFor(atom(get => get(entry)?.calls.find(value => value.ordinal === call.ordinal)?.outcome ?? undefined)).pipe(Effect.mapError(String))
         return result.status === "fulfilled" ? result.value : yield* Effect.fail(result.reason)
       }).pipe(Effect.mapError(String))).pipe(Effect.exit)

@@ -10,7 +10,7 @@ export const promiseDeadline = () => Effect.runPromise(Effect.gen(function* () {
   const Job = act({ name: "test.deadline", input: Schema.Struct({}), success: Schema.String, failure: Schema.String })
   const actor = defineActor("deadline", Effect.sync(() => {
     const state = durableAtom({ name: "deadline", input: Event, schema: Schema.Struct({ started: Schema.Boolean, done: Schema.Boolean, timedOut: Schema.Boolean }), initial: { started: false, done: false, timedOut: false }, reduce: (s, e) => e.type === "Start" ? { ...s, started: true } : { ...s, done: true, timedOut: e.timedOut } })
-    const job = Job.request({ tag: "hang", input: {}, onSettled: result => [{ type: "Done", timedOut: result.status === "rejected" && Schema.is(PromiseTimedOut)(result.reason) }] })
+    const job = Job.request({ input: {}, onSettled: result => [{ type: "Done", timedOut: result.status === "rejected" && Schema.is(PromiseTimedOut)(result.reason) }] })
     return { schema: Event, atom: effectAtom(get => { const view = get(state); return { view, events: {}, acts: view.started && !view.done ? { job } : {} } }) }
   }))
   let cancelled = false

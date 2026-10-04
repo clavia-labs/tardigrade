@@ -6,7 +6,7 @@
 // Run verification from a temporary directory; initEarly exposes a seven-transition counterexample.
 // quint verify /absolute/path/to/proposalCheckpoint.qnt --invariants recoveryMatchesRequest allocationAtomic --max-steps 12
 module proposalCheckpoint {
-  type Ref = { seq: int, atom: str, tag: str }
+  type Ref = { seq: int, atom: str, act: str }
   type Entry = { kind: str, ref: Ref }
   type State = {
     journal: List[Entry], checkpointPosition: int, checkpointQueued: bool,
@@ -14,7 +14,7 @@ module proposalCheckpoint {
     allocationAtAcceptance: bool,
   }
   pure val capacity = 4
-  pure def reference(seq: int): Ref = { seq: seq, atom: "delivery/send", tag: "hello" }
+  pure def reference(seq: int): Ref = { seq: seq, atom: "delivery", act: "send" }
   pure def domain(kind: str): Entry = { kind: kind, ref: reference(0) }
 
   var state: State

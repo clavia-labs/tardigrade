@@ -34,6 +34,7 @@ module inputLifecycle {
     nondet key = input::operationKeys.oneOf()
     all {
       lifecycle::prepare,
+      key._2 == input::original(lifecycle::live.position).act,
       active(lifecycle::live.status) implies available(lifecycle::live.ref),
       staged' = List(input::encode(input::reference(lifecycle::live.position, key), input::original(lifecycle::live.position), inline)),
       requests' = requests, loaded' = loaded, lost' = lost,
@@ -93,7 +94,7 @@ module inputLifecycle {
 
   val requestPositions = lifecycle::journal.indices().filter(i => lifecycle::journal.nth(i).kind == 1)
   val identityPreserved = requests.keys() == requestPositions and requests.keys().forall(ref =>
-    requests.get(ref).ref.seq == ref and input::operationKeys.contains((requests.get(ref).ref.atom, requests.get(ref).ref.tag)))
+    requests.get(ref).ref.seq == ref and requests.get(ref).ref.act == requests.get(ref).act and input::operationKeys.contains((requests.get(ref).ref.atom, requests.get(ref).ref.act)))
   val observerEquivalent = requests.keys().forall(ref =>
     input::observe(requests.get(ref)) == input::observe(input::encode(requests.get(ref).ref, input::original(ref), true)))
   val observationIndependent = 0.to(lifecycle::capacity).forall(position => input::operationKeys.forall(key =>

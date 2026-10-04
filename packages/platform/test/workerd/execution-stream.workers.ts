@@ -20,7 +20,7 @@ test("thread DO streams live act updates without journal entries", async () => {
     expect((await flow.request("/parent/methods/spawn", 73, "child")).status).toBe(202)
     const frame = new TextDecoder().decode((await update).value)
     const data = frame.split("\n").find(line => line.startsWith("data:"))!.slice(5)
-    expect(JSON.parse(data)).toMatchObject({ address, ref: { tag: "child" }, payload: { type: "tool.progress", message: "spawning" } })
+    expect(JSON.parse(data)).toMatchObject({ address, ref: { atom: "layout", act: "layout.spawn" }, payload: { type: "tool.progress", message: "spawning" } })
     expect(JSON.stringify(await parent.records())).not.toContain("tool.progress")
   } finally {
     await reader.cancel()
