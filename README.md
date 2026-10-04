@@ -143,10 +143,10 @@ export default worker
 
 ```text
 ActorDO [supervisor DB]
-`-- directory
-    |-- ThreadDO A [thread DB]
-    |-- ThreadDO B [thread DB, parent: A]
-    `-- ThreadDO C [thread DB, parent: B]
+└── directory
+    ├── A [DO, thread DB]
+    ├── B [DO, thread DB, parent: A]
+    └── C [DO, thread DB, parent: B]
 ```
 
 The tree shows directory entries in a flat thread namespace. ActorDO allocates and routes to threads; each ThreadDO owns a separate database with its state, journal and alarm. Parent coordinates record logical lineage, here A -> B -> C.
