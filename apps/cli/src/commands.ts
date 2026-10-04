@@ -453,7 +453,11 @@ export const initCommand = Command.make("init", {
       ? yield* Effect.mapError(setupPromptIn(cli.cwd, cli.env), userErrorOf)
       : yield* userErrorOf(NON_INTERACTIVE_INIT))
     const selected = { provider: answers.provider, model_id: answers.model_id }
-    const modelLock = yield* resolveConfiguredModelLock(cli, configuredModels({ allow: "*", providers: {} }, [answers], selected))
+    const models = configuredModels({
+      allow: [{ provider: selected.provider, model_ids: [selected.model_id] }],
+      providers: {}
+    }, [answers], selected)
+    const modelLock = yield* resolveConfiguredModelLock(cli, models)
     const initialized = yield* Effect.tryPromise({
       try: () => initActor(name, {
         cwd: cli.cwd,

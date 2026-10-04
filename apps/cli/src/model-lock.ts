@@ -56,13 +56,20 @@ export const resolveModelLock = async (
   if (!selectedExists) {
     throw new Error(`default model ${selected.provider}/${selected.model_id} is absent from catalog revision ${JSON.stringify(catalog.revision)}`)
   }
+  for (const provider of catalog.providers) {
+    for (const model of provider.models) {
+      if (model.metadata.contextWindowTokens === undefined && required.some(reference => reference.provider === provider.id && reference.model_id === model.id)) {
+        throw new Error(`model ${provider.id}/${model.id} has no context window in the catalog; supply models.${model.id}.metadata.contextWindowTokens in provider configuration`)
+      }
+    }
+  }
   return modelLockOf({
     schema: MODEL_LOCK_SCHEMA,
     providers: Object.fromEntries(Object.entries(config.providers).map(([id, provider]) => [id, {
       protocol: provider.protocol, baseUrl: provider.baseUrl, env: provider.env,
       ...(provider.region === undefined ? {} : { region: provider.region })
     }])),
-    models: catalog.providers.flatMap(provider => provider.models.map(model => {
+    models: catalog.providers.flatMap(provider => provider.models.filter(model => model.metadata.contextWindowTokens !== undefined).map(model => {
       const configured = config.providers[provider.id]?.models?.[model.id]
       return {
         ...model.metadata, provider: provider.id, model_id: model.id,
