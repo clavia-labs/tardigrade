@@ -1,3 +1,4 @@
+import { frozenPlainData } from "../atoms/incremental/frozen"
 import { createHash } from "node:crypto"
 import { isDeepStrictEqual } from "node:util"
 import { Schema } from "effect"
@@ -12,13 +13,21 @@ export const InputDigest = Schema.TaggedStruct("InputDigest", {
 })
 export type InputDigest = typeof InputDigest.Type
 
+// canonicalForms caches the canonical text of verified frozen plain data, which cannot change after verification.
+const canonicalForms = new WeakMap<object, string>()
+
 // canonicalInput serializes JSON values with JCS property ordering and Unicode validation (RFC 8785 §3.2; inputCanonicalization).
 export function canonicalInput(input: Schema.Json): string {
   if (typeof input === "string" && /[\uD800-\uDFFF]/u.test(input)) throw new Error("Canonical JSON rejects lone Unicode surrogates")
   if (typeof input === "number" && !Number.isFinite(input)) throw new Error("Canonical JSON requires finite numbers")
   if (input === null || typeof input !== "object") return JSON.stringify(input)
-  if (Array.isArray(input)) return `[${input.map(canonicalInput).join(",")}]`
-  return `{${Object.keys(input).sort().map(key => `${canonicalInput(key)}:${canonicalInput((input as Readonly<Record<string, Schema.Json>>)[key]!)}`).join(",")}}`
+  const cached = canonicalForms.get(input)
+  if (cached !== undefined) return cached
+  const text = Array.isArray(input)
+    ? `[${input.map(canonicalInput).join(",")}]`
+    : `{${Object.keys(input).sort().map(key => `${canonicalInput(key)}:${canonicalInput((input as Readonly<Record<string, Schema.Json>>)[key]!)}`).join(",")}}`
+  if (frozenPlainData.has(input)) canonicalForms.set(input, text)
+  return text
 }
 
 // digestInput identifies canonical JSON by SHA-256 and UTF-8 byte length (input-digest.test.ts).
