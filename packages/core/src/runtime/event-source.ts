@@ -22,19 +22,22 @@ export function createEventSource<Event = unknown>() {
 
 // createRecordSource appends stored records and payload-free atom observations atomically (inputRepresentation).
 export function createRecordSource<Event>() {
-  const source = atom<{ readonly events: readonly RuntimeEvent<Event>[]; readonly records: readonly Recorded<Event>[]; readonly observed: readonly ObservedRecord<Event>[] }>({ events: Object.freeze([]), records: Object.freeze([]), observed: Object.freeze([]) })
+  const source = atom<{ readonly events: readonly RuntimeEvent<Event>[]; readonly records: readonly Recorded<Event>[]; readonly observed: readonly ObservedRecord<Event>[]; readonly observedEvents: readonly (Event | ObservedRecord<Event>["event"])[] }>({ events: Object.freeze([]), records: Object.freeze([]), observed: Object.freeze([]), observedEvents: Object.freeze([]) })
+  const eventOf = <Entry extends { readonly event: unknown; readonly message?: { readonly inReplyTo?: unknown } }>(record: Entry) => isMessageReceived(record.event) && !record.message?.inReplyTo ? record.event.body as Event : record.event as Entry["event"]
   return {
     events: atom(get => get(source).events).pipe(NativeAtom.withLabel("events")),
     records: atom(get => get(source).records).pipe(NativeAtom.withLabel("records")),
     observedRecords: atom(get => get(source).observed).pipe(NativeAtom.withLabel("observedRecords")),
-    observedEvents: atom(get => Object.freeze(get(source).observed.map(record => isMessageReceived(record.event) && !record.message?.inReplyTo ? record.event.body as Event : record.event))).pipe(NativeAtom.withLabel("observedEvents")),
+    observedEvents: atom(get => get(source).observedEvents).pipe(NativeAtom.withLabel("observedEvents")),
     append: (store: Pick<ReturnType<typeof createStore>, "get" | "set">, batch: readonly Recorded<Event>[]) => {
       if (!batch.length) return
       const previous = store.get(source)
+      const observed = batch.map(record => Object.freeze({ ...record, event: Schema.is(EffectRequested)(record.event) ? Object.freeze(observeRequest(record.event)) : record.event }))
       store.set(source, {
-        events: Object.freeze([...previous.events, ...batch.map(record => isMessageReceived(record.event) && !record.message?.inReplyTo ? record.event.body as Event : record.event)]),
+        events: Object.freeze([...previous.events, ...batch.map(eventOf)]),
         records: Object.freeze([...previous.records, ...batch]),
-        observed: Object.freeze([...previous.observed, ...batch.map(record => Object.freeze({ ...record, event: Schema.is(EffectRequested)(record.event) ? Object.freeze(observeRequest(record.event)) : record.event }))]),
+        observed: Object.freeze([...previous.observed, ...observed]),
+        observedEvents: Object.freeze([...previous.observedEvents, ...observed.map(eventOf)]),
       })
     },
   }
