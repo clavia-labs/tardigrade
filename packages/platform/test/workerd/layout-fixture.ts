@@ -43,7 +43,7 @@ const paused = new Set<string>()
 const failed = new Set<string>()
 const held = new Map<string, Deferred.Deferred<void>>()
 const attempts = new Map<string, number>()
-const worker = createActorWorker({ actor, actorContext: Context.pick(), initialStateAtoms: [value, spawns], http: env => typeof env.FIXTURE_TOKEN === "string" ? { token: env.FIXTURE_TOKEN } : {}, effectInput: { digestMinBytes: 0 }, services: (_env, coordinate) => Spawn.layer(input => Effect.gen(function* () {
+const worker = createActorWorker({ actor, checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } }, actorContext: Context.pick(), initialStateAtoms: [value, spawns], http: env => typeof env.FIXTURE_TOKEN === "string" ? { token: env.FIXTURE_TOKEN } : {}, effectInput: { digestMinBytes: 0 }, services: (_env, coordinate) => Spawn.layer(input => Effect.gen(function* () {
   const name = cloudflareThreadName(coordinate)
   attempts.set(name, (attempts.get(name) ?? 0) + 1)
   const execution = yield* EffectExecution

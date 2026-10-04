@@ -137,6 +137,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       if (!this.directory) {
         this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
         this.directory = createSupervisor({ actor: options.actor.actorName, journal: () => this.journal!, run: this.run,
+          ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
           canDrive: () => this.watchdog.status.pipe(Effect.flatMap(entries => entries.get(watchdogKey({ actor: options.actor.actorName, instance }))?.status === "blocked" ? Effect.succeed(false) : options.canDrive ? options.canDrive({ actor: options.actor.actorName, instance }) : Effect.succeed(true))),
           defaultChildPlacement: DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, supportedChildPlacements: CLOUDFLARE_CHILD_PLACEMENTS,
           ...(options.promises ? { promises: options.promises } : {}), ...(options.generateName ? { generateName: options.generateName } : {}),
@@ -277,6 +278,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
         return this.storage()
       } }, services: (coordinate, runtime) => options.services(this.env, coordinate, runtime).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, this.supervisor()), Layer.succeed(Invocation, { send: this.send })))),
         delivery: () => ({ ...options.delivery, address: this.address(), send: this.send }), from: options.from ?? DEFAULT_EXTERNAL_SENDER, run: this.run,
+        ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
         ...(options.effectInput ? { effectInput: options.effectInput } : {}), ...(options.promises ? { promises: options.promises } : {}), ...(options.executionStream ? { executionStream: options.executionStream } : {}),
         canDrive: () => this.watchdog.status.pipe(Effect.flatMap(entries => entries.get(watchdogKey(this.address()))?.status === "blocked" ? Effect.succeed(false) : options.canDrive ? options.canDrive(this.address()) : Effect.succeed(true))),
       })

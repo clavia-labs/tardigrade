@@ -14,7 +14,7 @@ import type { PromisePolicy } from "../services/promises"
 
 import type { InitialState, StatefulAtom } from "../initialise"
 import { prepareInitialState } from "./initialisation"
-import { createActorStore, type DeliveryOptions } from "./execution"
+import { createActorStore, type CheckpointPolicy, type DeliveryOptions } from "./execution"
 import { createThreadStore } from "./stores/thread"
 import type { ExecutionStream, ExecutionStreamPolicy } from "../services/execution-stream"
 import { initializeThread, readThreadCreation, type ThreadJournal } from "../services/journal/thread"
@@ -114,6 +114,7 @@ export interface ActorStorage<Event extends object> {
 export interface ActorExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
   readonly executionStream?: Partial<ExecutionStreamPolicy>
   readonly executionStreamBus?: typeof ExecutionStream.Service
+  readonly checkpointPolicy?: CheckpointPolicy
   readonly effectInput?: { readonly digestMinBytes?: number }
   readonly promises?: Partial<PromisePolicy>
   readonly canDrive?: (target: WatchdogTarget) => Effect.Effect<boolean, Error>
@@ -181,6 +182,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
     if (!pending) {
       const journal = journalFor(coordinate)
       pending = yield* Effect.cached(readThreadCreation(journal, coordinate).pipe(Effect.andThen(createActorStore<Event, State, Services, Contracts>({
+        ...(options.checkpointPolicy ? { checkpoint: options.checkpointPolicy } : {}),
         ...(options.effectInput ? { effectInput: options.effectInput } : {}), actor: options.actor, actorContext: options.actorContext, journal, ...(options.executionStream ? { executionStream: options.executionStream } : {}), ...(options.executionStreamBus ? { executionStreamBus: options.executionStreamBus } : {}), ...(options.canDrive ? { canDrive: options.canDrive(coordinate) } : {}), ...(options.promises ? { promises: options.promises } : {}), delivery: options.delivery(coordinate), services: runtime => options.services(coordinate, runtime),
       })), Effect.onError(() => Effect.sync(() => { threads.delete(key) }))))
       threads.set(key, pending)

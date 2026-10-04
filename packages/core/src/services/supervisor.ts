@@ -7,7 +7,7 @@ import { RuntimeError } from "../runtime/effects"
 import type { ChildPlacement, ThreadCoordinate } from "../actor/thread"
 import type { Journal } from "./journal"
 import { Provision, supervisorActor, type SupervisorEvent, type ThreadAllocation } from "./supervisor/graph"
-import { createActorStore } from "../runtime/execution"
+import { createActorStore, type CheckpointPolicy } from "../runtime/execution"
 import type { ActorRuntime } from "../runtime/contracts"
 import { createSupervisorStore, type SupervisorStore } from "../runtime/stores/supervisor"
 
@@ -29,6 +29,7 @@ export class Supervisor extends Context.Service<Supervisor, {
 // createSupervisor manages per-instance directory actors and provisions their requested threads.
 export function createSupervisor(options: {
   readonly actor: string
+  readonly checkpointPolicy?: CheckpointPolicy
   readonly promises?: Partial<PromisePolicy>
   readonly canDrive?: (instance: string) => Effect.Effect<boolean, Error>
   readonly journal: (instance: string) => Journal<SupervisorEvent>
@@ -44,6 +45,7 @@ export function createSupervisor(options: {
     let runtime!: ActorRuntime<SupervisorEvent>
     const store = yield* createActorStore({
       actor: supervisorActor,
+      ...(options.checkpointPolicy ? { checkpoint: options.checkpointPolicy } : {}),
       ...(options.canDrive ? { canDrive: options.canDrive(instance) } : {}),
       ...(options.promises ? { promises: options.promises } : {}),
       journal: options.journal(instance),

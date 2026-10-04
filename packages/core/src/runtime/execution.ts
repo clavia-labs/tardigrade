@@ -26,7 +26,6 @@ import { DeliverMessage, type MessageDelivery } from "../services/invocation"
 import { select } from "./stores/thread"
 
 export type CheckpointPolicy =
-  | { readonly mode: "quiescent"; readonly options?: { readonly maxBytes?: number } }
   | { readonly mode: "threshold"; readonly options: { readonly everyEvents: number; readonly maxBytes?: number } }
   | { readonly mode: "manual"; readonly options?: { readonly maxBytes?: number } }
 
@@ -40,7 +39,7 @@ export interface DeliveryOptions {
 
 export const DEFAULT_CANCELLATION_RETRY_INTERVAL_MS = 5_000
 
-export const DEFAULT_CHECKPOINT_POLICY: CheckpointPolicy = { mode: "quiescent" }
+export const DEFAULT_CHECKPOINT_POLICY: CheckpointPolicy = { mode: "threshold", options: { everyEvents: 500 } }
 
 export type ActorServices<Definition> = Definition extends ActorDefinition<infer Event, infer State, infer Services>
   ? (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
@@ -120,6 +119,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     let initialState: StateSeed | undefined
     let checkpointPosition = 0
     const checkpointPolicy = options.checkpoint ?? DEFAULT_CHECKPOINT_POLICY
+    if (checkpointPolicy.mode !== "threshold" && checkpointPolicy.mode !== "manual") return yield* Effect.fail(new RuntimeError("Checkpoint mode must be threshold or manual"))
     if (checkpointPolicy.mode === "threshold" && (!Number.isSafeInteger(checkpointPolicy.options.everyEvents) || checkpointPolicy.options.everyEvents < 1)) return yield* Effect.fail(new RuntimeError("Checkpoint everyEvents must be a positive safe integer"))
     const checkpointMaxBytes = checkpointPolicy.options?.maxBytes ?? DEFAULT_CHECKPOINT_MAX_BYTES
     if (!Number.isSafeInteger(checkpointMaxBytes) || checkpointMaxBytes < 1) return yield* Effect.fail(new RuntimeError("Checkpoint maxBytes must be a positive safe integer"))
@@ -185,7 +185,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       if (persistenceFailure) return yield* persistenceFailure
       if (next === snapshot) return
       const records = next.records.slice(snapshot.records.length)
-      const eligible = checkpointPolicy.mode === "quiescent" || (checkpointPolicy.mode === "threshold" && next.position - checkpointPosition >= checkpointPolicy.options.everyEvents)
+      const eligible = checkpointPolicy.mode === "threshold" && next.position - checkpointPosition >= checkpointPolicy.options.everyEvents
       const checkpoint = options.journal && eligible ? next.checkpoint() : undefined
       if (options.journal) {
         const journal = options.journal

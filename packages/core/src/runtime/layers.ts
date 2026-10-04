@@ -44,6 +44,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
   }
   const supervisor = createSupervisor({
     actor: options.actor.actorName,
+    ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
     ...(options.canDrive ? { canDrive: (instance: string) => options.canDrive!({ actor: options.actor.actorName, instance }) } : {}),
     ...(options.promises ? { promises: options.promises } : {}),
     journal: instance => options.storage.supervisor(options.actor.actorName, instance),
