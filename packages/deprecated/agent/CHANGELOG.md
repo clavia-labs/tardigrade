@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.42.1](https://github.com/clavia-labs/tardigrade/compare/v0.42.0...v0.42.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **core:** streamline state validation ([#650](https://github.com/clavia-labs/tardigrade/issues/650)) ([7107c88](https://github.com/clavia-labs/tardigrade/commit/7107c8818885b96e301dddae20e89b04429919a6))
+
+
+### Performance Improvements
+
+* **agent:** cache compaction sizes ([#651](https://github.com/clavia-labs/tardigrade/issues/651)) ([6e0ef3a](https://github.com/clavia-labs/tardigrade/commit/6e0ef3abac07baf3c69ff2da7368db7c73d0cec5))
+* **core:** advance promise observation ([#645](https://github.com/clavia-labs/tardigrade/issues/645)) ([3d8972e](https://github.com/clavia-labs/tardigrade/commit/3d8972e0aed06a81bc9ff50e8d196dfc7a7ac814))
+* **core:** append observed events ([#656](https://github.com/clavia-labs/tardigrade/issues/656)) ([b52eaee](https://github.com/clavia-labs/tardigrade/commit/b52eaee5757866894cbdbdcb6de19fba3cdee4cf))
+* **core:** cache canonical input ([#654](https://github.com/clavia-labs/tardigrade/issues/654)) ([c0b82f4](https://github.com/clavia-labs/tardigrade/commit/c0b82f4ec09df0c73be0abfbfc172b95b02d569a))
+* **core:** decode act inputs incrementally ([#652](https://github.com/clavia-labs/tardigrade/issues/652)) ([724b4ec](https://github.com/clavia-labs/tardigrade/commit/724b4ecf5a304a7297541065038fe2c0c7a89225))
+* **core:** decode executed inputs incrementally ([#657](https://github.com/clavia-labs/tardigrade/issues/657)) ([f31be2a](https://github.com/clavia-labs/tardigrade/commit/f31be2af318c1af4c84257241a012b7030cee9a9))
+* **core:** reduce checkpoint frequency ([#643](https://github.com/clavia-labs/tardigrade/issues/643)) ([f9f57c4](https://github.com/clavia-labs/tardigrade/commit/f9f57c469a73f7c853793c2a22e2889c733aa1ae))
+* **core:** reuse live requests ([#647](https://github.com/clavia-labs/tardigrade/issues/647)) ([01c9d85](https://github.com/clavia-labs/tardigrade/commit/01c9d85b53ef8ffdfc05f747125411e9c274372f))
+* **core:** scan recovery backwards ([#659](https://github.com/clavia-labs/tardigrade/issues/659)) ([12ba867](https://github.com/clavia-labs/tardigrade/commit/12ba86753507e257af8a58d3d75cec2db3613de9))
+* **core:** trust act request inputs ([#658](https://github.com/clavia-labs/tardigrade/issues/658)) ([d659ca2](https://github.com/clavia-labs/tardigrade/commit/d659ca2a87891e7e2563591168eba69043bca13a))
+* **core:** trust restored state ([#661](https://github.com/clavia-labs/tardigrade/issues/661)) ([f18c65e](https://github.com/clavia-labs/tardigrade/commit/f18c65e661d23022bea4b7a755116cf03d6e499b))
+* **core:** validate state incrementally ([#648](https://github.com/clavia-labs/tardigrade/issues/648)) ([0e7b075](https://github.com/clavia-labs/tardigrade/commit/0e7b075c913fd797d97221c8208d846a082a6004))
+* **platform:** index journal length ([#646](https://github.com/clavia-labs/tardigrade/issues/646)) ([ab59f1b](https://github.com/clavia-labs/tardigrade/commit/ab59f1b9d1a49ed7fa745b2249b532bb962f847a))
+
 ## [0.42.0](https://github.com/clavia-labs/tardigrade/compare/v0.41.2...v0.42.0) (2026-10-04)
 
 
