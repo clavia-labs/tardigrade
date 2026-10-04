@@ -123,7 +123,7 @@ event log -> history -> messages -> compact --+
 
 ## Hosting
 
-Host each actor instance in a SQLite-backed Durable Object on Cloudflare or a self-hosted [Celld fleet](https://github.com/denoland/celld/blob/main/docs/README.md). The same Worker entrypoint runs on both.
+Host each actor instance with an ActorDO for its supervisor directory and a separate SQLite-backed ThreadDO for each thread on Cloudflare or a self-hosted [Celld fleet](https://github.com/denoland/celld/blob/main/docs/README.md). The same Worker entrypoint runs on both.
 
 ```ts
 import { actorContext } from "tardie/agent"
@@ -137,12 +137,25 @@ const worker = createActorWorker({
   services: () => services(),
 })
 export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
 export default worker
 ```
 
+```text
+Worker
+  +-- ActorDO         supervisor DB (directory and allocation)
+  +-- ThreadDO parent thread DB (state, journal and alarm)
+  +-- ThreadDO child  thread DB (state, journal and alarm)
+
+Logical lineage: parent --> child
+Physical layout: separate DOs in a flat thread namespace
+```
+
+ActorDO allocates and routes to threads. A child's parent coordinate records its lineage; each thread owns its database independently.
+
 The [Quickstart](docs/getting-started/quickstart.mdx) generates the services and deployment configs. Set your model and provider credentials before running.
 
-`createActorWorker` owns the outer Worker routing and creates an `ActorObject` with the Durable Object storage, HTTP, alarm, and disposal lifecycle. Use `createActorHost` when you need to assemble that lifecycle yourself.
+`createActorWorker` owns the outer Worker routing and creates the `ActorObject` and `ThreadObject` classes with their storage, HTTP, alarm, and disposal lifecycles. Bind both exported classes in your deployment configuration; the [Quickstart](docs/getting-started/quickstart.mdx) generates these bindings.
 
 Run locally with `bunx wrangler dev`; see [local setup](docs/platforms/cloudflare.mdx#verify-locally).
 
