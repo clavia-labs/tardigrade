@@ -82,11 +82,3 @@ Set `PORT` to change the HTTP port and `TARDIGRADE_ACTOR_DATA` to change the sto
 `createBunHost({ promises: { timeoutMs: 60_000, pollIntervalMs: 1_000 }, ... })` configures deferred work at the host. `bunPromises(runtime, ...)` inherits this policy; its `policy` option can override resolver scheduling. `DEFAULT_PROMISE_POLICY` is exported from `tardie/core`. Each promise records an absolute deadline, so a restart preserves its expiry. Expiry rejects with `PromiseTimedOut` without invoking backend cancellation; scheduled clocks receive the timeout budget after their scheduled time.
 
 Background library methods override the host waiting budget with `.annotate(MethodPromiseTimeout, timeoutMs)` from `tardie/libraries`. `modelServices({ timeoutMs })` carries the configured model timeout into inference promises. Overrides become fixed recorded deadlines, so replay does not renew the waiting budget.
-
-## Effect input storage
-
-The host stores act inputs whose canonical JSON is at least 2,048 UTF-8 bytes as `{ _tag: "InputDigest", sha256, bytes }` in `EffectRequested`. Smaller inputs remain inline. `InputDigest` and `DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES` are exported from `tardie/core`. The `InputDigest` input shape is reserved for framework records.
-
-Set `effectInput: { digestMinBytes: 4096 }` at host construction to change the threshold. The threshold accepts a nonnegative safe integer; zero digests every input. Canonical JSON sorts object keys recursively and preserves array order. Replay rebuilds the full input and compares its digest and executor before accepting it for execution. A mismatch rejects replay.
-
-Checkpoints retain digests for large, completed inputs. Pending effects and unresolved promises retain full reconstructed inputs in memory; cancelled effects retain full inputs in checkpoints for cleanup recovery. Completed inputs are released after settlement callbacks can consume them. Changing the storage threshold does not change model context. Existing inline records remain readable, and full prompt auditing belongs in application telemetry.

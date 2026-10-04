@@ -35,7 +35,7 @@ Start with a project from the [Quickstart](/docs/quickstart), then install Wrang
 bun add --dev wrangler@latest
 ```
 
-Add `TARDIGRADE_TOKEN` and each configured provider credential to `.dev.vars`. Interactive `tdg setup` saves credentials there; credentials supplied only through the environment must also be available to Wrangler. Set a token and use the same value with the CLI's `--token` option. The generated Worker enables bearer authentication when `TARDIGRADE_TOKEN` is present.
+Add each configured provider credential to `.dev.vars`. Interactive `tdg setup` saves credentials there; credentials supplied only through the environment must also be available to Wrangler. Authentication is optional: set `TARDIGRADE_TOKEN` to enable it.
 
 Start the Worker:
 
@@ -43,12 +43,12 @@ Start the Worker:
 bun run dev:cloudflare
 ```
 
-Set `TARDIGRADE_TOKEN` in the calling shell to the value saved in `.dev.vars`. Wrangler reads that file for the Worker; it does not export its values to another shell. Use the URL printed by Wrangler when allocating and calling a thread. `/healthz` is public; when authentication is enabled, the remaining commands require the token from `.dev.vars`:
+When authentication is enabled, export `TARDIGRADE_TOKEN` in the calling shell with the value saved in `.dev.vars`; the CLI reads it automatically. Wrangler reads that file for the Worker; it does not export its values to another shell. Use the URL printed by Wrangler when allocating and calling a thread. `/healthz` is public; when authentication is enabled, the remaining commands require the token from `.dev.vars`:
 
 ```bash
 curl http://localhost:8787/healthz
-tdg thread create --name quickstart --url http://localhost:8787 --token "$TARDIGRADE_TOKEN"
-tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickstart --url http://localhost:8787 --token "$TARDIGRADE_TOKEN"
+tdg thread create --name quickstart --url http://localhost:8787
+tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickstart --url http://localhost:8787
 ```
 
 ## Configure
@@ -122,11 +122,3 @@ const research = Rpc.make("research", {
 The host keeps live local fibres active with alarm heartbeats at `keepAliveIntervalMs`. Alarm handlers return while recovery runs. Heartbeats preserve the promise deadline and recovery counters; completion releases the wake, and a process crash returns to budgeted recovery. Remote promises park without keeping the local fibre alive. `modelServices({ timeoutMs })` uses the configured model timeout for inference promises too.
 
 Local promise recovery reruns the originating act with its recorded reference and deadline. The act must recreate its producer and tolerate repeated execution; external operations must deduplicate by the reference. Cloudflare's finite alarm redeliveries leave a coverage gap if repeated crashes occur before the replacement alarm becomes durable.
-
-## Effect input storage
-
-The host stores act inputs whose canonical JSON is at least 2,048 UTF-8 bytes as `{ _tag: "InputDigest", sha256, bytes }` in `EffectRequested`. Smaller inputs remain inline. `InputDigest` and `DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES` are exported from `tardie/core`. The `InputDigest` input shape is reserved for framework records.
-
-Set `effectInput: { digestMinBytes: 4096 }` at host construction to change the threshold. The threshold accepts a nonnegative safe integer; zero digests every input. Canonical JSON sorts object keys recursively and preserves array order. Replay rebuilds the full input and compares its digest and executor before accepting it for execution. A mismatch rejects replay.
-
-Checkpoints retain digests for large, completed inputs. Pending effects and unresolved promises retain full reconstructed inputs in memory; cancelled effects retain full inputs in checkpoints for cleanup recovery. Completed inputs are released after settlement callbacks can consume them. Changing the storage threshold does not change model context. Existing inline records remain readable, and full prompt auditing belongs in application telemetry.
