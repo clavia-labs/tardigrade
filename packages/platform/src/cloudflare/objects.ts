@@ -46,11 +46,12 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
 // cloudflareThreadName identifies a thread DO by its complete coordinate (test/workerd/thread-layout.workers.ts).
 export const cloudflareThreadName = (coordinate: ThreadCoordinate): string => JSON.stringify([coordinate.actor, coordinate.instance, coordinate.thread])
 
-function objectJournal<Event extends object>(options: {
+// objectJournal commits journal records and watchdog admission in the same storage transaction (test/workerd/watchdog.workers.ts).
+export function objectJournal<Event extends object>(options: {
   readonly storage: DurableObjectStorage
   readonly key: string
   readonly target: WatchdogTarget
-  readonly alarms?: CloudflareAlarmOptions
+  readonly alarms?: CloudflareAlarmOptions | undefined
   readonly watchdog: ReturnType<typeof createWatchdog>
 }) {
   const alarms = makeRetryingAlarms(options.storage, options.alarms)
@@ -71,6 +72,17 @@ function objectJournal<Event extends object>(options: {
       }))), catch: RuntimeError.from })
     }).pipe(Effect.uninterruptible),
   })
+}
+
+// objectResponse handles health checks and translates request failures to public HTTP errors.
+async function objectResponse(request: Request, handle: () => Promise<Response>): Promise<Response> {
+  if (new URL(request.url).pathname === "/healthz") return Response.json({ status: "resting", dirty: 0 })
+  try { return await handle() }
+  catch (error) {
+    const response = publicError(error)
+    await Effect.runPromise(Effect.logError("HTTP request failed", error))
+    return Response.json(response.body, { status: response.status })
+  }
 }
 
 // createActorObjects separates the instance directory from per-thread storage, execution, and alarms (test/workerd/thread-layout.workers.ts).
@@ -162,13 +174,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       ...(options.actorTransport ? { actorTransport: options.actorTransport } : {}), ...(options.transports ? { transports: options.transports } : {}),
     }).send(message)
     async fetch(request: Request): Promise<Response> {
-      if (new URL(request.url).pathname === "/healthz") return Response.json({ status: "resting", dirty: 0 })
-      try { return await this.handleRequest(request) }
-      catch (error) {
-        const response = publicError(error)
-        await Effect.runPromise(Effect.logError("HTTP request failed", error))
-        return Response.json(response.body, { status: response.status })
-      }
+      return objectResponse(request, () => this.handleRequest(request))
     }
     private async handleRequest(request: Request): Promise<Response> {
       const pathname = new URL(request.url).pathname
@@ -286,13 +292,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       return Effect.runPromise(this.registered().pipe(Effect.andThen(this.actors().receive(this.address(), packet.body, packet.message))))
     }
     async fetch(request: Request): Promise<Response> {
-      if (new URL(request.url).pathname === "/healthz") return Response.json({ status: "resting", dirty: 0 })
-      try { return await this.handleRequest(request) }
-      catch (error) {
-        const response = publicError(error)
-        await Effect.runPromise(Effect.logError("HTTP request failed", error))
-        return Response.json(response.body, { status: response.status })
-      }
+      return objectResponse(request, () => this.handleRequest(request))
     }
     private async handleRequest(request: Request): Promise<Response> {
       const http = options.http?.(this.env) ?? {}

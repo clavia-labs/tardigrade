@@ -55,7 +55,7 @@ if (existing) {
         await Bun.write(retired, 'export default { fetch: () => new Response("Fixture retired", { status: 410 }) }')
         await Bun.write(config, JSON.stringify({
           ...manifest, main: retired, durable_objects: { bindings: [] },
-          migrations: [...manifest.migrations, { tag: "v2", deleted_classes: ["LayoutActorDO", "LayoutThreadDO"] }],
+          migrations: [...manifest.migrations, { tag: "v2", deleted_classes: manifest.migrations[0]!.new_sqlite_classes }],
         }))
         try { await wrangler("deploy") }
         finally { await wrangler("delete", name, "--force") }

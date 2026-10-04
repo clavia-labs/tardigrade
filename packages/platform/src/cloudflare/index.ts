@@ -2,11 +2,11 @@ import { DEFAULT_METHOD_HTTP_INSTANCE } from "../shared/method-http"
 export { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 export { executionStreamSse } from "../shared/execution-stream-sse"
 import { Effect, Exit, Fiber } from "effect"
-import { createWatchdog, RuntimeError, watchdogKey, type WatchdogPolicy, type WatchdogTarget, type ActorMethods, createThreadHost, type ThreadStorage } from "@clavia/tardigrade-core"
+import { createWatchdog, watchdogKey, type WatchdogPolicy, type WatchdogTarget, type ActorMethods, createThreadHost, type ThreadStorage } from "@clavia/tardigrade-core"
 import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import { cloudflareWatchdogStorage, cloudflareWatchdogTransaction } from "./watchdog"
+import { cloudflareWatchdogStorage } from "./watchdog"
 import { sqlJournal } from "../shared/sql-journal"
 export { sqlJournal } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
@@ -40,24 +40,7 @@ export function createActorHost<Event extends object, Services, State, Contracts
     }), ...options.watchdog })
   const connections = new Set<Effect.Effect<void, Error>>()
   const journal = <Entry extends object>(key: readonly string[], target: WatchdogTarget) => {
-    const alarms = makeRetryingAlarms(options.storage, options.alarms)
-    const opened = sqlJournal<Entry>({ actor: JSON.stringify(key), layer: SqliteClient.layer({ storage: options.storage }), flush: alarms.sync,
-      commit: (work, records, position) => Effect.gen(function* () {
-        const context = yield* Effect.context<never>()
-        yield* Effect.tryPromise({ try: () => options.storage.transaction(tx => Effect.runPromiseWith(context)(Effect.gen(function* () {
-          yield* work
-          if (!records.length) return
-          let progressCursor = 0
-          let admission = false
-          for (const [index, record] of records.entries()) {
-            const event: object = record.event
-            if ("type" in event && (event.type === "EffectSettled" || event.type === "PromiseSettled")) progressCursor = position - records.length + index + 1
-            if ("type" in event && (event.type === "MessageReceived" || event.type === "ThreadCreated" || event.type === "ThreadRequested")) admission = true
-          }
-          yield* watchdog.admit(cloudflareWatchdogTransaction(tx, options.alarms), target, progressCursor, admission)
-        }))), catch: RuntimeError.from })
-      }).pipe(Effect.uninterruptible),
-    })
+    const opened = objectJournal<Entry>({ storage: options.storage, key: JSON.stringify(key), target, watchdog, alarms: options.alarms })
     connections.add(opened.close)
     return opened
   }
@@ -87,7 +70,7 @@ export const cloudflareHandler = (host: HttpHost) => HttpRouter.toWebHandler(hos
 
 export { createActorObjects, cloudflareThreadName, CLOUDFLARE_CHILD_PLACEMENTS, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT } from "./objects"
 export type { ActorObjectOptions, CloudflareObjectBindings, ActorDirectoryStub, ThreadRuntimeStub } from "./objects"
-import { createActorObjects, type ActorObjectOptions, type CloudflareObjectBindings } from "./objects"
+import { createActorObjects, objectJournal, type ActorObjectOptions, type CloudflareObjectBindings } from "./objects"
 
 // createActorObject owns an instance directory whose registered threads execute in separate DOs (test/workerd/thread-layout.workers.ts).
 export function createActorObject<Env extends object = Record<string, unknown>, Event extends object = object, Services = never, State = unknown, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorObjectOptions<Env, Event, Services, State, Contracts>) {
