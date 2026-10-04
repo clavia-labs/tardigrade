@@ -689,8 +689,15 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         active: () => [...background.keys()],
         recoveryState: (): RecoveryState => {
           if (errors.length) throw errors[0]!
+          // progressCursor is the position after the last settlement, so the scan runs back from the end.
           let progressCursor = snapshot.seed?.position ?? 0
-          for (const [index, record] of snapshot.records.entries()) if (Schema.is(EffectSettled)(record.event) || Schema.is(PromiseSettled)(record.event)) progressCursor = (snapshot.seed?.position ?? 0) + index + 1
+          for (let index = snapshot.records.length - 1; index >= 0; index--) {
+            const event = snapshot.records[index]!.event
+            if (Schema.is(EffectSettled)(event) || Schema.is(PromiseSettled)(event)) {
+              progressCursor = (snapshot.seed?.position ?? 0) + index + 1
+              break
+            }
+          }
           const deferred = snapshot.deferred()
           const live = deferred.filter(work => work.handle.executor === "local" && background.has(work.handle.id))
           if (live.length && !snapshot.effects().length && !snapshot.pending().length && !snapshot.cancellations().length && !snapshot.deliveries().length) {
