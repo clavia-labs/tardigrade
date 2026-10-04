@@ -31,6 +31,14 @@ The prose lint holds markdown to the rules in [AGENTS.md](AGENTS.md) that a code
 
 CI installs with `bun install --frozen-lockfile` and runs the full `bun run gate` for code changes and pushes to `main`. For PRs that change only `docs/`, the required `gate` job runs `bun run gate --only=lint:docs,build:app-web` to check prose and compile the documentation site. Commit `bun.lock` with any dependency change.
 
+## Long-running fixture
+
+The 10k-event workerd regression is opt-in and runs outside the gate:
+
+```sh
+bun run --cwd packages/platform test:workers:long
+```
+
 ## Deployed fixture flow
 
 The platform has an opt-in flow against real Cloudflare Workers. Authenticate Wrangler, then run:

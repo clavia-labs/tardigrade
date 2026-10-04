@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test"
-import { canonicalInput, storeRequest, digestInput } from "../../../core/src/runtime/input-digest"
+import { expect, test } from "bun:test"
+import { storeRequest, digestInput } from "../../../core/src/runtime/input-digest"
 import { Schema } from "effect"
 import { atom, EventLog, act, durableAtom, effectAtom, createEventLog, encodeCheckpoint, decodeCheckpoint } from "@clavia/tardigrade-core"
 import { requests } from "@clavia/tardigrade-agent/contracts/acts"
@@ -7,19 +7,6 @@ import { Context, Effect } from "effect"
 import { defineActor } from "@clavia/tardigrade-core"
 import { eventLogContext } from "../../../core/src/services/event-log"
 import { createTestStore } from "../properties/runtime/store"
-describe("effect input digests", () => {
-  test("canonical encoding sorts nested keys, preserves arrays and counts UTF-8 bytes", () => {
-    expect(canonicalInput({ z: [{ b: 2, a: 1 }], a: "é" })).toBe('{"a":"é","z":[{"a":1,"b":2}]}')
-    expect(digestInput({ a: 1, b: 2 })).toEqual(digestInput({ b: 2, a: 1 }))
-    expect(digestInput("é").bytes).toBe(4)
-    expect(digestInput([1, 2])).not.toEqual(digestInput([2, 1]))
-    expect(digestInput(null).sha256).toBe("74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b")
-  })
-
-
-})
-
-
 const Started = Schema.Struct({ type: Schema.Literal("Started"), text: Schema.String })
 const Finished = Schema.Struct({ type: Schema.Literal("Finished") })
 const Events = Schema.Union([Started, Finished])
@@ -69,7 +56,7 @@ test("digest replay reconstructs pending input and rejects changed proposals bef
   } finally { log.dispose(); restored.dispose(); changed.dispose() }
 })
 
-test("settled checkpoints compact inputs and restore without changing the journal prefix", () => {
+test("settlement callbacks, input release and checkpoint restore preserve the journal prefix", () => {
   const { log, snapshot: accepted, ref } = acceptedHistory()
   try {
     const settled = log.append(accepted, { type: "EffectSettled", ref, outcome: { status: "fulfilled", value: { type: "value", value: "done" } } })
@@ -84,6 +71,9 @@ test("settled checkpoints compact inputs and restore without changing the journa
       expect(() => changed.initial).toThrow("Restored effect request differs")
       expect(settled.followups(settled.events.at(-1)!)).toEqual([{ type: "Finished" }])
     } finally { restored.dispose(); changed.dispose() }
+    const finished = log.append(settled, { type: "Finished" })
+    expect(finished.effect(ref)!.request.request.input).toEqual(checkpoint.effects[0]!.request.request.input)
+    expect(JSON.stringify(finished.records.slice(0, settled.records.length))).toBe(before)
   } finally { log.dispose() }
 })
 
@@ -96,7 +86,6 @@ test("inline and digest acceptance share identity", () => {
     expect(() => log.append(snapshot, { ...duplicate, request: storeRequest({ act: "test.digest", input: { system: "wrong", text } }, 0) })).toThrow("Conflicting")
   } finally { log.dispose() }
 })
-
 
 test("latestOnly keeps same-tag identity and releases preceding handles", () => {
   const create = (input: { tag: string; input: string }) => ({ ...input })
@@ -111,18 +100,6 @@ test("latestOnly keeps same-tag identity and releases preceding handles", () => 
   expect(all({ tag: "first", input: "one" })).toBe(retained)
   const custom = requests(create, input => input.input)
   expect(custom({ tag: "one", input: "same" })).toBe(custom({ tag: "two", input: "same" }))
-})
-
-test("completed inputs are released after settlement callbacks, without changing stored records", () => {
-  const { log, snapshot, ref } = acceptedHistory()
-  try {
-    const settled = log.append(snapshot, { type: "EffectSettled", ref, outcome: { status: "fulfilled", value: { type: "value", value: "done" } } })
-    const records = JSON.stringify(settled.records)
-    expect(settled.followups(settled.events.at(-1)!)).toEqual([{ type: "Finished" }])
-    const finished = log.append(settled, { type: "Finished" })
-    expect(finished.effect(ref)!.request.request.input).toEqual(digestInput({ system: "original", text: "x".repeat(4096) }))
-    expect(JSON.stringify(finished.records.slice(0, settled.records.length))).toBe(records)
-  } finally { log.dispose() }
 })
 
 test("deferred inputs survive settlement and cancellation checkpoints for recovery and cleanup", () => {
@@ -141,7 +118,6 @@ test("deferred inputs survive settlement and cancellation checkpoints for recove
     finally { restored.dispose() }
   } finally { log.dispose() }
 })
-
 
 test("runtime threshold overrides preserve executable inputs", async () => {
   for (const digestMinBytes of [0, 1_000_000]) {

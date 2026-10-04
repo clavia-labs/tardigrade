@@ -53,6 +53,7 @@ export const inputRepresentation = fc.property(fc.record({
 
 // inputCanonicalization checks RFC 8785 §3.2.3 ordering and Appendix B number vectors on every host.
 export function inputCanonicalization() {
+  if (digestInput(null).sha256 !== "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b" || digestInput("é").bytes !== 4) throw new Error("Canonical input hash or UTF-8 length changed")
   const keys = ["\r", "1", "\u0080", "\u00f6", "\u20ac", "\ud83d\ude00", "\ufb33"]
   const object = Object.fromEntries([...keys].reverse().map(key => [key, key]))
   const expected = `{${keys.map(key => `${JSON.stringify(key)}:${JSON.stringify(key)}`).join(",")}}`
