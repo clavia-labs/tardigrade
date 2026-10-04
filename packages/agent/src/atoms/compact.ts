@@ -53,7 +53,16 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     const text = clip(message.text, message.role === "tool" ? toolCharLimit : userCharLimit)
     return text === message.text ? message : { ...message, text }
   })
-  const estimate = (messages: typeof Conversation.Type) => Math.ceil(messages.reduce((size, message) => size + JSON.stringify(message).length, 0) / policy.charsPerToken)
+  // sizeOf is a message's JSON length, cached for frozen messages; durable state is deep-frozen (core/src/atoms/state-validation.ts), so trajectory messages are measured once.
+  const sizes = new WeakMap<object, number>()
+  const sizeOf = (message: typeof Conversation.Type[number]) => {
+    const cached = sizes.get(message)
+    if (cached !== undefined) return cached
+    const size = JSON.stringify(message).length
+    if (Object.isFrozen(message)) sizes.set(message, size)
+    return size
+  }
+  const estimate = (messages: typeof Conversation.Type) => Math.ceil(messages.reduce((size, message) => size + sizeOf(message), 0) / policy.charsPerToken)
   const compactionState = createCompactionState()
 
   const request = requests(Summarize.request, { latestOnly: true })
@@ -82,7 +91,9 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
       if (message.role === "tool") pending.delete(message.callId)
     }
     if (pending.size || !boundaries.length) return { view: ready, events: {}, acts: {} }
-    const through = boundaries.find(index => estimate(messages.slice(index)) <= retainTokens) ?? boundaries.at(-1)!
+    const suffix = Array.from({ length: messages.length + 1 }, () => 0)
+    for (let index = messages.length - 1; index >= state.through; index--) suffix[index] = suffix[index + 1]! + sizeOf(messages[index]!)
+    const through = boundaries.find(index => Math.ceil(suffix[index]! / policy.charsPerToken) <= retainTokens) ?? boundaries.at(-1)!
     const callId = `compact:${through}:${state.attempts}`
     return {
       view: { position: "compacting" as const, policy, ...usage },
