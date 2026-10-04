@@ -1,11 +1,12 @@
 import { Exit, Schema, SchemaAST } from "effect"
+import { frozenPlainData } from "./frozen"
 
 const STRICT = { onExcessProperty: "error" } as const
 type Check = (value: unknown) => boolean
 
 // incrementalValidator reuses successful checks for frozen plain-data subtrees under pure type-side schemas (packages/platform/test/properties/runtime/state-validation.ts).
 export function incrementalValidator(schema: Schema.Top, onFallback?: () => void): Check {
-  const immutable = new WeakSet<object>()
+  const immutable = frozenPlainData
   const freeze = (value: unknown): boolean => {
     const pending: object[] = []
     const seen = new Set<object>()

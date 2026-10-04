@@ -1,3 +1,4 @@
+import { incrementalDecoder } from "./incremental/decode"
 import { Context, Effect, Layer, Schema, Option } from "effect"
 import { atom, type Atom } from "./atom"
 import { EventLog, eventLogContext } from "../services/event-log"
@@ -73,6 +74,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
   const failureSchema = Schema.toType(options.failure)
   const decodeSuccess = Schema.decodeUnknownSync(successSchema)
   const decodeFailure = Schema.decodeUnknownSync(failureSchema)
+  const decodeInput = incrementalDecoder(inputSchema)
   // Implementation uses the act name as its service identity across independently constructed definitions.
   // @effect-diagnostics-next-line serviceNotAsClass:off
   const Implementation = Context.Service<ActService<Name>, ImplementationService>(`experimental/act/${options.name}`)
@@ -97,7 +99,8 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
 
   // request creates an invocation handle retained across reevaluation; another invocation requires another handle.
   const request = (invocation: { readonly origin?: number; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
-    const input = Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
+    const decoded = decodeInput(invocation.input)
+    const input = decoded ? decoded.value as Schema.Json : Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
     const origin = invocation.origin === undefined ? undefined : Schema.decodeSync(EffectRef.fields.seq)(invocation.origin)
     const identity = {}
     const ref = atom(get => {
