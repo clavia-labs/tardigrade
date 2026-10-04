@@ -23,6 +23,9 @@ If you use the legacy component API, see the [migration guide](docs/migration/st
 
 ```sh
 bun add tardie
+```
+
+```sh
 bunx tardie init tardie-agent --template quickstart
 ```
 
