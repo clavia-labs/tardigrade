@@ -1,53 +1,32 @@
 import { env } from "cloudflare:workers"
-import { runInDurableObject } from "cloudflare:test"
+import { SELF, runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
-import { Context, Deferred, Effect, Schema, Stream } from "effect"
-import { act, actorMethod, defineActor, durableAtom, EffectExecution, effectAtom, event, type ExecutionUpdate } from "@clavia/tardigrade-core"
-import { createCloudflareHost } from "../../src/cloudflare"
-import type { TestPromiseResolver } from "./fixture.worker"
+import { cloudflareThreadName } from "../../src/cloudflare"
+import { threadFlow } from "../fixtures/thread-flow"
+import type { LayoutThreadDO } from "./layout-fixture"
 
-const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
-
-test("Cloudflare thread execution streams live act updates without journal entries", async () => {
-  await runInDurableObject(namespace.getByName("execution-stream"), async (_instance, state) => {
-    const Started = event({ type: "Started" })
-    const Job = act({ name: "workerd.execution-stream", input: Schema.String, success: Schema.String, failure: Schema.String })
-    const running = durableAtom({ name: "running", input: Started, schema: Schema.Boolean, initial: false, reduce: () => true })
-    const actor = defineActor("execution-stream", Effect.sync(() => {
-      const request = Job.request({ tag: "job", input: "payload" })
-      return {
-        schema: Started,
-        atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: get(running) ? { job: request } : {} })),
-        methods: {
-          start: actorMethod({ inputSchema: Schema.Null, outputSchema: Schema.String, onReceive: Started.from(() => ({})), result: (_, get) => {
-            const result = get(request.result)
-            if (result.status !== "fulfilled") return undefined
-            return { status: "completed" as const, output: result.value }
-          } }),
-        },
-      }
-    }))
-    const release = Deferred.makeUnsafe<void>()
-    const host = createCloudflareHost({ actor, storage: state.storage, actorContext: Context.pick(), services: () => Job.layer(() => Effect.gen(function* () {
-      const execution = yield* EffectExecution
-      yield* execution.publish({ type: "tool.progress", message: "running in workerd" })
-      yield* Deferred.await(release)
-      return "done"
-    })) })
-    try {
-      const thread = await Effect.runPromise(host.allocateRootThread({ instance: "main", name: "root" }))
-      const updates = Effect.runPromise(thread.execution.stream.pipe(Stream.take(1), Stream.runCollect))
-      await Effect.runPromise(thread.invoke("start", null, { id: "start" }))
-      const received = (await updates)[0] as ExecutionUpdate
-      expect(received.address).toEqual({ actor: "execution-stream", instance: "main", thread: "root" })
-      expect(received.payload).toEqual({ type: "tool.progress", message: "running in workerd" })
-      expect(received.ref.tag).toBe("job")
-      expect((await Effect.runPromise(thread.records())).some(record => JSON.stringify(record.event).includes("tool.progress"))).toBe(false)
-      await Effect.runPromise(Deferred.succeed(release, undefined))
-      await Effect.runPromise(thread.wait)
-      expect(thread.getState().view).toEqual({ status: "fulfilled", value: "done" })
-    } finally {
-      await Effect.runPromise(host.close)
-    }
-  })
+test("thread DO streams live act updates without journal entries", async () => {
+  const instance = "execution-stream"
+  const address = { actor: "layout", instance, thread: "parent" }
+  const parent = (env as unknown as { THREADS: DurableObjectNamespace<LayoutThreadDO> }).THREADS.getByName(cloudflareThreadName(address))
+  const flow = threadFlow(request => SELF.fetch(request), instance)
+  expect((await flow.request("", { name: "parent" })).status).toBe(200)
+  await parent.blockSpawns(true)
+  const response = await flow.request("/parent/execution/stream")
+  expect(response.status).toBe(200)
+  const reader = response.body!.getReader()
+  try {
+    const update = reader.read()
+    expect((await flow.request("/parent/methods/spawn", 73, "child")).status).toBe(202)
+    const frame = new TextDecoder().decode((await update).value)
+    const data = frame.split("\n").find(line => line.startsWith("data:"))!.slice(5)
+    expect(JSON.parse(data)).toMatchObject({ address, ref: { tag: "child" }, payload: { type: "tool.progress", message: "spawning" } })
+    expect(JSON.stringify(await parent.records())).not.toContain("tool.progress")
+  } finally {
+    await reader.cancel()
+    await parent.blockSpawns(false)
+    await runInDurableObject(parent, object => object.dispose())
+  }
+  await parent.wake()
+  await flow.completed("parent", "spawn", "child", flow.coordinate("child"))
 })

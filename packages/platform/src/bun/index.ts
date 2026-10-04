@@ -7,8 +7,9 @@ import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { Effect, ManagedRuntime, Semaphore, Exit, type Layer } from "effect"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
+import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { sqlJournal, type CheckpointChunkOptions } from "../shared/sql-journal"
-export { sqlJournal, DEFAULT_CHECKPOINT_CHUNK_BYTES, type CheckpointChunkOptions } from "../shared/sql-journal"
+export { sqlJournal, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
 import { captureHostCheckpoint, type CheckpointPolicy } from "./backup"
 export { serve, DEFAULT_SERVE_OPTIONS, type ServeOptions } from "./serve"
@@ -28,6 +29,7 @@ export function createBunHost<Event extends object, Services, State, Contracts e
   readonly checkpoint?: Partial<CheckpointPolicy>
 }) {
   return Effect.gen(function* () {
+    yield* Effect.try({ try: () => validateCheckpointChunkBytes(options.checkpointChunkBytes ?? DEFAULT_CHECKPOINT_CHUNK_BYTES), catch: RuntimeError.from })
     const connections = new Set<Effect.Effect<void, Error>>()
     const journal = <Entry extends object>(filename: string, actor: string) => {
       mkdirSync(dirname(filename), { recursive: true })

@@ -11,6 +11,8 @@ import { SqliteClient } from "@effect/sql-sqlite-do"
 import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"
 import { cloudflareWatchdogStorage, cloudflareWatchdogTransaction } from "./watchdog"
 import { sqlJournal } from "../shared/sql-journal"
+import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
+import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 import { HttpRouter } from "effect/unstable/http"
 import { hostRoutes, publicError } from "../shared/http"
@@ -57,7 +59,7 @@ export function objectJournal<Event extends object>(options: {
   readonly watchdog: ReturnType<typeof createWatchdog>
 }) {
   const alarms = makeRetryingAlarms(options.storage, options.alarms)
-  return sqlJournal<Event>({ actor: options.key, checkpointChunkBytes: options.checkpointChunkBytes, layer: SqliteClient.layer({ storage: options.storage }), flush: alarms.sync,
+  return sqlJournal<Event>({ actor: options.key, limits: CLOUDFLARE_SQL_LIMITS, checkpointChunkBytes: options.checkpointChunkBytes, layer: SqliteClient.layer({ storage: options.storage }), flush: alarms.sync,
     commit: (work, records, position) => Effect.gen(function* () {
       const context = yield* Effect.context<never>()
       yield* Effect.tryPromise({ try: () => options.storage.transaction(tx => Effect.runPromiseWith(context)(Effect.gen(function* () {
@@ -89,6 +91,7 @@ async function objectResponse(request: Request, handle: () => Promise<Response>)
 
 // createActorObjects separates the instance directory from per-thread storage, execution, and alarms (test/workerd/thread-layout.workers.ts).
 export function createActorObjects<Env extends object = Record<string, unknown>, Event extends object = object, Services = never, State = unknown, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorObjectOptions<Env, Event, Services, State, Contracts>) {
+  validateCheckpointChunkBytes(options.checkpointChunkBytes ?? DEFAULT_CHECKPOINT_CHUNK_BYTES, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES)
   const actorContext = options.actorContext ?? (() => Context.empty()) as unknown as ExecutionOptions<Event, Services, State, Contracts>["actorContext"]
   const io = <Value>(work: () => Promise<Value>) => Effect.tryPromise({ try: work, catch: RuntimeError.from })
   if (options.defaultChildPlacement !== undefined && options.defaultChildPlacement !== "independent") throw new RuntimeError("Cloudflare object hosts require independent placement")
@@ -274,7 +277,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
         return this.storage()
       } }, services: (coordinate, runtime) => options.services(this.env, coordinate, runtime).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, this.supervisor()), Layer.succeed(Invocation, { send: this.send })))),
         delivery: () => ({ ...options.delivery, address: this.address(), send: this.send }), from: options.from ?? DEFAULT_EXTERNAL_SENDER, run: this.run,
-        ...(options.promises ? { promises: options.promises } : {}), ...(options.executionStream ? { executionStream: options.executionStream } : {}),
+        ...(options.effectInput ? { effectInput: options.effectInput } : {}), ...(options.promises ? { promises: options.promises } : {}), ...(options.executionStream ? { executionStream: options.executionStream } : {}),
         canDrive: () => this.watchdog.status.pipe(Effect.flatMap(entries => entries.get(watchdogKey(this.address()))?.status === "blocked" ? Effect.succeed(false) : options.canDrive ? options.canDrive(this.address()) : Effect.succeed(true))),
       })
       return this.execution

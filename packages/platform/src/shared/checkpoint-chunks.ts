@@ -1,12 +1,15 @@
 import { RuntimeError } from "@clavia/tardigrade-core"
 
+// CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES bounds integer ordinal and SQLite record encoding overhead (https://www.sqlite.org/fileformat.html#record_format).
+export const CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES = 32
 export const DEFAULT_CHECKPOINT_CHUNK_BYTES = 512 * 1024
 export interface CheckpointChunkOptions { readonly checkpointChunkBytes?: number | undefined }
 export interface CheckpointChunk { readonly ordinal: number; readonly payload: Uint8Array }
 
-// validateCheckpointChunkBytes rejects invalid write limits before storage opens (checkpointChunks).
-export function validateCheckpointChunkBytes(chunkBytes: number): void {
+// validateCheckpointChunkBytes rejects write limits outside the supported SQL row capacity before storage opens (checkpointChunks).
+export function validateCheckpointChunkBytes(chunkBytes: number, maxBytes?: number): void {
   if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1) throw new RuntimeError("Checkpoint chunkBytes must be a positive safe integer")
+  if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || chunkBytes > maxBytes)) throw new RuntimeError(`Checkpoint chunkBytes exceeds the SQL host capacity of ${maxBytes} bytes`)
 }
 
 // encodeCheckpointChunks splits bytes without decoding text; concatenation preserves the input (checkpointChunks).

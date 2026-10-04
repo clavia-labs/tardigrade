@@ -74,13 +74,13 @@ bunx wrangler deploy
 
 The deployed Worker exposes the same thread creation, method invocation, cancellation, and event routes used during local development.
 
-Independent routing requires directory entries with independent placement. Colocated journals require an explicit data migration before these factories can route them. For an existing Worker namespace, register `ThreadDO` in a new SQLite migration tag and add its `THREADS` binding. The compatibility `createActorHost` API retains its supplied-storage layout.
+Independent routing requires directory entries with independent placement. Colocated journals require an explicit data migration before these factories can route them. For an existing Worker namespace, register `ThreadDO` in a new SQLite migration tag and add its `THREADS` binding.
 
 ## Recovery
 
 The host commits a watchdog record and an immediate alarm with journal admission, then awaits `storage.sync()` before acknowledging the commit or starting execution. The directory and each thread handle their own `alarm()`. A thread alarm restores that thread from its own database; it does not drive sibling runtimes. Each recovery attempt commits its counters and replacement alarm, then synchronizes storage before driving the runtime.
 
-The compatibility `createActorHost` API exposes `host.watchdog.status` for recovery records keyed by supervisor or thread. Effect and promise settlements advance the progress cursor and reset consecutive failures. Settled runtimes clear their wake; remote promises park until their recorded deadline. Terminal failures and exhausted budgets retain a blocked record and clear the wake. New messages preserve the block; `host.watchdog.resume({ actor, instance, thread })` explicitly starts a fresh recovery budget. Omit `thread` for the supervisor.
+Effect and promise settlements advance the progress cursor and reset consecutive failures. Settled runtimes clear their wake; remote promises park until their recorded deadline. Terminal failures and exhausted budgets retain a blocked record and clear the wake. New messages preserve the block.
 
 Configure recovery at Worker construction:
 

@@ -4,19 +4,22 @@ import { JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, t
 import type { ThreadJournal } from "@clavia/tardigrade-core"
 
 import { checkpointDigest } from "@clavia/tardigrade-core"
-import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes, encodeCheckpointChunks, decodeCheckpointChunks, type CheckpointChunk, type CheckpointChunkOptions } from "./checkpoint-chunks"
+import { CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES, DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes, encodeCheckpointChunks, decodeCheckpointChunks, type CheckpointChunk, type CheckpointChunkOptions } from "./checkpoint-chunks"
 export { DEFAULT_CHECKPOINT_CHUNK_BYTES, type CheckpointChunkOptions } from "./checkpoint-chunks"
+
+export interface SqlJournalLimits { readonly maxRowBytes: number }
 
 // sqlJournal owns a database with one checkpoint and commits checkpoint chunks with journal events (checkpointStorage).
 export function sqlJournal<Event extends object>(options: CheckpointChunkOptions & {
   readonly actor: string
+  readonly limits?: SqlJournalLimits
   readonly layer: Layer.Layer<SqlClient.SqlClient, Error>
   readonly flush?: Effect.Effect<void, Error>
   readonly commit?: (work: Effect.Effect<void, Error>, records: readonly Recorded<Event>[], position: number) => Effect.Effect<void, Error>
 }): ThreadJournal<Event> & { readonly close: Effect.Effect<void, Error> } {
   if (!options.actor) throw new RuntimeError("Journal actor identity must be nonempty")
   const chunkBytes = options.checkpointChunkBytes ?? DEFAULT_CHECKPOINT_CHUNK_BYTES
-  validateCheckpointChunkBytes(chunkBytes)
+  validateCheckpointChunkBytes(chunkBytes, options.limits ? options.limits.maxRowBytes - CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES : undefined)
   const runtime = ManagedRuntime.make(options.layer)
   const setup = Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient

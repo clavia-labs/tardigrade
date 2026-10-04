@@ -1,6 +1,9 @@
 import { env } from "cloudflare:workers"
-import { SELF, runInDurableObject, runDurableObjectAlarm } from "cloudflare:test"
+import { SELF, runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
+import { Effect } from "effect"
+import { createWatchdog, watchdogKey } from "@clavia/tardigrade-core"
+import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { threadFlow } from "../fixtures/thread-flow"
 import { cloudflareThreadName } from "../../src/cloudflare"
 import type { LayoutActorDO, LayoutThreadDO } from "./layout-fixture"
@@ -51,13 +54,28 @@ test("a thread alarm restores checkpointed state and pending work without changi
   await expect.poll(async () => (await parent.records()).some(record => record.event.type === "EffectRequested")).toBe(true)
   expect(await flow.result("parent", "spawn", "child")).toMatchObject({ status: "pending" })
   const prefix = await parent.records()
+  expect(prefix.filter(record => record.event.type === "EffectRequested").every(record => record.event.type === "EffectRequested" && record.event.request.input._tag === "InputDigest")).toBe(true)
   await runInDurableObject(parent, async object => { await object.dispose() })
   await runInDurableObject(bindings.ACTORS.getByName(instance), async object => { await object.dispose() })
   await parent.blockSpawns(false)
-  expect(await runDurableObjectAlarm(parent)).toBe(true)
+  await parent.wake()
   await flow.completed("parent", "spawn", "child", coordinate(instance, "child"))
   await flow.completed("child", "set", "child:child", 73)
   await flow.call("parent", "read", null, "restored", 32)
   expect((await parent.records()).slice(0, prefix.length)).toEqual(prefix)
+  await parent.failSpawns(true)
+  expect((await flow.request("/parent/methods/spawn", 99, "retry")).status).toBe(202)
+  const status = () => runInDurableObject(parent, async (_object, state) => Effect.runPromise(cloudflareWatchdogStorage(state.storage).transaction(tx => tx.list)))
+  await expect.poll(async () => (await status()).get(watchdogKey(coordinate(instance, "parent")))?.status).toBe("blocked")
+  const attempts = await parent.executions()
+  await parent.failSpawns(false)
+  await runInDurableObject(parent, async (_object, state) => {
+    const watchdog = createWatchdog({ storage: cloudflareWatchdogStorage(state.storage), recover: () => Effect.die("Fixture only resumes recovery"), invalidate: () => Effect.void })
+    await Effect.runPromise(watchdog.resume(coordinate(instance, "parent")))
+  })
+  await parent.wake()
+  await flow.completed("parent", "spawn", "retry", coordinate(instance, "retry"))
+  expect(await parent.executions()).toBe(attempts + 1)
+  await flow.call("parent", "read", null, "after-recovery", 32)
   expect(await threadStub(instance, "sibling").records()).toEqual(sibling)
 })

@@ -1,10 +1,10 @@
 import * as fc from "fast-check"
 import { isDeepStrictEqual } from "node:util"
-import { encodeCheckpointChunks, decodeCheckpointChunks } from "../../../src/shared/checkpoint-chunks"
+import { encodeCheckpointChunks, decodeCheckpointChunks, validateCheckpointChunkBytes } from "../../../src/shared/checkpoint-chunks"
 
 // checkpointChunks checks byte identity and structural rejection across write boundaries on every host.
 export const checkpointChunks = fc.property(fc.oneof(fc.uint8Array({ maxLength: 4096 }), fc.constant(new TextEncoder().encode("Aé😀Z"))), fc.integer({ min: 1, max: 256 }), (payload, limit) => {
-  for (const chunkBytes of [limit, 1, Math.max(1, payload.length), payload.length + 1]) {
+  for (const chunkBytes of [limit, 1, Math.max(1, payload.length), payload.length + 1, Number.MAX_SAFE_INTEGER]) {
     const before = payload.slice()
     const chunks = encodeCheckpointChunks(payload, chunkBytes)
     const decoded = decodeCheckpointChunks(chunks, payload.length, chunks.length)
@@ -20,6 +20,8 @@ export const checkpointChunks = fc.property(fc.oneof(fc.uint8Array({ maxLength: 
     if (chunks.length > 1) rejects(() => decodeCheckpointChunks([...chunks].reverse(), payload.length, chunks.length))
     if (decoded.length) { decoded[0] = decoded[0]! ^ 255; if (!isDeepStrictEqual(payload, before)) throw new Error("Decoded bytes alias the input") }
   }
+  validateCheckpointChunkBytes(limit, limit)
+  rejects(() => validateCheckpointChunkBytes(limit + 1, limit))
   for (const invalid of [0, -1, 0.5, NaN, Infinity]) rejects(() => encodeCheckpointChunks(payload, invalid))
 })
 

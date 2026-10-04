@@ -8,9 +8,16 @@ type Journal = ReturnType<typeof sqlJournal<Event>>
 
 // checkpointStorage checks replacement, rollback, reopening and corruption through the same SQL flow on both hosts.
 export async function checkpointStorage(fixture: {
+  readonly maxChunkBytes?: number
   readonly open: (chunkBytes: number) => Journal
   readonly execute: (query: string) => Promise<readonly Record<string, unknown>[]>
 }) {
+  const chunkBytes = fixture.maxChunkBytes ?? 2 * 1024 * 1024
+  if (fixture.maxChunkBytes !== undefined) {
+    let rejected = false
+    try { fixture.open(chunkBytes + 1) } catch { rejected = true }
+    if (!rejected) throw new Error("SQL journal accepted a chunk larger than the host row capacity")
+  }
   const checkpoint = async (position: number, text: string) => {
     const state = { position, durable: [{ name: "state", state: { text }, position }], effects: [], promises: [] }
     const payload = encodeCheckpoint(state)
@@ -51,6 +58,11 @@ export async function checkpointStorage(fixture: {
     await rejects(journal.readCheckpoint, "chunk metadata")
     await Effect.runPromise(journal.appendWithCheckpoint(2, [], second))
     await verify(second, [record("first"), record("second")])
+    await Effect.runPromise(journal.close)
+    journal = fixture.open(chunkBytes)
+    const boundary = await checkpoint(2, "x".repeat(chunkBytes))
+    await Effect.runPromise(journal.appendWithCheckpoint(2, [], boundary))
+    if (await verify(boundary, [record("first"), record("second")]) !== 2) throw new Error("Host-sized chunk failed its SQL round trip")
   } finally { await Effect.runPromise(journal.close) }
 }
 
