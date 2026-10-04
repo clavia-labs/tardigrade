@@ -86,7 +86,10 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
         Effect.mapError(RuntimeError.from),
         Effect.flatMap(input => cancellation.cancel(input, { ...request, ...execution })), Effect.provide(services),
       ) : Effect.void,
-      execute: (input, ref) => Schema.decodeUnknownEffect(inputSchema)(input).pipe(
+      execute: (input, ref) => Effect.suspend(() => {
+        const decoded = decodeInput(input)
+        return decoded ? Effect.succeed(decoded.value as Input) : Schema.decodeUnknownEffect(inputSchema)(input)
+      }).pipe(
         Effect.orDie,
         Effect.flatMap(value => EffectExecution.use(execution => Effect.suspend(() => implement(value, { ref, signal: execution.signal })).pipe(Effect.provideService(EffectExecution, execution), Effect.provide(services)))),
         Effect.flatMap((value): Effect.Effect<ExecutionResult> => typeof value === "object" && value !== null && DeferredType in value
