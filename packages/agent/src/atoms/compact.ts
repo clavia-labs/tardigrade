@@ -53,7 +53,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     const text = clip(message.text, message.role === "tool" ? toolCharLimit : userCharLimit)
     return text === message.text ? message : { ...message, text }
   })
-  // sizeOf is a message's JSON length, cached for frozen messages; durable state is deep-frozen (core/src/atoms/state-validation.ts), so trajectory messages are measured once.
+  // sizeOf is a message's JSON length, cached for frozen messages; durable state is deep-frozen (core/src/atoms/incremental/validate.ts), so trajectory messages are measured once.
   const sizes = new WeakMap<object, number>()
   const sizeOf = (message: typeof Conversation.Type[number]) => {
     const cached = sizes.get(message)

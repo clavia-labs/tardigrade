@@ -3,7 +3,7 @@ import { Exit, Schema } from "effect"
 import * as fc from "fast-check"
 import { AtomState, createEventLog, durableAtom, effectAtom } from "@clavia/tardigrade-core"
 import { TrajectoryState } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
-import { incrementalValidator } from "../../../../core/src/atoms/state-validation"
+import { incrementalValidator } from "../../../../core/src/atoms/incremental/validate"
 import { RUNTIME_PROPERTY_OPTIONS } from "./config"
 
 const Item = Schema.Struct({ count: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)), label: Schema.NonEmptyString })

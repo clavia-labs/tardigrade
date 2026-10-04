@@ -1,7 +1,7 @@
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom, type Getter } from "./atom"
-import { incrementalValidator } from "./state-validation"
+import { incrementalValidator } from "./incremental/validate"
 import type { RecordMetadata } from "../services/journal"
 import { EventLog, eventLogContext } from "../services/event-log"
 import { AtomState, type StatefulAtom } from "../initialise"
