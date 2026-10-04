@@ -300,9 +300,15 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     }
     const dispatched = new Set<string>()
     const watched = new Set<string>()
+    // observedThrough advances past processed records while failed registrations remain retryable (packages/platform/test/properties/runtime/deferred-recovery.ts, externalProducerObservation).
+    let observedThrough = 0
+    let lastObserved: RuntimeEvent<Event> | undefined
     const observePromises = Effect.gen(function* () {
       const observer = Context.getOption(services, Promises)
-      for (const record of snapshot.events) {
+      const events = snapshot.events
+      if (observedThrough > events.length || (observedThrough > 0 && events[observedThrough - 1] !== lastObserved)) observedThrough = 0
+      for (; observedThrough < events.length; observedThrough++, lastObserved = events[observedThrough - 1]) {
+        const record = events[observedThrough]!
         if (!Schema.is(EffectSettled)(record) || record.outcome.status !== "fulfilled") continue
         const result = yield* Schema.decodeUnknownEffect(ExecutionResult)(record.outcome.value).pipe(Effect.mapError(RuntimeError.from))
         if (result.type !== "promise" || snapshot.promise(record.ref) || snapshot.effect(record.ref)?.cancellation) continue

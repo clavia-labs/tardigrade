@@ -20,6 +20,7 @@ interface RecoveryCase {
   readonly completion: "forked" | "immediate" | "rejected"
   readonly updates: number
   readonly extraReopens: number
+  readonly retryWatch: boolean
 }
 
 const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase) => Effect.runPromise(Effect.gen(function* () {
@@ -30,6 +31,7 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
   const executions: EffectRef[] = []
   let reopening = false
   let watches = 0
+  let watchAttempts = 0
   const journal: Journal<Event> = {
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined; Effect.void has a void result type.
@@ -73,8 +75,9 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
       return Job.defer(yield* execution.fork(operation))
     }).pipe(Effect.mapError(String))), Layer.succeed(Promises, {
       watch: registration => Effect.gen(function* () {
-        watches++
         if (executor === "local") return yield* Effect.fail(new RuntimeError("Local producer delegated to external resolver"))
+        if (++watchAttempts === 1 && options.retryWatch) return yield* Effect.fail(new RuntimeError("Registration unavailable"))
+        watches++
         if (!reopening) return
         const promise = durablePromise(registration.ref, { success: Schema.Finite, error: Schema.String })
         yield* host.send([options.completion === "rejected" ? promise.fail("Recovered operation failed") : promise.succeed(options.value)])
@@ -85,6 +88,8 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
   yield* Effect.gen(function* () {
     yield* first.send([{ type: "Queued" }])
     yield* Deferred.await(recorded)
+    const observation = yield* first.recover.pipe(Effect.result)
+    if ((observation._tag === "Failure") !== (executor === "remote" && options.retryWatch)) return yield* Effect.fail(new RuntimeError("Promise registration failure was not reported"))
     yield* first.send([{ type: "Updated" }])
     const submissions = first.getState().view.submissions
     if (submissions.length !== 1 || first.getState().view.results.length !== 0 || payloads().some(event => event.type === "PromiseSettled")) return yield* Effect.fail(new RuntimeError("Deferred handle was not delivered before completion"))
@@ -92,6 +97,8 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
     const settledIndex = payloads().findIndex(event => event.type === "EffectSettled")
     if (records[settledIndex + 1]?.event.type !== "Submitted") return yield* Effect.fail(new RuntimeError("Deferred notification was not committed with settlement"))
     for (let index = 0; index < options.updates; index++) yield* first.send([{ type: "Updated" }])
+    yield* first.recover.pipe(Effect.result)
+    if (executor === "remote" && (watches !== 1 || watchAttempts !== 1 + Number(options.retryWatch))) return yield* Effect.fail(new RuntimeError("Promise observation duplicated or failed registration was skipped"))
   }).pipe(Effect.ensuring(first.close))
   reopening = true
   for (let cycle = 0; cycle <= options.extraReopens; cycle++) {
@@ -106,12 +113,12 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
       if (requests[0]!.type !== "EffectRequested" || settlements[0]!.type !== "PromiseSettled" || executions.some(ref => effectKey(ref) !== effectKey(requests[0]!.ref)) || effectKey(settlements[0]!.ref) !== effectKey(requests[0]!.ref)) return yield* Effect.fail(new RuntimeError("Deferred recovery changed the accepted reference"))
       const result = results[0]!
       if (options.completion === "rejected" ? result.status !== "rejected" || result.reason !== "Recovered operation failed" : result.status !== "fulfilled" || result.value !== options.value) return yield* Effect.fail(new RuntimeError("Deferred recovery changed the result"))
-      if (executor === "local" ? watches !== 0 : watches === 0) return yield* Effect.fail(new RuntimeError("Recovery used the wrong executor"))
+      if (executor === "local" ? watches !== 0 : watches !== 2) return yield* Effect.fail(new RuntimeError("Recovery did not observe each unresolved promise once per runtime"))
     }).pipe(Effect.ensuring(restored.close))
   }
 }).pipe(Effect.scoped, Effect.timeout(5_000)))
 
-const recoveryCases = fc.record({ value: fc.integer({ min: -100, max: 100 }), completion: fc.constantFrom("forked" as const, "immediate" as const, "rejected" as const), updates: fc.integer({ min: 0, max: 3 }), extraReopens: fc.integer({ min: 0, max: 2 }) })
+const recoveryCases = fc.record({ value: fc.integer({ min: -100, max: 100 }), completion: fc.constantFrom("forked" as const, "immediate" as const, "rejected" as const), updates: fc.integer({ min: 0, max: 3 }), extraReopens: fc.integer({ min: 0, max: 2 }), retryWatch: fc.boolean() })
 
 // ownedProducerRecovery checks lost local producers restart with their accepted reference and settle once.
 export const ownedProducerRecovery = fc.asyncProperty(recoveryCases, options => runRecoveryScenario("local", options))
