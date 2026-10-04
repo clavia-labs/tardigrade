@@ -122,3 +122,11 @@ const research = Rpc.make("research", {
 The host keeps live local fibres active with alarm heartbeats at `keepAliveIntervalMs`. Alarm handlers return while recovery runs. Heartbeats preserve the promise deadline and recovery counters; completion releases the wake, and a process crash returns to budgeted recovery. Remote promises park without keeping the local fibre alive. `modelServices({ timeoutMs })` uses the configured model timeout for inference promises too.
 
 Local promise recovery reruns the originating act with its recorded reference and deadline. The act must recreate its producer and tolerate repeated execution; external operations must deduplicate by the reference. Cloudflare's finite alarm redeliveries leave a coverage gap if repeated crashes occur before the replacement alarm becomes durable.
+
+## Effect input storage
+
+The host stores act inputs whose canonical JSON is at least 2,048 UTF-8 bytes as `{ _tag: "InputDigest", sha256, bytes }` in `EffectRequested`. Smaller inputs remain inline. `InputDigest` and `DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES` are exported from `tardie/core`. The `InputDigest` input shape is reserved for framework records.
+
+Set `effectInput: { digestMinBytes: 4096 }` at host construction to change the threshold. The threshold accepts a nonnegative safe integer; zero digests every input. Canonical JSON sorts object keys recursively and preserves array order. Replay rebuilds the full input and compares its digest and executor before accepting it for execution. A mismatch rejects replay.
+
+Checkpoints retain digests for large, completed inputs. Pending effects and unresolved promises retain full reconstructed inputs in memory; cancelled effects retain full inputs in checkpoints for cleanup recovery. Completed inputs are released after settlement callbacks can consume them. Changing the storage threshold does not change model context. Existing inline records remain readable, and full prompt auditing belongs in application telemetry.

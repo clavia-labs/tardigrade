@@ -154,7 +154,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
         const settlement = events.find(item => Schema.is(EffectSettled)(item) && effectKey(item.ref) === key)
         if (!Schema.is(EffectSettled)(settlement) || settlement.outcome.status !== "fulfilled") return []
         const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
-        return result.type === "promise" ? [{ ref: event.ref, input: Schema.decodeUnknownSync(inputSchema)(event.request.input), handle: result.handle }] : []
+        return result.type === "promise" ? [{ ref: event.ref, input: Schema.decodeUnknownSync(inputSchema)(Context.get(context, EventLog).effect?.(event.ref)?.request.request.input ?? event.request.input), handle: result.handle }] : []
       })
     }),
     layer,

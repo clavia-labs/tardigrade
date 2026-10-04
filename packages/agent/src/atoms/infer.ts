@@ -18,7 +18,7 @@ export interface AgentInput<R, ToolEvents extends object = Event> {
 }
 
 export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>>) {
-  const request = requests(Generate.request)
+  const request = requests(Generate.request, { latestOnly: true })
 
   const output = Effect.map(ModelInfo, selection => effectAtom(get => {
     get(toolSpend)

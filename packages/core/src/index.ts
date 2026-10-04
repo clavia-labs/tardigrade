@@ -43,3 +43,5 @@ export { createEventLog, type EffectCheckpoint } from "./runtime/replay"
 export * from "./services/alarm"
 export * from "./services/watchdog"
 export * from "./services/execution-stream"
+
+export { DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES, InputDigest } from "./runtime/input-digest"

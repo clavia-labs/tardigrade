@@ -56,7 +56,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
   const estimate = (messages: typeof Conversation.Type) => Math.ceil(messages.reduce((size, message) => size + JSON.stringify(message).length, 0) / policy.charsPerToken)
   const compactionState = createCompactionState()
 
-  const request = requests(Summarize.request)
+  const request = requests(Summarize.request, { latestOnly: true })
   return Effect.map(ModelInfo, selection => effectAtom(get => {
     const messages = render(get(trajectory))
     const state = get(compactionState)
