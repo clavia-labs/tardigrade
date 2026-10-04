@@ -1,6 +1,6 @@
 import { Schema, Crypto, Effect, Encoding, PlatformError } from "effect"
 import { RuntimeError, EffectRef, EffectCancelled } from "../runtime/effects"
-import { EffectRequested, EffectSettled, PromiseSettled } from "../runtime/events"
+import { StoredEffectRequested, EffectSettled, PromiseSettled } from "../runtime/events"
 import type { EffectCheckpoint } from "../runtime/replay"
 
 export const DEFAULT_CHECKPOINT_MAX_BYTES = 256 * 1024 * 1024
@@ -18,7 +18,7 @@ export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
   if (checkpoint.durable.some(entry => !Schema.is(Schema.Json)(entry.state))) throw new Error("Checkpoint state must be JSON")
   let encoded: string
   try {
-    encoded = JSON.stringify({ version: 1, ...checkpoint })
+    encoded = JSON.stringify({ version: 2, ...checkpoint })
   } catch (cause) {
     throw new Error("Checkpoint state is not serializable", { cause })
   }
@@ -26,10 +26,10 @@ export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
 }
 
 export const decodeCheckpoint = (bytes: Uint8Array): EffectCheckpoint => {
-  const value: unknown = JSON.parse(new TextDecoder().decode(bytes))
+  const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid checkpoint payload")
   const record = value as Record<string, unknown>
-  if (record.version !== 1 || !Number.isSafeInteger(record.position) || (record.position as number) < 0 ||
+  if (record.version !== 2 || !Number.isSafeInteger(record.position) || (record.position as number) < 0 ||
     !Array.isArray(record.durable) || !Array.isArray(record.effects) || !Array.isArray(record.promises)) throw new Error("Invalid checkpoint payload")
   const durable = record.durable.map(entry => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error("Invalid durable checkpoint entry")
@@ -42,10 +42,11 @@ export const decodeCheckpoint = (bytes: Uint8Array): EffectCheckpoint => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error("Invalid effect checkpoint entry")
     const item = entry as Record<string, unknown>
     const ref = Schema.decodeUnknownSync(EffectRef)(item.ref)
-    const request = Schema.decodeUnknownSync(EffectRequested)(item.request)
+    const request = Schema.decodeUnknownSync(StoredEffectRequested)(item.request)
     const settlement = item.settlement === undefined ? undefined : Schema.decodeUnknownSync(Schema.toType(EffectSettled))(item.settlement)
     const cancellation = item.cancellation === undefined ? undefined : Schema.decodeUnknownSync(EffectCancelled)(item.cancellation)
     if (!settlement && !cancellation) throw new Error("Effect checkpoint contains pending work")
+    if (cancellation && request.request.input._tag !== "InlineInput") throw new Error("Cancellation checkpoint requires inline input")
     if ([request, settlement, cancellation].some(record => record && JSON.stringify(ref) !== JSON.stringify(record.ref))) throw new Error("Effect checkpoint references disagree")
     return { ref, request, ...(settlement ? { settlement } : {}), ...(cancellation ? { cancellation } : {}) }
   })

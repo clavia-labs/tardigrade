@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { canonicalInput, compactRequest, digestInput, sameRequest } from "../../../core/src/runtime/input-digest"
+import { canonicalInput, storeRequest, digestInput } from "../../../core/src/runtime/input-digest"
 import { Schema } from "effect"
-import { act, durableAtom, effectAtom, createEventLog, encodeCheckpoint, decodeCheckpoint } from "@clavia/tardigrade-core"
+import { atom, EventLog, act, durableAtom, effectAtom, createEventLog, encodeCheckpoint, decodeCheckpoint } from "@clavia/tardigrade-core"
 import { requests } from "@clavia/tardigrade-agent/contracts/acts"
 import { Context, Effect } from "effect"
 import { defineActor } from "@clavia/tardigrade-core"
+import { eventLogContext } from "../../../core/src/services/event-log"
 import { createTestStore } from "../properties/runtime/store"
 describe("effect input digests", () => {
   test("canonical encoding sorts nested keys, preserves arrays and counts UTF-8 bytes", () => {
@@ -15,24 +16,7 @@ describe("effect input digests", () => {
     expect(digestInput(null).sha256).toBe("74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b")
   })
 
-  test("threshold is inclusive, configurable, and leaves small inputs inline", () => {
-    const request = { executor: "test", input: "é" }
-    expect(compactRequest(request, 5)).toBe(request)
-    expect(compactRequest(request, 4).input).toEqual(digestInput("é"))
-    expect(compactRequest(request, 0).input).toEqual(digestInput("é"))
-    for (const limit of [-1, 0.5, Infinity, NaN]) expect(() => compactRequest(request, limit)).toThrow("minBytes")
-  })
 
-  test("comparison detects changed inputs, executors and lengths in either direction", () => {
-    const request = { executor: "test", input: { system: "original" } }
-    const compact = compactRequest(request, 0)
-    expect(sameRequest(request, compact)).toBe(true)
-    expect(sameRequest(compact, request)).toBe(true)
-    expect(sameRequest(compact, compact)).toBe(true)
-    expect(sameRequest(compact, { ...request, executor: "other" })).toBe(false)
-    expect(sameRequest(compact, { ...request, input: { system: "changed" } })).toBe(false)
-    expect(sameRequest(compact, { ...request, input: { ...digestInput(request.input), bytes: 0 } })).toBe(false)
-  })
 })
 
 
@@ -58,7 +42,7 @@ const acceptedHistory = (text = "x".repeat(4096)) => {
   let snapshot = log.append(log.initial, { type: "Started", text })
   const offered = snapshot.effects()[0]!
   const ref = { seq: snapshot.position, atom: offered.source, tag: offered.id }
-  snapshot = log.append(snapshot, { type: "EffectRequested", ref, request: compactRequest(offered.request) })
+  snapshot = log.append(snapshot, { type: "EffectRequested", ref, request: storeRequest(offered.request) })
   return { log, snapshot, ref, text }
 }
 
@@ -71,8 +55,16 @@ test("digest replay reconstructs pending input and rejects changed proposals bef
     expect(replay.effects()[0]!.request.input).toEqual({ system: "original", text })
     expect(replay.pending()[0]!.request.input).toEqual({ system: "original", text })
     expect(() => changed.replay(snapshot.records)).toThrow("differs from its proposal")
-    const badExecutor = snapshot.records.map(record => record.event.type === "EffectRequested" ? { ...record, event: { ...record.event, request: { ...record.event.request, executor: "changed" } } } : record)
+    const badExecutor = snapshot.records.map(record => record.event.type === "EffectRequested" ? { ...record, event: { ...record.event, request: { ...record.event.request, act: "changed" } } } : record)
     expect(() => restored.replay(badExecutor)).toThrow("differs from its proposal")
+    const observation = replay.get(atom(get => {
+      const service = Context.get(get(eventLogContext)!, EventLog)
+      return { events: get(service.events), records: get(service.records!), effect: service.effect!(replay.pending()[0]!.ref) }
+    }))
+    const acceptance = { type: "EffectRequested" as const, ref: replay.pending()[0]!.ref, act: Job.name }
+    expect(observation.events.at(-1)).toEqual(acceptance)
+    expect(observation.records.at(-1)!.event).toEqual(acceptance)
+    expect(observation.effect!.request).toEqual(acceptance)
     expect(replay.checkpoint()).toBeUndefined()
   } finally { log.dispose(); restored.dispose(); changed.dispose() }
 })
@@ -95,13 +87,13 @@ test("settled checkpoints compact inputs and restore without changing the journa
   } finally { log.dispose() }
 })
 
-test("inline histories and duplicate digest acceptance remain compatible", () => {
+test("inline and digest acceptance share identity", () => {
   const { log, snapshot, ref, text } = acceptedHistory("small")
   try {
-    expect(snapshot.records[1]!.event).toEqual({ type: "EffectRequested", ref, request: { executor: "test.digest", input: { system: "original", text } } })
-    const duplicate = { type: "EffectRequested" as const, ref, request: compactRequest({ executor: "test.digest", input: { system: "original", text } }, 0) }
+    expect(snapshot.records[1]!.event).toEqual({ type: "EffectRequested", ref, request: { act: "test.digest", input: { _tag: "InlineInput", value: { system: "original", text } } } })
+    const duplicate = { type: "EffectRequested" as const, ref, request: storeRequest({ act: "test.digest", input: { system: "original", text } }, 0) }
     expect(log.append(snapshot, duplicate)).toBe(snapshot)
-    expect(() => log.append(snapshot, { ...duplicate, request: compactRequest({ executor: "test.digest", input: { system: "wrong", text } }, 0) })).toThrow("Conflicting")
+    expect(() => log.append(snapshot, { ...duplicate, request: storeRequest({ act: "test.digest", input: { system: "wrong", text } }, 0) })).toThrow("Conflicting")
   } finally { log.dispose() }
 })
 
@@ -138,12 +130,12 @@ test("deferred inputs survive settlement and cancellation checkpoints for recove
   try {
     const submitted = log.append(snapshot, { type: "EffectSettled", ref, outcome: { status: "fulfilled", value: { type: "promise", handle: { executor: "local", id: "producer" } } } })
     const advanced = log.append(submitted, { type: "Finished" })
-    expect(advanced.get(Job.pending)[0]!.input).toEqual({ system: "original", text })
+    expect(advanced.get(Job.pending)[0]).toEqual({ ref, handle: { executor: "local", id: "producer" } })
     expect(advanced.deferred()[0]!.request.input).toEqual({ system: "original", text })
     expect(advanced.checkpoint()).toBeUndefined()
     const cancelled = log.append(advanced, { type: "EffectCancelled", ref, reason: "stop" })
     const checkpoint = decodeCheckpoint(encodeCheckpoint(cancelled.checkpoint()!))
-    expect(checkpoint.effects[0]!.request.request.input).toEqual({ system: "original", text })
+    expect(checkpoint.effects[0]!.request.request.input).toEqual({ _tag: "InlineInput", value: { system: "original", text } })
     const restored = createEventLog({ ...setup(), checkpoint })
     try { expect(restored.initial.cancelled()[0]!.request.input).toEqual({ system: "original", text }) }
     finally { restored.dispose() }
@@ -167,22 +159,9 @@ test("runtime threshold overrides preserve executable inputs", async () => {
       await Effect.runPromise(store.wait)
       expect(received).toBe("payload")
       const recorded = store.snapshot().events.find(event => event.type === "EffectRequested")!
-      expect(recorded.type === "EffectRequested" && recorded.request.input).toEqual(digestMinBytes === 0 ? digestInput({ system: "original", text: "payload" }) : { system: "original", text: "payload" })
+      expect(recorded.type === "EffectRequested" && recorded.request.input).toEqual(digestMinBytes === 0 ? digestInput({ system: "original", text: "payload" }) : { _tag: "InlineInput", value: { system: "original", text: "payload" } })
     } finally { await Effect.runPromise(store.close) }
   }
-})
-
-test("legacy large inline requests replay and compact at checkpoint capture", () => {
-  const { log, snapshot, ref, text } = acceptedHistory()
-  const restored = createEventLog(setup())
-  try {
-    const history = snapshot.records.map(record => record.event.type === "EffectRequested" ? { ...record, event: { ...record.event, request: { executor: Job.name, input: { system: "original", text } } } } : record)
-    const pending = restored.replay(history)
-    expect(pending.effects()[0]!.request.input).toEqual({ system: "original", text })
-    const settled = restored.append(pending, { type: "EffectSettled", ref, outcome: { status: "rejected", reason: "failed" } })
-    expect(settled.checkpoint()!.effects[0]!.request.request.input).toEqual(digestInput({ system: "original", text }))
-    expect(settled.records[1]!.event).toEqual(history[1]!.event)
-  } finally { log.dispose(); restored.dispose() }
 })
 
 test("same-identity input changes are rejected when the retained declaration is a digest", () => {
@@ -192,17 +171,25 @@ test("same-identity input changes are rejected when the retained declaration is 
   const log = createEventLog({ schema: Started, atoms: { root } })
   try {
     const initial = log.initial
-    proposal = { ...proposal, request: { executor: Job.name, input: { system: "changed", text: "x".repeat(4096) } } }
+    proposal = { ...proposal, request: { act: Job.name, input: { system: "changed", text: "x".repeat(4096) } } }
     expect(() => log.append(initial, { type: "Started", text: "update" })).toThrow("Effect identity reused with a different request")
   } finally { log.dispose() }
 })
 
-test("digest-shaped user inputs and invalid replay thresholds fail explicitly", () => {
+test("digest-shaped user data is executable and invalid thresholds fail", () => {
   const JsonJob = act({ name: "json", input: Schema.Json, success: Schema.Null, failure: Schema.String })
   const request = JsonJob.request({ tag: "reserved", input: digestInput("user data") })
   const root = effectAtom(() => ({ view: null, events: {}, acts: { call: request } }))
   const log = createEventLog({ schema: Started, atoms: { root } })
-  try { expect(() => log.initial).toThrow("InputDigest is reserved") }
+  try {
+    const initial = log.initial
+    const offered = initial.effects()[0]!
+    const ref = { seq: initial.position, atom: offered.source, tag: offered.id }
+    const accepted = log.append(initial, { type: "EffectRequested", ref, request: storeRequest(offered.request, 0) })
+    expect(accepted.effects()[0]!.request.input).toEqual(digestInput("user data"))
+    const restored = log.replay(accepted.records)
+    expect(restored.effects()[0]!.request.input).toEqual(digestInput("user data"))
+  }
   finally { log.dispose() }
   expect(() => createEventLog({ ...setup(), digestMinBytes: -1 })).toThrow("minBytes")
 })

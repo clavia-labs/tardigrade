@@ -1,4 +1,4 @@
-import { atom, durableAtom, CoreEvent, type RecordMetadata } from "@clavia/tardigrade-core"
+import { atom, durableAtom, ObservedCoreEvent, type RecordMetadata } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
 import { Event } from "../../contracts/events"
 
@@ -12,7 +12,7 @@ const SpendState = Schema.Struct({
   toolSpend: ToolSpend, tokenSpend: TokenSpend, usdSpend: UsdSpend, timeSpend: TimeSpend, timers: Schema.Array(Schema.Struct({ turnId: Schema.String, index: Count, startedAt: Schema.NullOr(Count) })),
   turns: Schema.Array(Schema.String), models: Calls, tools: Calls,
 })
-const SpendEvent = Schema.Union([Event, CoreEvent])
+const SpendEvent = Schema.Union([Event, ObservedCoreEvent])
 
 // spendState retains pending call attribution alongside ordered turn totals across checkpoint recovery.
 function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type, metadata: RecordMetadata): typeof SpendState.Type {

@@ -109,7 +109,7 @@ export const agentTurnCancellation = fc.asyncProperty(fc.record({
     yield* store.send([message({ text: "hello", turnId: "first", invocationRef: { method: "turn", id: "first" } })])
     yield* Deferred.await(entered)
     if (options.phase !== "tool") yield* store.wait
-    const deferred = store.snapshot().deferred().find(work => work.request.executor === ExecuteTool.name)
+    const deferred = store.snapshot().deferred().find(work => work.request.act === ExecuteTool.name)
     yield* store.send([cancel({ ref: { method: "turn", id: "first" }, reason: options.reason })])
     if (options.reopen || (options.phase === "deferred" && options.completionRace)) {
       const events = store.snapshot().events
@@ -184,7 +184,7 @@ export const codeModeCancellationRecovery = fc.asyncProperty(fc.record({ reason:
   yield* Effect.gen(function* () {
     yield* store.send([{ type: "ModelReturned", purpose: "inference", callId: "first", text: "", toolCalls: [{ callId: `tool:${"first"}`, providerId: "first", name: "execute", input: { code: "return await test.job({})" } }] }])
     yield* Deferred.await(entered)
-    const ref = store.snapshot().deferred().find(work => work.request.executor === EvaluateCode.name)!.ref
+    const ref = store.snapshot().deferred().find(work => work.request.act === EvaluateCode.name)!.ref
     yield* store.cancel(ref, options.reason)
     yield* store.wait
     if (store.get(pendingTools).pending !== null || store.snapshot().events.filter(event => event.type === "EffectCancelled").length !== 2 || store.snapshot().events.filter(event => event.type === "ToolReturned").length !== 1 || store.getState().view.executions.length !== 0) return yield* Effect.fail(new RuntimeError("Cancelled code retained running packages or its tool queue"))

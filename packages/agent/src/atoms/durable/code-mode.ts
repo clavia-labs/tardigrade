@@ -1,27 +1,28 @@
-import { PackageCalled, PackageReturned, CodeCalled, CodeReturned, DomainEvent, EvaluateCode, EvaluationInput, ExecutePackage, PackageInput, type Event } from "../../contracts/code-mode"
+import { PackageCalled, PackageReturned, CodeCalled, CodeReturned, DomainEvent, EvaluateCode, ExecutePackage, type Event } from "../../contracts/code-mode"
 import { Schema } from "effect"
-import { EffectRef, durableAtom, effectKey, RuntimeError, EffectRequested } from "@clavia/tardigrade-core"
+import { EffectRef, durableAtom, effectKey, RuntimeError, EffectAcceptance } from "@clavia/tardigrade-core"
+import { evaluationOwner, packageOwner } from "../../contracts/code-mode-reference"
 import { ToolCall, ModelReturned, ToolReturned } from "../../contracts/events"
 
 const PackageRecord = Schema.Struct({ ordinal: PackageCalled.fields.ordinal, package: PackageCalled.fields.package, method: PackageCalled.fields.method, input: PackageCalled.fields.input, ref: Schema.NullOr(EffectRef), outcome: Schema.NullOr(PackageReturned.fields.outcome) })
 export const CodeModeState = Schema.Array(Schema.Struct({ call: ToolCall, codeMode: Schema.NullOr(Schema.String), evaluation: Schema.NullOr(EffectRef), ambient: Schema.NullOr(CodeCalled.fields.ambient), returned: Schema.Boolean, calls: Schema.Array(PackageRecord), outcome: Schema.NullOr(CodeReturned.fields.outcome) }))
 
 // codeModeState retains code inputs and package receipts until their tool results are delivered.
-export function codeModeState(state: typeof CodeModeState.Type, event: typeof Event.Type | EffectRequested): typeof CodeModeState.Type {
+export function codeModeState(state: typeof CodeModeState.Type, event: typeof Event.Type | EffectAcceptance): typeof CodeModeState.Type {
   if (event.type === "ModelReturned" && event.purpose === "inference") return [...state, ...event.toolCalls.map(call => ({ call, codeMode: null, evaluation: null, ambient: null, returned: false, calls: [], outcome: null }))]
   if (event.type === "ToolReturned") return state.flatMap(entry => entry.call.callId !== event.callId ? [entry]
     : entry.calls.every(call => call.outcome !== null) ? [] : [{ ...entry, returned: true }])
   if (event.type === "EffectRequested") {
-    if (event.request.executor === EvaluateCode.name) {
-      const input = Schema.decodeUnknownSync(EvaluationInput)(event.request.input)
-      const entry = state.find(entry => entry.call.callId === input.callId)
-      if (!entry || entry.outcome !== null || entry.evaluation !== null) throw new RuntimeError(`No pending code evaluation: ${input.callId}`)
-      return state.map(value => value === entry ? { ...entry, codeMode: input.codeMode, evaluation: event.ref } : value)
+    if (event.act === EvaluateCode.name) {
+      const owner = evaluationOwner(event.ref)
+      const entry = state.find(entry => entry.call.callId === owner.callId)
+      if (!entry || entry.outcome !== null || entry.evaluation !== null) throw new RuntimeError(`No pending code evaluation: ${owner.callId}`)
+      return state.map(value => value === entry ? { ...entry, codeMode: owner.codeMode, evaluation: event.ref } : value)
     }
-    if (event.request.executor !== ExecutePackage.name) return state
-    const input = Schema.decodeUnknownSync(PackageInput)(event.request.input)
-    const entry = state.find(entry => entry.codeMode === input.codeMode && entry.call.callId === input.callId)
-    const call = entry?.calls.find(call => call.ordinal === input.ordinal)
+    if (event.act !== ExecutePackage.name) return state
+    const owner = packageOwner(event.ref)
+    const entry = state.find(entry => entry.codeMode === owner.codeMode && entry.call.callId === owner.callId)
+    const call = entry?.calls.find(call => call.ordinal === owner.ordinal)
     if (!entry || !call || call.ref !== null || call.outcome !== null) throw new RuntimeError("No pending package acceptance")
     return state.map(value => value === entry ? { ...entry, calls: entry.calls.map(value => value === call ? { ...call, ref: event.ref } : value) } : value)
   }
@@ -47,4 +48,4 @@ export function codeModeState(state: typeof CodeModeState.Type, event: typeof Ev
   return state.flatMap(value => value !== entry ? [value] : next.returned && next.calls.every(call => call.outcome !== null) ? [] : [next])
 }
 
-export const executions = durableAtom({ name: "agent.code-mode.executions", input: Schema.Union([ModelReturned, ToolReturned, DomainEvent, EffectRequested]), schema: CodeModeState, initial: [], reduce: codeModeState })
+export const executions = durableAtom({ name: "agent.code-mode.executions", input: Schema.Union([ModelReturned, ToolReturned, DomainEvent, EffectAcceptance]), schema: CodeModeState, initial: [], reduce: codeModeState })

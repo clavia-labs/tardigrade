@@ -1,5 +1,7 @@
 # Watchdog
 
+The [system contract map](../../core/quint/README.md) connects host recovery to atom projection, runtime admission, input verification, cancellation, and thread invocation.
+
 [watchdog.qnt](watchdog.qnt) models atomic message admission and a shared durable recovery alarm for two actors. Each actor receives one message that requires two recorded effect settlements. Crashes discard staged messages and volatile execution; committed messages, settlements, and persisted alarms survive.
 
 [Deferred recovery](deferred-recovery.md) covers bounded recovery, local fibre supervision, parent invocation replay, remote promise parking, and deadlines. Run `python3 packages/platform/quint/verify.py` from the repository root to check all four models and require the named negative variants to produce counterexamples. The runner uses the installed TLC and cached Apalache JAR, keeps compiler output and traces in `/tmp`, and fails on an unexpected checker result.

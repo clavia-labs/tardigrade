@@ -1,3 +1,6 @@
+import { checkpointChunks } from "./runtime/checkpoint-chunks"
+import { referenceCoordinates } from "./runtime/reference-coordinates"
+import { inputCanonicalization, inputRepresentation } from "./runtime/input-representation"
 import { promiseDeadline } from "./runtime/promise-deadline"
 import * as fc from "fast-check"
 import { RUNTIME_PROPERTY_OPTIONS } from "./runtime/config"
@@ -13,6 +16,10 @@ import { toolDeferredLifecycle } from "./tool-deferred-lifecycle"
 import { agentTurnCancellation, agentCancellationRecovery, codeModeCancellationRecovery, compactionCancellationRecovery } from "./agent-cancellation"
 
 export const propertyCases = {
+  checkpointChunks: () => fc.assert(checkpointChunks, RUNTIME_PROPERTY_OPTIONS),
+  referenceCoordinates: () => fc.assert(referenceCoordinates, RUNTIME_PROPERTY_OPTIONS),
+  inputCanonicalization,
+  inputRepresentation: () => fc.assert(inputRepresentation, RUNTIME_PROPERTY_OPTIONS),
   promiseDeadline,
   turnFactRecovery: () => fc.assert(turnFactRecovery, RUNTIME_PROPERTY_OPTIONS),
   compactionCancellationRecovery: () => fc.assert(compactionCancellationRecovery, RUNTIME_PROPERTY_OPTIONS),

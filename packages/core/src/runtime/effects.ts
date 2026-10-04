@@ -9,6 +9,19 @@ export type EffectRef = typeof EffectRef.Type
 
 export const effectKey = (ref: EffectRef) => JSON.stringify([ref.seq, ref.atom, ref.tag])
 
+// effectSource names work within an atom root; source names cannot contain a slash (referenceCoordinates).
+export function effectSource(atom: string, name: string): string {
+  if (!name || name.includes("/")) throw new RuntimeError(`Invalid effect source: ${name}`)
+  return `${atom}/${name}`
+}
+
+// effectSourceName recovers the source name from a runtime coordinate (referenceCoordinates).
+export function effectSourceName(ref: EffectRef): string {
+  const separator = ref.atom.lastIndexOf("/")
+  if (separator < 0 || separator === ref.atom.length - 1) throw new RuntimeError("Invalid effect source coordinate")
+  return ref.atom.slice(separator + 1)
+}
+
 // RuntimeError preserves a typed failure at the runtime boundary.
 export class RuntimeError extends Error {
   readonly _tag = "RuntimeError"

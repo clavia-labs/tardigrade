@@ -1,6 +1,6 @@
 import { Schema, type Effect } from "effect"
 import { MessageMetadata, type MessageReceived } from "../actor/message"
-import type { CoreEvent } from "../runtime/events"
+import type { CoreEvent, ObservedCoreEvent } from "../runtime/events"
 
 // RecordMetadata carries journal time and host-established delivery context separately from event payloads.
 export const RecordMetadata = Schema.Struct({
@@ -15,6 +15,10 @@ export type JournalEvent<Event> = RuntimeEvent<Event> | MessageReceived
 
 export interface Recorded<Event> extends RecordMetadata {
   readonly event: JournalEvent<Event>
+}
+
+export interface ObservedRecord<Event> extends RecordMetadata {
+  readonly event: Event | ObservedCoreEvent
 }
 
 export interface StoredCheckpoint {

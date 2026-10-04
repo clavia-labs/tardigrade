@@ -7,6 +7,7 @@ import { codeModeSpec, selectLibraries } from "../contracts/libraries"
 import { ToolCatalog } from "../actor/context"
 import { ToolReturned, type ToolCalled } from "../contracts/events"
 import { CodeReturned, Event, EvaluateCode, ExecutePackage, PackageReturned } from "../contracts/code-mode"
+import { CodeModeName, codeModeCoordinate } from "../contracts/code-mode-reference"
 import { executions as state } from "./durable/code-mode"
 
 const CodeInput = Schema.Struct({ code: Schema.String })
@@ -21,8 +22,7 @@ export function codeMode(librariesOrOptions: readonly LibrarySource[] | CodeMode
 }
 
 function createCodeMode(options: CodeModeOptions, sources?: readonly LibrarySource[]) {
-  const name = options.name ?? DEFAULT_CODE_MODE_NAME
-  if (!name || name.includes("/")) throw new RuntimeError("Code mode name must be nonempty and contain no slash")
+  const name = Schema.decodeSync(CodeModeName)(options.name ?? DEFAULT_CODE_MODE_NAME)
   return Effect.gen(function* () {
     const catalog = yield* ToolCatalog
     const libraries = sources ? selectLibraries(sources, catalog.libraries ?? []) : undefined
@@ -61,7 +61,8 @@ function createCodeMode(options: CodeModeOptions, sources?: readonly LibrarySour
         } satisfies ToolReturned)
       } else if (Option.isSome(parsed)) {
         {
-          const key = call.callId
+          const coordinate = codeModeCoordinate({ codeMode: name, callId: call.callId })
+          const key = coordinate.tag
           let request = evaluations.get(key)
           if (!request) {
             request = EvaluateCode.request({
@@ -70,12 +71,13 @@ function createCodeMode(options: CodeModeOptions, sources?: readonly LibrarySour
             })
             evaluations.set(key, request)
           }
-          acts[name] = request
+          acts[coordinate.source] = request
         }
         const open = execution.calls.filter(call => call.outcome === null)
         if (open.length) {
           for (const packageCall of open) {
-            const key = JSON.stringify([call.callId, packageCall.ordinal])
+            const coordinate = codeModeCoordinate({ codeMode: name, callId: call.callId }, packageCall.ordinal)
+            const key = coordinate.tag
             let request = packages.get(key)
             if (!request) {
               request = ExecutePackage.request({
@@ -84,7 +86,7 @@ function createCodeMode(options: CodeModeOptions, sources?: readonly LibrarySour
               })
               packages.set(key, request)
             }
-            acts[`${name}.package.${packageCall.ordinal}`] = request
+            acts[coordinate.source] = request
           }
         }
 

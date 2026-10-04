@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Schema, Option } from "effect"
 import { atom, type Atom } from "./atom"
 import { EventLog, eventLogContext } from "../services/event-log"
 import { effectKey, EffectRef, EffectCancelled, Cancelled, PromiseTimedOut, ExecutionHandle, RuntimeError, ExecutionResult } from "../runtime/effects"
-import { type EffectRequest, EffectRequested, EffectSettled, PromiseSettled } from "../runtime/events"
+import { type EffectRequest, EffectAcceptance, EffectSettled, PromiseSettled } from "../runtime/events"
 import { EffectExecution } from "../services/effect-execution"
 
 export interface ActService<Name extends string> {
@@ -52,9 +52,9 @@ interface ImplementationService {
 // cancelAct dispatches idempotent cleanup using durable invocation data rather than proposal closures.
 export const cancelAct = (request: ActCancellation, execution: Pick<typeof EffectExecution.Service, "get" | "cancel">): Effect.Effect<void, Error> => Effect.gen(function* () {
   // @effect-diagnostics-next-line serviceNotAsClass:off
-  const service = Context.Service<ActService<string>, ImplementationService>(`experimental/act/${request.request.executor}`)
+  const service = Context.Service<ActService<string>, ImplementationService>(`experimental/act/${request.request.act}`)
   const implementation = Context.getOption(yield* Effect.context<never>(), service)
-  if (Option.isNone(implementation)) return yield* Effect.fail(new RuntimeError(`Missing cancellation implementation: ${request.request.executor}`))
+  if (Option.isNone(implementation)) return yield* Effect.fail(new RuntimeError(`Missing cancellation implementation: ${request.request.act}`))
   yield* implementation.value.cancel(request, execution)
 })
 
@@ -126,7 +126,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
         : { status: "rejected", reason: Schema.is(PromiseTimedOut)(resolved.result.reason) ? resolved.result.reason : decodeFailure(resolved.result.reason) }
     })
     const handle: ActRequest<Value, Failure, ActService<Name>> = Object.freeze({
-      kind: "act", identity, id: invocation.tag, request: { executor: options.name, input }, ref, result,
+      kind: "act", identity, id: invocation.tag, request: { act: options.name, input }, ref, result,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
       ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
       onSettled: (outcome: Exclude<ActState<Value, Failure | Cancelled | PromiseTimedOut>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
@@ -147,14 +147,14 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       const context = get(eventLogContext)
       if (!context) return []
       const events = get(Context.get(context, EventLog).events)
-      return events.filter(Schema.is(EffectRequested)).filter(event => event.request.executor === options.name).flatMap(event => {
+      return events.filter(Schema.is(EffectAcceptance)).filter(event => event.act === options.name).flatMap(event => {
         const key = effectKey(event.ref)
         if (Context.get(context, EventLog).effect?.(event.ref)?.cancellation || events.some(item => Schema.is(EffectCancelled)(item) && effectKey(item.ref) === key)) return []
         if (events.some(item => Schema.is(PromiseSettled)(item) && effectKey(item.ref) === key)) return []
         const settlement = events.find(item => Schema.is(EffectSettled)(item) && effectKey(item.ref) === key)
         if (!Schema.is(EffectSettled)(settlement) || settlement.outcome.status !== "fulfilled") return []
         const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
-        return result.type === "promise" ? [{ ref: event.ref, input: Schema.decodeUnknownSync(inputSchema)(Context.get(context, EventLog).effect?.(event.ref)?.request.request.input ?? event.request.input), handle: result.handle }] : []
+        return result.type === "promise" ? [{ ref: event.ref, handle: result.handle }] : []
       })
     }),
     layer,

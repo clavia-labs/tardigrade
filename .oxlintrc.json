@@ -80,6 +80,17 @@
             ],
             "patterns": [
               {
+                "regex": "^@clavia/tardigrade-core($|/runtime/(events|effect-request)$)|(^|/)runtime/(events|effect-request)$",
+                "importNames": [
+                  "CoreEvent",
+                  "EffectRequest",
+                  "EffectRequested",
+                  "StoredEffectRequest",
+                  "StoredEffectRequested"
+                ],
+                "message": "Actor modules observe EffectAcceptance and ObservedCoreEvent. Stored requests belong to the runtime."
+              },
+              {
                 "regex": "(^|/)(services|platform)(/|$)|^@effect/platform|^@clavia/tardigrade-platform(/|$)|^bun(:|$)|^cloudflare:|^@clavia/tardigrade-core/runtime/(execution|actors|layers|stores)(/|$)",
                 "allowTypeImports": true,
                 "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
