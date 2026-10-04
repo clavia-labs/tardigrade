@@ -25,6 +25,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
     }),
     appendWithCheckpoint: (position, events, value) => Effect.sync(() => {
       if (position !== records.length) throw new RuntimeError("Unexpected checkpoint position")
+      if (value.position !== (checkpoint?.position ?? 0) + 2) throw new RuntimeError("Checkpoint threshold cadence changed across recovery")
       records.push(...events)
       checkpoint = value
     }),
@@ -34,7 +35,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       view: { trajectory: get(trajectory), messages: get(messages), timeSpend: get(timeSpend) }, events: {}, acts: {},
     })), schema: Event
   })))
-  const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(), services: () => Layer.empty })
+  const open = () => createTestStore({ actor, journal, checkpoint: options.checkpoint ? { mode: "threshold", options: { everyEvents: 2 } } : { mode: "manual" }, actorContext: () => Context.empty(), services: () => Layer.empty })
   yield* Effect.gen(function* () {
     let store = yield* open()
     const model = { model: { provider: "openrouter" as const, model_id: "test" }, contextWindowTokens: 10_000 }
@@ -42,7 +43,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       yield* store.send([{ type: "TurnRequested", turnId: "first", text: "first" }])
       yield* store.send([{ type: "ModelCalled", purpose: "inference", callId: "m1", turnId: "first", ...model }])
       yield* store.send([{ type: "TurnRequested", turnId: "second", text: "second" }])
-      if (options.checkpoint) yield* store.checkpoint
+      if (options.checkpoint && checkpoint?.position !== records.length - 1) return yield* Effect.fail(new RuntimeError("Threshold checkpoint omitted the recovery suffix"))
       const before = JSON.stringify(store.getState())
       yield* store.close
       now += options.first
@@ -60,7 +61,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       if (JSON.stringify(state.trajectory.map(entry => entry.turnId)) !== JSON.stringify(["first", "second", "first", "second", "first"])) return yield* Effect.fail(new RuntimeError("Trajectory lost arrival order or turn attribution"))
       if (JSON.stringify(state.messages) !== JSON.stringify(state.trajectory.map(entry => entry.message))) return yield* Effect.fail(new RuntimeError("Model messages diverged from trajectory"))
       if (JSON.stringify(state.timeSpend) !== JSON.stringify([{ turnId: "first", ms: options.first }, { turnId: "second", ms: options.first + options.second }])) return yield* Effect.fail(new RuntimeError("Turn timing omitted queue time or downtime"))
-      if (options.checkpoint) yield* store.checkpoint
+      if (options.checkpoint && checkpoint?.position !== records.length - 1) return yield* Effect.fail(new RuntimeError("Threshold checkpoint omitted the recovery suffix"))
       const settled = JSON.stringify(store.getState())
       yield* store.close
       now += 100_000
