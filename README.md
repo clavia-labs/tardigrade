@@ -23,6 +23,7 @@ If you use the legacy component API, see the [migration guide](docs/migration/st
 
 ```sh
 bun add tardie
+bunx tardie init tardie-agent --template quickstart
 ```
 
 For coding agents, use the [Tardigrade skill](https://github.com/clavia-labs/tardigrade/blob/main/skills/tardigrade/SKILL.md).
