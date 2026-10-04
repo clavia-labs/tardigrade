@@ -31,6 +31,16 @@ The prose lint holds markdown to the rules in [AGENTS.md](AGENTS.md) that a code
 
 CI installs with `bun install --frozen-lockfile` and runs the full `bun run gate` for code changes and pushes to `main`. For PRs that change only `docs/`, the required `gate` job runs `bun run gate --only=lint:docs,build:app-web` to check prose and compile the documentation site. Commit `bun.lock` with any dependency change.
 
+## Deployed fixture flow
+
+The platform has an opt-in flow against real Cloudflare Workers. Authenticate Wrangler, then run:
+
+```sh
+bun run --cwd packages/platform test:deployed
+```
+
+The command deploys a uniquely named fixture Worker, runs the same thread creation and messaging flow as the local workerd tests, then deletes its Durable Object namespaces and Worker in teardown. It is outside the gate. Use `--dry-run` to check the fixture bundle without deploying. Use `--url URL` to run against an existing deployment of the same fixture, including Celld; this mode leaves that deployment in place and reads its bearer token from `FIXTURE_TOKEN`.
+
 ## Actor capabilities
 
 Actor modules propose acts and read data services. Act implementations and platform wiring own I/O. The overrides in [.oxlintrc.json](.oxlintrc.json) apply to agent atoms and contracts, CLI actor entrypoints, the supervisor, and `actors/` directories. Keep actor definitions in these locations and put implementation layers in `services/` modules or platform entrypoints. Import shared schemas from data contract modules.

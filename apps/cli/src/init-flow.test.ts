@@ -189,7 +189,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
         result: input => ({ status: "completed", output: input }),
       }) }`), "utf8")
     await bundleEntry(cwd)
-    expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("createCloudflareHost")
+    expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("createActorWorker")
     await run("lint", "actor.ts", "--json")
     expect(JSON.parse(await run("build", join(cwd, "actor.ts"), "--out", join(cwd, "artifact"), "--json"))).toMatchObject({ manifest: { name: "tardie-agent" } })
     const catalogCallsAfterInit = catalogCalls

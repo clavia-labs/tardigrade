@@ -1,7 +1,7 @@
+import { DEFAULT_METHOD_HTTP_INSTANCE } from "../shared/method-http"
 export { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 export { executionStreamSse } from "../shared/execution-stream-sse"
-import { Context, Effect, Exit, Fiber } from "effect"
-import { DurableObject } from "cloudflare:workers"
+import { Effect, Exit, Fiber } from "effect"
 import { createWatchdog, RuntimeError, watchdogKey, type WatchdogPolicy, type WatchdogTarget, type ActorMethods, createThreadHost, type ThreadStorage } from "@clavia/tardigrade-core"
 import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
@@ -11,7 +11,6 @@ import { sqlJournal } from "../shared/sql-journal"
 export { sqlJournal } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
 import { hostRoutes, type HttpHost } from "../shared/http"
-import { methodHttp } from "../shared/method-http"
 import { HttpRouter } from "effect/unstable/http"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
@@ -24,6 +23,7 @@ export function cloudflareJournal<Event extends object>(storage: DurableObjectSt
   })
 }
 
+/** @deprecated Use createActorWorker for separate supervisor and thread databases. */
 // createActorHost keeps supervisor and thread journals in the supplied Durable Object storage.
 export function createActorHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "storage"> & {
   readonly storage: DurableObjectStorage
@@ -85,47 +85,28 @@ export const createCloudflareHost = createActorHost
 // cloudflareHandler exposes host routes as a Worker fetch handler; dispose releases HTTP resources.
 export const cloudflareHandler = (host: HttpHost) => HttpRouter.toWebHandler(hostRoutes(host), { disableLogger: true })
 
-type ActorHostOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Parameters<typeof createActorHost<Event, Services, State, Contracts>>[0]
+export { createActorObjects, cloudflareThreadName, CLOUDFLARE_CHILD_PLACEMENTS, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT } from "./objects"
+export type { ActorObjectOptions, CloudflareObjectBindings, ActorDirectoryStub, ThreadRuntimeStub } from "./objects"
+import { createActorObjects, type ActorObjectOptions, type CloudflareObjectBindings } from "./objects"
 
-type ActorObjectOptions<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Omit<ActorHostOptions<Event, Services, State, Contracts>, "storage" | "actorContext" | "services"> & {
-  readonly actorContext?: ActorHostOptions<Event, Services, State, Contracts>["actorContext"]
-  readonly services: (env: Env, ...args: Parameters<ActorHostOptions<Event, Services, State, Contracts>["services"]>) => ReturnType<ActorHostOptions<Event, Services, State, Contracts>["services"]>
-}
-
-// createActorObject supplies the Durable Object lifecycle required by a Tardigrade actor host.
+// createActorObject owns an instance directory whose registered threads execute in separate DOs (test/workerd/thread-layout.workers.ts).
 export function createActorObject<Env extends object = Record<string, unknown>, Event extends object = object, Services = never, State = unknown, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorObjectOptions<Env, Event, Services, State, Contracts>) {
-  const actorContext = options.actorContext ?? (() => Context.empty()) as unknown as NonNullable<ActorHostOptions<Event, Services, State, Contracts>["actorContext"]>
-  return class ActorObject extends DurableObject<Env> {
-    private readonly host = createActorHost({ ...options, actorContext, services: (coordinate, runtime) => options.services(this.env, coordinate, runtime), storage: this.ctx.storage })
-    private readonly http = cloudflareHandler(this.host)
-    private readonly methods = methodHttp(this.host)
-
-    fetch(request: Request) {
-      const pathname = new URL(request.url).pathname
-      if (pathname === "/healthz" || pathname === "/v1/methods" || pathname === "/v1/metadata" || pathname.includes("/methods/")) return this.methods(request)
-      return this.http.handler(request)
-    }
-
-    async alarm() {
-      await Effect.runPromise(this.host.alarm)
-    }
-
-    async dispose() {
-      await Effect.runPromise(this.host.close)
-      await this.http.dispose()
-    }
-  }
+  return createActorObjects(options).ActorObject
 }
 
-// createActorWorker routes public actor requests to the Durable Object class created by createActorObject.
+// createThreadObject owns the storage, execution, and recovery of one registered thread (test/workerd/thread-layout.workers.ts).
+export function createThreadObject<Env extends object = Record<string, unknown>, Event extends object = object, Services = never, State = unknown, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorObjectOptions<Env, Event, Services, State, Contracts>) {
+  return createActorObjects(options).ThreadObject
+}
+
+// createActorWorker routes instance requests to a directory DO and exports its thread DO class (test/workerd/thread-layout.workers.ts).
 export function createActorWorker<Env extends object = Record<string, unknown>, Event extends object = object, Services = never, State = unknown, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorObjectOptions<Env, Event, Services, State, Contracts>) {
-  const ActorObject = createActorObject<Env, Event, Services, State, Contracts>(options)
+  const objects = createActorObjects(options)
   return {
-    ActorObject,
-    fetch(request: Request, env: Env & { readonly ACTORS: DurableObjectNamespace<InstanceType<typeof ActorObject>> }) {
+    ...objects,
+    fetch(request: Request, env: Env & CloudflareObjectBindings) {
       const instance = /^\/v1\/actors\/([^/]+)\/threads(?:\/|$)/.exec(new URL(request.url).pathname)?.[1]
-      if (!instance) return new Response("Not found", { status: 404 })
-      return env.ACTORS.getByName(decodeURIComponent(instance)).fetch(request)
+      return env.ACTORS.getByName(instance === undefined ? options.http?.(env).instance ?? DEFAULT_METHOD_HTTP_INSTANCE : decodeURIComponent(instance)).fetch(request)
     },
   }
 }

@@ -16,10 +16,16 @@ Worker fetch
         |
         +-- ActorDO
               +-- supervisor journal
-              +-- thread journals and runtimes
+              +-- supervisor recovery alarm
+              |
+              +-- THREADS.getByName(coordinate)
+                    +-- ThreadDO
+                          +-- thread SQLite database
+                          +-- runtime and checkpoint
+                          +-- thread recovery alarm
 ```
 
-The Worker exports `ActorDO`, mounts the actor with `createActorObject` from `tardie/platform/cloudflare`, and routes requests to its Durable Object namespace. The generated `services.ts` supplies model and tool implementations. Use `createActorHost` when a custom host lifecycle is required.
+The Worker exports `ActorDO` and `ThreadDO` from `createActorWorker` in `tardie/platform/cloudflare`. Instance requests reach the directory, which forwards thread requests to their owning Durable Objects. The generated `services.ts` supplies model and tool implementations. Use `createActorObject` and `createThreadObject` separately when custom Worker routing is required.
 
 ## Deploy
 
@@ -58,6 +64,6 @@ Keep the internal listener on a trusted private network. Running nodes poll for 
 
 ## Storage
 
-The generated manifest binds `ACTORS` to `ActorDO`. Each actor instance stores its supervisor and thread journals in that Durable Object's SQLite storage. Opening a thread restores atom state from its checkpoint and recorded events.
+The generated manifest binds `ACTORS` to `ActorDO` and `THREADS` to `ThreadDO`. Each actor instance has a supervisor SQLite database, and each thread has its own SQLite database, as on Bun and Cloudflare. Opening a thread restores atom state from its checkpoint and recorded events.
 
 Model configuration is stored in `TARDIGRADE_CONFIG`, and model metadata is bundled in `models.lock.json`. Provider secrets are supplied by the fleet nodes.

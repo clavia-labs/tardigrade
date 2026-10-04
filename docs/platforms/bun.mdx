@@ -7,7 +7,7 @@ sectionOrder: 3
 order: 1
 ---
 
-The Bun platform runs an actor backed by SQLite. Each actor instance has a supervisor database, and each thread has its own event journal and runtime.
+The Bun platform runs an actor backed by SQLite. Each actor instance has a supervisor SQLite database, and each thread has its own SQLite database, runtime, and checkpoint. Cloudflare and Celld use the same database boundaries through separate Durable Objects.
 
 ## Run locally
 

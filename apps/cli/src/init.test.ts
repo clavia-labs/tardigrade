@@ -52,8 +52,8 @@ describe("initActor", () => {
     expect(server).toContain("Effect.runPromise(createBunHost({")
     expect(server).toContain("methodHttp(host")
     expect(server).toContain("host.close")
-    expect(worker).toContain("createCloudflareHost({")
-    expect(worker).toContain("methodHttp(this.host")
+    expect(worker).toContain("createActorWorker({")
+    expect(worker).toContain("worker.ThreadObject")
     expect(worker).toContain('from "tardie/platform/cloudflare"')
     expect(await readFile(join(initialized.directory, "services.ts"), "utf8")).toContain("toolActs([tools])")
     expect(manifest).toMatchObject({
@@ -61,9 +61,10 @@ describe("initActor", () => {
       main: "worker.ts",
       compatibility_date: "2026-08-24",
       durable_objects: { bindings: [
-        { name: "ACTORS", class_name: "ActorDO" }
+        { name: "ACTORS", class_name: "ActorDO" },
+        { name: "THREADS", class_name: "ThreadDO" }
       ] },
-      migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO"] }]
+      migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO", "ThreadDO"] }]
     })
     expect(manifest["d1_databases"]).toBeUndefined()
     expect(Object.keys(celldManifest).sort()).toEqual([

@@ -7,7 +7,7 @@ sectionOrder: 3
 order: 2
 ---
 
-Each actor instance runs in a SQLite-backed Durable Object. The host keeps a supervisor journal and separate logical thread journals in that object's storage. The Worker routes an instance ID to its `ActorDO`:
+Each actor instance has an `ActorDO` with its supervisor database. Each thread has a separate `ThreadDO` with its own SQLite database, runtime, checkpoint, and recovery alarm. Bun uses the same database boundaries with SQLite files. The Worker routes an instance ID to its directory, which forwards thread requests to their owning objects:
 
 ```ts title="worker.ts"
 import { actorContext } from "tardie/agent"
@@ -21,10 +21,11 @@ const worker = createActorWorker({
   services: () => services(),
 })
 export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
 export default worker
 ```
 
-`services` comes from the generated `services.ts` and supplies model and tool implementations. `actorContext` selects the services visible to agent setup. `createActorWorker` supplies the outer Worker router and an `ActorObject` with the Durable Object storage, fetch handler, alarm handler, and disposal lifecycle. Use `createActorHost` when an application needs to assemble those pieces itself.
+`services` comes from the generated `services.ts` and supplies model and tool implementations. `actorContext` selects the services visible to agent setup. `createActorWorker` supplies the Worker router, `ActorObject` directory class, and `ThreadObject` runtime class. Export both classes and bind both namespaces. `createActorObject` and `createThreadObject` supply the classes separately for custom Worker routing. Thread object names encode the full actor, instance, and thread coordinate through `cloudflareThreadName`.
 
 ## Verify locally
 
@@ -54,7 +55,7 @@ tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickst
 
 `tdg init` creates `wrangler.jsonc` and the Worker entry for your actor. Run `tdg setup` to select a model and write its visible configuration to the project.
 
-The generated manifest binds `ACTORS` to the exported `ActorDO` class and declares its SQLite migration. Model metadata comes from `models.lock.json`, bundled with the Worker.
+The generated manifest binds `ACTORS` to `ActorDO` and `THREADS` to `ThreadDO`, and declares both classes in its SQLite migration. Model metadata comes from `models.lock.json`, bundled with the Worker.
 
 Store the Tardigrade token and each model provider credential as Wrangler secrets:
 
@@ -73,17 +74,19 @@ bunx wrangler deploy
 
 The deployed Worker exposes the same thread creation, method invocation, cancellation, and event routes used during local development.
 
+Independent routing requires directory entries with independent placement. Colocated journals require an explicit data migration before these factories can route them. For an existing Worker namespace, register `ThreadDO` in a new SQLite migration tag and add its `THREADS` binding. The compatibility `createActorHost` API retains its supplied-storage layout.
+
 ## Recovery
 
-The host commits a watchdog record and an immediate alarm with journal admission, then awaits `storage.sync()` before acknowledging the commit or starting execution. `createActorObject` forwards the Durable Object's `alarm()` handler to the host. Advanced hosts that call `createActorHost` directly must forward `alarm()` themselves. Each recovery attempt commits its counters and replacement alarm, then synchronizes storage before driving the runtime.
+The host commits a watchdog record and an immediate alarm with journal admission, then awaits `storage.sync()` before acknowledging the commit or starting execution. The directory and each thread handle their own `alarm()`. A thread alarm restores that thread from its own database; it does not drive sibling runtimes. Each recovery attempt commits its counters and replacement alarm, then synchronizes storage before driving the runtime.
 
-`host.watchdog.status` reads recovery records keyed by supervisor or thread. Effect and promise settlements advance the progress cursor and reset consecutive failures. Settled runtimes clear their wake; remote promises park until their recorded deadline. Terminal failures and exhausted budgets retain a blocked record and clear the wake. New messages preserve the block; `host.watchdog.resume({ actor, instance, thread })` explicitly starts a fresh recovery budget. Omit `thread` for the supervisor.
+The compatibility `createActorHost` API exposes `host.watchdog.status` for recovery records keyed by supervisor or thread. Effect and promise settlements advance the progress cursor and reset consecutive failures. Settled runtimes clear their wake; remote promises park until their recorded deadline. Terminal failures and exhausted budgets retain a blocked record and clear the wake. New messages preserve the block; `host.watchdog.resume({ actor, instance, thread })` explicitly starts a fresh recovery budget. Omit `thread` for the supervisor.
 
-Configure recovery at host construction:
+Configure recovery at Worker construction:
 
 ```ts
-createActorHost({
-  // actor, storage, services, actorContext
+createActorWorker({
+  // actor, services, actorContext
   watchdog: {
     policy: {
       attemptTimeoutMs: 30_000,

@@ -29,6 +29,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test test/bun",
-    "test:workers": "vitest run --config vitest.config.ts"
+    "test:workers": "vitest run --config vitest.config.ts",
+    "test:deployed": "bun run test/deployed.ts"
   }
 }

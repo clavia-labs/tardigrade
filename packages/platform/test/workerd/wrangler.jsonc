@@ -2,7 +2,7 @@
   "name": "tardigrade-experimental-test",
   "main": "fixture.worker.ts",
   "compatibility_date": "2026-08-08",
-  "durable_objects": { "bindings": [{ "name": "PROMISE_RESOLVER", "class_name": "TestPromiseResolver" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TestPromiseResolver"] }],
+  "durable_objects": { "bindings": [{ "name": "PROMISE_RESOLVER", "class_name": "TestPromiseResolver" }, { "name": "ACTORS", "class_name": "LayoutActorDO" }, { "name": "THREADS", "class_name": "LayoutThreadDO" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TestPromiseResolver", "LayoutActorDO", "LayoutThreadDO"] }],
   "compatibility_flags": ["nodejs_compat"]
 }

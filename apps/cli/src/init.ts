@@ -175,8 +175,8 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   const modern = (options.template ?? DEFAULT_INIT_TEMPLATE) === "quickstart"
   const manifestValue = JSON.parse(manifestTemplate(name, options.now ?? new Date()))
   if (modern) {
-    manifestValue.durable_objects.bindings = [{ name: "ACTORS", class_name: "ActorDO" }]
-    manifestValue.migrations = [{ tag: "v1", new_sqlite_classes: ["ActorDO"] }]
+    manifestValue.durable_objects.bindings = [{ name: "ACTORS", class_name: "ActorDO" }, { name: "THREADS", class_name: "ThreadDO" }]
+    manifestValue.migrations = [{ tag: "v1", new_sqlite_classes: ["ActorDO", "ThreadDO"] }]
     delete manifestValue.worker_loaders
     delete manifestValue.d1_databases
     manifestValue.vars = { TARDIGRADE_CONFIG: {} }
