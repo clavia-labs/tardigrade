@@ -4,6 +4,7 @@ import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled } from "../contracts/events"
 import { ModelInfo } from "../actor/context"
 import { Generate, requests, failureMessage } from "../contracts/acts"
+import type { OutputContract } from "../contracts/acts"
 import { inferenceState } from "./durable/inference"
 import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
 import { type ToolView } from "./tools"
@@ -15,6 +16,7 @@ export interface AgentInput<R, ToolEvents extends object = Event> {
   readonly system: string
   readonly tools: ActorOutput<Pick<ToolView<R>, "specs">, ToolEvents, R>
   readonly context: ContextView
+  readonly output?: OutputContract
 }
 
 export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>> | ((get: Getter) => AgentInput<R, ToolEvents>)) {
@@ -76,7 +78,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
         ...proposals.acts,
         inference: request(state.callId, {
           ...(state.origin === null ? {} : { origin: state.origin }),
-          input: { model: selection.model, system: input.system, tools: input.tools.view.specs, context: messages },
+          input: { model: selection.model, system: input.system, tools: input.tools.view.specs, context: messages, ...(input.output === undefined ? {} : { output: input.output }) },
           onRequested: () => [{ type: "ModelCalled", purpose: "inference", ...selection, callId: state.callId, turnId: state.turnId } satisfies ModelCalled],
           onSettled: (result, ref) => {
             if (result.status === "rejected") return [{ type: "ModelFailed", callId: state.callId, reason: failureMessage(result.reason) } satisfies typeof ModelFailed.Type]

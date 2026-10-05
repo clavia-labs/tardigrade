@@ -4,7 +4,14 @@ import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ToolSpec } from "@clavia/tardigrade-libraries/types"
 import { ModelReply, ToolCall, Decision, BudgetDecision, BudgetMetric, PermissionRequest, Conversation } from "./events"
 
-const ModelInput = Schema.Struct({ model: ModelRef, system: Schema.String, tools: Schema.Array(ToolSpec), context: Conversation })
+// OutputContract carries the schema that a provider-native response format must enforce.
+export const OutputContract = Schema.Struct({
+  name: Schema.NonEmptyString,
+  schema: Schema.Json,
+})
+export type OutputContract = typeof OutputContract.Type
+
+const ModelInput = Schema.Struct({ model: ModelRef, system: Schema.String, tools: Schema.Array(ToolSpec), context: Conversation, output: Schema.optionalKey(OutputContract) })
 export const Generate = act({
   name: "agent.model.generate",
   input: ModelInput,
