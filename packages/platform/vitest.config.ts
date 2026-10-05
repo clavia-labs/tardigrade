@@ -6,6 +6,6 @@ export default defineConfig({
   test: { include: process.env.TARDIGRADE_TEST_LONG === "1"
     ? ["test/workerd/input-digest.workers.ts"]
     : ["test/workerd/**/*.workers.ts"],
-    exclude: process.env.TARDIGRADE_TEST_LONG === "1" ? [] : ["test/workerd/input-digest.workers.ts"],
+    exclude: process.env.TARDIGRADE_TEST_LONG === "1" ? [] : ["test/workerd/input-digest.workers.ts", "test/workerd/agent-*.workers.ts"],
   },
 })

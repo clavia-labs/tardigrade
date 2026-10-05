@@ -26,7 +26,7 @@ export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode),
   const append = (event: JournalEvent<typeof Tick.Type>) => { current = log.append(current, event); snapshots.push(current) }
   let step = 0
   const pad = () => { for (let i = 0; i < padding[step++ % padding.length]!; i++) append({ type: "Tick", value: step }) }
-  const answers = (snapshot: Snapshot) => refs.map(ref => ({ effect: snapshot.effect(ref), promise: snapshot.promise(ref) }))
+  const answers = (snapshot: Snapshot) => refs.map(ref => ({ effect: snapshot.effect(ref), promise: snapshot.promise(ref), retry: snapshot.retry(ref) }))
   const expected = new WeakMap<Snapshot, ReturnType<typeof answers>>()
   const oracles = new Map<EffectCheckpoint | undefined, ReturnType<typeof open>>()
   const check = (snapshot: Snapshot) => {
@@ -57,6 +57,13 @@ export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode),
       append(request)
       if (current.records.at(-1)!.event !== request) throw new Error("Live request acceptance copied its processed event")
       pad()
+      for (let attempt = 1; attempt <= padding[index]!; attempt++) {
+        const retry = { type: "RetryScheduled" as const, ref, attempt, dueAt: attempt * 100, reason: input }
+        append(retry)
+        if (log.append(current, retry) !== current) throw new Error("Duplicate retry changed the snapshot")
+        rejects(() => log.append(current, { ...retry, dueAt: -1 }))
+        rejects(() => log.replay([...current.records, { event: { ...retry, attempt: attempt + 2 } }]))
+      }
       const selected = modes[index]!
       if (selected === "cancel") append({ type: "EffectCancelled", ref, reason: input })
       else {

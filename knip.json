@@ -10,7 +10,7 @@
       "project": ["src/**/*.ts"]
     },
     "packages/platform": {
-      "entry": ["test/workerd/fixture.worker.ts", "test/agent/fixture.worker.ts", "test/agent/*.workers.ts"],
+      "entry": ["test/workerd/fixture.worker.ts", "test/workerd/agent-fixture.worker.ts", "test/workerd/*.workers.ts"],
       "project": ["src/**/*.ts!", "test/**/*.ts"],
       "ignoreIssues": {
         "src/cloudflare/index.ts": ["duplicates"]

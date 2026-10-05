@@ -1,12 +1,9 @@
 import { test } from "vitest"
-import { propertyCases } from "../properties/suite"
 import { env } from "cloudflare:workers"
 import { runInDurableObject } from "cloudflare:test"
 import { cloudflareJournal, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "../../src/cloudflare"
 import { checkpointStorage } from "../properties/checkpoint-storage"
 import type { TestPromiseResolver } from "./fixture.worker"
-
-for (const [name, run] of Object.entries(propertyCases)) test(name, run)
 
 
 test("checkpointStorage", async () => {

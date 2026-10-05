@@ -1,8 +1,8 @@
-import { test } from "bun:test"
+import { test } from "vitest"
 import { contentScenarios } from "../properties/content/hydration"
-import { bunContentFixture } from "./content-fixture"
+import { workerdContentFixture } from "./content-fixture"
 
 for (const scenario of contentScenarios) test(scenario.name, async () => {
-  const fixture = await bunContentFixture()
+  const fixture = await workerdContentFixture()
   try { await scenario.run(fixture) } finally { await fixture.close() }
 })
