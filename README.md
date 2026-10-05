@@ -102,16 +102,17 @@ import { workspace, fetch } from "tardie/libraries"
 import { agentMethods, codeMode, compact, infer, messages } from "tardie/agent"
 
 const researcher = defineActor("researcher", Effect.gen(function* () {
+  const system = atom("You are a careful research assistant.")
   const tools = yield* codeMode([workspace(), fetch()])
   const context = yield* compact(messages, {
     triggerRatio: 0.8,
     retainRatio: 0.5,
   })
-  const agent = yield* infer(atom(get => ({
+  const agent = yield* infer(get => ({
     system: get(system),
     tools: get(tools),
     context: get(context),
-  })))
+  }))
 
   return { atom: agent, methods: agentMethods }
 }))
