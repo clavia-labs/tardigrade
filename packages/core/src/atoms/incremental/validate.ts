@@ -41,10 +41,10 @@ export function incrementalValidator(schema: Schema.Top, onFallback?: () => void
     const proveInPlace = (object: object): unknown => {
       // A cycle back to object resolves to object itself.
       results.set(object, object)
-      const descriptors = Object.getOwnPropertyDescriptors(object) as Record<PropertyKey, PropertyDescriptor>
+      const keys = Reflect.ownKeys(object)
+      const descriptors = keys.map(key => Object.getOwnPropertyDescriptor(object, key)!)
       let replaced = false
-      for (const key of Reflect.ownKeys(descriptors)) {
-        const descriptor = descriptors[key]!
+      for (const descriptor of descriptors) {
         if (!("value" in descriptor)) return invalid
         const next = visit(descriptor.value)
         if (next === invalid) return invalid
@@ -54,7 +54,8 @@ export function incrementalValidator(schema: Schema.Top, onFallback?: () => void
         }
       }
       if (!replaced) return object
-      const copy: object = Object.defineProperties(Array.isArray(object) ? [] : Object.create(Object.getPrototypeOf(object)) as object, descriptors)
+      const copy: object = Array.isArray(object) ? [] : Object.create(Object.getPrototypeOf(object)) as object
+      keys.forEach((key, index) => Object.defineProperty(copy, key, descriptors[index]!))
       results.set(object, copy)
       return copy
     }
