@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Chunk, Hash } from "effect"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { initialTurnProjection, reduceTurnProjection, trajectoryFrom, turnViewFrom } from "./turn-projection"
@@ -115,4 +116,25 @@ test("event types preserve turn attribution regardless of waits, ID suffixes, an
       }
     }
   ), { numRuns: 200 })
+})
+
+test("a turn update does not hash the turn's event history", () => {
+  // Each append makes a new Chunk, so a structural compare of a turn record rehashes its whole event history.
+  const proto = Object.getPrototypeOf(Chunk.empty()) as { [Hash.symbol]: (this: Chunk.Chunk<unknown>) => number }
+  const original = proto[Hash.symbol]
+  let hashed = 0
+  proto[Hash.symbol] = function(this: Chunk.Chunk<unknown>) {
+    hashed += Chunk.size(this)
+    return original.call(this)
+  }
+  try {
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m0" } as Event,
+      ...Array.from({ length: 200 }, (_, ordinal) => eventOf(0, "m0", 0, ordinal))
+    ]
+    log.reduce(reduceTurnProjection, initialTurnProjection())
+  } finally {
+    proto[Hash.symbol] = original
+  }
+  expect(hashed).toBe(0)
 })
