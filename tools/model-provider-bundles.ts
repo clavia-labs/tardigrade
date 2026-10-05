@@ -21,16 +21,25 @@ const exists = async (path: string): Promise<boolean> => {
   }
 }
 
-const workerSource = (provider: string): string => `import { actor } from "tardie/deprecated"
+const workerSource = (providers: ReadonlyArray<string>): string => `import { actor } from "tardie/deprecated"
 import { defineWorkerHost, workerHttp, workerModelServices } from "tardie/deprecated/worker"
-import { providerLayer } from "tardie/model/providers/${provider}"
+${providers.map((provider, index) => `import { providerLayer as provider${index} } from "tardie/model/providers/${provider}"`).join("\n")}
 
 const host = defineWorkerHost(actor({ name: "bundle-proof", methods: {}, components: [] }), {
-  services: workerModelServices({ model: { providerLayer } })
+  services: workerModelServices({ model: { providerLayer: (options) => {
+    switch (options.provider) {
+${providers.map((provider, index) => `      case "${provider}": return provider${index}(options)`).join("\n")}
+      default: throw new Error("Unsupported provider: " + options.provider)
+    }
+  } } })
 })
 export const { ActorDO, ThreadDO } = host
 export default workerHttp(host)
 `
+
+const bundle = (directory: string): Promise<void> => run([
+  join(root, "node_modules/.bin/wrangler"), "deploy", "--dry-run", "--outdir", "dist", "--config", "wrangler.jsonc"
+], directory)
 
 const wranglerSource = `${JSON.stringify({
   name: "model-provider-bundle-proof",
@@ -60,65 +69,58 @@ const main = async (): Promise<void> => {
 
     const fixtures = ["anthropic", "openai", "openai-compat", "openrouter"] as const
 
-    let packedManifest: PackedManifest | undefined
-    for (const fixture of fixtures) {
-      const directory = join(temporary, fixture)
-      await mkdir(directory)
-      await writeFile(join(directory, "package.json"), `${JSON.stringify({
-        private: true,
-        type: "module",
-        dependencies: { tardie: `file:${tarball}` },
-        devDependencies: { "@types/node": dependencies["@types/node"] }
-      }, undefined, 2)}\n`)
-      await writeFile(join(directory, "index.ts"), 'import { actor } from "tardie/deprecated"\nexport default actor\n')
-      await writeFile(join(directory, "tsconfig.json"), `${JSON.stringify({
-        compilerOptions: {
-          target: "ES2023", lib: ["ES2023", "DOM"], module: "Preserve", moduleResolution: "bundler",
-          strict: true, noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true, types: ["node"]
-        },
-        include: ["index.ts"]
-      }, undefined, 2)}\n`)
-      await writeFile(join(directory, "worker.ts"), workerSource(fixture))
-      await writeFile(join(directory, "wrangler.jsonc"), wranglerSource)
-      await run(["npm", "install", "--ignore-scripts", "--omit=optional"], directory)
+    const directory = join(temporary, "ordinary")
+    await mkdir(directory)
+    await writeFile(join(directory, "package.json"), `${JSON.stringify({
+      private: true,
+      type: "module",
+      dependencies: { tardie: `file:${tarball}` },
+      devDependencies: { "@types/node": dependencies["@types/node"] }
+    }, undefined, 2)}\n`)
+    await writeFile(join(directory, "index.ts"), ['export { actor } from "tardie/deprecated"', ...fixtures.map((provider, index) => `export { providerLayer as provider${index} } from "tardie/model/providers/${provider}"`)].join("\n") + "\n")
+    await writeFile(join(directory, "tsconfig.json"), `${JSON.stringify({
+      compilerOptions: {
+        target: "ES2023", lib: ["ES2023", "DOM"], module: "Preserve", moduleResolution: "bundler",
+        strict: true, noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true, types: ["node"]
+      },
+      include: ["index.ts"]
+    }, undefined, 2)}\n`)
+    await writeFile(join(directory, "worker.ts"), workerSource(fixtures))
+    await writeFile(join(directory, "wrangler.jsonc"), wranglerSource)
+    await run(["npm", "install", "--ignore-scripts", "--omit=optional"], directory)
 
-      const manifest = JSON.parse(await readFile(join(directory, "node_modules/tardie/package.json"), "utf8")) as PackedManifest
-      packedManifest = manifest
-      const optionalPeers = Object.entries(manifest.peerDependenciesMeta ?? {})
-        .filter(([, metadata]) => metadata.optional === true)
-        .map(([name]) => name)
-      if (optionalPeers.length === 0) throw new Error("packed Tardigrade manifest declares no optional provider dependencies")
-      for (const name of new Set([...optionalPeers, "@aws-sdk/client-bedrock-runtime"])) {
-        const path = join(directory, "node_modules", ...name.split("/"))
-        if (await exists(path)) throw new Error(`${fixture} installed optional provider dependency ${name}`)
-      }
-
-      await run([process.execPath, join(root, "node_modules/typescript/bin/tsc"), "--project", "tsconfig.json"], directory)
-
-      await run([process.execPath, "-e", "await import('tardie/deprecated/server/host'); await import('tardie/model/host')"], directory)
-      await run([process.execPath, "-e", `
-        import { Effect, Layer } from "effect";
-        import { FetchHttpClient } from "effect/unstable/http";
-        import { inferenceLayer } from "tardie/model/services";
-        await Effect.runPromise(Effect.scoped(Layer.build(inferenceLayer({
-          provider: ${JSON.stringify(fixture)}, endpoint: "https://unused.invalid", client: {}, model: { model: "fixture" }
-        }).pipe(Layer.provide(FetchHttpClient.layer)))));
-      `], directory)
-
-      await run([
-        join(root, "node_modules/.bin/wrangler"),
-        "deploy",
-        "--dry-run",
-        "--outdir",
-        "dist",
-        "--config",
-        "wrangler.jsonc"
-      ], directory)
-      console.log(`${fixture} bundle excludes ${optionalPeers.length} optional provider dependencies`)
+    const manifest = JSON.parse(await readFile(join(directory, "node_modules/tardie/package.json"), "utf8")) as PackedManifest
+    const optionalPeers = Object.entries(manifest.peerDependenciesMeta ?? {})
+      .filter(([, metadata]) => metadata.optional === true)
+      .map(([name]) => name)
+    if (optionalPeers.length === 0) throw new Error("packed Tardigrade manifest declares no optional provider dependencies")
+    for (const name of new Set([...optionalPeers, "@aws-sdk/client-bedrock-runtime"])) {
+      const path = join(directory, "node_modules", ...name.split("/"))
+      if (await exists(path)) throw new Error(`ordinary consumer installed optional provider dependency ${name}`)
     }
 
-    if (packedManifest === undefined) throw new Error("packed Tardigrade manifest was not read")
-    const providerDependencies = packedManifest.peerDependencies ?? {}
+    await run([process.execPath, join(root, "node_modules/typescript/bin/tsc"), "--project", "tsconfig.json"], directory)
+
+    await run([process.execPath, "-e", "await import('tardie/deprecated/server/host'); await import('tardie/model/host')"], directory)
+    await run([process.execPath, "-e", `
+      import { Effect } from "effect";
+      import { LanguageModel } from "effect/unstable/ai";
+      import { FetchHttpClient } from "effect/unstable/http";
+      import { inferenceLayer } from "tardie/model/services";
+      for (const provider of ${JSON.stringify(fixtures)}) {
+        const { providerLayer } = await import("tardie/model/providers/" + provider);
+        await Effect.runPromise(Effect.scoped(LanguageModel.LanguageModel.pipe(
+          Effect.provide(inferenceLayer({
+            provider, endpoint: "https://unused.invalid", client: {}, model: { model: "fixture" }
+          }, providerLayer)),
+          Effect.provide(FetchHttpClient.layer)
+        )));
+      }
+    `], directory)
+    await bundle(directory)
+    console.log(`${fixtures.join(", ")} bundle excludes ${optionalPeers.length} optional provider dependencies`)
+
+    const providerDependencies = manifest.peerDependencies ?? {}
     if (Object.keys(providerDependencies).length === 0) throw new Error("packed Tardigrade manifest declares no provider dependencies")
     const bedrockDirectory = join(temporary, "bedrock")
     await mkdir(bedrockDirectory)
@@ -127,22 +129,14 @@ const main = async (): Promise<void> => {
       type: "module",
       dependencies: { tardie: `file:${tarball}`, ...providerDependencies }
     }, undefined, 2)}\n`)
-    await writeFile(join(bedrockDirectory, "worker.ts"), workerSource("bedrock"))
+    await writeFile(join(bedrockDirectory, "worker.ts"), workerSource(["bedrock"]))
     await writeFile(join(bedrockDirectory, "wrangler.jsonc"), wranglerSource)
     await run(["npm", "install", "--ignore-scripts"], bedrockDirectory)
     for (const name of Object.keys(providerDependencies)) {
       const path = join(bedrockDirectory, "node_modules", ...name.split("/"))
       if (!(await exists(path))) throw new Error(`bedrock did not install provider dependency ${name}`)
     }
-    await run([
-      join(root, "node_modules/.bin/wrangler"),
-      "deploy",
-      "--dry-run",
-      "--outdir",
-      "dist",
-      "--config",
-      "wrangler.jsonc"
-    ], bedrockDirectory)
+    await bundle(bedrockDirectory)
     console.log(`bedrock bundle includes ${Object.keys(providerDependencies).length} provider dependencies`)
   } finally {
     await rm(temporary, { recursive: true, force: true })
