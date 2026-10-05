@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.43.0](https://github.com/clavia-labs/tardigrade/compare/v0.42.1...v0.43.0) (2026-10-05)
+
+
+### Features
+
+* **agent:** hydrate content parts ([#673](https://github.com/clavia-labs/tardigrade/issues/673)) ([b61681b](https://github.com/clavia-labs/tardigrade/commit/b61681b3e873648d2172081cd735418b9b73263f))
+* **agent:** inline inference getter ([#667](https://github.com/clavia-labs/tardigrade/issues/667)) ([62090a8](https://github.com/clavia-labs/tardigrade/commit/62090a8af047c6350c7d6f3b5ea307c475449d20))
+* **agent:** inline inference getter ([#668](https://github.com/clavia-labs/tardigrade/issues/668)) ([b88bf0d](https://github.com/clavia-labs/tardigrade/commit/b88bf0d42b2fc9120c63bf8681cd8d587220d003))
+* **core:** schedule durable effect retries ([#678](https://github.com/clavia-labs/tardigrade/issues/678)) ([30f2dfd](https://github.com/clavia-labs/tardigrade/commit/30f2dfdcfd1c89c8b1a0dd3179db337736e5329a))
+
+
+### Bug Fixes
+
+* **agent:** one turn per invocation ([#666](https://github.com/clavia-labs/tardigrade/issues/666)) ([0d60f90](https://github.com/clavia-labs/tardigrade/commit/0d60f9074741a7e4f56dfe7caf2d6cc80574b773))
+* **core:** share decoder caches ([#674](https://github.com/clavia-labs/tardigrade/issues/674)) ([391f026](https://github.com/clavia-labs/tardigrade/commit/391f0264e9a79dfacdf94d895f895fb5c68b9203))
+
+
+### Performance Improvements
+
+* **agent:** update one turn ([#669](https://github.com/clavia-labs/tardigrade/issues/669)) ([ccd09e3](https://github.com/clavia-labs/tardigrade/commit/ccd09e32d2b9414d97c7910fd99f6706836b7cf1))
+* **core:** append without copying ([#675](https://github.com/clavia-labs/tardigrade/issues/675)) ([b8448c5](https://github.com/clavia-labs/tardigrade/commit/b8448c59a1fbf1296b045885d2a6ffed9cb91641))
+* **core:** cache initial seed ([#671](https://github.com/clavia-labs/tardigrade/issues/671)) ([c8c69c7](https://github.com/clavia-labs/tardigrade/commit/c8c69c7950fb76c367fb2677a45ccf58acdc5a45))
+* **core:** freeze decoded requests ([#672](https://github.com/clavia-labs/tardigrade/issues/672)) ([fe72d15](https://github.com/clavia-labs/tardigrade/commit/fe72d15e35b6d6772874c747501fd9be94747159))
+* **core:** rebuild new arrays ([#670](https://github.com/clavia-labs/tardigrade/issues/670)) ([82dad94](https://github.com/clavia-labs/tardigrade/commit/82dad9496e291d460b5b2d27af894e2767da186f))
+* **core:** resume input digests ([#665](https://github.com/clavia-labs/tardigrade/issues/665)) ([6c8136c](https://github.com/clavia-labs/tardigrade/commit/6c8136c9945072dc49363257c5b68368c89ff3f5))
+* **core:** reuse replay digests ([#663](https://github.com/clavia-labs/tardigrade/issues/663)) ([78b71fc](https://github.com/clavia-labs/tardigrade/commit/78b71fc42fbb61b0317a7beb5ef594f88103cd25))
+* **core:** stop copying bindings ([#677](https://github.com/clavia-labs/tardigrade/issues/677)) ([df6ffd1](https://github.com/clavia-labs/tardigrade/commit/df6ffd1dbe59cbaaf0cd1fa54e4af372d68a16ad))
+
 ## [0.42.1](https://github.com/clavia-labs/tardigrade/compare/v0.42.0...v0.42.1) (2026-10-04)
 
 
