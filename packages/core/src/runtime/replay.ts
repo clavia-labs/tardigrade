@@ -69,6 +69,11 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     preparedRequests.set(request, prepared)
     return prepared
   }
+  // matchesPrepared is matchesRequest(stored, prepared.request), reusing the digest prepareRequest stored when both sides are digests (storeRequest and digestInput hash the same canonical bytes).
+  const matchesPrepared = (stored: StoredEffectRequested["request"], prepared: { readonly request: EffectRequest; readonly stored: StoredEffectRequested["request"] }) =>
+    stored.input._tag === "InputDigest" && prepared.stored.input._tag === "InputDigest"
+      ? stored.act === prepared.stored.act && isDeepStrictEqual(stored.input, prepared.stored.input)
+      : matchesRequest(stored, prepared.request)
   const eventOf = (event: unknown, reply = false): JournalEvent<Event> => {
     if (typeof event !== "object" || event === null || Array.isArray(event)) throw new Error("Domain event must be an object")
     if (processedRequests.has(event)) return event as StoredEffectRequested
@@ -312,11 +317,11 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const prepared = prepareRequest(proposal.request)
         const executionRequest = prepared.request
         const previousRequest = executionDeclarations.get(proposal.identity)
-        if (previousRequest && previousRequest !== prepared.stored && !matchesRequest(previousRequest, executionRequest)) throw new Error("Effect identity reused with a different request")
+        if (previousRequest && previousRequest !== prepared.stored && !matchesPrepared(previousRequest, prepared)) throw new Error("Effect identity reused with a different request")
         executionDeclarations.set(proposal.identity, prepared.stored)
         if (ref) {
           const recorded = coreRequests.get(effectKey(ref))
-          if (!recorded || recorded.origin !== proposal.origin || (recorded.request !== prepared.stored && !matchesRequest(recorded.request, executionRequest))) throw new Error("Restored effect request differs from its proposal")
+          if (!recorded || recorded.origin !== proposal.origin || (recorded.request !== prepared.stored && !matchesPrepared(recorded.request, prepared))) throw new Error("Restored effect request differs from its proposal")
           const key = effectKey(ref)
           const settlement = coreSettlements.get(key)
           const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !promiseSettlements.has(key)
@@ -368,7 +373,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const candidates = effects().filter(work => !work.ref && work.atom === event.ref.atom && work.request.act === event.ref.act && work.origin === event.origin)
           if (candidates.length > 1) throw new Error("Calls to the same act require distinct origins")
           const offered = candidates[0]
-          if (!offered || (preparedRequests.get(offered.request)?.stored !== event.request && !matchesRequest(event.request, offered.request))) throw new Error("Effect request differs from its proposal")
+          const offeredPrepared = offered ? preparedRequests.get(offered.request) : undefined
+          if (!offered || (offeredPrepared?.stored !== event.request && !(offeredPrepared ? matchesPrepared(event.request, offeredPrepared) : matchesRequest(event.request, offered.request)))) throw new Error("Effect request differs from its proposal")
           const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
           rememberOrigin(event)
