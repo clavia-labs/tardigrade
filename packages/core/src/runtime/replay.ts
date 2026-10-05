@@ -1,4 +1,4 @@
-import type { ReadonlyLog } from "./log-view"
+import { IndexView, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
 import { frozenPlainData } from "../atoms/incremental/frozen"
 import { actInputs } from "../atoms/act"
 import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
@@ -100,7 +100,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly records: ReadonlyLog<Recorded<Event>>
     readonly position: number
     readonly seed: EffectCheckpoint | undefined
-    readonly bindings: ReadonlyMap<object, EffectRef>
+    readonly bindings: ReadonlyIndex<object, EffectRef>
     readonly get: <Value>(node: Atom<Value>) => Value
     readonly view: () => Values<Atoms>
     readonly effects: () => readonly Work[]
@@ -117,7 +117,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   const createEngine = (history: ReadonlyLog<Recorded<Event>>, seed?: EffectCheckpoint) => {
     const offset = seed?.position ?? 0
     const source = createRecordSource<Event>()
-    const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
+    const bindings = atom(IndexView.empty<object, EffectRef>())
     // initialState holds the seed once records[0..1], the only records initialStateSeed reads, exist or it found one; an append-only source cannot change it afterwards.
     let initialState: { readonly seed: StateSeed | undefined } | undefined
     const initialisedNames = new Set(seed?.durable.map(entry => entry.name))
@@ -229,7 +229,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (prior && prior.identity !== proposal.identity) throw new Error("Duplicate effect binding")
       actReferences.set(proposal.identity, ref)
       acts.set(effectKey(ref), proposal)
-      store.set(bindings, new Map(actReferences))
+      store.set(bindings, store.get(bindings).set(proposal.identity, ref))
     }
     const checkpoint = (): EffectCheckpoint | undefined => {
       const pendingEffects = [...coreRequests].filter(([key]) => !coreSettlements.has(key) && !coreCancellations.has(key))
@@ -472,11 +472,13 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         return result.type === "value" ? request.onSettled?.({ status: "fulfilled", value: result.value }, event.ref) ?? [] : request.onDeferred?.(result.handle, event.ref) ?? []
       },
       bindings: () => store.get(bindings),
-      restoreBindings: (previous: ReadonlyMap<object, EffectRef>) => {
+      restoreBindings: (previous: ReadonlyIndex<object, EffectRef>) => {
+        let next = store.get(bindings)
         for (const [identity, ref] of previous) {
           actReferences.set(identity, ref)
+          next = next.set(identity, ref)
         }
-        store.set(bindings, new Map(actReferences))
+        store.set(bindings, next)
       },
       get: store.get,
       view,

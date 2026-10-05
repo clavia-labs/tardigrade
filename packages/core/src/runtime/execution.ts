@@ -1,3 +1,4 @@
+import type { ReadonlyIndex } from "./log-view"
 import { initialStateSeed, type StateSeed } from "../initialise"
 import { ActorCommitError, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, effectKey, type EffectRef } from "./effects"
 import { createStore } from "../atoms/store"
@@ -114,7 +115,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     let snapshot: ReturnType<typeof definition.replay>
     const localRecovery = new Map<string, ReturnType<typeof snapshot.deferred>[number]>()
     const source = createRecordSource<Event>()
-    const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
+    const bindings = atom<ReadonlyIndex<object, EffectRef>>(new Map())
     let checkpointSeed: EffectCheckpoint | undefined
     let initialState: StateSeed | undefined
     let checkpointPosition = 0

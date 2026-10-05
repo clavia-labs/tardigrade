@@ -1,4 +1,4 @@
-import type { ReadonlyLog } from "../runtime/log-view"
+import type { ReadonlyIndex, ReadonlyLog } from "../runtime/log-view"
 import { Context } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom } from "../atoms/atom"
@@ -14,7 +14,7 @@ export class EventLog extends Context.Service<EventLog, {
   // position is the absolute log position immediately before events[0].
   readonly position?: number | (() => number)
   readonly initialState?: StateSeed | (() => StateSeed | undefined)
-  readonly bindings?: Atom<ReadonlyMap<object, EffectRef>>
+  readonly bindings?: Atom<ReadonlyIndex<object, EffectRef>>
   readonly effect?: (ref: EffectRef) => { readonly request: EffectAcceptance; readonly settlement?: EffectSettled; readonly cancellation?: EffectCancelled } | undefined
   readonly promise?: (ref: EffectRef) => PromiseSettled | undefined
 }>()("experimental/EventLog") {}

@@ -83,3 +83,62 @@ export class LogView<T> implements ReadonlyLog<T> {
     for (let index = 0; index < this.length; index++) yield this.#items[index]!
   }
 }
+
+// ReadonlyIndex is the read surface of a map that only gains keys; readonly maps satisfy it.
+export interface ReadonlyIndex<K, V> {
+  readonly size: number
+  get(key: K): V | undefined
+  has(key: K): boolean
+  [Symbol.iterator](): Iterator<[K, V]>
+}
+
+// IndexView is the first size entries of a Map that only grows, each tagged with its insertion position. Entries below a view's size are never replaced, so a view never changes; set adds in place only from the view at the tip and copies otherwise (properties/log-view.test.ts).
+export class IndexView<K, V> implements ReadonlyIndex<K, V> {
+  readonly #entries: Map<K, { readonly value: V; readonly at: number }>
+
+  private constructor(entries: Map<K, { readonly value: V; readonly at: number }>, readonly size: number) {
+    this.#entries = entries
+  }
+
+  static empty<K, V>(): IndexView<K, V> {
+    return new IndexView(new Map(), 0)
+  }
+
+  set(key: K, value: V): IndexView<K, V> {
+    const current = this.#entry(key)
+    if (current && Object.is(current.value, value)) return this
+    if (!current && this.size > 0 && this.#entries.size === this.size) {
+      this.#entries.set(key, { value, at: this.size })
+      return new IndexView(this.#entries, this.size + 1)
+    }
+    const entries = new Map<K, { readonly value: V; readonly at: number }>()
+    for (const [entryKey, entryValue] of this) entries.set(entryKey, { value: entryValue, at: entries.size })
+    entries.set(key, { value, at: current ? current.at : entries.size })
+    return new IndexView(entries, entries.size)
+  }
+
+  #entry(key: K) {
+    const entry = this.#entries.get(key)
+    return entry && entry.at < this.size ? entry : undefined
+  }
+
+  get(key: K): V | undefined {
+    return this.#entry(key)?.value
+  }
+
+  has(key: K): boolean {
+    return this.#entry(key) !== undefined
+  }
+
+  *[Symbol.iterator](): Iterator<[K, V]> {
+    let seen = 0
+    for (const [key, entry] of this.#entries) {
+      if (seen++ >= this.size) return
+      yield [key, entry.value]
+    }
+  }
+
+  [Symbol.for("nodejs.util.inspect.custom")](): Map<K, V> {
+    return new Map(this)
+  }
+}
