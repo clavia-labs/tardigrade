@@ -15,7 +15,7 @@ export const InferenceState = Schema.Struct({
 export const initialInference: typeof InferenceState.Type = { turns: [], turnId: "", callId: "model::0", origin: null, needsReply: false, running: false, waiting: false }
 
 type Turn = typeof InferenceState.Type["turns"][number]
-// updateTurn replaces the last turn that matches; each caller matches an identifier at most one turn holds (turn ids are checked unique, effect refs and call ids are unique per effect), so this equals replacing every match.
+// updateTurn replaces the last turn that matches; each caller matches an identifier at most one turn holds (turn ids and invocation refs are checked unique per turn, effect refs and call ids are unique per effect), so this equals replacing every match.
 const updateTurn = (turns: typeof InferenceState.Type["turns"], matches: (turn: Turn) => boolean, update: (turn: Turn) => Turn) => {
   for (let index = turns.length - 1; index >= 0; index--) {
     if (!matches(turns[index]!)) continue
@@ -35,7 +35,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Obs
     if (ref && turns.some(turn => turn.invocationRef?.method === ref.method && turn.invocationRef.id === ref.id)) throw new RuntimeError(`Duplicate turn for invocation: ${ref.method}:${ref.id}`)
     turns = [...turns, { turnId: event.turnId, invocationRef: event.invocationRef ?? null, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }]
   }
-  if (event.type === "AbortRequested") turns = turns.map(turn => turn.invocationRef?.method === event.ref.method && turn.invocationRef.id === event.ref.id && turn.settlement === null && turn.cancellation === null ? { ...turn, cancellation: event.reason } : turn)
+  if (event.type === "AbortRequested") turns = updateTurn(turns, turn => turn.invocationRef?.method === event.ref.method && turn.invocationRef.id === event.ref.id && turn.settlement === null && turn.cancellation === null, turn => ({ ...turn, cancellation: event.reason }))
   if (event.type === "EffectRequested" && event.act !== DeliverMessage.name) turns = updateTurn(turns, turn => turn.turnId === state.turnId, turn => ({ ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] }))
   if (event.type === "EffectCancelled" || event.type === "PromiseSettled" || (event.type === "EffectSettled" && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value"))) {
     const key = effectKey(event.ref)
