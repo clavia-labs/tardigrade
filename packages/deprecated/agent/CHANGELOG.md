@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.44.0](https://github.com/clavia-labs/tardigrade/compare/v0.43.0...v0.44.0) (2026-10-05)
+
+
+### Features
+
+* **agent:** add native output schema ([#683](https://github.com/clavia-labs/tardigrade/issues/683)) ([77f37af](https://github.com/clavia-labs/tardigrade/commit/77f37afc35c3cf4f8e2688abab86a8c1e6942dd3))
+
+
+### Performance Improvements
+
+* **gate:** consolidate provider bundle fixtures ([#681](https://github.com/clavia-labs/tardigrade/issues/681)) ([66e9acd](https://github.com/clavia-labs/tardigrade/commit/66e9acd5c7434499dea04fa3414c5808f4fe0acf))
+
 ## [0.43.0](https://github.com/clavia-labs/tardigrade/compare/v0.42.1...v0.43.0) (2026-10-05)
 
 
