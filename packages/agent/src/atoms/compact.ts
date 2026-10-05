@@ -66,12 +66,24 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     if (Object.isFrozen(message)) sizes.set(message, size)
     return size
   }
-  const estimate = (messages: typeof Conversation.Type) => Math.ceil(messages.reduce((size, message) => size + sizeOf(message), 0) / policy.charsPerToken)
+  // rendered holds the last trajectory's render and totals, where totals[i] is the size of its first i rendered messages. A trajectory that extends it by identity renders and measures only its new messages; both arrays only grow and no evaluation keeps them, so no evaluation sees them change.
+  let rendered = { source: [] as typeof Conversation.Type, messages: [] as (typeof Conversation.Type[number])[], totals: [0] }
+  const renderTrajectory = (source: typeof Conversation.Type) => {
+    const extends_ = source.length >= rendered.source.length && rendered.source.every((message, index) => source[index] === message)
+    if (!extends_) rendered = { source, messages: [], totals: [0] }
+    for (let index = rendered.messages.length; index < source.length; index++) {
+      const [message] = render([source[index]!])
+      rendered.messages.push(message!)
+      rendered.totals.push(rendered.totals.at(-1)! + sizeOf(message!))
+    }
+    rendered.source = source
+    return rendered
+  }
   const compactionState = createCompactionState()
 
   const request = requests(Summarize.request, { latestOnly: true })
   return Effect.map(ModelInfo, selection => effectAtom(get => {
-    const messages = render(get(trajectory))
+    const { messages, totals } = renderTrajectory(get(trajectory))
     const state = get(compactionState)
     const triggerTokens = Math.floor(selection.contextWindowTokens * policy.triggerRatio)
     const retainTokens = Math.floor(selection.contextWindowTokens * policy.retainRatio)
@@ -80,7 +92,8 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
     const remaining = messages.slice(state.through)
     const summary = render(state.summary ? [{ role: "user" as const, text: `Earlier conversation summary (compaction applied):\n${state.summary}` }] : [])
     const visible = [...summary, ...remaining]
-    const usage = { estimatedTokens: estimate(visible), contextWindowTokens: selection.contextWindowTokens, triggerTokens, retainTokens }
+    const size = summary.reduce((total, message) => total + sizeOf(message), 0) + totals[messages.length]! - totals[Math.min(state.through, messages.length)]!
+    const usage = { estimatedTokens: Math.ceil(size / policy.charsPerToken), contextWindowTokens: selection.contextWindowTokens, triggerTokens, retainTokens }
     const ready = { position: "ready" as const, messages: visible, policy, ...usage }
     if (state.failure !== null) return { view: { position: "failed" as const, reason: state.failure, policy, ...usage }, events: {}, acts: {} }
     if (state.pending) return { view: { position: "compacting" as const, policy, ...usage }, events: {}, acts: {} }
@@ -95,9 +108,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
       if (message.role === "tool") pending.delete(message.callId)
     }
     if (pending.size || !boundaries.length) return { view: ready, events: {}, acts: {} }
-    const suffix = Array.from({ length: messages.length + 1 }, () => 0)
-    for (let index = messages.length - 1; index >= state.through; index--) suffix[index] = suffix[index + 1]! + sizeOf(messages[index]!)
-    const through = boundaries.find(index => Math.ceil(suffix[index]! / policy.charsPerToken) <= retainTokens) ?? boundaries.at(-1)!
+    const through = boundaries.find(index => Math.ceil((totals[messages.length]! - totals[index]!) / policy.charsPerToken) <= retainTokens) ?? boundaries.at(-1)!
     const callId = `compact:${through}:${state.attempts}`
     return {
       view: { position: "compacting" as const, policy, ...usage },
