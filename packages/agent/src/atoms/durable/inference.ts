@@ -14,6 +14,18 @@ export const InferenceState = Schema.Struct({
 })
 export const initialInference: typeof InferenceState.Type = { turns: [], turnId: "", callId: "model::0", origin: null, needsReply: false, running: false, waiting: false }
 
+type Turn = typeof InferenceState.Type["turns"][number]
+// updateTurn replaces the last turn that matches; each caller matches an identifier at most one turn holds (turn ids are checked unique, effect refs and call ids are unique per effect), so this equals replacing every match.
+const updateTurn = (turns: typeof InferenceState.Type["turns"], matches: (turn: Turn) => boolean, update: (turn: Turn) => Turn) => {
+  for (let index = turns.length - 1; index >= 0; index--) {
+    if (!matches(turns[index]!)) continue
+    const next = turns.slice()
+    next[index] = update(turns[index]!)
+    return next
+  }
+  return turns
+}
+
 export function inferState(state: typeof InferenceState.Type, event: Event | ObservedCoreEvent, _metadata?: unknown, position?: number): typeof InferenceState.Type {
   let turns = state.turns
   if (event.type === "TurnRequested") {
@@ -24,30 +36,31 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Obs
     turns = [...turns, { turnId: event.turnId, invocationRef: event.invocationRef ?? null, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }]
   }
   if (event.type === "AbortRequested") turns = turns.map(turn => turn.invocationRef?.method === event.ref.method && turn.invocationRef.id === event.ref.id && turn.settlement === null && turn.cancellation === null ? { ...turn, cancellation: event.reason } : turn)
-  if (event.type === "EffectRequested" && event.act !== DeliverMessage.name) turns = turns.map(turn => turn.turnId === state.turnId ? { ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] } : turn)
+  if (event.type === "EffectRequested" && event.act !== DeliverMessage.name) turns = updateTurn(turns, turn => turn.turnId === state.turnId, turn => ({ ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] }))
   if (event.type === "EffectCancelled" || event.type === "PromiseSettled" || (event.type === "EffectSettled" && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value"))) {
     const key = effectKey(event.ref)
-    turns = turns.map(turn => turn.effects.some(work => work.pending && effectKey(work.ref) === key) ? { ...turn, effects: turn.effects.map(work => effectKey(work.ref) === key ? { ...work, pending: false } : work) } : turn)
+    const settles = (work: Turn["effects"][number]) => work.ref.seq === event.ref.seq && effectKey(work.ref) === key
+    turns = updateTurn(turns, turn => turn.effects.some(work => work.pending && settles(work)), turn => ({ ...turn, effects: turn.effects.map(work => settles(work) ? { ...work, pending: false } : work) }))
   }
   if (event.type === "ModelCalled" && event.purpose === "inference") {
     if (!state.needsReply || state.running || state.waiting || event.turnId !== state.turnId || event.callId !== state.callId) {
       throw new RuntimeError(`Model call is unavailable: ${event.callId}`)
     }
-    turns = turns.map(turn => turn.turnId === event.turnId ? { ...turn, calls: [...turn.calls, { callId: event.callId, returned: false }] } : turn)
+    turns = updateTurn(turns, turn => turn.turnId === event.turnId, turn => ({ ...turn, calls: [...turn.calls, { callId: event.callId, returned: false }] }))
   }
   if (event.type === "ModelReturned" && event.purpose === "inference") {
     if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
     if (new Set(event.toolCalls.map(call => call.callId)).size !== event.toolCalls.length) throw new RuntimeError("Duplicate tool call IDs in model reply")
-    turns = turns.map(turn => turn.calls.some(call => call.callId === event.callId) ? {
+    turns = updateTurn(turns, turn => turn.calls.some(call => call.callId === event.callId), turn => ({
       ...turn, answer: event.toolCalls.length === 0 ? event.text : null,
       answerCallId: event.toolCalls.length === 0 ? event.callId : null,
       calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call),
       outstanding: event.toolCalls.map(call => call.callId),
-    } : turn)
+    }))
   }
   if (event.type === "ModelFailed") {
     if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
-    turns = turns.map(turn => turn.calls.some(call => call.callId === event.callId) ? { ...turn, failure: event.reason, calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call) } : turn)
+    turns = updateTurn(turns, turn => turn.calls.some(call => call.callId === event.callId), turn => ({ ...turn, failure: event.reason, calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call) }))
   }
   if (event.type === "TurnSettled") {
     const turn = turns.find(turn => turn.turnId === event.turnId)
@@ -59,11 +72,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Obs
     if (event.outcome === "cancelled" && (turn.cancellation === null || turn.effects.some(work => work.pending))) throw new RuntimeError("Turn cancellation must drain accepted work before settlement")
     turns = turns.map(value => value === turn ? { ...value, settlement: event.outcome, ...(event.outcome === "failed" ? { failure: event.reason } : event.outcome === "cancelled" ? { cancellation: event.reason } : {}) } : value)
   }
-  if (event.type === "ToolReturned" && turns.some(turn => turn.outstanding.includes(event.callId))) {
-    turns = turns.map(turn => turn.outstanding.includes(event.callId)
-      ? { ...turn, outstanding: turn.outstanding.filter(id => id !== event.callId) }
-      : turn)
-  }
+  if (event.type === "ToolReturned") turns = updateTurn(turns, turn => turn.outstanding.includes(event.callId), turn => ({ ...turn, outstanding: turn.outstanding.filter(id => id !== event.callId) }))
   if (turns === state.turns) return state
   const turn = turns.find(turn => turn.settlement === null)
   const running = turn?.calls.find(call => !call.returned)
