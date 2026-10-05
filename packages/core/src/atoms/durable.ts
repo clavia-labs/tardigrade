@@ -1,7 +1,7 @@
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom, type Getter } from "./atom"
-import { incrementalValidator } from "./incremental/validate"
+import { incrementalValidator, invalid } from "./incremental/validate"
 import type { RecordMetadata } from "../services/journal"
 import { EventLog, eventLogContext } from "../services/event-log"
 import { AtomState, type StatefulAtom } from "../initialise"
@@ -32,16 +32,18 @@ export function durableAtom<State, Event>(options: {
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
   const fast = incrementalValidator(options.schema, () => console.warn(`Durable atom "${options.name}" state is not plain data; validation is O(state)`))
+  // check returns the state to keep: the parsed value when the incremental path accepts it, otherwise state after Effect's validation.
   const check = (state: State): State => {
-    if (!fast(state)) validate(state)
+    const parsed = fast.parse(state)
+    if (parsed !== invalid) return parsed as State
+    validate(state)
     return state
   }
   const decode = (Schema.decodeUnknownSync as unknown as (schema: unknown, options: { readonly onExcessProperty: "error" }) => (value: unknown) => unknown)(options.schema, { onExcessProperty: "error" }) as (value: unknown) => State
   const encode = (Schema.encodeUnknownSync as unknown as (schema: unknown) => (value: unknown) => unknown)(options.schema) as (value: State) => unknown
   const restore = (state: unknown): State => {
     const decoded = decode(state)
-    fast.trust(decoded)
-    return decoded
+    return fast.trust(decoded) as State
   }
   const initial = structuredClone(options.initial)
   validate(initial)
@@ -71,8 +73,7 @@ export function durableAtom<State, Event>(options: {
       const record = records?.[index]
       const metadata: RecordMetadata = record ? { ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), ...(record.message ? { message: record.message } : {}) } : {}
       const next = options.reduce(state, event, metadata, offset + index)
-      if (!Object.is(next, state)) check(next)
-      state = next
+      state = Object.is(next, state) ? next : check(next)
     }
     return { source, position: offset + events.length, state }
   }).pipe(NativeAtom.keepAlive)

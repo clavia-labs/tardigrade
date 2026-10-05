@@ -5,32 +5,65 @@ const STRICT = { onExcessProperty: "error" } as const
 type Check = (value: unknown) => boolean
 type Node = { readonly check: Check; readonly trust: (value: unknown) => void }
 
+// invalid is the result of parse for a value that fails validation.
+export const invalid: unique symbol = Symbol("invalid")
+
 // incrementalValidator reuses successful checks for frozen plain-data subtrees under pure type-side schemas (packages/platform/test/properties/runtime/state-validation.ts).
-// The returned trust(value) records an already decoded value as passing without checking it again; values that are not plain data are left unrecorded.
-export function incrementalValidator(schema: Schema.Top, onFallback?: () => void): Check & { readonly trust: (value: unknown) => void } {
+// parse(value) returns the deep-frozen plain value that passed, or invalid; an unfrozen array is read by index into a new array, as Effect's decode reads it, so the result can differ from value by identity and callers keep the result.
+// trust(value) records an already decoded value as passing without checking it again and returns the value to keep; values that are not plain data are returned unrecorded.
+export function incrementalValidator(schema: Schema.Top, onFallback?: () => void): Check & { readonly parse: (value: unknown) => unknown; readonly trust: (value: unknown) => unknown } {
   const immutable = frozenPlainData
-  const freeze = (value: unknown): boolean => {
+  const own = (root: unknown): unknown => {
     const pending: object[] = []
-    const seen = new Set<object>()
-    const visit = (value: unknown): boolean => {
-      if (value === null || typeof value !== "object") return typeof value !== "function"
-      if (immutable.has(value) || seen.has(value)) return true
+    const owned = new Map<object, unknown>()
+    const visit = (value: unknown): unknown => {
+      if (value === null || typeof value !== "object") return typeof value === "function" ? invalid : value
+      if (immutable.has(value)) return value
+      const known = owned.get(value)
+      if (known !== undefined) return known
       const prototype: unknown = Object.getPrototypeOf(value)
-      if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return false
-      seen.add(value)
-      for (const key of Reflect.ownKeys(value)) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, key)!
-        if (!("value" in descriptor) || !visit(descriptor.value)) return false
+      if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return invalid
+      if (Array.isArray(value) && !Object.isFrozen(value)) {
+        const copy: unknown[] = []
+        owned.set(value, copy)
+        for (let index = 0; index < value.length; index++) {
+          const item: unknown = value[index]
+          if (item === undefined && !Object.hasOwn(value, index)) return invalid
+          const next = visit(item)
+          if (next === invalid) return invalid
+          copy.push(next)
+        }
+        pending.push(copy)
+        return copy
       }
-      pending.push(value)
-      return true
+      owned.set(value, value)
+      const keys = Reflect.ownKeys(value)
+      const values: unknown[] = []
+      let replaced = false
+      for (const key of keys) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key)!
+        if (!("value" in descriptor)) return invalid
+        const next = visit(descriptor.value)
+        if (next === invalid) return invalid
+        replaced ||= next !== descriptor.value
+        values.push(next)
+      }
+      let result: object = value
+      if (replaced) {
+        result = Array.isArray(value) ? [] : prototype === null ? Object.create(null) as object : {}
+        keys.forEach((key, index) => Object.defineProperty(result, key, { value: values[index], enumerable: Object.getOwnPropertyDescriptor(value, key)!.enumerable!, writable: true, configurable: true }))
+        owned.set(value, result)
+      }
+      pending.push(result)
+      return result
     }
-    if (!visit(value)) return false
+    const result = visit(root)
+    if (result === invalid) return invalid
     for (const object of pending) {
       Object.freeze(object)
       immutable.add(object)
     }
-    return true
+    return result
   }
   const compile = (ast: SchemaAST.AST): Node => {
     const decode = Schema.decodeUnknownExit(Schema.toType(Schema.make(ast)), STRICT)
@@ -84,14 +117,21 @@ export function incrementalValidator(schema: Schema.Top, onFallback?: () => void
   const fast = compile(ast)
   const decode = Schema.decodeUnknownExit(Schema.toType(Schema.make(ast)), STRICT)
   let reported = false
-  const validate = (value: unknown) => {
-    if (freeze(value)) return fast.check(value)
-    const valid = Exit.isSuccess(decode(value))
-    if (valid && !reported) {
+  const parse = (value: unknown): unknown => {
+    const owned = own(value)
+    if (owned !== invalid) return fast.check(owned) ? owned : invalid
+    if (!Exit.isSuccess(decode(value))) return invalid
+    if (!reported) {
       reported = true
       onFallback?.()
     }
-    return valid
+    return value
   }
-  return Object.assign(validate, { trust: (value: unknown) => { if (freeze(value)) fast.trust(value) } })
+  const trust = (value: unknown): unknown => {
+    const owned = own(value)
+    if (owned === invalid) return value
+    fast.trust(owned)
+    return owned
+  }
+  return Object.assign((value: unknown) => parse(value) !== invalid, { parse, trust })
 }
