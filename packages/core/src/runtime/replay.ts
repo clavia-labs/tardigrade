@@ -1,3 +1,4 @@
+import type { ReadonlyLog } from "./log-view"
 import { frozenPlainData } from "../atoms/incremental/frozen"
 import { actInputs } from "../atoms/act"
 import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
@@ -95,8 +96,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     return freeze({ ...metadata, event: eventOf(record.event, metadata.message?.inReplyTo !== undefined) })
   }
   type Snapshot = {
-    readonly events: readonly RuntimeEvent<Event>[]
-    readonly records: readonly Recorded<Event>[]
+    readonly events: ReadonlyLog<RuntimeEvent<Event>>
+    readonly records: ReadonlyLog<Recorded<Event>>
     readonly position: number
     readonly seed: EffectCheckpoint | undefined
     readonly bindings: ReadonlyMap<object, EffectRef>
@@ -113,7 +114,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
     readonly checkpoint: () => EffectCheckpoint | undefined
   }
-  const createEngine = (history: readonly Recorded<Event>[], seed?: EffectCheckpoint) => {
+  const createEngine = (history: ReadonlyLog<Recorded<Event>>, seed?: EffectCheckpoint) => {
     const offset = seed?.position ?? 0
     const source = createRecordSource<Event>()
     const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
@@ -179,7 +180,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }))
     const actReferences = new Map<object, EffectRef>()
     const actOwners = new Map<object, string>()
-    let records: readonly Recorded<Event>[] = store.get(source.records)
+    let records: ReadonlyLog<Recorded<Event>> = store.get(source.records)
     let disposed = false
     const dispose = () => {
       if (disposed) return
@@ -511,7 +512,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     return restored
   }
   const extends_ = (engine: Engine, snapshot: Snapshot) => !engine.disposed && engine.seed === snapshot.seed && engine.position >= snapshot.position &&
-    (snapshot.records.length === 0 || engine.records[snapshot.records.length - 1] === snapshot.records[snapshot.records.length - 1])
+    (snapshot.records.length === 0 || engine.records.at(snapshot.records.length - 1) === snapshot.records.at(snapshot.records.length - 1))
   const snapshotOf = (engine: Engine): Snapshot => {
     const work = Object.freeze([...engine.effects()])
     const cancellations = Object.freeze([...engine.cancellations()])

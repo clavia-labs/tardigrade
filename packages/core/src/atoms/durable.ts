@@ -1,3 +1,4 @@
+import type { ReadonlyLog } from "../runtime/log-view"
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom, type Getter } from "./atom"
@@ -48,7 +49,7 @@ export function durableAtom<State, Event>(options: {
   const initial = structuredClone(options.initial)
   validate(initial)
   check(initial)
-  type Frame = { readonly source: Atom<readonly unknown[]>; readonly position: number; readonly state: State }
+  type Frame = { readonly source: Atom<ReadonlyLog<unknown>>; readonly position: number; readonly state: State }
   const reduced = NativeAtom.readable((get): Frame => {
     const context = get(eventLogContext)
     if (!context) throw new Error("Missing EventLog service")
@@ -68,9 +69,9 @@ export function durableAtom<State, Event>(options: {
     let state = continued ? previous.state : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : check(structuredClone(initial))
     const start = (continued ? previous.position : seed?.position ?? offset) - offset
     for (let index = Math.max(0, start); index < events.length; index++) {
-      const event = events[index]
+      const event = events.at(index)
       if (!accepts(event)) continue
-      const record = records?.[index]
+      const record = records?.at(index)
       const metadata: RecordMetadata = record ? { ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), ...(record.message ? { message: record.message } : {}) } : {}
       const next = options.reduce(state, event, metadata, offset + index)
       state = Object.is(next, state) ? next : check(next)

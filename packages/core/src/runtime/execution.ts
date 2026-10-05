@@ -306,9 +306,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const observePromises = Effect.gen(function* () {
       const observer = Context.getOption(services, Promises)
       const events = snapshot.events
-      if (observedThrough > events.length || (observedThrough > 0 && events[observedThrough - 1] !== lastObserved)) observedThrough = 0
-      for (; observedThrough < events.length; observedThrough++, lastObserved = events[observedThrough - 1]) {
-        const record = events[observedThrough]!
+      if (observedThrough > events.length || (observedThrough > 0 && events.at(observedThrough - 1) !== lastObserved)) observedThrough = 0
+      for (; observedThrough < events.length; observedThrough++, lastObserved = events.at(observedThrough - 1)) {
+        const record = events.at(observedThrough)!
         if (!Schema.is(EffectSettled)(record) || record.outcome.status !== "fulfilled") continue
         const result = yield* Schema.decodeUnknownEffect(ExecutionResult)(record.outcome.value).pipe(Effect.mapError(RuntimeError.from))
         if (result.type !== "promise" || snapshot.promise(record.ref) || snapshot.effect(record.ref)?.cancellation) continue
@@ -692,7 +692,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           // progressCursor is the position after the last settlement, so the scan runs back from the end.
           let progressCursor = snapshot.seed?.position ?? 0
           for (let index = snapshot.records.length - 1; index >= 0; index--) {
-            const event = snapshot.records[index]!.event
+            const event = snapshot.records.at(index)!.event
             if (Schema.is(EffectSettled)(event) || Schema.is(PromiseSettled)(event)) {
               progressCursor = (snapshot.seed?.position ?? 0) + index + 1
               break

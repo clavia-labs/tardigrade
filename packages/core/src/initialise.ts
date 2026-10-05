@@ -1,3 +1,4 @@
+import type { ReadonlyLog } from "./runtime/log-view"
 import { Schema } from "effect"
 import type { Getter } from "./atoms/atom"
 import type { Recorded } from "./services/journal"
@@ -32,10 +33,10 @@ export const StateInitialised = Schema.Struct({
 export type StateInitialised = typeof StateInitialised.Type
 
 // initialStateSeed resolves checkpoint state or a fresh journal marker into an atom seed.
-export function initialStateSeed(records: readonly Recorded<unknown>[], checkpoint?: { readonly position: number; readonly durable: readonly { readonly name: string; readonly state: unknown }[] }): StateSeed | undefined {
+export function initialStateSeed(records: ReadonlyLog<Recorded<unknown>>, checkpoint?: { readonly position: number; readonly durable: readonly { readonly name: string; readonly state: unknown }[] }): StateSeed | undefined {
   if (checkpoint) return { position: checkpoint.position, state: new Map(checkpoint.durable.map(entry => [entry.name, entry.state] as const)) }
-  const first = records[0]?.event
+  const first = records.at(0)?.event
   const index = Schema.is(ThreadCreated)(first) ? 1 : 0
-  const event = records[index]?.event
+  const event = records.at(index)?.event
   return Schema.is(StateInitialised)(event) ? { position: index + 1, state: new Map(Object.entries(event.initialState)) } : undefined
 }

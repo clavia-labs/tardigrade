@@ -6,6 +6,7 @@ import { EffectRequested } from "./events"
 import { observeRequest } from "./input-digest"
 import { Schema } from "effect"
 import type { createStore } from "../atoms/store"
+import { LogView } from "./log-view"
 
 // createEventSource exposes an event prefix whose updates accept only appended batches.
 export function createEventSource<Event = unknown>() {
@@ -22,7 +23,7 @@ export function createEventSource<Event = unknown>() {
 
 // createRecordSource appends stored records and payload-free atom observations atomically (inputRepresentation).
 export function createRecordSource<Event>() {
-  const source = atom<{ readonly events: readonly RuntimeEvent<Event>[]; readonly records: readonly Recorded<Event>[]; readonly observed: readonly ObservedRecord<Event>[]; readonly observedEvents: readonly (Event | ObservedRecord<Event>["event"])[] }>({ events: Object.freeze([]), records: Object.freeze([]), observed: Object.freeze([]), observedEvents: Object.freeze([]) })
+  const source = atom<{ readonly events: LogView<RuntimeEvent<Event>>; readonly records: LogView<Recorded<Event>>; readonly observed: LogView<ObservedRecord<Event>>; readonly observedEvents: LogView<Event | ObservedRecord<Event>["event"]> }>({ events: LogView.empty, records: LogView.empty, observed: LogView.empty, observedEvents: LogView.empty })
   const eventOf = <Entry extends { readonly event: unknown; readonly message?: { readonly inReplyTo?: unknown } }>(record: Entry) => isMessageReceived(record.event) && !record.message?.inReplyTo ? record.event.body as Event : record.event as Entry["event"]
   return {
     events: atom(get => get(source).events).pipe(NativeAtom.withLabel("events")),
@@ -34,10 +35,10 @@ export function createRecordSource<Event>() {
       const previous = store.get(source)
       const observed = batch.map(record => Object.freeze({ ...record, event: Schema.is(EffectRequested)(record.event) ? Object.freeze(observeRequest(record.event)) : record.event }))
       store.set(source, {
-        events: Object.freeze([...previous.events, ...batch.map(eventOf)]),
-        records: Object.freeze([...previous.records, ...batch]),
-        observed: Object.freeze([...previous.observed, ...observed]),
-        observedEvents: Object.freeze([...previous.observedEvents, ...observed.map(eventOf)]),
+        events: previous.events.append(batch.map(eventOf)),
+        records: previous.records.append(batch),
+        observed: previous.observed.append(observed),
+        observedEvents: previous.observedEvents.append(observed.map(eventOf)),
       })
     },
   }
