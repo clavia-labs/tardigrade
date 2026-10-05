@@ -97,6 +97,13 @@ const resolveContentObjects = (context: typeof Conversation.Type): Effect.Effect
   return new Map(entries)
 })
 
+const jsonSchemaOf = (value: unknown) => Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(value)
+
+const outputDecode = (schema: Schema.Top, text: string) => Effect.result(Effect.try({
+  try: () => JSON.parse(text),
+  catch: RuntimeError.from,
+}).pipe(Effect.flatMap(value => (Schema.decodeUnknownEffect as unknown as (schema: Schema.Top) => (value: unknown) => Effect.Effect<unknown, Error>)(schema)(value))))
+
 const promptPartsOf = (content: ReadonlyArray<MessageContentPart>, objects: ReadonlyMap<string, Uint8Array>) => content.map((part) => {
   if (part.type === "text") return Prompt.makePart("text", { text: part.text })
   const data = objects.get(objectKeyOf(part.object))
@@ -140,7 +147,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
         type: "json" as const,
         objectName: input.output.name,
         schema: SchemaRepresentation.fromJsonSchemaDocument(
-          JsonSchema.fromSchemaDraft07(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(input.output.schema)),
+          JsonSchema.fromSchemaDraft07(jsonSchemaOf(input.output.schema)),
           settings.schemaImport ?? DEFAULT_SCHEMA_IMPORT_OPTIONS,
         ),
       }
@@ -187,11 +194,8 @@ export function modelServices(options: ModelServiceOptions = {}) {
       if (response.finishReason === "length") return yield* Effect.fail(new RuntimeError(`Model reached maxOutputTokens=${settings.policy.maxOutputTokens}`))
       let outputErrors: string[] | undefined
       if (input.output !== undefined) {
-        try {
-          (Schema.decodeUnknownSync as unknown as (schema: Schema.Top) => (value: unknown) => unknown)(responseFormat!.schema)(JSON.parse(response.text))
-        } catch (error) {
-          outputErrors = [`${error instanceof Error ? error.message : String(error)}`]
-        }
+        const decoded = yield* outputDecode(responseFormat!.schema, response.text)
+        if (decoded._tag === "Failure") outputErrors = [decoded.failure instanceof Error ? decoded.failure.message : String(decoded.failure)]
       }
       const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: Schema.decodeUnknownSync(Schema.Json)(call.params) }))
       const finish = response.content.find(part => part.type === "finish")
