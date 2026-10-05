@@ -10,6 +10,7 @@ export { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_SQLITE_MAX_ROW_BYTES, CLOUDFLARE_MAX_
 import { sqlJournal, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { sqlJournal, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
+export { workerLoaderIsolate, DEFAULT_WORKER_LOADER_ISOLATE_POLICY, type WorkerLoaderIsolatePolicy } from "./isolate"
 import { hostRoutes, type HttpHost } from "../shared/http"
 import { HttpRouter } from "effect/unstable/http"
 
