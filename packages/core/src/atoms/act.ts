@@ -77,7 +77,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
   const failureSchema = Schema.toType(options.failure)
   const decodeSuccess = Schema.decodeUnknownSync(successSchema)
   const decodeFailure = Schema.decodeUnknownSync(failureSchema)
-  // decodeInput freezes what request builds, since prepareRequest freezes request inputs regardless; execute hands implementations unfrozen containers and reuses the request's.
+  // decodeInput freezes what request builds, since prepareRequest freezes request inputs regardless; execute rebuilds those containers unfrozen for implementations.
   const decodeInput = incrementalDecoder(inputSchema)
   // Implementation uses the act name as its service identity across independently constructed definitions.
   // @effect-diagnostics-next-line serviceNotAsClass:off

@@ -28,13 +28,16 @@ const isPlainObject = (value: object): boolean => {
 }
 
 // incrementalDecoder decodes a value against a type-side schema and returns a result deep-equal to structuredClone of Schema.decodeSync, reusing frozen plain-data subtrees instead of decoding and copying them again. It returns undefined where it cannot show that equivalence; the caller then decodes and clones.
-// With freeze, a container it builds whose children are all primitives or frozen plain data is frozen, recorded in frozenPlainData so later proofs of the result stop at it (runtime/replay.ts freeze), and recorded as passed at its node, since it holds exactly that node's fields, each decoded; a later call without freeze then reuses it.
+// With freeze, a container it builds whose children are all primitives or frozen plain data is frozen, recorded in frozenPlainData so later proofs of the result stop at it (runtime/replay.ts freeze), and recorded as passed at its node, since it holds exactly that node's fields, each decoded.
+// A call without freeze rebuilds such a container unfrozen and reuses its passed children, so it returns the same shape as decoding the unfrozen original.
 export function incrementalDecoder(schema: Schema.Top): (value: unknown, options?: DecodeOptions) => ReturnType<Decode> {
   let freeze = false
+  const frozenByFreeze = new WeakSet<object>()
   const built = (value: object, plain: boolean, passed: WeakSet<object>) => {
     if (freeze && plain) {
       Object.freeze(value)
       frozenPlainData.add(value)
+      frozenByFreeze.add(value)
       passed.add(value)
     }
     return { value }
@@ -83,6 +86,7 @@ export function incrementalDecoder(schema: Schema.Top): (value: unknown, options
     return value => {
       if (typeof value !== "object" || value === null) return isJson(value) && strict(value) ? { value } : undefined
       if (frozenPlainData.has(value)) {
+        if (container && !freeze && frozenByFreeze.has(value)) return container(value)
         if (passed.has(value)) return { value }
         if (!isReusableJson(value) || !strict(value)) return undefined
         passed.add(value)
