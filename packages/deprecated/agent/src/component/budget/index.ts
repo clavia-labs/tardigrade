@@ -221,7 +221,12 @@ export const budget = <
       )]
     })
     const recorded = new Set(log.map(transitionKeyOf).filter((key) => key !== undefined))
-    const refusals = refused.filter((transition) => !recorded.has(transition.key))
+    // legacy maps a key to the "agent.tools" owner that older logs record tool answers under; seq and tag still identify the call (#529).
+    const legacy = (key: string): string => {
+      const [seq, , tag] = JSON.parse(key) as [number, string, string]
+      return JSON.stringify([seq, "agent.tools", tag])
+    }
+    const refusals = refused.filter((transition) => !recorded.has(transition.key) && !recorded.has(legacy(transition.key)))
     const wall = refusals.length > 0 && used > allowance && budgetPhase(trajectory) === "spending" && log.length > 0
       ? [exhaustion(log[log.length - 1]!, used)] : []
     const head = turnHead(trajectory)
