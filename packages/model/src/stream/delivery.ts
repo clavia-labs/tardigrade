@@ -50,11 +50,18 @@ export const observeResponse = (identity: InferenceIdentity, model: ModelRef, ke
   const physicalAttempt = yield* IdGenerator.defaultIdGenerator.generateId()
   let sequence = 0
   let blockIndex = -1
+  let openBlock: string | undefined
   return {
     onPart: (part: Response.AnyPart) => {
-      if (part.type === "text-start" || part.type === "reasoning-start") blockIndex += 1
       if (part.type !== "text-delta" && part.type !== "reasoning-delta") return Effect.void
-      const delta: InferDelta = { ...identity, logicalAttempt: key ?? identity.turn, physicalAttempt, model, blockIndex: Math.max(0, blockIndex), sequence: sequence++, text: part.delta, ...(part.type === "reasoning-delta" ? { kind: "reasoning" as const } : {}) }
+      // A block opens when the delta's part changes and an empty delta opens none, since OpenRouter reopens reasoning beside empty text (delivery.test.ts).
+      if (part.delta === "") return Effect.void
+      const block = `${part.type}:${part.id}`
+      if (block !== openBlock) {
+        blockIndex += 1
+        openBlock = block
+      }
+      const delta: InferDelta = { ...identity, logicalAttempt: key ?? identity.turn, physicalAttempt, model, blockIndex, sequence: sequence++, text: part.delta, ...(part.type === "reasoning-delta" ? { kind: "reasoning" as const } : {}) }
       onDelta?.(delta)
       return delivery?.offer(delta).pipe(Effect.asVoid) ?? Effect.void
     },
