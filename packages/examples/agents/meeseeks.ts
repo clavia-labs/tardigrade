@@ -7,10 +7,10 @@ export const meeseeks = defineActor("meeseeks", Effect.gen(function* () {
   const system = atom("You are a helpful assistant. Keep answers concise and practical.")
   const tools = yield* libraryTools()
   const context = yield* compact(messages)
-  const agent = yield* infer(atom(get => ({
+  const agent = yield* infer(get => ({
     system: get(system),
     tools: get(tools),
     context: get(context),
-  })))
+  }))
   return { atom: agent, methods: agentMethods }
 }))

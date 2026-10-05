@@ -97,11 +97,11 @@ export default defineActor(actorName, Effect.gen(function* () {
   const system = atom(actorInstructions)
   const tools = yield* libraryTools([weather])
   const context = yield* compact(messages)
-  const agent = yield* infer(atom(get => ({
+  const agent = yield* infer(get => ({
     system: get(system),
     tools: get(tools),
     context: get(context),
-  })))
+  }))
   return { atom: agent, methods: agentMethods }
 }))
 ```

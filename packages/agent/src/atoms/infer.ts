@@ -1,4 +1,4 @@
-import { type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue } from "@clavia/tardigrade-core"
+import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled } from "../contracts/events"
@@ -17,7 +17,8 @@ export interface AgentInput<R, ToolEvents extends object = Event> {
   readonly context: ContextView
 }
 
-export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>>) {
+export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>> | ((get: Getter) => AgentInput<R, ToolEvents>)) {
+  const agentAtom = typeof agent === "function" ? atom(agent) : agent
   const request = requests(Generate.request, { latestOnly: true })
 
   const output = Effect.map(ModelInfo, selection => effectAtom(get => {
@@ -25,7 +26,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
     get(tokenSpend)
     get(usdSpend)
     get(timeSpend)
-    const input = get(agent)
+    const input = get(agentAtom)
     const state = get(inferenceState)
     const turn = state.turns.find(turn => turn.turnId === state.turnId)
 
