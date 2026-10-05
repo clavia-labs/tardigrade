@@ -1,6 +1,6 @@
 import { OperationScope } from "@clavia/tardigrade-deprecated-core/runtime/context"
 import { bindTransitionContext, type TransitionRef } from "@clavia/tardigrade-deprecated-core/transition/transition"
-import { Clock, Deferred, Effect, Fiber } from "effect"
+import { Clock, Deferred, Effect, Fiber, HashMap, HashSet, Option } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-deprecated-core/log"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
@@ -178,12 +178,13 @@ const executeRecorded = (
     return [{ type: "CodeSettled", execId, error: outcome.error, ...logs, ...stamp, at }]
   }).pipe(Effect.scoped)
 
+// CodeState holds persistent collections, so a step shares every collection it does not change; dispatches order is first-dispatch position, which cancellation follows (code.test.ts).
 interface CodeState {
   readonly turns: TurnProjectionState
-  readonly dispatches: ReadonlyMap<string, Event>
-  readonly settled: ReadonlySet<string>
-  readonly calls: ReadonlyMap<string, { readonly execId: string }>
-  readonly returned: ReadonlySet<string>
+  readonly dispatches: HashMap.HashMap<string, { readonly event: Event; readonly order: number }>
+  readonly settled: HashSet.HashSet<string>
+  readonly calls: HashMap.HashMap<string, { readonly execId: string }>
+  readonly returned: HashSet.HashSet<string>
 }
 
 const codeExecutionProjection = (
@@ -214,9 +215,9 @@ const codeExecutionProjection = (
     note: policy.spill?.note ?? (workspace === undefined ? BARE_SPILL_NOTE : WORKSPACE_SPILL_NOTE)
   })
   const callPolicy = packageCallPolicyOf(policy.call)
-  const ownerOf = (dispatches: ReadonlyMap<string, Event>, callId: string): string => {
+  const ownerOf = (dispatches: CodeState["dispatches"], callId: string): string => {
     let owner = ""
-    for (const execId of dispatches.keys()) {
+    for (const execId of HashMap.keys(dispatches)) {
       if (callId.startsWith(`${execId}.`) && execId.length > owner.length) owner = execId
     }
     return owner
@@ -224,28 +225,26 @@ const codeExecutionProjection = (
   return transitionProjection({
     initial: (): CodeState => ({
       turns: initialTurnProjection(),
-      dispatches: new Map(),
-      settled: new Set(),
-      calls: new Map(),
-      returned: new Set()
+      dispatches: HashMap.empty(),
+      settled: HashSet.empty(),
+      calls: HashMap.empty(),
+      returned: HashSet.empty()
     }),
     step: (state, event): CodeState => {
-      const dispatches = new Map(state.dispatches)
-      const settled = new Set(state.settled)
-      const calls = new Map(state.calls)
-      const returned = new Set(state.returned)
+      let { dispatches, settled, calls, returned } = state
       const value = event as { readonly execId?: unknown; readonly callId?: unknown; readonly awaiting?: unknown; readonly id?: unknown; readonly at?: unknown }
       if (event.type === "CodeDispatched") {
         const execId = executionKeyOf(event)
-        const prior = dispatches.get(execId) as { readonly at?: unknown } | undefined
-        if (prior === undefined || Number(value.at ?? 0) < Number(prior.at ?? 0)) dispatches.set(execId, event)
+        const prior = Option.getOrUndefined(HashMap.get(dispatches, execId))
+        if (prior === undefined || Number(value.at ?? 0) < Number((prior.event as { readonly at?: unknown }).at ?? 0))
+          dispatches = HashMap.set(dispatches, execId, { event, order: prior?.order ?? HashMap.size(dispatches) })
       }
-      if (event.type === "CodeSettled") settled.add(executionKeyOf(event))
+      if (event.type === "CodeSettled") settled = HashSet.add(settled, executionKeyOf(event))
       if (event.type === "PackageCalled") {
         const callId = packageKeyOf(event)
-        calls.set(callId, { execId: (executionRefOf(event) === undefined ? ownerOf(dispatches, callId) : executionKeyOf(event)) })
+        calls = HashMap.set(calls, callId, { execId: (executionRefOf(event) === undefined ? ownerOf(dispatches, callId) : executionKeyOf(event)) })
       }
-      if (event.type === "PackageReturned") returned.add(packageKeyOf(event))
+      if (event.type === "PackageReturned") returned = HashSet.add(returned, packageKeyOf(event))
       return {
         turns: reduceTurnProjection(state.turns, event),
         dispatches,
@@ -255,16 +254,16 @@ const codeExecutionProjection = (
       }
     },
     output: (state) => {
-      const ordered = [...state.dispatches.entries()].sort(([leftId, left], [rightId, right]) => {
+      const ordered = [...HashMap.entries(state.dispatches)].sort(([leftId, { event: left }], [rightId, { event: right }]) => {
         const time = Number((left as { readonly at?: unknown }).at ?? 0) - Number((right as { readonly at?: unknown }).at ?? 0)
         return time !== 0 ? time : leftId < rightId ? -1 : 1
       })
       let selected: { readonly execId: string; readonly dispatch: Event } | undefined
-      for (const [execId, dispatch] of ordered) {
+      for (const [execId, { event: dispatch }] of ordered) {
         const turn = turnOf(dispatch)
-        if (state.settled.has(execId) || (turn !== undefined && turnTerminalFrom(state.turns, turn) !== undefined)) continue
-        const owned = [...state.calls.entries()].filter(([, call]) => call.execId === execId)
-        const open = owned.filter(([callId]) => !state.returned.has(callId))
+        if (HashSet.has(state.settled, execId) || (turn !== undefined && turnTerminalFrom(state.turns, turn) !== undefined)) continue
+        const owned = [...HashMap.entries(state.calls)].filter(([, call]) => call.execId === execId)
+        const open = owned.filter(([callId]) => !HashSet.has(state.returned, callId))
         if (open.length === 0) selected = { execId, dispatch }
         break
       }
@@ -314,8 +313,8 @@ export const codeExecution = <const Cs extends ReadonlyArray<CodeComponent<unkno
               return cleanup
             if (cancellation.invocation.method !== "message")
               return []
-            return [...state.dispatches].flatMap(([key, dispatch]) => {
-              if (state.settled.has(key) || turnOf(dispatch) !== cancellation.invocation.id || eventEpochOf(dispatch) !== cancellation.invocation.epoch)
+            return [...HashMap.entries(state.dispatches)].sort(([, left], [, right]) => left.order - right.order).flatMap(([key, { event: dispatch }]) => {
+              if (HashSet.has(state.settled, key) || turnOf(dispatch) !== cancellation.invocation.id || eventEpochOf(dispatch) !== cancellation.invocation.epoch)
                 return []
               return [bindTransitionContext(dispatch, "code.execution").intent("execute", at => codeSettled({
                 ...(executionRefOf(dispatch) === undefined ? {} : { executionRef: executionRefOf(dispatch)! }),

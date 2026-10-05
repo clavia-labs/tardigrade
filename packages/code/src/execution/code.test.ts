@@ -5,6 +5,7 @@ import { OperationScope } from "@clavia/tardigrade-deprecated-core/runtime/conte
 import { describe, expect, expectTypeOf, test } from "bun:test"
 import { Context, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
+import { eventAt } from "@clavia/tardigrade-deprecated-core/event"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-deprecated-core/log"
 import { settleActor } from "@clavia/tardigrade-deprecated-core/runtime"
@@ -503,3 +504,43 @@ const executionFor = <const P extends ReadonlyArray<import("../package/definitio
   return transitionProjectionOf(child)
 }
 const emptyExecution = executionFor({}, [])
+
+describe("the execution state", () => {
+  const ownOf = (state: unknown) => (state as { readonly state: { readonly own: Record<string, unknown> } }).state.own
+  const stepper = () => {
+    const machine = machineOf(codeExecution([]))
+    let state = machine.initial()
+    let seq = 0
+    const step = (event: Event) => { state = machine.step(state, eventAt(event, ++seq)) }
+    return { machine, step, state: () => state }
+  }
+
+  test("a step shares every collection it does not change with the prior state", () => {
+    const { step, state } = stepper()
+    step({ type: "MessageReceived", id: "t1", text: "go", at: 1 })
+    step({ type: "CodeDispatched", execId: "e0", code: "return 1", turn: "t1", at: 2 })
+    step({ type: "CodeSettled", execId: "e0", result: 1, turn: "t1", at: 2 })
+    const before = ownOf(state())
+    step({ type: "MessageReceived", id: "t2", text: "again", at: 3 })
+    const after = ownOf(state())
+    expect(after.dispatches).toBe(before.dispatches)
+    expect(after.settled).toBe(before.settled)
+    expect(after.calls).toBe(before.calls)
+    expect(after.returned).toBe(before.returned)
+    step({ type: "CodeSettled", execId: "e0", result: 1, turn: "t1", at: 4 })
+    expect(ownOf(state()).dispatches).toBe(after.dispatches)
+    expect(ownOf(state()).calls).toBe(after.calls)
+  })
+
+  test("cancellation takes the first dispatched execution", () => {
+    const { machine, step, state } = stepper()
+    step({ type: "MessageReceived", id: "t1", text: "go", at: 1 })
+    step({ type: "CodeDispatched", execId: "e1", code: "return 1", turn: "t1", at: 2 })
+    step({ type: "CodeDispatched", execId: "e0", code: "return 1", turn: "t1", at: 2 })
+    const [cancel] = machine.output(state()).interactions!.cancel!({ request: "r1", cause: "requested", invocation: { method: "message", id: "t1", epoch: 0 } }) as unknown as ReadonlyArray<{
+      readonly input: unknown
+      readonly events: (input: unknown, at: number) => ReadonlyArray<{ readonly execId?: unknown }>
+    }>
+    expect(cancel!.events(cancel!.input, 9)[0]!.execId).toBe("e1")
+  })
+})
