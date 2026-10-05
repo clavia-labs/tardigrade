@@ -92,17 +92,17 @@ function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type
   }
 }
 
-const spend = durableAtom({
+export const spendSource = durableAtom({
   name: "agent.spend", input: SpendEvent, schema: SpendState,
   initial: { toolSpend: [], tokenSpend: [], usdSpend: [], timeSpend: [], timers: [], turns: [], models: [], tools: [] }, reduce: spendState,
 })
 
 // toolSpend records budget-counted tool calls per turn, including execution failures.
-export const toolSpend = atom(get => get(spend).toolSpend)
+export const toolSpend = atom(get => get(spendSource).toolSpend)
 // tokenSpend sums recorded provider input and output tokens per turn, including compaction.
-export const tokenSpend = atom(get => get(spend).tokenSpend)
+export const tokenSpend = atom(get => get(spendSource).tokenSpend)
 // usdSpend sums reported provider costs per turn; a missing cost makes that turn's total unknown.
-export const usdSpend = atom(get => get(spend).usdSpend)
+export const usdSpend = atom(get => get(spendSource).usdSpend)
 
 // timeSpend records wall milliseconds from turn request to turn settlement at journal boundaries, including queueing and downtime; missing timestamps produce unknown totals.
-export const timeSpend = atom(get => get(spend).timeSpend)
+export const timeSpend = atom(get => get(spendSource).timeSpend)
