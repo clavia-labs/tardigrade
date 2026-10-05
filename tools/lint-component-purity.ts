@@ -1,7 +1,7 @@
 import { componentPurityViolations } from "./component-purity"
 
 let violations = 0
-for await (const file of new Bun.Glob("{packages,platform,apps,examples,e2e}/**/*.{ts,tsx}").scan(".")) {
+for await (const file of new Bun.Glob("{packages,platform,apps,examples}/**/*.{ts,tsx}").scan(".")) {
   if (file.includes("node_modules/") || file.includes("/.output/") || file.includes("/dist/") || /\.(test|spec)\.[cm]?[jt]sx?$/.test(file)) continue
   const source = await Bun.file(file).text()
   for (const violation of componentPurityViolations(file, source)) {

@@ -10,7 +10,7 @@ export interface LocalObjectStorageOptions {
   readonly maxObjectBytes?: number
 }
 
-// sqlObjectStorage retains objects without eviction and rejects oversized writes (e2e/host/objects.test.ts).
+// sqlObjectStorage retains objects without eviction and rejects oversized writes.
 export const sqlObjectStorage = (options: LocalObjectStorageOptions = {}) => {
   const maxObjectBytes = options.maxObjectBytes ?? DEFAULT_MAX_LOCAL_OBJECT_BYTES
   if (!Number.isSafeInteger(maxObjectBytes) || maxObjectBytes < 0) throw new RangeError("maxObjectBytes must be a non-negative safe integer")

@@ -4,7 +4,7 @@ import { FileSystem } from "effect/FileSystem"
 import { Path } from "effect/Path"
 import { ObjectStorage, makeObjectStorage, sqlObjectStorage, type LocalObjectStorageOptions } from "@clavia/tardigrade-model/object"
 
-// objectStorageFromSqlite shares objects through the supplied database across host restarts (e2e/host/objects.test.ts).
+// objectStorageFromSqlite shares objects through the supplied database across host restarts.
 export const objectStorageFromSqlite = (
   config: SqliteClient.SqliteClientConfig,
   options: LocalObjectStorageOptions = {}
