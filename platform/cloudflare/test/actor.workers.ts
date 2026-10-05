@@ -5,7 +5,7 @@ import { threadSupervisor } from "@clavia/tardigrade-deprecated-core/actor/super
 import { childKeyOf } from "@clavia/tardigrade-deprecated-core/actor/coordinate"
 import { threadCreated } from "@clavia/tardigrade-deprecated-core/interaction/relations"
 import { env, runInDurableObject, evictDurableObject, SELF } from "cloudflare:test"
-import { Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-deprecated-core/actor"
 
 import type { Event } from "@clavia/tardigrade-deprecated-core/event"
@@ -490,6 +490,35 @@ describe("cloudflare actor", () => {
         actorInstance: "main",
         thread: "ag.cold-resting",
         actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
+      })
+      const result = await host.resting()
+      await host.close()
+      return result
+    })
+
+    expect(resting).toBe(true)
+  })
+
+  test("a cold thread replays rest with its dependencies", async () => {
+    class Prefix extends Context.Service<Prefix, { readonly value: string }>()("test/ColdRestingPrefix") {}
+    const resting = await runInDurableObject(threadStub("ag.cold-resting-dependencies"), async (_instance, state) => {
+      const host = await createCloudflareThreadHost({
+        storage: state.storage,
+        actorName: "echo",
+        actorInstance: "main",
+        thread: "ag.cold-resting-dependencies",
+        actor: actor({
+          name: "echo",
+          methods: {},
+          components: [component({
+            name: "prefixed",
+            dependencies: [Prefix] as const,
+            initial: (_children, [prefix]) => prefix.value,
+            step: (state) => state,
+            output: () => ({ view: undefined, transitions: [] })
+          })]
+        }),
+        layers: Layer.succeed(Prefix, { value: "cold" })
       })
       const result = await host.resting()
       await host.close()
