@@ -1,3 +1,5 @@
+import { modelRetry } from "./model-retry"
+import type { RetryOptions } from "@clavia/tardigrade-core/services/effect-execution"
 import { ModelInfo } from "../actor/context"
 import { RuntimeError, type ExecutionHandle, type ActCancellation, durablePromise, EffectExecution } from "@clavia/tardigrade-core"
 import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit, Option } from "effect"
@@ -39,6 +41,7 @@ export interface ModelInput { readonly model: ModelRef; readonly system: string;
 
 export class Model extends Context.Service<Model, {
   readonly call: (input: ModelInput, context?: ModelCallContext) => Effect.Effect<ModelReply, Error>
+  readonly retry?: (input: ModelInput) => Effect.Effect<RetryOptions<Error>, Error>
   readonly promiseTimeoutMs?: number | ((input: ModelInput) => Effect.Effect<number, Error>)
   readonly submit?: (input: ModelInput, context: Pick<typeof EffectExecution.Service, "ref" | "signal" | "publish">) => Effect.Effect<ExecutionHandle, Error>
   readonly cancel?: (input: ModelInput, context: Omit<ActCancellation, "request">) => Effect.Effect<void, Error>
@@ -49,6 +52,7 @@ export const DEFAULT_SCHEMA_IMPORT_OPTIONS = { patterns: "apply" } as const sati
 
 export interface ModelServiceOptions {
   readonly timeoutMs?: number
+  readonly promiseTimeoutMs?: number
 }
 
 const ProviderError = Schema.Struct({ error: Schema.Struct({
@@ -100,20 +104,24 @@ const promptPartsOf = (content: ReadonlyArray<MessageContentPart>, objects: Read
 
 // modelServices adapts native AI providers to the agent's model service without executing tools.
 export function modelServices(options: ModelServiceOptions = {}) {
-  if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new RuntimeError("timeoutMs must be a positive safe integer")
+  for (const [name, value] of Object.entries(options)) if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) throw new RuntimeError(`${name} must be a positive safe integer`)
   return Layer.effect(Model, Effect.gen(function* () {
     const lock = yield* ModelLock
     const languageModel = yield* LanguageModel.LanguageModel
     const selection = yield* ModelSelection
     const fallback = yield* BindingSettings
-    const promiseTimeoutMs = (input: ModelInput) => Effect.gen(function* () {
+    const settingsOf = (input: ModelInput) => Effect.gen(function* () {
       const resolved = lock.resolve(input.model)
       const settings = yield* (selection.settings?.(resolved.model) ?? Effect.succeed(fallback))
-      return options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
+      return { resolved, settings }
     })
-    return { promiseTimeoutMs, call: (input, context) => Effect.gen(function* () {
-      const resolved = lock.resolve(input.model)
-      const settings = yield* (selection.settings?.(resolved.model) ?? Effect.succeed(fallback))
+    const promiseTimeoutMs = (input: ModelInput) => Effect.gen(function* () {
+      const { settings } = yield* settingsOf(input)
+      return options.promiseTimeoutMs ?? options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
+    })
+    const retry = (input: ModelInput) => settingsOf(input).pipe(Effect.map(({ settings }) => modelRetry(settings.policy.retry)))
+    return { promiseTimeoutMs, retry, call: (input, context) => Effect.gen(function* () {
+      const { resolved, settings } = yield* settingsOf(input)
       const timeoutMs = options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
       const objects = yield* resolveContentObjects(input.context)
       const toolkit = yield* Effect.try({
@@ -177,8 +185,8 @@ export function modelServices(options: ModelServiceOptions = {}) {
 
 // liveModelServices connects the agent to Tardie's locked provider configuration and credentials.
 export function liveModelServices(options: Omit<ModelBindingOptions, "observer"> & ModelServiceOptions) {
-  const { timeoutMs, ...binding } = options
-  return modelServices(timeoutMs === undefined ? {} : { timeoutMs }).pipe(Layer.provideMerge(modelLayer(binding)))
+  const { timeoutMs, promiseTimeoutMs, ...binding } = options
+  return modelServices({ ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs }) }).pipe(Layer.provideMerge(modelLayer(binding)))
 }
 
 export const generate = Generate.layer(input => Effect.gen(function* () {
@@ -186,8 +194,10 @@ export const generate = Generate.layer(input => Effect.gen(function* () {
   const execution = yield* EffectExecution
   const timeoutMs = typeof model.promiseTimeoutMs === "function" ? yield* model.promiseTimeoutMs(input) : model.promiseTimeoutMs
   if (model.submit) return Generate.defer(yield* execution.submit(model.submit(input, execution), { timeoutMs }))
+  const retry = model.retry ? yield* model.retry(input) : undefined
+  const call = model.call(input, { publish: execution.publish, purpose: "inference" })
   const reply = durablePromise(execution.ref, { success: ModelReplySchema, error: Schema.String })
-  const handle = yield* execution.fork(model.call(input, { publish: execution.publish, purpose: "inference" }).pipe(
+  const handle = yield* execution.fork((retry ? execution.retry(call, retry) : call).pipe(
     Effect.exit,
     Effect.map(exit => Exit.isSuccess(exit) ? reply.succeed(exit.value) : reply.fail(Cause.pretty(exit.cause))),
   ), { timeoutMs })
@@ -197,7 +207,9 @@ export const generate = Generate.layer(input => Effect.gen(function* () {
 export const summarize = Summarize.layer(input => Effect.gen(function* () {
   const execution = yield* EffectExecution
   const model = yield* Model
-  return yield* model.call(input, { publish: execution.publish, purpose: "compaction" })
+  const retry = model.retry ? yield* model.retry(input) : undefined
+  const call = model.call(input, { publish: execution.publish, purpose: "compaction" })
+  return yield* (retry ? execution.retry(call, retry) : call)
 }).pipe(
   Effect.flatMap(reply => reply.text.trim() ? Effect.succeed(reply) : Effect.fail("Compaction returned an empty summary")),
   Effect.mapError(String),
