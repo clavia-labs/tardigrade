@@ -185,11 +185,13 @@ export function modelServices(options: ModelServiceOptions = {}) {
       )
       const { response } = collected
       if (response.finishReason === "length") return yield* Effect.fail(new RuntimeError(`Model reached maxOutputTokens=${settings.policy.maxOutputTokens}`))
+      let outputErrors: string[] | undefined
       if (input.output !== undefined) {
-        yield* Effect.try({
-          try: () => (Schema.decodeUnknownSync as unknown as (schema: Schema.Top) => (value: unknown) => unknown)(responseFormat!.schema)(JSON.parse(response.text)),
-          catch: error => new RuntimeError(`Model output did not satisfy schema "${input.output!.name}": ${error instanceof Error ? error.message : String(error)}`),
-        })
+        try {
+          (Schema.decodeUnknownSync as unknown as (schema: Schema.Top) => (value: unknown) => unknown)(responseFormat!.schema)(JSON.parse(response.text))
+        } catch (error) {
+          outputErrors = [`${error instanceof Error ? error.message : String(error)}`]
+        }
       }
       const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: Schema.decodeUnknownSync(Schema.Json)(call.params) }))
       const finish = response.content.find(part => part.type === "finish")
@@ -199,7 +201,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
         provider: settings.provider, protocol: settings.protocol, model: resolved.model.model_id,
         payload: yield* Schema.encodeEffect(Prompt.Prompt)(collected.continuation).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json))),
       }
-      return { text: response.text, toolCalls,
+      return { text: response.text, toolCalls, ...(outputErrors === undefined ? {} : { outputErrors }),
         ...(reasoning === undefined ? {} : { reasoning }),
         ...(continuation === undefined ? {} : { continuation }),
         usage: {

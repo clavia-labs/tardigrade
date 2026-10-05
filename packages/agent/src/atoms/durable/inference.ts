@@ -1,9 +1,10 @@
 import { Schema } from "effect"
 import { durableAtom, ObservedCoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage } from "@clavia/tardigrade-core"
-import { TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled, AbortRequested, type Event } from "../../contracts/events"
+import { TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled, AbortRequested, type Event } from "../../contracts/events"
 
 const Turn = Schema.Struct({
   turnId: Schema.String, invocationRef: Schema.NullOr(InvocationRef), settlement: Schema.NullOr(Schema.Literals(["completed", "failed", "cancelled"])), answer: Schema.NullOr(Schema.String), answerCallId: Schema.NullOr(Schema.String),
+  rejection: Schema.optionalKey(Schema.NullOr(Schema.Struct({ contract: Schema.String, errors: Schema.Array(Schema.String), attempt: Schema.Finite, maxCorrections: Schema.Finite }))),
   calls: Schema.Array(Schema.Struct({ callId: Schema.String, returned: Schema.Boolean })),
   outstanding: Schema.Array(Schema.String),
   effects: Schema.Array(Schema.Struct({ ref: EffectRef, pending: Schema.Boolean })), failure: Schema.NullOr(Schema.String), cancellation: Schema.NullOr(Schema.String),
@@ -33,7 +34,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Obs
     // An invocation starts at most one turn, so AbortRequested cancels exactly the turn of its invocation.
     const ref = event.invocationRef
     if (ref && turns.some(turn => turn.invocationRef?.method === ref.method && turn.invocationRef.id === ref.id)) throw new RuntimeError(`Duplicate turn for invocation: ${ref.method}:${ref.id}`)
-    turns = [...turns, { turnId: event.turnId, invocationRef: event.invocationRef ?? null, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }]
+    turns = [...turns, { turnId: event.turnId, invocationRef: event.invocationRef ?? null, settlement: null, answer: null, answerCallId: null, rejection: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }]
   }
   if (event.type === "AbortRequested") turns = updateTurn(turns, turn => turn.invocationRef?.method === event.ref.method && turn.invocationRef.id === event.ref.id && turn.settlement === null && turn.cancellation === null, turn => ({ ...turn, cancellation: event.reason }))
   if (event.type === "EffectRequested" && event.act !== DeliverMessage.name) turns = updateTurn(turns, turn => turn.turnId === state.turnId, turn => ({ ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] }))
@@ -52,7 +53,7 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Obs
     if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
     if (new Set(event.toolCalls.map(call => call.callId)).size !== event.toolCalls.length) throw new RuntimeError("Duplicate tool call IDs in model reply")
     turns = updateTurn(turns, turn => turn.calls.some(call => call.callId === event.callId), turn => ({
-      ...turn, answer: event.toolCalls.length === 0 ? event.text : null,
+      ...turn, answer: event.toolCalls.length === 0 ? event.text : null, rejection: null,
       answerCallId: event.toolCalls.length === 0 ? event.callId : null,
       calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call),
       outstanding: event.toolCalls.map(call => call.callId),
@@ -61,6 +62,14 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Obs
   if (event.type === "ModelFailed") {
     if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
     turns = updateTurn(turns, turn => turn.calls.some(call => call.callId === event.callId), turn => ({ ...turn, failure: event.reason, calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call) }))
+  }
+  if (event.type === "OutputRejected") {
+    if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
+    turns = turns.map(turn => turn.turnId === event.turnId ? {
+      ...turn, rejection: { contract: event.contract, errors: event.errors, attempt: event.attempt, maxCorrections: event.maxCorrections },
+      ...(event.attempt >= event.maxCorrections ? { failure: `The response did not satisfy output contract "${event.contract}" after ${event.maxCorrections} correction${event.maxCorrections === 1 ? "" : "s"}` } : {}),
+      calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call),
+    } : turn)
   }
   if (event.type === "TurnSettled") {
     const turn = turns.find(turn => turn.turnId === event.turnId)
@@ -96,7 +105,7 @@ export function turnOutput(events: readonly Event[], settlement: TurnSettled): s
 
 export const inferenceState = durableAtom({
   name: "agent.inference.state",
-  input: Schema.Union([TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled, AbortRequested, ObservedCoreEvent]),
+  input: Schema.Union([TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled, AbortRequested, ObservedCoreEvent]),
   schema: InferenceState,
   initial: initialInference,
   reduce: inferState,

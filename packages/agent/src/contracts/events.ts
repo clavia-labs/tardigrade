@@ -20,7 +20,7 @@ const ModelReasoning = {
   reasoning: Schema.optionalKey(Schema.String),
   continuation: Schema.optionalKey(ProviderContinuation),
 }
-export const ModelReply = Schema.Struct({ ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ProviderToolCall), usage: Schema.optionalKey(ModelUsage) })
+export const ModelReply = Schema.Struct({ ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ProviderToolCall), usage: Schema.optionalKey(ModelUsage), outputErrors: Schema.optionalKey(Schema.Array(Schema.String)) })
 export const Decision = Schema.Struct({ allowed: Schema.Boolean, reason: Schema.String })
 
 export const PermissionMode = Schema.Literals(["allow", "deny", "ask"])
@@ -92,6 +92,11 @@ export type ModelReturned = typeof ModelReturned.Type
 
 export const CompactionFailed = Schema.Struct({ type: Schema.Literal("CompactionFailed"), callId: Schema.String, reason: Schema.String })
 export const ModelFailed = Schema.Struct({ type: Schema.Literal("ModelFailed"), callId: Schema.String, reason: Schema.String })
+export const OutputRejected = Schema.Struct({
+  type: Schema.Literal("OutputRejected"), turnId: Schema.String, callId: Schema.String,
+  contract: Schema.String, text: Schema.String, errors: Schema.Array(Schema.String),
+  attempt: Schema.Finite, maxCorrections: Schema.Finite,
+})
 export { AbortRequested } from "@clavia/tardigrade-core"
 
 export const TurnSettled = Schema.Union([
@@ -115,6 +120,7 @@ export const Event = Schema.Union([
   ActorReplyReceived,
   ModelCalled,
   ModelFailed,
+  OutputRejected,
   AbortRequested,
   CompactionFailed,
   PromiseSettled,

@@ -1,7 +1,7 @@
 import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled } from "../contracts/events"
+import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled } from "../contracts/events"
 import { ModelInfo } from "../actor/context"
 import { Generate, requests, failureMessage } from "../contracts/acts"
 import type { OutputContract } from "../contracts/acts"
@@ -70,6 +70,9 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
     }
     if (state.waiting || input.context.view.position !== "ready") return { view: { position: "waiting" as const }, ...proposals }
     const messages = input.context.view.messages
+    const rejection = turn?.rejection
+    const correctionSystem = rejection === null || rejection === undefined || rejection.attempt >= rejection.maxCorrections ? "" :
+      `\n\nYour previous response did not satisfy the declared output contract "${rejection.contract}".\nValidation errors:\n${rejection.errors.map(error => `- ${error}`).join("\n")}\nReturn only a corrected response matching the contract.`
 
     return {
       view: { position: "ready" as const },
@@ -78,10 +81,11 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
         ...proposals.acts,
         inference: request(state.callId, {
           ...(state.origin === null ? {} : { origin: state.origin }),
-          input: { model: selection.model, system: input.system, tools: input.tools.view.specs, context: messages, ...(input.output === undefined ? {} : { output: input.output }) },
+          input: { model: selection.model, system: `${input.system}${correctionSystem}`, tools: input.tools.view.specs, context: messages, ...(input.output === undefined ? {} : { output: input.output }) },
           onRequested: () => [{ type: "ModelCalled", purpose: "inference", ...selection, callId: state.callId, turnId: state.turnId } satisfies ModelCalled],
           onSettled: (result, ref) => {
             if (result.status === "rejected") return [{ type: "ModelFailed", callId: state.callId, reason: failureMessage(result.reason) } satisfies typeof ModelFailed.Type]
+            if (result.value.outputErrors !== undefined) return [{ type: "OutputRejected", turnId: state.turnId, callId: state.callId, contract: input.output?.name ?? "output", text: result.value.text, errors: result.value.outputErrors, attempt: turn?.calls.length ?? 0, maxCorrections: input.output?.correction?.attempts ?? 0 } satisfies typeof OutputRejected.Type]
             if (new Set(result.value.toolCalls.map(call => call.callId)).size !== result.value.toolCalls.length) return [{ type: "ModelFailed", callId: state.callId, reason: "Duplicate provider tool call IDs" } satisfies typeof ModelFailed.Type]
             return [{ type: "ModelReturned", purpose: "inference", callId: state.callId, text: result.value.text, ...(result.value.reasoning === undefined ? {} : { reasoning: result.value.reasoning }), ...(result.value.continuation === undefined ? {} : { continuation: result.value.continuation }), ...(result.value.usage ? { usage: result.value.usage } : {}),
               toolCalls: result.value.toolCalls.map((call, index) => ({ ...call, providerId: call.callId, callId: JSON.stringify([ref.seq, ref.atom, ref.act, index]) })),

@@ -8,6 +8,7 @@ import { ModelReply, ToolCall, Decision, BudgetDecision, BudgetMetric, Permissio
 export const OutputContract = Schema.Struct({
   name: Schema.NonEmptyString,
   schema: Schema.Json,
+  correction: Schema.optionalKey(Schema.Struct({ attempts: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)), projectHistory: Schema.optionalKey(Schema.Boolean) })),
 })
 export type OutputContract = typeof OutputContract.Type
 
