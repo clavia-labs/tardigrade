@@ -50,7 +50,11 @@ export class Model extends Context.Service<Model, {
 }>()("example/Model") {}
 
 export const DEFAULT_MODEL_TIMEOUT_MS = 60_000
-export const DEFAULT_SCHEMA_IMPORT_OPTIONS = { patterns: "apply" } as const satisfies SchemaRepresentation.FromJsonSchemaOptions
+// closeObjectSchemas sets additionalProperties to false on each object schema that declares properties and leaves it unset. An open object imports with a root allOf that strict adapters reject (#603; platform/test/bun/tool-schema.test.ts).
+export const closeObjectSchemas = (schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema =>
+  schema.type === "object" && schema.properties !== undefined && schema.additionalProperties === undefined ? { ...schema, additionalProperties: false } : schema
+// DEFAULT_SCHEMA_IMPORT_OPTIONS imports tool and output schemas with closed objects; a binding's schemaImport setting replaces it.
+export const DEFAULT_SCHEMA_IMPORT_OPTIONS = { patterns: "apply", onEnter: closeObjectSchemas } as const satisfies SchemaRepresentation.FromJsonSchemaOptions
 
 export interface ModelServiceOptions {
   readonly timeoutMs?: number
