@@ -10,7 +10,7 @@ export const TrajectoryState = Schema.Struct({
 
 export function trajectoryState(state: typeof TrajectoryState.Type, event: Event): typeof TrajectoryState.Type {
   if (event.type === "TurnRequested") {
-    return { ...state, entries: [...state.entries, { turnId: event.turnId, message: { role: "user", text: event.text } }] }
+    return { ...state, entries: [...state.entries, { turnId: event.turnId, message: event.content === undefined ? { role: "user", text: event.text } : { role: "user", content: event.content } }] }
   }
   if (event.type === "ModelCalled" && event.purpose === "inference") return {
     ...state, models: [...state.models, { callId: event.callId, turnId: event.turnId }],

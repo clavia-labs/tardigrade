@@ -2,6 +2,7 @@ import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ResolutionSettled as PromiseSettled, event, type DeclaredEvent, ActorRequest, AbortRequested, InvocationRef, ExecutionHandle, EffectRef } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
 import { ToolPromise } from "@clavia/tardigrade-libraries/types"
+import { ObjectRef } from "@clavia/tardigrade-model/object"
 
 const ProviderToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Json })
 export const ToolCall = Schema.Struct({ ...ProviderToolCall.fields, providerId: Schema.String })
@@ -59,6 +60,10 @@ export type ToolReturned = typeof ToolReturned.Type
 
 export const TurnRequested = event({
   type: "TurnRequested", turnId: Schema.String, text: Schema.String,
+  content: Schema.optionalKey(Schema.Array(Schema.Union([
+    Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }),
+    Schema.Struct({ type: Schema.Literal("file"), mediaType: Schema.NonEmptyString, filename: Schema.optionalKey(Schema.String), object: ObjectRef }),
+  ]))),
   invocationRef: Schema.optionalKey(InvocationRef),
   source: Schema.optionalKey(Schema.Literals(["user", "agent", "tool"])),
   promiseRef: Schema.optionalKey(EffectRef), outcome: Schema.optionalKey(Schema.Literals(["completed", "failed", "cancelled"])),
@@ -142,8 +147,17 @@ export function turnSource(event: TurnRequested): "user" | "agent" | "tool" {
   return event.source ?? "user"
 }
 
+export const MessageContentPart = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("file"), mediaType: Schema.NonEmptyString, filename: Schema.optionalKey(Schema.String), object: ObjectRef }),
+])
+export type MessageContentPart = typeof MessageContentPart.Type
+export const MessageContent = Schema.Array(MessageContentPart)
+export type MessageContent = typeof MessageContent.Type
+
 const Message = Schema.Union([
   Schema.Struct({ role: Schema.Literal("user"), text: Schema.String }),
+  Schema.Struct({ role: Schema.Literal("user"), content: MessageContent }),
   Schema.Struct({ role: Schema.Literal("assistant"), ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
   Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, providerId: Schema.String, name: Schema.String, text: Schema.String, error: Schema.Boolean }),
 ])

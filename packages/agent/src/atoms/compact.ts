@@ -50,6 +50,10 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
   }
   const render = (messages: typeof Conversation.Type): typeof Conversation.Type => messages.map(message => {
     if (message.role === "assistant") return message
+    if (message.role === "user" && "content" in message) {
+      const content = message.content.map(part => part.type === "text" ? { ...part, text: clip(part.text, userCharLimit) } : part)
+      return content.every((part, index) => part === message.content[index]) ? message : { ...message, content }
+    }
     const text = clip(message.text, message.role === "tool" ? toolCharLimit : userCharLimit)
     return text === message.text ? message : { ...message, text }
   })
