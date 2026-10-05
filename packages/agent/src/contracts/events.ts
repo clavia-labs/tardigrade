@@ -8,8 +8,10 @@ export { MessageContentPart, MessageContent }
 const ProviderToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Json })
 export const ToolCall = Schema.Struct({ ...ProviderToolCall.fields, providerId: Schema.String })
 const TokenCount = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
+// ModelUsage is provider-reported token usage for one call; cacheRead and cacheWrite count tokens within input.
 export const ModelUsage = Schema.Struct({
   input: Schema.optionalKey(TokenCount), output: Schema.optionalKey(TokenCount),
+  cacheRead: Schema.optionalKey(TokenCount), cacheWrite: Schema.optionalKey(TokenCount),
   usd: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
 })
 export const ProviderContinuation = Schema.Struct({
