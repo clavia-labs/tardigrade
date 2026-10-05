@@ -17,6 +17,8 @@ Tardigrade is a typescript framework for building composable agents around an im
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/event-log-equation-dark.svg"><img src="assets/event-log-equation.svg" alt="{ view, effects } = f(event log)" width="240" height="34"></picture></p>
 
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/event-effect-loop-dark.svg"><img src="assets/event-effect-loop.svg" alt="Events feed atoms, which describe effects. The runtime executes effects and records their results as events." width="920"></picture></p>
+
 ## Quickstart
 
 If you use the legacy component API, see the [migration guide](docs/migration/state-initialisation.mdx) for moving existing state to atoms.
