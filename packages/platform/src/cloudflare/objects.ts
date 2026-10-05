@@ -38,7 +38,8 @@ export interface CloudflareObjectBindings {
 type ExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event>> = ActorExecutionOptions<Event, Services, State, Contracts>
 export type ActorObjectOptions<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Omit<ExecutionOptions<Event, Services, State, Contracts>, "storage" | "services" | "from" | "delivery" | "actorContext" | "executionStreamBus"> & Pick<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "from" | "delivery" | "transports" | "actorTransport" | "telemetry" | "defaultChildPlacement"> & {
   readonly actorContext?: ExecutionOptions<Event, Services, State, Contracts>["actorContext"]
-  readonly services: (env: Env, ...args: Parameters<ExecutionOptions<Event, Services, State, Contracts>["services"]>) => Layer.Layer<Layer.Success<ReturnType<ExecutionOptions<Event, Services, State, Contracts>["services"]>>, Error, Supervisor | Invocation>
+  // services receives the current Durable Object storage for local cache layers.
+  readonly services: (env: Env, ...args: [...Parameters<ExecutionOptions<Event, Services, State, Contracts>["services"]>, DurableObjectStorage]) => Layer.Layer<Layer.Success<ReturnType<ExecutionOptions<Event, Services, State, Contracts>["services"]>>, Error, Supervisor | Invocation>
   readonly alarms?: CloudflareAlarmOptions
   readonly watchdog?: { readonly policy?: Partial<WatchdogPolicy>; readonly retryable?: (error: Error) => boolean }
   readonly http?: (env: Env) => MethodHttpOptions
@@ -198,7 +199,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       const host = {
         actor: options.actor.actorName,
         methodContracts: () => Effect.acquireUseRelease(createActorStore({ actor: options.actor, actorContext, inspect: true,
-          services: runtime => options.services(this.env, { actor: options.actor.actorName, instance, thread: "$methods" }, runtime).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, directory), Layer.succeed(Invocation, { send: this.deliver })))),
+          services: runtime => options.services(this.env, { actor: options.actor.actorName, instance, thread: "$methods" }, runtime, this.ctx.storage).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, directory), Layer.succeed(Invocation, { send: this.deliver })))),
         }), store => Effect.succeed(store.contracts), store => store.close),
         allocateRootThread: (input: Omit<ThreadRequest, "parent">) => io(() => this.allocate(input)).pipe(Effect.map(coordinate => ({ coordinate }))),
         allocateChildThread: (input: Omit<ThreadRequest, "instance" | "parent"> & { readonly parent: ThreadCoordinate }) => io(() => this.allocate({ ...input, instance: input.parent.instance })).pipe(Effect.map(coordinate => ({ coordinate }))),
@@ -276,7 +277,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       if (!this.execution) this.execution = createActorExecution({ actor: options.actor, actorContext, storage: { thread: coordinate => {
         if (!isDeepStrictEqual(coordinate, this.address())) throw new RuntimeError("Thread runtime cannot open another DO's journal")
         return this.storage()
-      } }, services: (coordinate, runtime) => options.services(this.env, coordinate, runtime).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, this.supervisor()), Layer.succeed(Invocation, { send: this.send })))),
+      } }, services: (coordinate, runtime) => options.services(this.env, coordinate, runtime, this.ctx.storage).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, this.supervisor()), Layer.succeed(Invocation, { send: this.send })))),
         delivery: () => ({ ...options.delivery, address: this.address(), send: this.send }), from: options.from ?? DEFAULT_EXTERNAL_SENDER, run: this.run,
         ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
         ...(options.effectInput ? { effectInput: options.effectInput } : {}), ...(options.promises ? { promises: options.promises } : {}), ...(options.executionStream ? { executionStream: options.executionStream } : {}),

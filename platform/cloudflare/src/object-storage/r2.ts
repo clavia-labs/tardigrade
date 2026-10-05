@@ -1,6 +1,6 @@
 import { ioRetryPolicy, retryIo, type IoRetryPolicy } from "@clavia/tardigrade-deprecated-host/retry"
 import { Effect, Layer } from "effect"
-import { cachedObjectStorage, makeObjectStorage, objectCachePolicy, ObjectStorage, sqlObjectCache, type ObjectCachePolicy } from "@clavia/tardigrade-deprecated-agent"
+import { cachedObjectStorage, makeObjectStorage, objectCachePolicy, ObjectStorage, sqlObjectCache, type ObjectCachePolicy } from "@clavia/tardigrade-model/object"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { CLOUDFLARE_OBJECT_CACHE_CAPABILITIES } from "./limits"
 import type { R2StorageError } from "../layers/r2-error"

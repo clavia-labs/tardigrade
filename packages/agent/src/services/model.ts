@@ -1,14 +1,15 @@
 import { ModelInfo } from "../actor/context"
 import { RuntimeError, type ExecutionHandle, type ActCancellation, durablePromise, EffectExecution } from "@clavia/tardigrade-core"
-import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit } from "effect"
+import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit, Option } from "effect"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
+import { ObjectReadConcurrency, ObjectStorage, objectKeyOf } from "@clavia/tardigrade-model/object"
 import { AiError, LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
 import { reportedCostOf } from "@clavia/tardigrade-model/providers/usage"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
 import { type ModelRef } from "@clavia/tardigrade-model/reference"
 import { DEFAULT_METHOD_EXECUTION, type ToolSpec } from "@clavia/tardigrade-libraries"
-import { type Conversation, ModelReply as ModelReplySchema } from "../contracts/events"
+import { type Conversation, MessageContentPart, ModelReply as ModelReplySchema } from "../contracts/events"
 import { Generate, Summarize } from "../contracts/acts"
 import { collectModelStream, type ModelCallContext } from "./model-stream"
 
@@ -74,6 +75,29 @@ export function modelError(error: AiError.AiError): RuntimeError {
   } catch { return RuntimeError.from(error) }
 }
 
+const resolveContentObjects = (context: typeof Conversation.Type): Effect.Effect<ReadonlyMap<string, Uint8Array>, Error> => Effect.gen(function* () {
+  const references = [...new Map(context.flatMap(message => message.role !== "user" || "text" in message
+    ? [] : message.content.flatMap((part) => part.type === "file" ? [[objectKeyOf(part.object), part.object] as const] : [])).map(([key, reference]) => [key, reference] as const)).values()]
+  if (references.length === 0) return new Map<string, Uint8Array>()
+  const service = yield* Effect.serviceOption(ObjectStorage)
+  if (Option.isNone(service)) return yield* Effect.fail(new RuntimeError("File input requires a runtime ObjectStorage service"))
+  const concurrency = yield* ObjectReadConcurrency
+  if (concurrency !== "unbounded" && (!Number.isSafeInteger(concurrency) || concurrency < 1)) {
+    return yield* Effect.die(new RangeError("ObjectReadConcurrency must be a positive safe integer or unbounded"))
+  }
+  const entries = yield* Effect.forEach(references, reference =>
+    service.value.get(reference).pipe(Effect.mapError(RuntimeError.from), Effect.map(bytes => [objectKeyOf(reference), bytes] as const)),
+  { concurrency })
+  return new Map(entries)
+})
+
+const promptPartsOf = (content: ReadonlyArray<typeof MessageContentPart.Type>, objects: ReadonlyMap<string, Uint8Array>) => content.map((part) => {
+  if (part.type === "text") return Prompt.makePart("text", { text: part.text })
+  const data = objects.get(objectKeyOf(part.object))
+  if (data === undefined) throw new RuntimeError(`Unresolved object: ${objectKeyOf(part.object)}`)
+  return Prompt.filePart({ mediaType: part.mediaType, data, ...(part.filename === undefined ? {} : { fileName: part.filename }) })
+})
+
 // modelServices adapts native AI providers to the agent's model service without executing tools.
 export function modelServices(options: ModelServiceOptions = {}) {
   if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new RuntimeError("timeoutMs must be a positive safe integer")
@@ -91,6 +115,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const resolved = lock.resolve(input.model)
       const settings = yield* (selection.settings?.(resolved.model) ?? Effect.succeed(fallback))
       const timeoutMs = options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
+      const objects = yield* resolveContentObjects(input.context)
       const toolkit = yield* Effect.try({
         try: () => Toolkit.make(...input.tools.map(tool => AiTool.dynamic(tool.name, {
           description: `${tool.description} Execution: ${tool.execution ?? DEFAULT_METHOD_EXECUTION}.${tool.promiseTimeoutMs === undefined ? "" : ` Promise timeout: ${tool.promiseTimeoutMs}ms.`}`,
@@ -105,7 +130,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
         prompt: Prompt.fromMessages([
           Prompt.makeMessage("system", { content: input.system }),
           ...input.context.flatMap((message): readonly Prompt.Message[] => {
-            if (message.role === "user") return [Prompt.makeMessage("user", { content: [Prompt.makePart("text", { text: message.text })] })]
+            if (message.role === "user") return [Prompt.makeMessage("user", { content: "text" in message ? [Prompt.makePart("text", { text: message.text })] : promptPartsOf(message.content, objects) })]
             if (message.role === "tool") return [Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, result: message.text, isFailure: message.error, providerExecuted: false })] })]
             const continuation = message.continuation
             if (continuation && continuation.provider === settings.provider && continuation.protocol === settings.protocol && continuation.model === resolved.model.model_id) {

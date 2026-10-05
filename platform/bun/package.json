@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@clavia/tardigrade-deprecated-agent": "workspace:*",
+    "@clavia/tardigrade-model": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-deprecated-core": "workspace:*",
     "@clavia/tardigrade-deprecated-host": "workspace:*",

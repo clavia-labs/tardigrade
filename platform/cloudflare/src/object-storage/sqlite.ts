@@ -1,6 +1,6 @@
 import { Layer } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import { DEFAULT_MAX_LOCAL_OBJECT_BYTES, ObjectStorage, sqlObjectStorage, type LocalObjectStorageOptions } from "@clavia/tardigrade-deprecated-agent"
+import { DEFAULT_MAX_LOCAL_OBJECT_BYTES, ObjectStorage, sqlObjectStorage, type LocalObjectStorageOptions } from "@clavia/tardigrade-model/object"
 import { CLOUDFLARE_SQLITE_MAX_OBJECT_BYTES } from "./limits"
 
 // objectStorageFromSqlite retains local objects across DO eviction (test/objects.workers.ts).
