@@ -37,6 +37,8 @@
     "./reasoning": "./src/providers/options.ts",
     "./request-policy": "./src/stream/policy.ts",
     "./output": "./src/output.ts",
+    "./object": "./src/object.ts",
+    "./object/*": "./src/object/*.ts",
     "./*": "./src/*.ts"
   },
   "dependencies": {
