@@ -47,7 +47,7 @@ export const compactionCancellationRecovery = fc.asyncProperty(fc.record({ reaso
     yield* store.send([cancel({ ref: { method: "turn", id: "first" }, reason: options.reason })])
     yield* store.wait
     if (options.reopen) {
-      const events = store.snapshot().events
+      const events = [...store.snapshot().events]
       yield* store.close
       store = yield* open(events)
     }

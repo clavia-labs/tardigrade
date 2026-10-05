@@ -1,83 +1,85 @@
-// ReadonlyLog is the read surface of an append-only sequence; readonly arrays satisfy it.
-export type ReadonlyLog<T> = Pick<ReadonlyArray<T>, "length" | "at" | "find" | "findLast" | "some" | "every" | "filter" | "map" | "flatMap" | "slice" | typeof Symbol.iterator>
+// ReadonlyLog is the read surface of an append-only sequence; readonly arrays satisfy it. Callbacks receive an item and its index only, so no reader sees past the log's length.
+export interface ReadonlyLog<T> {
+  readonly length: number
+  at(index: number): T | undefined
+  find<S extends T>(predicate: (value: T, index: number) => value is S): S | undefined
+  find(predicate: (value: T, index: number) => unknown): T | undefined
+  findIndex(predicate: (value: T, index: number) => unknown): number
+  some(predicate: (value: T, index: number) => unknown): boolean
+  filter<S extends T>(predicate: (value: T, index: number) => value is S): S[]
+  filter(predicate: (value: T, index: number) => unknown): T[]
+  slice(start?: number, end?: number): T[]
+  [Symbol.iterator](): Iterator<T>
+}
 
-// LogView is the first length items of a backing array that only grows. Items below a view's length are never written again, so a view never changes; append writes in place only from the view at the tip and copies otherwise (Go slices, three-index form).
+// LogView is the first length items of a backing array that only grows. Items below a view's length are never written again, so a view never changes; append writes in place only from the view at the tip and copies otherwise (Go slices, three-index form; properties/log-view.test.ts).
+// The backing array is private to the class, so deep equality and structuredClone see only length; compare or clone view.slice().
 export class LogView<T> implements ReadonlyLog<T> {
   static readonly empty: LogView<never> = new LogView([], 0)
 
-  private constructor(private readonly items: T[], readonly length: number) {
-    Object.freeze(this)
+  readonly #items: T[]
+
+  private constructor(items: T[], readonly length: number) {
+    this.#items = items
   }
 
   append(batch: readonly T[]): LogView<T> {
     if (batch.length === 0) return this
-    const items = this.items.length === this.length ? this.items : this.items.slice(0, this.length)
+    // A view of nothing starts a fresh array, so the shared empty view never takes ownership of a log.
+    const items = this.length > 0 && this.#items.length === this.length ? this.#items : this.#items.slice(0, this.length)
     for (const item of batch) items.push(item)
     return new LogView(items, items.length)
   }
 
+  // position resolves a relative index against the view's length, clamped to [0, length].
+  private position(index: number): number {
+    return index < 0 ? Math.max(0, this.length + index) : Math.min(index, this.length)
+  }
+
   at(index: number): T | undefined {
     const position = index < 0 ? this.length + index : index
-    return position >= 0 && position < this.length ? this.items[position] : undefined
+    return position >= 0 && position < this.length ? this.#items[position] : undefined
   }
 
-  *[Symbol.iterator](): ArrayIterator<T> {
-    for (let index = 0; index < this.length; index++) yield this.items[index]!
+  findIndex(predicate: (value: T, index: number) => unknown): number {
+    for (let index = 0; index < this.length; index++) if (predicate(this.#items[index]!, index)) return index
+    return -1
   }
 
-  find<S extends T>(predicate: (value: T, index: number, array: readonly T[]) => value is S): S | undefined
-  find(predicate: (value: T, index: number, array: readonly T[]) => unknown): T | undefined
-  find(predicate: (value: T, index: number, array: readonly T[]) => unknown): T | undefined {
-    for (let index = 0; index < this.length; index++) if (predicate(this.items[index]!, index, this.items)) return this.items[index]
-    return undefined
+  find<S extends T>(predicate: (value: T, index: number) => value is S): S | undefined
+  find(predicate: (value: T, index: number) => unknown): T | undefined
+  find(predicate: (value: T, index: number) => unknown): T | undefined {
+    const index = this.findIndex(predicate)
+    return index < 0 ? undefined : this.#items[index]
   }
 
-  findLast<S extends T>(predicate: (value: T, index: number, array: readonly T[]) => value is S): S | undefined
-  findLast(predicate: (value: T, index: number, array: readonly T[]) => unknown): T | undefined
-  findLast(predicate: (value: T, index: number, array: readonly T[]) => unknown): T | undefined {
-    for (let index = this.length - 1; index >= 0; index--) if (predicate(this.items[index]!, index, this.items)) return this.items[index]
-    return undefined
+  some(predicate: (value: T, index: number) => unknown): boolean {
+    return this.findIndex(predicate) >= 0
   }
 
-  some(predicate: (value: T, index: number, array: readonly T[]) => unknown): boolean {
-    for (let index = 0; index < this.length; index++) if (predicate(this.items[index]!, index, this.items)) return true
-    return false
-  }
-
-  every<S extends T>(predicate: (value: T, index: number, array: readonly T[]) => value is S): this is readonly S[]
-  every(predicate: (value: T, index: number, array: readonly T[]) => unknown): boolean
-  every(predicate: (value: T, index: number, array: readonly T[]) => unknown): boolean {
-    for (let index = 0; index < this.length; index++) if (!predicate(this.items[index]!, index, this.items)) return false
-    return true
-  }
-
-  filter<S extends T>(predicate: (value: T, index: number, array: readonly T[]) => value is S): S[]
-  filter(predicate: (value: T, index: number, array: readonly T[]) => unknown): T[]
-  filter(predicate: (value: T, index: number, array: readonly T[]) => unknown): T[] {
+  filter<S extends T>(predicate: (value: T, index: number) => value is S): S[]
+  filter(predicate: (value: T, index: number) => unknown): T[]
+  filter(predicate: (value: T, index: number) => unknown): T[] {
     const out: T[] = []
-    for (let index = 0; index < this.length; index++) if (predicate(this.items[index]!, index, this.items)) out.push(this.items[index]!)
+    for (let index = 0; index < this.length; index++) if (predicate(this.#items[index]!, index)) out.push(this.#items[index]!)
     return out
   }
 
-  map<U>(callback: (value: T, index: number, array: readonly T[]) => U): U[] {
-    const out: U[] = []
-    for (let index = 0; index < this.length; index++) out.push(callback(this.items[index]!, index, this.items))
-    return out
+  slice(start = 0, end = this.length): T[] {
+    const from = this.position(start)
+    return this.#items.slice(from, Math.max(from, this.position(end)))
   }
 
-  flatMap<U, This = undefined>(callback: (this: This, value: T, index: number, array: T[]) => U | ReadonlyArray<U>): U[] {
-    const out: U[] = []
-    for (let index = 0; index < this.length; index++) {
-      const value = callback.call(undefined as This, this.items[index]!, index, this.items)
-      if (Array.isArray(value)) out.push(...value)
-      else out.push(value as U)
-    }
-    return out
+  // toJSON serializes the view as its own items, so later appends to the shared backing array stay out of it.
+  toJSON(): T[] {
+    return this.slice()
   }
 
-  slice(start?: number, end?: number): T[] {
-    const from = start === undefined ? 0 : start < 0 ? Math.max(0, this.length + start) : Math.min(start, this.length)
-    const to = end === undefined ? this.length : end < 0 ? Math.max(0, this.length + end) : Math.min(end, this.length)
-    return this.items.slice(from, Math.max(from, to))
+  [Symbol.for("nodejs.util.inspect.custom")](): T[] {
+    return this.slice()
+  }
+
+  *[Symbol.iterator](): Iterator<T> {
+    for (let index = 0; index < this.length; index++) yield this.#items[index]!
   }
 }

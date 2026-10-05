@@ -200,6 +200,9 @@
       "dependencies": {
         "effect": "4.0.0-rc.115",
       },
+      "devDependencies": {
+        "fast-check": "^4.9.0",
+      },
     },
     "packages/deprecated/agent": {
       "name": "@clavia/tardigrade-deprecated-agent",

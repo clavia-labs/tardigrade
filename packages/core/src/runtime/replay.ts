@@ -540,7 +540,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     engines.set(snapshot, engine)
     return snapshot
   }
-  const replay = (history: readonly Recorded<Event>[]): Snapshot => {
+  const replay = (history: ReadonlyLog<Recorded<Event>>): Snapshot => {
     const engine = createEngine(history, options.checkpoint)
     try {
       return snapshotOf(engine)

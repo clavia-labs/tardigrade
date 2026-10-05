@@ -12,7 +12,11 @@
   "dependencies": {
     "effect": "4.0.0-rc.115"
   },
+  "devDependencies": {
+    "fast-check": "^4.9.0"
+  },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   }
 }

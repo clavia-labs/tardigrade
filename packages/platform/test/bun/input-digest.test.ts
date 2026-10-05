@@ -42,7 +42,7 @@ test("digest replay reconstructs pending input and rejects changed proposals bef
     expect(replay.effects()[0]!.request.input).toEqual({ system: "original", text })
     expect(replay.pending()[0]!.request.input).toEqual({ system: "original", text })
     expect(() => changed.replay(snapshot.records)).toThrow("differs from its proposal")
-    const badExecutor = snapshot.records.map(record => record.event.type === "EffectRequested" ? { ...record, event: { ...record.event, request: { ...record.event.request, act: "changed" } } } : record)
+    const badExecutor = snapshot.records.slice().map(record => record.event.type === "EffectRequested" ? { ...record, event: { ...record.event, request: { ...record.event.request, act: "changed" } } } : record)
     expect(() => restored.replay(badExecutor)).toThrow()
     const observation = replay.get(atom(get => {
       const service = Context.get(get(eventLogContext)!, EventLog)
@@ -80,7 +80,7 @@ test("settlement callbacks, input release and checkpoint restore preserve the jo
 test("inline and digest acceptance share identity", () => {
   const { log, snapshot, ref, text } = acceptedHistory("small")
   try {
-    expect(snapshot.records[1]!.event).toEqual({ type: "EffectRequested", ref, request: { act: "test.digest", input: { _tag: "InlineInput", value: { system: "original", text } } } })
+    expect(snapshot.records.at(1)!.event).toEqual({ type: "EffectRequested", ref, request: { act: "test.digest", input: { _tag: "InlineInput", value: { system: "original", text } } } })
     const duplicate = { type: "EffectRequested" as const, ref, request: storeRequest({ act: "test.digest", input: { system: "original", text } }, 0) }
     expect(log.append(snapshot, duplicate)).toBe(snapshot)
     expect(() => log.append(snapshot, { ...duplicate, request: storeRequest({ act: "test.digest", input: { system: "wrong", text } }, 0) })).toThrow("Conflicting")
