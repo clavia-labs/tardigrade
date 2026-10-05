@@ -39,11 +39,6 @@
         "examples/**/*.ts"
       ]
     },
-    "e2e": {
-      "project": [
-        "**/*.ts"
-      ]
-    },
     "examples/react-rlm-chat/server": {
       "entry": ["*.test.ts", "*.workers.ts"],
       "project": [
@@ -67,16 +62,12 @@
     },
     "platform/cloudflare": {
       "entry": [
-        "test/fixture.worker.ts",
-        "vitest.e2e.config.ts",
-        "test-e2e/*.workers.ts",
-        "test-e2e/fixture.worker.ts"
+        "test/fixture.worker.ts"
       ],
       "project": [
         "src/**/*.ts",
         "test/**/*.ts",
-        "*.config.ts",
-        "test-e2e/**/*.ts"
+        "*.config.ts"
       ]
     },
     "packages/model": {

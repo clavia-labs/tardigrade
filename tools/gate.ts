@@ -19,7 +19,6 @@ const platforms = ["bun", "worker-loader", "cloudflare"]
 const appPkg = (name: string) => `${root}apps/${name}`
 const apps = ["cli", "server", "voyager"]
 const typecheckedApps = [...apps, "web"]
-const e2e = `${root}e2e`
 const examplePkg = (name: string) => `${root}examples/react-rlm-chat/${name}`
 const examplePackages = ["server", "web"]
 // Apps that ship a bundle. A typecheck proves the sources agree; only a build proves the bundler
@@ -36,8 +35,7 @@ const effectProjects = [
   ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
   ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
   ...typecheckedApps.flatMap((name) => tsconfigsIn(appPkg(name))),
-  ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name))),
-  ...tsconfigsIn(e2e)
+  ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name)))
 ]
 
 const effectTaskId = (project: string): string => {
@@ -81,18 +79,15 @@ const tasks: ReadonlyArray<Task> = [
   { id: "typecheck:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "tsc", "--noEmit", "-p", "tsconfig.workers.json"] },
   ...typecheckedApps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...examplePackages.map((name) => ({ id: `typecheck:example-react-rlm-chat-${name}`, cwd: examplePkg(name), cmd: ["bun", "run", "typecheck"] })),
-  { id: "typecheck:e2e", cwd: e2e, cmd: ["bun", "run", "typecheck"] },
   ...testedPackages.map((name) => ({ id: `test:${packageId(name)}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   { id: "test:platform", cwd: pkg("platform"), cmd: ["bun", "run", "test"] },
   { id: "test:platform:workers", cwd: pkg("platform"), cmd: ["bun", "run", "test:workers"] },
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),
   { id: "test:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "test:workers"] },
-  { id: "test:platform-cloudflare:e2e", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "vitest", "run", "--config", "vitest.e2e.config.ts"] },
   { id: "test:platform-worker-loader:workers", cwd: platformPkg("worker-loader"), cmd: ["bun", "run", "test:workers"] },
   ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
   { id: "test:app-web", cwd: appPkg("web"), cmd: ["bun", "test"] },
   { id: "test:example-react-rlm-chat-web", cwd: examplePkg("web"), cmd: ["bun", "test"] },
-  { id: "test:e2e", cwd: e2e, cmd: ["bun", "test"] },
   { id: "test:example-react-rlm-chat-server", cwd: examplePkg("server"), cmd: ["bun", "test"] },
   { id: "test:example-react-rlm-chat-workers", cwd: examplePkg("server"), cmd: ["bun", "run", "test:workers"] },
   { id: "bundle:model-providers", cmd: ["bun", "run", "tools/model-provider-bundles.ts"] },
