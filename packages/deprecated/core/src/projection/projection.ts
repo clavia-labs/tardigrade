@@ -49,7 +49,7 @@ export interface MaterializedProjectionState<State, Value> {
 }
 
 /**
- * materializeProjection stores a projection's output and recomputes it when state identity changes.
+ * materializeProjection memoizes output on first observation of each state identity.
  *
  * The projection author uses identity as the cache invalidation signal:
  *
@@ -60,7 +60,8 @@ export interface MaterializedProjectionState<State, Value> {
  *     return computeNextState(state, event)
  *   }
  *
- * Returning state reuses the cached output. Returning a new state recomputes it.
+ * Returning state reuses the cached output. A new state computes output when observed.
+ * An output that throws therefore throws at its first read, not at the step that reached the state.
  *
  * Step must not mutate and return its existing state.
  * Doing so changes the projection without invalidating its cached output
@@ -68,16 +69,23 @@ export interface MaterializedProjectionState<State, Value> {
  */
 export const materializeProjection = <State, Value>(
   projection: Projection<State, Value>
-): Projection<MaterializedProjectionState<State, Value>, Value> => ({
-  initial: (data) => {
-    const state = projection.initial(data)
-    return { state, value: projection.output(state) }
-  },
-  step: (current, event) => {
-    const state = projection.step(current.state, event)
-    return Object.is(state, current.state)
-      ? current
-      : { state, value: projection.output(state) }
-  },
-  output: (current) => current.value
-})
+): Projection<MaterializedProjectionState<State, Value>, Value> => {
+  const defer = (state: State): MaterializedProjectionState<State, Value> => {
+    let cached: { readonly value: Value } | undefined
+    return {
+      state,
+      get value() {
+        cached ??= { value: projection.output(state) }
+        return cached.value
+      }
+    }
+  }
+  return {
+    initial: (data) => defer(projection.initial(data)),
+    step: (current, event) => {
+      const state = projection.step(current.state, event)
+      return Object.is(state, current.state) ? current : defer(state)
+    },
+    output: (current) => current.value
+  }
+}
