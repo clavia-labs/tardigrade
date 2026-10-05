@@ -107,7 +107,8 @@
                   "!effect/unstable/reactivity",
                   "@clavia/tardigrade-model",
                   "@clavia/tardigrade-model/*",
-                  "!@clavia/tardigrade-model/reference"
+                  "!@clavia/tardigrade-model/reference",
+                  "!@clavia/tardigrade-model/object/reference"
                 ],
                 "allowTypeImports": true,
                 "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."

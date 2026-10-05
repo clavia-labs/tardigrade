@@ -91,7 +91,7 @@ const resolveContentObjects = (context: typeof Conversation.Type): Effect.Effect
   return new Map(entries)
 })
 
-const promptPartsOf = (content: ReadonlyArray<typeof MessageContentPart.Type>, objects: ReadonlyMap<string, Uint8Array>) => content.map((part) => {
+const promptPartsOf = (content: ReadonlyArray<MessageContentPart>, objects: ReadonlyMap<string, Uint8Array>) => content.map((part) => {
   if (part.type === "text") return Prompt.makePart("text", { text: part.text })
   const data = objects.get(objectKeyOf(part.object))
   if (data === undefined) throw new RuntimeError(`Unresolved object: ${objectKeyOf(part.object)}`)

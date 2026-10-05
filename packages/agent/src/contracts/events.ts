@@ -2,7 +2,7 @@ import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ResolutionSettled as PromiseSettled, event, type DeclaredEvent, ActorRequest, AbortRequested, InvocationRef, ExecutionHandle, EffectRef } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
 import { ToolPromise } from "@clavia/tardigrade-libraries/types"
-import { ObjectRef } from "@clavia/tardigrade-model/object"
+import { ObjectRef } from "@clavia/tardigrade-model/object/reference"
 
 const ProviderToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Json })
 export const ToolCall = Schema.Struct({ ...ProviderToolCall.fields, providerId: Schema.String })

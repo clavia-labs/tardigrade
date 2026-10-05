@@ -10,6 +10,8 @@ export const objectStorageFromSqlite = (
   options: LocalObjectStorageOptions = {}
 ) => Layer.effect(ObjectStorage, sqlObjectStorage(options)).pipe(Layer.provide(SqliteClient.layer(config)))
 
+export const DEFAULT_FILE_OBJECT_PREFIX = "objects"
+
 export interface FileObjectStorageOptions {
   readonly prefix?: string
 }
@@ -21,7 +23,7 @@ export const objectStorageFromFileSystem = (
 ) => Layer.effect(ObjectStorage, Effect.gen(function* () {
   const fs = yield* FileSystem
   const path = yield* Path
-  const prefix = options.prefix ?? "objects"
+  const prefix = options.prefix ?? DEFAULT_FILE_OBJECT_PREFIX
   const root = path.join(directory, prefix)
   yield* fs.makeDirectory(root, { recursive: true })
   return makeObjectStorage({

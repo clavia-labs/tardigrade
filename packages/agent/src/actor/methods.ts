@@ -24,7 +24,7 @@ export function agentReply(id: string, get: Getter): MethodResult<AgentMessageOu
 
 export const AgentMessageInput = Schema.Struct({
   text: Schema.optionalKey(Schema.String), content: Schema.optionalKey(MessageContent),
-}).pipe(Schema.refine((input): input is typeof input & ({ readonly text: string; readonly content?: never } | { readonly text?: never; readonly content: typeof MessageContent.Type }) =>
+}).pipe(Schema.refine((input): input is typeof input & ({ readonly text: string; readonly content?: never } | { readonly text?: never; readonly content: MessageContent }) =>
   (input.text === undefined) !== (input.content === undefined), { message: "exactly one of text or content is required" }))
 export const agentMethods = {
   message: actorMethod({

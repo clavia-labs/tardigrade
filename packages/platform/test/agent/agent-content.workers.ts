@@ -1,9 +1,10 @@
+import { assertHydratedContent } from "./content-property"
 import { env, SELF } from "cloudflare:test"
 import { expect, test } from "vitest"
 import { Effect } from "effect"
 import { objectRefOf } from "@clavia/tardigrade-model/object"
 import type { AgentEnv } from "./fixture.worker"
-import { observedPrompt } from "./fixture.worker"
+import { observedPrompt, providerCallCount } from "./fixture.worker"
 
 const authorization = { authorization: "Bearer test" }
 
@@ -21,7 +22,14 @@ test("workerd replays durable content into the provider as hydrated parts", asyn
   expect(call.status).toBe(202)
   const resultUrl = "http://test/v1/actors/main/threads/thread/methods/message/calls/message"
   await expect.poll(async () => (await SELF.fetch(resultUrl, { headers: authorization })).json()).toMatchObject({ status: "completed", output: { text: "ok" } })
-  const user = observedPrompt?.content.find(message => message.role === "user")
-  expect(user?.role === "user" ? user.content.map(part => part.type) : []).toEqual(["text", "file", "text"])
-  expect(user?.role === "user" && user.content[1]?.type === "file" ? user.content[1] : undefined).toMatchObject({ mediaType: "image/png", fileName: "photo.png", data: bytes })
+  assertHydratedContent(observedPrompt, bytes)
+})
+
+test("workerd fails a missing object before provider execution", async () => {
+  const before = providerCallCount()
+  expect((await SELF.fetch("http://test/v1/actors/missing/threads", { method: "POST", body: JSON.stringify({ name: "thread" }) })).status).toBe(200)
+  const url = "http://test/v1/actors/missing/threads/thread/methods/message"
+  expect((await SELF.fetch(url, { method: "POST", headers: { "idempotency-key": "missing" }, body: JSON.stringify({ content: [{ type: "file", mediaType: "image/png", object: { algorithm: "sha256", digest: "a".repeat(64) } }] }) })).status).toBe(202)
+  await expect.poll(async () => (await SELF.fetch(`${url}/calls/missing`)).json()).toMatchObject({ status: "failed", error: expect.stringContaining("Object is missing") })
+  expect(providerCallCount()).toBe(before)
 })

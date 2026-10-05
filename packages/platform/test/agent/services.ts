@@ -1,0 +1,43 @@
+import { Layer, Effect, Stream } from "effect"
+import { LanguageModel, Prompt, Response } from "effect/unstable/ai"
+import { modelActs, modelInfo, modelServices } from "@clavia/tardigrade-agent/services/model"
+import { toolActs } from "@clavia/tardigrade-agent/services/tools"
+import { AskPermission } from "@clavia/tardigrade-agent/contracts/acts"
+import { ModelLock, modelLockOf, modelLockService } from "@clavia/tardigrade-model/lock"
+import { BindingSettings, ModelSelection } from "@clavia/tardigrade-model/settings"
+import { requestPolicyOf } from "@clavia/tardigrade-model/stream/request"
+
+const model = { provider: "fixture", model_id: "test" }
+const binding = { provider: "fixture", protocol: "openai-chat-completions", model: "test", endpoint: "https://fixture.invalid", policy: requestPolicyOf({}) }
+const lock = modelLockService(modelLockOf({
+  schema: 2,
+  providers: { fixture: { protocol: "openai-chat-completions", baseUrl: "https://fixture.invalid", env: [] } },
+  models: [{ provider: "fixture", model_id: "test", contextWindowTokens: 4096 }],
+}), { allow: "*", default: model })
+export const contentServices = (observe: (prompt: Prompt.Prompt) => void) => {
+  const provider = Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+    generateText: input => Effect.sync(() => { observe(input.prompt); return [Response.makePart("text", { text: "ok" })] }),
+    streamText: input => {
+      observe(input.prompt)
+      return Stream.make(
+        Response.makePart("text-start", { id: "reply" }),
+        Response.makePart("text-delta", { id: "reply", delta: "ok" }),
+        Response.makePart("text-end", { id: "reply" }),
+        Response.makePart("finish", { reason: "stop", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) }),
+      )
+    },
+  }))
+  const modelLayer = modelServices().pipe(Layer.provide(Layer.mergeAll(
+    Layer.succeed(ModelLock, lock), provider,
+    Layer.succeed(ModelSelection, { settings: () => Effect.succeed(binding) }),
+    Layer.succeed(BindingSettings, binding),
+  )))
+  const lockLayer = Layer.succeed(ModelLock, lock)
+
+  return Layer.mergeAll(
+    modelInfo.pipe(Layer.provide(lockLayer)),
+    modelActs.pipe(Layer.provide(modelLayer)),
+    toolActs([]),
+    AskPermission.layer(() => Effect.die("No tool permission should be requested")),
+  )
+}
