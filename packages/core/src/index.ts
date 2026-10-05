@@ -42,6 +42,7 @@ export * from "./services/invocation"
 export { createEventLog, type EffectCheckpoint } from "./runtime/replay"
 
 export * from "./services/alarm"
+export * from "./services/scheduler"
 export * from "./services/watchdog"
 export * from "./services/execution-stream"
 

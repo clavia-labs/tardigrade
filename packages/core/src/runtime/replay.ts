@@ -10,7 +10,7 @@ import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "../atoms/act"
 import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
-import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, type EffectSettled, PromiseSettled } from "./events"
+import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, type EffectSettled, PromiseSettled, type RetryScheduled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
@@ -111,6 +111,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly followups: (event: JournalEvent<Event>) => readonly object[]
     readonly pending: () => readonly { readonly type: "EffectRequested"; readonly ref: EffectRef; readonly request: EffectRequest }[]
     readonly effect: (ref: EffectRef) => { readonly request: StoredEffectRequested; readonly settlement?: EffectSettled; readonly cancellation?: EffectCancelled } | undefined
+    readonly retry: (ref: EffectRef) => RetryScheduled | undefined
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
     readonly checkpoint: () => EffectCheckpoint | undefined
   }
@@ -141,6 +142,19 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const coreSettlements = new Map<string, EffectSettled>()
     const coreCancellations = new Map<string, EffectCancelled>()
     const promiseSettlements = new Map<string, PromiseSettled>()
+    const retries = new Map<string, { readonly position: number; readonly event: RetryScheduled }[]>()
+    const retry = (ref: EffectRef) => retries.get(effectKey(ref))?.at(-1)?.event
+    const retryAt = (ref: EffectRef, position: number) => {
+      const history = retries.get(effectKey(ref)) ?? []
+      let low = 0
+      let high = history.length
+      while (low < high) {
+        const middle = (low + high) >>> 1
+        if (history[middle]!.position < position) low = middle + 1
+        else high = middle
+      }
+      return history[low - 1]?.event
+    }
     const effect = (ref: EffectRef) => {
       const request = coreRequests.get(effectKey(ref))
       if (!request) return undefined
@@ -392,6 +406,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           loadedInputs.set(key, offered.request)
           bind(proposal, event.ref)
           accepted.set(key, { ...offered, ref: event.ref, request: offered.request })
+        } else if (event.type === "RetryScheduled") {
+          if (!coreRequests.has(key) || coreCancellations.has(key) || promiseSettlements.has(key)) throw new Error("Retry requires pending accepted work")
+          const settled = coreSettlements.get(key)
+          if (settled && (settled.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(settled.outcome.value).type === "value")) throw new Error("Retry requires pending accepted work")
+          const history = retries.get(key) ?? []
+          if (event.attempt !== (history.at(-1)?.event.attempt ?? 0) + 1) throw new Error("Retry attempt must advance by one")
+          history.push({ position: offset + records.length, event })
+          retries.set(key, history)
         } else if (event.type === "EffectCancelled") {
           if (!coreRequests.has(key)) throw new Error("Cancellation requires an accepted effect")
           retire.delete(key)
@@ -460,6 +482,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           return request.onSettled?.({ status: "rejected", reason: { _tag: "Cancelled", reason: event.reason } }, event.ref, result?.type === "promise" ? result.handle : undefined) ?? []
         }
         if (coreCancellations.has(effectKey(event.ref))) return []
+        if (event.type === "RetryScheduled") return []
         if (event.type === "EffectRequested") return request.onRequested?.(event.ref) ?? []
         if (event.type === "PromiseSettled") {
           const settled = coreSettlements.get(effectKey(event.ref))
@@ -496,6 +519,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       pending: () => [...coreRequests].filter(([key]) => !coreSettlements.has(key) && !coreCancellations.has(key)).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
       effect,
       effectAt,
+      retry,
+      retryAt,
       promiseAt,
       promise: (ref: EffectRef) => promiseSettlements.get(effectKey(ref)),
       checkpoint,
@@ -536,6 +561,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       followups: (event: JournalEvent<Event>) => engineOf(snapshot).followups(event),
       pending: () => engineOf(snapshot).pending(),
       effect: (ref: EffectRef) => extends_(engine, snapshot) ? engine.effectAt(ref, snapshot.position) : engineOf(snapshot).effect(ref),
+      retry: (ref: EffectRef) => extends_(engine, snapshot) ? engine.retryAt(ref, snapshot.position) : engineOf(snapshot).retry(ref),
       promise: (ref: EffectRef) => extends_(engine, snapshot) ? engine.promiseAt(ref, snapshot.position) : engineOf(snapshot).promise(ref),
       checkpoint: () => engineOf(snapshot).checkpoint(),
     })
@@ -573,10 +599,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const settlement = lifecycle.settlement
           if (settlement && (settlement.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "value")) return snapshot
         } else if (lifecycle?.cancellation) {
-          if (record.type === "PromiseSettled") return snapshot
+          if (record.type === "PromiseSettled" || record.type === "RetryScheduled") return snapshot
           if (record.type === "EffectSettled" && (record.outcome.status !== "fulfilled" || Schema.decodeUnknownSync(ExecutionResult)(record.outcome.value).type !== "promise")) return snapshot
         }
-        const prior = record.type === "EffectRequested" ? lifecycle?.request
+        const prior = record.type === "RetryScheduled" ? (engine.retry(record.ref)?.attempt === record.attempt ? engine.retry(record.ref) : undefined) : record.type === "EffectRequested" ? lifecycle?.request
           : record.type === "EffectSettled" ? lifecycle?.settlement : record.type === "EffectCancelled" ? lifecycle?.cancellation : engine.promise(record.ref)
         if (prior) {
           if (record.type === "PromiseSettled" && Schema.is(PromiseSettled)(prior) &&

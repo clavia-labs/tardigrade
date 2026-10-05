@@ -93,6 +93,7 @@ export function createWatchdog(options: {
   return {
     policy,
     admit,
+    restore: options.storage.transaction(schedule),
     status: options.storage.transaction(tx => tx.list),
     resume: (target: WatchdogTarget) => cleanupLock.withPermit(options.storage.transaction(tx => Effect.gen(function* () {
       const key = watchdogKey(target)

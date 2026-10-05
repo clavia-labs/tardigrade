@@ -22,7 +22,8 @@ export const HOST_CHILD_PLACEMENTS = ["colocated"] as const satisfies readonly C
 export const DEFAULT_CHILD_PLACEMENT: ChildPlacement = "colocated"
 
 // createThreadHost composes supervision and invocation within a shared storage lifetime.
-export function createThreadHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<ActorExecutionOptions<Event, Services, State, Contracts>, "from" | "delivery" | "executionStreamBus"> & {
+export function createThreadHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<ActorExecutionOptions<Event, Services, State, Contracts>, "from" | "delivery" | "executionStreamBus" | "services"> & {
+  readonly services: (...args: Parameters<ActorExecutionOptions<Event, Services, State, Contracts>["services"]>) => Layer.Layer<Layer.Success<ReturnType<ActorExecutionOptions<Event, Services, State, Contracts>["services"]>>, Error, Supervisor | Invocation>
   readonly storage: ThreadStorage<Event>
   // telemetry supplies Effect observability services to host-managed fibers and their child runtimes.
   readonly telemetry?: Layer.Layer<{}, never, never>

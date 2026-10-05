@@ -1,10 +1,11 @@
 export { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 export { executionStreamSse } from "../shared/execution-stream-sse"
-import { RuntimeError, type ActorMethods, createThreadHost, type ThreadStorage, RemoteBackup } from "@clavia/tardigrade-core"
+import { RuntimeError, Scheduler, type ActorMethods, createThreadHost, type ThreadStorage, type SchedulerPolicy, RemoteBackup } from "@clavia/tardigrade-core"
+import { bunAlarm } from "./alarm"
 import { bunSupervisorPath, bunThreadPath } from "./observe"
 export { observeBunThread, observeBunSupervisor, bunThreadActivity } from "./observe"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { Effect, ManagedRuntime, Semaphore, Exit, type Layer } from "effect"
+import { Effect, ManagedRuntime, Semaphore, Exit, Layer } from "effect"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
@@ -16,13 +17,14 @@ export { serve, DEFAULT_SERVE_OPTIONS, type ServeOptions } from "./serve"
 export { bunBackup, restoreHostCheckpoint, DEFAULT_CHECKPOINT_POLICY, type CheckpointPolicy } from "./backup"
 
 // bunJournal opens a SQLite event journal; its caller closes it after closing the actor.
-export function bunJournal<Event extends object>(options: SqliteClient.SqliteClientConfig & CheckpointChunkOptions & { readonly actor: string }) {
-  return sqlJournal<Event>({ actor: options.actor, checkpointChunkBytes: options.checkpointChunkBytes, layer: SqliteClient.layer(options) })
+export function bunJournal<Event extends object>(options: SqliteClient.SqliteClientConfig & CheckpointChunkOptions & { readonly actor: string; readonly scheduler?: Parameters<typeof sqlJournal<Event>>[0]["scheduler"] }) {
+  return sqlJournal<Event>({ actor: options.actor, checkpointChunkBytes: options.checkpointChunkBytes, layer: SqliteClient.layer(options), scheduler: options.scheduler })
 }
 
 // createBunHost keeps an instance supervisor database and separate thread databases beneath storage.
 export function createBunHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "storage"> & {
   readonly storage: string
+  readonly scheduler?: Partial<SchedulerPolicy>
   readonly checkpointChunkBytes?: number
   readonly sqlite?: Omit<SqliteClient.SqliteClientConfig, "filename">
   readonly backup?: Layer.Layer<RemoteBackup, Error>
@@ -30,16 +32,23 @@ export function createBunHost<Event extends object, Services, State, Contracts e
 }) {
   return Effect.gen(function* () {
     yield* Effect.try({ try: () => validateCheckpointChunkBytes(options.checkpointChunkBytes ?? DEFAULT_CHECKPOINT_CHUNK_BYTES), catch: RuntimeError.from })
+    const schedulers = new Map<string, typeof Scheduler.Service>()
     const connections = new Set<Effect.Effect<void, Error>>()
-    const journal = <Entry extends object>(filename: string, actor: string) => {
+    const journal = <Entry extends object>(filename: string, actor: string, target?: { actor: string; instance: string; thread: string }) => {
       mkdirSync(dirname(filename), { recursive: true })
-      const opened = bunJournal<Entry>({ ...options.sqlite, filename, actor, checkpointChunkBytes: options.checkpointChunkBytes })
+      const alarm: ReturnType<typeof bunAlarm> | undefined = target ? bunAlarm(Effect.suspend(() => opened.scheduler!.alarm), { retryIntervalMs: options.scheduler?.deliveryRetryMs }) : undefined
+      const opened: ReturnType<typeof bunJournal<Entry>> = bunJournal<Entry>({ ...options.sqlite, filename, actor, checkpointChunkBytes: options.checkpointChunkBytes, ...(alarm ? { scheduler: {
+        alarm: alarm.alarm, policy: options.scheduler,
+        deliver: () => Effect.suspend(() => host.getThread(target!).pipe(Effect.flatMap(thread => thread ? thread.resume : Effect.fail(new RuntimeError("Scheduled thread was not found"))))),
+      } } : {}) })
+      if (target && opened.scheduler) schedulers.set(JSON.stringify([target.actor, target.instance, target.thread]), opened.scheduler)
+      if (alarm) connections.add(alarm.close)
       connections.add(opened.close)
       return opened
     }
     const storage: ThreadStorage<Event> = {
       supervisor: (actor, instance) => journal(bunSupervisorPath(options.storage, actor, instance), "supervisor"),
-      thread: coordinate => journal(bunThreadPath(options.storage, coordinate), "events"),
+      thread: coordinate => journal(bunThreadPath(options.storage, coordinate), "events", coordinate),
       close: Effect.gen(function* () {
         const results = yield* Effect.forEach(connections, close => Effect.exit(close))
         connections.clear()
@@ -47,7 +56,11 @@ export function createBunHost<Event extends object, Services, State, Contracts e
         if (failure && Exit.isFailure(failure)) return yield* Effect.failCause(failure.cause)
       }),
     }
-    const host = createThreadHost({ ...options, storage })
+    const host = createThreadHost({ ...options, storage, services: (coordinate, runtime) => {
+      const scheduler = schedulers.get(JSON.stringify([coordinate.actor, coordinate.instance, coordinate.thread]))
+      const services = options.services(coordinate, runtime)
+      return scheduler ? services.pipe(Layer.provideMerge(Layer.succeed(Scheduler, scheduler))) : services
+    } })
     const runtime = options.backup ? ManagedRuntime.make(options.backup) : undefined
     const lock = yield* Semaphore.make(1)
     let closed = false
@@ -73,6 +86,7 @@ export function createBunHost<Event extends object, Services, State, Contracts e
   })
 }
 export { bunPromises } from "./promises"
+export { MAX_BUN_TIMER_DELAY_MS } from "./alarm"
 
 export { bunIsolate, DEFAULT_ISOLATE_POLICY, type IsolatePolicy } from "./isolate"
 

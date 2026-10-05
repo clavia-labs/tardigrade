@@ -1,16 +1,16 @@
 import type { DurableObjectStorage, DurableObjectTransaction } from "@cloudflare/workers-types"
 import { Effect, Schema } from "effect"
-import { RuntimeError, WatchdogEntry, type WatchdogTransaction, type WatchdogStorage } from "@clavia/tardigrade-core"
-import { makeAlarmScheduling, type DurableObjectAlarmsOptions } from "@clavia/tardigrade-cloudflare/layers/alarms"
+import { RuntimeError, WatchdogEntry, schedulerAlarm, schedulerOwner, type WatchdogTransaction, type WatchdogStorage } from "@clavia/tardigrade-core"
+import { type DurableObjectAlarmsOptions } from "@clavia/tardigrade-cloudflare/layers/alarms"
+import { cloudflareSchedulerTransaction } from "./scheduler"
 
 const prefix = "tardie:watchdog:"
 
 // cloudflareWatchdogTransaction binds recovery records and alarm changes to a DO transaction.
 export function cloudflareWatchdogTransaction(tx: DurableObjectTransaction, alarms?: DurableObjectAlarmsOptions): WatchdogTransaction {
   const io = <Value>(run: () => Promise<Value>) => Effect.tryPromise({ try: run, catch: RuntimeError.from })
-  const scheduling = makeAlarmScheduling(tx, alarms)
   return {
-    alarm: { set: at => scheduling.set(at), clear: scheduling.delete },
+    alarm: schedulerOwner(cloudflareSchedulerTransaction(tx, alarms), "watchdog", { owner: "watchdog" }),
     // get preserves the storage API's missing-value result.
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: WatchdogTransaction.get requires an undefined value.
     get: key => io(() => tx.get(prefix + key)).pipe(Effect.flatMap(value => value === undefined ? Effect.succeed(undefined) : Schema.decodeUnknownEffect(WatchdogEntry)(value))),
@@ -24,7 +24,7 @@ export function cloudflareWatchdogTransaction(tx: DurableObjectTransaction, alar
 export function cloudflareWatchdogStorage(storage: DurableObjectStorage, alarms?: DurableObjectAlarmsOptions): WatchdogStorage {
   return { transaction: work => Effect.gen(function* () {
     const context = yield* Effect.context<never>()
-    const value = yield* Effect.tryPromise({ try: () => storage.transaction(tx => Effect.runPromiseWith(context)(work(cloudflareWatchdogTransaction(tx, alarms)))), catch: RuntimeError.from })
+    const value = yield* Effect.tryPromise({ try: () => storage.transaction(tx => Effect.runPromiseWith(context)(work(cloudflareWatchdogTransaction(tx, alarms)).pipe(Effect.tap(() => schedulerAlarm(cloudflareSchedulerTransaction(tx, alarms)))))), catch: RuntimeError.from })
     yield* Effect.tryPromise({ try: () => storage.sync(), catch: RuntimeError.from })
     return value
   }).pipe(Effect.uninterruptible) }

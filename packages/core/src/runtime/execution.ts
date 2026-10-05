@@ -5,6 +5,7 @@ import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import { atom, type Atom } from "../atoms/atom"
 import { EventLog } from "../services/event-log"
+import { Scheduler } from "../services/scheduler"
 import { EffectExecution } from "../services/effect-execution"
 import { createExecutionStream, type ExecutionStream, type ExecutionStreamPolicy } from "../services/execution-stream"
 import { EffectRequested, EffectSettled, PromiseSettled, hasCoreEventType } from "./events"
@@ -152,6 +153,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const ready = Deferred.makeUnsafe<void>()
     const scope = yield* Scope.make()
     const executionStream = options.executionStreamBus ?? (yield* createExecutionStream(options.executionStream))
+    const retryWaits = new Map<string, { readonly dueAt: number; readonly wake: Deferred.Deferred<void> }>()
     const lifetimes = new Map<string, { readonly scope: Scope.Closeable; readonly signal: AbortSignal }>()
     const executions = new Map<string, Fiber.Fiber<{ readonly status: "fulfilled"; readonly value: ExecutionResult } | { readonly status: "rejected"; readonly reason: Schema.Json }, never>>()
     const cleaning = new Set<string>()
@@ -439,11 +441,41 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           dispatched.delete(key)
           continue
         }
-        const attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
+        let attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
         let executionSequence = 0
+        let retryStarted = false
+        const durableRetries = Option.isSome(Context.getOption(services, Scheduler))
         const execution: typeof EffectExecution.Service = {
           ref: work.ref,
           signal: signal,
+          retry: (operation, retryOptions) => Effect.gen(function* () {
+            if (retryStarted) return yield* Effect.fail(new RuntimeError("An effect execution supports one retry boundary"))
+            retryStarted = true
+            const previous = snapshot.retry(work.ref)
+            let attempt = previous?.attempt ?? 0
+            let dueAt = previous?.dueAt
+            while (true) {
+              if (signal.aborted || snapshot.effect(work.ref)?.cancellation) return yield* Effect.interrupt
+              if (dueAt !== undefined) {
+                const waiting = { dueAt, wake: Deferred.makeUnsafe<void>() }
+                retryWaits.set(key, waiting)
+                const now = yield* Clock.currentTimeMillis
+                if (dueAt > now) yield* (durableRetries ? Deferred.await(waiting.wake) : Effect.sleep(dueAt - now)).pipe(Effect.ensuring(Effect.sync(() => { retryWaits.delete(key) })))
+                retryWaits.delete(key)
+                attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
+                executionSequence = 0
+              }
+              if (signal.aborted || snapshot.effect(work.ref)?.cancellation) return yield* Effect.interrupt
+              const result = yield* Effect.result(operation)
+              if (result._tag === "Success") return result.success
+              const decision = yield* retryOptions.decide(result.failure, attempt)
+              if (!decision) return yield* Effect.fail(result.failure)
+              if (!Number.isSafeInteger(decision.delayMs) || decision.delayMs < 0) return yield* Effect.fail(new RuntimeError("Retry delayMs must be a nonnegative safe integer"))
+              dueAt = (yield* Clock.currentTimeMillis) + decision.delayMs
+              attempt++
+              yield* execution.record({ type: "RetryScheduled", ref: work.ref, attempt, dueAt, reason: decision.reason })
+            }
+          }),
           publish: payload => Effect.suspend(() => closed || signal.aborted || snapshot.effect(work.ref)?.cancellation
             ? Effect.void
             : executionStream.publish({ ...(options.delivery ? { address: options.delivery.address } : {}), ref: work.ref, attemptId, sequence: executionSequence++, payload })),
@@ -518,6 +550,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const send = (events: readonly RuntimeEvent<Event>[], when?: (get: ActorRuntime<Event>["get"]) => boolean, owner?: EffectRef) => Effect.gen(function* () {
       if (options.inspect) return yield* Effect.fail(new RuntimeError("Actor inspection cannot send events"))
       yield* Deferred.await(ready)
+      const now = yield* Clock.currentTimeMillis
+      for (const waiting of retryWaits.values()) if (waiting.dueAt <= now) yield* Deferred.succeed(waiting.wake, undefined)
       let admitted = false
       let cursor = 0
       yield* enqueue(Effect.gen(function* () {
@@ -700,6 +734,16 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             }
           }
           const deferred = snapshot.deferred()
+          const pendingRefs = [...snapshot.effects().flatMap(work => work.ref ? [work.ref] : []), ...deferred.map(work => work.ref)]
+          if (pendingRefs.length && pendingRefs.every(ref => retryWaits.has(effectKey(ref))) && !snapshot.cancellations().length && !snapshot.deliveries().length) {
+            const times = pendingRefs.map(ref => retryWaits.get(effectKey(ref))!.dueAt)
+            for (const work of deferred) {
+              const outcome = snapshot.effect(work.ref)?.settlement?.outcome
+              const value = outcome?.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(outcome.value) : undefined
+              if (value?.type === "promise" && value.deadlineAt !== undefined) times.push(value.deadlineAt)
+            }
+            return { progressCursor, status: "parked", wakeAt: Math.min(...times) }
+          }
           const live = deferred.filter(work => work.handle.executor === "local" && background.has(work.handle.id))
           if (live.length && !snapshot.effects().length && !snapshot.pending().length && !snapshot.cancellations().length && !snapshot.deliveries().length) {
             const deadlines = deferred.map(work => {
