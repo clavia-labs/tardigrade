@@ -67,18 +67,28 @@ export interface MaterializedProjectionState<State, Value> {
  * Doing so changes the projection without invalidating its cached output
  * (projection.test.ts, "materialization reuses the value while state identity is stable").
  */
+// derived holds each materialized state whose output was read, so a holder of an old state can resolve from it and release it.
+const derived = new WeakSet<object>()
+
+// outputDerived reports whether a materialized state's output was already read; reading it again costs nothing.
+export const outputDerived = (state: unknown): boolean => typeof state === "object" && state !== null && derived.has(state)
+
 export const materializeProjection = <State, Value>(
   projection: Projection<State, Value>
 ): Projection<MaterializedProjectionState<State, Value>, Value> => {
   const defer = (state: State): MaterializedProjectionState<State, Value> => {
     let cached: { readonly value: Value } | undefined
-    return {
+    const materialized: MaterializedProjectionState<State, Value> = {
       state,
       get value() {
-        cached ??= { value: projection.output(state) }
+        if (cached === undefined) {
+          cached = { value: projection.output(state) }
+          derived.add(materialized)
+        }
         return cached.value
       }
     }
+    return materialized
   }
   return {
     initial: (data) => defer(projection.initial(data)),

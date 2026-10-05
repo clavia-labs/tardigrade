@@ -1,4 +1,5 @@
 import type { ComponentReadonly } from "../readonly"
+import { outputDerived } from "@clavia/tardigrade-deprecated-core/projection"
 import { eventAt } from "../../event"
 import type { Intent } from "../../intent"
 import type { ComponentMachine } from "../machine"
@@ -54,11 +55,18 @@ const admission = (machine: ComponentMachine<unknown, unknown>, snapshot: unknow
   return candidate(snapshot, position, new Set())
 }
 
+const snapshots = new WeakMap<object, unknown>()
+
 // bindChild exposes public operations without revealing its snapshot (children.test.ts).
 export const bindChild = (machine: ComponentMachine<unknown, unknown>, snapshot: unknown, position = 0, at = 0): ChildHandle<unknown, unknown, never> => {
   const handle: ChildHandle<unknown, unknown, never> = {
     output: () => machine.output(snapshot),
     admission: () => admission(machine, snapshot, position, at)
   }
-  return Object.freeze(handle)
+  Object.freeze(handle)
+  snapshots.set(handle, snapshot)
+  return handle
 }
+
+// childOutputDerived reports whether a handle's snapshot output was already read (projection.ts, outputDerived).
+export const childOutputDerived = (child: object): boolean => outputDerived(snapshots.get(child))
