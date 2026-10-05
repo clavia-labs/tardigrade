@@ -1,3 +1,4 @@
+import { frozenPlainData } from "../atoms/incremental/frozen"
 import { actInputs } from "../atoms/act"
 import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
 import { Context, Schema } from "effect"
@@ -44,7 +45,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   const processedRequests = new WeakSet<object>()
   const preparedRequests = new WeakMap<EffectRequest, { readonly request: EffectRequest; readonly stored: StoredEffectRequested["request"] }>()
   const freeze = <Value>(value: Value): Value => {
-    if (typeof value === "object" && value !== null && !frozen.has(value)) {
+    if (typeof value === "object" && value !== null && !frozen.has(value) && !frozenPlainData.has(value)) {
       const prototype = Object.getPrototypeOf(value)
       if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) throw new Error("Domain events must be plain data")
       for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {

@@ -27,7 +27,16 @@ const isPlainObject = (value: object): boolean => {
 }
 
 // incrementalDecoder decodes a value against a type-side schema and returns a result deep-equal to structuredClone of Schema.decodeSync, reusing frozen plain-data subtrees instead of decoding and copying them again. It returns undefined where it cannot show that equivalence; the caller then decodes and clones.
-export function incrementalDecoder(schema: Schema.Top): Decode {
+// With freeze, a container it builds whose children are all primitives or frozen plain data is frozen and recorded in frozenPlainData, so later proofs of the result stop at it (runtime/replay.ts freeze).
+export function incrementalDecoder(schema: Schema.Top, options?: { readonly freeze?: boolean }): Decode {
+  const built = (value: object, plain: boolean) => {
+    if (options?.freeze && plain) {
+      Object.freeze(value)
+      frozenPlainData.add(value)
+    }
+    return { value }
+  }
+  const isFrozenPlain = (value: unknown) => typeof value !== "object" || value === null || frozenPlainData.has(value)
   const compile = (ast: SchemaAST.AST): Decode => {
     const decodeStrict = Schema.decodeUnknownExit(Schema.toType(Schema.make(ast)), STRICT)
     const strict = (value: unknown) => Exit.isSuccess(decodeStrict(value))
@@ -39,12 +48,14 @@ export function incrementalDecoder(schema: Schema.Top): Decode {
       container = value => {
         if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return undefined
         const out: unknown[] = []
+        let plain = true
         for (let index = 0; index < value.length; index++) {
           const decoded = item(value[index])
           if (!decoded) return undefined
           out.push(decoded.value)
+          plain &&= isFrozenPlain(decoded.value)
         }
-        return { value: out }
+        return built(out, plain)
       }
     } else if (ast._tag === "Objects" && !ast.checks?.length && !ast.encodingChecks?.length && ast.indexSignatures.length === 0 && ast.propertySignatures.every(property => typeof property.name === "string")) {
       const fields = ast.propertySignatures.map(property => ({ name: property.name as string, optional: property.type.context?.isOptional === true, decode: compile(property.type) }))
@@ -52,6 +63,7 @@ export function incrementalDecoder(schema: Schema.Top): Decode {
         if (typeof value !== "object" || value === null || Array.isArray(value) || !isPlainObject(value)) return undefined
         const record = value as Readonly<Record<string, unknown>>
         const out: Record<string, unknown> = {}
+        let plain = true
         for (const field of fields) {
           if (!Object.hasOwn(record, field.name)) {
             if (field.optional) continue
@@ -60,8 +72,9 @@ export function incrementalDecoder(schema: Schema.Top): Decode {
           const decoded = field.decode(record[field.name])
           if (!decoded) return undefined
           out[field.name] = decoded.value
+          plain &&= isFrozenPlain(decoded.value)
         }
-        return { value: out }
+        return built(out, plain)
       }
     }
     return value => {

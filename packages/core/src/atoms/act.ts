@@ -78,6 +78,8 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
   const decodeSuccess = Schema.decodeUnknownSync(successSchema)
   const decodeFailure = Schema.decodeUnknownSync(failureSchema)
   const decodeInput = incrementalDecoder(inputSchema)
+  // decodeRequest freezes what it builds; prepareRequest freezes request inputs regardless, while execute hands implementations unfrozen containers.
+  const decodeRequest = incrementalDecoder(inputSchema, { freeze: true })
   // Implementation uses the act name as its service identity across independently constructed definitions.
   // @effect-diagnostics-next-line serviceNotAsClass:off
   const Implementation = Context.Service<ActService<Name>, ImplementationService>(`experimental/act/${options.name}`)
@@ -105,7 +107,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
 
   // request creates an invocation handle retained across reevaluation; another invocation requires another handle.
   const request = (invocation: { readonly origin?: number; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
-    const decoded = decodeInput(invocation.input)
+    const decoded = decodeRequest(invocation.input)
     const input = decoded ? decoded.value as Schema.Json : Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
     if (typeof input === "object" && input !== null) actInputs.add(input)
     const origin = invocation.origin === undefined ? undefined : Schema.decodeSync(EffectRef.fields.seq)(invocation.origin)
