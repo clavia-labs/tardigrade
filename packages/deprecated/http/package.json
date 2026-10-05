@@ -17,8 +17,5 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"
-  },
-  "devDependencies": {
-    "@effect/platform-bun": "4.0.0-rc.115"
   }
 }

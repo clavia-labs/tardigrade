@@ -16,6 +16,10 @@
         "src/cloudflare/index.ts": ["duplicates"]
       }
     },
+    "packages/deprecated/agent": {
+      "entry": ["fixtures/binding.ts"],
+      "project": ["src/**/*.ts", "fixtures/**/*.ts"]
+    },
     "packages/examples": {
       "entry": ["*.ts!"],
       "project": ["**/*.ts"]

@@ -211,15 +211,6 @@
         "@clavia/tardigrade-model": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
-      "devDependencies": {
-        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
-        "@clavia/tardigrade-deprecated-host": "workspace:*",
-        "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.6",
-        "@tardie/ai-openai": "4.0.0-rc.113-clavia.6",
-        "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.7",
-        "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.3",
-        "fast-check": "^4.9.0",
-      },
     },
     "packages/deprecated/channels": {
       "name": "@clavia/tardigrade-deprecated-channels",
@@ -281,9 +272,6 @@
         "@clavia/tardigrade-deprecated-host": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "effect": "4.0.0-rc.115",
-      },
-      "devDependencies": {
-        "@effect/platform-bun": "4.0.0-rc.115",
       },
     },
     "packages/examples": {
