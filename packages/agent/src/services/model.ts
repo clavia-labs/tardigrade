@@ -211,6 +211,8 @@ export function modelServices(options: ModelServiceOptions = {}) {
         usage: {
         ...(response.usage.inputTokens.total === undefined ? {} : { input: response.usage.inputTokens.total }),
         ...(response.usage.outputTokens.total === undefined ? {} : { output: response.usage.outputTokens.total }),
+        ...(response.usage.inputTokens.cacheRead === undefined ? {} : { cacheRead: response.usage.inputTokens.cacheRead }),
+        ...(response.usage.inputTokens.cacheWrite === undefined ? {} : { cacheWrite: response.usage.inputTokens.cacheWrite }),
         usd: usd ?? null,
       } }
     }) } satisfies typeof Model.Service
