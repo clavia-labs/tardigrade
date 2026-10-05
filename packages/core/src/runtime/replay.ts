@@ -116,7 +116,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const offset = seed?.position ?? 0
     const source = createRecordSource<Event>()
     const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
-    let initialState: StateSeed | undefined
+    // initialState holds the seed once records[0..1], the only records initialStateSeed reads, exist or it found one; an append-only source cannot change it afterwards.
+    let initialState: { readonly seed: StateSeed | undefined } | undefined
     const initialisedNames = new Set(seed?.durable.map(entry => entry.name))
     const coreRequests = new Map<string, StoredEffectRequested>()
     // addedAt places checkpoint entries before the suffix and journal entries at their global index (packages/platform/test/properties/runtime/snapshot-lookups.ts).
@@ -162,7 +163,13 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       records: source.observedRecords,
       bindings,
       position: seed?.position ?? 0,
-      initialState: () => initialState ??= initialStateSeed(store.get(source.records), seed),
+      initialState: () => {
+        if (initialState) return initialState.seed
+        const records = store.get(source.records)
+        const found = initialStateSeed(records, seed)
+        if (found || seed || records.length >= 2) initialState = { seed: found }
+        return found
+      },
       effect: ref => {
         const state = effect(ref)
         return state ? { ...state, request: Object.freeze(observeRequest(state.request)) } : undefined
