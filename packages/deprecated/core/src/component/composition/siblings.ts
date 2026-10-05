@@ -71,12 +71,17 @@ export function composeComponents<
   type ChildState = MaterializedProjectionState<unknown, ReturnType<Machine["output"]>>
   type Output = ReturnType<Machine["output"]>
   type PublicOutput = ComponentOutput<View, Requirements, Result, Interactions>
+  // CompositionTree is the last derived output tree; a later read replaces only its changed leaves.
+  interface CompositionTree {
+    readonly children: ReadonlyArray<ChildState>
+    readonly root: OutputTree<Output>
+  }
   interface CompositionState {
+    readonly reusable: CompositionTree | undefined
     readonly children: ReadonlyArray<ChildState>
     readonly root: OutputTree<Output>
     // TODO: Give reconciliation its own projection state so composition does not retain the complete event history.
     readonly history: Chunk.Chunk<Event>
-    readonly output: PublicOutput
   }
 
   const members = components as unknown as ReadonlyArray<Component<View, Requirements, Result>>
@@ -108,50 +113,57 @@ export function composeComponents<
     transitions: [...left.transitions, ...right.transitions]
   })
 
-  const projection = materializeProjection<CompositionState, PublicOutput>({
-    initial: (data) => {
-      const children = materialized.map((machine) => machine.initial(data))
-      const root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
-      const history = Chunk.empty<Event>()
-      return {
-        children,
-        root,
-        history,
-        output: outputFrom(root.output, history, children)
+  // deferredState derives its output tree on first read, starting from the last tree a predecessor derived.
+  const deferredState = (
+    children: ReadonlyArray<ChildState>,
+    history: Chunk.Chunk<Event>,
+    previous?: CompositionTree
+  ): CompositionState => {
+    let tree: CompositionTree | undefined
+    return {
+      children,
+      history,
+      get reusable() {
+        return tree ?? previous
+      },
+      get root() {
+        if (tree !== undefined) return tree.root
+        const changed = children.flatMap((child, index) => Object.is(child, previous?.children[index]) ? [] : [index])
+        let root = previous?.root
+        if (root === undefined || changed.length * Math.max(1, Math.ceil(Math.log2(children.length))) >= children.length) {
+          root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
+        } else {
+          for (const index of changed) root = replaceOutputTree(root, index, children[index]!.value, combine)
+        }
+        tree = { children, root }
+        previous = undefined
+        return root
       }
-    },
+    }
+  }
+
+  const projection = materializeProjection<CompositionState, PublicOutput>({
+    initial: (data) => deferredState(materialized.map((machine) => machine.initial(data)), Chunk.empty<Event>()),
     step: (state, event) => {
       let children: Array<ChildState> | undefined
-      const changed: Array<number> = []
       for (let index = 0; index < materialized.length; index++) {
         const current = state.children[index]!
         const child = materialized[index]!.step(current, event)
         if (Object.is(child, current)) continue
         children ??= [...state.children]
         children[index] = child
-        changed.push(index)
       }
       if (children === undefined && reconcile === undefined) return state
-      let root = state.root
-      if (children !== undefined) {
-        const replacementCost = changed.length * Math.max(1, Math.ceil(Math.log2(children.length)))
-        if (replacementCost >= children.length) {
-          root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
-        } else {
-          for (const index of changed) root = replaceOutputTree(root, index, children[index]!.value, combine)
-        }
-      }
-      const history = reconcile === undefined ? state.history : Chunk.append(state.history, event)
-      return {
-        children: children ?? state.children,
-        root,
-        history,
-        output: outputFrom(root.output, history, children ?? state.children)
-      }
+      return deferredState(
+        children ?? state.children,
+        reconcile === undefined ? state.history : Chunk.append(state.history, event),
+        state.reusable
+      )
     },
     output: (state) => {
-      validateTransitions(state.output.transitions)
-      return state.output
+      const output = outputFrom(state.root.output, state.history, state.children)
+      validateTransitions(output.transitions)
+      return output
     }
   })
   type CachedState = MaterializedProjectionState<CompositionState, PublicOutput>
