@@ -16,6 +16,8 @@ export interface AgentInput<R, ToolEvents extends object = Event> {
   readonly system: string
   readonly tools: ActorOutput<Pick<ToolView<R>, "specs">, ToolEvents, R>
   readonly context: ContextView
+  // note is sent after the context as a final user message and is not recorded in the trajectory. Text that changes between calls of one turn belongs here, so the system block stays a stable cache prefix.
+  readonly note?: string
   readonly output?: OutputContract
 }
 
@@ -81,7 +83,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
         ...proposals.acts,
         inference: request(state.callId, {
           ...(state.origin === null ? {} : { origin: state.origin }),
-          input: { model: selection.model, system: `${input.system}${correctionSystem}`, tools: input.tools.view.specs, context: messages, ...(input.output === undefined ? {} : { output: input.output }) },
+          input: { model: selection.model, system: `${input.system}${correctionSystem}`, tools: input.tools.view.specs, context: input.note ? [...messages, { role: "user" as const, text: input.note }] : messages, ...(input.output === undefined ? {} : { output: input.output }) },
           onRequested: () => [{ type: "ModelCalled", purpose: "inference", ...selection, callId: state.callId, turnId: state.turnId } satisfies ModelCalled],
           onSettled: (result, ref) => {
             if (result.status === "rejected") return [{ type: "ModelFailed", callId: state.callId, reason: failureMessage(result.reason) } satisfies typeof ModelFailed.Type]
