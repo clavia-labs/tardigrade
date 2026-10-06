@@ -72,7 +72,48 @@ In effect terms, we would call the shape of the storage as a `Service`. This is 
 
 <CaveDiagram form="tree" labels={{ form: "Service", layer: "Layer", shadow: "filesystem", prisoner: "you" }} />
 
-Written in Effect, using Tardigrade, it would look like this:
+First, define the storage capabilities and connect the tools to that service in your own `services/workspace.ts`:
+
+```ts
+import { Context, Effect, Schema } from "effect"
+import { Rpc } from "effect/unstable/rpc"
+import { defineLibrary, MethodDescription } from "tardie/libraries"
+
+export class Workspace extends Context.Service<Workspace, {
+  readonly read: (path: string) => Effect.Effect<string, Error>
+  readonly write: (path: string, text: string) => Effect.Effect<void, Error>
+}>()("Workspace") {}
+
+export const storage = defineLibrary({
+  name: "storage",
+  description: "Read and write text at paths.",
+  toolNames: { read: "read_file", write: "write_file" },
+  methods: [
+    Rpc.make("read", {
+      payload: Schema.Struct({ path: Schema.String }),
+      success: Schema.String,
+      error: Schema.String,
+    }).annotate(MethodDescription, "Read a text file at a path"),
+    Rpc.make("write", {
+      payload: Schema.Struct({ path: Schema.String, text: Schema.String }),
+      success: Schema.Struct({ path: Schema.String }),
+      error: Schema.String,
+    }).annotate(MethodDescription, "Write a text file at a path"),
+  ],
+}).implement({
+  read: ({ path }) => Effect.gen(function* () {
+    const workspace = yield* Workspace
+    return yield* workspace.read(path)
+  }).pipe(Effect.mapError(String)),
+  write: ({ path, text }) => Effect.gen(function* () {
+    const workspace = yield* Workspace
+    yield* workspace.write(path, text)
+    return { path }
+  }).pipe(Effect.mapError(String)),
+})
+```
+
+These are the same `read_file` and `write_file` tools as above. Their handlers get the supplied `Workspace` service and use its capabilities. The agent selects those tools:
 
 ```ts highlight="1,5"
 import { storage } from "./services/workspace"
