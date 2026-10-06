@@ -1,3 +1,4 @@
+import { onHostScheduler } from "./scheduler"
 import { Cause, Effect, Exit, Schema, type Stream } from "effect"
 import type { ExecutionStreamPolicy, ExecutionUpdate } from "@clavia/tardigrade-core"
 import { HttpServerResponse } from "effect/unstable/http"
@@ -37,7 +38,7 @@ export function methodHttp<Contracts extends ActorMethods<object>>(
   options: MethodHttpOptions = {},
 ) {
   const run = async <Value>(effect: Effect.Effect<Value, Error>) => {
-    const exit = await Effect.runPromiseExit(effect)
+    const exit = await Effect.runPromiseExit(onHostScheduler(effect))
     if (Exit.isFailure(exit)) throw Cause.squash(exit.cause)
     return exit.value
   }
