@@ -11,11 +11,11 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "types": ["bun", "vite/client"],
-    "paths": { "@docs/*": ["../../docs/*"] },
+    "paths": { "@docs/*": ["../../docs/*"], "@notes/*": ["../../notes/*"] },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src", "../../docs/**/*.mdx"]
+  "include": ["src", "../../docs/**/*.mdx", "../../notes/**/*.mdx"]
 }

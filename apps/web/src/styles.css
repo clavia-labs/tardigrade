@@ -52,6 +52,7 @@ svg { display: block; }
 .guide-link { position: relative; font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
 .nav-brand-group > .guide-link::before { position: absolute; top: 50%; right: calc(100% + 12px); width: 1px; height: 18px; background: rgb(var(--accent-rgb) / 28%); content: ""; transform: translateY(-50%); }
 .guide-link[aria-current="page"] { color: var(--moss-ink); }
+.nav-brand-group .notes-link, .mobile-nav-sections .notes-link { font-family: "Caveat", "Segoe Print", cursive; font-size: 21px; font-weight: 500; letter-spacing: 0; }
 .github-link, .discord-link { width: 24px; height: 24px; }
 .github-link svg, .discord-link svg { width: 100%; height: 100%; }
 .header-theme-toggle { position: relative; display: grid; place-items: center; }
@@ -421,6 +422,7 @@ h1 span { display: block; white-space: nowrap; }
 .not-found-state { display: grid; justify-items: center; }
 .pixel-404 { width: min(100%, 430px); height: auto; overflow: visible; fill: var(--moss); stroke: color-mix(in srgb, var(--moss) 38%, var(--bg)); stroke-linejoin: round; stroke-width: 1.25px; vector-effect: non-scaling-stroke; }
 .not-found-page h1 { margin: 40px 0 12px; font-family: var(--display); font-size: clamp(30px, 3.4vw, 42px); font-weight: 600; letter-spacing: -.045em; }
+.not-found-page p { max-width: 520px; margin: 0 0 24px; color: var(--ink-2); font-size: 18px; line-height: 1.5; }
 .not-found-page a { padding: 10px 0; color: var(--moss-ink); font-family: var(--mono); font-size: 16px; text-decoration: underline; text-underline-offset: 4px; }
 .guide-shell { width: min(100%, var(--container)); min-height: calc(100vh - 64px); margin: 0 auto; padding: 0 var(--gutter); display: grid; grid-template-columns: 240px minmax(0, 760px); gap: 80px; }
 .guide-sidebar { position: sticky; top: 64px; height: calc(100vh - 64px); overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; scrollbar-width: none; padding: 68px 36px 80px 0; display: flex; flex-direction: column; align-items: flex-start; align-self: start; gap: 14px; border-right: 1px dashed rgb(var(--accent-rgb) / 36%); color: var(--ink-2); font-size: 15px; }
@@ -437,6 +439,92 @@ h1 span { display: block; white-space: nowrap; }
 .theme-toggle svg { width: 16px; height: 16px; }
 @media (hover: hover) and (pointer: fine) { .theme-toggle:hover { color: var(--ink); } }
 .guide-article { padding: 64px 0 120px; }
+.notes-index { min-height: calc(100vh - 64px); }
+.notes-index-inner { width: min(100%, 808px); margin: 0 auto; padding: clamp(72px, 9vw, 144px) var(--gutter) 120px; }
+.notes-entry { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.notes-entry h2 { margin: 0; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: clamp(26px, 3vw, 34px); font-weight: 400; letter-spacing: -.02em; line-height: 1.3; }
+.notes-entry h2 a { text-decoration: none; }
+.notes-entry h2 a:focus-visible { outline: 2px solid var(--moss-ink); outline-offset: 6px; }
+.notes-entry time { display: block; margin-top: 4px; color: var(--ink-2); font-family: Georgia, "Times New Roman", serif; font-size: 20px; line-height: 1.5; }
+.notes-article { width: min(100%, 808px); margin: 0 auto; padding: 64px var(--gutter) 120px; }
+.guide-article.notes-article h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; letter-spacing: -.02em; }
+.notes-metadata { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; color: var(--ink-2); font-size: 14px; line-height: 1.5; }
+.notes-metadata a { text-decoration: underline; text-decoration-color: rgb(var(--accent-rgb) / 38%); text-underline-offset: 3px; }
+.notes-signoff { margin: 24px 0; text-align: left; font-family: "Caveat", "Segoe Print", cursive; font-size: 26px; line-height: 1.3; }
+.notes-signoff p { margin: 0; }
+.notes-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 32px; }
+.notes-toolbar .guide-heading-actions { margin-top: 0; }
+.note-stamp { flex: none; width: 96px; height: auto; margin-top: 4px; }
+.notes-entry:is(:hover, :focus-within) .note-stamp { animation: note-stamp-flutter 620ms var(--ease-out); }
+@keyframes note-stamp-flutter { 0% { transform: none; } 25% { transform: translateY(-3px) rotate(-3deg); } 55% { transform: translateY(-1px) rotate(2deg); } 80% { transform: rotate(-1deg); } 100% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .notes-entry .note-stamp { animation: none; } }
+.note-stamp-paper .postal-stamp-fill { fill: var(--surface); }
+.note-stamp-edge { flood-color: rgb(var(--accent-rgb) / 45%); }
+.note-stamp-paper .postal-stamp-inset { stroke: rgb(var(--accent-rgb) / 40%); }
+.note-stamp-rock { fill: var(--moss-ink); }
+.note-stamp-light { fill: var(--surface); }
+.note-stamp-bird { color: var(--moss-ink); }
+@media (max-width: 640px) { .note-stamp { width: 64px; } }
+.notes-back { display: inline-flex; align-items: center; gap: 8px; width: fit-content; color: var(--moss-ink); }
+.notes-article pre { --notes-code-padding: 24px; --notes-code-line-height: 1.6em; max-width: 100%; overflow-x: auto; padding: var(--notes-code-padding); border: 1px dashed rgb(var(--accent-rgb) / 28%); background: var(--surface); font-family: var(--mono); font-size: 14px; line-height: var(--notes-code-line-height); }
+.flying-tardie { position: relative; width: min(100%, 400px); margin: 24px auto 32px; padding: 0 0 72px 128px; }
+.flying-tardie img { position: relative; z-index: 1; display: block; width: 78%; height: auto; }
+.flying-tardie-earth { position: absolute; left: -28px; bottom: 0; width: 38%; }
+.flying-earth { display: block; width: 100%; height: auto; overflow: visible; }
+.flying-earth-sphere { fill: var(--moss-wash); stroke: var(--moss); stroke-width: 1.5; }
+.flying-earth-land { fill: rgb(var(--accent-rgb) / 14%); stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; stroke-linejoin: round; }
+.flying-earth-grid { fill: none; stroke: rgb(var(--accent-rgb) / 30%); stroke-dasharray: 3 4; }
+.flying-earth-orbit { fill: none; stroke: rgb(var(--accent-rgb) / 40%); stroke-dasharray: 3 5; }
+.flying-earth-stars { fill: none; stroke: rgb(var(--accent-rgb) / 50%); stroke-width: 1.25; stroke-linecap: round; }
+.cave-diagram { display: block; width: 100%; max-width: 640px; height: auto; margin: 28px auto 32px; }
+.cave-ink path { fill: var(--moss-ink); }
+.cave-object :is(path, circle) { fill: var(--moss-ink); }
+.cave-object :is(.cave-stick, .cave-limb) { fill: none; stroke: var(--moss-ink); stroke-linecap: round; stroke-linejoin: round; }
+.cave-object .cave-stick { stroke-width: 3; }
+.cave-object .cave-limb { stroke-width: 9; }
+.cave-outline-ink { flood-color: var(--moss-ink); }
+.cave-labels text { fill: var(--moss-ink); font: 12px var(--mono); }
+.cave-labels path { fill: none; stroke: var(--moss-ink); stroke-width: 1; }
+.cave-labels .cave-label-on-rock { fill: var(--bg); }
+.cave-shape { color: var(--moss-ink); }
+.cave-flame { fill: var(--moss-ink); }
+.cave-light { fill: var(--surface); }
+.cave-rays { fill: none; stroke: light-dark(#7d9bff, #c3ceff); stroke-width: 1.25; stroke-dasharray: 4 5; opacity: .8; }
+.agent-view { margin: 28px 0 32px; }
+.agent-view > svg { display: block; width: 100%; max-width: 700px; height: auto; margin-inline: auto; overflow: visible; }
+.agent-view > .agent-view-mobile { display: none; }
+@media (max-width: 640px) {
+  .agent-view > .agent-view-desktop { display: none; }
+  .agent-view > .agent-view-mobile { display: block; max-width: 360px; }
+}
+.agent-view-box { fill: var(--surface); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1.25; }
+.agent-view-hit { fill: var(--moss-wash); stroke: var(--moss); stroke-width: 1.25; }
+.agent-view-folder { fill: none; stroke: var(--faint); stroke-width: 1.25; stroke-linejoin: round; }
+.agent-view-kind { fill: var(--faint); font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.agent-view-tree path { fill: none; stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1.25; }
+.agent-view-tree text { fill: var(--ink); font: 14px var(--mono); }
+.agent-view-leader { fill: none; stroke: var(--moss); stroke-width: 1.25; }
+.agent-view-note { fill: var(--moss-ink); font: 12px var(--mono); }
+.agent-view-name { fill: var(--ink-2); font: 13px var(--mono); }
+.agent-view-calls path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; }
+.agent-view-calls text { fill: var(--ink-2); font: 11px var(--mono); white-space: pre; }
+.agent-view-calls .agent-view-result { fill: var(--moss-ink); }
+.agent-view marker path { fill: var(--moss-ink); }
+.agent-view-horizon { fill: none; stroke: rgb(var(--accent-rgb) / 36%); stroke-dasharray: 3 5; }
+.agent-view-branch { fill: none; stroke: light-dark(#7299cb, #719bcf); stroke-width: 1.5; }
+.agent-view-branch-alternate { stroke-dasharray: 3 4; }
+.agent-view-joint { fill: var(--bg); stroke: light-dark(#7299cb, #719bcf); stroke-width: 1.5; }
+.agent-view-backend { fill: var(--ink-2); font: 11px var(--mono); }
+.agent-view-tile { fill: var(--surface); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1.25; }
+.agent-view-glyph { color: var(--moss-ink); }
+.russian-doll-diagram { display: block; width: min(100%, 480px); height: auto; margin: 32px auto 36px; overflow: visible; }
+.russian-doll :is(path, ellipse, circle) { fill: none; stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1.25; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.russian-doll .russian-doll-body { fill: var(--surface); }
+.russian-doll .russian-doll-face { fill: var(--bg); }
+.russian-doll .russian-doll-eye { fill: rgb(var(--accent-rgb) / 52%); stroke: none; }
+.russian-doll-core :is(path, ellipse, circle) { stroke: var(--moss); }
+.russian-doll-core .russian-doll-body { fill: var(--moss-wash); }
+.russian-doll-core .russian-doll-eye { fill: var(--moss); }
 .guide-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: start; }
 .guide-article h1 { max-width: none; margin: 0; font-size: clamp(36px, 4.2vw, 48px); font-weight: 600; letter-spacing: -.045em; }
 .guide-intro { margin: 20px 0 0; color: var(--ink-2); font-size: 18px; }

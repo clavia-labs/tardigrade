@@ -173,7 +173,7 @@ const plain = (text: string): CodeLine => ({ tokens: [token(text)] })
 
 const agentExample: ReadonlyArray<CodeLine> = [
   { tokens: [token("import", "red"), token(" { Effect } "), token("from", "red"), token(' "effect"', "blue")] },
-  { tokens: [token("import", "red"), token(" { atom, defineActor } "), token("from", "red"), token(' "tardie/core"', "blue")] },
+  { tokens: [token("import", "red"), token(" { defineActor } "), token("from", "red"), token(' "tardie/core"', "blue")] },
   { tokens: [token("import", "red"), token(" { arxiv, workspace } "), token("from", "red"), token(' "tardie/libraries"', "blue")] },
   { tokens: [token("import", "red"), token(" { system } "), token("from", "red"), token(' "./atoms"', "blue")] },
   { tokens: [token("import", "red"), token(" { agentMethods, codeMode, compact, infer, messages } "), token("from", "red"), token(' "tardie/agent"', "blue")] },
@@ -184,11 +184,11 @@ const agentExample: ReadonlyArray<CodeLine> = [
   { tokens: [token("    triggerRatio: "), token("0.8", "number"), token(",")] },
   { tokens: [token("    retainRatio: "), token("0.5", "number"), token(",")] },
   plain("  })"),
-  { tokens: [token("  const", "red"), token(" agent = "), token("yield", "red"), token("* "), token("infer", "purple"), token("("), token("atom", "purple"), token("(get => ({")] },
+  { tokens: [token("  const", "red"), token(" agent = "), token("yield", "red"), token("* "), token("infer", "purple"), token("(get => ({")] },
   { tokens: [token("    system: "), token("get", "purple"), token("(system),")] },
   { tokens: [token("    tools: "), token("get", "purple"), token("(tools),")] },
   { tokens: [token("    context: "), token("get", "purple"), token("(context),")] },
-  plain("  })))"),
+  plain("  }))"),
   plain(""),
   { tokens: [token("  return", "red"), token(" { atom: agent, methods: agentMethods }")] },
   plain("}))")
@@ -736,6 +736,7 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
             <span className="brand-version" title="Current release" aria-label="Version 0.41.0">v0.41.0</span>
           </div>
           <Link className="guide-link" to="/docs" aria-current={docs ? "page" : undefined}>Docs</Link>
+          <Link className="guide-link notes-link" to="/notes" aria-current={pathname.startsWith("/notes") ? "page" : undefined}>Notes</Link>
         </div>
         <div className="nav-actions">
           <a className="github-link" href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank"><Github /></a>
@@ -752,6 +753,7 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
           <div className="mobile-nav-primary">
             <div className="mobile-nav-sections">
               <Link to="/docs" aria-current={docs ? "page" : undefined} onClick={closeMobileMenu}>Docs</Link>
+              <Link className="notes-link" to="/notes" aria-current={pathname.startsWith("/notes") ? "page" : undefined} onClick={closeMobileMenu}>Notes</Link>
             </div>
           </div>
         </nav>

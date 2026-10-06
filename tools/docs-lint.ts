@@ -13,15 +13,14 @@ import { join } from "node:path"
 
 const root = join(import.meta.dir, "..")
 
-// Every Markdown and MDX page under docs/ is found rather than listed, so a nested page cannot escape the check.
-const pages = [...new Bun.Glob("**/*.{md,mdx}").scanSync({ cwd: join(root, "docs"), onlyFiles: true })]
+const pages = ["docs", "notes"].flatMap(directory => [...new Bun.Glob("**/*.{md,mdx}").scanSync({ cwd: join(root, directory), onlyFiles: true })].map(name => `${directory}/${name}`))
 const files = [
   "README.md",
   "AGENTS.md",
   "CLAUDE.md",
   "CONTRIBUTING.md",
   ".github/PULL_REQUEST_TEMPLATE.md",
-  ...pages.map((name) => `docs/${name}`).sort()
+  ...pages.sort()
 ]
 
 interface Problem {

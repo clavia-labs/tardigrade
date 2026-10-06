@@ -1,0 +1,137 @@
+---
+title: Effect TS and allegory of the cave
+date: "2026-10-06"
+author: Arjun
+authorUrl: https://x.com/arjunkmrm
+description: "An intuition for Effect services and layers: separating what your system needs from how it runs."
+route: /notes/effect-ts-and-allegory-of-the-cave
+socialImage: /images/effect-cave-social.png
+socialImageAlt: "Plato's cave illustrates a storage service whose layer casts a filesystem shadow."
+---
+
+In the [allegory of the cave](https://en.wikipedia.org/wiki/Allegory_of_the_cave), Plato argued there are pure forms in nature and that physical reality is a shadow of them. Prisoners in a cave mistake the shadows for reality because that is all they know. Without realising, we're like these prisioners when building our systems.
+
+<CaveDiagram />
+
+Too often, we mistake implementation details for pure domain logic, binding us to the constraints of physics. Effect is a great tool at your disposal to liberate yourself. It forces you to discover the pure form of your systems, and differentiate the shadows from something higher.
+
+If you're looking for a guide on how to structure your effect code, this isn't for you. However, if you want to grasp the intuition behind effect, this is the right place! Let's start with a practical example.
+
+## An agent connected to file system tools
+
+### The non-effect way
+
+We're building a simple agent connected to file system tools using typescript. If you're running on node, you would use `node:fs` to wire the agent to your computer's file storage. Your code might look something like this:
+
+```ts
+import { readFile, writeFile } from "node:fs/promises"
+import { generateText, stepCountIs, tool, type LanguageModel } from "ai"
+import { z } from "zod"
+
+export function runAgent(model: LanguageModel, prompt: string, maxSteps: number) {
+  return generateText({
+    model,
+    prompt,
+    stopWhen: stepCountIs(maxSteps),
+    tools: {
+      read_file: tool({
+        description: "Read a text file at a path",
+        inputSchema: z.object({ path: z.string() }),
+        execute: ({ path }) => readFile(path, "utf8"),
+      }),
+      write_file: tool({
+        description: "Write a text file at a path",
+        inputSchema: z.object({ path: z.string(), text: z.string() }),
+        execute: async ({ path, text }) => {
+          await writeFile(path, text, "utf8")
+          return { path }
+        },
+      }),
+    },
+  })
+}
+```
+
+Now you have an agent, but it's a prisoner of the file system. This agent cannot run in environments that don't provide one.
+
+Pause and ask yourself. Does the agent really need a file system, or does it just need content storage that's shaped like a file system. This is a very important distinction and the answer to this question is what made Effect click for me.
+
+To answer this question, let's step into the shoes of our agent. The agent needs a `write_file` tool to write some content into storage at a specific path. After writing that content, it should be accessible at the same location later. It could then use the `read_file` tool to get the content. Overall, the navigation structure of the content storage should be *shaped like a tree*. So long as this thing provides these capabilities to our agent, the underlying storage implementation does not matter at all!
+
+<AgentViewDiagram />
+
+This distinction is very important so I'll repeat it here. The shape of the content storage is what matters to your agent, not the actual physical implementation. This is what I mean by the difference between form and physics. In terms of Plato's allegory, the tree shape and the capabilities it provides is the pure form. The plysical implementation is a shadow. Often we confuse between the two.
+
+An actual file system is just the most common object storage that implements a tree shaped navigation structure. You can implement the same shape in hot memory, or an sqlite table. When you think of it this way, your agent is suddently free. It is liberated from the physical implementation details.
+
+<FlyingTardie />
+
+### The effect way
+
+In effect terms, we would call the shape of the storage as a `Service`. This is similar to what Plato described as "pure forms". It's the structure of what your system needs without concerning itself with the underlying physics. `Layers` are the receipes that bind these structures to reality. Like the prison master and the flame that's casting the shadow.
+
+<CaveDiagram form="tree" labels={{ form: "Service", layer: "Layer", shadow: "filesystem", prisoner: "you" }} />
+
+Written in Effect, using Tardigrade, it would look like this:
+
+```ts highlight="1,5"
+import { storage } from "./services/workspace"
+
+export const agent = defineActor("file-agent", Effect.gen(function* () {
+  const system = atom("Use the workspace to read and write your notes.")
+  const files = yield* tools([storage])
+  const context = yield* compact(messages)
+  const inference = yield* infer(get => ({
+    system: get(system),
+    tools: get(files),
+    context: get(context),
+  }))
+  return { atom: inference, methods: agentMethods }
+}))
+```
+
+If you notice this example here, your agent is not bound to the physical implementation anymore. Your can bind the workspace service to different physical objects through layers: an in-memory store shaped like a file system, an sqlite table or a real file storage.
+
+
+```ts highlight="4,7"
+import { Layer } from "effect"
+import { toolActs } from "tardie/agent/services"
+import { storage } from "./services/workspace"
+import { memoryWorkspace } from "./services/workspace-memory"
+
+const fileToolServices = toolActs([storage]).pipe(
+  Layer.provide(memoryWorkspace),
+)
+```
+
+User-defined SQLite and filesystem layers can supply that same shape:
+
+```ts highlight="1,2,5,9"
+import { sqliteWorkspace } from "./services/workspace-sqlite"
+import { filesystemWorkspace } from "./services/workspace-filesystem"
+
+const sqliteToolServices = toolActs([storage]).pipe(
+  Layer.provide(sqliteWorkspace),
+)
+
+const filesystemToolServices = toolActs([storage]).pipe(
+  Layer.provide(filesystemWorkspace),
+)
+```
+
+## What's the payoff?
+Writing effect code might feel too constraining initially. But as Runar says, ["Constraints liberate, liberties constrain"](https://www.youtube.com/watch?v=GqmsQeSzMdw). Writing your code using Effect liberates your system.
+
+In this small example above, we already noticed the case in point. By defining services, we were able to layer our agent onto different environments with interchangeable storage backends. The most important thing was a tree shaped content store, every implementation is secondary to that. Now this agent can run in-memory, on your device with a file system or in a [Durable Object](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/#sqlite-storage-backend) with sqlite backed storage.
+
+I've intentionally not gone deeper into a guide on structuring your codebase. I think that's secondary to building good intuitions and understanding. So go out there and try organising your code into services and layers. You'll figure out a physical structure that works best for you. Liberate your system from the shackles of physics.
+
+<div className="notes-signoff">
+
+Happy effecting!
+
+[Arjun](https://x.com/arjunkmrm)
+
+</div>
+
+***ps:*** This post didn't explore `Effect<A, E, R>`: the success value, possible errors, and required services. Maybe that's for another time. But here's a teaser: an Effect declares what it needs, services define those capabilities, and layers describe how to provide them.

@@ -111,11 +111,13 @@
     "apps/web": {
       "entry": [
         "src/**/*.test.ts",
-        "../../docs/**/*.mdx"
+        "../../docs/**/*.mdx",
+        "../../notes/**/*.mdx"
       ],
       "project": [
         "src/**/*.{ts,tsx}!",
-        "../../docs/**/*.mdx"
+        "../../docs/**/*.mdx",
+        "../../notes/**/*.mdx"
       ]
     }
   }

@@ -15,6 +15,8 @@ import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as DocsSplatRouteImport } from './routes/docs.$'
+import { Route as NotesIndexRouteImport } from './routes/notes.index'
+import { Route as NotesEffectTsAndAllegoryOfTheCaveRouteImport } from './routes/notes.effect-ts-and-allegory-of-the-cave'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -46,6 +48,17 @@ const DocsSplatRoute = DocsSplatRouteImport.update({
   path: '/docs/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NotesIndexRoute = NotesIndexRouteImport.update({
+  id: '/notes/',
+  path: '/notes/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotesEffectTsAndAllegoryOfTheCaveRoute =
+  NotesEffectTsAndAllegoryOfTheCaveRouteImport.update({
+    id: '/notes/effect-ts-and-allegory-of-the-cave',
+    path: '/notes/effect-ts-and-allegory-of-the-cave',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -53,7 +66,9 @@ export interface FileRoutesByFullPath {
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/docs/$': typeof DocsSplatRoute
+  '/notes/effect-ts-and-allegory-of-the-cave': typeof NotesEffectTsAndAllegoryOfTheCaveRoute
   '/docs/': typeof DocsIndexRoute
+  '/notes/': typeof NotesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -61,7 +76,9 @@ export interface FileRoutesByTo {
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/docs/$': typeof DocsSplatRoute
+  '/notes/effect-ts-and-allegory-of-the-cave': typeof NotesEffectTsAndAllegoryOfTheCaveRoute
   '/docs': typeof DocsIndexRoute
+  '/notes': typeof NotesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -70,14 +87,31 @@ export interface FileRoutesById {
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/docs/$': typeof DocsSplatRoute
+  '/notes/effect-ts-and-allegory-of-the-cave': typeof NotesEffectTsAndAllegoryOfTheCaveRoute
   '/docs/': typeof DocsIndexRoute
+  '/notes/': typeof NotesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/console' | '/llms.txt' | '/robots.txt' | '/docs/$' | '/docs/'
+    | '/'
+    | '/console'
+    | '/llms.txt'
+    | '/robots.txt'
+    | '/docs/$'
+    | '/notes/effect-ts-and-allegory-of-the-cave'
+    | '/docs/'
+    | '/notes/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/console' | '/llms.txt' | '/robots.txt' | '/docs/$' | '/docs'
+  to:
+    | '/'
+    | '/console'
+    | '/llms.txt'
+    | '/robots.txt'
+    | '/docs/$'
+    | '/notes/effect-ts-and-allegory-of-the-cave'
+    | '/docs'
+    | '/notes'
   id:
     | '__root__'
     | '/'
@@ -85,7 +119,9 @@ export interface FileRouteTypes {
     | '/llms.txt'
     | '/robots.txt'
     | '/docs/$'
+    | '/notes/effect-ts-and-allegory-of-the-cave'
     | '/docs/'
+    | '/notes/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -94,7 +130,9 @@ export interface RootRouteChildren {
   LlmsDottxtRoute: typeof LlmsDottxtRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   DocsSplatRoute: typeof DocsSplatRoute
+  NotesEffectTsAndAllegoryOfTheCaveRoute: typeof NotesEffectTsAndAllegoryOfTheCaveRoute
   DocsIndexRoute: typeof DocsIndexRoute
+  NotesIndexRoute: typeof NotesIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -141,6 +179,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/notes/': {
+      id: '/notes/'
+      path: '/notes'
+      fullPath: '/notes/'
+      preLoaderRoute: typeof NotesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notes/effect-ts-and-allegory-of-the-cave': {
+      id: '/notes/effect-ts-and-allegory-of-the-cave'
+      path: '/notes/effect-ts-and-allegory-of-the-cave'
+      fullPath: '/notes/effect-ts-and-allegory-of-the-cave'
+      preLoaderRoute: typeof NotesEffectTsAndAllegoryOfTheCaveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -150,7 +202,10 @@ const rootRouteChildren: RootRouteChildren = {
   LlmsDottxtRoute: LlmsDottxtRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
   DocsSplatRoute: DocsSplatRoute,
+  NotesEffectTsAndAllegoryOfTheCaveRoute:
+    NotesEffectTsAndAllegoryOfTheCaveRoute,
   DocsIndexRoute: DocsIndexRoute,
+  NotesIndexRoute: NotesIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
