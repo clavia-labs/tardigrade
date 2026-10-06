@@ -49,9 +49,9 @@ export const CaveDiagram = ({ form = "bird", labels }: { readonly form?: keyof t
         </g>
       </g>
       {labels === undefined ? null : <g className="cave-labels">
-        <text x="236" y="40" textAnchor="middle">{labels.form}</text>
+        <text x="236" y={labels.form.includes("\n") ? 26 : 40} textAnchor="middle">{labels.form.split("\n").map((line, index) => <tspan key={index} x="236" dy={index === 0 ? 0 : 14}>{line}</tspan>)}</text>
         <path d="M134 222L94 198M166 222L192 198" />
-        <text x="150" y="238" textAnchor="middle">{labels.layer}</text>
+        <text x="140" y="238" textAnchor="middle">{labels.layer.split("\n").map((line, index) => <tspan key={index} x="140" dy={index === 0 ? 0 : 14}>{line}</tspan>)}</text>
         <text className="cave-label-on-rock" x="596" y="192" textAnchor="middle">{labels.shadow}</text>
         <text x="372" y="164" textAnchor="middle">{labels.prisoner}</text>
       </g>}

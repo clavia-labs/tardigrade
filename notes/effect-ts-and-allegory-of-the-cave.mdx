@@ -13,13 +13,13 @@ In the [allegory of the cave](https://en.wikipedia.org/wiki/Allegory_of_the_cave
 
 <CaveDiagram />
 
-Too often, we mistake implementation details for pure domain logic, binding us to the constraints of physics. Effect is a great tool at your disposal to liberate yourself. It forces you to discover the pure form of your systems, and differentiate the shadows from something higher.
+Too often, we mistake implementation details for pure domain logic, binding ourselves to the constraints of physics. Effect is a great tool at your disposal for liberation. It nudges you to discover the form that shapes your domain, and differentiate the shadows from what's casting it.
 
-If you're looking for a guide on how to structure your effect code, this isn't for you. However, if you want to grasp the intuition behind effect, this is the right place! Let's start with a practical example.
+If you're looking for a guide on how to structure your Effect code, this isn't for you. However, if you want to grasp the intuition behind Effect, this is the right place! Let's start with a practical example.
 
 ## An agent connected to file system tools
 
-### The non-effect way
+### The non-Effect way
 
 We're building a simple agent connected to file system tools using typescript. If you're running on node, you would use `node:fs` to wire the agent to your computer's file storage. Your code might look something like this:
 
@@ -66,21 +66,21 @@ An actual file system is just the most common object storage that implements a t
 
 <FlyingTardie />
 
-### The effect way
+### The Effect way
 
-In effect terms, we would call the shape of the storage as a `Service`. This is similar to what Plato described as "pure forms". It's the structure of what your system needs without concerning itself with the underlying physics. `Layers` are the receipes that bind these structures to reality. Like the prison master and the flame that's casting the shadow.
+In Effect terms, we would call the shape of the storage as a `Service`. This is similar to what Plato described as "pure forms". It's the structure of what your system needs without concerning itself with the underlying physics. `Layers` are the receipes that bind these structures to reality. Like the prison master and the flame that's casting the shadow.
 
-<CaveDiagram form="tree" labels={{ form: "Service", layer: "Layer", shadow: "filesystem", prisoner: "you" }} />
+<CaveDiagram form="tree" labels={{ form: "ContentStorage\nService", layer: "FileSystem\nLayer", shadow: "filesystem", prisoner: "you" }} />
 
 First, define the storage capabilities in your own `services/workspace.ts`:
 
 ```ts highlight="4,5"
 import { Context, Effect } from "effect"
 
-export class Workspace extends Context.Service<Workspace, {
+export class ContentStorage extends Context.Service<ContentStorage, {
   readonly read: (path: string) => Effect.Effect<string, Error>
   readonly write: (path: string, text: string) => Effect.Effect<void, Error>
-}>()("Workspace") {}
+}>()("ContentStorage") {}
 ```
 
 Then connect the tools to that service. Here, `storageContract` declares the `read_file` and `write_file` tool names and schemas, omitted from this excerpt:
@@ -88,18 +88,18 @@ Then connect the tools to that service. Here, `storageContract` declares the `re
 ```ts highlight="3,4,7,8"
 export const storage = storageContract.implement({
   read: ({ path }) => Effect.gen(function* () {
-    const workspace = yield* Workspace
-    return yield* workspace.read(path)
+    const storage = yield* ContentStorage
+    return yield* storage.read(path)
   }).pipe(Effect.mapError(String)),
   write: ({ path, text }) => Effect.gen(function* () {
-    const workspace = yield* Workspace
-    yield* workspace.write(path, text)
+    const storage = yield* ContentStorage
+    yield* storage.write(path, text)
     return { path }
   }).pipe(Effect.mapError(String)),
 })
 ```
 
-These are the same `read_file` and `write_file` tools as above. Their handlers get the supplied `Workspace` service and use its capabilities. The agent selects those tools:
+These are the same `read_file` and `write_file` tools as above. Their handlers get the supplied `ContentStorage` service and use its capabilities. The agent selects those tools:
 
 ```ts highlight="1,5"
 import { storage } from "./services/workspace"
@@ -151,7 +151,7 @@ Writing effect code might feel too constraining initially. But as Runar says, ["
 
 In this small example above, we already noticed the case in point. By defining services, we were able to layer our agent onto different environments with interchangeable storage backends. The most important thing was a tree shaped content store, every implementation is secondary to that. Now this agent can run in-memory, on your device with a file system or in a [Durable Object](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/#sqlite-storage-backend) with sqlite backed storage.
 
-I've intentionally not gone deeper into a guide on structuring your codebase. I think that's secondary to building good intuitions and understanding. So go out there and try organising your code into services and layers. You'll figure out a physical structure that works best for you. Liberate your system from the shackles of physics.
+I've intentionally not gone deeper into a guide on structuring your codebase. I think that's secondary to building good intuitions and understanding. So go out there and try organising your code into services and layers. You'll figure out a structure that works best for you. Free your system from the shackles of physics.
 
 <div className="notes-signoff">
 
