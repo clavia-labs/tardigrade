@@ -1,6 +1,8 @@
 @import "@clavia/tardigrade-ui/tardigrade.css";
 @import "@clavia/tardigrade-ui/contract.css";
 
+:root { --code-highlight: light-dark(rgb(255 238 155 / 28%), rgb(225 195 105 / 18%)); }
+
 * { box-sizing: border-box; }
 html, body, #root { min-width: 320px; min-height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); }
@@ -648,7 +650,7 @@ h1 span { display: block; white-space: nowrap; }
 .docs-code-header { height: 40px; padding: 0 14px; display: flex; align-items: center; border-bottom: 1px dashed rgb(var(--accent-rgb) / 28%); color: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .docs-code { --docs-code-padding-top: 18px; }
 .docs-code pre { max-height: 560px; padding: var(--docs-code-padding-top) 54px 18px 20px; }
-.docs-code[data-highlight="true"] pre { background-image: linear-gradient(rgb(255 238 155 / 28%), rgb(255 238 155 / 28%)); background-position: 0 var(--docs-highlight-position, calc(var(--docs-code-padding-top) + var(--docs-highlight-offset))); background-repeat: no-repeat; background-size: 100% var(--docs-highlight-height, var(--docs-code-line-height)); }
+.docs-code[data-highlight="true"] pre { background-image: linear-gradient(var(--code-highlight), var(--code-highlight)); background-position: 0 var(--docs-highlight-position, calc(var(--docs-code-padding-top) + var(--docs-highlight-offset))); background-repeat: no-repeat; background-size: 100% var(--docs-highlight-height, var(--docs-code-line-height)); }
 .docs-code[data-expanded="true"] pre { max-height: none; }
 .docs-code button { top: 4px; }
 .docs-code-body { position: relative; }

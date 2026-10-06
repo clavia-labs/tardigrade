@@ -13,7 +13,7 @@ In the [allegory of the cave](https://en.wikipedia.org/wiki/Allegory_of_the_cave
 
 <CaveDiagram />
 
-Too often, we mistake implementation details for domain logic, binding ourselves to imaginary constraints. Effect is a great tool at your disposal for liberation. It nudges you to discover the form that shapes your domain, and differentiate the shadows from what's casting it.
+Too often, we mistake implementation details for domain logic. Effect is a great tool at your disposal for liberation. It nudges you to differentiate the forms and shadows around the system that you're trying to build.
 
 If you're looking for a guide on how to structure your Effect code, this isn't for you. However, if you want to grasp the intuition behind Effect, this is the right place! Let's start with a practical example.
 
@@ -21,7 +21,7 @@ If you're looking for a guide on how to structure your Effect code, this isn't f
 
 ### The non-Effect way
 
-We're building a simple agent connected to file system tools using typescript. If you're running on node, you would use `node:fs` to wire the agent to your computer's file storage. This example is purposefully naive to illustrate a point. Your code might look something like this:
+We're building a simple agent connected to file system tools using typescript. If you're running on node, you would use `node:fs` to wire the agent to your computer's file storage. Your code might look something like this:
 
 ```ts
 import { readFile, readdir, writeFile } from "node:fs/promises"
@@ -57,23 +57,23 @@ export function runAgent(model: LanguageModel, prompt: string, maxSteps: number)
 }
 ```
 
-We have an agent, but it's a prisoner of the file system; it cannot run in environments that don't provide one.
+We have an agent, but it's tied to the file system; it cannot run in environments that don't provide one.
 
-Hang on, does the agent really need a file system, or does it just need content storage that's shaped like a file system. This is a very important distinction and the answer to this question is what made Effect click for me.
+But, does the agent really need a file system, or does it just need content storage that's shaped like a file system. This is a very important distinction and what made Effect click for me.
 
-To answer this question, let's step into the shoes of our agent. The agent needs a `write_file` tool to write some content into storage at a specific path in a tree directory. It could then use the `read_file` tool to get the content at the same path later. The agent could also use a `list_directory` tool to get the overall tree structure of the content. So long as the thing behind the tools provides these capabilities, the underlying storage implementation is secondary to this!
+To answer this question, let's step into the shoes of our agent. It needs a `write_file` tool to add some content into a path in a tree shaped directory. It needs a `read_file` tool to get the content at the same path later. It needs a `list_directory` tool to get the overall tree structure of the store. So long as the thing behind the tools provides these capabilities and honors its contracts, the underlying storage implementation is secondary!
 
 <AgentViewDiagram />
 
-This distinction is very important so I'll repeat it here. The shape of the content storage is what matters to your agent, not the actual physical implementation. This is the difference between form and physics. In terms of Plato's allegory, the tree shape and the capabilities it provides is the form. The physical implementation is a shadow, a physical example. Often we confuse between the two.
+The shape of the content storage and its contracts are what matters to your agent's core logic, not the physical implementation. This is the difference between form and physics. In terms of Plato's allegory, the tree shape and the capabilities that a store provides is the form. The implementation is a shadow, a physical example. Often we confuse between the two.
 
-An actual file system is just the most common object storage that implements a tree shaped navigation structure. You can implement the same shape in hot memory, or an sqlite table. When you think of it this way, your agent is suddently free. It is liberated from the physical implementation details.
+An actual file system is the most common content store that implements tree shaped navigation. You can implement the same shape in hot-storage, or an sqlite table. When you think of it this way, your agent is suddently free. It is liberated from the implementation details.
 
 <FlyingTardie />
 
 ### The Effect way
 
-In Effect terms, we would call the shape of the storage as a `Service`. This is similar to what Plato described as forms. It's the structure of what your system needs without concerning itself with the underlying physics. `Layers` are the receipes that bind these structures to reality. Like the prison master and the flame that's casting the shadow.
+In Effect terms, we would call the shape of the storage as a `Service`. This is similar to what Plato described as forms. It's the structure that your domain needs without concerning itself with the underlying physics. `Layers` are the receipes that bind these structures to reality: like the puppeteers and the flame that's casting the shadow. In another example, we'll see the same agent implemented using Effect TS and Tardigrade.
 
 <CaveDiagram form="tree" labels={{ form: "ContentStorage\nService", layer: "FileSystem\nLayer", shadow: "filesystem", prisoner: "you" }} />
 
@@ -127,7 +127,7 @@ export const agent = defineActor("file-agent", Effect.gen(function* () {
 }))
 ```
 
-If you notice this example here, your agent is not bound to the physical implementation anymore. Your can bind the workspace service to different physical objects through layers: an in-memory store shaped like a file system, an sqlite table or a real file storage.
+If you notice, the agent isn't bound to the physical implementation anymore. You can bind the workspace service to different physical storages through layers: an in-memory store, an sqlite table or a real file system.
 
 
 ```ts highlight="4,7"

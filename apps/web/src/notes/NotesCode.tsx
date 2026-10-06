@@ -49,7 +49,7 @@ export const NotesCode = ({ highlight, style, ...props }: NotesCodeProps): React
   }, [highlight, props.children])
   return <pre {...props} ref={preRef} style={{
     ...(lines.length === 0 ? {} : {
-      backgroundImage: lines.map(() => "linear-gradient(rgb(255 238 155 / 28%), rgb(255 238 155 / 28%))").join(", "),
+      backgroundImage: lines.map(() => "linear-gradient(var(--code-highlight), var(--code-highlight))").join(", "),
       backgroundPosition: lines.map(line => `0 calc(var(--notes-code-padding) + ${line - 1} * var(--notes-code-line-height))`).join(", "),
       backgroundSize: "100% var(--notes-code-line-height)",
       backgroundRepeat: "no-repeat",
