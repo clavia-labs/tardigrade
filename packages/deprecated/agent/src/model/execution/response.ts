@@ -73,16 +73,21 @@ const encodeEvidence = <A, I>(schema: Schema.Codec<A, I>, part: A, fallback: () 
   }
 }
 
-// responseEvidence extracts model prose, readable reasoning, and response metadata for Action.
+// responseEvidence extracts model prose, readable reasoning with a paragraph break between blocks, and response metadata for Action.
 export const responseEvidence = (parts: ReadonlyArray<Response.AnyPart>) => {
   let text = ""
   let reasoning = ""
+  let reasoningBlock: string | undefined
   let response: Action["response"]
   let finish: Action["finish"]
   let usage: Action["usage"]
   for (const part of parts) {
     if (part.type === "text-delta") text += part.delta
-    if (part.type === "reasoning-delta") reasoning += part.delta
+    if (part.type === "reasoning-delta" && part.delta !== "") {
+      if (reasoningBlock !== undefined && part.id !== reasoningBlock) reasoning = reasoning.trimEnd() + "\n\n"
+      reasoningBlock = part.id
+      reasoning += part.delta
+    }
     if (part.type === "response-metadata") {
       const encoded: Response.ResponseMetadataPartEncoded = encodeEvidence(Response.ResponseMetadataPart, part, () => Response.makePart("response-metadata", {
         ...(part.id === undefined ? {} : { id: part.id }),
