@@ -447,11 +447,32 @@ h1 span { display: block; white-space: nowrap; }
 .notes-entry h2 a:focus-visible { outline: 2px solid var(--moss-ink); outline-offset: 6px; }
 .notes-entry time { display: block; margin-top: 4px; color: var(--ink-2); font-family: Georgia, "Times New Roman", serif; font-size: 20px; line-height: 1.5; }
 .notes-article { width: min(100%, 808px); margin: 0 auto; padding: 64px var(--gutter) 120px; }
+.notes-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 808px) minmax(0, 1fr); }
+.notes-layout > .notes-article { grid-column: 2; }
+.notes-outline-rail { grid-column: 3; padding: 220px 24px 120px 8px; }
+.notes-outline { position: sticky; top: 96px; max-width: 220px; }
+.notes-article :is(h2, h3)[id] { scroll-margin-top: 88px; }
+.notes-outline-title { margin: 0 0 12px; color: var(--faint); font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.notes-outline ol { margin: 0; padding: 0; list-style: none; border-left: 1px dashed rgb(var(--accent-rgb) / 30%); }
+.notes-outline li[data-level="3"] a { padding-left: 26px; font-size: 13px; }
+.notes-outline a { position: relative; display: block; padding: 5px 0 5px 14px; color: var(--ink-2); font-size: 14px; line-height: 1.4; text-decoration: none; transition: color 160ms ease; }
+.notes-outline a::before { position: absolute; top: 6px; bottom: 6px; left: -1px; width: 2px; background: var(--moss-ink); content: ""; transform: scaleY(0); transition: transform 200ms var(--ease-out); }
+.notes-outline a[aria-current="location"] { color: var(--moss-ink); }
+.notes-outline a[aria-current="location"]::before { transform: scaleY(1); }
+@media (hover: hover) and (pointer: fine) { .notes-outline a:hover { color: var(--ink); } }
+@media (max-width: 1240px) { .notes-outline-rail { display: none; } }
 .guide-article.notes-article h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; letter-spacing: -.02em; }
 .notes-metadata { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; color: var(--ink-2); font-size: 14px; line-height: 1.5; }
 .notes-metadata a { text-decoration: underline; text-decoration-color: rgb(var(--accent-rgb) / 38%); text-underline-offset: 3px; }
 .notes-signoff { margin: 24px 0; text-align: left; font-family: "Caveat", "Segoe Print", cursive; font-size: 26px; line-height: 1.3; }
 .notes-signoff p { margin: 0; }
+.notes-signoff p:has(.notes-avatar) { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.notes-avatar { flex: none; width: 68px; height: 68px; }
+.notes-avatar-ground { fill: #edf2ff; }
+.notes-avatar-hatch path { fill: none; stroke: var(--moss); stroke-width: 8.5; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 180ms ease-in-out; }
+.notes-signoff p:has(.notes-avatar):hover .notes-avatar-hatch path { stroke-dashoffset: 0; }
+@media (prefers-reduced-motion: reduce) { .notes-avatar-hatch path { transition: none; } }
+.notes-signoff p:has(.notes-avatar) a { position: relative; top: -5px; }
 .notes-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 32px; }
 .notes-toolbar .guide-heading-actions { margin-top: 0; }
 .note-stamp { flex: none; width: 96px; height: auto; margin-top: 4px; }
@@ -563,6 +584,7 @@ h1 span { display: block; white-space: nowrap; }
 .guide-command { width: min(100%, 560px); margin-top: 22px; }
 .guide-command .install-command { margin-top: 0; }
 .guide-article > p code { color: var(--moss-ink); font-family: var(--mono); font-size: .9em; }
+.notes-article :not(pre) > code { padding: .08em .28em; border-radius: 5px; background: rgb(var(--accent-rgb) / 6%); -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .cli-command-list { width: min(100%, 720px); border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); }
 .cli-command-row { min-height: 58px; padding: 15px 18px; display: grid; grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr); gap: 24px; align-items: center; }
 .cli-command-row + .cli-command-row { border-top: 1px dashed rgb(var(--accent-rgb) / 28%); }

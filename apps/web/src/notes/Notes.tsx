@@ -1,13 +1,15 @@
 import { MDXProvider } from "@mdx-js/react"
 import { ArrowLeft } from "@phosphor-icons/react"
 import { Link } from "@tanstack/react-router"
-import type { ReactElement } from "react"
+import { useRef, type ReactElement } from "react"
 
 import Content, { frontmatter } from "@notes/effect-ts-and-allegory-of-the-cave.mdx"
 import markdown from "@notes/effect-ts-and-allegory-of-the-cave.mdx?doc-source"
 import { PageActions } from "../ui/PageActions"
+import { AuthorAvatar } from "./AuthorAvatar"
 import { NotesCode } from "./NotesCode"
 import { NotesLink } from "./NotesLink"
+import { NotesOutline } from "./NotesOutline"
 import { AgentViewDiagram } from "./diagrams/AgentViewDiagram"
 import { CaveDiagram } from "./diagrams/CaveDiagram"
 import { CaveStamp } from "./diagrams/CaveStamp"
@@ -41,9 +43,11 @@ export const NotesPage = (): ReactElement => (
   </main>
 )
 
-export const NotesPostPage = (): ReactElement => (
-  <main className="guide-page">
-    <article className="guide-article notes-article">
+export const NotesPostPage = (): ReactElement => {
+  const article = useRef<HTMLElement>(null)
+  return (
+  <main className="guide-page notes-layout">
+    <article className="guide-article notes-article" ref={article}>
       <div className="notes-toolbar">
         <Link className="notes-back" to="/notes"><ArrowLeft size={16} aria-hidden="true" />Back to Notes</Link>
         <PageActions markdown={markdown} contentType="note" />
@@ -51,7 +55,9 @@ export const NotesPostPage = (): ReactElement => (
       <h1>{post.title}</h1>
       <div className="notes-metadata"><time dateTime={post.date}>{postDate}</time></div>
       <div className="guide-divider" />
-      <MDXProvider components={{ a: NotesLink, pre: NotesCode, AgentViewDiagram, CaveDiagram, FlyingTardie, RussianDollDiagram }}><Content /></MDXProvider>
+      <MDXProvider components={{ a: NotesLink, pre: NotesCode, AuthorAvatar, AgentViewDiagram, CaveDiagram, FlyingTardie, RussianDollDiagram }}><Content /></MDXProvider>
     </article>
+    <aside className="notes-outline-rail"><NotesOutline article={article} /></aside>
   </main>
-)
+  )
+}

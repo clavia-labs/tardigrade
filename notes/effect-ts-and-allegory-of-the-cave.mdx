@@ -6,14 +6,14 @@ authorUrl: https://x.com/arjunkmrm
 description: "An intuition for Effect services and layers: separating what your system needs from how it runs."
 route: /notes/effect-ts-and-allegory-of-the-cave
 socialImage: /images/effect-cave-social.png
-socialImageAlt: "Plato's cave illustrates a storage service whose layer casts a filesystem shadow."
+socialImageAlt: "Plato's cave with a bird labeled Service and a carrier and flame labeled Layer."
 ---
 
-In the [allegory of the cave](https://en.wikipedia.org/wiki/Allegory_of_the_cave), Plato argued there are pure forms in nature and that physical reality is a shadow of them. Prisoners in a cave mistake the shadows for reality because that is all they know. Without realising, we're like these prisioners when building our systems.
+In the [allegory of the cave](https://en.wikipedia.org/wiki/Allegory_of_the_cave), Plato argued that forms exist independant of their physical example. Prisoners in a cave mistaked the shadows of forms for reality because that's all they knew. Without realising, we're like these prisioners when building our systems.
 
 <CaveDiagram />
 
-Too often, we mistake implementation details for pure domain logic, binding ourselves to the constraints of physics. Effect is a great tool at your disposal for liberation. It nudges you to discover the form that shapes your domain, and differentiate the shadows from what's casting it.
+Too often, we mistake implementation details for domain logic, binding ourselves to imaginary constraints. Effect is a great tool at your disposal for liberation. It nudges you to discover the form that shapes your domain, and differentiate the shadows from what's casting it.
 
 If you're looking for a guide on how to structure your Effect code, this isn't for you. However, if you want to grasp the intuition behind Effect, this is the right place! Let's start with a practical example.
 
@@ -21,10 +21,10 @@ If you're looking for a guide on how to structure your Effect code, this isn't f
 
 ### The non-Effect way
 
-We're building a simple agent connected to file system tools using typescript. If you're running on node, you would use `node:fs` to wire the agent to your computer's file storage. Your code might look something like this:
+We're building a simple agent connected to file system tools using typescript. If you're running on node, you would use `node:fs` to wire the agent to your computer's file storage. This example is purposefully naive to illustrate a point. Your code might look something like this:
 
 ```ts
-import { readFile, writeFile } from "node:fs/promises"
+import { readFile, readdir, writeFile } from "node:fs/promises"
 import { generateText, stepCountIs, tool, type LanguageModel } from "ai"
 import { z } from "zod"
 
@@ -34,6 +34,11 @@ export function runAgent(model: LanguageModel, prompt: string, maxSteps: number)
     prompt,
     stopWhen: stepCountIs(maxSteps),
     tools: {
+      list_directory: tool({
+        description: "List the names of a directory's immediate children",
+        inputSchema: z.object({ path: z.string() }),
+        execute: ({ path }) => readdir(path),
+      }),
       read_file: tool({
         description: "Read a text file at a path",
         inputSchema: z.object({ path: z.string() }),
@@ -52,15 +57,15 @@ export function runAgent(model: LanguageModel, prompt: string, maxSteps: number)
 }
 ```
 
-Now you have an agent, but it's a prisoner of the file system. This agent cannot run in environments that don't provide one.
+We have an agent, but it's a prisoner of the file system; it cannot run in environments that don't provide one.
 
-Pause and ask yourself. Does the agent really need a file system, or does it just need content storage that's shaped like a file system. This is a very important distinction and the answer to this question is what made Effect click for me.
+Hang on, does the agent really need a file system, or does it just need content storage that's shaped like a file system. This is a very important distinction and the answer to this question is what made Effect click for me.
 
-To answer this question, let's step into the shoes of our agent. The agent needs a `write_file` tool to write some content into storage at a specific path. After writing that content, it should be accessible at the same location later. It could then use the `read_file` tool to get the content. Overall, the navigation structure of the content storage should be *shaped like a tree*. So long as this thing provides these capabilities to our agent, the underlying storage implementation does not matter at all!
+To answer this question, let's step into the shoes of our agent. The agent needs a `write_file` tool to write some content into storage at a specific path in a tree directory. It could then use the `read_file` tool to get the content at the same path later. The agent could also use a `list_directory` tool to get the overall tree structure of the content. So long as the thing behind the tools provides these capabilities, the underlying storage implementation is secondary to this!
 
 <AgentViewDiagram />
 
-This distinction is very important so I'll repeat it here. The shape of the content storage is what matters to your agent, not the actual physical implementation. This is what I mean by the difference between form and physics. In terms of Plato's allegory, the tree shape and the capabilities it provides is the pure form. The plysical implementation is a shadow. Often we confuse between the two.
+This distinction is very important so I'll repeat it here. The shape of the content storage is what matters to your agent, not the actual physical implementation. This is the difference between form and physics. In terms of Plato's allegory, the tree shape and the capabilities it provides is the form. The physical implementation is a shadow, a physical example. Often we confuse between the two.
 
 An actual file system is just the most common object storage that implements a tree shaped navigation structure. You can implement the same shape in hot memory, or an sqlite table. When you think of it this way, your agent is suddently free. It is liberated from the physical implementation details.
 
@@ -68,25 +73,30 @@ An actual file system is just the most common object storage that implements a t
 
 ### The Effect way
 
-In Effect terms, we would call the shape of the storage as a `Service`. This is similar to what Plato described as "pure forms". It's the structure of what your system needs without concerning itself with the underlying physics. `Layers` are the receipes that bind these structures to reality. Like the prison master and the flame that's casting the shadow.
+In Effect terms, we would call the shape of the storage as a `Service`. This is similar to what Plato described as forms. It's the structure of what your system needs without concerning itself with the underlying physics. `Layers` are the receipes that bind these structures to reality. Like the prison master and the flame that's casting the shadow.
 
 <CaveDiagram form="tree" labels={{ form: "ContentStorage\nService", layer: "FileSystem\nLayer", shadow: "filesystem", prisoner: "you" }} />
 
 First, define the storage capabilities in your own `services/workspace.ts`:
 
-```ts highlight="4,5"
+```ts highlight="4,5,6"
 import { Context, Effect } from "effect"
 
 export class ContentStorage extends Context.Service<ContentStorage, {
+  readonly list: (path: string) => Effect.Effect<readonly string[], Error>
   readonly read: (path: string) => Effect.Effect<string, Error>
   readonly write: (path: string, text: string) => Effect.Effect<void, Error>
 }>()("ContentStorage") {}
 ```
 
-Then connect the tools to that service. Here, `storageContract` declares the `read_file` and `write_file` tool names and schemas, omitted from this excerpt:
+Then connect the tools to that service. Here, `storageContract` declares the `list_directory`, `read_file`, and `write_file` tool names and schemas, omitted from this excerpt:
 
-```ts highlight="3,4,7,8"
+```ts highlight="3,4,7,8,11,12"
 export const storage = storageContract.implement({
+  list: ({ path }) => Effect.gen(function* () {
+    const storage = yield* ContentStorage
+    return yield* storage.list(path)
+  }).pipe(Effect.mapError(String)),
   read: ({ path }) => Effect.gen(function* () {
     const storage = yield* ContentStorage
     return yield* storage.read(path)
@@ -99,7 +109,7 @@ export const storage = storageContract.implement({
 })
 ```
 
-These are the same `read_file` and `write_file` tools as above. Their handlers get the supplied `ContentStorage` service and use its capabilities. The agent selects those tools:
+These are the same `list_directory`, `read_file`, and `write_file` tools as above. Their handlers get the supplied `ContentStorage` service and use its capabilities. The agent selects those tools:
 
 ```ts highlight="1,5"
 import { storage } from "./services/workspace"
@@ -146,8 +156,47 @@ const filesystemToolServices = toolActs([storage]).pipe(
 )
 ```
 
+## Effect isn't a magic pill
+Before you think otherwise, Effect **will not** magically solve all your problem. You can totally implement the structure above using vanilla typescript. For example, a simple way to add dependency injection in typescript would be like this:
+
+```ts highlight="7,13,17,22"
+interface ContentStorage {
+  list(path: string): Promise<readonly string[]>
+  read(path: string): Promise<string>
+  write(path: string, text: string): Promise<void>
+}
+
+export function runAgent(storage: ContentStorage /* other inputs omitted */) {
+  return generateText({
+    // model, prompt, and stopWhen are supplied as above.
+    tools: {
+      list_directory: tool({
+        // inputSchema
+        execute: ({ path }) => storage.list(path),
+      }),
+      read_file: tool({
+        // inputSchema
+        execute: ({ path }) => storage.read(path),
+      }),
+      write_file: tool({
+        // inputSchema
+        execute: async ({ path, text }) => {
+          await storage.write(path, text)
+          return { path }
+        },
+      }),
+    },
+  })
+}
+```
+
+
+You can also add ways to share injected dependencies and create graphs by yourself all in plain typescript. As you do it, and if you do it well, you might eventually face similar design concerns and end with something that's shaped like Effect.
+
+Effect is simply a library that gives you an ergonomic and battle tested way to structure your codebase into domain logic, the capabilities your domain requires and the recipe to layer these capabialites in different environments explicitly. In Plato's terms, it will help you think of your system as forms and shadows cast by those forms. And this is a beautiful way in itself to write and think about your code.
+
 ## What's the payoff?
-Writing effect code might feel too constraining initially. But as Runar says, ["Constraints liberate, liberties constrain"](https://www.youtube.com/watch?v=GqmsQeSzMdw). Writing your code using Effect liberates your system.
+Writing effect code, or structuring your codebase this way, might feel too constraining initially. But as Runar says, ["Constraints liberate, liberties constrain"](https://www.youtube.com/watch?v=GqmsQeSzMdw). It will eventually liberate your system.
 
 In this small example above, we already noticed the case in point. By defining services, we were able to layer our agent onto different environments with interchangeable storage backends. The most important thing was a tree shaped content store, every implementation is secondary to that. Now this agent can run in-memory, on your device with a file system or in a [Durable Object](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/#sqlite-storage-backend) with sqlite backed storage.
 
@@ -157,8 +206,8 @@ I've intentionally not gone deeper into a guide on structuring your codebase. I 
 
 Happy effecting!
 
-[Arjun](https://x.com/arjunkmrm)
+<AuthorAvatar />[June](https://x.com/arjunkmrm)
 
 </div>
 
-***ps:*** This post didn't explore `Effect<A, E, R>`: the success value, possible errors, and required services. Maybe that's for another time. But here's a teaser: an Effect declares what it needs, services define those capabilities, and layers describe how to provide them.
+***ps:*** This note didn't explore `Effect<A, E, R>`: the success value, possible errors, and required services. Maybe that's for another time. But here's a teaser: an Effect declares what it needs, services define those capabilities, and layers describe how to provide them.
