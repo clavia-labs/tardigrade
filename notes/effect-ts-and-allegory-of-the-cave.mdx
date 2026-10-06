@@ -72,35 +72,21 @@ In effect terms, we would call the shape of the storage as a `Service`. This is 
 
 <CaveDiagram form="tree" labels={{ form: "Service", layer: "Layer", shadow: "filesystem", prisoner: "you" }} />
 
-First, define the storage capabilities and connect the tools to that service in your own `services/workspace.ts`:
+First, define the storage capabilities in your own `services/workspace.ts`:
 
-```ts
-import { Context, Effect, Schema } from "effect"
-import { Rpc } from "effect/unstable/rpc"
-import { defineLibrary, MethodDescription } from "tardie/libraries"
+```ts highlight="4,5"
+import { Context, Effect } from "effect"
 
 export class Workspace extends Context.Service<Workspace, {
   readonly read: (path: string) => Effect.Effect<string, Error>
   readonly write: (path: string, text: string) => Effect.Effect<void, Error>
 }>()("Workspace") {}
+```
 
-export const storage = defineLibrary({
-  name: "storage",
-  description: "Read and write text at paths.",
-  toolNames: { read: "read_file", write: "write_file" },
-  methods: [
-    Rpc.make("read", {
-      payload: Schema.Struct({ path: Schema.String }),
-      success: Schema.String,
-      error: Schema.String,
-    }).annotate(MethodDescription, "Read a text file at a path"),
-    Rpc.make("write", {
-      payload: Schema.Struct({ path: Schema.String, text: Schema.String }),
-      success: Schema.Struct({ path: Schema.String }),
-      error: Schema.String,
-    }).annotate(MethodDescription, "Write a text file at a path"),
-  ],
-}).implement({
+Then connect the tools to that service. Here, `storageContract` declares the `read_file` and `write_file` tool names and schemas, omitted from this excerpt:
+
+```ts highlight="3,4,7,8"
+export const storage = storageContract.implement({
   read: ({ path }) => Effect.gen(function* () {
     const workspace = yield* Workspace
     return yield* workspace.read(path)
