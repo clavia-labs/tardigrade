@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactElement, type RefObject } from "react"
 type Heading = { readonly id: string; readonly text: string; readonly level: 2 | 3 }
 
 // HEADING_GAP is the space, in CSS pixels, between the sticky header and the top of a heading's letters after a jump.
-export const HEADING_GAP = 24
+const HEADING_GAP = 24
 
 // alignHeading sets the heading's scroll margin so any scroll to it, by click, hash link, or the router, lands its letters HEADING_GAP below the sticky header; the margin discounts the padding and half-leading above the text, so headings of any size and section headings with a divider land alike.
 const alignHeading = (heading: HTMLElement): void => {
@@ -38,7 +38,6 @@ export const NotesOutline = ({ article }: { readonly article: RefObject<HTMLElem
       root.style.paddingBottom = ""
       const last = nodes.at(-1)
       if (last === undefined) return
-      const header = document.querySelector(".site-header")?.getBoundingClientRect().bottom ?? 0
       const landing = window.scrollY + last.getBoundingClientRect().top - Number.parseFloat(last.style.scrollMarginTop || "0")
       const deficit = landing - (document.documentElement.scrollHeight - window.innerHeight)
       if (deficit > 0) root.style.paddingBottom = `${Number.parseFloat(getComputedStyle(root).paddingBottom) + deficit}px`
