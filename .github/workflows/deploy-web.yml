@@ -1,0 +1,52 @@
+name: deploy-web
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-web-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-web:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://tardigrade.sh
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
+      - run: bun install --frozen-lockfile
+      - run: bun run gate --only=lint:docs,typecheck:app-web,build:app-web
+      - run: bun install --global vercel@latest
+      - name: Link Vercel project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -o pipefail
+          mkdir -p .vercel
+          curl -fsS "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            | jq --arg orgId "$VERCEL_ORG_ID" --arg projectId "$VERCEL_PROJECT_ID" \
+              '{orgId: $orgId, projectId: $projectId, projectName: .name, settings: {createdAt, framework, devCommand, installCommand, buildCommand, outputDirectory, rootDirectory, directoryListing, nodeVersion}}' \
+              > .vercel/project.json
+        working-directory: apps/web
+      - run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          NITRO_PRESET: vercel
+        working-directory: apps/web
+      - run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: apps/web

@@ -31,6 +31,10 @@ The prose lint holds markdown to the rules in [AGENTS.md](AGENTS.md) that a code
 
 CI installs with `bun install --frozen-lockfile` and runs the full `bun run gate` for code changes and pushes to `main`. For PRs that change only `docs/`, the required `gate` job runs `bun run gate --only=lint:docs,build:app-web` to check prose and compile the documentation site. Commit `bun.lock` with any dependency change.
 
+## Web deployment
+
+Web deployment is manual. In GitHub Actions, select `deploy-web`, choose **Run workflow**, and use the `main` branch. The workflow checks prose, typechecks the web app, and builds it before deploying to Vercel production.
+
 ## Long-running fixture
 
 The 10k-event workerd regression is opt-in and runs outside the gate:
