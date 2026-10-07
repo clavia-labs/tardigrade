@@ -1,0 +1,278 @@
+---
+title: Telling forms from the shadows
+date: "2026-10-06"
+author: Arjun
+authorUrl: https://x.com/arjunkmrm
+description: "A short note on Effect services and layers"
+route: /notes/telling-forms-from-the-shadows
+socialImage: /images/effect-cave-social.png
+socialImageAlt: "Plato's cave with a bird labeled Service and a carrier and flame labeled Layer."
+---
+
+Through the [allegory of the cave](https://en.wikipedia.org/wiki/Allegory_of_the_cave), Plato argued that forms exist independantly from their physical examples. Prisoners in a cave mistake the shadows of forms for reality because that's all they knew. Unaware of it, we're like these prisioners when building our systems.
+
+<CaveDiagram />
+
+Too often, we mistake implementation details for domain logic. Effect TS is a tool that helps you differentiate between the two. It's not a magic bullet that will save your code. And you can totally do all of this without Effect.
+
+It simply offers you some nice primitives to think about your system in terms of forms and shadows. This will make more sense as we go. If you're looking for a guide on how to physically structure your Effect project, this isn't for you. If you want to grasp the intuition behind some Effect concepts, you're at the right place. We'll start with a practical example.
+
+## An agent connected to file system tools
+
+### The non-Effect way
+
+Imagine you're building an agent connected to a file system with three simple tools: `read_file`, `write_file`, `list_directory`. If you're running on node, you would use `node:fs` to wire the agent to your computer's file storage. Your code might look something like this:
+
+```ts highlight="1,11,16,21"
+import { readFile, readdir, writeFile } from "node:fs/promises"
+import { generateText, stepCountIs, tool, type LanguageModel } from "ai"
+import { z } from "zod"
+
+export function runAgent(model: LanguageModel, prompt: string, maxSteps: number) {
+  return generateText({
+    model,
+    prompt,
+    stopWhen: stepCountIs(maxSteps),
+    tools: {
+      list_directory: tool({
+        description: "List the names of a directory's immediate children",
+        inputSchema: z.object({ path: z.string() }),
+        execute: ({ path }) => readdir(path),
+      }),
+      read_file: tool({
+        description: "Read a text file at a path",
+        inputSchema: z.object({ path: z.string() }),
+        execute: ({ path }) => readFile(path, "utf8"),
+      }),
+      write_file: tool({
+        description: "Write a text file at a path",
+        inputSchema: z.object({ path: z.string(), text: z.string() }),
+        execute: async ({ path, text }) => {
+          await writeFile(path, text, "utf8")
+          return { path }
+        },
+      }),
+    },
+  })
+}
+```
+
+Now let's say you want to deploy it so that it runs remotely. You would quickly run into problems because not all environments provide a filesystem. So, we now have the agent we wanted, but it's imprisoned to providers that support a file system. It cannot run in places that don't provide one.
+
+### A tree shaped store
+
+Step back and ask yourself, does the agent really need a file system, or does it just need a content store that's shaped like a tree? This is a very important distinction and what made Effect click for me.
+
+Step into the agent's shoes and think in terms of the capabilites that it needs to function. A `write_file` tool to add content into a path within a tree shaped directory. A `read_file` tool to get the content at a later time using the same path. A `list_directory` tool to get the overall structure of the store, which should be tree shaped. So long as the thing behind the tools provides these capabilities and honors its contracts, the underlying storage implementation is secondary!
+
+<AgentViewDiagram />
+
+The shape of the content storage and its contracts are what matters to your agent's core, not the physical implementation. This is the difference between form and shadow. In terms of Plato's allegory, the tree shape and the capabilities that such a store provides is the form. The implementation is a shadow, a physical example. Often we confuse between the two.
+
+An actual file system is the most common physical example of a content store that implements a tree shaped directory. You can implement the same shape in hot-storage, or an sqlite table. Thinking of things this way is very liberating. Your agent can suddenly exist in so many places that you might not have initially expected.
+
+<FlyingTardie />
+
+### The Effect way
+
+In Effect terms, we call the shape of the storage as a `Service`. This is similar to what Plato described as forms. It's a description of the capabilities that your domain logic needs without concerning itself with the underlying physics. `Layers` are the receipes that bind these project these descriptions into reality: like the puppeteers and the flame casting the shadow.
+
+In the example below, we'll see the same agent implemented using Effect TS and Tardigrade.
+
+<CaveDiagram form="tree" labels={{ form: "ContentStorage\nService", layer: "FileSystem\nLayer", shadow: "filesystem", prisoner: "you" }} />
+
+### First, define the forms
+
+We start by defining the form of storage we need as a `Service`. The service lists the capabilites and contracts guaranteed to its user. Here, we guarantee that listing the directory would return data that's shaped like a tree (`ContentEntry`) and reading takes a string and returns an error or a string. Likewise, writing take in a string and returns nothing or an error.
+
+```ts highlight="4,5,9,10,11"
+import { Context, Effect } from "effect"
+
+export type ContentEntry = {
+  readonly name: string
+  readonly kind: "directory" | "file"
+}
+
+export class ContentStorage extends Context.Service<ContentStorage, {
+  readonly list: (path: string) => Effect.Effect<readonly ContentEntry[], Error>
+  readonly read: (path: string) => Effect.Effect<string, Error>
+  readonly write: (path: string, text: string) => Effect.Effect<void, Error>
+}>()("ContentStorage") {}
+```
+
+Declare the tool contract using Tardigrade's `defineLibrary`:
+
+```ts highlight="3,5,10,18,23"
+import { Schema } from "effect"
+import { Rpc } from "effect/unstable/rpc"
+import { defineLibrary, MethodDescription } from "tardie/libraries"
+
+export const storageContract = defineLibrary({
+  name: "storage",
+  description: "Read and write text in a tree shaped content store.",
+  toolNames: { list: "list_directory", read: "read_file", write: "write_file" },
+  methods: [
+    Rpc.make("list", {
+      payload: Schema.Struct({ path: Schema.String }),
+      success: Schema.Array(Schema.Struct({
+        name: Schema.String,
+        kind: Schema.Literals(["directory", "file"]),
+      })),
+      error: Schema.String,
+    }).annotate(MethodDescription, "List a directory's immediate children with their names and kinds"),
+    Rpc.make("read", {
+      payload: Schema.Struct({ path: Schema.String }),
+      success: Schema.String,
+      error: Schema.String,
+    }).annotate(MethodDescription, "Read a text file at a path"),
+    Rpc.make("write", {
+      payload: Schema.Struct({ path: Schema.String, text: Schema.String }),
+      success: Schema.Struct({ path: Schema.String }),
+      error: Schema.String,
+    }).annotate(MethodDescription, "Write a text file at a path"),
+  ],
+})
+```
+
+Tardigrade then lets you connect the library definition to the `ContentStorage` service that you defined.
+
+```ts highlight="3,4"
+export const storage = storageContract.implement({
+  list: ({ path }) => Effect.gen(function* () {
+    const storage = yield* ContentStorage
+    return yield* storage.list(path)
+  }).pipe(Effect.mapError(String)),
+  read: ({ path }) => Effect.gen(function* () {
+    const storage = yield* ContentStorage
+    return yield* storage.read(path)
+  }).pipe(Effect.mapError(String)),
+  write: ({ path, text }) => Effect.gen(function* () {
+    const storage = yield* ContentStorage
+    yield* storage.write(path, text)
+    return { path }
+  }).pipe(Effect.mapError(String)),
+})
+```
+
+The tools method takes a list of libraries and returns an atom, which can then be passed to the infer method.
+
+```ts highlight="1,5"
+import { storage } from "./services/workspace"
+
+export const agent = defineActor("file-agent", Effect.gen(function* () {
+  const system = atom("Use the workspace to read and write your notes.")
+  const files = yield* tools([storage])
+  const context = yield* compact(messages)
+  const inference = yield* infer(get => ({
+    system: get(system),
+    tools: get(files),
+    context: get(context),
+  }))
+  return { atom: inference, methods: agentMethods }
+}))
+```
+
+### Then, project it to onto the world
+
+If you notice, until now the agent hasn't been bound to a physical implementation of the content store yet. What we have now is rather a typed Effect program. This is again the form, it does not concern itself with the physical implmentation. The final step is to project it into the world. This is where we use `Layer` to bind the services that the agent requires into a specific store: in-memory, an sqlite table or a real file system.
+
+<MergeDiagram form="File System Agent" model="language model" store="tree shaped store" modelProvides={["compaction", "inference"]} storeProvides="file tools" />
+
+
+```ts highlight="4,5,6,9,13,17"
+import { Layer } from "effect"
+import { toolActs } from "tardie/agent/services"
+import { storage } from "./services/workspace"
+import { memoryWorkspace } from "./services/workspace-memory"
+import { sqliteWorkspace } from "./services/workspace-sqlite"
+import { filesystemWorkspace } from "./services/workspace-filesystem"
+
+const fileToolServices = toolActs([storage]).pipe(
+  Layer.provide(memoryWorkspace),
+)
+
+const sqliteToolServices = toolActs([storage]).pipe(
+  Layer.provide(sqliteWorkspace),
+)
+
+const filesystemToolServices = toolActs([storage]).pipe(
+  Layer.provide(filesystemWorkspace),
+)
+```
+
+Finally, pass the agent and its supplied services to the host. Choose one of the tool layers above and merge it with the other services the agent requires. Here, `agentRuntimeServices` is an application-defined layer supplying model metadata, model execution, and any other requirements of the agent; its configuration is omitted:
+
+```ts highlight="8,11,14"
+import { Effect, Layer } from "effect"
+import { actorContext } from "tardie/agent"
+import { createBunHost } from "tardie/platform/bun"
+import { agent } from "./agent"
+import { agentRuntimeServices } from "./services/agent-runtime"
+
+const services = Layer.mergeAll(
+  fileToolServices,
+  agentRuntimeServices,
+)
+const host = await Effect.runPromise(createBunHost({
+  actor: agent,
+  actorContext,
+  services: () => services,
+  storage: ".tardigrade/data",
+}))
+```
+
+## Effect isn't a magic pill
+Before you think otherwise, Effect **will not** magically solve all your problem. You can totally implement the structure above using vanilla typescript. For example, a simple way to add dependency injection in typescript would be like this:
+
+```ts highlight="7,13,17,22"
+interface ContentStorage {
+  list(path: string): Promise<readonly ContentEntry[]>
+  read(path: string): Promise<string>
+  write(path: string, text: string): Promise<void>
+}
+
+export function runAgent(storage: ContentStorage /* other inputs omitted */) {
+  return generateText({
+    // model, prompt, and stopWhen are supplied as above.
+    tools: {
+      list_directory: tool({
+        // inputSchema
+        execute: ({ path }) => storage.list(path),
+      }),
+      read_file: tool({
+        // inputSchema
+        execute: ({ path }) => storage.read(path),
+      }),
+      write_file: tool({
+        // inputSchema
+        execute: async ({ path, text }) => {
+          await storage.write(path, text)
+          return { path }
+        },
+      }),
+    },
+  })
+}
+```
+
+
+You can also add ways to share injected dependencies and create graphs by yourself all in plain typescript. As you do it, and if you do it well, you might eventually face similar design concerns and end with something that's shaped like Effect.
+
+Effect is simply a library that gives you an ergonomic and battle tested way to structure your codebase into domain logic, the capabilities your domain requires and the recipe to layer these capabialites in different environments explicitly. In Plato's terms, it will help you think of your system as forms and shadows cast by those forms. And this is a beautiful way in itself to write and think about your code.
+
+## What's the payoff?
+Writing effect code, or structuring your codebase this way, might feel too constraining initially. But as Runar says, ["Constraints liberate, liberties constrain"](https://www.youtube.com/watch?v=GqmsQeSzMdw). It will eventually liberate your system.
+
+In this small example above, we already noticed the case in point. By defining services, we were able to layer our agent onto different environments with interchangeable storage backends. The most important thing was a tree shaped content store, every implementation is secondary to that. Now this agent can run in-memory, on your device with a file system or in a [Durable Object](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/#sqlite-storage-backend) with sqlite backed storage.
+
+I've intentionally not gone deeper into a guide on structuring your codebase. I think that's secondary to building good intuitions and understanding. So go out there and try organising your code into services and layers. You'll figure out a structure that works best for you. Free your system from the shackles of physics.
+
+<div className="notes-signoff">
+
+Happy effecting!
+
+<AuthorAvatar />[June](https://x.com/arjunkmrm)
+
+</div>
+
+***ps:*** This note didn't explore `Effect<A, E, R>`: the success value, possible errors, and required services. Maybe that's for another time. But here's a teaser: an Effect declares what it needs, services define those capabilities, and layers describe how to provide them.

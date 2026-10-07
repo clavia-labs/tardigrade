@@ -455,12 +455,16 @@ h1 span { display: block; white-space: nowrap; }
 .notes-outline { position: sticky; top: 96px; max-width: 220px; }
 .notes-article :is(h2, h3)[id] { scroll-margin-top: 88px; }
 .notes-outline-title { margin: 0 0 12px; color: var(--faint); font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
-.notes-outline ol { margin: 0; padding: 0; list-style: none; border-left: 1px dashed rgb(var(--accent-rgb) / 30%); }
+.notes-outline-track { position: relative; }
+.notes-outline ol { margin: 0; padding: 0; list-style: none; }
+.notes-outline-ink { position: absolute; top: 0; left: -6px; overflow: visible; pointer-events: none; }
+.notes-outline-ink path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.notes-outline-ink .base { stroke: rgb(var(--accent-rgb) / 35%); stroke-width: 1.25; }
+.notes-outline-ink .trail { stroke: var(--moss-ink); stroke-width: 1.75; }
+.notes-outline-ink .pen { fill: var(--moss-ink); }
 .notes-outline li[data-level="3"] a { padding-left: 26px; font-size: 13px; }
 .notes-outline a { position: relative; display: block; padding: 5px 0 5px 14px; color: var(--ink-2); font-size: 14px; line-height: 1.4; text-decoration: none; transition: color 160ms ease; }
-.notes-outline a::before { position: absolute; top: 6px; bottom: 6px; left: -1px; width: 2px; background: var(--moss-ink); content: ""; transform: scaleY(0); transition: transform 200ms var(--ease-out); }
 .notes-outline a[aria-current="location"] { color: var(--moss-ink); }
-.notes-outline a[aria-current="location"]::before { transform: scaleY(1); }
 @media (hover: hover) and (pointer: fine) { .notes-outline a:hover { color: var(--ink); } }
 @media (max-width: 1240px) { .notes-outline-rail { display: none; } }
 .guide-article.notes-article h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; letter-spacing: -.02em; }
@@ -510,6 +514,14 @@ h1 span { display: block; white-space: nowrap; }
 .cave-labels path { fill: none; stroke: var(--moss-ink); stroke-width: 1; }
 .cave-labels .cave-label-on-rock { fill: var(--bg); }
 .cave-shape { color: var(--moss-ink); }
+.cave-shape-fill path { fill: var(--moss-ink); }
+.shadow-diagram { display: block; width: 100%; max-width: 640px; height: auto; margin: 28px auto 32px; }
+.shadow-diagram .cave-object .shadow-diagram-eye { fill: var(--bg); }
+.merge-diagram { display: block; width: 100%; max-width: 640px; height: auto; margin: 28px auto 32px; }
+.merge-diagram .cave-object .shadow-diagram-eye { fill: var(--bg); }
+.merge-diagram :is(.merge-lines path, .merge-head, .merge-box) { fill: none; stroke: var(--moss-ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.merge-diagram .merge-box { stroke-dasharray: 5 4; }
+.merge-diagram .merge-label { fill: var(--moss-ink); font: 12px var(--mono); }
 .cave-flame { fill: var(--moss-ink); }
 .cave-light { fill: var(--surface); }
 .cave-rays { fill: none; stroke: light-dark(#7d9bff, #c3ceff); stroke-width: 1.25; stroke-dasharray: 4 5; opacity: .8; }
@@ -975,6 +987,7 @@ h1 span { display: block; white-space: nowrap; }
   .guide-shell { padding: 0 20px; }
   .guide-sidebar { overflow-x: auto; font-size: 13px; white-space: nowrap; }
   .guide-article { padding: 36px 0 80px; }
+  .guide-article.notes-article { padding-inline: var(--gutter); }
   .guide-article h1 { font-size: 36px; }
   .guide-article h2 { font-size: 27px; }
   .guide-article > p:not(.guide-intro) { font-size: 16px; }

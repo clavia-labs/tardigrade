@@ -3,8 +3,8 @@ import { ArrowLeft } from "@phosphor-icons/react"
 import { Link } from "@tanstack/react-router"
 import { useRef, type ReactElement } from "react"
 
-import Content, { frontmatter } from "@notes/effect-ts-and-allegory-of-the-cave.mdx"
-import markdown from "@notes/effect-ts-and-allegory-of-the-cave.mdx?doc-source"
+import Content, { frontmatter } from "@notes/telling-forms-from-the-shadows.mdx"
+import markdown from "@notes/telling-forms-from-the-shadows.mdx?doc-source"
 import { PageActions } from "../ui/PageActions"
 import { AuthorAvatar } from "./AuthorAvatar"
 import { NotesCode } from "./NotesCode"
@@ -14,7 +14,9 @@ import { AgentViewDiagram } from "./diagrams/AgentViewDiagram"
 import { CaveDiagram } from "./diagrams/CaveDiagram"
 import { CaveStamp } from "./diagrams/CaveStamp"
 import { FlyingTardie } from "./diagrams/FlyingTardie"
+import { MergeDiagram } from "./diagrams/MergeDiagram"
 import { RussianDollDiagram } from "./diagrams/RussianDollDiagram"
+import { ShadowDiagram } from "./diagrams/ShadowDiagram"
 
 export const post = frontmatter as {
   readonly title: string
@@ -22,7 +24,7 @@ export const post = frontmatter as {
   readonly author: string
   readonly authorUrl?: string
   readonly description: string
-  readonly route: "/notes/effect-ts-and-allegory-of-the-cave"
+  readonly route: "/notes/telling-forms-from-the-shadows"
   readonly socialImage: string
   readonly socialImageAlt: string
 }
@@ -55,7 +57,7 @@ export const NotesPostPage = (): ReactElement => {
       <h1>{post.title}</h1>
       <div className="notes-metadata"><time dateTime={post.date}>{postDate}</time></div>
       <div className="guide-divider" />
-      <MDXProvider components={{ a: NotesLink, pre: NotesCode, AuthorAvatar, AgentViewDiagram, CaveDiagram, FlyingTardie, RussianDollDiagram }}><Content /></MDXProvider>
+      <MDXProvider components={{ a: NotesLink, pre: NotesCode, AuthorAvatar, AgentViewDiagram, CaveDiagram, FlyingTardie, MergeDiagram, RussianDollDiagram, ShadowDiagram }}><Content /></MDXProvider>
     </article>
     <aside className="notes-outline-rail"><NotesOutline article={article} /></aside>
   </main>
