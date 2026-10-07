@@ -52,6 +52,7 @@ export const REQUIRED_PUBLISH_DEPENDENCIES = [
   "@effect/platform-node-shared",
   "@effect/sql-sqlite-bun",
   "@effect/sql-sqlite-do",
+  "@modelcontextprotocol/sdk",
   "@tardie/ai",
   "@tardie/ai-anthropic",
   "@tardie/ai-openai",

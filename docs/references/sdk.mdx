@@ -94,9 +94,29 @@ const directTools = tools(libraries)
 const researchCode = codeMode(libraries)
 ```
 
-Yield the chosen Effect during actor setup. Supply matching implementations in host services with `toolActs(libraries)` for direct tools or `codeModeActs(libraries)` for code mode. Both atoms also accept the host's full catalog when no library selection is supplied. Missing or duplicate selected library names fail during setup. Built-ins include `arxiv`, `fetch`, `workspace`, `agents`, and `alarm`.
+Yield the chosen Effect during actor setup. Supply matching implementations in host services with `toolActs(libraries)` for direct tools or `codeModeActs(libraries)` for code mode. Both atoms also accept the host's full catalog when no library selection is supplied. Missing or duplicate selected library names fail during setup. Built-ins include `arxiv`, `fetch`, `parallel`, `workspace`, `agents`, and `alarm`.
 
 `arxiv().search` is exposed as `arxiv.search` inside code mode and `arxiv__search` as a direct tool. It returns the arXiv Atom XML feed with its source URL and applied pagination. `DEFAULT_ARXIV_POLICY` supplies pagination defaults; override them when constructing the library or per search call. `DEFAULT_ARXIV_ENDPOINT` can also be overridden. Applications own request pacing according to the [arXiv API guidance](https://info.arxiv.org/help/api/user-manual.html).
+
+### Parallel web search
+
+`parallel()` exposes anonymous [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) over Streamable HTTP. Add it to the libraries selected by `tools` and provide the same implementations with `toolActs` in host services:
+
+```ts
+import { parallel } from "tardie/libraries"
+import { tools } from "tardie/agent"
+import { toolActs } from "tardie/agent/services"
+
+const libraries = [parallel()]
+const directTools = tools(libraries)
+const toolServices = toolActs(libraries)
+```
+
+Yield `directTools` during actor setup and include `toolServices` in the host service layer. The model sees `parallel__search` with `objective` and `search_queries`, and `parallel__fetch` with `urls`, optional `objective`, `search_queries`, and `full_content`. Both return the MCP result, including `content` and any structured source URLs, excerpts, warnings, and fetch errors. MCP tool errors become tool failures. Pass a stable optional `session_id` on both methods for calls within one conversation.
+
+No Parallel API key or saved credentials are read. The anonymous tier uses server-managed search settings and has rate limits; model inference uses the host's model configuration and is separate. Fetch accepts up to 20 URLs, and its optional objective is limited to 200 characters. `full_content` defaults to the server's excerpt mode; complete pages can exceed the server's output limit.
+
+`DEFAULT_PARALLEL_ENDPOINT` is `https://search.parallel.ai/mcp`, `DEFAULT_PARALLEL_USER_AGENT` is `tardigrade (Parallel Search MCP)`, and `DEFAULT_PARALLEL_TIMEOUT_MS` is 60,000. Override `endpoint`, `userAgent`, `timeoutMs`, or `fetch` when constructing the library. The timeout covers connection and tool execution, appears in the model's tool descriptions, and aborts HTTP requests along with Effect interruption. The SDK loads when a Parallel method executes; each call opens and closes its own MCP client.
 
 ## Host and services
 

@@ -8,3 +8,4 @@ export * from "./agents"
 export * from "./alarm"
 
 export * from "./errors"
+export * from "./parallel"
