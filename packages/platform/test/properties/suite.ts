@@ -1,7 +1,7 @@
 import { stateValidation } from "./runtime/state-validation"
 import { snapshotLookups } from "./runtime/snapshot-lookups"
 import { checkpointChunks } from "./runtime/checkpoint-chunks"
-import { durableCapture } from "./runtime/durable-capture"
+import { atomCheckpoint } from "./runtime/atom-checkpoint"
 import { referenceCoordinates } from "./runtime/reference-coordinates"
 import { inputCanonicalization, inputRepresentation } from "./runtime/input-representation"
 import { promiseDeadline } from "./runtime/promise-deadline"
@@ -23,7 +23,7 @@ export const propertyCases = {
   stateValidation,
   snapshotLookups: () => fc.assert(snapshotLookups, RUNTIME_PROPERTY_OPTIONS),
   checkpointChunks: () => fc.assert(checkpointChunks, RUNTIME_PROPERTY_OPTIONS),
-  durableCapture: () => fc.assert(durableCapture, RUNTIME_PROPERTY_OPTIONS),
+  atomCheckpoint: () => fc.assert(atomCheckpoint, RUNTIME_PROPERTY_OPTIONS),
   referenceCoordinates: () => fc.assert(referenceCoordinates, RUNTIME_PROPERTY_OPTIONS),
   inputCanonicalization,
   inputRepresentation: () => fc.assert(inputRepresentation, RUNTIME_PROPERTY_OPTIONS),
