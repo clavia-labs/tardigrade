@@ -142,7 +142,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const coreSettlements = new Map<string, EffectSettled>()
     const coreCancellations = new Map<string, EffectCancelled>()
     const promiseSettlements = new Map<string, PromiseSettled>()
-    // concluded holds effects with a recorded terminal outcome; replay checks their identity but not their input, since only unsettled input can execute (quint/checkpoint/inputLifecycle.qnt, verifiedExecution).
     const concluded = new Set([...[...history].map(record => record.event), ...(seed?.effects.flatMap(entry => entry.settlement ?? []) ?? []), ...(seed?.promises ?? [])].flatMap(event =>
       Schema.is(PromiseSettled)(event) || (Schema.is(EffectSettled)(event) && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value")) ? [effectKey(event.ref)] : []))
     const retries = new Map<string, { readonly position: number; readonly event: RetryScheduled }[]>()
