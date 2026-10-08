@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { AiError } from "effect/unstable/ai"
+import { AiError } from "effect/ai"
 
 export const ModelError = Schema.toCodecJson(AiError.AiError)
 export type ModelError = typeof ModelError.Type

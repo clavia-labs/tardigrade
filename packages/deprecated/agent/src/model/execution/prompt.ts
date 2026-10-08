@@ -1,5 +1,5 @@
 import { JsonSchema, Schema, SchemaRepresentation } from "effect"
-import { Prompt } from "effect/unstable/ai"
+import { Prompt } from "effect/ai"
 import { objectKeyOf } from "../../object/reference"
 import type { ResolvedObjects } from "./objects"
 import type { AgentMessage } from "../../projection/messages"

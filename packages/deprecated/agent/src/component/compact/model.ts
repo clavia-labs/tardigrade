@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { Toolkit, type Prompt, type Response } from "effect/unstable/ai"
+import { Toolkit, type Prompt, type Response } from "effect/ai"
 import { collectResponse } from "@clavia/tardigrade-model/stream/collect"
 import { withModelRequest } from "@clavia/tardigrade-model/stream/invocation"
 import { BindingSettings } from "@clavia/tardigrade-model/settings"

@@ -1,5 +1,5 @@
 import { toolComponent, type ToolComponent, toolConcurrencyOf, toolDispatchMatches, type ToolConcurrency, type Answer, type PendingCall } from "../tool/machine"
-import type { KeyValueStore } from "effect/unstable/persistence"
+import type { KeyValueStore } from "effect/persistence"
 import { Chunk } from "effect"
 import { type Transition } from "@clavia/tardigrade-deprecated-core/runtime"
 import { component as defineComponent, type ComponentRequirements } from "@clavia/tardigrade-deprecated-core/actor"

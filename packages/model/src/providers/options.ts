@@ -19,13 +19,13 @@ export interface ProtocolOptions {
   readonly options?: Schema.JsonObject
 }
 
-// protocolOptionsOf checks JSON shape; the selected provider validates its settings at assembly (options.test.ts).
+// protocolOptionsOf checks JSON shape; the selected provider validates protocol-specific settings at assembly.
 export const protocolOptionsOf = (protocol: ModelProtocol, value: unknown): ProtocolOptions => ({
   protocol,
   ...(value === undefined ? {} : { options: Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(value) })
 })
 
-// validatedConfig checks options before and after host limits are applied (options.test.ts).
+// validatedConfig checks Bedrock options before and after host limits are applied.
 export const validatedConfig = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown, original: unknown = value): S["Type"] => {
   const decode = Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })
   if (original !== value) decode(original ?? {})

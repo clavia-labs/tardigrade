@@ -1,4 +1,4 @@
-import type { LanguageModel } from "effect/unstable/ai"
+import type { LanguageModel } from "effect/ai"
 import { testInferenceLayer } from "@clavia/tardigrade-deprecated-agent/testing/model"
 import { Effect, Layer } from "effect"
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"

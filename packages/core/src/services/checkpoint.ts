@@ -1,4 +1,4 @@
-import { Schema, Crypto, Effect, Encoding, PlatformError } from "effect"
+import { Schema, Crypto, Effect, PlatformError } from "effect"
 import { RuntimeError, EffectRef, EffectCancelled } from "../runtime/effects"
 import { StoredEffectRequested, EffectSettled, PromiseSettled } from "../runtime/events"
 import type { EffectCheckpoint } from "../runtime/replay"
@@ -10,7 +10,9 @@ const crypto = Crypto.make({
   digest: (algorithm, data) => Effect.tryPromise({ try: () => globalThis.crypto.subtle.digest(algorithm, data.slice().buffer as ArrayBuffer).then(value => new Uint8Array(value)), catch: cause => PlatformError.systemError({ _tag: "Unknown", module: "Crypto", method: "digest", description: "Checkpoint digest failed", cause }) }),
 })
 
-export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => crypto.digest("SHA-256", payload).pipe(Effect.map(Encoding.encodeHex), Effect.mapError(RuntimeError.from))
+const encodeHex = (bytes: Uint8Array): string => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+
+export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => crypto.digest("SHA-256", payload).pipe(Effect.map(encodeHex), Effect.mapError(RuntimeError.from))
 
 export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
   if (!Number.isSafeInteger(checkpoint.position) || checkpoint.position < 0) throw new Error("Invalid checkpoint position")

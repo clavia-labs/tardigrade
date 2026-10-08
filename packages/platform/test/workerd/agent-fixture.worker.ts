@@ -1,5 +1,5 @@
 import { Layer } from "effect"
-import { Prompt } from "effect/unstable/ai"
+import { Prompt } from "effect/ai"
 import { actorContext, createActor } from "@clavia/tardigrade-agent"
 import { objectStorageFromR2 } from "@clavia/tardigrade-cloudflare/object-storage/r2"
 import { createActorWorker } from "../../src/cloudflare"

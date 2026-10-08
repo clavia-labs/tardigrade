@@ -1,5 +1,5 @@
 import { Effect, ManagedRuntime, Schema, Semaphore, type Layer } from "effect"
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage } from "@clavia/tardigrade-core"
 import { initializeSqlScheduler, sqlSchedulerTransaction } from "./sql-scheduler"
 import { recordRetryWakes } from "./retry-wakes"

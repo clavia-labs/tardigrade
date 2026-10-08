@@ -1,5 +1,5 @@
 import { Context, Schema } from "effect"
-import { AtomRegistry } from "effect/unstable/reactivity"
+import { AtomRegistry } from "effect/reactivity"
 import type { Atom, PrimitiveAtom, SetStateAction } from "./atom"
 import { EventLog, eventLogContext } from "../services/event-log"
 import { actorGraph } from "./graph"

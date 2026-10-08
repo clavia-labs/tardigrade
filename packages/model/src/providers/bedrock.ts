@@ -1,11 +1,11 @@
 import { inferenceLayer as sharedInferenceLayer } from "../services"
 import { DEFAULT_BEDROCK_TOOL_HISTORY, validatedConfig } from "./options"
-import { BedrockLanguageModel } from "@tardie/ai-bedrock"
+import * as BedrockLanguageModel from "@tardie/ai-bedrock"
 import { bedrockGatewayHandler } from "./bedrock-transport"
 import type { ProviderLayer, ProviderOptions } from "./layer"
 import type { BedrockOptions } from "./bedrock-contract"
 
-export type { ClientOptions, ModelConfig, Send } from "@tardie/ai-bedrock/BedrockLanguageModel"
+export type { ClientOptions, ModelConfig, Send } from "./bedrock-language-model"
 
 // BedrockProviderOptions exposes SDK client and model settings at the optional provider entry point (bedrock.test.ts).
 export type BedrockProviderOptions = Omit<BedrockOptions, "client"> & {

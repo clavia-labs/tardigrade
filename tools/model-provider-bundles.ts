@@ -104,8 +104,8 @@ const main = async (): Promise<void> => {
     await run([process.execPath, "-e", "await import('tardie/deprecated/server/host'); await import('tardie/model/host')"], directory)
     await run([process.execPath, "-e", `
       import { Effect } from "effect";
-      import { LanguageModel } from "effect/unstable/ai";
-      import { FetchHttpClient } from "effect/unstable/http";
+      import { LanguageModel } from "effect/ai";
+      import { FetchHttpClient } from "effect/http";
       import { inferenceLayer } from "tardie/model/services";
       for (const provider of ${JSON.stringify(fixtures)}) {
         const { providerLayer } = await import("tardie/model/providers/" + provider);

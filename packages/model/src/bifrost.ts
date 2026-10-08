@@ -1,5 +1,5 @@
 import { Context, Data, Effect, Layer, Redacted, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 
 export class BifrostError extends Data.TaggedError("BifrostError")<{ readonly message: string; readonly status?: number }> {}
 const failure = (message: string) => new BifrostError({ message })

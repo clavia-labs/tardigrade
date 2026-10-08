@@ -1,4 +1,4 @@
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { isMessageReceived } from "../actor/message"
 import { atom } from "../atoms/atom"
 import type { Recorded, RuntimeEvent, ObservedRecord } from "../services/journal"

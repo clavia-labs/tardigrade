@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Context, Effect, Layer, Schema } from "effect"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { defineActor, effectAtom, ExecutionHandle, ExecutionResult } from "@clavia/tardigrade-core"
 import { defineLibrary, MethodExecution, MethodPromiseTimeout, toolsFromLibraries } from "@clavia/tardigrade-libraries"
 import { tools } from "@clavia/tardigrade-agent/atoms/tools"

@@ -1,6 +1,6 @@
 import type { ReadonlyIndex, ReadonlyLog } from "../runtime/log-view"
 import { Context } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { atom, type Atom } from "../atoms/atom"
 import type { ObservedRecord } from "./journal"
 import type { EffectRef, EffectCancelled } from "../runtime/effects"

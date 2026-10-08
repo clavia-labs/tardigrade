@@ -1,6 +1,7 @@
-import { Effect, Encoding, Layer } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
-import { SqlClient } from "effect/unstable/sql"
+import { Effect, Layer } from "effect"
+import { Base64 } from "effect/encoding"
+import { KeyValueStore } from "effect/persistence"
+import { SqlClient } from "effect/sql"
 import { SqliteMigrator } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import type { AppendOptions, AppendResult, ThreadEventStore } from "@clavia/tardigrade-deprecated-core/log"
@@ -253,10 +254,10 @@ export const layerWorkspace = (sql: SqlClient.SqlClient): Layer.Layer<KeyValueSt
     get,
     getUint8Array: (key) => get(key).pipe(Effect.map((value) => {
       if (value === undefined) return undefined
-      const decoded = Encoding.decodeBase64(value)
+      const decoded = Base64.decode(value)
       return decoded._tag === "Success" ? decoded.success : new TextEncoder().encode(value)
     })),
-    set: (key, value) => set(key, typeof value === "string" ? value : Encoding.encodeBase64(value)),
+    set: (key, value) => set(key, typeof value === "string" ? value : Base64.encode(value)),
     remove: (key) => sql.unsafe("DELETE FROM workspace WHERE key = ?", [key]).pipe(Effect.asVoid, Effect.orDie),
     clear: sql.unsafe("DELETE FROM workspace").pipe(Effect.asVoid, Effect.orDie),
     size: sql.unsafe<{ readonly count: number }>("SELECT COUNT(*) AS count FROM workspace").pipe(

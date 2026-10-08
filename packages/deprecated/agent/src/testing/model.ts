@@ -1,6 +1,6 @@
 import { ModelLock, emptyModelLock, modelLockService } from "@clavia/tardigrade-model/lock"
 import { Context, Effect, Layer, Schema, Stream } from "effect"
-import { AiError, LanguageModel, Response } from "effect/unstable/ai"
+import { AiError, LanguageModel, Response } from "effect/ai"
 import type { InferRequest, ModelResolution } from "../model/contract"
 import type { InferDelta } from "../model/observer"
 import type { Action } from "../log/events"

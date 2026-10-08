@@ -23,6 +23,6 @@
     "@clavia/tardigrade-libraries": "workspace:*",
     "@clavia/tardigrade-platform": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
-    "effect": "4.0.0-rc.115"
+    "effect": "4.0.1"
   }
 }

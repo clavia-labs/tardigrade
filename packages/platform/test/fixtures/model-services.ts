@@ -1,5 +1,5 @@
 import { Layer, Effect, Stream } from "effect"
-import { AiError, LanguageModel, Prompt, Response } from "effect/unstable/ai"
+import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import { modelActs, modelInfo, modelServices } from "@clavia/tardigrade-agent/services/model"
 import { toolActs } from "@clavia/tardigrade-agent/services/tools"
 import { AskPermission } from "@clavia/tardigrade-agent/contracts/acts"

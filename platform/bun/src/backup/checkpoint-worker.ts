@@ -1,6 +1,6 @@
 import { BunWorkerRunner } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
-import { RpcServer } from "effect/unstable/rpc"
+import { RpcServer } from "effect/rpc"
 import { captureHostCheckpoint } from "./index"
 import { CheckpointRpcs } from "./protocol"
 

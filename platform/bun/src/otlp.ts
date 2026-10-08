@@ -1,6 +1,6 @@
 import { Layer } from "effect"
-import * as Otlp from "effect/unstable/observability/Otlp"
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient"
+import * as Otlp from "effect/observability/Otlp"
+import * as FetchHttpClient from "effect/http/FetchHttpClient"
 
 // The export half of the telemetry seam, batteries included: effect v4 ships the OTLP exporter
 // in core, so the convenience costs no dependency. Hand the result to createBunHost's

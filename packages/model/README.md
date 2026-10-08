@@ -17,7 +17,7 @@ src/
 
 Tests sit beside the modules they cover. Shared fixtures are excluded from the published package. The export map retains established flat catalog paths.
 
-The package uses `@tardie/ai` and the scoped provider packages. Bedrock hosts install the optional `@tardie/ai-bedrock` peer; Cloudflare gateway hosts also install the declared Smithy transport peers. Hosts install upstream `effect@4.0.0-rc.115`. Dynamic tools use native encoded schemas, and the shared provider wrapper supplies deferred validation and response formats.
+The package uses `@tardie/ai` and the scoped provider packages. Bedrock hosts install the optional `@tardie/ai-bedrock` peer; Cloudflare gateway hosts also install the declared Smithy transport peers. Hosts install stable `effect@4.0.1`. Dynamic tools use native encoded schemas, and the shared provider wrapper supplies deferred validation and response formats.
 
 The agent inference component translates turns in `src/inference/model/`. Compaction owns its summary translation in `src/component/compaction/model.ts`. Both consume Effect's `LanguageModel` service. Provider assembly and catalog selection stay in this package. Other libraries connect through a bridge that implements `LanguageModel`.
 

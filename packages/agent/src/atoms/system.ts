@@ -1,4 +1,4 @@
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { atom, type Atom } from "@clavia/tardigrade-core"
 
 // systemPrompt joins static text and reactive instruction blocks, omitting empty blocks.

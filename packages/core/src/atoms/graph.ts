@@ -1,4 +1,4 @@
-import type { AtomRegistry } from "effect/unstable/reactivity"
+import type { AtomRegistry } from "effect/reactivity"
 import type { Atom } from "./atom"
 
 export interface ActorGraph {

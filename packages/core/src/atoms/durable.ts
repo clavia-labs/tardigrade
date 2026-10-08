@@ -1,6 +1,6 @@
 import type { ReadonlyLog } from "../runtime/log-view"
 import { Context, Option, Schema } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { atom, type Atom, type Getter } from "./atom"
 import { incrementalValidator, invalid } from "./incremental/validate"
 import type { RecordMetadata } from "../services/journal"

@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { Atom } from "effect/unstable/reactivity"
+import { Atom } from "effect/reactivity"
 import { effectAtom, durableAtom, durablePromise, eventValue, EffectCancelled, effectKey } from "@clavia/tardigrade-core"
 import { ToolPromise } from "@clavia/tardigrade-libraries/types"
 import { ToolReturned, TurnRequested } from "../contracts/events"

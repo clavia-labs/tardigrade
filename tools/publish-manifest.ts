@@ -48,15 +48,15 @@ export const publishSources = [
 
 export const REQUIRED_PUBLISH_DEPENDENCIES = [
   "@cfworker/json-schema",
-  "@effect/platform-bun",
-  "@effect/platform-node-shared",
-  "@effect/sql-sqlite-bun",
-  "@effect/sql-sqlite-do",
   "@tardie/ai",
   "@tardie/ai-anthropic",
   "@tardie/ai-openai",
   "@tardie/ai-openai-compat",
   "@tardie/ai-openrouter",
+  "@effect/platform-bun",
+  "@effect/platform-node-shared",
+  "@effect/sql-sqlite-bun",
+  "@effect/sql-sqlite-do",
   "effect",
   "jsonc-parser",
 ] as const

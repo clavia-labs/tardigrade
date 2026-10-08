@@ -79,7 +79,7 @@ export const outputSchemaFor = (output: OutputRequest | undefined, mode: OutputM
   output === undefined || output.kind !== "contract" || mode.kind !== "native" ? undefined : output.contract.schema
 
 // outputNameFor is the schema identity a native attempt sends beside the schema. Both wires carry
-// a name, and both carry the declared one (providers/response-format.test.ts).
+// a name, and both carry the declared one (packages/ai/clavia/test/LanguageModel.test.ts).
 export const outputNameFor = (output: OutputRequest | undefined, mode: OutputMode): string | undefined =>
   outputSchemaFor(output, mode) === undefined || output?.kind !== "contract" ? undefined : output.contract.name
 

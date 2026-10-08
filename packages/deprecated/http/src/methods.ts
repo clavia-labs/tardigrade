@@ -1,6 +1,6 @@
 import { Clock, Context, Effect, Schema } from "effect"
-import { HttpServerResponse } from "effect/unstable/http"
-import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpServerResponse } from "effect/http"
+import { HttpApi, HttpApiBuilder } from "effect/http-api"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import type { ActorMethods } from "@clavia/tardigrade-deprecated-core/actor/method"
 import { threadCreatedOf } from "@clavia/tardigrade-deprecated-core/interaction/relations"

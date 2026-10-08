@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Effect, Fiber, Layer, Stream } from "effect"
-import { LanguageModel, Response, Toolkit } from "effect/unstable/ai"
+import { LanguageModel, Response, Toolkit } from "effect/ai"
 import { collectResponse } from "./collect"
 import { TestClock } from "effect/testing"
 import { boundedStream, requestPolicyOf, StreamBoundExceeded } from "./request"

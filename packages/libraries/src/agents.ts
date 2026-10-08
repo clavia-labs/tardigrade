@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { Actor, ExecutionHandle, RuntimeError } from "@clavia/tardigrade-core"
 import { defineLibrary, MethodDescription, MethodHints, MethodExecution } from "./library"
 

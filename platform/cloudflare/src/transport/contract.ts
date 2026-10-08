@@ -1,6 +1,6 @@
-import type { HttpRouter } from "effect/unstable/http"
+import type { HttpRouter } from "effect/http"
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api"
 import { actorsGroup, methodsGroup, modelsGroup, runtimeGroup, threadsGroup } from "@clavia/tardigrade-deprecated-client/contract"
 
 const WorkerActor = Schema.Struct({ actor: Schema.String, definition: Schema.String })

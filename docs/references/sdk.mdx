@@ -55,7 +55,7 @@ A library names a list of Effect RPC methods. Each method declares its payload, 
 
 ```ts
 import { Effect, Schema } from "effect"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { defineLibrary, MethodDescription, MethodHints } from "tardie/libraries"
 
 const notes = defineLibrary({
@@ -111,7 +111,7 @@ import { providerLayer } from "tardie/model/providers/openrouter"
 
 For Cloudflare, import `createActorWorker` from `tardie/platform/cloudflare` and export its `ActorObject` and `ThreadObject` classes as `ActorDO` and `ThreadDO`. Each instance directory and each thread own separate SQLite databases. Use `createActorObject` and `createThreadObject` separately for custom Worker routing. Provider modules have individual entrypoints so applications can choose their provider dependencies.
 
-Pass a fully provided Effect telemetry layer as `telemetry` to any host. The layer is inherited by host-managed fibers, actor runtimes, commit logging, and recovery work. Effect 4 exposes OTLP integrations from `effect/unstable/observability`; provide their HTTP client and serialization dependencies in the application layer before passing it to the host.
+Pass a fully provided Effect telemetry layer as `telemetry` to any host. The layer is inherited by host-managed fibers, actor runtimes, commit logging, and recovery work. Effect 4 exposes OTLP integrations from `effect/observability`; provide their HTTP client and serialization dependencies in the application layer before passing it to the host.
 
 ```ts
 import { createActorWorker } from "tardie/platform/cloudflare"

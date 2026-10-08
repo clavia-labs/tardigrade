@@ -1,6 +1,6 @@
 import { Cause, Effect, Exit, Schema, type Stream } from "effect"
 import type { ExecutionStreamPolicy, ExecutionUpdate } from "@clavia/tardigrade-core"
-import { HttpServerResponse } from "effect/unstable/http"
+import { HttpServerResponse } from "effect/http"
 import { executionStreamSse } from "./execution-stream-sse"
 import { InitialState, InvalidMessage, type ActorMethods, type MethodInput, type MethodResult, type MessageReceipt, type ThreadCoordinate, type ThreadRequest, type Recorded } from "@clavia/tardigrade-core"
 import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"

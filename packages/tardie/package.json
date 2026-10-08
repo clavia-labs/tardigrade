@@ -188,7 +188,7 @@
     "@clavia/tardigrade-deprecated-agent": "workspace:*",
     "@clavia/tardigrade-deprecated-core": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
-    "effect": "4.0.0-rc.115",
+    "effect": "4.0.1",
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-platform": "workspace:*",

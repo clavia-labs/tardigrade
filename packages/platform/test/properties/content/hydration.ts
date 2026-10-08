@@ -1,5 +1,5 @@
 import { deepStrictEqual, strictEqual, ok } from "node:assert"
-import type { Prompt } from "effect/unstable/ai"
+import type { Prompt } from "effect/ai"
 import type { MethodResult } from "@clavia/tardigrade-core"
 import type { MessageContentPart } from "@clavia/tardigrade-agent/contracts/events"
 import type { ObjectRef } from "@clavia/tardigrade-model/object"

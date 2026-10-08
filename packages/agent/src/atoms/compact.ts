@@ -1,7 +1,7 @@
 import { createCompactionState } from "./durable/compaction"
 import { RuntimeError, effectAtom, type Atom } from "@clavia/tardigrade-core"
 import { Effect } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { type Conversation, ModelCalled, ModelReturned, CompactionFailed } from "../contracts/events"
 import { ModelInfo } from "../actor/context"
 import { Summarize, requests, failureMessage } from "../contracts/acts"

@@ -62,7 +62,7 @@
     "./testing": "./src/testing/check.ts"
   },
   "dependencies": {
-    "effect": "4.0.0-rc.115"
+    "effect": "4.0.1"
   },
   "peerDependencies": {
     "fast-check": "^4.9.0"

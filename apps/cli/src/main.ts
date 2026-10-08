@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { Effect, Layer } from "effect"
-import { Command } from "effect/unstable/cli"
+import { Command } from "effect/cli"
 import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
 

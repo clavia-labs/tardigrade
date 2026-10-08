@@ -2,7 +2,7 @@ import { makeRetryingAlarmPersistence, type CloudflareRetryPolicy } from "./retr
 import { actorExecution } from "@clavia/tardigrade-deprecated-host/execution"
 import { commitTracedDelivery } from "@clavia/tardigrade-deprecated-host/delivery"
 import { Effect, Layer, ManagedRuntime } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
+import { KeyValueStore } from "effect/persistence"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { EventLog, eventLogFrom, type ThreadEventRow, type AppendOptions } from "@clavia/tardigrade-deprecated-core/log"

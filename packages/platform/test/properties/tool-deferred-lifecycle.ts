@@ -1,6 +1,6 @@
 import { createTestStore } from "./runtime/store"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import * as fc from "fast-check"
 import { defineActor, durablePromise, effectKey, EffectExecution, ExecutionHandle, ExecutionResult, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, Promises } from "@clavia/tardigrade-core"
 import { defineLibrary, MethodExecution, MethodPromiseTimeout } from "@clavia/tardigrade-libraries"

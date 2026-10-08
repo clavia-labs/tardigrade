@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 import { makeObjectStorage, ObjectStorage, ObjectStorageError } from "./storage"
 import { objectRefOf } from "./reference"
 

@@ -1,6 +1,6 @@
 import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled } from "../contracts/events"
 import { ModelInfo } from "../actor/context"
 import { Generate, requests, failureMessage } from "../contracts/acts"

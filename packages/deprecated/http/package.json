@@ -12,7 +12,7 @@
     "@clavia/tardigrade-deprecated-client": "workspace:*",
     "@clavia/tardigrade-deprecated-agent": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
-    "effect": "4.0.0-rc.115"
+    "effect": "4.0.1"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

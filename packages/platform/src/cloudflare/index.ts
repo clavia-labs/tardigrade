@@ -11,7 +11,7 @@ import { sqlJournal, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { sqlJournal, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
 import { hostRoutes, type HttpHost } from "../shared/http"
-import { HttpRouter } from "effect/unstable/http"
+import { HttpRouter } from "effect/http"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
 export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string, options: CloudflareAlarmOptions & CheckpointChunkOptions = {}) {

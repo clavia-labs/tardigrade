@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util"
 import { Schema } from "effect"
-import { Atom } from "effect/unstable/reactivity"
+import { Atom } from "effect/reactivity"
 import { durableAtom } from "./durable"
 import { EffectRef, effectKey, RuntimeError, Cancelled, EffectCancelled, PromiseTimedOut } from "../runtime/effects"
 

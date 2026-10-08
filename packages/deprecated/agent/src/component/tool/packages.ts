@@ -1,6 +1,6 @@
 import { component, composeComponents, type ComponentRequirements } from "@clavia/tardigrade-deprecated-core/actor"
 import { composeKeys } from "@clavia/tardigrade-deprecated-core/log"
-import type { KeyValueStore } from "effect/unstable/persistence"
+import type { KeyValueStore } from "effect/persistence"
 import { CODE_VIEW_ALGEBRA, type CodeComponent } from "@clavia/tardigrade-code/package/definition"
 import { codeKeys, packageCalled, packageKeyOf } from "@clavia/tardigrade-code/execution/events"
 import { packageCallPolicyOf, type CodePolicy } from "@clavia/tardigrade-code/execution/policy"

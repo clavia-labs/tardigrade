@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { FetchHttpClient, type HttpClient } from "effect/unstable/http"
+import { FetchHttpClient, type HttpClient } from "effect/http"
 import type { Park } from "../execution/errors"
 
 import { DEFAULT_FETCH_BODY_CHARS, DEFAULT_FETCH_POLICY, fetchPackage, fetchPolicyOf } from "./fetch"

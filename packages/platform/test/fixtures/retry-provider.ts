@@ -1,5 +1,5 @@
 import { Duration } from "effect"
-import { AiError } from "effect/unstable/ai"
+import { AiError } from "effect/ai"
 import { contentServices } from "./model-services"
 
 export function retryServices() {

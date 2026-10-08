@@ -1,5 +1,5 @@
 import { Duration, Effect, Random } from "effect"
-import { AiError } from "effect/unstable/ai"
+import { AiError } from "effect/ai"
 import type { RetryOptions } from "@clavia/tardigrade-core/services/effect-execution"
 import { encodeModelError } from "@clavia/tardigrade-model/error"
 import type { RetryPolicy } from "@clavia/tardigrade-model/stream/policy"

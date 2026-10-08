@@ -79,7 +79,7 @@ Use `host` to allocate threads and call methods from the surrounding application
 
 ```ts
 import { Layer, Redacted } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 import { OpenAiClient, OpenAiLanguageModel } from "@tardie/ai-openai"
 
 export const modelLayer = (apiKey: string) =>

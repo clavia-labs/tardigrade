@@ -1,4 +1,4 @@
-import type { LanguageModel } from "effect/unstable/ai"
+import type { LanguageModel } from "effect/ai"
 import { testInferenceLayer } from "@clavia/tardigrade-deprecated-agent/testing/model"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"

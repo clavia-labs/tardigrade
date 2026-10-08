@@ -3,7 +3,7 @@ import { Clock, Console, Effect, Option } from "effect"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { resolve } from "node:path"
-import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
+import { Argument, CliError, Command, Flag, Prompt } from "effect/cli"
 import { ACTOR_NAME_PATTERN } from "tardie/deprecated"
 import {
   NO_ANSWER,

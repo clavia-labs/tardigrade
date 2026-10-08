@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { Prompt } from "effect/unstable/ai"
+import { Prompt } from "effect/ai"
 
 // ProviderContinuation preserves encoded prompt evidence for compatible replay (binding/continuation.test.ts).
 export const ProviderContinuation = Schema.Struct({

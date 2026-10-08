@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import type { SqlClient } from "effect/unstable/sql"
+import type { SqlClient } from "effect/sql"
 import { RuntimeError, ScheduledWake, type Alarm, type SchedulerTransaction } from "@clavia/tardigrade-core"
 
 // sqlSchedulerTransaction stores wake entries in the journal's SQLite transaction.

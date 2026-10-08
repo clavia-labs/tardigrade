@@ -3,7 +3,7 @@ import type { ModelRef } from "@clavia/tardigrade-model/reference"
 import { boundedStream, StreamIncomplete } from "@clavia/tardigrade-model/stream/request"
 import type { StreamBounds } from "@clavia/tardigrade-model/stream/policy"
 import { Effect, Stream } from "effect"
-import { LanguageModel, Prompt, Response, type Tool } from "effect/unstable/ai"
+import { LanguageModel, Prompt, Response, type Tool } from "effect/ai"
 
 export interface ModelCallContext {
   readonly publish: typeof EffectExecution.Service.publish

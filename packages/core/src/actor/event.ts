@@ -32,10 +32,14 @@ export function event(definition: Tagged | string, supplied?: Schema.Schema<Tagg
     constructed.set(value, schema)
     return value as DeclaredEvent<Tagged>
   }
-  return Object.assign(schema, { make,
-    from: <Args extends readonly unknown[]>(map: (...args: Args) => Payload<Tagged>): EventHandler<Tagged, Args> =>
-      Object.assign((...args: Args) => make(map(...args)), { schema }),
+  const from = <Args extends readonly unknown[]>(map: (...args: Args) => Payload<Tagged>): EventHandler<Tagged, Args> =>
+    Object.assign((...args: Args) => make(map(...args)), { schema })
+  const declaration = Object.create(schema) as EventDeclaration<Tagged>
+  Object.defineProperties(declaration, {
+    make: { value: make, enumerable: true },
+    from: { value: from, enumerable: true },
   })
+  return declaration
 }
 
 // constructedEvent validates a method-produced event against the declaration carried by its constructor.

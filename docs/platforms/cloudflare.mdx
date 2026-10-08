@@ -107,7 +107,7 @@ Background library methods can override the host's promise timeout. The override
 
 ```ts
 import { Schema } from "effect"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { MethodExecution, MethodPromiseTimeout } from "tardie/libraries"
 
 const research = Rpc.make("research", {

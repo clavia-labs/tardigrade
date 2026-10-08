@@ -15,8 +15,8 @@
     "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-platform": "workspace:*",
-    "@effect/platform-bun": "4.0.0-rc.115",
-    "effect": "4.0.0-rc.115",
+    "@effect/platform-bun": "4.0.1",
+    "effect": "4.0.1",
     "@clavia/tardigrade-libraries": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*"
   }

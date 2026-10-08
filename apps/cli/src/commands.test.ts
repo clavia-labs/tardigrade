@@ -4,7 +4,7 @@ import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Cause, Console, Effect, Exit, Layer, Option } from "effect"
-import { CliError, Command } from "effect/unstable/cli"
+import { CliError, Command } from "effect/cli"
 import { BunServices } from "@effect/platform-bun"
 import {
   ProblemError,

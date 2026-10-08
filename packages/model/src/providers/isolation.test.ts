@@ -40,8 +40,8 @@ test("a missing selected provider produces an actionable model failure", async (
     await symlink(fileURLToPath(new URL("../../../../node_modules", import.meta.url)), join(directory, "node_modules"))
     const source = `
       import { Effect, Stream } from "effect"
-      import { LanguageModel } from "effect/unstable/ai"
-      import { FetchHttpClient } from "effect/unstable/http"
+      import { LanguageModel } from "effect/ai"
+      import { FetchHttpClient } from "effect/http"
       import { providerLayer } from "./layer"
       const result = await Effect.runPromise(Effect.gen(function* () {
         const model = yield* LanguageModel.LanguageModel

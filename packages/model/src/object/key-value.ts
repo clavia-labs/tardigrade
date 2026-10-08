@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
+import { KeyValueStore } from "effect/persistence"
 import { makeObjectStorage, ObjectStorage } from "./storage"
 
 export const DEFAULT_OBJECT_STORAGE_PREFIX = "objects:"

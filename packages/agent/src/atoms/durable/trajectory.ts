@@ -1,7 +1,7 @@
 import { Trajectory, TurnRequested, ModelCalled, ModelReturned, ModelFailed, ToolReturned, TurnSettled, type Event } from "../../contracts/events"
 import { Schema } from "effect"
 import { atom, durableAtom } from "@clavia/tardigrade-core"
-import { Atom } from "effect/unstable/reactivity"
+import { Atom } from "effect/reactivity"
 
 export const TrajectoryState = Schema.Struct({
   entries: Trajectory,

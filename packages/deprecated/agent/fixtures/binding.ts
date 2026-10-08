@@ -1,5 +1,5 @@
 import { Cause, Effect, Layer } from "effect"
-import { LanguageModel } from "effect/unstable/ai"
+import { LanguageModel } from "effect/ai"
 import type { Action } from "../src/log/events"
 import { BindingSettings, ModelSelection } from "../src/model/execution/settings"
 import { react } from "../src/model/execution/index"

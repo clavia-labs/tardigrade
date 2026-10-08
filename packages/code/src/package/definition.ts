@@ -1,5 +1,5 @@
 import { packageCalls, type PackageCall } from "./calls"
-import type { KeyValueStore } from "effect/unstable/persistence"
+import type { KeyValueStore } from "effect/persistence"
 import type { Effect } from "effect"
 import type { Component, ViewAlgebra } from "@clavia/tardigrade-deprecated-core/actor"
 import type { Park } from "../execution/errors"

@@ -1,12 +1,12 @@
-import { ResponseFormat } from "@tardie/ai"
+import { ResponseFormat } from "@tardie/ai/LanguageModel"
 import { Effect, Schema, Stream } from "effect"
-import { LanguageModel, Prompt, Response } from "effect/unstable/ai"
-import type { Tool, Toolkit } from "effect/unstable/ai"
+import { LanguageModel, Prompt, Response } from "effect/ai"
+import type { Tool, Toolkit } from "effect/ai"
 
 import type { StreamBounds } from "./policy"
 import { boundedStream, StreamBoundExceeded, StreamIncomplete } from "./request"
 
-// collectResponse preserves provider metadata while leaving tool execution to the caller (providers/response.test.ts).
+// collectResponse preserves provider metadata while leaving tool execution to the caller (providers/integration.test.ts).
 export const collectResponse = <Tools extends Record<string, Tool.Any>>(prompt: Prompt.RawInput, toolkit: Toolkit.Toolkit<Tools>, onPart?: (part: Response.AnyPart) => void | Effect.Effect<void>, responseFormat?: LanguageModel.ProviderOptions["responseFormat"], bounds?: StreamBounds) =>
   LanguageModel.streamText({ prompt, toolkit, disableToolCallResolution: true }).pipe(
     (stream) => responseFormat === undefined ? stream : Stream.provideService(stream, ResponseFormat, responseFormat),

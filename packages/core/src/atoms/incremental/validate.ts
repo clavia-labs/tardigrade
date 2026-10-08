@@ -86,7 +86,7 @@ export function incrementalValidator(schema: Schema.Top, onFallback?: () => void
       const names = new Set(fields.map(field => field.name))
       check = value => {
         if (typeof value !== "object" || value === null || Array.isArray(value)) return false
-        for (const key of Reflect.ownKeys(value)) if (!names.has(key)) return false
+        for (const key of Reflect.ownKeys(value)) if (Object.prototype.propertyIsEnumerable.call(value, key) && !names.has(key)) return false
         const record = value as Record<PropertyKey, unknown>
         for (const field of fields) {
           if (!(field.name === "__proto__" ? Object.hasOwn(record, field.name) : field.name in record)) {
@@ -117,7 +117,7 @@ export function incrementalValidator(schema: Schema.Top, onFallback?: () => void
   }
   const ast = SchemaAST.toType(schema.ast)
   const fast = compile(ast)
-  const decode = Schema.decodeUnknownExit(Schema.toType(Schema.make(ast)), STRICT)
+  const decode = Schema.decodeUnknownExit(Schema.toType(schema), STRICT)
   let reported = false
   const parse = (value: unknown): unknown => {
     const plain = plainData(value)

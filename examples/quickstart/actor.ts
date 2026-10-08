@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { atom, defineActor } from "tardie/core"
 import { agentMethods, compact, infer, messages, tools as libraryTools } from "tardie/agent"
 import { defineLibrary, MethodDescription, MethodHints } from "tardie/libraries"

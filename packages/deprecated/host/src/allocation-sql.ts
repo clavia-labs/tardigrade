@@ -1,5 +1,5 @@
 import { Clock, Effect } from "effect"
-import type { SqlClient } from "effect/unstable/sql"
+import type { SqlClient } from "effect/sql"
 import type { ThreadCoordinate } from "@clavia/tardigrade-deprecated-core/actor/coordinate"
 import { actorEventKeyOf } from "@clavia/tardigrade-deprecated-core/actor/events"
 import type { Event } from "@clavia/tardigrade-deprecated-core/event"

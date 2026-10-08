@@ -1,7 +1,7 @@
 import { RuntimeError } from "@clavia/tardigrade-core"
 import { Context, Effect, Layer, ManagedRuntime, Result } from "effect"
-import { HttpRouter, HttpServer } from "effect/unstable/http"
-import * as NetAddress from "effect/unstable/net/NetAddress"
+import { HttpRouter, HttpServer } from "effect/http"
+import * as NetAddress from "effect/net/NetAddress"
 import { BunHttpServer } from "@effect/platform-bun"
 import { hostRoutes, type HttpHost } from "../shared/http"
 

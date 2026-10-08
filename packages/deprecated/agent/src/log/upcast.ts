@@ -2,7 +2,7 @@ import { upcastResponse } from "./response-upcast"
 import { Schema } from "effect"
 import { TurnError } from "./events"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
-import { AiError } from "effect/unstable/ai"
+import { AiError } from "effect/ai"
 import { modelErrorOf } from "../model/error"
 
 // upcastError reads historical string failures and current structured failures (upcast.test.ts).

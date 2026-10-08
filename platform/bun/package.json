@@ -35,10 +35,10 @@
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-deprecated-core": "workspace:*",
     "@clavia/tardigrade-deprecated-host": "workspace:*",
-    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
-    "effect": "4.0.0-rc.115",
+    "@effect/sql-sqlite-bun": "4.0.1",
+    "effect": "4.0.1",
     "@clavia/tardigrade-deprecated-http": "workspace:*",
-    "@effect/platform-bun": "4.0.0-rc.115"
+    "@effect/platform-bun": "4.0.1"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

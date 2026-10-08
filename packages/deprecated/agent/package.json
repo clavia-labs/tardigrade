@@ -48,7 +48,7 @@
     "@clavia/tardigrade-deprecated-core": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "@cfworker/json-schema": "^4.1.1",
-    "effect": "4.0.0-rc.115",
+    "effect": "4.0.1",
     "@clavia/tardigrade-model": "workspace:*"
   },
   "scripts": {

@@ -1,7 +1,7 @@
 import { Effect, Layer, Schema, type Stream } from "effect"
 import type { ExecutionStreamPolicy, ExecutionUpdate } from "@clavia/tardigrade-core"
 import { executionStreamSse } from "./execution-stream-sse"
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { ActorCommitError, InitialState, StateInitialisationError, InvalidMessage, MessageConflict, WatchdogTerminalError, type MessageReceipt } from "@clavia/tardigrade-core"
 import type { MessageDelivery } from "@clavia/tardigrade-core"
 import type { ThreadRequest, ThreadCoordinate } from "@clavia/tardigrade-core"

@@ -1,5 +1,4 @@
-import { validatedConfig } from "./options"
-import type { HttpClient } from "effect/unstable/http"
+import type { HttpClient } from "effect/http"
 import { Layer } from "effect"
 import { OpenAiClient, OpenAiLanguageModel } from "@tardie/ai-openai-compat"
 import { requestKeys, type ProviderLayer } from "./layer"
@@ -8,5 +7,5 @@ import { requestKeys, type ProviderLayer } from "./layer"
 export const providerLayer: ProviderLayer = (options) => {
   if (options.provider !== "openai-compat") throw new Error(`The openai-compat layer cannot serve ${options.provider}; supply the matching providerLayer`)
   const client = { ...options.client, transformClient: (http: HttpClient.HttpClient) => requestKeys(options.client.transformClient?.(http) ?? http) }
-  return OpenAiLanguageModel.layer({ ...options.model, config: validatedConfig(OpenAiLanguageModel.ModelConfigSchema, options.model.config, options.unvalidatedConfig) }).pipe(Layer.provide(OpenAiClient.layer(client)))
+  return OpenAiLanguageModel.layer({ ...options.model, config: options.model.config }).pipe(Layer.provide(OpenAiClient.layer(client)))
 }
