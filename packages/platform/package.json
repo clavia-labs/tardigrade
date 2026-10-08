@@ -12,6 +12,7 @@
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-cloudflare": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-worker-loader": "workspace:*",
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-do": "4.0.0-rc.115",
     "@effect/platform-bun": "4.0.0-rc.115",
