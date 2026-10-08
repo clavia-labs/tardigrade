@@ -1,7 +1,7 @@
 import type { ReadonlyLog } from "../runtime/log-view"
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { atom, type Atom, type Getter } from "./atom"
+import { atom, type Atom } from "./atom"
 import { incrementalValidator, invalid } from "./incremental/validate"
 import type { RecordMetadata } from "../services/journal"
 import { EventLog, eventLogContext } from "../services/event-log"
@@ -81,6 +81,6 @@ export function durableAtom<State, Event>(options: {
   const output = atom(get => get(reduced).state)
   return Object.assign(output, {
     input: options.input,
-    [AtomState]: { name: options.name, decode: restore, encode: (get: Getter) => encode(get(output)) },
+    [AtomState]: { name: options.name, decode: restore, encode: (value: unknown) => encode(value as State) },
   })
 }

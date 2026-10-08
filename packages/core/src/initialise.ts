@@ -1,6 +1,5 @@
 import type { ReadonlyLog } from "./runtime/log-view"
 import { Schema } from "effect"
-import type { Getter } from "./atoms/atom"
 import type { Recorded } from "./services/journal"
 import { ThreadCreated } from "./actor/thread"
 
@@ -10,7 +9,8 @@ export interface StatefulAtom {
   readonly [AtomState]: {
     readonly name: string
     readonly decode: (state: unknown) => unknown
-    readonly encode: (get: Getter) => unknown
+    // encode receives the value of the node capture visits, so capture mounts no atom (packages/platform/test/properties/runtime/durable-capture.ts).
+    readonly encode: (value: unknown) => unknown
   }
 }
 
