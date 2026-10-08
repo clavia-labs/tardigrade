@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.45.0](https://github.com/clavia-labs/tardigrade/compare/v0.44.0...v0.45.0) (2026-10-08)
+
+
+### Features
+
+* **agent:** bound output correction ([#684](https://github.com/clavia-labs/tardigrade/issues/684)) ([5076f3c](https://github.com/clavia-labs/tardigrade/commit/5076f3cbf416403efe1ac3587abb2fab10ce0a29))
+* **notes:** mark draft note ([#718](https://github.com/clavia-labs/tardigrade/issues/718)) ([b69ddfa](https://github.com/clavia-labs/tardigrade/commit/b69ddfa67f1a8e4933bf31471889e8e2555f964e))
+* **web:** add notes ([#712](https://github.com/clavia-labs/tardigrade/issues/712)) ([e6239fa](https://github.com/clavia-labs/tardigrade/commit/e6239fa0a96ba01af6d8f2a6b1c80d7bc081769a))
+* **web:** refine notes publishing ([#713](https://github.com/clavia-labs/tardigrade/issues/713)) ([3289804](https://github.com/clavia-labs/tardigrade/commit/3289804a949a476620dd8c3b55a74ea41415ce01))
+
+
+### Bug Fixes
+
+* **core:** relax settled effect replay ([#719](https://github.com/clavia-labs/tardigrade/issues/719)) ([5ce0342](https://github.com/clavia-labs/tardigrade/commit/5ce0342c055c255991f035326bf57b478f877a5f))
+
 ## [0.44.0](https://github.com/clavia-labs/tardigrade/compare/v0.43.0...v0.44.0) (2026-10-05)
 
 
