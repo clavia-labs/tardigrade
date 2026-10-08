@@ -263,7 +263,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         return { ref: request.ref, request: { ...request, request: stored }, ...(settlement ? { settlement } : {}), ...(cancellation ? { cancellation } : {}) }
       })
       // TODO: Checkpoint capture must preserve recovery for unread durable atoms absent from the registry; suffix-only restore currently loses their prefix state (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent, initSkipPrefix).
-      // captured emits each codec once; atom copies (Atom.withLabel, Atom.keepAlive) share the original's codec, and a host may mount both (packages/platform/test/properties/runtime/durable-capture.ts).
       const captured = new Set<unknown>()
       const durable = [...store.nodes().values()].flatMap(node => {
         const codec = (node.atom as Partial<StatefulAtom>)[AtomState]

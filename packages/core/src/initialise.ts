@@ -9,7 +9,6 @@ export interface StatefulAtom {
   readonly [AtomState]: {
     readonly name: string
     readonly decode: (state: unknown) => unknown
-    // encode receives the value of the node capture visits, so capture mounts no atom (packages/platform/test/properties/runtime/durable-capture.ts).
     readonly encode: (value: unknown) => unknown
   }
 }
