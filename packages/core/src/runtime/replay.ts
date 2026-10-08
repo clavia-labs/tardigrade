@@ -10,7 +10,7 @@ import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "../atoms/act"
 import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
-import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, type EffectSettled, PromiseSettled, type RetryScheduled } from "./events"
+import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, EffectSettled, PromiseSettled, type RetryScheduled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
@@ -142,6 +142,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const coreSettlements = new Map<string, EffectSettled>()
     const coreCancellations = new Map<string, EffectCancelled>()
     const promiseSettlements = new Map<string, PromiseSettled>()
+    // concluded holds effects with a recorded terminal outcome; replay checks their identity but not their input, since only unsettled input can execute (quint/checkpoint/inputLifecycle.qnt, verifiedExecution).
+    const concluded = new Set([...[...history].map(record => record.event), ...(seed?.effects.flatMap(entry => entry.settlement ?? []) ?? []), ...(seed?.promises ?? [])].flatMap(event =>
+      Schema.is(PromiseSettled)(event) || (Schema.is(EffectSettled)(event) && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value")) ? [effectKey(event.ref)] : []))
     const retries = new Map<string, { readonly position: number; readonly event: RetryScheduled }[]>()
     const retry = (ref: EffectRef) => retries.get(effectKey(ref))?.at(-1)?.event
     const retryAt = (ref: EffectRef, position: number) => {
@@ -344,7 +347,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         executionDeclarations.set(proposal.identity, prepared.stored)
         if (ref) {
           const recorded = coreRequests.get(effectKey(ref))
-          if (!recorded || recorded.origin !== proposal.origin || (recorded.request !== prepared.stored && !matchesPrepared(recorded.request, prepared))) throw new Error("Restored effect request differs from its proposal")
+          if (!recorded || recorded.origin !== proposal.origin || (!concluded.has(effectKey(ref)) && recorded.request !== prepared.stored && !matchesPrepared(recorded.request, prepared))) throw new Error("Restored effect request differs from its proposal")
           const key = effectKey(ref)
           const settlement = coreSettlements.get(key)
           const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !promiseSettlements.has(key)
@@ -397,7 +400,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           if (candidates.length > 1) throw new Error("Calls to the same act require distinct origins")
           const offered = candidates[0]
           const offeredPrepared = offered ? preparedRequests.get(offered.request) : undefined
-          if (!offered || (offeredPrepared?.stored !== event.request && !(offeredPrepared ? matchesPrepared(event.request, offeredPrepared) : matchesRequest(event.request, offered.request)))) throw new Error("Effect request differs from its proposal")
+          if (!offered || (!concluded.has(key) && offeredPrepared?.stored !== event.request && !(offeredPrepared ? matchesPrepared(event.request, offeredPrepared) : matchesRequest(event.request, offered.request)))) throw new Error("Effect request differs from its proposal")
           const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
           rememberOrigin(event)

@@ -9,6 +9,7 @@ import { RUNTIME_PROPERTY_OPTIONS } from "./runtime/config"
 import { promiseSettlementOrder } from "./runtime/promise-settlement-order"
 import { referenceAcceptanceAtomicity } from "./runtime/reference-acceptance-atomicity"
 import { ownedProducerRecovery, externalProducerObservation } from "./runtime/deferred-recovery"
+import { settledEffect, settledEffectExamples } from "./runtime/settled-effect"
 
 import { cancellationTerminality, cancellationForwarding, cancellationBatchIsolation } from "./runtime/cancellation"
 
@@ -37,5 +38,6 @@ export const propertyCases = {
   referenceAcceptanceAtomicity: () => fc.assert(referenceAcceptanceAtomicity, RUNTIME_PROPERTY_OPTIONS),
   ownedProducerRecovery: () => fc.assert(ownedProducerRecovery, RUNTIME_PROPERTY_OPTIONS),
   externalProducerObservation: () => fc.assert(externalProducerObservation, RUNTIME_PROPERTY_OPTIONS),
+  settledEffect: () => fc.assert(settledEffect, { ...RUNTIME_PROPERTY_OPTIONS, examples: settledEffectExamples }),
   toolDeferredLifecycle: () => fc.assert(toolDeferredLifecycle, RUNTIME_PROPERTY_OPTIONS),
 }
