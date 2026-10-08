@@ -20,6 +20,7 @@ import { ShadowDiagram } from "./diagrams/ShadowDiagram"
 
 export const post = frontmatter as {
   readonly title: string
+  readonly draft?: boolean
   readonly date: string
   readonly author: string
   readonly authorUrl?: string
@@ -36,7 +37,7 @@ export const NotesPage = (): ReactElement => (
     <div className="notes-index-inner">
       <article className="notes-entry">
         <div>
-          <h2><Link to={post.route}>{post.title}</Link></h2>
+          <h2><Link to={post.route}>{post.title}</Link>{post.draft === true ? <span className="notes-draft">[DRAFT]</span> : null}</h2>
           <time dateTime={post.date}>{postDate}</time>
         </div>
         <CaveStamp />
@@ -54,7 +55,7 @@ export const NotesPostPage = (): ReactElement => {
         <Link className="notes-back" to="/notes"><ArrowLeft size={16} aria-hidden="true" />Back to Notes</Link>
         <PageActions markdown={markdown} contentType="note" />
       </div>
-      <h1>{post.title}</h1>
+      <h1>{post.title}{post.draft === true ? <span className="notes-draft">[DRAFT]</span> : null}</h1>
       <div className="notes-metadata"><time dateTime={post.date}>{postDate}</time></div>
       <div className="guide-divider" />
       <MDXProvider components={{ a: NotesLink, pre: NotesCode, AuthorAvatar, AgentViewDiagram, CaveDiagram, FlyingTardie, MergeDiagram, RussianDollDiagram, ShadowDiagram }}><Content /></MDXProvider>

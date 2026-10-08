@@ -446,6 +446,7 @@ h1 span { display: block; white-space: nowrap; }
 .notes-entry { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .notes-entry h2 { margin: 0; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: clamp(26px, 3vw, 34px); font-weight: 400; letter-spacing: -.02em; line-height: 1.3; }
 .notes-entry h2 a { text-decoration: none; }
+.notes-draft { display: inline-block; margin-left: .55em; color: var(--moss-ink); font-family: var(--mono); font-size: .42em; font-weight: 600; letter-spacing: .08em; line-height: 1; vertical-align: .28em; }
 .notes-entry h2 a:focus-visible { outline: 2px solid var(--moss-ink); outline-offset: 6px; }
 .notes-entry time { display: block; margin-top: 4px; color: var(--ink-2); font-family: Georgia, "Times New Roman", serif; font-size: 20px; line-height: 1.5; }
 .notes-article { width: min(100%, 808px); margin: 0 auto; padding: 64px var(--gutter) 120px; }
@@ -454,6 +455,7 @@ h1 span { display: block; white-space: nowrap; }
 .notes-outline-rail { grid-column: 3; padding: 220px 24px 120px 8px; }
 .notes-outline { position: sticky; top: 96px; max-width: 220px; }
 .notes-article :is(h2, h3)[id] { scroll-margin-top: 88px; }
+.notes-article h1 .notes-draft { font-size: .3em; vertical-align: .42em; }
 .notes-outline-title { margin: 0 0 12px; color: var(--faint); font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .notes-outline-track { position: relative; }
 .notes-outline ol { margin: 0; padding: 0; list-style: none; }
