@@ -16,16 +16,15 @@ export const createActor = defineActor("tardie", Effect.gen(function* () {
   const permitted = withPermissions(available, permission)
   const budget = toolBudget(pendingTools, { configure: false })
   const tools = withBudget(permitted, budget)
-  const system = systemPrompt(
-    "You are a friendly assistant.",
-    budgetInstructions(budget),
-  )
+  const system = systemPrompt("You are a friendly assistant.")
+  const note = budgetInstructions(budget)
   const context = yield* compact(messages)
 
   const input = atom(get => ({
     system: get(system),
     tools: get(tools),
     context: get(context),
+    note: get(note),
   }))
   const inference = yield* infer(input)
   return { atom: inference, methods: agentMethods }
