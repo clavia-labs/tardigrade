@@ -156,7 +156,6 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const retryWaits = new Map<string, { readonly dueAt: number; readonly wake: Deferred.Deferred<void> }>()
     const lifetimes = new Map<string, { readonly scope: Scope.Closeable; readonly signal: AbortSignal }>()
     const executions = new Map<string, Fiber.Fiber<{ readonly status: "fulfilled"; readonly value: ExecutionResult } | { readonly status: "rejected"; readonly reason: Schema.Json }, never>>()
-    // executionWaiters bound recovery waiting to the start of inline execution (packages/platform/test/properties/watchdog/live-inline.ts, liveInline).
     const executionWaiters = new Set<Deferred.Deferred<void>>()
     const cleaning = new Set<string>()
     const pendingCleanup = new Map<string, ActCancellation>()
