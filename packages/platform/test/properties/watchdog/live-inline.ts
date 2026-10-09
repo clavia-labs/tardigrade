@@ -43,7 +43,7 @@ export const liveInline = (createFixture: (options: SlowActOptions) => Promise<L
         assert.equal(result?.status, "completed", JSON.stringify({ ...observed, log: await fixture.log() }))
         assert.ok(result?.status === "completed" && result.output === value)
         const log = await fixture.log()
-        assert.equal(log.filter(entry => entry.kind === "start").length, restart ? 2 : 1)
+        assert.equal(log.filter(entry => entry.kind === "start").length, restart ? 2 : 1, JSON.stringify({ forked, restart, workMs, log }))
         assert.equal(log.filter(entry => entry.kind === "done").length, 1)
         const execution = restart ? log.slice(log.findIndex((entry, index) => index > 0 && entry.kind === "start")) : log
         assert.equal(execution.filter(entry => entry.kind === "interrupted").length, 0)

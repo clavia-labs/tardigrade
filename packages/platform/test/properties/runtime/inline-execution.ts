@@ -83,7 +83,7 @@ export const inlineExecutionSupervision = fc.asyncProperty(cases, options => Eff
       assert.equal(alarm, retry.dueAt)
       yield* store.cancel(retry.ref, "stop")
     }
-    yield* store.recover
+    yield* store.wait
     assert.equal(store.recoveryState().status, "settled")
     assert.deepEqual(store.getState().view, options.retryWait ? { status: "rejected", reason: { _tag: "Cancelled", reason: "stop" } }
       : options.rejected ? { status: "rejected", reason: "failed" } : { status: "fulfilled", value: options.value })
