@@ -156,6 +156,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const retryWaits = new Map<string, { readonly dueAt: number; readonly wake: Deferred.Deferred<void> }>()
     const lifetimes = new Map<string, { readonly scope: Scope.Closeable; readonly signal: AbortSignal }>()
     const executions = new Map<string, Fiber.Fiber<{ readonly status: "fulfilled"; readonly value: ExecutionResult } | { readonly status: "rejected"; readonly reason: Schema.Json }, never>>()
+    const executionWaiters = new Set<Deferred.Deferred<void>>()
     const cleaning = new Set<string>()
     const pendingCleanup = new Map<string, ActCancellation>()
     const queueCleanup = (cancellation: ActCancellation) => {
@@ -518,6 +519,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           Effect.forkIn(scope),
         )
         executions.set(key, fiber)
+        for (const waiter of executionWaiters) yield* Deferred.succeed(waiter, undefined)
+        executionWaiters.clear()
         if (signal.aborted) yield* Fiber.interrupt(fiber)
         const exit = yield* Fiber.await(fiber)
         executions.delete(key)
@@ -765,10 +768,13 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           })
           return { progressCursor, status: "parked", wakeAt: Math.min(...deadlines) }
         },
-        // recover waits for queued processing and reports failures while background producers continue.
         recover: run(Effect.gen(function* () {
           const completion = scheduled
-          if (completion) yield* Deferred.await(completion)
+          if (completion && !executions.size) {
+            const started = Deferred.makeUnsafe<void>()
+            executionWaiters.add(started)
+            yield* Effect.raceFirst(Deferred.await(completion), Deferred.await(started)).pipe(Effect.ensuring(Effect.sync(() => { executionWaiters.delete(started) })))
+          }
           if (errors.length) return yield* Effect.fail(errors[0]!)
         })),
         // wait observes local processing and failures; external promise delivery can arrive after it returns.

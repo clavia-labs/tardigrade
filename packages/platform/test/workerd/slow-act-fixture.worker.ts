@@ -18,6 +18,7 @@ const fixtureOf = (instance: string) => {
   if (!fixture) throw new RuntimeError("Slow act fixture was not configured")
   return fixture
 }
+export const logSlowAct = (instance: string) => fixtureOf(instance).log()
 const worker = createActorWorker({ actor: slowActor, actorContext: Context.pick(), watchdog: { policy: SLOW_ACT_WATCHDOG_POLICY }, services: (_env, coordinate) => fixtureOf(coordinate.instance).services })
 export class SlowActorDO extends worker.ActorObject {
   constructor(ctx: ConstructorParameters<typeof worker.ActorObject>[0], env: SlowBindings) { super(ctx, bindings(env)) }
@@ -25,5 +26,6 @@ export class SlowActorDO extends worker.ActorObject {
 export class SlowThreadDO extends worker.ThreadObject {
   constructor(ctx: ConstructorParameters<typeof worker.ThreadObject>[0], env: SlowBindings) { super(ctx, bindings(env)) }
   log(instance: string) { return fixtureOf(instance).log() }
+  crash() { this.ctx.abort("watchdog cold recovery property") }
 }
 export const slowFetch = (request: Request, env: SlowBindings) => worker.fetch(request, bindings(env))
