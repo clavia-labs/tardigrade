@@ -744,7 +744,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             }
             return { progressCursor, status: "parked", wakeAt: Math.min(...times) }
           }
-          // recoveryState preserves live inline execution without a deadline (packages/platform/test/bun/thread-recovery.test.ts, live inline execution is running until settlement).
+          // recoveryState preserves live inline execution without a deadline (packages/platform/test/properties/runtime/inline-execution.ts, inlineExecutionSupervision).
           if (executions.size && snapshot.effects().length) return { progressCursor, status: "running" }
           const live = deferred.filter(work => work.handle.executor === "local" && background.has(work.handle.id))
           if (live.length && !snapshot.effects().length && !snapshot.pending().length && !snapshot.cancellations().length && !snapshot.deliveries().length) {
