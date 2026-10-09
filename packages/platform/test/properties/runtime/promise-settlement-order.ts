@@ -99,6 +99,7 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
     if (payloads().some(event => event.type === "PromiseSettled" || event.type === "Returned") || externalAcknowledged) return yield* Effect.fail(new RuntimeError("Result accepted before effect settlement"))
     yield* Deferred.succeed(allowSettlement, undefined)
     yield* Deferred.await(commitEntered)
+    if (mode === "local" && store.recoveryState().status !== "running") return yield* Effect.fail(new RuntimeError("Local execution lost supervision before durable commit"))
     yield* Effect.sleep(options.holdMillis)
     if (payloads().some(event => event.type === "PromiseSettled" || event.type === "Returned") || store.getState().view.results.length !== 0 || externalAcknowledged) return yield* Effect.fail(new RuntimeError("Result accepted before durable commit"))
     yield* Deferred.succeed(allowCommit, undefined)
