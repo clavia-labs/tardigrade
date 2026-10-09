@@ -4,7 +4,7 @@ import { effectAtom, durableAtom, durablePromise, eventValue, EffectCancelled, e
 import { ToolPromise } from "@clavia/tardigrade-libraries/types"
 import { ToolReturned, TurnRequested } from "../contracts/events"
 
-const submissions = durableAtom({
+export const toolPromiseSubmissions = durableAtom({
   name: "agent.promises.submissions",
   input: Schema.Union([ToolReturned, TurnRequested, EffectCancelled]),
   schema: Schema.Array(Schema.Struct({ callId: Schema.String, promise: ToolPromise })), initial: [],
@@ -18,7 +18,7 @@ const makeReply = (promise: ToolPromise) => durablePromise(promise.ref, { succes
 
 // toolPromises interprets settled tool promises as turn requests and exposes unresolved handles for the resolver.
 export const toolPromises = effectAtom(get => {
-  const items = get(submissions).map(item => {
+  const items = get(toolPromiseSubmissions).map(item => {
     const key = JSON.stringify(item.promise.ref)
     let reply = replies.get(key)
     if (!reply) { reply = makeReply(item.promise); replies.set(key, reply) }
