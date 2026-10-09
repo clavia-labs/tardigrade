@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.45.1](https://github.com/clavia-labs/tardigrade/compare/v0.45.0...v0.45.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **core:** capture durable atoms once ([#711](https://github.com/clavia-labs/tardigrade/issues/711)) ([05120bc](https://github.com/clavia-labs/tardigrade/commit/05120bc7b24380dc013c7b04ab198f5497f9742a))
+* **watchdog:** preserve live inline acts ([#722](https://github.com/clavia-labs/tardigrade/issues/722)) ([82861ff](https://github.com/clavia-labs/tardigrade/commit/82861ffd4fc6a7ca4176ad0587595cf419b54aa0))
+
 ## [0.45.0](https://github.com/clavia-labs/tardigrade/compare/v0.44.0...v0.45.0) (2026-10-08)
 
 
