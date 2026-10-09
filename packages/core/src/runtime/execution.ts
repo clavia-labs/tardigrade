@@ -523,8 +523,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         executionWaiters.clear()
         if (signal.aborted) yield* Fiber.interrupt(fiber)
         const exit = yield* Fiber.await(fiber)
-        executions.delete(key)
         if (Exit.isFailure(exit)) {
+          executions.delete(key)
           dispatched.delete(key)
           if (snapshot.effect(work.ref)?.cancellation && Cause.hasInterruptsOnly(exit.cause)) continue
           return yield* Effect.failCause(exit.cause)
@@ -543,6 +543,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           const settlement = yield* Schema.decodeEffect(Schema.toType(EffectSettled))({ type: "EffectSettled", ref: work.ref, outcome }).pipe(Effect.mapError(RuntimeError.from))
           yield* append(settlement)
         }
+        executions.delete(key)
         dispatched.delete(effectKey(work.ref))
         if (outcome.status === "rejected" || outcome.value.type === "value") {
           yield* Scope.close(lifetime.scope, Exit.succeed(undefined))
