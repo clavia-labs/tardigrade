@@ -15,7 +15,7 @@ const lock = modelLockService(modelLockOf({
   providers: { fixture: { protocol: "openai-chat-completions", baseUrl: "https://fixture.invalid", env: [] } },
   models: [{ provider: "fixture", model_id: "test", contextWindowTokens: 4096 }],
 }), { allow: "*", default: model })
-export const contentServices = (observe: (prompt: Prompt.Prompt) => void, options: { readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined; readonly request?: RequestOptions } = {}) => {
+export const contentServices = (observe: (prompt: Prompt.Prompt) => void, options: { readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined; readonly request?: RequestOptions; readonly usage?: Response.Usage } = {}) => {
   const settings = { ...binding, policy: requestPolicyOf(options.request ?? {}) }
   const provider = Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
     generateText: input => Effect.suspend(() => { observe(input.prompt); const failure = options.failure?.(input.prompt); return failure ? Effect.fail(failure) : Effect.succeed([Response.makePart("text", { text: "ok" })]) }),
@@ -27,7 +27,7 @@ export const contentServices = (observe: (prompt: Prompt.Prompt) => void, option
         Response.makePart("text-start", { id: "reply" }),
         Response.makePart("text-delta", { id: "reply", delta: "ok" }),
         Response.makePart("text-end", { id: "reply" }),
-        Response.makePart("finish", { reason: "stop", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) }),
+        Response.makePart("finish", { reason: "stop", usage: options.usage ?? Response.Usage.make({ inputTokens: {}, outputTokens: {} }) }),
       )
     }),
   }))
