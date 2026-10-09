@@ -33,6 +33,7 @@ const restartRetries = async (fixture: RetryFixture) => {
   await fixture.start()
   const retry = await retryOf(fixture)
   assert.equal((await fixture.stats()).attempts, 1)
+  assert.equal(await waitFor(fixture.recoveryWake, at => at === retry.dueAt), retry.dueAt)
   await fixture.restart()
   assert.deepEqual(await resultOf(fixture), { status: "completed", output: 42 })
   const stats = await fixture.stats()

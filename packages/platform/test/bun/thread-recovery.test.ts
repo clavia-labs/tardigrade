@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Deferred, Effect, Fiber, Layer, Schema } from "effect"
-import { actorMethod, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
+import { act, actorMethod, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
 import { createBunHost } from "../../src/bun"
 
 const Changed = event({ type: "Changed", done: Schema.Boolean })
@@ -16,6 +16,40 @@ const actor = defineActor("retained-reference", Effect.succeed({
     result: (_, get) => get(done) ? { status: "completed", output: true } : undefined,
   }) },
 }))
+
+test("live inline execution is running until settlement", async () => {
+  const storage = await mkdtemp(join(tmpdir(), "tardie-inline-recovery-"))
+  const entered = Deferred.makeUnsafe<void>()
+  const release = Deferred.makeUnsafe<void>()
+  const Job = act({ name: "recovery.inline", input: Schema.Null, success: Schema.Boolean, failure: Schema.String })
+  const inlineActor = defineActor("inline-recovery", Effect.sync(() => {
+    const job = Job.request({ input: null })
+    return { atom: effectAtom(get => ({ view: get(job.result), events: {}, acts: get(done) && get(job.result).status === "pending" ? { job } : {} })),
+      methods: { run: actorMethod({ inputSchema: Schema.Boolean, outputSchema: Schema.Boolean, onReceive: Changed.from(done => ({ done })), result: (_, get) => {
+        const result = get(job.result)
+        return result.status === "fulfilled" ? { status: "completed", output: result.value } : undefined
+      } }) },
+    }
+  }))
+  const host = await Effect.runPromise(createBunHost({ actor: inlineActor, storage, actorContext: Context.pick(), services: () => Job.layer(() =>
+    Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.as(true)),
+  ) }))
+  try {
+    const ref = await Effect.runPromise(host.allocateRootThread({ instance: "main", name: "one" }))
+    await Effect.runPromise(ref.invoke("run", true, { id: "run" }))
+    await Effect.runPromise(Deferred.await(entered).pipe(Effect.timeout(1_000)))
+    expect(await Effect.runPromise(host.probe(ref.coordinate))).toMatchObject({ status: "running" })
+    expect((await Effect.runPromise(host.probe(ref.coordinate)))?.wakeAt).toBeUndefined()
+    await Effect.runPromise(Deferred.succeed(release, undefined))
+    await Effect.runPromise(ref.wait.pipe(Effect.timeout(1_000)))
+    expect(await Effect.runPromise(ref.methodState("run", "run"))).toEqual({ status: "completed", output: true })
+    expect(await Effect.runPromise(host.probe(ref.coordinate))).toMatchObject({ status: "settled" })
+  } finally {
+    await Effect.runPromise(Deferred.succeed(release, undefined))
+    await Effect.runPromise(host.close)
+    await rm(storage, { recursive: true, force: true })
+  }
+})
 
 test("thread references and projections follow runtime replacement", async () => {
   const storage = await mkdtemp(join(tmpdir(), "tardie-thread-recovery-"))

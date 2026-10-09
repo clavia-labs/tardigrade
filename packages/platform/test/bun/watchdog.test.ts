@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { Clock, Deferred, Effect, Fiber, Scope } from "effect"
+import * as fc from "fast-check"
 import { createWatchdog, watchdogKey, watchdogPolicy, WatchdogTerminalError, type WatchdogEntry, type WatchdogStorage, type WatchdogTransaction, type RecoveryState } from "@clavia/tardigrade-core"
 
 const target = { actor: "test", instance: "main", thread: "one" }
@@ -125,6 +126,33 @@ test("live promise heartbeats preserve the deadline and recovery budget", async 
   await Effect.runPromise(watchdog.alarm)
   expect(db.records().size).toBe(0)
   expect(db.alarm()).toBeNull()
+})
+
+test("live inline work without a deadline is heartbeated without charging attempts", async () => {
+  await fc.assert(fc.asyncProperty(fc.integer({ min: 4, max: 12 }), async heartbeats => {
+    const db = memory()
+    const target = { actor: "inline", instance: `case-${heartbeats}`, thread: "one" }
+    let recoveries = 0
+    let invalidations = 0
+    const watchdog = createWatchdog({
+      storage: db.storage,
+      policy: { ...policy, keepAliveIntervalMs: heartbeats },
+      probe: () => Effect.succeed({ status: "running" as const, progressCursor: 0 }),
+      recover: () => Effect.sync(() => { recoveries++; return { status: "running" as const, progressCursor: 0 } }),
+      invalidate: () => Effect.sync(() => { invalidations++ }),
+    })
+    await Effect.runPromise(db.storage.transaction(tx => watchdog.admit(tx, target)))
+    for (let index = 0; index < heartbeats; index++) {
+      await Effect.runPromise(db.storage.transaction(tx => tx.get(watchdogKey(target)).pipe(Effect.flatMap(entry => entry ? tx.put(watchdogKey(target), { ...entry, nextWakeAt: 0 }) : Effect.void))))
+      await Effect.runPromise(watchdog.alarm)
+    }
+    const entry = db.records().get(watchdogKey(target))!
+    expect(recoveries).toBe(0)
+    expect(invalidations).toBe(0)
+    expect(entry.attempts).toBe(0)
+    expect(entry.consecutiveNoProgress).toBe(0)
+    expect(entry.status).toBe("pending")
+  }), { numRuns: 20 })
 })
 
 test("alarm returns while recovery runs and heartbeats do not launch duplicates", async () => {

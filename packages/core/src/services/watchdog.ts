@@ -76,8 +76,8 @@ export function createWatchdog(options: {
       const progressCursor = Math.max(current.progressCursor, state.progressCursor)
       const progress = progressCursor > covered.progressCursor
       if (state.status === "settled" && current.generation === covered.generation) yield* tx.delete(key)
-      else if ((state.status === "parked" || state.status === "running") && state.wakeAt !== undefined && state.wakeAt > now && current.generation === covered.generation) {
-        yield* tx.put(key, { ...current, progressCursor, consecutiveNoProgress: progress ? 0 : Math.max(0, current.consecutiveNoProgress - (charged ? 1 : 0)), nextWakeAt: state.status === "running" ? Math.min(state.wakeAt, now + policy.keepAliveIntervalMs) : state.wakeAt })
+      else if (((state.status === "running" && (state.wakeAt === undefined || state.wakeAt > now)) || (state.status === "parked" && state.wakeAt !== undefined && state.wakeAt > now)) && current.generation === covered.generation) {
+        yield* tx.put(key, { ...current, progressCursor, consecutiveNoProgress: progress ? 0 : Math.max(0, current.consecutiveNoProgress - (charged ? 1 : 0)), nextWakeAt: state.status === "running" ? Math.min(state.wakeAt ?? now + policy.keepAliveIntervalMs, now + policy.keepAliveIntervalMs) : state.wakeAt! })
       } else if (current.attempts >= policy.maxAttempts || (!progress && current.consecutiveNoProgress >= policy.maxNoProgressAttempts)) {
         yield* tx.put(key, { ...current, progressCursor, status: "blocked", nextWakeAt: null, reason: "Recovery budget exhausted" })
       } else yield* tx.put(key, { ...current, progressCursor, consecutiveNoProgress: progress ? 0 : current.consecutiveNoProgress, nextWakeAt: now + (progress ? policy.retryIntervalMs : retryDelay(current.consecutiveNoProgress)) })
@@ -109,7 +109,7 @@ export function createWatchdog(options: {
         if (active.has(key)) { yield* options.storage.transaction(schedule); continue }
         if (entry.status !== "pending" || entry.nextWakeAt === null || entry.nextWakeAt > now) continue
         const observed = options.probe ? yield* Effect.exit(options.probe(entry.target)) : Exit.succeed(undefined)
-        if (Exit.isSuccess(observed) && observed.value && (observed.value.status === "settled" || ((observed.value.status === "running" || observed.value.status === "parked") && observed.value.wakeAt !== undefined && observed.value.wakeAt > now))) {
+        if (Exit.isSuccess(observed) && observed.value && (observed.value.status === "settled" || (observed.value.status === "running" && (observed.value.wakeAt === undefined || observed.value.wakeAt > now)) || (observed.value.status === "parked" && observed.value.wakeAt !== undefined && observed.value.wakeAt > now))) {
           yield* finish(key, entry, Exit.succeed(observed.value), false)
           continue
         }
