@@ -769,8 +769,6 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           })
           return { progressCursor, status: "parked", wakeAt: Math.min(...deadlines) }
         },
-        // recover waits for processing completion or inline execution ownership and reports failures (packages/platform/test/properties/watchdog/live-inline.ts, liveInline).
-        // The watchdog's attemptTimeoutMs bounds recovery waiting while inline execution continues independently.
         recover: run(Effect.gen(function* () {
           const completion = scheduled
           if (completion && !executions.size) {
