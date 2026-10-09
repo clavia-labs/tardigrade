@@ -156,7 +156,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const retryWaits = new Map<string, { readonly dueAt: number; readonly wake: Deferred.Deferred<void> }>()
     const lifetimes = new Map<string, { readonly scope: Scope.Closeable; readonly signal: AbortSignal }>()
     const executions = new Map<string, Fiber.Fiber<{ readonly status: "fulfilled"; readonly value: ExecutionResult } | { readonly status: "rejected"; readonly reason: Schema.Json }, never>>()
-    // executionWaiters are released when the drain starts an inline act, which ends a recovery wait.
+    // executionWaiters bound recovery waiting to the start of inline execution (packages/platform/test/properties/watchdog/live-inline.ts, liveInline).
     const executionWaiters = new Set<Deferred.Deferred<void>>()
     const cleaning = new Set<string>()
     const pendingCleanup = new Map<string, ActCancellation>()
@@ -769,8 +769,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           })
           return { progressCursor, status: "parked", wakeAt: Math.min(...deadlines) }
         },
-        // recover returns when queued processing finishes or starts an inline act, whichever comes first, and reports failures; the started act and background producers keep running.
-        // Waiting for a started act to settle would bound the act by the watchdog's attemptTimeoutMs.
+        // recover waits for processing completion or inline execution ownership and reports failures (packages/platform/test/properties/watchdog/live-inline.ts, liveInline).
+        // The watchdog's attemptTimeoutMs bounds recovery waiting while inline execution continues independently.
         recover: run(Effect.gen(function* () {
           const completion = scheduled
           if (completion && !executions.size) {

@@ -19,7 +19,7 @@ import { SLOW_ACT_WATCHDOG_POLICY } from "./slow-act-fixture.worker"
 const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
 const address = { actor: "test", instance: "main", thread: "one" }
 
-test("real watchdog alarms preserve slow inline and forked work", () => fc.assert(
+test("real watchdog alarms preserve slow inline and forked work across restarts", () => fc.assert(
   liveInline(workerdSlowActFixture, SLOW_ACT_WATCHDOG_POLICY.attemptTimeoutMs),
   { ...RUNTIME_PROPERTY_OPTIONS, numRuns: 12, examples: liveInlineExamples },
 ), 30_000)
