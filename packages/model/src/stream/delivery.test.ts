@@ -5,7 +5,8 @@ import { Response } from "effect/unstable/ai"
 import { FetchHttpClient } from "effect/unstable/http"
 import { BindingSettings, CurrentModel, ProviderRequestKey } from "../settings"
 import { withModelRequest } from "./invocation"
-import { deltaDelivery } from "./delivery"
+import { deltaDelivery, observeResponse } from "./delivery"
+import type { InferDelta } from "./observer"
 
 class ObserverFailed extends Data.TaggedError("ObserverFailed") {}
 
@@ -71,4 +72,27 @@ test.each([false, true])("request context restores services and closes observati
     expect(yield* CurrentModel).toEqual(original)
     expect(yield* ProviderRequestKey).toBe(key)
   }))
+})
+
+test("an empty delta between reopened reasoning parts keeps one reasoning block", async () => {
+  const seen: InferDelta[] = []
+  await Effect.runPromise(Effect.gen(function* () {
+    const observed = yield* observeResponse({ actor: "a", instance: "i", thread: "t", turn: "t" }, { provider: "test", model_id: "m" }, undefined, undefined, (item) => { seen.push(item) })
+    for (const part of [
+      Response.makePart("reasoning-start", { id: "gen" }),
+      Response.makePart("reasoning-delta", { id: "gen", delta: "think" }),
+      Response.makePart("reasoning-end", { id: "gen" }),
+      Response.makePart("text-start", { id: "gen" }),
+      Response.makePart("text-delta", { id: "gen", delta: "" }),
+      Response.makePart("reasoning-start", { id: "gen" }),
+      Response.makePart("reasoning-delta", { id: "gen", delta: "ing" }),
+      Response.makePart("text-delta", { id: "gen", delta: "" }),
+      Response.makePart("text-delta", { id: "gen", delta: "answer" })
+    ]) yield* observed.onPart(part)
+  }))
+  expect(seen.map(({ kind, blockIndex, text }) => ({ kind, blockIndex, text }))).toEqual([
+    { kind: "reasoning", blockIndex: 0, text: "think" },
+    { kind: "reasoning", blockIndex: 0, text: "ing" },
+    { kind: undefined, blockIndex: 1, text: "answer" }
+  ])
 })
