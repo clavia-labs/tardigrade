@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.45.2](https://github.com/clavia-labs/tardigrade/compare/v0.45.1...v0.45.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **watchdog:** release recovery after startup ([#724](https://github.com/clavia-labs/tardigrade/issues/724)) ([1972e70](https://github.com/clavia-labs/tardigrade/commit/1972e70766f8864aea2e997fd6e184144f5ba84b))
+* **watchdog:** retain ownership through commit ([#726](https://github.com/clavia-labs/tardigrade/issues/726)) ([19a134a](https://github.com/clavia-labs/tardigrade/commit/19a134abd3a241944959f92f30aeb3926d0092af))
+
 ## [0.45.1](https://github.com/clavia-labs/tardigrade/compare/v0.45.0...v0.45.1) (2026-10-09)
 
 
