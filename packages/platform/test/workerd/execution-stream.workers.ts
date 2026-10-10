@@ -3,7 +3,7 @@ import { SELF, runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
 import { cloudflareThreadName } from "../../src/cloudflare"
 import { threadFlow } from "../fixtures/thread-flow"
-import type { LayoutThreadDO } from "./layout-fixture"
+import type { LayoutThreadDO } from "../fixtures/workerd/layout-fixture"
 
 test("thread DO streams live act updates without journal entries", async () => {
   const instance = "execution-stream"

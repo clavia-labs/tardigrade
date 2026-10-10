@@ -23,7 +23,7 @@ if (existing) {
   const secrets = join(directory, "secrets.json")
   const token = crypto.randomUUID()
   const manifest = {
-    name, main: fileURLToPath(new URL("./workerd/layout-fixture.ts", import.meta.url)),
+    name, main: fileURLToPath(new URL("./fixtures/workerd/layout-fixture.ts", import.meta.url)),
     compatibility_date: "2026-08-08", compatibility_flags: ["nodejs_compat"], workers_dev: true,
     durable_objects: { bindings: [{ name: "ACTORS", class_name: "LayoutActorDO" }, { name: "THREADS", class_name: "LayoutThreadDO" }] },
     migrations: [{ tag: "v1", new_sqlite_classes: ["LayoutActorDO", "LayoutThreadDO"] }],

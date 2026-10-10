@@ -7,14 +7,14 @@ import { cloudflareThreadName } from "../../src/cloudflare"
 import { objectJournal } from "../../src/cloudflare/objects"
 import { threadFlow } from "../fixtures/thread-flow"
 import { SELF } from "cloudflare:test"
-import type { LayoutThreadDO } from "./layout-fixture"
+import type { LayoutThreadDO } from "../fixtures/workerd/layout-fixture"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
-import type { TestPromiseResolver } from "./fixture.worker"
+import type { TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
 import * as fc from "fast-check"
 import { liveInline, liveInlineExamples } from "../properties/watchdog/live-inline"
 import { RUNTIME_PROPERTY_OPTIONS } from "../properties/runtime/config"
-import { workerdSlowActFixture } from "./slow-act-fixture"
-import { SLOW_ACT_WATCHDOG_POLICY } from "./slow-act-fixture.worker"
+import { workerdSlowActFixture } from "../fixtures/workerd/slow-act-fixture"
+import { SLOW_ACT_WATCHDOG_POLICY } from "../fixtures/workerd/slow-act-fixture.worker"
 
 const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
 const address = { actor: "test", instance: "main", thread: "one" }

@@ -1,7 +1,7 @@
 import { Context, Deferred, Effect, Schema } from "effect"
 import { act, actorMethod, defineActor, durableAtom, effectAtom, event, Invocation, Supervisor, ThreadCoordinate, EffectExecution, durablePromise } from "@clavia/tardigrade-core"
-import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
-import { createActorWorker, cloudflareThreadName } from "../../src/cloudflare"
+import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
+import { createActorWorker, cloudflareThreadName } from "../../../src/cloudflare"
 
 const ReadRequested = event({ type: "ReadRequested" })
 const Changed = event({ type: "Changed", value: Schema.Finite })

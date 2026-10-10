@@ -1,7 +1,7 @@
 import { Context } from "effect"
 import { RuntimeError } from "@clavia/tardigrade-core"
-import { createActorWorker, type CloudflareObjectBindings } from "../../src/cloudflare"
-import { slowActor, slowServices, type SlowActOptions } from "../fixtures/slow-act"
+import { createActorWorker, type CloudflareObjectBindings } from "../../../src/cloudflare"
+import { slowActor, slowServices, type SlowActOptions } from "../slow-act"
 
 export const SLOW_ACT_WATCHDOG_POLICY = { attemptTimeoutMs: 100, keepAliveIntervalMs: 20, retryIntervalMs: 20, maxRetryIntervalMs: 40, maxNoProgressAttempts: 3 } as const
 

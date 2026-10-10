@@ -6,7 +6,7 @@ import { createWatchdog, createScheduler } from "@clavia/tardigrade-core"
 import { cloudflareSchedulerStorage } from "../../src/cloudflare/scheduler"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { schedulerProperties, schedulerAcknowledgments } from "../properties/scheduler/wakes"
-import type { TestPromiseResolver } from "./fixture.worker"
+import type { TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
 
 const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
 for (const property of [schedulerProperties, schedulerAcknowledgments]) test(`workerd ${property.name}`, async () => {

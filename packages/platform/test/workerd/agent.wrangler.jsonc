@@ -1,6 +1,6 @@
 {
   "name": "tardigrade-agent-content-test",
-  "main": "agent-fixture.worker.ts",
+  "main": "../fixtures/workerd/agent-fixture.worker.ts",
   "compatibility_date": "2026-08-08",
   "compatibility_flags": ["nodejs_compat"],
   "r2_buckets": [{ "binding": "OBJECTS", "bucket_name": "tardigrade-agent-content-test" }],

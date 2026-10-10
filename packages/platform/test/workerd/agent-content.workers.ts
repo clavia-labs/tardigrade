@@ -2,9 +2,9 @@ import { env } from "cloudflare:workers"
 import { test, expect } from "vitest"
 import { DEFAULT_R2_OBJECT_PREFIX } from "@clavia/tardigrade-cloudflare/object-storage/r2"
 import { objectKeyOf } from "@clavia/tardigrade-model/object"
-import { type AgentEnv } from "./agent-fixture.worker"
+import { type AgentEnv } from "../fixtures/workerd/agent-fixture.worker"
 import { contentScenarios } from "../properties/content/hydration"
-import { workerdContentFixture } from "./content-fixture"
+import { workerdContentFixture } from "../fixtures/workerd/content-fixture"
 
 for (const scenario of contentScenarios) test(scenario.name, async () => {
   const fixture = await workerdContentFixture()

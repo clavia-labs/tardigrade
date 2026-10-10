@@ -5,9 +5,9 @@ import { Effect, Schema } from "effect"
 import { methodResult, ThreadCoordinate } from "@clavia/tardigrade-core"
 import { ObjectStorage, type InputContentPart, type ContentPart } from "@clavia/tardigrade-model/object"
 import { objectStorageFromR2 } from "@clavia/tardigrade-cloudflare/object-storage/r2"
-import { cloudflareThreadName } from "../../src/cloudflare"
-import { waitFor } from "../fixtures/wait"
-import type { ContentFixture } from "../properties/content/hydration"
+import { cloudflareThreadName } from "../../../src/cloudflare"
+import { waitFor } from "../wait"
+import type { ContentFixture } from "../../properties/content/hydration"
 import { observedPrompt, providerCallCount, type AgentEnv, type AgentThreadDO } from "./agent-fixture.worker"
 
 interface WorkerdContentFixture extends ContentFixture {
