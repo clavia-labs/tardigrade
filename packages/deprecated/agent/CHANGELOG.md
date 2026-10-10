@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.46.0](https://github.com/clavia-labs/tardigrade/compare/v0.45.2...v0.46.0) (2026-10-10)
+
+
+### Features
+
+* **core:** add versioned upcasts ([#732](https://github.com/clavia-labs/tardigrade/issues/732)) ([5e3413c](https://github.com/clavia-labs/tardigrade/commit/5e3413c5522f909a77c599a6cbc18d5b1ae48b9c))
+* **notes:** add socratic dialogue ([#727](https://github.com/clavia-labs/tardigrade/issues/727)) ([76f5a9b](https://github.com/clavia-labs/tardigrade/commit/76f5a9b3b83be4d3a41fc3a9548cf2324d92b5f6))
+* **storage:** add content translation ([#733](https://github.com/clavia-labs/tardigrade/issues/733)) ([d82b5ed](https://github.com/clavia-labs/tardigrade/commit/d82b5ed3bd7449d56f9861502a5b4d72664e50bb))
+* **tools:** support multipart results ([#730](https://github.com/clavia-labs/tardigrade/issues/730)) ([5c6f35c](https://github.com/clavia-labs/tardigrade/commit/5c6f35cea10dd845a9578a8216b8600463b2fe14))
+
+
+### Bug Fixes
+
+* **gate:** normalize working directory ([#731](https://github.com/clavia-labs/tardigrade/issues/731)) ([544372a](https://github.com/clavia-labs/tardigrade/commit/544372a90653490b79bcd24e1b67e07e3ad185c7))
+
 ## [0.45.2](https://github.com/clavia-labs/tardigrade/compare/v0.45.1...v0.45.2) (2026-10-09)
 
 
