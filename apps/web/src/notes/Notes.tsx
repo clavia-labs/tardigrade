@@ -7,6 +7,7 @@ import Content, { frontmatter } from "@notes/telling-forms-from-the-shadows.mdx"
 import markdown from "@notes/telling-forms-from-the-shadows.mdx?doc-source"
 import { PageActions } from "../ui/PageActions"
 import { AuthorAvatar } from "./AuthorAvatar"
+import { Dialogue, Socrates, You } from "./Dialogue"
 import { NotesCode } from "./NotesCode"
 import { NotesLink } from "./NotesLink"
 import { NotesOutline } from "./NotesOutline"
@@ -58,7 +59,7 @@ export const NotesPostPage = (): ReactElement => {
       <h1>{post.title}{post.draft === true ? <span className="notes-draft">[DRAFT]</span> : null}</h1>
       <div className="notes-metadata"><time dateTime={post.date}>{postDate}</time></div>
       <div className="guide-divider" />
-      <MDXProvider components={{ a: NotesLink, pre: NotesCode, AuthorAvatar, AgentViewDiagram, CaveDiagram, FlyingTardie, MergeDiagram, RussianDollDiagram, ShadowDiagram }}><Content /></MDXProvider>
+      <MDXProvider components={{ a: NotesLink, pre: NotesCode, AuthorAvatar, AgentViewDiagram, CaveDiagram, Dialogue, Socrates, You, FlyingTardie, MergeDiagram, RussianDollDiagram, ShadowDiagram }}><Content /></MDXProvider>
     </article>
     <aside className="notes-outline-rail"><NotesOutline article={article} /></aside>
   </main>

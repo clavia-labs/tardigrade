@@ -8,12 +8,12 @@ const forms = {
 
 type Labels = { readonly form: string; readonly layer: string; readonly shadow: string; readonly prisoner: string }
 
-// CaveDiagram draws Plato's cave; form picks the object the carrier holds up, whose shadow the prisoner sees, and labels names the form, the carrier with the flame, the shadow, and the prisoner.
-export const CaveDiagram = ({ form = "bird", labels }: { readonly form?: keyof typeof forms; readonly labels?: Labels }): ReactElement => {
+// CaveDiagram draws Plato's cave; form picks the object the carrier holds up, whose shadow the prisoner sees, labels names the form, the carrier with the flame, the shadow, and the prisoner, and looking picks whether the prisoner sits pointing at the shadow or stands turned around pointing back at the form.
+export const CaveDiagram = ({ form = "bird", labels, looking = "shadow" }: { readonly form?: keyof typeof forms; readonly labels?: Labels; readonly looking?: "shadow" | "form" }): ReactElement => {
   const outline = useId()
   const { Icon, name } = forms[form]
   return (
-    <svg className="cave-diagram" viewBox="0 0 640 300" role="img" aria-label={`Plato's cave. A torch burns on a column. A carrier holds ${name} up on a stick behind a low wall, and its shadow falls on the cave wall, where a seated prisoner points at it.`}>
+    <svg className="cave-diagram" viewBox="0 0 640 300" role="img" aria-label={`Plato's cave. A torch burns on a column. A carrier holds ${name} up on a stick behind a low wall, and its shadow falls on the cave wall, where a seated prisoner ${looking === "form" ? "has stood up, turned around, and points back at the form" : "points at it"}.`}>
       <defs>
         {/* outline traces the edge of everything drawn inside it, so overlapping parts share one contour. */}
         <filter id={outline}>
@@ -41,19 +41,23 @@ export const CaveDiagram = ({ form = "bird", labels }: { readonly form?: keyof t
           <path d="M-12-136C8-140 20-128 18-108L22-62 34-40H-30L-18-64C-22-96-24-126-12-136Z" />
           <path className="cave-limb" d="M12-128 26-170M-8-126-24-96-20-80M-12-42-34-2M14-42 30-2" />
         </g>
-        <g transform="translate(366 278)">
+        {looking === "form" ? <g transform="translate(380 278)">
+          <circle cx="-4" cy="-146" r="11" />
+          <path d="M-10-132C6-134 14-122 12-104L10-64H-16L-18-104C-20-120-20-130-10-132Z" />
+          <path className="cave-limb" d="M-8-124-38-142-68-161M6-122 14-98 10-78M-10-66-16-2M6-66 14-2" />
+        </g> : <g transform="translate(366 278)">
           <circle cx="6" cy="-96" r="11" />
           <path d="M-10-82C8-84 16-70 14-50L10-20H-22C-24-50-22-76-10-82Z" />
           <path d="M-20-20C10-30 40-46 56-40L88-6 96-4V0H-20Z" />
           <path className="cave-limb" d="M6-72 34-82 62-94M-8-70-18-40-14-22" />
-        </g>
+        </g>}
       </g>
       {labels === undefined ? null : <g className="cave-labels">
         <text x="236" y={labels.form.includes("\n") ? 26 : 40} textAnchor="middle">{labels.form.split("\n").map((line, index) => <tspan key={index} x="236" dy={index === 0 ? 0 : 14}>{line}</tspan>)}</text>
         <path d="M134 222L94 198M166 222L192 198" />
         <text x="140" y="238" textAnchor="middle">{labels.layer.split("\n").map((line, index) => <tspan key={index} x="140" dy={index === 0 ? 0 : 14}>{line}</tspan>)}</text>
         <text className="cave-label-on-rock" x="596" y="192" textAnchor="middle">{labels.shadow}</text>
-        <text x="372" y="164" textAnchor="middle">{labels.prisoner}</text>
+        <text x={looking === "form" ? 428 : 372} y={looking === "form" ? 196 : 164} textAnchor="middle">{labels.prisoner}</text>
       </g>}
     </svg>
   )
