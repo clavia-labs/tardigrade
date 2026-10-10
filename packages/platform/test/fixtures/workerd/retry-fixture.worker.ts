@@ -1,7 +1,7 @@
 import { Context, Effect } from "effect"
 import { RuntimeError, type EffectRef } from "@clavia/tardigrade-core"
-import { createActorWorker, type CloudflareObjectBindings } from "../../src/cloudflare"
-import { retryActor, retryServices, type RetryServiceOptions } from "../fixtures/retry-actor"
+import { createActorWorker, type CloudflareObjectBindings } from "../../../src/cloudflare"
+import { retryActor, retryServices, type RetryServiceOptions } from "../retry-actor"
 
 interface RetryBindings {
   readonly RETRY_ACTORS: CloudflareObjectBindings["ACTORS"]

@@ -5,7 +5,7 @@ import { Clock, Effect } from "effect"
 import { createCloudflarePromiseResolver } from "../../src/cloudflare/promise-resolver"
 import { RuntimeError, type ResolutionSettled } from "@clavia/tardigrade-core"
 
-import type { TestPromiseResolver } from "./fixture.worker"
+import type { TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
 
 const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
 const request = { recipient: { actor: "test", instance: "main", thread: "one" }, ref: { atom: "a", seq: 1, act: "job" }, handle: { executor: "remote", id: "job", mode: "push" as const } }

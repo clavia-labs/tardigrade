@@ -6,7 +6,7 @@ import { createWatchdog, watchdogKey } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { threadFlow } from "../fixtures/thread-flow"
 import { cloudflareThreadName } from "../../src/cloudflare"
-import type { LayoutActorDO, LayoutThreadDO } from "./layout-fixture"
+import type { LayoutActorDO, LayoutThreadDO } from "../fixtures/workerd/layout-fixture"
 
 const bindings = env as unknown as { ACTORS: DurableObjectNamespace<InstanceType<typeof LayoutActorDO>>; THREADS: DurableObjectNamespace<LayoutThreadDO> }
 const coordinate = (instance: string, thread: string) => ({ actor: "layout", instance, thread })

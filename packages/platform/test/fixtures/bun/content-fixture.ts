@@ -8,9 +8,9 @@ import { actorContext, createActor } from "@clavia/tardigrade-agent"
 import { ObjectStorage } from "@clavia/tardigrade-model/object"
 import { objectStorageFromFileSystem } from "@clavia/tardigrade-bun"
 import { methodResult } from "@clavia/tardigrade-core"
-import { createBunHost } from "../../src/bun"
-import { contentServices } from "../fixtures/model-services"
-import type { ContentFixture } from "../properties/content/hydration"
+import { createBunHost } from "../../../src/bun"
+import { contentServices } from "../model-services"
+import type { ContentFixture } from "../../properties/content/hydration"
 
 export async function bunContentFixture(): Promise<ContentFixture> {
   const root = await mkdtemp(join(tmpdir(), "tardie-agent-content-"))

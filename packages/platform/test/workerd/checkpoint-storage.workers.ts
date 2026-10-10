@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers"
 import { runInDurableObject } from "cloudflare:test"
 import { cloudflareJournal, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "../../src/cloudflare"
 import { checkpointStorage } from "../properties/checkpoint-storage"
-import type { TestPromiseResolver } from "./fixture.worker"
+import type { TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
 
 
 test("checkpointStorage", async () => {

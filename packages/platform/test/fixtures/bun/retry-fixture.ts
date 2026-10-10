@@ -3,10 +3,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Schema } from "effect"
 import { methodResult } from "@clavia/tardigrade-core"
-import { createBunHost, bunJournal } from "../../src/bun"
-import { bunThreadPath } from "../../src/bun/observe"
-import { retryActor, retryServices, type RetryServiceOptions } from "../fixtures/retry-actor"
-import type { RetryFixture } from "../properties/retries/lifecycle"
+import { createBunHost, bunJournal } from "../../../src/bun"
+import { bunThreadPath } from "../../../src/bun/observe"
+import { retryActor, retryServices, type RetryServiceOptions } from "../retry-actor"
+import type { RetryFixture } from "../../properties/retries/lifecycle"
 
 export async function bunRetryFixture(options: RetryServiceOptions): Promise<RetryFixture> {
   const root = await mkdtemp(join(tmpdir(), "tardie-effect-retry-"))

@@ -9,7 +9,7 @@ import type { Event } from "@clavia/tardigrade-agent/contracts/events"
 import { InputDigest } from "@clavia/tardigrade-core"
 import { cloudflareJournal, DEFAULT_CHECKPOINT_CHUNK_BYTES } from "../../src/cloudflare"
 import { createTestStore } from "../properties/runtime/store"
-import type { TestPromiseResolver } from "./fixture.worker"
+import type { TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
 
 const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
 

@@ -1,6 +1,6 @@
 import { SELF } from "cloudflare:test"
 import { test, expect } from "vitest"
-import { retryCallCount } from "./agent-fixture.worker"
+import { retryCallCount } from "../fixtures/workerd/agent-fixture.worker"
 
 test("a provider retry hint reaches the effect runtime through the agent adapter", async () => {
   const base = "http://test/v1/actors/retry-transient/threads"

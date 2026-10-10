@@ -4,7 +4,7 @@ import { ModelInfo } from "../actor/context"
 import { RuntimeError, type ExecutionHandle, type ActCancellation, durablePromise, EffectExecution } from "@clavia/tardigrade-core"
 import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit, Option, Stream } from "effect"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
-import { ObjectReadConcurrency, ObjectStorage, objectKeyOf } from "@clavia/tardigrade-model/object"
+import { ObjectStorage, objectKeyOf } from "@clavia/tardigrade-model/object"
 import { AiError, LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
 import { ResponseFormat } from "@tardie/ai"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
@@ -82,19 +82,17 @@ export function modelError(error: AiError.AiError): RuntimeError {
 }
 
 const resolveContentObjects = (context: typeof Conversation.Type): Effect.Effect<ReadonlyMap<string, Uint8Array>, Error> => Effect.gen(function* () {
-  const references = [...new Map(context.flatMap(message => message.role !== "user" || "text" in message
-    ? [] : message.content.flatMap((part) => part.type === "file" ? [[objectKeyOf(part.object), part.object] as const] : [])).map(([key, reference]) => [key, reference] as const)).values()]
-  if (references.length === 0) return new Map<string, Uint8Array>()
+  const content = context.flatMap(message => message.role === "user" && "content" in message && message.content !== undefined ? message.content : [])
+  if (!content.some(part => part.type === "file")) return new Map<string, Uint8Array>()
   const service = yield* Effect.serviceOption(ObjectStorage)
   if (Option.isNone(service)) return yield* Effect.fail(new RuntimeError("File input requires a runtime ObjectStorage service"))
-  const concurrency = yield* ObjectReadConcurrency
-  if (concurrency !== "unbounded" && (!Number.isSafeInteger(concurrency) || concurrency < 1)) {
-    return yield* Effect.die(new RangeError("ObjectReadConcurrency must be a positive safe integer or unbounded"))
-  }
-  const entries = yield* Effect.forEach(references, reference =>
-    service.value.get(reference).pipe(Effect.mapError(RuntimeError.from), Effect.map(bytes => [objectKeyOf(reference), bytes] as const)),
-  { concurrency })
-  return new Map(entries)
+  const resolved = yield* ObjectStorage.resolve(content).pipe(Effect.provideService(ObjectStorage, service.value), Effect.mapError(RuntimeError.from))
+  const objects = new Map<string, Uint8Array>()
+  content.forEach((part, index) => {
+    const value = resolved[index]
+    if (part.type === "file" && value?.type === "file") objects.set(objectKeyOf(part.object), value.bytes)
+  })
+  return objects
 })
 
 const jsonSchemaOf = (value: unknown) => Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(value)
