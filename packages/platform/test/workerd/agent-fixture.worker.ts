@@ -18,7 +18,7 @@ const worker = createActorWorker({
   actorContext,
   services: (env: AgentEnv, coordinate, _runtime, storage) => coordinate.instance.startsWith("retry-") ? retry.services : Layer.merge(
     services,
-    objectStorageFromR2(env.OBJECTS, { cache: { storage, bucketNamespace: "agent-content" } }),
+    objectStorageFromR2(env.OBJECTS, coordinate.instance.startsWith("content-r2-") ? {} : { cache: { storage, bucketNamespace: "agent-content" } }),
   ),
 })
 export const AgentActorDO = worker.ActorObject
