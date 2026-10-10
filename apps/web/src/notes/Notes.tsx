@@ -3,8 +3,8 @@ import { ArrowLeft } from "@phosphor-icons/react"
 import { Link } from "@tanstack/react-router"
 import { useRef, type ReactElement } from "react"
 
-import Content, { frontmatter } from "@notes/telling-forms-from-the-shadows.mdx"
-import markdown from "@notes/telling-forms-from-the-shadows.mdx?doc-source"
+import Content, { frontmatter } from "@notes/telling-forms-from-their-shadows.mdx"
+import markdown from "@notes/telling-forms-from-their-shadows.mdx?doc-source"
 import { PageActions } from "../ui/PageActions"
 import { AuthorAvatar } from "./AuthorAvatar"
 import { Dialogue, Socrates, You } from "./Dialogue"
@@ -26,7 +26,7 @@ export const post = frontmatter as {
   readonly author: string
   readonly authorUrl?: string
   readonly description: string
-  readonly route: "/notes/telling-forms-from-the-shadows"
+  readonly route: "/notes/telling-forms-from-their-shadows"
   readonly socialImage: string
   readonly socialImageAlt: string
 }

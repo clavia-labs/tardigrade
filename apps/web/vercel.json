@@ -1,4 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "tanstack-start"
+  "framework": "tanstack-start",
+  "redirects": [
+    { "source": "/notes/telling-forms-from-the-shadows", "destination": "/notes/telling-forms-from-their-shadows", "permanent": true }
+  ]
 }

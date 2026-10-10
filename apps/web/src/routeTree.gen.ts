@@ -16,7 +16,7 @@ import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as DocsSplatRouteImport } from './routes/docs.$'
 import { Route as NotesIndexRouteImport } from './routes/notes.index'
-import { Route as NotesTellingFormsFromTheShadowsRouteImport } from './routes/notes.telling-forms-from-the-shadows'
+import { Route as NotesTellingFormsFromTheirShadowsRouteImport } from './routes/notes.telling-forms-from-their-shadows'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -53,10 +53,10 @@ const NotesIndexRoute = NotesIndexRouteImport.update({
   path: '/notes/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const NotesTellingFormsFromTheShadowsRoute =
-  NotesTellingFormsFromTheShadowsRouteImport.update({
-    id: '/notes/telling-forms-from-the-shadows',
-    path: '/notes/telling-forms-from-the-shadows',
+const NotesTellingFormsFromTheirShadowsRoute =
+  NotesTellingFormsFromTheirShadowsRouteImport.update({
+    id: '/notes/telling-forms-from-their-shadows',
+    path: '/notes/telling-forms-from-their-shadows',
     getParentRoute: () => rootRouteImport,
   } as any)
 
@@ -66,7 +66,7 @@ export interface FileRoutesByFullPath {
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/docs/$': typeof DocsSplatRoute
-  '/notes/telling-forms-from-the-shadows': typeof NotesTellingFormsFromTheShadowsRoute
+  '/notes/telling-forms-from-their-shadows': typeof NotesTellingFormsFromTheirShadowsRoute
   '/docs/': typeof DocsIndexRoute
   '/notes/': typeof NotesIndexRoute
 }
@@ -76,7 +76,7 @@ export interface FileRoutesByTo {
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/docs/$': typeof DocsSplatRoute
-  '/notes/telling-forms-from-the-shadows': typeof NotesTellingFormsFromTheShadowsRoute
+  '/notes/telling-forms-from-their-shadows': typeof NotesTellingFormsFromTheirShadowsRoute
   '/docs': typeof DocsIndexRoute
   '/notes': typeof NotesIndexRoute
 }
@@ -87,7 +87,7 @@ export interface FileRoutesById {
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/docs/$': typeof DocsSplatRoute
-  '/notes/telling-forms-from-the-shadows': typeof NotesTellingFormsFromTheShadowsRoute
+  '/notes/telling-forms-from-their-shadows': typeof NotesTellingFormsFromTheirShadowsRoute
   '/docs/': typeof DocsIndexRoute
   '/notes/': typeof NotesIndexRoute
 }
@@ -99,7 +99,7 @@ export interface FileRouteTypes {
     | '/llms.txt'
     | '/robots.txt'
     | '/docs/$'
-    | '/notes/telling-forms-from-the-shadows'
+    | '/notes/telling-forms-from-their-shadows'
     | '/docs/'
     | '/notes/'
   fileRoutesByTo: FileRoutesByTo
@@ -109,7 +109,7 @@ export interface FileRouteTypes {
     | '/llms.txt'
     | '/robots.txt'
     | '/docs/$'
-    | '/notes/telling-forms-from-the-shadows'
+    | '/notes/telling-forms-from-their-shadows'
     | '/docs'
     | '/notes'
   id:
@@ -119,7 +119,7 @@ export interface FileRouteTypes {
     | '/llms.txt'
     | '/robots.txt'
     | '/docs/$'
-    | '/notes/telling-forms-from-the-shadows'
+    | '/notes/telling-forms-from-their-shadows'
     | '/docs/'
     | '/notes/'
   fileRoutesById: FileRoutesById
@@ -130,7 +130,7 @@ export interface RootRouteChildren {
   LlmsDottxtRoute: typeof LlmsDottxtRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   DocsSplatRoute: typeof DocsSplatRoute
-  NotesTellingFormsFromTheShadowsRoute: typeof NotesTellingFormsFromTheShadowsRoute
+  NotesTellingFormsFromTheirShadowsRoute: typeof NotesTellingFormsFromTheirShadowsRoute
   DocsIndexRoute: typeof DocsIndexRoute
   NotesIndexRoute: typeof NotesIndexRoute
 }
@@ -186,11 +186,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NotesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/notes/telling-forms-from-the-shadows': {
-      id: '/notes/telling-forms-from-the-shadows'
-      path: '/notes/telling-forms-from-the-shadows'
-      fullPath: '/notes/telling-forms-from-the-shadows'
-      preLoaderRoute: typeof NotesTellingFormsFromTheShadowsRouteImport
+    '/notes/telling-forms-from-their-shadows': {
+      id: '/notes/telling-forms-from-their-shadows'
+      path: '/notes/telling-forms-from-their-shadows'
+      fullPath: '/notes/telling-forms-from-their-shadows'
+      preLoaderRoute: typeof NotesTellingFormsFromTheirShadowsRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -202,7 +202,8 @@ const rootRouteChildren: RootRouteChildren = {
   LlmsDottxtRoute: LlmsDottxtRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
   DocsSplatRoute: DocsSplatRoute,
-  NotesTellingFormsFromTheShadowsRoute: NotesTellingFormsFromTheShadowsRoute,
+  NotesTellingFormsFromTheirShadowsRoute:
+    NotesTellingFormsFromTheirShadowsRoute,
   DocsIndexRoute: DocsIndexRoute,
   NotesIndexRoute: NotesIndexRoute,
 }

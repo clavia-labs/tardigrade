@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router"
 
 import { NotesPostPage, post } from "../notes/Notes"
 
-export const Route = createFileRoute("/notes/telling-forms-from-the-shadows")({
+export const Route = createFileRoute("/notes/telling-forms-from-their-shadows")({
   component: NotesPostPage,
   head: () => ({ meta: [
     { title: `${post.title} | Tardigrade` },
