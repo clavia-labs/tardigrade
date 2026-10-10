@@ -1,4 +1,5 @@
 import { eventCatalog } from "./event"
+import { historicalEventDecoder } from "../event/versioned"
 import type { ActorMethods, ActorMethod } from "./method"
 import { RuntimeError } from "../runtime/effects"
 import { Context, Effect, Schema } from "effect"
@@ -54,6 +55,7 @@ export function defineActor<Value, const Name extends string, Services, const Co
     return {
       root,
       schema: (definition.schema ?? catalog.schema) as Schema.Schema<DomainEvents>,
+      decodeEvent: definition.schema ? historicalEventDecoder(definition.schema) : catalog.decode,
       contracts: definition.methods ?? {} as Contracts,
       effects: { [name]: root } as Atoms,
     }

@@ -1,4 +1,5 @@
 import { IndexView, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
+import { historicalEventDecoder } from "../event/versioned"
 import { frozenPlainData } from "../atoms/incremental/frozen"
 import { actInputs } from "../atoms/act"
 import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
@@ -29,6 +30,7 @@ export interface EffectCheckpoint {
 // createEventLog replays validated domain events and derives identified effect descriptions without executing them.
 export function createEventLog<Event extends object, const Atoms extends Readonly<Record<string, Atom<unknown>>>>(options: {
   readonly schema: Schema.Schema<Event>
+  readonly decodeEvent?: (input: unknown) => Event
   readonly atoms: Atoms
   readonly digestMinBytes?: number
   readonly checkpoint?: EffectCheckpoint
@@ -40,6 +42,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   type DeferredWork = IdentifiedEffectValue<ServicesOf<EffectValues>> & { readonly handle: ExecutionHandle }
   const disposers = new Set<() => void>()
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
+  const read = options.decodeEvent ?? historicalEventDecoder(options.schema)
   const validateMetadata = Schema.decodeUnknownSync(RecordMetadata)
   const validateCore = Schema.decodeUnknownSync(Schema.toType(CoreEvent), { onExcessProperty: "error" })
   const frozen = new WeakSet<object>()
@@ -76,7 +79,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     stored.input._tag === "InputDigest" && prepared.stored.input._tag === "InputDigest"
       ? stored.act === prepared.stored.act && isDeepStrictEqual(stored.input, prepared.stored.input)
       : matchesRequest(stored, prepared.request)
-  const eventOf = (event: unknown, reply = false): JournalEvent<Event> => {
+  const eventOf = (event: unknown, reply = false, historical = false): JournalEvent<Event> => {
+    const decodeDomain = historical ? (input: unknown) => validate(read(input)) : validate
     if (typeof event !== "object" || event === null || Array.isArray(event)) throw new Error("Domain event must be an object")
     if (processedRequests.has(event)) return event as StoredEffectRequested
     if ("effect" in event) throw new Error("Domain effect metadata is not supported")
@@ -84,16 +88,16 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const inbox = Schema.decodeSync(MessageReceived, { onExcessProperty: "error" })(event)
       if (reply) return freeze(structuredClone(inbox))
       if (typeof inbox.body !== "object" || inbox.body === null || hasCoreEventType(inbox.body)) throw new Error("Actor inputs must be domain events")
-      return freeze({ type: "MessageReceived", body: structuredClone(validate(inbox.body)) }) as JournalEvent<Event>
+      return freeze({ type: "MessageReceived", body: structuredClone(decodeDomain(inbox.body)) }) as JournalEvent<Event>
     }
-    const result = freeze(structuredClone(hasCoreEventType(event) ? validateCore(event) : validate(event)))
+    const result = freeze(structuredClone(hasCoreEventType(event) ? validateCore(event) : decodeDomain(event)))
     if ("type" in result && result.type === "EffectRequested") processedRequests.add(result)
     return result
   }
-  const recordOf = (record: Recorded<Event>): Recorded<Event> => {
+  const recordOf = (record: Recorded<Event>, historical = false): Recorded<Event> => {
     const metadata = validateMetadata(record)
     if (isMessageReceived(record.event) !== (metadata.message !== undefined)) throw new Error("Inbox records require message metadata")
-    return freeze({ ...metadata, event: eventOf(record.event, metadata.message?.inReplyTo !== undefined) })
+    return freeze({ ...metadata, event: eventOf(record.event, metadata.message?.inReplyTo !== undefined, historical) })
   }
   type Snapshot = {
     readonly events: ReadonlyLog<RuntimeEvent<Event>>
@@ -452,7 +456,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     try {
       effects()
-      for (const raw of history) append(recordOf(raw))
+      for (const raw of history) append(recordOf(raw, true))
     } catch (error) {
       dispose()
       throw error
