@@ -1,4 +1,5 @@
 import { Schema, SchemaAST } from "effect"
+import { historicalEventDecoder, historicalEventMigrations } from "../event/versioned"
 
 const EventCodec = Symbol("EventCodec")
 type Tagged = { readonly type: string }
@@ -48,6 +49,8 @@ export function constructedEvent<Value extends object>(value: DeclaredEvent<Valu
 // eventCatalog owns the tagged codecs discovered for an actor setup.
 export function eventCatalog<Value extends object>() {
   const codecs = new Map<string, Set<(input: unknown) => boolean>>()
+  const readers = new Map<string, Set<(input: unknown) => unknown>>()
+  const migrations = new Map<string, (input: unknown) => object>()
   const registered = new WeakSet<SchemaAST.AST>()
   const tags = (node: SchemaAST.AST): readonly string[] => {
     if (SchemaAST.isUnion(node)) return node.types.flatMap(tags)
@@ -59,14 +62,34 @@ export function eventCatalog<Value extends object>() {
     add: (schema: Schema.Top) => {
       const ast = Schema.toType(schema).ast
       if (registered.has(ast)) return
+      for (const [name, read] of historicalEventMigrations(schema)) {
+        const previous = migrations.get(name)
+        if (previous && previous !== read) throw new Error(`Conflicting event migrations: ${name}`)
+        migrations.set(name, read)
+      }
       registered.add(ast)
       const decode = Schema.decodeUnknownSync(Schema.toType(schema), { onExcessProperty: "error" })
       const accepts = (input: unknown) => { try { decode(input); return true } catch { return false } }
+      const read = historicalEventDecoder(schema)
       for (const tag of tags(ast)) {
         let checks = codecs.get(tag)
         if (!checks) { checks = new Set(); codecs.set(tag, checks) }
         checks.add(accepts)
+        let decoders = readers.get(tag)
+        if (!decoders) { decoders = new Set(); readers.set(tag, decoders) }
+        decoders.add(read)
       }
+    },
+    decode: (input: unknown): Value => {
+      const causes: unknown[] = []
+      if (typeof input === "object" && input !== null && "type" in input && typeof input.type === "string") {
+        for (const read of readers.get(input.type) ?? []) {
+          try { return read(input) as Value } catch (cause) { causes.push(cause) }
+        }
+        const version = "version" in input ? String(input.version) : "unversioned"
+        throw new AggregateError(causes, `Invalid historical actor event ${input.type} (incoming version ${version})`)
+      }
+      throw new AggregateError(causes, "Invalid historical actor event")
     },
     schema: Schema.declare((input): input is Value => {
       if (typeof input !== "object" || input === null || !("type" in input) || typeof input.type !== "string") return false

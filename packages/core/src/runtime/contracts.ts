@@ -32,6 +32,7 @@ export interface ActorRuntime<Event extends object> {
 
 export interface ActorSetup<Event extends object, Atoms extends Readonly<Record<string, Atom<unknown>>>, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
   readonly schema: Schema.Schema<Event>
+  readonly decodeEvent?: (input: unknown) => Event
   readonly contracts: Contracts
   readonly effects: Atoms
 }
