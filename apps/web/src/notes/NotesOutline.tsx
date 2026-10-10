@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState, type ReactElement, type RefObject } from "react"
 
-type Heading = { readonly id: string; readonly text: string; readonly level: 2 | 3 }
+type Segment = { readonly text: string; readonly struck: boolean }
+type Heading = { readonly id: string; readonly segments: ReadonlyArray<Segment>; readonly level: 2 | 3 | 4 }
+
+// segmentsOf keeps a heading's strikethrough, so a struck word reads as struck in the outline too; other inline markup flattens to text.
+const segmentsOf = (heading: HTMLElement): ReadonlyArray<Segment> => Array.from(heading.childNodes, (child) => ({
+  text: child.textContent ?? "",
+  struck: child instanceof HTMLElement && (child.tagName === "DEL" || child.tagName === "S"),
+})).filter((segment) => segment.text !== "")
 
 // HEADING_GAP is the space, in CSS pixels, between the sticky header and the top of a heading's letters after a jump.
 const HEADING_GAP = 24
@@ -59,7 +66,7 @@ const sample = (series: ReadonlyArray<number>, y: number): number => {
   return series[i]! + (series[j]! - series[i]!) * (at - i)
 }
 
-// NotesOutline lists the article's h2 and h3 headings and marks the one the reader is in; heading ids come from rehype-slug.
+// NotesOutline lists the article's h2, h3, and h4 headings and marks the one the reader is in; heading ids come from rehype-slug.
 export const NotesOutline = ({ article }: { readonly article: RefObject<HTMLElement | null> }): ReactElement | null => {
   const [headings, setHeadings] = useState<ReadonlyArray<Heading>>([])
   const [active, setActive] = useState<string | null>(null)
@@ -71,8 +78,8 @@ export const NotesOutline = ({ article }: { readonly article: RefObject<HTMLElem
   useEffect(() => {
     const root = article.current
     if (root === null) return
-    const nodes = Array.from(root.querySelectorAll<HTMLHeadingElement>("h2[id], h3[id]"))
-    setHeadings(nodes.map((node) => ({ id: node.id, text: node.textContent ?? "", level: node.tagName === "H2" ? 2 : 3 })))
+    const nodes = Array.from(root.querySelectorAll<HTMLHeadingElement>("h2[id], h3[id], h4[id]"))
+    setHeadings(nodes.map((node) => ({ id: node.id, segments: segmentsOf(node), level: node.tagName === "H2" ? 2 : node.tagName === "H3" ? 3 : 4 })))
     // The active heading is the last one whose top has passed a line just below the landing position of a jump.
     const update = (): void => {
       const line = readingLine()
@@ -203,7 +210,7 @@ export const NotesOutline = ({ article }: { readonly article: RefObject<HTMLElem
                   history.replaceState(null, "", `#${heading.id}`)
                 }}
               >
-                {heading.text}
+                {heading.segments.map((segment, i) => segment.struck ? <del key={i}>{segment.text}</del> : segment.text)}
               </a>
             </li>
           ))}
