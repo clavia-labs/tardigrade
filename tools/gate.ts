@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs"
 import { availableParallelism } from "node:os"
 import { basename, relative } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -8,7 +9,7 @@ type Task = {
   readonly cwd?: string
 }
 
-const root = fileURLToPath(new URL("../", import.meta.url))
+const root = `${realpathSync(fileURLToPath(new URL("../", import.meta.url)))}/`
 const pkg = (name: string) => `${root}packages/${name}`
 const deprecated = ["core", "agent", "host", "channels", "client", "http"].map((name) => `deprecated/${name}`)
 const packages = ["tardie", "core", "code", "agent", "libraries", "platform", "examples", "apps/cli", "model", ...deprecated]
@@ -136,7 +137,8 @@ const pipe = async (id: string, stream: ReadableStream<Uint8Array> | null) => {
 const run = async (task: Task) => {
   const started = Date.now()
   console.log(`\n> ${task.id}  ${task.cmd.join(" ")}`)
-  const proc = Bun.spawn([...task.cmd], { cwd: task.cwd ?? root, stdout: "pipe", stderr: "pipe" })
+  const cwd = realpathSync(task.cwd ?? root)
+  const proc = Bun.spawn([...task.cmd], { cwd, env: { ...process.env, PWD: cwd }, stdout: "pipe", stderr: "pipe" })
   const drained = Promise.all([pipe(task.id, proc.stdout), pipe(task.id, proc.stderr)])
   const code = await proc.exited
   await drained
