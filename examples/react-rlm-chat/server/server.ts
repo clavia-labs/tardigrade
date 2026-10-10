@@ -4,7 +4,11 @@ import { createBunHost, serve } from "tardie/deprecated/bun"
 import { bunModelServices } from "tardie/deprecated/server/model-services"
 import definition from "./actor"
 
-const { config, layers, api } = await bunModelServices({
+const provider = process.env.CHAT_PROVIDER ?? "openrouter"
+if (provider !== "openrouter" && provider !== "codex") throw new Error(`Unsupported CHAT_PROVIDER: ${provider}`)
+const { config, layers, api } = provider === "codex"
+  ? await (await import("./codex")).codexModelServices(process.env)
+  : await bunModelServices({
   model: { providerLayer, configure: () => ({ maxOutputTokens: 4096 }) },
   configFile: new URL("wrangler.jsonc", import.meta.url),
   env: process.env

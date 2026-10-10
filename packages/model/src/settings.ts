@@ -12,6 +12,7 @@ export interface BindingOptions {
   readonly protocol: string
   readonly model: string
   readonly endpoint: string
+  readonly outputTokenLimitEnforcement?: "unsupported"
   readonly policy: RequestPolicy
   readonly output?: OutputCapability
   readonly pricing?: ModelPricing

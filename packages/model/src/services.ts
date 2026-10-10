@@ -24,10 +24,11 @@ export const inferenceLayer = (options: ProviderOptions & { readonly schemaImpor
     : { ...options, model: { ...options.model, config: { ...options.model.config, max_output_tokens: policy.maxOutputTokens, ...(strict ? { strictJsonSchema: true } : {}) } } }
   return Layer.merge(Layer.succeed(BindingSettings, {
     provider: options.providerId ?? options.provider,
-    protocol: options.provider === "bedrock" ? "bedrock-converse" : options.provider === "openai" ? "openai-responses" : (options.provider === "openai-compat" || options.provider === "openrouter") ? "openai-chat-completions" : "anthropic",
+    protocol: options.provider === "bedrock" ? "bedrock-converse" : (options.provider === "openai" || options.provider === "codex") ? "openai-responses" : (options.provider === "openai-compat" || options.provider === "openrouter") ? "openai-chat-completions" : "anthropic",
     model: options.model.model,
     endpoint: options.endpoint,
     policy,
+    ...(options.provider === "codex" ? { outputTokenLimitEnforcement: "unsupported" as const } : {}),
     ...(options.pricing === undefined ? {} : { pricing: options.pricing }),
     ...(options.output === undefined ? {} : { output: options.output }),
     ...(options.observer === undefined ? {} : { observer: options.observer }),

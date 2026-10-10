@@ -3,7 +3,6 @@ import { agentMethods, agents, budget, caller, escalate, codeMode, compact, mess
 import { fetch, workspace } from "tardie/code"
 
 const actorName = "react-chat"
-const sol = { provider: "openrouter", model_id: "openai/gpt-5.6-sol" } as const
 
 const actorInstructions = `
 You are a research assistant.
@@ -27,6 +26,6 @@ export default actor({
       ),
       compact(messages()),
       outputValidateOnce
-    ], { models: { default: sol, allow: [{ provider: sol.provider, model_ids: [sol.model_id] }] } })
+    ])
   ]
 })

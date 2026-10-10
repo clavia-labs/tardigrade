@@ -85,6 +85,8 @@
   "./deprecated/runtime/turn": "./src/deprecated/agent/runtime/turn.ts",
   "./model/providers/bedrock": "./src/model/providers/bedrock.ts",
   "./model/providers/anthropic": "./src/model/providers/anthropic.ts",
+  "./model/providers/codex": "./src/model/providers/codex.ts",
+  "./model/providers/codex-auth": "./src/model/providers/codex-auth.ts",
   "./model/providers/openai": "./src/model/providers/openai.ts",
   "./model/providers/openai-compat": "./src/model/providers/openai-compat.ts",
   "./model/providers/openrouter": "./src/model/providers/openrouter.ts",

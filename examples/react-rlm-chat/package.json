@@ -5,6 +5,7 @@
   "scripts": {
     "dev:cloudflare": "bun run --cwd server dev:cloudflare",
     "build": "bun run --cwd web build",
+    "dev:codex": "CHAT_PROVIDER=codex bun run dev",
     "dev": "bun run --filter '@clavia/tardigrade-react-rlm-chat-*' --parallel dev",
     "dev:server": "bun run --cwd server dev",
     "dev:web": "bun run --cwd web dev",

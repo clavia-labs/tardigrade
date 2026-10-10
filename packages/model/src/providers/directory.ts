@@ -18,6 +18,7 @@ export interface ModelProviderConnection {
 // MODEL_PROVIDER_CONNECTIONS declares the provider presets whose setup defaults Tardigrade owns.
 export const MODEL_PROVIDER_CONNECTIONS: ReadonlyArray<ModelProviderConnection> = [
   { id: "openai", name: "OpenAI", protocol: "openai-responses", baseUrl: "https://api.openai.com/v1", region: false },
+  { id: "codex", name: "Codex", protocol: "openai-responses", baseUrl: "https://chatgpt.com/backend-api/codex", region: false },
   { id: "anthropic", name: "Anthropic", protocol: "anthropic-messages", baseUrl: "https://api.anthropic.com", region: false },
   { id: "openrouter", name: "OpenRouter", protocol: "openai-chat-completions", baseUrl: "https://openrouter.ai/api/v1", region: false },
   { id: "bifrost", name: "Bifrost", protocol: "openai-chat-completions", region: false },
@@ -39,4 +40,5 @@ export const modelProtocolOf = (value: string): ModelProtocol => {
 
 // modelProviderModuleOf selects a provider implementation without importing it (directory.test.ts).
 export const modelProviderModuleOf = (provider: string | undefined, protocol: ModelProtocol) =>
+  provider === "codex" && protocol === "openai-responses" ? "codex" :
   provider === "openrouter" && protocol === "openai-chat-completions" ? "openrouter" : ({ "openai-responses": "openai", "openai-chat-completions": "openai-compat", "anthropic-messages": "anthropic", "bedrock-converse": "bedrock" } as const)[protocol]

@@ -14,6 +14,7 @@ export type ProviderOptions = { readonly unvalidatedConfig?: unknown } & (
   | { readonly provider: "openrouter"; readonly client: Parameters<typeof OpenRouterClient.layer>[0]; readonly model: Parameters<typeof OpenRouterLanguageModel.layer>[0] }
   | BedrockOptions
   | { readonly provider: "openai-compat"; readonly client: Parameters<typeof CompatClient.layer>[0]; readonly model: Parameters<typeof CompatLanguageModel.layer>[0] }
+  | { readonly provider: "codex"; readonly client: Parameters<typeof OpenAiClient.layer>[0]; readonly model: Parameters<typeof OpenAiLanguageModel.layer>[0] }
   | { readonly provider: "openai"; readonly client: Parameters<typeof OpenAiClient.layer>[0]; readonly model: Parameters<typeof OpenAiLanguageModel.layer>[0] }
   | { readonly provider: "anthropic"; readonly client: Parameters<typeof AnthropicClient.layer>[0]; readonly model: Parameters<typeof AnthropicLanguageModel.layer>[0] }
 
@@ -33,7 +34,7 @@ export const providerLayer: ProviderLayer = (options) => Layer.unwrap(Effect.try
     const loaded: { readonly providerLayer: ProviderLayer } = await import(/* @vite-ignore */ path)
     return loaded.providerLayer(options)
   } catch (cause) {
-    const packages = options.provider === "bedrock" ? "@tardie/ai-bedrock @smithy/fetch-http-handler @smithy/node-http-handler" : `@tardie/ai-${options.provider}`
+    const packages = options.provider === "bedrock" ? "@tardie/ai-bedrock @smithy/fetch-http-handler @smithy/node-http-handler" : `@tardie/ai-${options.provider === "codex" ? "openai" : options.provider}`
     throw new Error(`Cannot load the ${options.provider} provider; install compatible ${packages} packages. ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
   }
 }).pipe(Effect.catch((error) => Effect.succeed(failedProviderLayer(error.cause)))))
