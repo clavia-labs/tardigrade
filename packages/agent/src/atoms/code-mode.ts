@@ -5,7 +5,7 @@ import { pendingTools } from "./durable/tools"
 import { type LibrarySource } from "@clavia/tardigrade-libraries/types"
 import { codeModeSpec, selectLibraries } from "../contracts/libraries"
 import { ToolCatalog } from "../actor/context"
-import { ToolReturned, type ToolCalled } from "../contracts/events"
+import { ToolReturned, toolReturnedOutput, type ToolCalled } from "../contracts/events"
 import { CodeModeName, CodeReturned, Event, EvaluateCode, ExecutePackage, MethodReturned } from "../contracts/code-mode"
 import { executions as state } from "./durable/code-mode"
 
@@ -55,7 +55,7 @@ function createCodeMode(options: CodeModeOptions, sources?: readonly LibrarySour
         const outcome = execution.outcome
         const value = outcome?.status === "fulfilled" ? outcome.value : null
         const bodyError = Schema.is(Schema.Struct({ error: Schema.String }))(value) ? value.error : undefined
-        events.returned = eventValue({ type: "ToolReturned", callId: call.callId, output: JSON.stringify(value),
+        events.returned = eventValue({ type: "ToolReturned", callId: call.callId, ...toolReturnedOutput(value),
           error: error ?? (outcome?.status === "rejected" ? outcome.reason : bodyError) ?? null,
         } satisfies ToolReturned)
       } else if (Option.isSome(parsed)) {

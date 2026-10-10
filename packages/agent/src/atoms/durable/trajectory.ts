@@ -26,7 +26,9 @@ export function trajectoryState(state: typeof TrajectoryState.Type, event: Event
   if (event.type === "ToolReturned") {
     const entry = state.entries.findLast(entry => entry.message.role === "assistant" && entry.message.toolCalls.some(call => call.callId === event.callId))
     const call = entry?.message.role === "assistant" ? entry.message.toolCalls.find(call => call.callId === event.callId) : undefined
-    if (entry && call) return { ...state, entries: [...state.entries, { turnId: entry.turnId, message: { role: "tool", callId: event.callId, providerId: call.providerId, name: call.name, text: event.error ?? event.output, error: event.error !== null } }] }
+    const text = event.error ?? event.content.filter(part => part.type === "text").map(part => part.text).join("\n")
+    const media = event.error === null && event.content.some(part => part.type === "file")
+    if (entry && call) return { ...state, entries: [...state.entries, { turnId: entry.turnId, message: { role: "tool", callId: event.callId, providerId: call.providerId, name: call.name, text, ...(media ? { content: event.content } : {}), error: event.error !== null } }] }
   }
   if (event.type === "ModelFailed") return { ...state, models: state.models.filter(call => call.callId !== event.callId) }
   if (event.type === "TurnSettled") return { ...state, models: state.models.filter(call => call.turnId !== event.turnId) }

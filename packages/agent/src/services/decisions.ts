@@ -77,6 +77,6 @@ export const grantBudget = tool({
   run: ({ handle, requestId, amount }) => Effect.gen(function* () {
     const runtime = yield* Actor
     yield* runtime.reply(handle, requestId, { allowed: true, amount })
-    return { handle, requestId, granted: amount }
+    return { content: [{ type: "text" as const, text: JSON.stringify({ handle, requestId, granted: amount }) }] }
   }),
 })

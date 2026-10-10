@@ -3,7 +3,7 @@ import { ExecuteTool, requests, failureMessage } from "../contracts/acts"
 import { RuntimeError, effectAtom, type Atom, type ActRequest, type ActorOutput } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { ToolCalled, ToolReturned, BudgetResolved, type Event, ToolCall } from "../contracts/events"
+import { ToolCalled, ToolReturned, toolReturnedOutput, BudgetResolved, type Event, ToolCall } from "../contracts/events"
 import { type PermissionState } from "./durable/permissions"
 import { toolPromises } from "./tool-promises"
 import { type ToolBudgetView } from "./budget-request"
@@ -135,11 +135,11 @@ function toolValue<R>(state: typeof ToolState.Type, tools: Tools<R>): Tools<R> {
         onRequested: () => [{ type: "ToolCalled", callId: call.callId, counted: plan.counted } satisfies ToolCalled],
         onDeferred: (handle, ref) => {
           const promise = { type: "promise" as const, ref, handle }
-          return [{ type: "ToolReturned", callId: call.callId, output: JSON.stringify(promise), error: null, promise } satisfies ToolReturned]
+          return [{ type: "ToolReturned", callId: call.callId, ...toolReturnedOutput(promise), error: null, promise } satisfies ToolReturned]
         },
         onSettled: (result, _ref, handle) => handle ? [] : [result.status === "fulfilled"
-          ? { type: "ToolReturned", callId: call.callId, output: JSON.stringify(result.value), error: null } satisfies ToolReturned
-          : { type: "ToolReturned", callId: call.callId, output: "", error: failureMessage(result.reason) } satisfies ToolReturned],
+          ? { type: "ToolReturned", callId: call.callId, ...toolReturnedOutput(result.value), error: null } satisfies ToolReturned
+          : { type: "ToolReturned", version: 1, callId: call.callId, content: [], error: failureMessage(result.reason) } satisfies ToolReturned],
       }),
     },
   }

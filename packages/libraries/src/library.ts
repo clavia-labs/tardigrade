@@ -5,6 +5,8 @@ import * as Headers from "effect/unstable/http/Headers"
 import { EffectExecution, ExecutionHandle } from "@clavia/tardigrade-core"
 import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
 import { ToolError } from "./errors"
+import { StoredToolResult, isToolResultSchema } from "@clavia/tardigrade-model/object/content"
+import { persistToolResult } from "@clavia/tardigrade-model/object/tool-result"
 import { tool, promiseTool, type AgentTool, type ToolInvocation } from "./tool"
 import { MethodAnnotations, ExecutionMode, DEFAULT_METHOD_EXECUTION, type LibraryContract, type ToolSpec } from "./types"
 
@@ -27,7 +29,11 @@ export interface Library<Rpcs extends Rpc.Any = Rpc.Any> extends LibraryContract
 
 export interface LibraryImplementation<R = never> {
   readonly library: LibraryContract
-  readonly methods: readonly AgentTool<R>[]
+  readonly methods: readonly LibraryMethod<R>[]
+}
+export interface LibraryMethod<R = never> extends AgentTool<R> {
+  readonly contentResult: boolean
+  readonly invoke: (input: unknown, call: ToolInvocation) => Effect.Effect<Schema.Json, Error, R>
 }
 export type LibraryRequirements<L> = L extends LibraryImplementation<infer R> ? R : never
 
@@ -78,7 +84,7 @@ export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definiti
     for (const name of options.submit ?? []) if (!names.includes(name)) throw new Error(`Unknown submitted method: ${name}`)
     for (const name of Object.keys(options.cancel ?? {})) if (!names.includes(name)) throw new Error(`Unknown cancelled method: ${name}`)
     for (const name of names) if (typeof implementations[name] !== "function") throw new Error(`Missing library handler: ${name}`)
-    const compiled = definition.methods.map((rpc, index): AgentTool<R | EffectExecution> => {
+    const compiled = definition.methods.map((rpc, index): LibraryMethod<R | EffectExecution> => {
       const spec = specs[index]!
       const run = (payload: unknown, call: ToolInvocation) => Effect.gen(function* () {
         const handler = implementations[rpc._tag]
@@ -97,20 +103,26 @@ export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definiti
         } catch { return ToolError.from(error) }
       }))
       const input = (rpc.payloadSchema === Schema.Void ? Schema.Struct({}) : rpc.payloadSchema) as Schema.ConstraintDecoder<unknown>
+      const contentResult = isToolResultSchema(rpc.successSchema)
+      const output = (payload: unknown, call: ToolInvocation) => run(payload, call).pipe(Effect.flatMap(contentResult ? persistToolResult : Schema.decodeUnknownEffect(Schema.Json)))
+      const invoke = (payload: unknown, call: ToolInvocation) => Schema.decodeUnknownEffect(input, { onExcessProperty: "error" })(payload).pipe(Effect.flatMap(value => output(value, call)), Effect.mapError(ToolError.from))
       const description = spec.description
       if (options.submit?.includes(rpc._tag)) {
         if (spec.execution !== "background") throw new Error(`Submitted method must use background execution: ${rpc._tag}`)
-        return promiseTool({ name: rpc._tag, description, input,
+        return { invoke, contentResult, ...promiseTool({ name: rpc._tag, description, input,
           ...(spec.promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs: spec.promiseTimeoutMs }),
           submit: (payload, call) => run(payload, call).pipe(Effect.flatMap(Schema.decodeUnknownEffect(ExecutionHandle))),
           ...(options.cancel?.[rpc._tag as Rpcs[number]["_tag"]] ? { cancel: options.cancel[rpc._tag as Rpcs[number]["_tag"]] } : {}),
           ...(spec.annotations ? { annotations: spec.annotations } : {}),
-        })
+        }) }
       }
-      return tool({ name: rpc._tag, description, input, run,
+      return { invoke, contentResult, ...tool({ name: rpc._tag, description, input,
+        run: (payload, call) => output(payload, call).pipe(Effect.flatMap(value => contentResult
+          ? Schema.decodeUnknownEffect(StoredToolResult)(value)
+          : Effect.succeed({ content: [{ type: "text" as const, text: JSON.stringify(value) }] }))),
         ...(spec.promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs: spec.promiseTimeoutMs }),
         ...(spec.annotations ? { annotations: spec.annotations } : {}), execution: spec.execution,
-      })
+      }) }
     })
     return { library, methods: compiled }
   } }

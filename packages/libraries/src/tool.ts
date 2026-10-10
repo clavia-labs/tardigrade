@@ -3,6 +3,9 @@ import { EffectExecution, ExecutionHandle, type ExecutionResult, durablePromise 
 import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
 import { Cause, Effect, Exit, Schema } from "effect"
 import { DEFAULT_METHOD_EXECUTION, type ToolCall, type ToolSpec, type ExecutionMode, type MethodAnnotations } from "./types"
+import { persistToolResult } from "@clavia/tardigrade-model/object/tool-result"
+import type { ToolResult } from "@clavia/tardigrade-model/object/content"
+export { ToolResult } from "@clavia/tardigrade-model/object/content"
 
 export interface ToolInvocation extends ToolCall {
   readonly parentCallId?: string
@@ -21,7 +24,7 @@ interface ToolOptions<Input, R> {
   readonly annotations?: MethodAnnotations
   readonly promiseTimeoutMs?: number
   readonly input: Schema.ConstraintDecoder<Input>
-  readonly run: (input: Input, call: ToolInvocation) => Effect.Effect<unknown, Error, R>
+  readonly run: (input: Input, call: ToolInvocation) => Effect.Effect<ToolResult, Error, R>
 }
 
 // tool executes its handler in the mode declared by its definition.
@@ -36,13 +39,13 @@ export function tool<Input, R>(options: ToolOptions<Input, R> & { readonly execu
     execute: (input, call) => Effect.gen(function* () {
       const value = yield* Schema.decodeUnknownEffect(options.input, { onExcessProperty: "error" })(input).pipe(Effect.mapError(ToolError.from))
       if (execution === "foreground") {
-        const result = yield* options.run(value, call).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)), Effect.mapError(ToolError.from))
+        const result = yield* options.run(value, call).pipe(Effect.flatMap(persistToolResult), Effect.mapError(ToolError.from))
         return { type: "value" as const, value: result }
       }
       const current = yield* EffectExecution
       const promise = durablePromise(current.ref, { success: Schema.Json, error: Schema.String })
       const handle = yield* current.fork(options.run(value, call).pipe(
-        Effect.flatMap(result => Schema.decodeUnknownEffect(Schema.Json)(result)),
+        Effect.flatMap(persistToolResult),
         Effect.exit,
         Effect.map(exit => Exit.isSuccess(exit) ? promise.succeed(exit.value) : promise.fail(Cause.pretty(exit.cause))),
       ), { timeoutMs: options.promiseTimeoutMs })

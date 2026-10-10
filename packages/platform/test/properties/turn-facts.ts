@@ -52,7 +52,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       yield* store.send([{ type: "ModelReturned", purpose: "inference", callId: "m1", text: "working", toolCalls: [{ callId: "tool", providerId: "provider", name: "job", input: {} }] }])
       yield* store.send([{ type: "ModelCalled", purpose: "inference", callId: "m2", turnId: "second", ...model }])
       yield* store.send([{ type: "ModelReturned", purpose: "inference", callId: "m2", text: "answer", toolCalls: [] }])
-      yield* store.send([{ type: "ToolReturned", callId: "tool", output: "late", error: null }])
+      yield* store.send([{ type: "ToolReturned", version: 1, callId: "tool", content: [{ type: "text", text: "late" }], error: null }])
       yield* store.send([{ type: "TurnSettled", turnId: "first", outcome: "cancelled", reason: "stop" }])
       now += options.second
       yield* store.send([{ type: "TurnSettled", turnId: "second", outcome: "completed", callId: "m2" }])

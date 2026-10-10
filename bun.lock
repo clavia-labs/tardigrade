@@ -148,6 +148,7 @@
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-libraries": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
+        "@tardie/ai": "0.0.5",
         "effect": "4.0.0-rc.115",
       },
     },
@@ -283,6 +284,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-model": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
     },
@@ -290,22 +292,22 @@
       "name": "@clavia/tardigrade-model",
       "version": "0.0.1",
       "dependencies": {
-        "@tardie/ai": "0.0.4",
-        "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.6",
-        "@tardie/ai-openai": "4.0.0-rc.113-clavia.6",
-        "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.7",
-        "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.3",
+        "@tardie/ai": "0.0.5",
+        "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.7",
+        "@tardie/ai-openai": "4.0.0-rc.113-clavia.7",
+        "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.8",
+        "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.4",
         "effect": "4.0.0-rc.115",
       },
       "devDependencies": {
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
-        "@tardie/ai-bedrock": "0.0.8",
+        "@tardie/ai-bedrock": "0.0.9",
       },
       "peerDependencies": {
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
-        "@tardie/ai-bedrock": "0.0.8",
+        "@tardie/ai-bedrock": "0.0.9",
       },
       "optionalPeers": [
         "@smithy/fetch-http-handler",
@@ -1005,17 +1007,17 @@
 
     "@tanstack/virtual-file-routes": ["@tanstack/virtual-file-routes@1.162.0", "", {}, "sha512-uhOeFyxLcU41HzvrxsGpiWdcMbScY1EDgbZ5K7DVRMYInbLYWAC0EA/kx9wXAoSM8q82bUG2hRl8+EAjE6XAbA=="],
 
-    "@tardie/ai": ["@tardie/ai@0.0.4", "", { "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-quIO+R0PjBm21xxwilXkDpDT2BFBOh0jczt/yytgEtAJE4FeBcSJ49m9SQHKOfwdYuI1dBiVXoIkybVipbCGuA=="],
+    "@tardie/ai": ["@tardie/ai@0.0.5", "", { "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-K0hgWtyFbQdDynqOgIzGdb2aPVJF8Ij0v29nd8q14X71G0b2iKBmnVomDmy86/rS1NpkAUqN4l3D1ER5wlQzNg=="],
 
-    "@tardie/ai-anthropic": ["@tardie/ai-anthropic@4.0.0-rc.113-clavia.6", "", { "dependencies": { "@tardie/ai": "0.0.4" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-+siRq4xw6GpFINWXQJgVPkfg8pbYUrVHIec6JuFBMA2wg6cP1IjAuKU8Zvqqc2rFsRV+6lMSkdNlYZsKO5diMQ=="],
+    "@tardie/ai-anthropic": ["@tardie/ai-anthropic@4.0.0-rc.113-clavia.7", "", { "dependencies": { "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-PipSrsHKfjMQnEwfz1PWi7EY7ubyd0z63DmuhBIgMWiCl3bXty+KqEd65ySOBaZUtrORhfN/3GZM9hF6oeUdOw=="],
 
-    "@tardie/ai-bedrock": ["@tardie/ai-bedrock@0.0.8", "", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0", "@tardie/ai": "0.0.4" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-Lm7tibHi3x83aNe8k3Iz6hLxlEvC6qE/vqTuyxzRoECHH3aKd6RSO+Re29wO0ShoYRs4aY+hTfA3h3j/df2LMQ=="],
+    "@tardie/ai-bedrock": ["@tardie/ai-bedrock@0.0.9", "", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0", "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-KyOWGHHOo0FACiuU5vKqByrlqNFZUBN5LadT3h2EWN8sF2CswqCfgJKjIMw1+FSIaDKTa4SPPCFd5MssGoZ0BQ=="],
 
-    "@tardie/ai-openai": ["@tardie/ai-openai@4.0.0-rc.113-clavia.6", "", { "dependencies": { "@tardie/ai": "0.0.4" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-S0gAgq2nfGwSXcLD0T5ho77X47fD7KYLZChRyfckcztk8abtuyn5afxPdlqiFgIfbf1ldHXUECkTEPsyct7vbw=="],
+    "@tardie/ai-openai": ["@tardie/ai-openai@4.0.0-rc.113-clavia.7", "", { "dependencies": { "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-kzckii0z8e5ZG89eoKgNIoRF++/B2YCr/MaCu2TAI9HfworYnXMK/deHvp3B/3blsi1pR+QbKgiyJndobrQpHw=="],
 
-    "@tardie/ai-openai-compat": ["@tardie/ai-openai-compat@4.0.0-rc.113-clavia.7", "", { "dependencies": { "@tardie/ai": "0.0.4" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-O1oBt+g/lxnRBSrDrSHVGOWrvysZ4jQVoJqzl+u2J1jP+elHoxRcQJnDot6hpjZB7daTDlyIiR0bvLrM4GtNzA=="],
+    "@tardie/ai-openai-compat": ["@tardie/ai-openai-compat@4.0.0-rc.113-clavia.8", "", { "dependencies": { "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-SjCxTH541t9oFt51VTJZmpwSD1FmbhgVx/TxvR1QwclTQCcooQxPAJdfa3q6CCo+n13+RPG9PrMsWTjsQNzoFg=="],
 
-    "@tardie/ai-openrouter": ["@tardie/ai-openrouter@4.0.0-rc.113-clavia.3", "", { "dependencies": { "@tardie/ai": "0.0.4" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-XX4PhLCTyir2P0nccbsBqM33o0ASrFfCysVy8Df18835jpt8B3uO9iHqkEJZOAbV7FqYDfw9SqhQOOfN9xuZlQ=="],
+    "@tardie/ai-openrouter": ["@tardie/ai-openrouter@4.0.0-rc.113-clavia.4", "", { "dependencies": { "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-nMnZa+i5RP332ze2ajTsTjjrIXI+mmrgxGlwLVymBZxfp2cW5TAgGjcShZYaf+WHprqhony3FiKvxXsjvIpALQ=="],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg=="],
 

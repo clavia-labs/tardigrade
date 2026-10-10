@@ -85,7 +85,8 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
       const reply = replies[0]!
       if (reply.type !== "TurnRequested" || "body" in reply) return yield* Effect.fail(new RuntimeError("Expected tool inbox result"))
       const data: unknown = JSON.parse(reply.text.slice("Tool promise result (data): ".length))
-      const expected = options.rejected ? Schema.Struct({ result: Schema.Struct({ status: Schema.Literal("rejected"), reason: Schema.String }) }) : Schema.Struct({ result: Schema.Struct({ status: Schema.Literal("fulfilled"), value: Schema.Literal(options.value) }) })
+      const success = options.executor === "local" ? Schema.Struct({ content: Schema.Tuple([Schema.Struct({ type: Schema.Literal("text"), text: Schema.Literal(JSON.stringify(options.value)) })]) }) : Schema.Literal(options.value)
+      const expected = options.rejected ? Schema.Struct({ result: Schema.Struct({ status: Schema.Literal("rejected"), reason: Schema.String }) }) : Schema.Struct({ result: Schema.Struct({ status: Schema.Literal("fulfilled"), value: success }) })
       if (!Schema.is(expected)(data)) return yield* Effect.fail(new RuntimeError("Tool inbox result changed on recovery"))
     }).pipe(Effect.ensuring(restored.close))
   }

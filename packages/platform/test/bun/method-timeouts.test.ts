@@ -59,7 +59,7 @@ for (const executor of ["local", "remote"] as const) test(`${executor} library p
     }).pipe(Effect.timeout(2_000)))
     const events = store.snapshot().events
     const settlement = events.find(event => event.type === "PromiseSettled")
-    expect(settlement?.type === "PromiseSettled" && settlement.result).toEqual({ status: "fulfilled", value: "done" })
+    expect(settlement?.type === "PromiseSettled" && settlement.result).toEqual({ status: "fulfilled", value: executor === "local" ? { content: [{ type: "text", text: '"done"' }] } : "done" })
     const effect = events.find(event => event.type === "EffectSettled")
     const value = Schema.decodeUnknownSync(ExecutionResult)(effect?.type === "EffectSettled" && effect.outcome.status === "fulfilled" ? effect.outcome.value : null)
     expect(value.type === "promise" && value.deadlineAt!).toBeGreaterThanOrEqual(startedAt + 500)
