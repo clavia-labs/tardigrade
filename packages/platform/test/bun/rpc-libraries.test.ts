@@ -17,6 +17,7 @@ import { Event } from "@clavia/tardigrade-agent/contracts/code-mode"
 import { createTestStore } from "../properties/runtime/store"
 import { type LibraryImplementation } from "@clavia/tardigrade-libraries"
 import { tool, promiseTool } from "@clavia/tardigrade-libraries"
+import { Content, ToolResult } from "@clavia/tardigrade-model/object/content"
 
 const call = { callId: "read", name: "notes__read", input: { key: "paper" } }
 const notes = defineLibrary({ name: "notes", description: "Research notes", methods: [
@@ -33,8 +34,8 @@ async function invoke(implementation: LibraryImplementation<import("@clavia/tard
     await Effect.runPromise(store.send([{ type: "ModelReturned", purpose: "inference", callId: "model", text: "", toolCalls: [{ callId: call.callId, providerId: "provider", name, input }] }]))
     await Effect.runPromise(store.wait)
     const result = store.snapshot().events.find(event => event.type === "ToolReturned")
-    if (!result || result.type !== "ToolReturned") throw new Error("No library result recorded")
-    return result
+    if (!result || result.type !== "ToolReturned") throw new Error("No text library result recorded")
+    return { ...result, output: result.content.filter(part => part.type === "text").map(part => part.text).join("\n") }
   } finally { await Effect.runPromise(store.close) }
 }
 
@@ -46,7 +47,7 @@ describe("RPC libraries", () => {
     const library = defineLibrary({ name: "named", description: "", methods: [
       Rpc.make("search", { payload: Input, success: Output }),
     ] })
-    const foreground = tool({ name: "direct", description: "", input: Input, run: () => Effect.succeed(null) })
+    const foreground = tool({ name: "direct", description: "", input: Input, run: () => Effect.succeed({ content: [] }) })
     const background = promiseTool({ name: "background", description: "", input: Input, submit: () => Effect.succeed({ executor: "test", id: "job" }) })
     for (const spec of [library.specs[0]!, foreground.spec, background.spec]) {
       const exported = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(spec.inputSchema)
@@ -111,6 +112,14 @@ describe("RPC libraries", () => {
     expect(calls).toBe(1)
   })
 
+  test("ordinary RPC objects named content remain structured data", async () => {
+    const value = { content: ["hello"], total: 1 }
+    const implementation = defineLibrary({ name: "data", description: "", methods: [
+      Rpc.make("read", { success: Schema.Struct({ content: Schema.Array(Schema.String), total: Schema.Finite }) }),
+    ] }).implement({ read: () => Effect.succeed(value) })
+    expect(JSON.parse((await invoke(implementation, {}, "data__read")).output)).toEqual(value)
+  })
+
   test("supports empty RPC payloads and encodes transformed successes", async () => {
     const typed = defineLibrary({ name: "typed", description: "", methods: [
       Rpc.make("number", { success: Schema.FiniteFromString }),
@@ -173,7 +182,7 @@ describe("RPC libraries", () => {
       await Effect.runPromise(store.send([{ type: "ModelReturned", purpose: "inference", callId: "model", text: "", toolCalls: [{ callId: "code", providerId: "provider", name: "execute", input: { code: 'return await notes.read({ key: "paper" })' } }] }]))
       await Effect.runPromise(store.wait)
       expect(namespaces).toEqual(["notes"])
-      expect(store.snapshot().events.find(event => event.type === "ToolReturned" && event.callId === "code")).toMatchObject({ output: '{"result":"note","logs":[]}', error: null })
+      expect(store.snapshot().events.find(event => event.type === "ToolReturned" && event.callId === "code")).toMatchObject({ version: 1, content: [{ type: "text", text: '{"result":"note","logs":[]}' }], error: null })
     } finally { await Effect.runPromise(store.close) }
   })
 
@@ -190,9 +199,29 @@ describe("RPC libraries", () => {
       const returned = store.snapshot().events.find(event => event.type === "ToolReturned" && event.callId === "research")
       expect(returned).toMatchObject({ error: null })
       if (!returned || returned.type !== "ToolReturned") throw new Error("Research result was not recorded")
-      expect(JSON.parse(returned.output).result.value).toContain("Durable agents")
+      expect(JSON.parse(returned.content.filter(part => part.type === "text").map(part => part.text).join("\n")).result.value).toContain("Durable agents")
       expect(store.snapshot().events.filter(event => event.type === "MethodRequested").map(event => `${event.package}.${event.method}`)).toEqual(["arxiv.search", "workspace.write", "workspace.read"])
     } finally { await Effect.runPromise(store.close) }
+  })
+
+  test("code mode delivers returned media by declared RPC schema and retains console output", async () => {
+    const result = { content: [{ type: "file" as const, mediaType: "image/png", object: { algorithm: "sha256" as const, digest: "a".repeat(64) } }] }
+    for (const contentResult of [true, false]) {
+      const implementation = defineLibrary({ name: "media", description: "", methods: [
+        Rpc.make("capture", { payload: Schema.Struct({}), success: contentResult ? ToolResult : Schema.Struct({ content: Content }) }),
+      ] }).implement({ capture: () => Effect.succeed(result) })
+      const actor = defineActor("code-media", Effect.map(codeMode([implementation]), atom => ({ atom, schema: Event })))
+      const store = await Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog), services: () => codeModeActs([implementation]).pipe(Layer.provideMerge(bunIsolate())) }))
+      try {
+        await Effect.runPromise(store.send([{ type: "ModelReturned", purpose: "inference", callId: "model", text: "", toolCalls: [{ callId: "code", providerId: "provider", name: "execute", input: { code: 'console.log("captured"); return await media.capture({});' } }] }]))
+        await Effect.runPromise(store.wait)
+        const returned = store.snapshot().events.find(event => event.type === "ToolReturned")
+        if (returned?.type !== "ToolReturned") throw new Error("Expected code result")
+        expect(returned.error).toBeNull()
+        expect(returned.content.some(part => part.type === "file")).toBe(contentResult)
+        expect(returned.content.filter(part => part.type === "text").map(part => part.text).join("\n")).toContain("captured")
+      } finally { await Effect.runPromise(store.close) }
+    }
   })
 
   test("arXiv exposes pagination overrides and returns the research feed", async () => {

@@ -1,5 +1,6 @@
 export { ObjectRef, objectRefOf, objectKeyOf, type ObjectRef as ObjectReference } from "./object/reference"
-export { ContentPart, Content, InputContentPart, type ResolvedContentPart } from "./object/content"
+export { ContentPart, Content, InputContentPart, ToolResult, StoredToolResult, type ResolvedContentPart } from "./object/content"
+export { persistToolResult, ToolResultError } from "./object/tool-result"
 export { ObjectStorage, ObjectStorageError, ObjectReadConcurrency, DEFAULT_OBJECT_READ_CONCURRENCY, makeObjectStorage } from "./object/storage"
 export { cachedObjectStorage, objectCachePolicy, DEFAULT_MAX_CACHED_OBJECT_BYTES, DEFAULT_MAX_OBJECT_CACHE_BYTES, type ObjectCache, type ObjectCachePolicy, type ObjectCacheCapabilities } from "./object/cache"
 export { sqlObjectCache, SQL_OBJECT_CACHE_ROW_HEADROOM_BYTES } from "./object/sql-cache"

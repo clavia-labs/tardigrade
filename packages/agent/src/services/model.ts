@@ -7,6 +7,7 @@ import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { ObjectStorage, objectKeyOf } from "@clavia/tardigrade-model/object"
 import { AiError, LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
 import { ResponseFormat } from "@tardie/ai"
+import type { Content as ToolResultContent } from "@tardie/ai/ToolResult"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
 import { reportedCostOf } from "@clavia/tardigrade-model/providers/usage"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
@@ -82,7 +83,7 @@ export function modelError(error: AiError.AiError): RuntimeError {
 }
 
 const resolveContentObjects = (context: typeof Conversation.Type): Effect.Effect<ReadonlyMap<string, Uint8Array>, Error> => Effect.gen(function* () {
-  const content = context.flatMap(message => message.role === "user" && "content" in message && message.content !== undefined ? message.content : [])
+  const content = context.flatMap(message => (message.role === "user" || message.role === "tool") && "content" in message && message.content !== undefined ? message.content : [])
   if (!content.some(part => part.type === "file")) return new Map<string, Uint8Array>()
   const service = yield* Effect.serviceOption(ObjectStorage)
   if (Option.isNone(service)) return yield* Effect.fail(new RuntimeError("File input requires a runtime ObjectStorage service"))
@@ -160,7 +161,10 @@ export function modelServices(options: ModelServiceOptions = {}) {
           Prompt.makeMessage("system", { content: input.system }),
           ...input.context.flatMap((message): readonly Prompt.Message[] => {
             if (message.role === "user") return [Prompt.makeMessage("user", { content: "text" in message ? [Prompt.makePart("text", { text: message.text })] : promptPartsOf(message.content, objects) })]
-            if (message.role === "tool") return [Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, result: message.text, isFailure: message.error, providerExecuted: false })] })]
+            if (message.role === "tool") {
+              const result: string | ToolResultContent = message.content === undefined ? message.text : { type: "content", value: promptPartsOf(message.content, objects) }
+              return [Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, result, isFailure: message.error, providerExecuted: false })] })]
+            }
             const continuation = message.continuation
             if (continuation && continuation.provider === settings.provider && continuation.protocol === settings.protocol && continuation.model === resolved.model.model_id) {
               return Schema.decodeUnknownSync(Prompt.Prompt)(continuation.payload).content

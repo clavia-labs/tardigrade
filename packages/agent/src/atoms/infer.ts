@@ -39,7 +39,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
         view: { position: "stopping" as const },
         acts: Object.fromEntries(pending.map(({ ref }) => [encodeURIComponent(effectKey(ref)), cancel(ref, reason)])),
         events: pending.length ? {} : turn.outstanding.length
-          ? Object.fromEntries(turn.outstanding.map(callId => [encodeURIComponent(callId), eventValue({ type: "ToolReturned", callId, output: "", error: reason } satisfies ToolReturned)]))
+          ? Object.fromEntries(turn.outstanding.map(callId => [encodeURIComponent(callId), eventValue({ type: "ToolReturned", version: 1, callId, content: [], error: reason } satisfies ToolReturned)]))
           : { inference: eventValue({ type: "TurnSettled", turnId: turn.turnId, outcome: "cancelled", reason } satisfies TurnSettled) },
       }
     }

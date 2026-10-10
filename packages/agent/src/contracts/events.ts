@@ -1,8 +1,8 @@
 import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ResolutionSettled as PromiseSettled, event, type DeclaredEvent, ActorRequest, AbortRequested, InvocationRef, ExecutionHandle, EffectRef } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
-import { ToolPromise } from "@clavia/tardigrade-libraries/types"
-import { ContentPart as MessageContentPart, Content as MessageContent } from "@clavia/tardigrade-model/object/content"
+import { toolReturnedVersions } from "./events/tool-returned/upcast"
+import { ContentPart as MessageContentPart, Content as MessageContent, StoredToolResult } from "@clavia/tardigrade-model/object/content"
 export { MessageContentPart, MessageContent }
 
 const ProviderToolCall = Schema.Struct({ callId: Schema.String, name: Schema.String, input: Schema.Json })
@@ -56,8 +56,13 @@ export type PermissionResolved = typeof PermissionResolved.Type
 export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), callId: Schema.String, codeMode: Schema.optionalKey(Schema.NonEmptyString), counted: Schema.Boolean })
 export type ToolCalled = typeof ToolCalled.Type
 
-export const ToolReturned = Schema.Struct({ type: Schema.Literal("ToolReturned"), callId: Schema.String, output: Schema.String, error: Schema.NullOr(Schema.String), promise: Schema.optionalKey(ToolPromise) })
+export const ToolReturned = toolReturnedVersions.schema
 export type ToolReturned = typeof ToolReturned.Type
+
+// toolReturnedOutput adapts persisted execution results to the current event payload.
+export function toolReturnedOutput(value: Schema.Json) {
+  return { version: 1 as const, content: Schema.is(StoredToolResult)(value) ? value.content : [{ type: "text" as const, text: JSON.stringify(value) }] }
+}
 
 export const TurnRequested = event({
   type: "TurnRequested", turnId: Schema.String, text: Schema.String,
@@ -155,7 +160,7 @@ const Message = Schema.Union([
   Schema.Struct({ role: Schema.Literal("user"), text: Schema.String }),
   Schema.Struct({ role: Schema.Literal("user"), content: MessageContent }),
   Schema.Struct({ role: Schema.Literal("assistant"), ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
-  Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, providerId: Schema.String, name: Schema.String, text: Schema.String, error: Schema.Boolean }),
+  Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, providerId: Schema.String, name: Schema.String, text: Schema.String, content: Schema.optionalKey(MessageContent), error: Schema.Boolean }),
 ])
 export const Conversation = Schema.Array(Message)
 export const Trajectory = Schema.Array(Schema.Struct({ turnId: Schema.String, message: Message }))

@@ -9,6 +9,7 @@ import { Summarize, requests, failureMessage } from "../contracts/acts"
 export const DEFAULT_COMPACTION_POLICY = {
   triggerRatio: 0.8, retainRatio: 0.5, charsPerToken: 4,
   toolOutputTokenLimit: 10_000, userMessageTokenLimit: 262_144,
+  imageTokenEstimate: 1_200,
 } as const
 
 const TRUNCATION_MARKER = "\n[truncated]\n"
@@ -17,6 +18,8 @@ export interface CompactionOptions {
   readonly triggerRatio?: number
   readonly retainRatio?: number
   readonly charsPerToken?: number
+  // imageTokenEstimate adds estimated tokens per image in user and tool content.
+  readonly imageTokenEstimate?: number
   // toolOutputTokenLimit bounds rendered tool text using charsPerToken, including the truncation marker.
   readonly toolOutputTokenLimit?: number
   // userMessageTokenLimit bounds rendered user text using charsPerToken, including the truncation marker.
@@ -26,6 +29,9 @@ export interface CompactionOptions {
 // compact clips projected text and Summarizes above the trigger threshold, retaining a tail near the lower threshold.
 export function compact(trajectory: Atom<typeof Conversation.Type>, options: CompactionOptions = {}) {
   const policy = { ...DEFAULT_COMPACTION_POLICY, ...options }
+  if (!Number.isSafeInteger(policy.imageTokenEstimate) || policy.imageTokenEstimate < 0) {
+    throw new RuntimeError("Compaction imageTokenEstimate must be a non-negative safe integer")
+  }
   if (!Number.isFinite(policy.charsPerToken) || policy.charsPerToken <= 0
     || !(policy.retainRatio > 0 && policy.retainRatio < policy.triggerRatio && policy.triggerRatio < 1)) {
     throw new RuntimeError("Compaction requires positive charsPerToken, and 0 < retainRatio < triggerRatio < 1")
@@ -50,19 +56,28 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
   }
   const render = (messages: typeof Conversation.Type): typeof Conversation.Type => messages.map(message => {
     if (message.role === "assistant") return message
-    if (message.role === "user" && "content" in message) {
-      const content = message.content.map(part => part.type === "text" ? { ...part, text: clip(part.text, userCharLimit) } : part)
-      return content.every((part, index) => part === message.content[index]) ? message : { ...message, content }
+    if ("content" in message && message.content !== undefined) {
+      const limit = message.role === "tool" ? toolCharLimit : userCharLimit
+      const content = message.content.map(part => {
+        if (part.type !== "text") return part
+        const text = clip(part.text, limit)
+        return text === part.text ? part : { ...part, text }
+      })
+      if (content.every((part, index) => part === message.content![index])) return message
+      return message.role === "tool" ? { ...message, content, text: content.filter(part => part.type === "text").map(part => part.text).join("\n") } : { ...message, content }
     }
+    if (!("text" in message)) return message
     const text = clip(message.text, message.role === "tool" ? toolCharLimit : userCharLimit)
     return text === message.text ? message : { ...message, text }
   })
-  // sizeOf is a message's JSON length, cached for frozen messages; durable state is deep-frozen (core/src/atoms/incremental/validate.ts), so trajectory messages are measured once.
+  // sizeOf includes serialized content and estimated image cost in character units; durable state is deep-frozen (core/src/atoms/incremental/validate.ts).
   const sizes = new WeakMap<object, number>()
   const sizeOf = (message: typeof Conversation.Type[number]) => {
     const cached = sizes.get(message)
     if (cached !== undefined) return cached
-    const size = JSON.stringify(message).length
+    const images = "content" in message && message.content !== undefined
+      ? message.content.filter(part => part.type === "file" && part.mediaType.startsWith("image/")).length : 0
+    const size = JSON.stringify(message).length + images * policy.imageTokenEstimate * policy.charsPerToken
     if (Object.isFrozen(message)) sizes.set(message, size)
     return size
   }

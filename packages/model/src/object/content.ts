@@ -23,3 +23,11 @@ export const InputContentPart = Schema.Union([
   Schema.Struct({ type: Schema.Literal("file"), mediaType: Schema.NonEmptyString, filename: Schema.optionalKey(Schema.String), byteSize: Schema.optionalKey(ByteSize), bytes: Schema.Uint8ArrayFromBase64 }),
 ])
 export type InputContentPart = typeof InputContentPart.Type
+
+export const ToolResult = Schema.Struct({ content: Schema.Array(InputContentPart) }).annotate({ "tardigrade/tool/content": true })
+export type ToolResult = typeof ToolResult.Type
+export const StoredToolResult = Schema.Struct({ content: Content }).annotate({ "tardigrade/tool/content": true })
+export type StoredToolResult = typeof StoredToolResult.Type
+
+// isToolResultSchema identifies an explicitly declared content result contract.
+export const isToolResultSchema = (schema: Schema.Top): boolean => Schema.resolveAnnotations(schema)?.["tardigrade/tool/content"] === true

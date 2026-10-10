@@ -2,10 +2,11 @@ import { isDeepStrictEqual } from "node:util"
 import { Cause, Clock, Effect, Exit, Layer, Schema } from "effect"
 import { atom, durablePromise, EffectExecution, effectKey, Isolate, RuntimeError } from "@clavia/tardigrade-core"
 import { ToolCatalog } from "../actor/context"
-import { type AgentTool, type LibraryImplementation, type LibraryRequirements } from "@clavia/tardigrade-libraries"
+import { type LibraryMethod, type LibraryImplementation, type LibraryRequirements } from "@clavia/tardigrade-libraries"
 import { codeModeSpec } from "../contracts/libraries"
 import { CodeCalled, EvaluateCode, ExecutePackage, MethodRequested } from "../contracts/code-mode"
 import { executions } from "../atoms/durable/code-mode"
+import { StoredToolResult } from "@clavia/tardigrade-model/object/content"
 
 // codeModeActs supplies tool descriptions, isolate RPC, and independently durable library execution.
 export function codeModeActs<const L extends readonly LibraryImplementation<unknown>[]>(implementations: L, options: { readonly signatureDepth?: number } = {}) {
@@ -14,13 +15,11 @@ export function codeModeActs<const L extends readonly LibraryImplementation<unkn
   const libraries = implementations.map(value => value.library)
   const spec = codeModeSpec(libraries, options.signatureDepth)
   const catalog = Layer.succeed(ToolCatalog, { names: ["execute"], specs: [spec], libraries })
-  const registry = new Map(implementations.flatMap(pkg => (pkg.methods as readonly AgentTool<R>[]).map(method => [JSON.stringify([pkg.library.name, method.spec.name]), method] as const)))
+  const registry = new Map(implementations.flatMap(pkg => (pkg.methods as readonly LibraryMethod<R>[]).map(method => [JSON.stringify([pkg.library.name, method.spec.name]), method] as const)))
   const executePackage = ExecutePackage.layer((input, { ref }) => Effect.gen(function* () {
     const method = registry.get(JSON.stringify([input.package, input.method]))
     if (!method) return yield* Effect.fail(new RuntimeError(`Unknown library method: ${input.package}.${input.method}`))
-    const result = yield* method.execute(input.input, { callId: effectKey(ref), parentCallId: input.callId, name: input.method, input: input.input })
-    if (result.type !== "value") return yield* Effect.fail(new RuntimeError("Code mode cannot await background library results"))
-    return result.value
+    return yield* method.invoke(input.input, { callId: effectKey(ref), parentCallId: input.callId, name: input.method, input: input.input })
   }).pipe(Effect.mapError(String)))
   const evaluateCode = EvaluateCode.layer(input => Effect.gen(function* () {
     const configured = input.libraries === undefined ? implementations : input.libraries.map(name => {
@@ -59,7 +58,15 @@ export function codeModeActs<const L extends readonly LibraryImplementation<unkn
       if (drift) return yield* Effect.fail(drift)
       if (seen.size !== completed.calls.length) return yield* Effect.fail("Nondeterministic code mode: replay omitted recorded library calls")
       if (Exit.isFailure(outcome)) return yield* Effect.fail(Cause.pretty(outcome.cause))
-      return yield* Schema.decodeUnknownEffect(Schema.Json)(outcome.value).pipe(Effect.mapError(String))
+      const returnedContent = completed.calls.some(call => call.outcome?.status === "fulfilled"
+        && registry.get(JSON.stringify([call.package, call.method]))?.contentResult
+        && isDeepStrictEqual(call.outcome.value, outcome.value.result))
+      if (!returnedContent || outcome.value.error !== undefined) return yield* Schema.decodeUnknownEffect(Schema.Json)(outcome.value).pipe(Effect.mapError(String))
+      const result = yield* Schema.decodeUnknownEffect(StoredToolResult, { onExcessProperty: "error" })(outcome.value.result).pipe(Effect.mapError(String))
+      return yield* Schema.decodeEffect(Schema.Json)({ ...outcome.value, content: [
+        ...result.content,
+        ...(outcome.value.logs.length ? [{ type: "text", text: `Console output:\n${outcome.value.logs.join("\n")}` }] : []),
+      ] }).pipe(Effect.mapError(String))
     }).pipe(Effect.exit, Effect.map(exit => Exit.isSuccess(exit) ? reply.succeed(exit.value) : reply.fail(Cause.pretty(exit.cause))))
     return EvaluateCode.defer(yield* execution.fork(run))
   }).pipe(Effect.mapError(String)), { cancel: (input, context) => Effect.gen(function* () {

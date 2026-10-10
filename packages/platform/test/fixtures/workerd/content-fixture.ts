@@ -16,8 +16,8 @@ interface WorkerdContentFixture extends ContentFixture {
   readonly restart: () => Promise<void>
 }
 
-export async function workerdContentFixture(options: { readonly cache?: boolean } = {}): Promise<WorkerdContentFixture> {
-  const prefix = options.cache === false ? "content-r2" : "content"
+export async function workerdContentFixture(options: { readonly cache?: boolean; readonly tools?: "files" | "background" } = {}): Promise<WorkerdContentFixture> {
+  const prefix = options.tools ? `content-r2-tools${options.tools === "files" ? "" : `-${options.tools}`}` : options.cache === false ? "content-r2" : "content"
   const instance = `${prefix}-${crypto.randomUUID()}`
   const base = `http://test/v1/actors/${instance}/threads`
   const created = await SELF.fetch(base, { method: "POST", body: JSON.stringify({ name: "thread" }) })

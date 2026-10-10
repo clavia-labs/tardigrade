@@ -3,6 +3,7 @@ import { Atom } from "effect/unstable/reactivity"
 import { effectAtom, durableAtom, durablePromise, eventValue, EffectCancelled, effectKey } from "@clavia/tardigrade-core"
 import { ToolPromise } from "@clavia/tardigrade-libraries/types"
 import { ToolReturned, TurnRequested } from "../contracts/events"
+import { StoredToolResult } from "@clavia/tardigrade-model/object/content"
 
 const submissions = durableAtom({
   name: "agent.promises.submissions",
@@ -31,6 +32,9 @@ export const toolPromises = effectAtom(get => {
       eventValue({
         type: "TurnRequested", source: item.promise.handle.executor === "actor" ? "agent" : "tool", promiseRef: item.promise.ref, turnId: `promise:${item.callId}`,
         text: `Tool promise result (data): ${JSON.stringify({ callId: item.callId, handle: item.promise.handle, result: item.result })}`,
+        ...(item.result.status === "fulfilled" && Schema.is(StoredToolResult)(item.result.value) ? {
+          content: [{ type: "text" as const, text: `Tool promise result for call ${item.callId}.` }, ...item.result.value.content],
+        } : {}),
       } satisfies TurnRequested),
     ])),
   }
