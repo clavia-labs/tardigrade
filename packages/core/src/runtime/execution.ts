@@ -4,11 +4,11 @@ import { ActorCommitError, RuntimeError, PromiseNotReady, PromiseTimedOut, Execu
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import { atom, type Atom } from "../atoms/atom"
-import { EventLog } from "../services/event-log"
+import { EventLog, executionDefect } from "../services/event-log"
 import { Scheduler } from "../services/scheduler"
 import { EffectExecution } from "../services/effect-execution"
 import { createExecutionStream, type ExecutionStream, type ExecutionStreamPolicy } from "../services/execution-stream"
-import { EffectRequested, EffectSettled, PromiseSettled, hasCoreEventType } from "./events"
+import { EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType } from "./events"
 import { cancelAct, type ActCancellation } from "../atoms/act"
 import type { RuntimeEvent, JournalEvent, Journal, MessageJournal, RecordMetadata } from "../services/journal"
 import type { ActorRuntime, ActorSetup, Requirements } from "./contracts"
@@ -140,6 +140,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         const state = snapshot?.effect(ref)
         return state ? { ...state, request: Object.freeze(observeRequest(state.request)) } : undefined
       },
+      defect: () => snapshot?.defect,
       promise: ref => snapshot?.promise(ref),
     }))
     const sync = () => {
@@ -218,6 +219,12 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       if (options.journal && checkpoint) checkpointPosition = next.position
       snapshot = next
       for (const { event: record } of records) {
+        if (Schema.is(EffectDied)(record)) {
+          yield* Fiber.interruptAll([...executions.values(), ...background.values(), ...deadlineTimers.values()]).pipe(Effect.forkIn(scope))
+          for (const lifetime of lifetimes.values()) yield* Scope.close(lifetime.scope, Exit.succeed(undefined))
+          lifetimes.clear()
+          continue
+        }
         if (Schema.is(PromiseSettled)(record)) {
           const key = effectKey(record.ref)
           const lifetime = lifetimes.get(key)
@@ -282,6 +289,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       for (const cancellation of snapshot.cancellations()) yield* appendNow(cancellation)
     })
     const append = (event: RuntimeEvent<Event>) => enqueue(appendNow(event))
+    const recordDeath = (ref: EffectRef, cause: Cause.Cause<unknown>) => enqueue(Effect.suspend(() =>
+      snapshot.defect || snapshot.promise(ref) || snapshot.effect(ref)?.cancellation ? Effect.void
+        : appendNow({ type: "EffectDied", ref, diagnostic: Cause.pretty(cause) }),
+    ))
     const promiseTimeouts = new Map<string, number>()
     const normalizePromise = (ref: EffectRef, value: ExecutionResult) => Effect.gen(function* () {
       if (value.type !== "promise") return value
@@ -308,6 +319,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     let observedThrough = 0
     let lastObserved: RuntimeEvent<Event> | undefined
     const observePromises = Effect.gen(function* () {
+      if (store.get(executionDefect)) return
       const observer = Context.getOption(services, Promises)
       const events = snapshot.events
       if (observedThrough > events.length || (observedThrough > 0 && events.at(observedThrough - 1) !== lastObserved)) observedThrough = 0
@@ -386,7 +398,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     })
     const drain = () => Effect.gen(function* () {
       while (true) {
-        if (options.canDrive && !(yield* options.canDrive)) return
+        if (!store.get(executionDefect) && options.canDrive && !(yield* options.canDrive)) return
         yield* afterCommit()
         const next = yield* enqueue(Effect.gen(function* () {
           if (closed) return
@@ -402,6 +414,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             return { kind: "delivery" as const }
           }
           for (const [key, work] of localRecovery) {
+            if (store.get(executionDefect)) { localRecovery.clear(); break }
             localRecovery.delete(key)
             if (snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cancellation) continue
             const prior = snapshot.effect(work.ref)?.settlement?.outcome
@@ -506,6 +519,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             yield* runtime.fork(id, operation.pipe(
               Effect.provide(context),
               Effect.flatMap(result => runtime.deliver(work.ref, (Array.isArray(result) ? result : [result]) as readonly Event[])),
+              Effect.catchCause(cause => Cause.hasDies(cause) ? recordDeath(work.ref, cause) : Effect.failCause(cause)),
             ))
             return { executor: "local" as const, id }
           }),
@@ -526,8 +540,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         if (Exit.isFailure(exit)) {
           executions.delete(key)
           dispatched.delete(key)
-          if (snapshot.effect(work.ref)?.cancellation && Cause.hasInterruptsOnly(exit.cause)) continue
-          return yield* Effect.failCause(exit.cause)
+          if (snapshot.effect(work.ref)?.cancellation || snapshot.promise(work.ref)) continue
+          if (!Cause.hasDies(exit.cause)) return yield* Effect.failCause(exit.cause)
+          yield* recordDeath(work.ref, exit.cause)
+          continue
         }
         const outcome = exit.value.status === "fulfilled" ? { ...exit.value, value: yield* normalizePromise(work.ref, exit.value.value) } : exit.value
         if (next.recovering) {
@@ -560,6 +576,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       let cursor = 0
       yield* enqueue(Effect.gen(function* () {
         if (persistenceFailure) return yield* persistenceFailure
+        const defect = store.get(executionDefect)
+        if (defect) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
         if (owner && snapshot.effect(owner)?.cancellation) return
         if (!admitted) {
           if (when && !(yield* Effect.try({ try: () => when(store.get), catch: RuntimeError.from }))) return
@@ -708,6 +726,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             yield* journal.acknowledge
             return { id: message.id, position: previous.position }
           }
+          const defect = store.get(executionDefect)
+          if (defect) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
           if (!context.inReplyTo) yield* Effect.try({ try: () => store.validate(setup.effects, event as Event), catch: InvalidMessage.from })
           const position = snapshot.position + 1
           const json = yield* Schema.decodeUnknownEffect(Schema.Json)(event).pipe(Effect.mapError(RuntimeError.from))
@@ -727,6 +747,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         })),
         active: () => [...background.keys()],
         recoveryState: (): RecoveryState => {
+          const defect = store.get(executionDefect)
+          if (defect) throw new WatchdogTerminalError(defect.diagnostic)
           if (errors.length) throw errors[0]!
           // progressCursor is the position after the last settlement, so the scan runs back from the end.
           let progressCursor = snapshot.seed?.position ?? 0
@@ -776,6 +798,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             executionWaiters.add(started)
             yield* Effect.raceFirst(Deferred.await(completion), Deferred.await(started)).pipe(Effect.ensuring(Effect.sync(() => { executionWaiters.delete(started) })))
           }
+          const defect = store.get(executionDefect)
+          if (defect) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
           if (errors.length) return yield* Effect.fail(errors[0]!)
         })),
         // wait observes local processing and failures; external promise delivery can arrive after it returns.
@@ -786,6 +810,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             yield* Fiber.awaitAll([...background.values()])
             if (completion === scheduled && background.size === 0) break
           }
+          const defect = store.get(executionDefect)
+          if (defect) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
           if (errors.length) return yield* Effect.fail(errors[0]!)
         })),
         close,

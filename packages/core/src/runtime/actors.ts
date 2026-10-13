@@ -3,7 +3,7 @@ import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Random, Schema, S
 import { Actor, ActorRequest, ActorCall, type ActorCaller } from "../services/actor"
 import { atom, type Atom } from "../atoms/atom"
 import { InvalidMessage, type MessageMetadata, type MessageReceipt } from "../actor/message"
-import { MethodFailed, MethodCancelled, type ActorMethods, type MethodInput, type MethodOutput, type MethodResult } from "../actor/method"
+import { resolveMethodResult, MethodFailed, MethodCancelled, type ActorMethods, type MethodInput, type MethodOutput, type MethodResult } from "../actor/method"
 import { RuntimeError, type ExecutionHandle } from "./effects"
 import type { ThreadCoordinate, ThreadCreated } from "../actor/thread"
 import type { ActorDefinition } from "../actor/definition"
@@ -210,7 +210,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
       const invocation = record?.record.message?.invocation
       const method = thread.contracts[name]
       if (!method || invocation?.method !== name) return yield* Effect.fail(new InvalidMessage("Result requires a matching invocation"))
-      const node = atom(get => current(coordinate).contracts[name]!.result(invocation.input, get, { id, ref: { method: name, id } }))
+      const node = atom(get => resolveMethodResult(current(coordinate).contracts[name]!, invocation.input, get, { id, ref: { method: name, id } }))
       const settled = yield* Deferred.make<MethodResult<Schema.Json>, Error>()
       const check = () => {
         try {
@@ -234,7 +234,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
       const invocation = record?.record.message?.invocation
       const method = thread.contracts[name]
       if (!method || invocation?.method !== name) return yield* Effect.fail(new InvalidMessage("State requires a matching invocation"))
-      return method.result(invocation.input, thread.get, { id, ref: { method: name, id } }) ?? { status: "pending" as const }
+      return resolveMethodResult(method, invocation.input, thread.get, { id, ref: { method: name, id } }) ?? { status: "pending" as const }
     }))
     type Client = { readonly [Name in keyof Contracts]: (input: MethodInput<Contracts[Name]>, request: { readonly id: string }) => Effect.Effect<MethodOutput<Contracts[Name]>, Error> }
     const methods = Object.fromEntries(Object.keys(thread.contracts).map(name => [name, (input: Schema.Json, request: { readonly id: string }) => invoke(name, input, request).pipe(Effect.andThen(result(name, request.id)), Effect.flatMap(result => result.status === "completed" ? Effect.succeed(result.output) : Effect.fail(result.status === "failed" ? new MethodFailed(result.error) : new MethodCancelled(result.reason))))])) as Client

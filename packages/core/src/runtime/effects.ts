@@ -51,6 +51,14 @@ export const ExecutionResult = Schema.Union([
 ])
 export type ExecutionResult = typeof ExecutionResult.Type
 
+// EffectDied records a terminal execution defect separately from the act's declared failure channel.
+export const EffectDied = Schema.Struct({
+  type: Schema.Literal("EffectDied"),
+  ref: EffectRef,
+  diagnostic: Schema.String,
+})
+export type EffectDied = typeof EffectDied.Type
+
 // EffectCancelled records a terminal local cancellation decision; executor cleanup may still be pending.
 export const EffectCancelled = Schema.Struct({ type: Schema.Literal("EffectCancelled"), ref: EffectRef, reason: Schema.Json })
 export type EffectCancelled = typeof EffectCancelled.Type
