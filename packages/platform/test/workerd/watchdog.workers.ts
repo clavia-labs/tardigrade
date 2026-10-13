@@ -10,19 +10,37 @@ import { SELF } from "cloudflare:test"
 import type { LayoutThreadDO } from "../fixtures/workerd/layout-fixture"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import type { TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
-import * as fc from "fast-check"
-import { liveInline, liveInlineExamples } from "../properties/watchdog/live-inline"
-import { RUNTIME_PROPERTY_OPTIONS } from "../properties/runtime/config"
 import { workerdSlowActFixture } from "../fixtures/workerd/slow-act-fixture"
-import { SLOW_ACT_WATCHDOG_POLICY } from "../fixtures/workerd/slow-act-fixture.worker"
+import { waitFor } from "../fixtures/wait"
 
 const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
 const address = { actor: "test", instance: "main", thread: "one" }
 
-test("real watchdog alarms preserve slow inline and forked work across restarts", () => fc.assert(
-  liveInline(workerdSlowActFixture, SLOW_ACT_WATCHDOG_POLICY.attemptTimeoutMs),
-  { ...RUNTIME_PROPERTY_OPTIONS, numRuns: 12, examples: liveInlineExamples },
-), 30_000)
+for (const forked of [false, true]) {
+  test(`real watchdog alarms recover ${forked ? "forked" : "inline"} work after restart`, async () => {
+    const fixture = await workerdSlowActFixture({ workMs: 0, value: 42, hold: true, ...(forked ? { fork: { timeoutMs: 60_000 } } : {}) })
+    try {
+      await fixture.start()
+      await waitFor(fixture.log, log => log.some(entry => entry.kind === "start"))
+      const initial = await fixture.watchdog()
+      expect(initial.entry?.status).toBe("pending")
+      expect(initial.alarm).not.toBeNull()
+      await waitFor(fixture.watchdog, state => (state.entry?.nextWakeAt ?? 0) > (initial.entry?.nextWakeAt ?? 0))
+      await fixture.restart()
+      // Fixture logs leave the thread cold so the durable alarm owns recovery.
+      await waitFor(fixture.log, log => log.filter(entry => entry.kind === "start").length === 2)
+      await fixture.release()
+      const result = await waitFor(fixture.result, result => result !== undefined)
+      expect(result).toMatchObject({ status: "completed", output: 42 })
+      const log = await fixture.log()
+      expect(log.filter(entry => entry.kind === "start")).toHaveLength(2)
+      expect(log.filter(entry => entry.kind === "done")).toHaveLength(1)
+      expect(log.slice(log.findIndex((entry, index) => index > 0 && entry.kind === "start")).some(entry => entry.kind === "interrupted")).toBe(false)
+      const final = await waitFor(fixture.watchdog, state => state.entry === undefined)
+      expect(final.alarm).toBeNull()
+    } finally { await fixture.close() }
+  }, 15_000)
+}
 
 test("watchdog synchronizes the replacement before recovery", async () => {
   await runInDurableObject(namespace.getByName("watchdog-sync"), async (_instance, state) => {

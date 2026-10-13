@@ -1,4 +1,4 @@
-import { Clock, Effect, Schema } from "effect"
+import { Clock, Deferred, Effect, Schema } from "effect"
 import { act, actorMethod, defineActor, durableAtom, durablePromise, effectAtom, EffectExecution, event } from "@clavia/tardigrade-core"
 
 const RunRequested = event({ type: "RunRequested" })
@@ -15,16 +15,27 @@ export const slowActor = defineActor("slow", Effect.sync(() => {
   } }
 }))
 
-export interface SlowActOptions { readonly workMs: number; readonly value: number; readonly fork?: { readonly timeoutMs: number } }
+export interface SlowActOptions { readonly workMs: number; readonly value: number; readonly hold?: boolean; readonly fork?: { readonly timeoutMs: number } }
 export interface SlowActLog { readonly kind: "start" | "interrupted" | "done"; readonly at: number }
 
-// slowServices exposes execution starts, interruptions, and completions for the liveInline property.
+// slowServices exposes execution barriers and lifecycle observations for watchdog tests.
 export function slowServices(options: SlowActOptions) {
   const log: SlowActLog[] = []
-  const note = (kind: SlowActLog["kind"]) => Clock.currentTimeMillis.pipe(Effect.map(at => { log.push({ kind, at }) }))
-  return { log: () => [...log], services: Job.layer(() => Effect.gen(function* () {
+  const starts = new Map<number, Deferred.Deferred<void>>()
+  const released = Deferred.makeUnsafe<void>()
+  let executions = 0
+  const started = (index: number) => {
+    let barrier = starts.get(index)
+    if (!barrier) { barrier = Deferred.makeUnsafe<void>(); starts.set(index, barrier) }
+    return barrier
+  }
+  const note = (kind: SlowActLog["kind"]) => Effect.gen(function* () {
+    log.push({ kind, at: yield* Clock.currentTimeMillis })
+    if (kind === "start") yield* Deferred.succeed(started(++executions), undefined)
+  })
+  return { log: () => [...log], started: (index: number) => Deferred.await(started(index)), release: Deferred.succeed(released, undefined).pipe(Effect.asVoid), services: Job.layer(() => Effect.gen(function* () {
     const execution = yield* EffectExecution
-    const work = note("start").pipe(Effect.andThen(Effect.sleep(options.workMs)), Effect.andThen(note("done")), Effect.as(options.value), Effect.onInterrupt(() => note("interrupted")))
+    const work = note("start").pipe(Effect.andThen(options.hold ? Deferred.await(released) : Effect.sleep(options.workMs)), Effect.andThen(note("done")), Effect.as(options.value), Effect.onInterrupt(() => note("interrupted")))
     if (!options.fork) return yield* work
     const promise = durablePromise(execution.ref, { success: Schema.Finite, error: Schema.String })
     const handle = yield* execution.fork(work.pipe(Effect.match({ onFailure: error => promise.fail(String(error)), onSuccess: promise.succeed })), options.fork)

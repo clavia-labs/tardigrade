@@ -1,9 +1,9 @@
-import { Context } from "effect"
+import { Context, Effect } from "effect"
 import { RuntimeError } from "@clavia/tardigrade-core"
 import { createActorWorker, type CloudflareObjectBindings } from "../../../src/cloudflare"
 import { slowActor, slowServices, type SlowActOptions } from "../slow-act"
 
-export const SLOW_ACT_WATCHDOG_POLICY = { attemptTimeoutMs: 100, keepAliveIntervalMs: 20, retryIntervalMs: 20, maxRetryIntervalMs: 40, maxNoProgressAttempts: 3 } as const
+const SLOW_ACT_WATCHDOG_POLICY = { attemptTimeoutMs: 1_000, keepAliveIntervalMs: 50, retryIntervalMs: 50, maxRetryIntervalMs: 100, maxNoProgressAttempts: 3 } as const
 
 interface SlowBindings {
   readonly SLOW_ACTORS: CloudflareObjectBindings["ACTORS"]
@@ -26,6 +26,7 @@ export class SlowActorDO extends worker.ActorObject {
 export class SlowThreadDO extends worker.ThreadObject {
   constructor(ctx: ConstructorParameters<typeof worker.ThreadObject>[0], env: SlowBindings) { super(ctx, bindings(env)) }
   log(instance: string) { return fixtureOf(instance).log() }
-  crash() { this.ctx.abort("watchdog cold recovery property") }
+  release(instance: string) { return Effect.runPromise(fixtureOf(instance).release) }
+  async restart() { await this.dispose(); this.ctx.abort("watchdog cold restart fixture") }
 }
 export const slowFetch = (request: Request, env: SlowBindings) => worker.fetch(request, bindings(env))

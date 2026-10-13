@@ -6,10 +6,9 @@ import { methodResult, watchdogKey } from "@clavia/tardigrade-core"
 import { cloudflareThreadName } from "../../../src/cloudflare"
 import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
 import type { SlowActOptions } from "../slow-act"
-import type { LiveInlineFixture } from "../../properties/watchdog/live-inline"
 import { configureSlowAct, forgetSlowAct, logSlowAct, type SlowThreadDO } from "./slow-act-fixture.worker"
 
-export async function workerdSlowActFixture(options: SlowActOptions): Promise<LiveInlineFixture> {
+export async function workerdSlowActFixture(options: SlowActOptions) {
   const instance = `watchdog-slow-${crypto.randomUUID()}`
   configureSlowAct(instance, options)
   const coordinate = { actor: "slow", instance, thread: "thread" }
@@ -26,8 +25,9 @@ export async function workerdSlowActFixture(options: SlowActOptions): Promise<Li
       return result.status === "pending" ? undefined : result
     },
     log: () => Promise.resolve(logSlowAct(instance)),
-    crash: async () => {
-      try { await stub.crash() } catch (error) { assert.match(String(error), /watchdog cold recovery property/) }
+    release: () => stub.release(instance),
+    restart: async () => {
+      try { await stub.restart() } catch (error) { assert.match(String(error), /watchdog cold restart fixture/) }
       stub = namespace.getByName(cloudflareThreadName(coordinate))
     },
     watchdog: () => runInDurableObject(stub, async (_object, state) => {
