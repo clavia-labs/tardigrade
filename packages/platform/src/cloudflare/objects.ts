@@ -8,7 +8,7 @@ import { initializeThread } from "@clavia/tardigrade-core/services/journal/threa
 import { prepareInitialState } from "@clavia/tardigrade-core/runtime/initialisation"
 import type { SupervisorEvent } from "@clavia/tardigrade-core/services/supervisor/graph"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"
+import { makeRetryingAlarms, makeRetryingRpc, type CloudflareAlarmOptions, type CloudflareRetryOptions } from "@clavia/tardigrade-cloudflare/retry"
 import { recordRetryWakes } from "../shared/retry-wakes"
 import { cloudflareSchedulerStorage, cloudflareSchedulerTransaction } from "./scheduler"
 import { cloudflareWatchdogStorage, cloudflareWatchdogTransaction } from "./watchdog"
@@ -43,6 +43,7 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
   // services receives the current Durable Object storage for local cache layers.
   readonly services: (env: Env, ...args: [...Parameters<ExecutionOptions<Event, Services, State, Contracts>["services"]>, DurableObjectStorage]) => Layer.Layer<Layer.Success<ReturnType<ExecutionOptions<Event, Services, State, Contracts>["services"]>>, Error, Supervisor | Invocation>
   readonly alarms?: CloudflareAlarmOptions
+  readonly rpc?: CloudflareRetryOptions
   readonly scheduler?: Partial<SchedulerPolicy>
   readonly watchdog?: { readonly policy?: Partial<WatchdogPolicy>; readonly retryable?: (error: Error) => boolean }
   readonly http?: (env: Env) => MethodHttpOptions
@@ -101,8 +102,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
   const actorContext = options.actorContext ?? (() => Context.empty()) as unknown as ExecutionOptions<Event, Services, State, Contracts>["actorContext"]
   const io = <Value>(work: () => Promise<Value>) => Effect.tryPromise({ try: work, catch: RuntimeError.from })
   if (options.defaultChildPlacement !== undefined && options.defaultChildPlacement !== "independent") throw new RuntimeError("Cloudflare object hosts require independent placement")
-  const receiptIo = (work: () => Promise<MessageReceipt>) => io(work).pipe(Effect.map(receipt => ({ id: receipt.id, ...(receipt.position === undefined ? {} : { position: receipt.position }) })))
-  const coordinateIo = <Value extends ThreadCoordinate | undefined>(work: () => Promise<Value>) => io(work).pipe(Effect.map(value => value === undefined ? undefined : { actor: value.actor, instance: value.instance, thread: value.thread }))
+  const rpc = makeRetryingRpc(options.rpc)
   const validateCoordinate = Schema.decodeUnknownSync(ThreadCoordinate, { onExcessProperty: "error" })
 
   class ActorObject extends DurableObject<Env & CloudflareObjectBindings> {
@@ -150,9 +150,9 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
           defaultChildPlacement: DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, supportedChildPlacements: CLOUDFLARE_CHILD_PLACEMENTS,
           ...(options.promises ? { promises: options.promises } : {}), ...(options.generateName ? { generateName: options.generateName } : {}),
           validateInitialState: state => prepareInitialState(options.initialStateAtoms ?? [], state).pipe(Effect.asVoid),
-          provision: allocation => io(() => this.env.THREADS.getByName(cloudflareThreadName(allocation.coordinate)).provision({ type: "ThreadCreated", address: allocation.coordinate,
+          provision: allocation => rpc.call(this.env.THREADS, cloudflareThreadName(allocation.coordinate), "provision", stub => stub.provision({ type: "ThreadCreated", address: allocation.coordinate,
             parent: allocation.parent === null ? null : { ...allocation.coordinate, thread: allocation.parent }, depth: allocation.depth, placement: allocation.placement,
-          }, allocation.initialState)),
+          }, allocation.initialState), true).pipe(Effect.asVoid),
         })
       }
       return this.directory
@@ -178,12 +178,12 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     }
     private deliver = (message: MessageDelivery) => createInvocation({
       supervisor: {
-        allocate: input => coordinateIo(() => this.env.ACTORS.getByName(input.instance).allocate(input)).pipe(Effect.map(value => value!)),
-        lookup: coordinate => coordinateIo(() => this.env.ACTORS.getByName(coordinate.instance).lookup(coordinate)),
+        allocate: input => rpc.call(this.env.ACTORS, input.instance, "allocate", stub => stub.allocate(input), input.name !== undefined).pipe(Effect.map(value => ({ actor: value.actor, instance: value.instance, thread: value.thread }))),
+        lookup: coordinate => rpc.call(this.env.ACTORS, coordinate.instance, "lookup", stub => stub.lookup(coordinate), true).pipe(Effect.map(value => value === undefined ? undefined : { actor: value.actor, instance: value.instance, thread: value.thread })),
         store: () => Effect.fail(new RuntimeError("Supervisor projections are owned by the Actor DO")),
       },
       reference: coordinate => Effect.succeed(coordinate),
-      receive: (target, body, message) => receiptIo(() => this.env.THREADS.getByName(cloudflareThreadName(target)).receive({ target, body, message })),
+      receive: (target, body, message) => rpc.call(this.env.THREADS, cloudflareThreadName(target), "receive", stub => stub.receive({ target, body, message }), message.id !== undefined).pipe(Effect.map(receipt => ({ id: receipt.id, ...(receipt.position === undefined ? {} : { position: receipt.position }) }))),
       from: options.from ?? DEFAULT_EXTERNAL_SENDER, run: this.run,
       ...(options.actorTransport ? { actorTransport: options.actorTransport } : {}), ...(options.transports ? { transports: options.transports } : {}),
     }).send(message)
@@ -268,16 +268,15 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       await Effect.runPromise(initializeThread(this.storage(), created, seeded))
     }
     private supervisor(): typeof Supervisor.Service {
-      const directory = () => this.env.ACTORS.getByName(this.address().instance)
       return {
-        allocate: request => coordinateIo(() => directory().allocate(request)).pipe(Effect.map(value => value!)),
-        lookup: coordinate => coordinateIo(() => this.env.ACTORS.getByName(coordinate.instance).lookup(coordinate)),
+        allocate: request => rpc.call(this.env.ACTORS, this.address().instance, "allocate", stub => stub.allocate(request), request.name !== undefined).pipe(Effect.map(value => ({ actor: value.actor, instance: value.instance, thread: value.thread }))),
+        lookup: coordinate => rpc.call(this.env.ACTORS, coordinate.instance, "lookup", stub => stub.lookup(coordinate), true).pipe(Effect.map(value => value === undefined ? undefined : { actor: value.actor, instance: value.instance, thread: value.thread })),
         store: () => Effect.fail(new RuntimeError("Supervisor projections are owned by the Actor DO")),
       }
     }
     private send = (message: MessageDelivery) => createInvocation({
       supervisor: this.supervisor(), reference: coordinate => Effect.succeed(coordinate),
-      receive: (target, body, message) => receiptIo(() => this.env.THREADS.getByName(cloudflareThreadName(target)).receive({ target, body, message })),
+      receive: (target, body, message) => rpc.call(this.env.THREADS, cloudflareThreadName(target), "receive", stub => stub.receive({ target, body, message }), message.id !== undefined).pipe(Effect.map(receipt => ({ id: receipt.id, ...(receipt.position === undefined ? {} : { position: receipt.position }) }))),
       from: this.address(), run: this.run,
       ...(options.actorTransport ? { actorTransport: options.actorTransport } : {}), ...(options.transports ? { transports: options.transports } : {}),
     }).send(message)

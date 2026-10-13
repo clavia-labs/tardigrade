@@ -39,6 +39,8 @@ const actor = defineActor("layout", Effect.sync(() => {
   } }
 }))
 
+const provisionResets = new Set<string>()
+const lookupResets = new Set<string>()
 const paused = new Set<string>()
 const failed = new Set<string>()
 const held = new Map<string, Deferred.Deferred<void>>()
@@ -63,8 +65,19 @@ const worker = createActorWorker({ actor, checkpointPolicy: { mode: "threshold",
   const handle = yield* execution.fork(Deferred.await(release).pipe(Effect.andThen(spawn), Effect.match({ onFailure: promise.fail, onSuccess: promise.succeed })), { timeoutMs: 60_000 })
   return Spawn.defer(handle)
 }).pipe(Effect.mapError(String))) })
-export const LayoutActorDO = worker.ActorObject
+export class LayoutActorDO extends worker.ActorObject {
+  resetNextProvision(thread: string) { provisionResets.add(cloudflareThreadName({ actor: "layout", instance: this.ctx.id.name!, thread })) }
+  resetNextLookup() { lookupResets.add(this.ctx.id.name!) }
+  override async lookup(coordinate: ThreadCoordinate) {
+    if (lookupResets.delete(coordinate.instance)) throw Object.assign(new Error("Durable Object reset because its code was updated."), { retryable: true })
+    return super.lookup(coordinate)
+  }
+}
 export class LayoutThreadDO extends worker.ThreadObject {
+  override async provision(...args: Parameters<InstanceType<typeof worker.ThreadObject>["provision"]>) {
+    await super.provision(...args)
+    if (provisionResets.delete(cloudflareThreadName(args[0].address))) throw Object.assign(new Error("Durable Object reset because its code was updated."), { retryable: true })
+  }
   async wake() {
     await Effect.runPromise(cloudflareWatchdogStorage(this.ctx.storage).transaction(tx => Effect.gen(function* () {
       for (const [key, entry] of yield* tx.list) if (entry.status === "pending") yield* tx.put(key, { ...entry, nextWakeAt: 0 })
