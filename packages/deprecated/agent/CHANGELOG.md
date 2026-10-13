@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.47.0](https://github.com/clavia-labs/tardigrade/compare/v0.46.0...v0.47.0) (2026-10-13)
+
+
+### Features
+
+* **agent:** export durable atoms ([#710](https://github.com/clavia-labs/tardigrade/issues/710)) ([410f5be](https://github.com/clavia-labs/tardigrade/commit/410f5be047c5840c9babab086988c0eae4868db9))
+* **agent:** record cache token usage ([#705](https://github.com/clavia-labs/tardigrade/issues/705)) ([75a3f65](https://github.com/clavia-labs/tardigrade/commit/75a3f658043a33c82fa68c9551f4ae33eaa0969a))
+* **model:** add Codex provider ([#720](https://github.com/clavia-labs/tardigrade/issues/720)) ([c0780f1](https://github.com/clavia-labs/tardigrade/commit/c0780f1747848007e842df683aa169994ddd14ae))
+* **platform:** add worker loader isolate ([#709](https://github.com/clavia-labs/tardigrade/issues/709)) ([f701bac](https://github.com/clavia-labs/tardigrade/commit/f701bac9330409e906dce0dcdf9b2b9f73ecb54e))
+
+
+### Bug Fixes
+
+* **agent:** close imported tool schemas ([#708](https://github.com/clavia-labs/tardigrade/issues/708)) ([7db37b1](https://github.com/clavia-labs/tardigrade/commit/7db37b1427f9eaa564324f846b8ea34e15180c2d))
+* **core:** persist execution deaths ([#736](https://github.com/clavia-labs/tardigrade/issues/736)) ([d5eb68f](https://github.com/clavia-labs/tardigrade/commit/d5eb68f5d5737223ad8b9d35202e8db32c86bf70))
+
 ## [0.46.0](https://github.com/clavia-labs/tardigrade/compare/v0.45.2...v0.46.0) (2026-10-10)
 
 
