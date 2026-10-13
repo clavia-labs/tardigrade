@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { RuntimeError } from "../runtime/effects"
 import { constructedEvent, type EventHandler } from "./event"
+import { executionDefect } from "../services/event-log"
 import type { Getter } from "../atoms/atom"
 
 export const MethodInvocation = Schema.Struct({ method: Schema.NonEmptyString, input: Schema.Json })
@@ -58,4 +59,12 @@ export function actorMethod<Input extends Schema.Json, Output extends Schema.Jso
     },
     ...(definition.onCancel ? { onCancel: (input: unknown, context: MethodContext & { readonly reason: string }) => constructedEvent(definition.onCancel!(decodeInput(input), context)) } : {}),
   }
+}
+
+// resolveMethodResult preserves domain results and fails unresolved calls on a terminal defect (quint/checkpoint/effectRecovery.qnt, terminalReachesCaller).
+export function resolveMethodResult<Event extends object, Output extends Schema.Json>(method: ActorMethod<Event, Schema.Json, Output>, input: unknown, get: Getter, context: MethodContext): MethodResult<Output> | undefined {
+  const result = method.result(input, get, context)
+  if (result !== undefined) return result
+  const defect = get(executionDefect)
+  return defect ? { status: "failed", error: defect.diagnostic } : undefined
 }

@@ -6,12 +6,12 @@ import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAUL
 import { Context, Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { atom, type Atom } from "../atoms/atom"
-import { EventLog } from "../services/event-log"
+import { EventLog, executionDefect } from "../services/event-log"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "../atoms/act"
 import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
-import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, EffectSettled, PromiseSettled, type RetryScheduled } from "./events"
+import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, EffectSettled, type EffectDied, PromiseSettled, type RetryScheduled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
@@ -105,6 +105,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly position: number
     readonly seed: EffectCheckpoint | undefined
     readonly bindings: ReadonlyIndex<object, EffectRef>
+    readonly defect: EffectDied | undefined
     readonly get: <Value>(node: Atom<Value>) => Value
     readonly view: () => Values<Atoms>
     readonly effects: () => readonly Work[]
@@ -126,6 +127,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     // initialState holds the seed once records[0..1], the only records initialStateSeed reads, exist or it found one; an append-only source cannot change it afterwards.
     let initialState: { readonly seed: StateSeed | undefined } | undefined
     const initialisedNames = new Set(seed?.durable.map(entry => entry.name))
+    let defect: EffectDied | undefined
     const coreRequests = new Map<string, StoredEffectRequested>()
     // addedAt places checkpoint entries before the suffix and journal entries at their global index (packages/platform/test/properties/runtime/snapshot-lookups.ts).
     const addedAt = new Map<string, number>()
@@ -196,6 +198,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const state = effect(ref)
         return state ? { ...state, request: Object.freeze(observeRequest(state.request)) } : undefined
       },
+      defect: () => defect,
       promise: ref => promiseSettlements.get(effectKey(ref)),
     }))
     const actReferences = new Map<object, EffectRef>()
@@ -252,6 +255,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       store.set(bindings, store.get(bindings).set(proposal.identity, ref))
     }
     const checkpoint = (): EffectCheckpoint | undefined => {
+      // checkpoint retains the journal suffix after a defect (quint/checkpoint/effectRecovery.qnt, capture).
+      if (store.get(executionDefect)) return undefined
       const pendingEffects = [...coreRequests].filter(([key]) => !coreSettlements.has(key) && !coreCancellations.has(key))
       const pendingPromises = [...coreSettlements].some(([key, settlement]) => {
         if (coreCancellations.has(key) || settlement.outcome.status !== "fulfilled") return false
@@ -287,6 +292,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     const view = (): Values<Atoms> => Object.fromEntries(Object.entries(options.atoms).map(([name, node]) => [name, store.get(node)])) as Values<Atoms>
     const effects = (): readonly Work[] => {
+      const defect = store.get(executionDefect)
       const values = view()
       proposals.clear()
       deliveries = []
@@ -297,7 +303,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         owners.set(name, owner)
         return [name, value]
       }
-      const candidates = Object.entries(values).flatMap(([name, value]): [string, unknown][] => {
+      const candidates = Object.entries(values).filter(([name]) => !defect || name === "host.message.replies").flatMap(([name, value]): [string, unknown][] => {
         if (typeof value !== "object" || value === null) return []
         const entries: [string, unknown][] = []
         if (!("view" in value) || (!("events" in value) && !("acts" in value))) return entries
@@ -362,7 +368,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         proposals.set(name, proposal)
         return [{ kind: "act" as const, atom: root, ...(proposal.origin === undefined ? {} : { origin: proposal.origin }), source: name, request: executionRequest, execute: proposal.execute }]
       })
-      return [...accepted.values(), ...work]
+      return [...[...accepted.values()].filter(work => !defect || work.atom === "host.message.replies"), ...work]
     }
     const validatePromise = (event: PromiseSettled) => {
       const key = effectKey(event.ref)
@@ -413,6 +419,12 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           loadedInputs.set(key, offered.request)
           bind(proposal, event.ref)
           accepted.set(key, { ...offered, ref: event.ref, request: offered.request })
+        } else if (event.type === "EffectDied") {
+          if (!coreRequests.has(key)) throw new Error("Defect requires an accepted effect")
+          const settlement = coreSettlements.get(key)
+          if (coreCancellations.has(key) || promiseSettlements.has(key) || settlement && (settlement.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "value")) throw new Error("Defect requires unfinished work")
+          defect ??= event
+          accepted.delete(key)
         } else if (event.type === "RetryScheduled") {
           if (!coreRequests.has(key) || coreCancellations.has(key) || promiseSettlements.has(key)) throw new Error("Retry requires pending accepted work")
           const settled = coreSettlements.get(key)
@@ -467,6 +479,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       get records() { return records },
       get position() { return offset + records.length },
       get disposed() { return disposed },
+      get defect() { return defect },
       append,
       validatePromise,
       dispose,
@@ -489,7 +502,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           return request.onSettled?.({ status: "rejected", reason: { _tag: "Cancelled", reason: event.reason } }, event.ref, result?.type === "promise" ? result.handle : undefined) ?? []
         }
         if (coreCancellations.has(effectKey(event.ref))) return []
-        if (event.type === "RetryScheduled") return []
+        if (event.type === "RetryScheduled" || event.type === "EffectDied") return []
         if (event.type === "EffectRequested") return request.onRequested?.(event.ref) ?? []
         if (event.type === "PromiseSettled") {
           const settled = coreSettlements.get(effectKey(event.ref))
@@ -513,7 +526,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       get: store.get,
       view,
       effects,
-      deferred: (): readonly DeferredWork[] => [...coreSettlements].flatMap(([key, settlement]) => {
+      deferred: (): readonly DeferredWork[] => store.get(executionDefect) ? [] : [...coreSettlements].flatMap(([key, settlement]) => {
         if (coreCancellations.has(key) || settlement.outcome.status !== "fulfilled" || promiseSettlements.has(key)) return []
         const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
         if (result.type !== "promise") return []
@@ -558,6 +571,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       position: engine.position,
       seed: engine.seed,
       bindings: engine.bindings(),
+      defect: engine.defect,
       get: <Value>(node: Atom<Value>): Value => engineOf(snapshot).get(node),
       view: () => values,
       effects: () => work,
@@ -598,6 +612,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     append: (snapshot: Snapshot, event: JournalEvent<Event>, metadata: RecordMetadata = {}): Snapshot => {
       const record = eventOf(event, metadata.message?.inReplyTo !== undefined)
       const engine = engineOf(snapshot)
+      const defect = snapshot.get(executionDefect)
+      if (defect && !(Schema.is(CoreEvent)(record) && "ref" in record && (record.type === "EffectDied" || record.ref.atom === "host.message.replies"))) return snapshot
       if (Schema.is(CoreEvent)(record) && record.type !== "ThreadCreated" && record.type !== "StateInitialised" && record.type !== "MessageDelivered" && !isMessageReceived(record)) {
         const lifecycle = engine.effect(record.ref)
         if (record.type === "EffectCancelled") {
@@ -608,6 +624,13 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         } else if (lifecycle?.cancellation) {
           if (record.type === "PromiseSettled" || record.type === "RetryScheduled") return snapshot
           if (record.type === "EffectSettled" && (record.outcome.status !== "fulfilled" || Schema.decodeUnknownSync(ExecutionResult)(record.outcome.value).type !== "promise")) return snapshot
+        }
+        if (record.type === "EffectDied") {
+          const prior = snapshot.get(executionDefect)
+          if (prior) {
+            if (!isDeepStrictEqual(prior, record)) throw new Error("Conflicting terminal defect")
+            return snapshot
+          }
         }
         const prior = record.type === "RetryScheduled" ? (engine.retry(record.ref)?.attempt === record.attempt ? engine.retry(record.ref) : undefined) : record.type === "EffectRequested" ? lifecycle?.request
           : record.type === "EffectSettled" ? lifecycle?.settlement : record.type === "EffectCancelled" ? lifecycle?.cancellation : engine.promise(record.ref)

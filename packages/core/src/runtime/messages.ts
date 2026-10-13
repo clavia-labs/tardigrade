@@ -3,7 +3,7 @@ import { CoreEvent } from "./events"
 import { MessageAddress, MessageDelivered } from "../actor/message"
 import { durableAtom } from "../atoms/durable"
 import { effectAtom } from "../atoms/effect"
-import type { ActorMethods } from "../actor/method"
+import { resolveMethodResult, type ActorMethods } from "../actor/method"
 import type { ThreadCoordinate } from "../actor/thread"
 import { DeliverMessage } from "../services/invocation"
 
@@ -38,7 +38,7 @@ export function messageReplies<Event extends object>(options: {
       if (!request) {
         const method = options.methods[pending.method]
         if (!method) throw new Error(`Unknown actor method: ${pending.method}`)
-        const body = method.result(pending.input, get, { id: pending.id, ref: { method: pending.method, id: pending.id } })
+        const body = resolveMethodResult(method, pending.input, get, { id: pending.id, ref: { method: pending.method, id: pending.id } })
         if (body === undefined) return []
         request = DeliverMessage.request({
           origin: pending.origin,
