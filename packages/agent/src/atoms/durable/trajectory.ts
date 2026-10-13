@@ -8,7 +8,7 @@ export const TrajectoryState = Schema.Struct({
   models: Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String })),
 })
 
-export function trajectoryState(state: typeof TrajectoryState.Type, event: Event): typeof TrajectoryState.Type {
+export function reduceTrajectory(state: typeof TrajectoryState.Type, event: Event): typeof TrajectoryState.Type {
   if (event.type === "TurnRequested") {
     return { ...state, entries: [...state.entries, { turnId: event.turnId, message: event.content === undefined ? { role: "user", text: event.text } : { role: "user", content: event.content } }] }
   }
@@ -35,12 +35,12 @@ export function trajectoryState(state: typeof TrajectoryState.Type, event: Event
   return state
 }
 
-export const trajectorySource = durableAtom({ name: "agent.trajectory", input: Schema.Union([TurnRequested, ModelCalled, ModelReturned, ModelFailed, ToolReturned, TurnSettled]),
+export const trajectoryState = durableAtom({ name: "agent.trajectory", input: Schema.Union([TurnRequested, ModelCalled, ModelReturned, ModelFailed, ToolReturned, TurnSettled]),
   schema: TrajectoryState,
-  initial: { entries: [], models: [] }, reduce: trajectoryState,
+  initial: { entries: [], models: [] }, reduce: reduceTrajectory,
 })
 
 // trajectory preserves message order and turn ownership, including pending model attribution across recovery.
-export const trajectory = atom(get => get(trajectorySource).entries).pipe(Atom.withLabel("trajectory"))
+export const trajectory = atom(get => get(trajectoryState).entries).pipe(Atom.withLabel("trajectory"))
 // messages projects trajectory messages for model input without turn metadata.
 export const messages = atom(get => get(trajectory).map(entry => entry.message))

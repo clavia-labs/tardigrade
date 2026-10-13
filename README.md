@@ -55,14 +55,14 @@ Durable atoms reduce an immutable event log into state.
 ```ts
 import { Schema } from "effect"
 import { durableAtom } from "tardie/core"
-import { Event, TrajectoryState, trajectoryState } from "tardie/agent"
+import { Event, TrajectoryState, reduceTrajectory } from "tardie/agent"
 
 const history = durableAtom({
   name: "researcher.history",
   input: Event,
   schema: TrajectoryState,
   initial: { entries: [], models: [] },
-  reduce: trajectoryState,
+  reduce: reduceTrajectory,
 })
 
 const messages = atom(get => get(history).entries.map(entry => entry.message))
