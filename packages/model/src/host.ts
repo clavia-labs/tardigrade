@@ -75,7 +75,7 @@ export const modelLayer = ({ credentials, ...options }: ModelBindingOptions) => 
     }
     return inferenceLayer(
       selected.protocol === "openai-responses"
-      ? { ...common, provider: "openai", model: { model: selected.model_id, ...(settings.openai === undefined ? {} : { config: settings.openai }) } }
+      ? { ...common, provider: selected.provider === "codex" ? "codex" : "openai", model: { model: selected.model_id, ...(settings.openai === undefined ? {} : { config: settings.openai }) } }
       : openrouter
       ? { ...common, provider: "openrouter", model: { model: selected.model_id, ...(settings.openrouter === undefined ? {} : { config: settings.openrouter }) } }
       : selected.protocol === "openai-chat-completions"

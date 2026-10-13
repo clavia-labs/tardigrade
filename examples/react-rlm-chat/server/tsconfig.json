@@ -12,5 +12,5 @@
       "tardie/server/*": ["../../../apps/server/src/*.ts"]
     }
   },
-  "include": ["actor.ts", "server.ts", "worker.ts"]
+  "include": ["actor.ts", "server.ts", "worker.ts", "codex.ts", "codex.test.ts"]
 }

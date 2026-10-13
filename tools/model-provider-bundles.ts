@@ -67,7 +67,7 @@ const main = async (): Promise<void> => {
     if (tarballName === undefined) throw new Error("packed Tardigrade tarball is missing")
     const tarball = join(packed, tarballName)
 
-    const fixtures = ["anthropic", "openai", "openai-compat", "openrouter"] as const
+    const fixtures = ["anthropic", "codex", "openai", "openai-compat", "openrouter"] as const
 
     const directory = join(temporary, "ordinary")
     await mkdir(directory)

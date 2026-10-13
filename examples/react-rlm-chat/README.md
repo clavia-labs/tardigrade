@@ -2,6 +2,34 @@
 
 A small full-stack chat for trying Tardigrade agents and subagents. Cloudflare runs the actor API, serves the React site, and stores uploaded images and PDFs in R2. Thread inference reads the same bucket through a local SQLite cache.
 
+## Run with Codex on Bun
+
+Use Bun 1.4 or later. The local research server can use the Codex provider with a saved device login. The same actor supplies fetching, code execution, workspace files, and delegated agents. The host selects the provider and model.
+
+From the repository root, complete device login and list the account models:
+
+```sh
+cd examples/codex-provider
+bun main.ts login
+bun main.ts models
+cd ../..
+CODEX_MODEL=<available-model-id> bun run --cwd examples/react-rlm-chat dev:codex
+```
+
+Open [http://localhost:5173](http://localhost:5173). The default API port is 4242. For a different port, set both `PORT` and `CHAT_API_URL`, for example `PORT=4342 CHAT_API_URL=http://localhost:4342`.
+
+`CODEX_CREDENTIALS_FILE` overrides the saved credential path. The default points to the Codex provider example's `.codex-credentials.json`. The server renews tokens through one shared credentials service and saves rotated tokens to that file. No OpenRouter key is required in this mode.
+
+Startup validates `CODEX_MODEL` against the account catalog and reads its context window. It writes provider configuration and a model lock under `server/.tardigrade/codex/<model>/`. `CODEX_STATE_DIRECTORY` overrides this directory. `CODEX_CONTEXT_WINDOW_TOKENS` overrides the catalog context window; it is required when the catalog omits that value. `CODEX_BASE_URL`, `CODEX_CLIENT_VERSION`, and `CODEX_MODEL_LIST_MS` override the endpoint, discovery version, and discovery timeout.
+
+The Codex provider reports that output token limits are unsupported. Tool budgets and the actor's delegation depth still apply. This mode uses the text-only Bun server. The Wrangler entry continues to use its configured OpenRouter provider.
+
+Try this workflow in the chat:
+
+> Use code execution to reconcile invoices A=120, B=85, C=60 against payment records A=120, B=40, B=40, X=25. Exclude exact duplicate payment records. Calculate applied and unpaid totals. Flag unknown invoice references. Write reconciliation.md in the working directory and read it back. Delegate an independent calculation to a child agent, then compare the results.
+
+The expected totals are 160 applied and 105 unpaid. The duplicate is the second B=40 payment. The unknown reference is X=25.
+
 ## Run with Wrangler
 
 Install workspace dependencies with `bun install`. Create `server/.dev.vars` with an OpenRouter key:

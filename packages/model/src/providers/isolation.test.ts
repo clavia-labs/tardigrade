@@ -8,7 +8,7 @@ import { providerLayer as openai } from "./openai"
 import { providerLayer as openrouter } from "./openrouter"
 import { providerLayer as compatible } from "./openai-compat"
 
-for (const entry of ["../host.ts", "../stream/collect.ts", "../catalog/index.ts", "./anthropic.ts", "./openai.ts", "./openai-compat.ts", "./openrouter.ts"]) test(`${entry} does not resolve agent, client, AWS, or Smithy`, async () => {
+for (const entry of ["../host.ts", "../stream/collect.ts", "../catalog/index.ts", "./anthropic.ts", "./codex.ts", "./codex-auth.ts", "./openai.ts", "./openai-compat.ts", "./openrouter.ts"]) test(`${entry} does not resolve agent, client, AWS, or Smithy`, async () => {
   const resolved: string[] = []
   const bundle = await Bun.build({
     entrypoints: [fileURLToPath(new URL(entry, import.meta.url))],
