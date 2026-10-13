@@ -8,6 +8,13 @@ import { checkpointDigest } from "@clavia/tardigrade-core"
 import { CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES, DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes, encodeCheckpointChunks, decodeCheckpointChunks, type CheckpointChunk, type CheckpointChunkOptions } from "./checkpoint-chunks"
 export { DEFAULT_CHECKPOINT_CHUNK_BYTES, type CheckpointChunkOptions } from "./checkpoint-chunks"
 
+// decodeSqlJournalRecord reconstructs a logical record for journal readers and storage exporters (journalEventChunks).
+export function decodeSqlJournalRecord<Event extends object>(text: string, chunks: readonly CheckpointChunk[] = []): Recorded<Event> {
+  const stored = JSON.parse(text) as Recorded<Event> | { chunkCount: number; byteLength: number }
+  if ("event" in stored) return stored
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decodeCheckpointChunks(chunks, stored.byteLength, stored.chunkCount))) as Recorded<Event>
+}
+
 export interface SqlJournalLimits { readonly maxRowBytes: number }
 
 // sqlJournal owns a database with one checkpoint and commits checkpoint chunks with journal events (checkpointStorage).
@@ -22,10 +29,14 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
   if (!options.actor) throw new RuntimeError("Journal actor identity must be nonempty")
   const chunkBytes = options.checkpointChunkBytes ?? DEFAULT_CHECKPOINT_CHUNK_BYTES
   validateCheckpointChunkBytes(chunkBytes, options.limits ? options.limits.maxRowBytes - CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES : undefined)
+  const actorBytes = new TextEncoder().encode(options.actor).byteLength
+  const eventChunkBytes = options.limits ? Math.min(chunkBytes, options.limits.maxRowBytes - actorBytes - CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES) : chunkBytes
+  validateCheckpointChunkBytes(eventChunkBytes)
   const runtime = ManagedRuntime.make(options.layer)
   const setup = Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_events (actor TEXT NOT NULL, seq INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY (actor, seq)) WITHOUT ROWID`
+    yield* sql`CREATE TABLE IF NOT EXISTS experimental_event_chunks (actor TEXT NOT NULL, seq INTEGER NOT NULL, ordinal INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY (actor, seq, ordinal), FOREIGN KEY (actor, seq) REFERENCES experimental_events(actor, seq)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_messages (actor TEXT NOT NULL, id TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (actor, id), FOREIGN KEY (actor, seq) REFERENCES experimental_events(actor, seq)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK (id = 1), position INTEGER NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL)`
     yield* sql`CREATE TABLE IF NOT EXISTS checkpoint_chunks (ordinal INTEGER PRIMARY KEY CHECK (ordinal >= 0), payload BLOB NOT NULL CHECK (typeof(payload) = 'blob' AND length(payload) > 0))`
@@ -56,7 +67,11 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
         Schema.decodeSync(MessageMetadata, { onExcessProperty: "error" })(record.message)
         Schema.decodeUnknownSync(InboxMessageReceived, { onExcessProperty: "error" })(record.event)
       }
-      return JSON.stringify(record)
+      const text = JSON.stringify(record)
+      const payload = new TextEncoder().encode(text)
+      const chunked = options.limits !== undefined && actorBytes + payload.byteLength + CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES > options.limits.maxRowBytes
+      const chunks = chunked ? encodeCheckpointChunks(payload, eventChunkBytes) : []
+      return { text: chunked ? JSON.stringify({ chunkCount: chunks.length, byteLength: payload.byteLength }) : text, chunks }
     }), catch: RuntimeError.from })
     if (checkpoint && checkpoint.digest !== (yield* checkpointDigest(checkpoint.payload))) return yield* Effect.fail(new RuntimeError("Invalid checkpoint digest"))
     const chunks = checkpoint ? encodeCheckpointChunks(checkpoint.payload, chunkBytes) : []
@@ -74,7 +89,8 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       const count = rows.length === 0 ? 0 : rows[0]!.seq + 1
       if (count !== expectedLength) return yield* Effect.fail(new JournalConflict(`Journal conflict for ${options.actor}: expected ${expectedLength}, found ${String(count)}`))
       for (const [index, event] of encoded.entries()) {
-        yield* sql`INSERT INTO experimental_events (actor, seq, event) VALUES (${options.actor}, ${expectedLength + index}, ${event})`
+        yield* sql`INSERT INTO experimental_events (actor, seq, event) VALUES (${options.actor}, ${expectedLength + index}, ${event.text})`
+        for (const chunk of event.chunks) yield* sql`INSERT INTO experimental_event_chunks (actor, seq, ordinal, payload) VALUES (${options.actor}, ${expectedLength + index}, ${chunk.ordinal}, ${chunk.payload})`
         const message = events[index]!.message
         if (message) yield* sql`INSERT INTO experimental_messages (actor, id, seq) VALUES (${options.actor}, ${message.id}, ${expectedLength + index})`
       }
@@ -103,39 +119,42 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       yield* syncAlarm(sql)
     }).pipe(Effect.uninterruptible))
   })
+  // decodeRecord restores a logical record before replay or message deduplication (journalEventChunks).
+  const decodeRecord = (sql: SqlClient.SqlClient, row: { seq: number; event: string }): Effect.Effect<Recorded<Event>, Error> => Effect.gen(function* () {
+    const stored = yield* Effect.try({ try: () => JSON.parse(row.event) as Recorded<Event> | { chunkCount: number; byteLength: number }, catch: RuntimeError.from })
+    if ("event" in stored) return stored
+    const chunks = yield* sql<CheckpointChunk>`SELECT ordinal, payload FROM experimental_event_chunks WHERE actor = ${options.actor} AND seq = ${row.seq} ORDER BY ordinal`
+    return yield* Effect.try({ try: () => decodeSqlJournalRecord<Event>(row.event, chunks), catch: RuntimeError.from })
+  })
   return {
     scheduler,
     acknowledge: client.pipe(Effect.andThen(options.flush ?? Effect.void)),
     readMessage: (id: string) => Effect.gen(function* () {
       const sql = yield* client
       const rows = yield* sql<{ seq: number; event: string }>`SELECT e.seq, e.event FROM experimental_messages m JOIN experimental_events e ON e.actor = m.actor AND e.seq = m.seq WHERE m.actor = ${options.actor} AND m.id = ${id}`
-      return yield* Effect.try({ try: () => {
-        const row = rows[0]
-        if (!row) return undefined
-        if (!Number.isSafeInteger(row.seq) || row.seq < 0) throw new RuntimeError("Invalid message journal sequence")
-        const record = JSON.parse(row.event) as Recorded<Event>
-        if (record.message?.id !== id) throw new RuntimeError("Message index differs from its journal record")
-        return { position: row.seq + 1, record }
-      }, catch: RuntimeError.from })
+      const row = rows[0]
+      if (!row) return undefined
+      if (!Number.isSafeInteger(row.seq) || row.seq < 0) return yield* Effect.fail(new RuntimeError("Invalid message journal sequence"))
+      const record = yield* decodeRecord(sql, row)
+      if (record.message?.id !== id) return yield* Effect.fail(new RuntimeError("Message index differs from its journal record"))
+      return { position: row.seq + 1, record }
     }),
     readFirst: Effect.gen(function* () {
       const sql = yield* client
       const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq LIMIT 1`
-      return yield* Effect.try({ try: () => {
-        const row = rows[0]
-        if (!row) return undefined
-        if (row.seq !== 0 || typeof row.event !== "string") throw new RuntimeError("Invalid first journal sequence")
-        return JSON.parse(row.event) as Recorded<Event>
-      }, catch: RuntimeError.from })
+      const row = rows[0]
+      if (!row) return undefined
+      if (row.seq !== 0 || typeof row.event !== "string") return yield* Effect.fail(new RuntimeError("Invalid first journal sequence"))
+      return yield* decodeRecord(sql, row)
     }),
     read: Effect.gen(function* () {
       if (scheduler) yield* scheduler.restore
       const sql = yield* client
       const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq`
-      return yield* Effect.try({ try: () => rows.map((row, index) => {
-        if (row.seq !== index || typeof row.event !== "string") throw new RuntimeError("Invalid journal sequence")
-        return JSON.parse(row.event) as Recorded<Event>
-      }), catch: RuntimeError.from })
+      return yield* Effect.forEach(rows, (row, index) => {
+        if (row.seq !== index || typeof row.event !== "string") return Effect.fail(new RuntimeError("Invalid journal sequence"))
+        return decodeRecord(sql, row)
+      })
     }),
     readAfter: (position: number) => Effect.gen(function* () {
       if (scheduler) yield* scheduler.restore
@@ -145,10 +164,10 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       const length = last.length === 0 ? 0 : last[0]!.seq + 1
       if (!Number.isSafeInteger(length) || length < 0 || position > length) return yield* Effect.fail(new RuntimeError("Checkpoint position exceeds journal length"))
       const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND seq >= ${position} ORDER BY seq`
-      return yield* Effect.try({ try: () => rows.map((row, index) => {
-        if (row.seq !== position + index || typeof row.event !== "string") throw new RuntimeError("Invalid journal sequence")
-        return JSON.parse(row.event) as Recorded<Event>
-      }), catch: RuntimeError.from })
+      return yield* Effect.forEach(rows, (row, index) => {
+        if (row.seq !== position + index || typeof row.event !== "string") return Effect.fail(new RuntimeError("Invalid journal sequence"))
+        return decodeRecord(sql, row)
+      })
     }),
     readInputs: Effect.gen(function* () {
       const sql = yield* client
