@@ -1,24 +1,14 @@
 import { expect, test } from "bun:test"
 import { Clock, Deferred, Effect, Fiber, Scope } from "effect"
-import { createWatchdog, watchdogKey, watchdogPolicy, WatchdogTerminalError, type WatchdogEntry, type WatchdogStorage, type WatchdogTransaction, type RecoveryState } from "@clavia/tardigrade-core"
+import { createWatchdog, watchdogKey, watchdogPolicy, WatchdogTerminalError, type RecoveryState } from "@clavia/tardigrade-core"
+
+import * as fc from "fast-check"
+import { slowExecutionRecovery } from "../properties/watchdog/slow-execution"
+import { RUNTIME_PROPERTY_OPTIONS } from "../properties/runtime/config"
+import { memoryWatchdog as memory } from "../fixtures/watchdog"
 
 const target = { actor: "test", instance: "main", thread: "one" }
-function memory(afterCommit: Effect.Effect<void> = Effect.void) {
-  let records = new Map<string, WatchdogEntry>()
-  let alarm: number | null = null
-  const storage: WatchdogStorage = { transaction: work => Effect.suspend(() => {
-    const staged = new Map(records)
-    let nextAlarm = alarm
-    const tx: WatchdogTransaction = {
-      alarm: { set: at => Effect.sync(() => { nextAlarm = at }), clear: Effect.sync(() => { nextAlarm = null }) },
-      get: key => Effect.sync(() => staged.get(key)),
-      put: (key, entry) => Effect.sync(() => { staged.set(key, entry) }),
-      delete: key => Effect.sync(() => { staged.delete(key) }), list: Effect.succeed(staged),
-    }
-    return work(tx).pipe(Effect.tap(() => Effect.sync(() => { records = staged; alarm = nextAlarm })), Effect.tap(() => afterCommit))
-  }) }
-  return { storage, records: () => records, alarm: () => alarm, consumeAlarm: () => { alarm = null } }
-}
+
 const policy = { retryIntervalMs: 2, maxRetryIntervalMs: 4, attemptTimeoutMs: 20, maxAttempts: 3, maxNoProgressAttempts: 2 }
 const pause = () => Effect.sleep(5)
 
@@ -284,3 +274,5 @@ test("resume waits for validated invalidation before resetting the budget", asyn
     expect(db.records().get(watchdogKey(target))!.attempts).toBe(0)
   }).pipe(Effect.scoped, Effect.timeout(2_000)))
 })
+
+test("watchdog preserves slow inline and forked execution across virtual-time restarts", () => fc.assert(slowExecutionRecovery, RUNTIME_PROPERTY_OPTIONS))
