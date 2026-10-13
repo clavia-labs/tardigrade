@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, JsonSchema, Layer, Schema, SchemaRepresentation } from "effect"
-import { Tool as AiTool } from "effect/unstable/ai"
+import { Context, Effect, JsonSchema, Layer, Redacted, Schema, SchemaRepresentation } from "effect"
+import { LanguageModel, Tool as AiTool, Toolkit } from "effect/unstable/ai"
+import { FetchHttpClient } from "effect/unstable/http"
+import { providerLayer } from "@clavia/tardigrade-model/providers/layer"
+import { DEFAULT_SCHEMA_IMPORT_OPTIONS, DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS } from "@clavia/tardigrade-agent/services/model"
 import { Validator } from "@cfworker/json-schema"
 import { Rpc, RpcTest } from "effect/unstable/rpc"
 import { defineLibrary, MethodDescription, MethodExecution, MethodHints, toolsFromLibraries } from "@clavia/tardigrade-libraries"
@@ -40,7 +43,7 @@ async function invoke(implementation: LibraryImplementation<import("@clavia/tard
 }
 
 describe("RPC libraries", () => {
-  test("named and nested schemas survive library export and model tool import", () => {
+  test("named, nested, and open schemas survive library export and provider requests", async () => {
     const Place = Schema.Struct({ city: Schema.String }).annotate({ identifier: "Place/~% café" })
     const Input = Schema.Struct({ place: Place }).annotate({ identifier: "SearchInput" })
     const Output = Schema.Struct({ result: Place }).annotate({ identifier: "SearchOutput" })
@@ -49,18 +52,47 @@ describe("RPC libraries", () => {
     ] })
     const foreground = tool({ name: "direct", description: "", input: Input, run: () => Effect.succeed({ content: [] }) })
     const background = promiseTool({ name: "background", description: "", input: Input, submit: () => Effect.succeed({ executor: "test", id: "job" }) })
-    for (const spec of [library.specs[0]!, foreground.spec, background.spec]) {
+    const open = { name: "open", description: "", inputSchema: {
+      type: "object", properties: { place: { type: "object", properties: { city: { type: "string" } }, required: ["city"] } }, required: ["place"],
+    } }
+    const freeForm = SchemaRepresentation.fromJsonSchemaDocument(JsonSchema.fromSchemaDraft07({ type: "object" }), DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS)
+    expect(Schema.decodeSync(Schema.toEncoded(freeForm))({ extra: true })).toEqual({ extra: true })
+    const outputImport = SchemaRepresentation.fromJsonSchemaDocument(JsonSchema.fromSchemaDraft07(open.inputSchema), DEFAULT_SCHEMA_IMPORT_OPTIONS)
+    const outputValue = { place: { city: "Singapore", extra: true }, extra: true }
+    expect(Schema.decodeSync(Schema.toEncoded(outputImport))(outputValue)).toEqual(outputValue)
+    const explicitOpen = SchemaRepresentation.fromJsonSchemaDocument(JsonSchema.fromSchemaDraft07({ ...open.inputSchema, additionalProperties: true }), DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS)
+    const toolValue = { place: { city: "Singapore" }, extra: true }
+    expect(Schema.decodeSync(Schema.toEncoded(explicitOpen))(toolValue)).toEqual(toolValue)
+    for (const spec of [library.specs[0]!, foreground.spec, background.spec, open]) {
       const exported = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(spec.inputSchema)
       expect(exported.type).toBe("object")
       const validator = new Validator(exported)
       expect(validator.validate({ place: { city: "Singapore" } }).valid).toBe(true)
       expect(validator.validate({ place: { city: 42 } }).valid).toBe(false)
-      const imported = SchemaRepresentation.fromJsonSchemaDocument(JsonSchema.fromSchemaDraft07(exported))
+      const imported = SchemaRepresentation.fromJsonSchemaDocument(JsonSchema.fromSchemaDraft07(exported), DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS)
       const modelTool = AiTool.dynamic(spec.name, { description: spec.description, parameters: Schema.toEncoded(imported) })
       const providerSchema = AiTool.getJsonSchema(modelTool)
       const providerValidator = new Validator(providerSchema, "2020-12")
       expect(providerValidator.validate({ place: { city: "Singapore" } }).valid).toBe(true)
       expect(providerValidator.validate({ place: { city: 42 } }).valid).toBe(false)
+      if (spec === open) for (const provider of ["openai", "anthropic", "openrouter"] as const) {
+        let sent: unknown
+        const fetch = Object.assign(async (_: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body)) as { tools: readonly { parameters?: unknown; input_schema?: unknown; function?: { parameters: unknown } }[] }
+          sent = provider === "openai" ? body.tools[0]!.parameters : provider === "anthropic" ? body.tools[0]!.input_schema : body.tools[0]!.function?.parameters
+          return Response.json({})
+        }, { preconnect: globalThis.fetch.preconnect })
+        const client = { apiKey: Redacted.make("test"), apiUrl: "https://fixture.invalid/v1" }
+        const layer = providerLayer(provider === "openai" ? { provider, client, model: { model: "gpt-5" } }
+          : provider === "anthropic" ? { provider, client, model: { model: "claude" } }
+          : { provider, client, model: { model: "vendor/model" } })
+        await Effect.runPromise(LanguageModel.generateText({ prompt: "Search", toolkit: Toolkit.make(modelTool), disableToolCallResolution: true }).pipe(
+          Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer))), Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.ignore,
+        ))
+        expect(sent).toMatchObject({ type: "object", properties: { place: { type: "object" } } })
+        if (provider !== "openrouter") expect(sent).toMatchObject({ additionalProperties: false, properties: { place: { additionalProperties: false } } })
+        expect(JSON.stringify(sent)).not.toContain("allOf")
+      }
     }
     const output = new Validator(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(library.specs[0]!.outputSchema))
     expect(output.validate({ result: { city: "Singapore" } }).valid).toBe(true)

@@ -51,11 +51,14 @@ export class Model extends Context.Service<Model, {
 }>()("example/Model") {}
 
 export const DEFAULT_MODEL_TIMEOUT_MS = 60_000
-// closeObjectSchemas sets additionalProperties to false on each object schema that declares properties and leaves it unset. An open object imports with a root allOf that strict adapters reject (#603; platform/test/bun/tool-schema.test.ts).
-export const closeObjectSchemas = (schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema =>
-  schema.type === "object" && schema.properties !== undefined && schema.additionalProperties === undefined ? { ...schema, additionalProperties: false } : schema
-// DEFAULT_SCHEMA_IMPORT_OPTIONS imports tool and output schemas with closed objects; a binding's schemaImport setting replaces it.
-export const DEFAULT_SCHEMA_IMPORT_OPTIONS = { patterns: "apply", onEnter: closeObjectSchemas } as const satisfies SchemaRepresentation.FromJsonSchemaOptions
+export const DEFAULT_SCHEMA_IMPORT_OPTIONS = { patterns: "apply" } as const satisfies SchemaRepresentation.FromJsonSchemaOptions
+
+// DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS closes tool objects with declared properties when additionalProperties is omitted; a binding's schemaImport replaces it (packages/platform/test/bun/rpc-libraries.test.ts).
+export const DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS = {
+  ...DEFAULT_SCHEMA_IMPORT_OPTIONS,
+  onEnter: (schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema =>
+    schema.type === "object" && schema.properties !== undefined && schema.additionalProperties === undefined ? { ...schema, additionalProperties: false } : schema,
+} satisfies SchemaRepresentation.FromJsonSchemaOptions
 
 export interface ModelServiceOptions {
   readonly timeoutMs?: number
@@ -141,7 +144,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
           description: `${tool.description} Execution: ${tool.execution ?? DEFAULT_METHOD_EXECUTION}.${tool.promiseTimeoutMs === undefined ? "" : ` Promise timeout: ${tool.promiseTimeoutMs}ms.`}`,
           parameters: Schema.toEncoded(SchemaRepresentation.fromJsonSchemaDocument(
             JsonSchema.fromSchemaDraft07(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(tool.inputSchema)),
-            settings.schemaImport ?? DEFAULT_SCHEMA_IMPORT_OPTIONS,
+            settings.schemaImport ?? DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS,
           )),
         }))),
         catch: RuntimeError.from,
