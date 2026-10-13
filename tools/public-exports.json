@@ -158,5 +158,6 @@
   "./deprecated/agent/projection/messages": "./src/deprecated/agent/projection/messages.ts",
   "./deprecated/agent/projection/transcript": "./src/deprecated/agent/projection/transcript.ts",
   "./deprecated/agent/runtime/resume": "./src/deprecated/agent/runtime/resume.ts",
-  "./deprecated/agent/runtime/turn": "./src/deprecated/agent/runtime/turn.ts"
+  "./deprecated/agent/runtime/turn": "./src/deprecated/agent/runtime/turn.ts",
+  "./platform/cloudflare/retry": "./src/platform/cloudflare/retry.ts"
 }
