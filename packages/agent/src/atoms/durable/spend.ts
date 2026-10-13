@@ -14,8 +14,8 @@ const SpendState = Schema.Struct({
 })
 const SpendEvent = Schema.Union([Event, ObservedCoreEvent])
 
-// spendState retains pending call attribution alongside ordered turn totals across checkpoint recovery.
-function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type, metadata: RecordMetadata): typeof SpendState.Type {
+// reduceSpend retains pending call attribution alongside ordered turn totals across checkpoint recovery.
+function reduceSpend(state: typeof SpendState.Type, event: typeof SpendEvent.Type, metadata: RecordMetadata): typeof SpendState.Type {
   if (metadata.recordedAt !== undefined) {
     let updated: Array<typeof TimeSpend.Type[number]> | undefined
     for (const timer of state.timers) {
@@ -92,17 +92,17 @@ function spendState(state: typeof SpendState.Type, event: typeof SpendEvent.Type
   }
 }
 
-const spend = durableAtom({
+export const spendState = durableAtom({
   name: "agent.spend", input: SpendEvent, schema: SpendState,
-  initial: { toolSpend: [], tokenSpend: [], usdSpend: [], timeSpend: [], timers: [], turns: [], models: [], tools: [] }, reduce: spendState,
+  initial: { toolSpend: [], tokenSpend: [], usdSpend: [], timeSpend: [], timers: [], turns: [], models: [], tools: [] }, reduce: reduceSpend,
 })
 
 // toolSpend records budget-counted tool calls per turn, including execution failures.
-export const toolSpend = atom(get => get(spend).toolSpend)
+export const toolSpend = atom(get => get(spendState).toolSpend)
 // tokenSpend sums recorded provider input and output tokens per turn, including compaction.
-export const tokenSpend = atom(get => get(spend).tokenSpend)
+export const tokenSpend = atom(get => get(spendState).tokenSpend)
 // usdSpend sums reported provider costs per turn; a missing cost makes that turn's total unknown.
-export const usdSpend = atom(get => get(spend).usdSpend)
+export const usdSpend = atom(get => get(spendState).usdSpend)
 
 // timeSpend records wall milliseconds from turn request to turn settlement at journal boundaries, including queueing and downtime; missing timestamps produce unknown totals.
-export const timeSpend = atom(get => get(spend).timeSpend)
+export const timeSpend = atom(get => get(spendState).timeSpend)

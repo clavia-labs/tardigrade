@@ -3,7 +3,7 @@ import { Schema } from "effect"
 import { ToolReturned } from "@clavia/tardigrade-agent/contracts/events"
 import { toolReturnedVersions } from "@clavia/tardigrade-agent/contracts/events/tool-returned/upcast"
 import { createEventLog, durableAtom, type Recorded } from "@clavia/tardigrade-core"
-import { trajectoryState, TrajectoryState } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
+import { reduceTrajectory, TrajectoryState } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
 
 const base = { type: "ToolReturned" as const, callId: "call", error: null }
 const content = [{ type: "text" as const, text: "Image captured" }, {
@@ -33,7 +33,7 @@ test("historical tool events upcast to content-only version one", () => {
 test("tool history reaches trajectory with literal text, media, and error semantics intact", () => {
   for (const payload of [{ output: "legacy" }, { content }, { output: "ignored", content }, { version: 1, content, error: "Capture failed" }]) {
     const log = createEventLog({ schema: ToolReturned, atoms: { trajectory: durableAtom({
-      name: "trajectory", input: ToolReturned, schema: TrajectoryState, initial: state, reduce: trajectoryState,
+      name: "trajectory", input: ToolReturned, schema: TrajectoryState, initial: state, reduce: reduceTrajectory,
     }) } })
     try {
       const records = JSON.parse(JSON.stringify([{ recordedAt: 10, event: { ...base, ...payload } }])) as readonly Recorded<ToolReturned>[]
