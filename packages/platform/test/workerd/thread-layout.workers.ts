@@ -81,3 +81,27 @@ test("a thread alarm restores checkpointed state and pending work without changi
   await flow.completed("parent", "read", "restored", 32)
   expect(await threadStub(instance, "sibling").records()).toEqual(sibling)
 })
+
+
+test("directory admission and a turn survive retryable provisioning and lookup resets", async () => {
+  const instance = "rpc-reset"
+  const actor = bindings.ACTORS.getByName(instance)
+  const flow = threadFlow(request => SELF.fetch(request), instance)
+  await actor.resetNextProvision("parent")
+  expect((await flow.request("", { name: "parent", initialState: { "layout.value": 32 } })).status).toBe(200)
+  await actor.resetNextLookup()
+  expect((await threadStub(instance, "parent").fetch(new Request(`https://layout.test/v1/actors/${instance}/threads/parent/methods/set`, {
+    method: "POST", headers: { "idempotency-key": "same-call", "content-type": "application/json" }, body: "73",
+  }))).status).toBe(202)
+  await flow.completed("parent", "set", "same-call", 73)
+  await flow.call("parent", "set", 73, "same-call", 73)
+  await flow.call("parent", "read", null, "read", 73)
+  const records = await threadStub(instance, "parent").records()
+  expect(records.filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
+  expect(records.filter(record => record.message?.id === "same-call")).toHaveLength(1)
+  await runInDurableObject(actor, async (_object, state) => {
+    const events = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events").toArray().map(row => JSON.parse(row.event).event.type)
+    expect(events.filter(type => type === "ThreadRegistered")).toHaveLength(1)
+    expect(events).not.toContain("ThreadFailed")
+  })
+})
