@@ -5,6 +5,9 @@ import { Effect, type Schema } from "effect"
 import { RuntimeError, type Recorded } from "@clavia/tardigrade-core"
 import { createJournalStore, createSupervisorStore, createThreadStore, SupervisorEvent, type ThreadCoordinate } from "@clavia/tardigrade-core"
 
+import { decodeSqlJournalRecord } from "../shared/sql-journal"
+import type { CheckpointChunk } from "../shared/checkpoint-chunks"
+
 const encoded = (value: string) => Buffer.from(value).toString("base64url")
 export const bunSupervisorPath = (storage: string, actor: string, instance: string) => join(storage, `${encoded(JSON.stringify([actor, instance]))}.sqlite`)
 export const bunThreadPath = (storage: string, coordinate: ThreadCoordinate) => join(`${bunSupervisorPath(storage, coordinate.actor, coordinate.instance)}.threads`, `${encoded(coordinate.thread)}.sqlite`)
@@ -17,7 +20,7 @@ function reader<Event extends object>(filename: string, actor: string) {
       if (!database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'experimental_events'").get()) return []
       return database.query<{ seq: number; event: string }, [string, number]>("SELECT seq, event FROM experimental_events WHERE actor = ? AND seq > ? ORDER BY seq").all(actor, after).map((row, index) => {
         if (row.seq !== after + index + 1) throw new RuntimeError("Invalid journal sequence")
-        return JSON.parse(row.event) as Recorded<Event>
+        return decodeSqlJournalRecord<Event>(row.event, () => database.query<CheckpointChunk, [string, number]>("SELECT ordinal, payload FROM experimental_event_chunks WHERE actor = ? AND seq = ? ORDER BY ordinal").all(actor, row.seq))
       })
     } finally { database.close() }
   }, catch: RuntimeError.from })

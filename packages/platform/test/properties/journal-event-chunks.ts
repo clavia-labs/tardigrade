@@ -7,6 +7,7 @@ import type { sqlJournal } from "../../src/shared/sql-journal"
 export async function journalEventChunks(fixture: {
   readonly open: () => ReturnType<typeof sqlJournal>
   readonly execute: (query: string) => Iterable<Record<string, unknown>>
+  readonly eventInlineBytes: number
   readonly maxRowBytes: number
 }) {
   const open = fixture.open
@@ -95,6 +96,18 @@ export async function journalEventChunks(fixture: {
   journal = open()
   same(await run(journal.read), [record, second])
   same(await run(journal.readCheckpoint), checkpoint)
+  const boundary = { event: { type: "Boundary", text: "" } }
+  const overhead = new TextEncoder().encode(JSON.stringify(boundary)).byteLength
+  const inline = { event: { ...boundary.event, text: "x".repeat(fixture.eventInlineBytes - overhead) } }
+  const chunked = { event: { ...inline.event, text: inline.event.text + "x" } }
+  await run(journal.append(2, [inline, chunked]))
+  same(await run(journal.readAfter(2)), [inline, chunked])
+  const stored = [...fixture.execute("SELECT seq, event FROM experimental_events WHERE seq >= 2 ORDER BY seq")]
+  same(JSON.parse(String(stored[0]!.event)), inline)
+  const header = JSON.parse(String(stored[1]!.event))
+  same(header.event, { type: "Boundary" })
+  assert(header.byteLength === fixture.eventInlineBytes + 1 && header.chunkCount > 0, "Inline threshold was ignored")
+  same([...fixture.execute("SELECT seq FROM experimental_events WHERE json_extract(event, '$.event.type') = 'Boundary' ORDER BY seq")].map(row => row.seq), [2, 3])
   fixture.execute(
     "DELETE FROM experimental_event_chunks WHERE seq=0 AND ordinal=1"
   )

@@ -1,25 +1,33 @@
 import type { Journal } from "@clavia/tardigrade-core"
 import type { EffectServiceClient } from "../fixtures/effect-service"
 import { bunEffectService } from "../fixtures/bun/effect-service"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import * as fc from "fast-check"
 import { operationLifecycle, operationLifecycleCases, defaultAttemptDeadline, attemptDeadlineCases, attemptDeadlineLifecycle, streamDeadlineCases, streamDeadlineLifecycle, operationRaceCases, operationRace } from "../properties/runtime/operation-lifecycle"
 import { RUNTIME_PROPERTY_OPTIONS, RUNTIME_PROPERTY_TEST_TIMEOUT_MS } from "../properties/runtime/config"
-import { test } from "bun:test"
+import { test, expect } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
-import { bunJournal } from "../../src/bun"
+import { join, dirname } from "node:path"
+import { bunJournal, observeBunThread } from "../../src/bun"
+import { bunThreadPath } from "../../src/bun/observe"
 import { pendingInputRecovery, cancellationInputRecovery, stoppedInputRecovery, cancellationStall, cancellationRetryRecovery } from "../properties/runtime/pending-input-recovery"
 import { checkpointStorage } from "../properties/checkpoint-storage"
 
 
 test("checkpointStorage", async () => {
   const directory = mkdtempSync(join(tmpdir(), "tardie-checkpoint-"))
-  const filename = join(directory, "thread.sqlite")
+  const coordinate = { actor: "fixture", instance: "default", thread: "storage" }
+  const filename = bunThreadPath(directory, coordinate)
+  mkdirSync(dirname(filename), { recursive: true })
   const db = new Database(filename, { create: true })
-  try { await checkpointStorage({ open: checkpointChunkBytes => bunJournal({ filename, actor: "events", checkpointChunkBytes }), execute: async query => db.query<Record<string, unknown>, []>(query).all() }) }
+  try {
+    await checkpointStorage({ open: checkpointChunkBytes => bunJournal({ filename, actor: "events", checkpointChunkBytes, eventInlineBytes: 1 }), execute: async query => db.query<Record<string, unknown>, []>(query).all() })
+    const observer = observeBunThread({ storage: directory, coordinate, schema: Schema.Struct({ type: Schema.Literal("Stored"), value: Schema.String }) })
+    try { await Effect.runPromise(observer.refresh); expect([...observer.records.get()].map(record => record.event)).toEqual(["first", "second", "pending", "settled"].map(value => ({ type: "Stored", value }))) }
+    finally { await Effect.runPromise(observer.close) }
+  }
   finally { db.close(); rmSync(directory, { recursive: true, force: true }) }
 })
 
