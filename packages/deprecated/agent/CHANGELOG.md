@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.47.1](https://github.com/clavia-labs/tardigrade/compare/v0.47.0...v0.47.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **cloudflare:** retry object RPCs ([#737](https://github.com/clavia-labs/tardigrade/issues/737)) ([cfe7c1a](https://github.com/clavia-labs/tardigrade/commit/cfe7c1aa0ab880053cf91b04ec87f78713938f67))
+* **core:** retain accepted inputs ([#743](https://github.com/clavia-labs/tardigrade/issues/743)) ([4370a06](https://github.com/clavia-labs/tardigrade/commit/4370a066611995ad4ac24faa9d31f691d907b708))
+* **platform:** wake cancelled effects ([#744](https://github.com/clavia-labs/tardigrade/issues/744)) ([1cba856](https://github.com/clavia-labs/tardigrade/commit/1cba8566c35dbf11c89a08c729afa7b9358c649b))
+
 ## [0.47.0](https://github.com/clavia-labs/tardigrade/compare/v0.46.0...v0.47.0) (2026-10-13)
 
 
