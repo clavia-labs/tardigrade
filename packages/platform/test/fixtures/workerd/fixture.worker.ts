@@ -103,5 +103,14 @@ export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByNam
   async wait() { await Effect.runPromise(this.store!.wait) }
   async checkpoint() { await Effect.runPromise(this.store!.checkpoint) }
   abort() { this.ctx.abort("Native input reset fixture") }
-  async dispose() { if (this.store) await Effect.runPromise(this.store.close); await Effect.runPromise(this.journal.close); await this.ctx.storage.deleteAlarm(); await this.external.configure({ holdSubmissionResponse: false, holdCancellationResponse: false }); await this.external.dispose() }
+  async dispose() {
+    try { await this.external.configure({ holdSubmissionResponse: false, holdCancellationResponse: false }) }
+    finally {
+      try { if (this.store) await Effect.runPromise(this.store.close) }
+      finally {
+        try { await Effect.runPromise(this.journal.close); await this.ctx.storage.deleteAlarm() }
+        finally { await this.external.dispose() }
+      }
+    }
+  }
 }
