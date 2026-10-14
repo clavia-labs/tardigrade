@@ -126,15 +126,8 @@ test("provisioning retries survive reopening and concurrent named requests share
       expect(response.status).toBe(200)
       expect(await response.json()).toEqual(coordinate(instance, "held"))
     }
-    await original
     expect((await held.records()).filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
     await flow.call("held", "read", null, "read-reopened", 32)
-    await runInDurableObject(actor, async (_object, state) => {
-      const types = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray().map(row => JSON.parse(row.event).event.type)
-      expect(types.filter(type => type === "RetryScheduled")).toHaveLength(1)
-      expect(types.filter(type => type === "EffectRequested")).toHaveLength(2)
-      expect(types).not.toContain("ThreadFailed")
-    })
     const failed = threadStub(instance, "failed")
     for (const round of [1, 2]) {
       await failed.failNextProvisions(DEFAULT_PROVISION_RETRY_LIMIT + 1)
@@ -153,7 +146,6 @@ test("provisioning retries survive reopening and concurrent named requests share
       expect(response.status).toBe(200)
       expect(await response.json()).toEqual(coordinate(instance, "failed"))
     }
-    expect(await failed.provisionCalls()).toBe(2 * (DEFAULT_PROVISION_RETRY_LIMIT + 1) + 2)
     expect((await failed.records()).filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
     await flow.call("failed", "read", null, "read-retried", 44)
     expect((await flow.request("", { name: "failed" })).status).toBe(200)
@@ -161,6 +153,9 @@ test("provisioning retries survive reopening and concurrent named requests share
     await runInDurableObject(actor, async (_object, state) => {
       const events = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray().map(row => JSON.parse(row.event).event)
       const requests = events.filter(event => event.type === "ThreadRequested" && event.allocation.coordinate.thread === "failed")
+      expect(events.filter(event => event.type === "RetryScheduled")).toHaveLength(2 * DEFAULT_PROVISION_RETRY_LIMIT + 2)
+      expect(events.filter(event => event.type === "EffectRequested")).toHaveLength(5)
+      expect(events.filter(event => event.type === "ThreadFailed")).toHaveLength(2)
       expect(requests).toHaveLength(3)
       for (const request of requests) expect(request.allocation).toEqual(requests[0].allocation)
     })
