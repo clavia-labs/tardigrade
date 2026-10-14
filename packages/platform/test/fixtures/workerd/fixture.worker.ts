@@ -18,7 +18,7 @@ import { DurableObject } from "cloudflare:workers"
 export class TestPromiseResolver extends DurableObject { alarm(): Promise<void> { return Promise.resolve() } }
 
 import { Context, Effect, Layer, Schema } from "effect"
-import { act, createActorStore, defineActor, effectAtom, Promises, RuntimeError, Scheduler, createWatchdog, createScheduler, effectKey, type EffectRef } from "@clavia/tardigrade-core"
+import { act, createActorStore, defineActor, effectAtom, Promises, RuntimeError, Scheduler, createWatchdog, createScheduler, effectKey, type EffectRef, type WatchdogEntry } from "@clavia/tardigrade-core"
 import { objectJournal } from "../../../src/cloudflare/objects"
 import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
 import { cloudflareSchedulerStorage } from "../../../src/cloudflare/scheduler"
@@ -27,7 +27,7 @@ const NativeJob = act({ name: "native-input", input: Schema.String, success: Sch
 const NativeEvent = Schema.Struct({ type: Schema.Literal("Unused") })
 type NativeConfig = { readonly input: string; readonly mode: "pending" | "deferred" | "complete"; readonly cleanup: "retry" | "success"; readonly attemptTimeoutMs?: number | null }
 const nativeTarget = { actor: "native-input", instance: "main", thread: "one" }
-const nativeRecoveryPolicy = { keepAliveIntervalMs: 250, retryIntervalMs: 250, maxRetryIntervalMs: 250 }
+const nativeRecoveryPolicy = { attemptTimeoutMs: 1_000, keepAliveIntervalMs: 250, retryIntervalMs: 250, maxRetryIntervalMs: 250 }
 type NativeCall = { readonly kind: "execution" | "cleanup"; readonly input: string; readonly ref: EffectRef; readonly instance: string }
 
 export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByName(name: string): { fetch(request: Request): Promise<Response> } } }> {
@@ -75,6 +75,7 @@ export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByNam
   private recoverStore() {
     return Effect.gen({ self: this }, function* () {
       if (!this.store) {
+        if (yield* Effect.promise(() => this.ctx.storage.get<boolean>("hold-recovery"))) return yield* Effect.never
         const config = yield* Effect.tryPromise({ try: () => this.ctx.storage.get<NativeConfig>("config"), catch: RuntimeError.from })
         if (!config) return yield* Effect.fail(new RuntimeError("Native lifecycle configuration is missing"))
         this.store = yield* Effect.tryPromise({ try: () => this.createStore(config.input, config.mode, config.cleanup, config.attemptTimeoutMs), catch: RuntimeError.from })
@@ -86,6 +87,7 @@ export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByNam
   }
   async alarm() { await Effect.runPromise(this.watchdog.restore.pipe(Effect.andThen(this.scheduler.alarm))) }
   async allowCleanup() { await this.ctx.storage.put("allow-cleanup", this.instance) }
+  async holdRecovery(hold: boolean) { await this.ctx.storage.put("hold-recovery", hold) }
   async configure(config: NativeConfig) { await this.ctx.storage.put("config", config); if (config.mode === "complete") await this.external.configure({ holdExecution: false }) }
   async remoteControl(policy: Partial<EffectServicePolicy>) { await this.external.configure(policy) }
   async open(input: string, mode: "pending" | "deferred" | "complete", cleanup: "retry" | "success", attemptTimeoutMs?: number | null) {
@@ -96,7 +98,7 @@ export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByNam
     return this.instance
   }
   async state() {
-    return { instance: this.instance, service: this.ctx.id.toString(), externalJobs: await this.external.jobs(), records: await Effect.runPromise(this.journal.read), inputs: await Effect.runPromise(this.journal.readInputs), calls: await this.ctx.storage.get<readonly NativeCall[]>("calls") ?? [] }
+    return { instance: this.instance, service: this.ctx.id.toString(), externalJobs: await this.external.jobs(), records: await Effect.runPromise(this.journal.read), inputs: await Effect.runPromise(this.journal.readInputs), calls: await this.ctx.storage.get<readonly NativeCall[]>("calls") ?? [], watchdog: [...(await this.ctx.storage.list<WatchdogEntry>({ prefix: "tardie:watchdog:" })).values()], alarmAt: await this.ctx.storage.getAlarm() }
   }
   async cancel(ref: EffectRef) { await Effect.runPromise(this.store!.cancel(ref, "stop")) }
   async resume() { await Effect.runPromise(this.store!.resume) }

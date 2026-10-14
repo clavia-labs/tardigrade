@@ -182,14 +182,17 @@ for (const result of ["success", "failure", "died"] as const) {
 test("external cancellation survives actor abort and lost acknowledgement", async () => {
   const namespace = (env as unknown as { INPUT_LIFECYCLE: DurableObjectNamespace<InputLifecycleDO> }).INPUT_LIFECYCLE
   let stub = namespace.getByName("external-acknowledgement")
+  let observed: Awaited<ReturnType<InputLifecycleDO["state"]>> | undefined
+  const observe = async () => { observed = await stub.state(); return observed }
   try {
     const instance = await testStage("opening the actor", () => stub.open("independent-work", "deferred", "success"))
-    const running = await testStage("waiting for external execution", () => waitFor(() => stub.state(), state => state.externalJobs[0]?.status === "running"))
+    const running = await testStage("waiting for external execution", () => waitFor(observe, state => state.externalJobs[0]?.status === "running"))
     await testStage("holding the cancellation response", () => stub.remoteControl({ holdCancellationResponse: true, responseTimeoutMs: RUNTIME_PROPERTY_TEST_TIMEOUT_MS }))
     await testStage("accepting cancellation", () => stub.cancel(running.inputs[0]!.ref))
-    const stopped = await testStage("waiting for the external job to stop", () => waitFor(() => stub.state(), state => state.externalJobs[0]?.status === "cancelled"))
+    const stopped = await testStage("waiting for the external job to stop", () => waitFor(observe, state => state.externalJobs[0]?.status === "cancelled"))
     expect(stopped.inputs).toHaveLength(1)
     expect(stopped.records.some(record => record.event.type === "CancellationSettled")).toBe(false)
+    await testStage("holding cold recovery", () => stub.holdRecovery(true))
     // The service has stopped the job; its response remains withheld across both DO resets.
     const services = (env as unknown as { EFFECT_SERVICE: DurableObjectNamespace<EffectServiceDO> }).EFFECT_SERVICE
     await testStage("aborting the actor", async () => {
@@ -199,18 +202,28 @@ test("external cancellation survives actor abort and lost acknowledgement", asyn
       try { await services.getByName(stopped.service).abort() } catch (error) { expect(String(error)).toContain("External effect service reset fixture") }
     })
     stub = namespace.getByName("external-acknowledgement")
-    await testStage("observing the new actor instance", () => waitFor(() => stub.state(), state => state.instance !== instance))
-    const retried = await testStage("waiting for recovered cleanup", () => waitFor(() => stub.state(), state => (state.externalJobs[0]?.cancellationRequests ?? 0) >= 2))
+    await testStage("observing the new actor instance", () => waitFor(observe, state => state.instance !== instance))
+    const charged = await testStage("waiting for durable recovery admission", () => waitFor(observe, state => state.watchdog.some(entry => entry.attempts > (stopped.watchdog[0]?.attempts ?? 0))))
+    expect(charged.inputs).toHaveLength(1)
+    expect(charged.alarmAt).not.toBeNull()
+    await testStage("releasing cold recovery", () => stub.holdRecovery(false))
+    await testStage("aborting the admitted recovery", async () => {
+      try { await stub.abort() } catch (error) { expect(String(error)).toContain("Native input reset fixture") }
+    })
+    stub = namespace.getByName("external-acknowledgement")
+    const retried = await testStage("waiting for recovered cleanup", () => waitFor(observe, state => (state.externalJobs[0]?.cancellationRequests ?? 0) >= 2))
     expect(retried.instance).not.toBe(instance)
     expect(retried.inputs).toHaveLength(1)
     expect(retried.externalJobs[0]!.executions).toBe(1)
     expect(retried.externalJobs[0]!.cancellationAcknowledgements).toBe(1)
     await testStage("releasing the cancellation response", () => stub.remoteControl({ holdCancellationResponse: false }))
-    const completed = await testStage("waiting for durable acknowledgement and input release", () => waitFor(() => stub.state(), state => state.inputs.length === 0))
+    const completed = await testStage("waiting for durable acknowledgement and input release", () => waitFor(observe, state => state.inputs.length === 0))
     expect(completed.externalJobs[0]!.status).toBe("cancelled")
     expect(completed.externalJobs[0]!.outputs).toEqual([])
     expect(completed.externalJobs[0]!.history.filter(event => event === "cancelled")).toHaveLength(1)
     expect(completed.records.filter(record => record.event.type === "CancellationSettled")).toHaveLength(1)
+  } catch (cause) {
+    throw new Error(`Cancellation recovery state: ${JSON.stringify(observed)}`, { cause })
   } finally { await testStage("disposing the actor fixture", () => stub.dispose()) }
 }, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
 
