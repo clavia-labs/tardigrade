@@ -2,7 +2,9 @@ import { isDeepStrictEqual } from "node:util"
 import type { RecoveryState } from "./watchdog"
 import type { PromisePolicy } from "./promises"
 import type { InitialState } from "../initialise"
-import { Context, Effect, Exit, Random, Semaphore } from "effect"
+import { Context, Deferred, Effect, Exit, Random, Schema, Semaphore } from "effect"
+import { durablePromise } from "../atoms/promise"
+import { EffectExecution } from "../atoms/effect"
 import { RuntimeError } from "../runtime/effects"
 import type { ChildPlacement, ThreadCoordinate } from "../actor/thread"
 import type { Journal } from "./journal"
@@ -54,7 +56,14 @@ export function createSupervisor(options: {
       actorContext: () => Context.empty(),
       services: current => {
         runtime = current
-        return Provision.layer(allocation => options.provision(allocation).pipe(Effect.as(null), Effect.mapError(String)))
+        return Provision.layer(allocation => Effect.gen(function* () {
+          const execution = yield* EffectExecution
+          const reply = durablePromise(execution.ref, { success: Schema.Null, error: Schema.String })
+          const handle = yield* execution.fork(options.provision(allocation).pipe(
+            Effect.match({ onFailure: error => reply.fail(String(error)), onSuccess: () => reply.succeed(null) }),
+          ))
+          return Provision.defer(handle)
+        }).pipe(Effect.mapError(String)))
       },
     })
     return { ...store, send: runtime.send }
@@ -72,7 +81,7 @@ export function createSupervisor(options: {
     let pending = supervisors.get(instance)
     if (!pending) {
       pending = yield* Effect.cached(openSupervisor(instance).pipe(Effect.flatMap(supervisor =>
-        supervisor.resume.pipe(Effect.andThen(supervisor.wait), Effect.as(supervisor), Effect.onError(() => supervisor.close)),
+        supervisor.resume.pipe(Effect.as(supervisor), Effect.onError(() => supervisor.close)),
       ), Effect.onError(() => Effect.sync(() => { supervisors.delete(instance) }))))
       supervisors.set(instance, pending)
     }
@@ -99,20 +108,30 @@ export function createSupervisor(options: {
       if (requestedPlacement !== undefined && existing.placement !== requestedPlacement) return yield* Effect.fail(new RuntimeError("Named thread already has different placement"))
       if (suppliedName === undefined) return yield* Effect.fail(new RuntimeError("Generated thread name already exists; supply a different name or generator"))
       yield* supervisor.resume
-      yield* supervisor.wait
-      const allocated = supervisor.getState().view.threads.find(entry => entry.coordinate.thread === existing.coordinate.thread)
-      if (allocated?.status !== "registered") return yield* Effect.fail(new RuntimeError(allocated?.reason ?? "Thread provisioning did not complete"))
-      return Object.freeze({ ...existing.coordinate })
+      return { supervisor, coordinate: existing.coordinate }
     }
     const thread = directory.some(entry => entry.coordinate.thread === name) ? `${name}-${yield* randomName}` : name
     if (directory.some(entry => entry.coordinate.thread === thread)) return yield* Effect.fail(new RuntimeError("Thread identity collision"))
     const coordinate = { actor: options.actor, instance, thread }
     yield* supervisor.send([{ type: "ThreadRequested", allocation: { coordinate, name, parent: parent?.thread ?? null, depth: ancestor ? ancestor.depth + 1 : 0, placement, ...(initialState === undefined ? {} : { initialState }) } }])
-    yield* supervisor.wait
-    const allocated = supervisor.getState().view.threads.find(entry => entry.coordinate.thread === coordinate.thread)
-    if (allocated?.status !== "registered") return yield* Effect.fail(new RuntimeError(allocated?.reason ?? "Thread provisioning did not complete"))
+    return { supervisor, coordinate }
+  })).pipe(Effect.flatMap(({ supervisor, coordinate }) => Effect.gen(function* () {
+    const registered = Deferred.makeUnsafe<void, Error>()
+    const check = () => {
+      const allocated = supervisor.getState().view.threads.find(entry => entry.coordinate.thread === coordinate.thread)
+      if (allocated?.status === "registered") Deferred.doneUnsafe(registered, Effect.void)
+      else if (allocated?.status === "failed") Deferred.doneUnsafe(registered, Effect.fail(new RuntimeError(allocated.reason ?? "Thread provisioning did not complete")))
+    }
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => { const stop = supervisor.subscribe(check); check(); return stop }),
+      () => Effect.raceFirst(Deferred.await(registered), supervisor.wait.pipe(Effect.andThen(Effect.suspend(() => {
+        check()
+        return Deferred.isDoneUnsafe(registered) ? Deferred.await(registered) : Effect.fail(new RuntimeError("Thread provisioning did not complete"))
+      })))),
+      stop => Effect.sync(stop),
+    )
     return Object.freeze({ ...coordinate })
-  }))
+  })))
   const lookup = (coordinate: ThreadCoordinate) => Effect.gen(function* () {
     if (coordinate.actor !== options.actor) return yield* Effect.fail(new RuntimeError(`Unknown actor: ${coordinate.actor}`))
     const supervisor = yield* supervisorFor(coordinate.instance)

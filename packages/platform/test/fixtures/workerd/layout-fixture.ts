@@ -1,5 +1,5 @@
 import { Context, Deferred, Effect, Schema } from "effect"
-import { act, actorMethod, defineActor, durableAtom, effectAtom, event, Invocation, Supervisor, ThreadCoordinate, EffectExecution, durablePromise } from "@clavia/tardigrade-core"
+import { act, actorMethod, defineActor, durableAtom, effectAtom, event, Invocation, Supervisor, ThreadCoordinate, EffectExecution, durablePromise, type ThreadCreated, type InitialState } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
 import { createActorWorker, cloudflareThreadName } from "../../../src/cloudflare"
 
@@ -74,9 +74,21 @@ export class LayoutActorDO extends worker.ActorObject {
   }
 }
 export class LayoutThreadDO extends worker.ThreadObject {
-  override async provision(...args: Parameters<InstanceType<typeof worker.ThreadObject>["provision"]>) {
-    await super.provision(...args)
-    if (provisionResets.delete(cloudflareThreadName(args[0].address))) throw Object.assign(new Error("Durable Object reset because its code was updated."), { retryable: true })
+  private provisionRelease: Deferred.Deferred<void> | undefined
+  private provisionEntered = false
+  holdProvision() { this.provisionRelease = Deferred.makeUnsafe<void>() }
+  provisioning() { return this.provisionEntered }
+  async releaseProvision() {
+    if (this.provisionRelease) await Effect.runPromise(Deferred.succeed(this.provisionRelease, undefined))
+    this.provisionRelease = undefined
+  }
+  override async provision(created: ThreadCreated, initialState?: InitialState) {
+    this.provisionEntered = true
+    if (created.address.instance.startsWith("parallel-") && created.address.thread === "failed") throw new Error("injected provision failure")
+    if (this.provisionRelease) await Effect.runPromise(Deferred.await(this.provisionRelease))
+    if (created.address.instance.startsWith("parallel-")) await Effect.runPromise(Effect.sleep(200))
+    await super.provision(created, initialState)
+    if (provisionResets.delete(cloudflareThreadName(created.address))) throw Object.assign(new Error("Durable Object reset because its code was updated."), { retryable: true })
   }
   async wake() {
     await Effect.runPromise(cloudflareWatchdogStorage(this.ctx.storage).transaction(tx => Effect.gen(function* () {
