@@ -33,7 +33,7 @@ const acceptedHistory = (text = "x".repeat(4096)) => {
   return { log, snapshot, ref, text }
 }
 
-test("digest replay reconstructs pending input and rejects changed proposals before execution", () => {
+test("digest replay reconstructs pending input and recovers changed proposals", () => {
   const { log, snapshot, text } = acceptedHistory()
   const restored = createEventLog(setup())
   const changed = createEventLog(setup("changed"))
@@ -41,7 +41,7 @@ test("digest replay reconstructs pending input and rejects changed proposals bef
     const replay = restored.replay(snapshot.records)
     expect(replay.effects()[0]!.request.input).toEqual({ system: "original", text })
     expect(replay.pending()[0]!.request.input).toEqual({ system: "original", text })
-    expect(() => changed.replay(snapshot.records)).toThrow("differs from its proposal")
+    expect(changed.replay(snapshot.records).pending()[0]!.request.input).toEqual({ system: "changed", text })
     const badExecutor = snapshot.records.slice().map(record => record.event.type === "EffectRequested" ? { ...record, event: { ...record.event, request: { ...record.event.request, act: "changed" } } } : record)
     expect(() => restored.replay(badExecutor)).toThrow()
     const observation = replay.get(atom(get => {

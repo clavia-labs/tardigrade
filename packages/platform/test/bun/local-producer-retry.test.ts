@@ -3,12 +3,14 @@ import { Context, Deferred, Effect, Schema } from "effect"
 import { act, defineActor, durablePromise, effectAtom, EffectExecution, ExecutionResult, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
 import { createTestStore } from "../properties/runtime/store"
 
-test("reopening retries the local effect and recreates its producer with the original deadline", async () => {
+test("replacement input retries the local promise producer with the original deadline", async () => {
   const Event = Schema.Struct({ type: Schema.Literal("Unused") })
   type Event = typeof Event.Type
-  const Job = act({ name: "producer.retry", input: Schema.Null, success: Schema.String, failure: Schema.String })
+  let imageInput = "v1"
+  const inputs: string[] = []
+  const Job = act({ name: "producer.retry", input: Schema.String, success: Schema.String, failure: Schema.String })
   const actor = defineActor("producer-retry", Effect.sync(() => {
-    const request = Job.request({ input: null })
+    const request = Job.request({ input: imageInput })
     return { schema: Event, atom: effectAtom(get => {
       const view = get(request.result)
       return { view, events: {}, acts: view.status === "pending" ? { job: request } : {} }
@@ -24,7 +26,8 @@ test("reopening retries the local effect and recreates its producer with the ori
     append: (expected, entries) => Effect.sync(() => { expect(expected).toBe(records.length); records.push(...entries) }),
     appendWithCheckpoint: () => Effect.die("Unexpected checkpoint"),
   }
-  const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, promises: { timeoutMs: refs.length ? 5_000 : 1_000 }, actorContext: Context.pick(), services: () => Job.layer(() => Effect.gen(function* () {
+  const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, promises: { timeoutMs: refs.length ? 5_000 : 1_000 }, actorContext: Context.pick(), services: () => Job.layer(input => Effect.gen(function* () {
+    inputs.push(input)
     const execution = yield* EffectExecution
     refs.push(execution.ref)
     const producer = yield* Deferred.make<string>()
@@ -45,11 +48,13 @@ test("reopening retries the local effect and recreates its producer with the ori
     originalDeadline = envelope.type === "promise" ? envelope.deadlineAt : undefined
     expect(originalDeadline).toBeDefined()
   } finally { await Effect.runPromise(first.close) }
+  imageInput = "v2"
   const reopened = await Effect.runPromise(open())
   try {
     await Effect.runPromise(reopened.wait.pipe(Effect.timeout(2_000)))
     expect(reopened.getState().view).toEqual({ status: "fulfilled", value: "recreated" })
     expect(refs).toHaveLength(2)
+    expect(inputs).toEqual(["v1", "v2"])
     expect(refs[1]).toEqual(refs[0])
     expect(producers[1]).not.toBe(producers[0])
     expect(records.filter(({ event }) => event.type === "EffectRequested")).toHaveLength(1)
@@ -60,4 +65,11 @@ test("reopening retries the local effect and recreates its producer with the ori
     expect(envelope.type === "promise" && envelope.deadlineAt).toBe(originalDeadline)
     expect(records.filter(({ event }) => event.type === "PromiseSettled")).toHaveLength(1)
   } finally { await Effect.runPromise(reopened.close) }
+  imageInput = "v3"
+  const settled = await Effect.runPromise(open())
+  try {
+    await Effect.runPromise(settled.wait.pipe(Effect.timeout(2_000)))
+    expect(settled.getState().view).toEqual({ status: "fulfilled", value: "recreated" })
+    expect(inputs).toEqual(["v1", "v2"])
+  } finally { await Effect.runPromise(settled.close) }
 })

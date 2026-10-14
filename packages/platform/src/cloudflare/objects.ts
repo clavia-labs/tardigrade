@@ -17,7 +17,7 @@ import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 import { HttpRouter } from "effect/unstable/http"
-import { hostRoutes, publicError } from "../shared/http"
+import { errorLogFields, hostRoutes, publicError } from "../shared/http"
 
 export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const
 export const DEFAULT_CLOUDFLARE_CHILD_PLACEMENT = "independent" as const
@@ -90,7 +90,7 @@ async function objectResponse(request: Request, handle: () => Promise<Response>)
   try { return await handle() }
   catch (error) {
     const response = publicError(error)
-    await Effect.runPromise(Effect.logError("HTTP request failed", error))
+    await Effect.runPromise(Effect.logError("HTTP request failed", error).pipe(Effect.annotateLogs(errorLogFields(error))))
     return Response.json(response.body, { status: response.status })
   }
 }

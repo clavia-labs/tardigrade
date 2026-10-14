@@ -25,6 +25,25 @@ class HttpError extends Error {
 
 type PublicHttpError = Readonly<{ code: string; message: string }>
 
+// errorLogFields keeps the underlying failure visible to platform logs while publicError retains the stable response contract.
+export const errorLogFields = (error: unknown): Readonly<Record<string, string>> => {
+  const fields: Record<string, string> = {}
+  let current: unknown = error
+  let depth = 0
+  while (current !== undefined && current !== null && depth < 4) {
+    if (current instanceof Error) {
+      if (depth === 0) { fields.errorName = current.name; fields.errorMessage = current.message }
+      else { fields[`cause${depth}Name`] = current.name; fields[`cause${depth}Message`] = current.message }
+      current = current.cause
+    } else {
+      fields[depth === 0 ? "errorMessage" : `cause${depth}Message`] = String(current)
+      break
+    }
+    depth++
+  }
+  return fields
+}
+
 // publicError converts internal failures into the stable error contract exposed by HTTP hosts.
 export const publicError = (error: unknown): Readonly<{ status: number; body: PublicHttpError }> => {
   if (error instanceof HttpError) return { status: error.status, body: { code: error.code, message: error.message } }
@@ -42,6 +61,7 @@ const respond = <Error, Services>(handler: Effect.Effect<HttpServerResponse.Http
     yield* Effect.logError("HTTP request failed", error).pipe(Effect.annotateLogs({
       code: response.body.code,
       status: response.status,
+      ...errorLogFields(error),
     }))
     return HttpServerResponse.jsonUnsafe(response.body, { status: response.status })
   })),

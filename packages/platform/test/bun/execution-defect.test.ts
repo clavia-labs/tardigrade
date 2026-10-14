@@ -15,6 +15,35 @@ const starts = durableAtom({ name: "defect.starts", input: Started,
   schema: Schema.Array(Schema.Struct({ id: Schema.String, mode: Mode, origin: Schema.Finite })), initial: [],
   reduce: (state, entry, _, origin) => [...state, { id: entry.id, mode: entry.mode, origin }],
 })
+let replayVersion = "v1"
+let replayComplete = false
+let replayAttempts = 0
+const replayJob = act({ name: "test.replay", input: Schema.String, success: Schema.String, failure: Schema.String })
+const replayActor = defineActor("replay-changed-pending", Effect.sync(() => {
+  const requests = new Map<string, ReturnType<typeof replayJob.request>>()
+  const requestFor = (entry: { readonly id: string; readonly origin: number }) => {
+    let request = requests.get(entry.id)
+    if (!request) {
+      request = replayJob.request({ input: replayVersion, origin: entry.origin, onSettled: () => [Finished.make({ id: entry.id })] })
+      requests.set(entry.id, request)
+    }
+    return request
+  }
+  return {
+    schema: Schema.Union([Started, Finished]),
+    atom: effectAtom(get => ({ view: null, events: {}, acts: Object.fromEntries(get(starts).map(entry => [entry.id, requestFor(entry)])) })),
+    methods: { run: actorMethod({ inputSchema: Mode, outputSchema: Schema.String,
+      onReceive: Started.from((mode, context) => ({ id: context.id, mode })),
+      result: (_, get, context) => {
+        const entry = get(starts).find(entry => entry.id === context.id)
+        if (!entry) return undefined
+        const result = get(requestFor(entry).result)
+        return result.status === "fulfilled" ? { status: "completed", output: result.value } : result.status === "rejected" ? { status: "failed", error: typeof result.reason === "object" && result.reason !== null && "code" in result.reason ? String(result.reason.code) : JSON.stringify(result.reason) } : undefined
+      },
+    }) },
+  }
+}))
+
 const actor = defineActor("execution-defect", Effect.sync(() => {
   const requests = new Map<string, ReturnType<typeof Job.request>>()
   const requestFor = (entry: { readonly id: string; readonly mode: typeof Mode.Type; readonly origin: number }) => {
@@ -41,6 +70,40 @@ const actor = defineActor("execution-defect", Effect.sync(() => {
     }) },
   }
 }))
+
+test("a changed pending effect input replays and retries on the replacement actor", async () => {
+  const open = (events: readonly RuntimeEvent<Event>[]) => Effect.runPromise(createActorStore({
+    actor: replayActor, events, actorContext: Context.pick(), services: () => replayJob.layer(() => Effect.suspend(() => {
+      replayAttempts++
+      return replayComplete ? Effect.succeed("ok") : Effect.interrupt
+    })),
+  }))
+  // The first image starts the effect and is interrupted before it can settle.
+  replayVersion = "v1"
+  replayComplete = false
+  let store = await open([Started.make({ id: "changed", mode: "interrupt" })])
+  try {
+    await Effect.runPromise(store.wait)
+    const history = [...store.snapshot().events]
+    expect(history.some(event => event.type === "EffectRequested")).toBe(true)
+    await Effect.runPromise(store.close)
+    const firstAttempts = replayAttempts
+    // The replacement image proposes a different input. It must retry the unfinished effect;
+    // settled effects retain their recorded results.
+    replayVersion = "v2"
+    replayComplete = true
+    store = await open(history)
+    await Effect.runPromise(store.wait)
+    expect(replayAttempts).toBe(firstAttempts + 1)
+    expect([...store.snapshot().events].some(event => event.type === "EffectSettled")).toBe(true)
+    const settledHistory = [...store.snapshot().events]
+    await Effect.runPromise(store.close)
+    replayVersion = "v3"
+    store = await open(settledHistory)
+    await Effect.runPromise(store.wait)
+    expect(replayAttempts).toBe(firstAttempts + 1)
+  } finally { await Effect.runPromise(store.close) }
+})
 
 test("execution defects fail waiting callers and HTTP status durably without entering the declared failure channel", async () => {
   const storage = await mkdtemp(join(tmpdir(), "tardie-execution-defect-"))

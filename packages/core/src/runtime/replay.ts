@@ -148,8 +148,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const coreSettlements = new Map<string, EffectSettled>()
     const coreCancellations = new Map<string, EffectCancelled>()
     const promiseSettlements = new Map<string, PromiseSettled>()
-    const concluded = new Set([...[...history].map(record => record.event), ...(seed?.effects.flatMap(entry => entry.settlement ?? []) ?? []), ...(seed?.promises ?? [])].flatMap(event =>
-      Schema.is(PromiseSettled)(event) || (Schema.is(EffectSettled)(event) && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value")) ? [effectKey(event.ref)] : []))
     const retries = new Map<string, { readonly position: number; readonly event: RetryScheduled }[]>()
     const retry = (ref: EffectRef) => retries.get(effectKey(ref))?.at(-1)?.event
     const retryAt = (ref: EffectRef, position: number) => {
@@ -357,7 +355,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         executionDeclarations.set(proposal.identity, prepared.stored)
         if (ref) {
           const recorded = coreRequests.get(effectKey(ref))
-          if (!recorded || recorded.origin !== proposal.origin || (!concluded.has(effectKey(ref)) && recorded.request !== prepared.stored && !matchesPrepared(recorded.request, prepared))) throw new Error("Restored effect request differs from its proposal")
+          if (!recorded || recorded.origin !== proposal.origin) throw new Error("Restored effect request differs from its proposal")
           const key = effectKey(ref)
           const settlement = coreSettlements.get(key)
           const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !promiseSettlements.has(key)
@@ -409,8 +407,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const candidates = effects().filter(work => !work.ref && work.atom === event.ref.atom && work.request.act === event.ref.act && work.origin === event.origin)
           if (candidates.length > 1) throw new Error("Calls to the same act require distinct origins")
           const offered = candidates[0]
-          const offeredPrepared = offered ? preparedRequests.get(offered.request) : undefined
-          if (!offered || (!concluded.has(key) && offeredPrepared?.stored !== event.request && !(offeredPrepared ? matchesPrepared(event.request, offeredPrepared) : matchesRequest(event.request, offered.request)))) throw new Error("Effect request differs from its proposal")
+          // An accepted effect with no terminal result is interrupted work. Its producer may
+          // have run on an older actor image, so the replacement may rebuild its input under
+          // the current image. Settled effects retain their recorded results.
+          if (!offered) throw new Error("Effect request differs from its proposal")
           const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
           rememberOrigin(event)
