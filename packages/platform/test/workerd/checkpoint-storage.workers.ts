@@ -81,7 +81,8 @@ for (const reset of ["evict", "abort"] as const) {
           await waitFor(() => stub.state(), value => value.records.some(record => record.event.type === "RetryScheduled" && record.event.phase === "cancellation"))
           await stub.checkpoint()
         }
-        await stub.configure({ input: "replacement proposal", mode: cleanup ? "deferred" : "complete", cleanup: "success" })
+        await stub.configure({ input: "replacement proposal", mode: cleanup ? "deferred" : "complete", cleanup: cleanup ? "retry" : "success" })
+        if (cleanup) await stub.allowCleanup()
         await restart()
         expect((await stub.state()).instance).not.toBe(instance)
         await waitFor(() => stub.state(), value => value.inputs.length === 0)
@@ -128,29 +129,6 @@ async function withEffectService(work: (journal: Journal<{ readonly type: "Unuse
 
 test("operation lifecycle crosses recovery boundaries", () => fc.assert(fc.asyncProperty(operationLifecycleCases, scenario =>
   withEffectService((journal, service) => operationLifecycle(journal, scenario, service))), RUNTIME_PROPERTY_OPTIONS), RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
-
-for (const reset of ["evict", "abort"] as const) {
-  test(`native ${reset} leaves cleanup recovery to persisted alarms`, async () => {
-    const namespace = (env as unknown as { INPUT_LIFECYCLE: DurableObjectNamespace<InputLifecycleDO> }).INPUT_LIFECYCLE
-    let stub = namespace.getByName(`alarm-${reset}`)
-    const instance = await stub.open("alarm-owned-input", "deferred", "retry", reset === "evict" ? null : undefined)
-    try {
-      const submitted = await waitFor(() => stub.state(), state => state.records.some(record => record.event.type === "EffectSettled"))
-      await stub.cancel(submitted.inputs[0]!.ref)
-      await waitFor(() => stub.state(), state => state.records.some(record => record.event.type === "RetryScheduled"))
-      await stub.allowCleanup()
-      if (reset === "evict") await evictDurableObject(stub)
-      else { try { await stub.abort() } catch (error) { expect(String(error)).toContain("Native input reset fixture") } }
-      stub = namespace.getByName(`alarm-${reset}`)
-      // state observes storage without opening the runtime; persisted alarms own recovery.
-      const recovered = await waitFor(() => stub.state(), state => state.inputs.length === 0)
-      expect(recovered.instance).not.toBe(instance)
-      expect(recovered.calls.at(-1)!.instance).toBe(recovered.instance)
-      expect(recovered.records.filter(record => record.event.type === "CancellationSettled")).toHaveLength(1)
-      expect(recovered.calls.every(call => call.input === "alarm-owned-input")).toBe(true)
-    } finally { await stub.dispose() }
-  })
-}
 
 for (const result of ["success", "failure", "died"] as const) {
   test(`terminal cleanup ${result} cancels its retry wake`, async () => {

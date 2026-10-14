@@ -177,7 +177,7 @@ test("host SSE identifies the thread and client disconnect leaves execution runn
 for (const mode of ["direct", "submit", "fork"] as const) {
   for (const timeoutMs of [DEFAULT_ATTEMPT_TIMEOUT_MS, 120_000]) {
     test(`${mode} work uses the framework deadline (${timeoutMs}ms)`, () => Effect.runPromise(Effect.gen(function* () {
-      const Job = act({ name: "test.default-deadline", input: Schema.Null, success: Schema.Null, failure: Schema.String })
+      const Job = act({ name: "test.default-deadline", input: Schema.Null, success: Schema.Null, failure: Schema.Struct({ code: Schema.String }) })
       const actor = defineActor("default-deadline", Effect.sync(() => {
         const request = Job.request({ input: null })
         return { schema: Schema.Struct({ type: Schema.Literal("Unused") }), atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: { job: request } })) }
@@ -189,7 +189,7 @@ for (const mode of ["direct", "submit", "fork"] as const) {
         if (mode === "submit") return Job.defer(yield* execution.submit(work))
         if (mode === "fork") return Job.defer(yield* execution.fork(work, { timeoutMs: timeoutMs + 1 }))
         return yield* work
-      }).pipe(Effect.mapError(String))) })
+      }).pipe(Effect.mapError(error => ({ code: String(error) })))) })
       yield* Effect.gen(function* () {
         yield* Deferred.await(entered)
         yield* TestClock.adjust(timeoutMs - 1)
@@ -199,7 +199,7 @@ for (const mode of ["direct", "submit", "fork"] as const) {
         const result = store.getState().view
         expect(result.status).toBe("rejected")
         if (result.status === "rejected") {
-          if (mode === "submit") expect(String(result.reason)).toContain(`Attempt timed out after ${timeoutMs}ms`)
+          if (mode === "submit") expect(result.reason).toEqual({ code: `AttemptTimedOut: Attempt timed out after ${timeoutMs}ms` })
           else expect(result.reason).toEqual({ _tag: "AttemptTimedOut", timeoutMs })
         }
       }).pipe(Effect.ensuring(store.close))
@@ -257,26 +257,3 @@ test("transport chunks reset the idle deadline and inference uses the same typed
   expect(result._tag).toBe("Failure")
   if (result._tag === "Failure") expect(result.failure).toBeInstanceOf(StreamTimedOut)
 }).pipe(Effect.provide(TestClock.layer()))))
-
-for (const deferred of [false, true]) {
-  test(`framework timeout bypasses the declared failure schema (${deferred ? "deferred" : "direct"})`, () => Effect.runPromise(Effect.gen(function* () {
-    const Job = act({ name: "test.structured-timeout", input: Schema.Null, success: Schema.Null, failure: Schema.Struct({ code: Schema.String }) })
-    const actor = defineActor("structured-timeout", Effect.sync(() => {
-      const request = Job.request({ input: null })
-      return { schema: Schema.Struct({ type: Schema.Literal("Unused") }), atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: { job: request } })) }
-    }))
-    const entered = yield* Deferred.make<void>()
-    const store = yield* createActorStore({ actor, actorContext: Context.pick(), services: () => Job.layer(() => Effect.gen(function* () {
-      const work = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
-      if (!deferred) return yield* work
-      const execution = yield* EffectExecution
-      return Job.defer(yield* execution.fork(work, { timeoutMs: DEFAULT_ATTEMPT_TIMEOUT_MS + 1 }))
-    }).pipe(Effect.mapError(error => ({ code: String(error) })))) })
-    yield* Effect.gen(function* () {
-      yield* Deferred.await(entered)
-      yield* TestClock.adjust(DEFAULT_ATTEMPT_TIMEOUT_MS)
-      yield* store.wait
-      expect(store.getState().view).toEqual({ status: "rejected", reason: { _tag: "AttemptTimedOut", timeoutMs: DEFAULT_ATTEMPT_TIMEOUT_MS } })
-    }).pipe(Effect.ensuring(store.close))
-  }).pipe(Effect.provide(TestClock.layer()))))
-}
