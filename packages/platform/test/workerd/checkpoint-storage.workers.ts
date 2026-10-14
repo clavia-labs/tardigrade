@@ -13,7 +13,7 @@ import { env } from "cloudflare:workers"
 import { runInDurableObject, evictDurableObject } from "cloudflare:test"
 import { cloudflareJournal, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "../../src/cloudflare"
 import { pendingInputRecovery, cancellationInputRecovery, stoppedInputRecovery, cancellationStall, cancellationRetryRecovery } from "../properties/runtime/pending-input-recovery"
-import { testStage, waitFor } from "../fixtures/wait"
+import { DEFAULT_WAIT_POLICY, testStage, waitFor } from "../fixtures/wait"
 import { checkpointStorage } from "../properties/checkpoint-storage"
 import type { TestPromiseResolver, InputLifecycleDO } from "../fixtures/workerd/fixture.worker"
 
@@ -187,11 +187,13 @@ test("external cancellation survives actor abort and lost acknowledgement", asyn
   try {
     const instance = await testStage("opening the actor", () => stub.open("independent-work", "deferred", "success"))
     const running = await testStage("waiting for external execution", () => waitFor(observe, state => state.externalJobs[0]?.status === "running"))
+    const parked = await testStage("waiting for deferred execution to park", () => waitFor(observe, state => state.watchdog.some(entry => entry.nextWakeAt !== null && entry.nextWakeAt - Date.now() > DEFAULT_WAIT_POLICY.timeoutMs)))
     await testStage("holding the cancellation response", () => stub.remoteControl({ holdCancellationResponse: true, responseTimeoutMs: RUNTIME_PROPERTY_TEST_TIMEOUT_MS }))
     await testStage("accepting cancellation", () => stub.cancel(running.inputs[0]!.ref))
     const stopped = await testStage("waiting for the external job to stop", () => waitFor(observe, state => state.externalJobs[0]?.status === "cancelled"))
     expect(stopped.inputs).toHaveLength(1)
     expect(stopped.records.some(record => record.event.type === "CancellationSettled")).toBe(false)
+    expect(stopped.watchdog[0]!.generation).toBe(parked.watchdog[0]!.generation + 1)
     await testStage("holding cold recovery", () => stub.holdRecovery(true))
     // The service has stopped the job; its response remains withheld across both DO resets.
     const services = (env as unknown as { EFFECT_SERVICE: DurableObjectNamespace<EffectServiceDO> }).EFFECT_SERVICE

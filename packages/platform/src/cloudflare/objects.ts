@@ -75,7 +75,7 @@ export function objectJournal<Event extends object>(options: {
         for (const [index, record] of records.entries()) {
           const event: object = record.event
           if ("type" in event && (event.type === "EffectSettled" || event.type === "PromiseSettled")) progressCursor = position - records.length + index + 1
-          if ("type" in event && (event.type === "MessageReceived" || event.type === "ThreadCreated" || event.type === "ThreadRequested")) admission = true
+          if ("type" in event && (event.type === "MessageReceived" || event.type === "ThreadCreated" || event.type === "ThreadRequested" || event.type === "EffectCancelled")) admission = true
         }
         if (records.length) yield* options.watchdog.admit(cloudflareWatchdogTransaction(tx, options.alarms), options.target, progressCursor, admission)
         yield* schedulerAlarm(scheduler)
