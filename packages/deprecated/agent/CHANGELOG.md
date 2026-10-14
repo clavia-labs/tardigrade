@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.47.2](https://github.com/clavia-labs/tardigrade/compare/v0.47.1...v0.47.2) (2026-10-14)
+
+
+### Bug Fixes
+
+* **core:** parallelize thread provisioning ([#747](https://github.com/clavia-labs/tardigrade/issues/747)) ([e05f52a](https://github.com/clavia-labs/tardigrade/commit/e05f52a0b5b089daa6546d8d0ee7856875aae1ca))
+* **core:** retry thread provisioning ([#750](https://github.com/clavia-labs/tardigrade/issues/750)) ([30ad1a1](https://github.com/clavia-labs/tardigrade/commit/30ad1a174f1eec860d55dc6b20d101b38b85cd1c))
+* **platform:** chunk oversized journal records ([#739](https://github.com/clavia-labs/tardigrade/issues/739)) ([8af8399](https://github.com/clavia-labs/tardigrade/commit/8af8399616e5d04587ea51948863d62cf733fba8))
+
 ## [0.47.1](https://github.com/clavia-labs/tardigrade/compare/v0.47.0...v0.47.1) (2026-10-14)
 
 
