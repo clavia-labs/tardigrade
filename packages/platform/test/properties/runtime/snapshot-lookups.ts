@@ -72,6 +72,12 @@ export const snapshotLookups = fc.property(fc.jsonValue(), fc.tuple(mode, mode),
         if (selected === "cancelPromise") append({ type: "EffectCancelled", ref, reason: input })
         if (selected === "promise" || selected === "cancelPromise") append({ type: "PromiseSettled", ref, result: { status: "fulfilled", value: input } })
       }
+      if (selected === "cancel" || selected === "cancelPromise") {
+        for (let attempt = 1; attempt <= padding[index]!; attempt++) append({ type: "RetryScheduled", ref, phase: "cancellation", attempt, dueAt: attempt * 100, reason: input })
+        const outcome = padding[index + 2]!
+        if (outcome === 1) append({ type: "CancellationSettled", ref, outcome: reverse ? { status: "rejected", reason: "cleanup failed" } : { status: "fulfilled" } })
+        if (outcome === 2) append({ type: "CancellationDied", ref, diagnostic: "cleanup defect" })
+      }
       append({ type: "Tick", value: step })
     }
     refs.push({ seq: current.position, atom: "suffix", act: Job.name }, { seq: current.position + 1, atom: "missing", act: Job.name })

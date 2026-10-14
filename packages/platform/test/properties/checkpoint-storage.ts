@@ -1,6 +1,6 @@
 import { Cause, Effect, Exit } from "effect"
 import { isDeepStrictEqual } from "node:util"
-import { checkpointDigest, encodeCheckpoint, decodeCheckpoint, type Recorded } from "@clavia/tardigrade-core"
+import { checkpointDigest, encodeCheckpoint, decodeCheckpoint, type Recorded, type PendingEffectInput } from "@clavia/tardigrade-core"
 import type { sqlJournal } from "../../src/shared/sql-journal"
 
 type Event = { readonly type: "Stored"; readonly value: string }
@@ -63,6 +63,20 @@ export async function checkpointStorage(fixture: {
     const boundary = await checkpoint(2, "x".repeat(chunkBytes))
     await Effect.runPromise(journal.appendWithCheckpoint(2, [], boundary))
     if (await verify(boundary, [record("first"), record("second")]) !== 2) throw new Error("Host-sized chunk failed its SQL round trip")
+    const pending: PendingEffectInput = { ref: { seq: 2, atom: "model", act: "test.input" }, request: { act: "test.input", input: "é😀".repeat(chunkBytes) } }
+    await fixture.execute("CREATE TRIGGER fail_input_chunk BEFORE INSERT ON effect_input_chunks WHEN NEW.ordinal = 1 BEGIN SELECT RAISE(ABORT, 'Injected input failure'); END")
+    await rejects(journal.append(2, [record("pending")], { put: [pending] }), "Injected input failure")
+    if ((await Effect.runPromise(journal.read)).length !== 2 || (await Effect.runPromise(journal.readInputs)).length !== 0) throw new Error("Input failure committed a partial acceptance")
+    await fixture.execute("DROP TRIGGER fail_input_chunk")
+    await Effect.runPromise(journal.append(2, [record("pending")], { put: [pending] }))
+    await Effect.runPromise(journal.close)
+    journal = fixture.open(chunkBytes)
+    if (!isDeepStrictEqual(await Effect.runPromise(journal.readInputs), [pending])) throw new Error("Pending input did not survive reopening")
+    await rejects(journal.append(3, [], { put: [{ ...pending, request: { ...pending.request, input: "changed" } }] }), "cannot change")
+    await fixture.execute("UPDATE effect_input_chunks SET payload = zeroblob(length(payload)) WHERE ordinal = 0")
+    await rejects(journal.readInputs, "digest mismatch")
+    await Effect.runPromise(journal.append(3, [record("settled")], { remove: [pending.ref] }))
+    if ((await Effect.runPromise(journal.readInputs)).length || (await fixture.execute("SELECT * FROM effect_input_chunks")).length) throw new Error("Terminal input release retained payloads")
   } finally { await Effect.runPromise(journal.close) }
 }
 

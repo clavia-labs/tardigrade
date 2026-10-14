@@ -23,9 +23,9 @@
     "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "@cloudflare/vitest-plugin": "^1.4.1",
     "@cloudflare/workers-types": "^5.20260804.1",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.4"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

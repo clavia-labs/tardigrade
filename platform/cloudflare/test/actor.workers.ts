@@ -1139,7 +1139,7 @@ describe("cloudflare actor", () => {
       body: JSON.stringify({ seq: 2, name: "fork-dst" })
     })
     expect(again.status).toBe(200)
-    expect((await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })).json()).resolves.toHaveLength(4)
+    await expect((await SELF.fetch("http://test/v1/actors/main/threads/fork-dst/events", { headers: authorization })).json()).resolves.toHaveLength(4)
     const secondRequest = { method: "POST", headers: { ...authorization, "content-type": "application/json" },
       body: JSON.stringify({ seq: 3, name: "fork-second" }) }
     for (let attempt = 0; attempt < 2; attempt++) {

@@ -1,7 +1,8 @@
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers"
+import { cloudflareTest } from "@cloudflare/vitest-plugin"
 import { defineConfig } from "vitest/config"
 
 export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./test/wrangler.jsonc" } })],
-  test: { include: ["test/**/*.workers.ts"] }
+  // fsModuleCache is disabled because workerd cannot read Vitest's host filesystem cache.
+  test: { fsModuleCache: false, include: ["test/**/*.workers.ts"] }
 })
