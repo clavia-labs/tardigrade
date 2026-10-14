@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util"
 import type { RecoveryState } from "./watchdog"
 import type { PromisePolicy } from "./promises"
 import type { InitialState } from "../initialise"
+import type { RetryOptions } from "./effect-execution"
 import { Context, Deferred, Effect, Exit, Random, Schema, Semaphore } from "effect"
 import { durablePromise } from "../atoms/promise"
 import { EffectExecution } from "../atoms/effect"
@@ -12,6 +13,13 @@ import { Provision, supervisorActor, type SupervisorEvent, type ThreadAllocation
 import { createActorStore, type CheckpointPolicy } from "../runtime/execution"
 import type { ActorRuntime } from "../runtime/contracts"
 import { createSupervisorStore, type SupervisorStore } from "../runtime/stores/supervisor"
+
+export const DEFAULT_PROVISION_RETRY_LIMIT = 2
+export const DEFAULT_PROVISION_RETRY_INTERVAL_MS = 1_000
+// DEFAULT_PROVISION_RETRY bounds typed provisioning failures using durable retries (platform/test/workerd/thread-layout.workers.ts).
+export const DEFAULT_PROVISION_RETRY: RetryOptions<Error> = {
+  decide: (failure, attempt) => Effect.succeed(attempt < DEFAULT_PROVISION_RETRY_LIMIT ? { delayMs: DEFAULT_PROVISION_RETRY_INTERVAL_MS, reason: String(failure) } : undefined),
+}
 
 export interface ThreadRequest {
   readonly instance: string
@@ -36,6 +44,7 @@ export function createSupervisor(options: {
   readonly promises?: Partial<PromisePolicy>
   readonly canDrive?: (instance: string) => Effect.Effect<boolean, Error>
   readonly journal: (instance: string) => Journal<SupervisorEvent>
+  readonly provisionRetry?: RetryOptions<Error>
   readonly provision: (allocation: ThreadAllocation) => Effect.Effect<void, Error>
   readonly validateInitialState?: (state: InitialState) => Effect.Effect<void, Error>
   readonly generateName?: () => string
@@ -59,7 +68,7 @@ export function createSupervisor(options: {
         return Provision.layer(allocation => Effect.gen(function* () {
           const execution = yield* EffectExecution
           const reply = durablePromise(execution.ref, { success: Schema.Null, error: Schema.String })
-          const handle = yield* execution.fork(options.provision(allocation).pipe(
+          const handle = yield* execution.fork(execution.retry(options.provision(allocation), options.provisionRetry ?? DEFAULT_PROVISION_RETRY).pipe(
             Effect.match({ onFailure: error => reply.fail(String(error)), onSuccess: () => reply.succeed(null) }),
           ))
           return Provision.defer(handle)
@@ -107,7 +116,10 @@ export function createSupervisor(options: {
       if (initialState !== undefined && !isDeepStrictEqual(existing.initialState, initialState)) return yield* Effect.fail(new RuntimeError("Named thread already has different initial state"))
       if (requestedPlacement !== undefined && existing.placement !== requestedPlacement) return yield* Effect.fail(new RuntimeError("Named thread already has different placement"))
       if (suppliedName === undefined) return yield* Effect.fail(new RuntimeError("Generated thread name already exists; supply a different name or generator"))
-      yield* supervisor.resume
+      if (existing.status === "failed") {
+        const { coordinate, name, parent, depth, placement, initialState } = existing
+        yield* supervisor.send([{ type: "ThreadRequested", allocation: { coordinate, name, parent, depth, placement, ...(initialState === undefined ? {} : { initialState }) } }])
+      } else yield* supervisor.resume
       return { supervisor, coordinate: existing.coordinate }
     }
     const thread = directory.some(entry => entry.coordinate.thread === name) ? `${name}-${yield* randomName}` : name

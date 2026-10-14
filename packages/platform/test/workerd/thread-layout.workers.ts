@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers"
 import { SELF, runInDurableObject } from "cloudflare:test"
 import { expect, inject, test } from "vitest"
 import { Effect } from "effect"
-import { createWatchdog, watchdogKey } from "@clavia/tardigrade-core"
+import { createWatchdog, watchdogKey, DEFAULT_PROVISION_RETRY_LIMIT } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { threadFlow } from "../fixtures/thread-flow"
 import { cloudflareThreadName } from "../../src/cloudflare"
@@ -106,29 +106,66 @@ test("directory admission and a turn survive retryable provisioning and lookup r
   })
 })
 
-test("pending allocation survives reopening and concurrent named requests share one thread", async () => {
+test("provisioning retries survive reopening and concurrent named requests share one thread", async () => {
   const instance = "parallel-reopen"
   const actor = bindings.ACTORS.getByName(instance)
   const flow = threadFlow(request => SELF.fetch(request), instance, { policy: { timeoutMs: 20_000 } })
   const held = threadStub(instance, "held")
   await held.holdProvision()
+  await held.failNextProvisions(1)
   const original = flow.request("", { name: "held", initialState: { "layout.value": 32 } }).catch(() => undefined)
-  await expect.poll(() => held.provisioning()).toBe(true)
-  await runInDurableObject(actor, async object => { await object.dispose() })
-  expect((await flow.request("", { name: "unrelated" })).status).toBe(200)
-  expect(await actor.lookup(coordinate(instance, "held"))).toBeUndefined()
-  const pending = Promise.all(Array.from({ length: 5 }, () => flow.request("", { name: "held", initialState: { "layout.value": 32 } })))
-  expect((await flow.request("", { name: "held", initialState: { "layout.value": 99 } })).status).toBeGreaterThanOrEqual(400)
-  await held.releaseProvision()
-  for (const response of await pending) {
-    expect(response.status).toBe(200)
-    expect(await response.json()).toEqual(coordinate(instance, "held"))
-  }
-  await original
-  expect((await held.records()).filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
-  await flow.call("held", "read", null, "read-reopened", 32)
-  expect((await flow.request("", { name: "failed" })).status).toBeGreaterThanOrEqual(400)
-  expect((await flow.request("", { name: "after-failure" })).status).toBe(200)
+  try {
+    await expect.poll(() => held.provisionCalls()).toBe(2)
+    await runInDurableObject(actor, async object => { await object.dispose() })
+    expect((await flow.request("", { name: "unrelated" })).status).toBe(200)
+    expect(await actor.lookup(coordinate(instance, "held"))).toBeUndefined()
+    const pending = Promise.all(Array.from({ length: 5 }, () => flow.request("", { name: "held", initialState: { "layout.value": 32 } })))
+    expect((await flow.request("", { name: "held", initialState: { "layout.value": 99 } })).status).toBeGreaterThanOrEqual(400)
+    await held.releaseProvision()
+    for (const response of await pending) {
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual(coordinate(instance, "held"))
+    }
+    await original
+    expect((await held.records()).filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
+    await flow.call("held", "read", null, "read-reopened", 32)
+    await runInDurableObject(actor, async (_object, state) => {
+      const types = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray().map(row => JSON.parse(row.event).event.type)
+      expect(types.filter(type => type === "RetryScheduled")).toHaveLength(1)
+      expect(types.filter(type => type === "EffectRequested")).toHaveLength(2)
+      expect(types).not.toContain("ThreadFailed")
+    })
+    const failed = threadStub(instance, "failed")
+    for (const round of [1, 2]) {
+      await failed.failNextProvisions(DEFAULT_PROVISION_RETRY_LIMIT + 1)
+      expect((await flow.request("", { name: "failed", initialState: { "layout.value": 44 } })).status).toBeGreaterThanOrEqual(400)
+      expect(await failed.provisionCalls()).toBe(round * (DEFAULT_PROVISION_RETRY_LIMIT + 1))
+    }
+    expect((await flow.request("", { name: "failed", initialState: { "layout.value": 99 } })).status).toBeGreaterThanOrEqual(400)
+    await runInDurableObject(actor, async (object, state) => {
+      await object.dispose()
+      state.storage.sql.exec("DELETE FROM checkpoint_chunks")
+      state.storage.sql.exec("DELETE FROM checkpoint")
+    })
+    await failed.failNextProvisions(1)
+    const retried = await Promise.all(Array.from({ length: 5 }, () => flow.request("", { name: "failed" })))
+    for (const response of retried) {
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual(coordinate(instance, "failed"))
+    }
+    expect(await failed.provisionCalls()).toBe(2 * (DEFAULT_PROVISION_RETRY_LIMIT + 1) + 2)
+    expect((await failed.records()).filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
+    await flow.call("failed", "read", null, "read-retried", 44)
+    expect((await flow.request("", { name: "failed" })).status).toBe(200)
+    expect(await failed.provisionCalls()).toBe(2 * (DEFAULT_PROVISION_RETRY_LIMIT + 1) + 2)
+    await runInDurableObject(actor, async (_object, state) => {
+      const events = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray().map(row => JSON.parse(row.event).event)
+      const requests = events.filter(event => event.type === "ThreadRequested" && event.allocation.coordinate.thread === "failed")
+      expect(requests).toHaveLength(3)
+      for (const request of requests) expect(request.allocation).toEqual(requests[0].allocation)
+    })
+    expect((await flow.request("", { name: "after-failure" })).status).toBe(200)
+  } finally { await held.releaseProvision(); await original }
 })
 
 test.skipIf(!inject("longTests"))("200 concurrent creates finish while another thread is still provisioning", async () => {
