@@ -19,7 +19,7 @@ export async function checkpointStorage(fixture: {
     if (!rejected) throw new Error("SQL journal accepted a chunk larger than the host row capacity")
   }
   const checkpoint = async (position: number, text: string) => {
-    const state = { position, durable: [{ name: "state", state: { text }, position }], effects: [], promises: [] }
+    const state = { position, durable: [{ name: "state", state: { text }, position }], operations: [] }
     const payload = encodeCheckpoint(state)
     if (!isDeepStrictEqual(decodeCheckpoint(payload), state)) throw new Error("Checkpoint state failed codec round trip")
     return { position, payload, digest: await Effect.runPromise(checkpointDigest(payload)) }

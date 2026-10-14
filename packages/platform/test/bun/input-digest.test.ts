@@ -62,7 +62,7 @@ test("settlement callbacks, input release and checkpoint restore preserve the jo
     const settled = log.append(accepted, { type: "EffectSettled", ref, outcome: { status: "fulfilled", value: { type: "value", value: "done" } } })
     const before = JSON.stringify(settled.records)
     const checkpoint = decodeCheckpoint(encodeCheckpoint(settled.checkpoint()!))
-    expect(checkpoint.effects[0]!.request.request.input).toEqual(digestInput({ system: "original", text: "x".repeat(4096) }))
+    expect(checkpoint.operations[0]!.request.request.input).toEqual(digestInput({ system: "original", text: "x".repeat(4096) }))
     expect(JSON.stringify(settled.records)).toBe(before)
     const restored = createEventLog({ ...setup(), checkpoint })
     const changed = createEventLog({ ...setup("changed"), checkpoint })
@@ -72,7 +72,7 @@ test("settlement callbacks, input release and checkpoint restore preserve the jo
       expect(settled.followups(settled.events.at(-1)!)).toEqual([{ type: "Finished" }])
     } finally { restored.dispose(); changed.dispose() }
     const finished = log.append(settled, { type: "Finished" })
-    expect(finished.effect(ref)!.request.request.input).toEqual(checkpoint.effects[0]!.request.request.input)
+    expect(finished.effect(ref)!.request.request.input).toEqual(checkpoint.operations[0]!.request.request.input)
     expect(JSON.stringify(finished.records.slice(0, settled.records.length))).toBe(before)
   } finally { log.dispose() }
 })
@@ -110,7 +110,7 @@ test("deferred inputs survive settlement and cancellation checkpoints for recove
     expect(advanced.checkpoint()).toBeUndefined()
     const cancelled = log.append(advanced, { type: "EffectCancelled", ref, reason: "stop" })
     const checkpoint = decodeCheckpoint(encodeCheckpoint(cancelled.checkpoint()!))
-    expect(checkpoint.effects[0]!.request.request.input).toEqual({ _tag: "InlineInput", value: { system: "original", text } })
+    expect(checkpoint.operations[0]!.request.request.input).toEqual({ _tag: "InlineInput", value: { system: "original", text } })
     const restored = createEventLog({ ...setup(), checkpoint })
     try { expect(restored.initial.cancelled()[0]!.request.input).toEqual({ system: "original", text }) }
     finally { restored.dispose() }

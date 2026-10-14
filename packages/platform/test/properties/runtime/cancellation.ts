@@ -47,8 +47,9 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
     if (events.some(({ event }) => event.type === "EffectSettled")) yield* Deferred.succeed(settled, undefined)
   })
   const journal: Journal<Event> = {
+    readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
-    readCheckpoint: Effect.sync(() => saved), append, appendWithCheckpoint: append,
+    readCheckpoint: Effect.sync(() => saved), append: (position, events) => append(position, events), appendWithCheckpoint: append,
   }
   const result = () => {
     const promise = durablePromise(reference, { success: Schema.Finite, error: Schema.String })

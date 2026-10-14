@@ -118,6 +118,7 @@ test("pure interruption remains pending and reuses the accepted reference on reo
 test("failed defect persistence leaves the committed invocation pending", async () => {
   const records: Recorded<Event>[] = [{ event: Started.make({ id: "uncommitted", mode: "defect" }) }]
   const journal: Journal<Event> = {
+    readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined.
     readCheckpoint: Effect.succeed(undefined),

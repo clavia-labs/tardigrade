@@ -34,6 +34,7 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
   let earlyResult!: PromiseSettled
   let externalAcknowledged = false
   const journal: Journal<Event> = {
+    readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]),
     readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined; Effect.void has a void result type.

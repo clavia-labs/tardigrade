@@ -50,7 +50,7 @@ export class Model extends Context.Service<Model, {
   readonly cancel?: (input: ModelInput, context: Omit<ActCancellation, "request">) => Effect.Effect<void, Error>
 }>()("example/Model") {}
 
-export const DEFAULT_MODEL_TIMEOUT_MS = 60_000
+export const DEFAULT_MODEL_TIMEOUT_MS = 90_000
 export const DEFAULT_SCHEMA_IMPORT_OPTIONS = { patterns: "apply" } as const satisfies SchemaRepresentation.FromJsonSchemaOptions
 
 // DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS closes tool objects with declared properties when additionalProperties is omitted; a binding's schemaImport replaces it (packages/platform/test/bun/rpc-libraries.test.ts).
@@ -134,10 +134,9 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const { settings } = yield* settingsOf(input)
       return options.promiseTimeoutMs ?? options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
     })
-    const retry = (input: ModelInput) => settingsOf(input).pipe(Effect.map(({ settings }) => modelRetry(settings.policy.retry)))
+    const retry = (input: ModelInput) => settingsOf(input).pipe(Effect.map(({ settings }) => ({ ...modelRetry(settings.policy.retry), attemptTimeoutMs: options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS })))
     return { promiseTimeoutMs, retry, call: (input, context) => Effect.gen(function* () {
       const { resolved, settings } = yield* settingsOf(input)
-      const timeoutMs = options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
       const objects = yield* resolveContentObjects(input.context)
       const toolkit = yield* Effect.try({
         try: () => Toolkit.make(...input.tools.map(tool => AiTool.dynamic(tool.name, {
@@ -196,7 +195,6 @@ export function modelServices(options: ModelServiceOptions = {}) {
           : languageModel.generateText(request).pipe(Effect.provideService(ResponseFormat, responseFormat), Effect.map(response => ({ response, continuation: Prompt.fromResponseParts(response.content) })))
       const collected = yield* generated.pipe(
         Effect.provideService(CurrentModel, resolved.model),
-        Effect.timeout(timeoutMs),
         Effect.mapError(error => AiError.isAiError(error) ? modelError(error) : RuntimeError.from(error)),
       )
       const { response } = collected
@@ -237,12 +235,12 @@ export function liveModelServices(options: Omit<ModelBindingOptions, "observer">
 export const generate = Generate.layer(input => Effect.gen(function* () {
   const model = yield* Model
   const execution = yield* EffectExecution
-  const timeoutMs = typeof model.promiseTimeoutMs === "function" ? yield* model.promiseTimeoutMs(input) : model.promiseTimeoutMs
-  if (model.submit) return Generate.defer(yield* execution.submit(model.submit(input, execution), { timeoutMs }))
-  const retry = model.retry ? yield* model.retry(input) : undefined
+  const retry = yield* inferenceRetry(model, input)
+  const timeoutMs = (typeof model.promiseTimeoutMs === "function" ? yield* model.promiseTimeoutMs(input) : model.promiseTimeoutMs) ?? retry.attemptTimeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS
+  if (model.submit) return Generate.defer(yield* execution.submit(execution.retry(model.submit(input, execution), retry), { timeoutMs }))
   const call = model.call(input, { publish: execution.publish, purpose: "inference" })
   const reply = durablePromise(execution.ref, { success: ModelReplySchema, error: Schema.String })
-  const handle = yield* execution.fork((retry ? execution.retry(call, retry) : call).pipe(
+  const handle = yield* execution.fork(execution.retry(call, retry).pipe(
     Effect.exit,
     Effect.map(exit => Exit.isSuccess(exit) ? reply.succeed(exit.value) : reply.fail(Cause.pretty(exit.cause))),
   ), { timeoutMs })
@@ -252,12 +250,18 @@ export const generate = Generate.layer(input => Effect.gen(function* () {
 export const summarize = Summarize.layer(input => Effect.gen(function* () {
   const execution = yield* EffectExecution
   const model = yield* Model
-  const retry = model.retry ? yield* model.retry(input) : undefined
+  const retry = yield* inferenceRetry(model, input)
   const call = model.call(input, { publish: execution.publish, purpose: "compaction" })
-  return yield* (retry ? execution.retry(call, retry) : call)
+  return yield* execution.retry(call, retry)
 }).pipe(
   Effect.flatMap(reply => reply.text.trim() ? Effect.succeed(reply) : Effect.fail("Compaction returned an empty summary")),
   Effect.mapError(String),
 ))
 
 export const modelActs = Layer.merge(generate, summarize)
+
+const inferenceRetry = (model: typeof Model.Service, input: ModelInput) => Effect.gen(function* () {
+  // @effect-diagnostics-next-line effectSucceedWithVoid:off: The retry decision requires an undefined value to stop.
+  const retry: RetryOptions<Error> = model.retry ? yield* model.retry(input) : { decide: () => Effect.succeed(undefined) }
+  return { ...retry, attemptTimeoutMs: retry.attemptTimeoutMs === undefined ? DEFAULT_MODEL_TIMEOUT_MS : retry.attemptTimeoutMs }
+})

@@ -1,8 +1,9 @@
+import { operationSettlement } from "../runtime/operation"
 import { incrementalDecoder } from "./incremental/decode"
 import { Context, Effect, Layer, Schema, Option } from "effect"
 import { atom, type Atom } from "./atom"
 import { EventLog, eventLogContext } from "../services/event-log"
-import { effectKey, EffectRef, EffectCancelled, Cancelled, PromiseTimedOut, ExecutionHandle, RuntimeError, ExecutionResult } from "../runtime/effects"
+import { effectKey, EffectRef, EffectCancelled, Cancelled, PromiseTimedOut, AttemptTimedOut, ExecutionHandle, RuntimeError, ExecutionResult } from "../runtime/effects"
 import { type EffectRequest, EffectAcceptance, EffectSettled, PromiseSettled } from "../runtime/events"
 import { EffectExecution } from "../services/effect-execution"
 
@@ -14,6 +15,8 @@ export type ActState<Value, Failure> =
   | { readonly status: "pending" }
   | { readonly status: "fulfilled"; readonly value: Value }
   | { readonly status: "rejected"; readonly reason: Failure }
+
+export type ActFailure<Failure> = Failure | Cancelled | PromiseTimedOut | typeof AttemptTimedOut.Encoded
 
 const DeferredType = Symbol("DeferredAct")
 export interface DeferredAct {
@@ -27,16 +30,16 @@ export interface ActRequest<Value, Failure, Services> {
   readonly request: EffectRequest
   readonly kind: "act"
   readonly identity: object
-  readonly execute: Effect.Effect<ExecutionResult, Schema.Json, Services | EffectExecution>
+  readonly execute: (input: Schema.Json) => Effect.Effect<ExecutionResult, Schema.Json, Services | EffectExecution>
   // onRequested derives domain events committed with durable acceptance; callbacks must be pure.
   onRequested?(ref: EffectRef): readonly object[]
   // onDeferred derives domain events committed with the submitted handle; callbacks must be pure.
   onDeferred?(handle: ExecutionHandle, ref: EffectRef): readonly object[]
   // onSettled derives domain events committed with the terminal decision; handle identifies deferred completion and callbacks must be pure.
-  onSettled?(result: Exclude<ActState<Value, Failure | Cancelled | PromiseTimedOut>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
+  onSettled?(result: Exclude<ActState<Value, ActFailure<Failure>>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
   readonly ref: Atom<EffectRef | undefined>
   // result exposes cancellation as a rejected Cancelled value delivered through onSettled (quint/terminalDelivery.qnt, deliverySound, callbackAtMostOnce).
-  readonly result: Atom<ActState<Value, Failure | Cancelled | PromiseTimedOut>>
+  readonly result: Atom<ActState<Value, ActFailure<Failure>>>
 }
 
 export interface ActCancellation {
@@ -76,7 +79,9 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
   const successSchema = Schema.toType(options.success)
   const failureSchema = Schema.toType(options.failure)
   const decodeSuccess = Schema.decodeUnknownSync(successSchema)
-  const decodeFailure = Schema.decodeUnknownSync(failureSchema)
+  const decodeDeclaredFailure = Schema.decodeUnknownSync(failureSchema)
+  const isAttemptTimedOut = Schema.is(Schema.toEncoded(AttemptTimedOut))
+  const decodeFailure = (reason: unknown) => isAttemptTimedOut(reason) ? reason : decodeDeclaredFailure(reason)
   // decodeInput freezes what request builds, since prepareRequest freezes request inputs regardless; execute rebuilds those containers unfrozen for implementations.
   const decodeInput = incrementalDecoder(inputSchema)
   // Implementation uses the act name as its service identity across independently constructed definitions.
@@ -117,16 +122,16 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       const bindings = Context.get(context, EventLog).bindings
       return bindings ? get(bindings).get(identity) : undefined
     })
-    const result = atom((get): ActState<Value, Failure | Cancelled | PromiseTimedOut> => {
+    const result = atom((get): ActState<Value, ActFailure<Failure>> => {
       const reference = get(ref)
       const context = get(eventLogContext)
       if (!reference || !context) return { status: "pending" }
       const service = Context.get(context, EventLog)
       const events = get(service.events)
       const key = effectKey(reference)
-      const cancellation = service.effect?.(reference)?.cancellation ?? events.find(event => Schema.is(EffectCancelled)(event) && effectKey(event.ref) === key)
+      const cancellation = service.effect?.(reference)?.cleanup?.request ?? events.find(event => Schema.is(EffectCancelled)(event) && effectKey(event.ref) === key)
       if (Schema.is(EffectCancelled)(cancellation)) return { status: "rejected", reason: { _tag: "Cancelled", reason: cancellation.reason } }
-      const settlement = service.effect?.(reference)?.settlement ?? events.find(event => Schema.is(EffectSettled)(event) && effectKey(event.ref) === key)
+      const settlement = operationSettlement(service.effect?.(reference)) ?? events.find(event => Schema.is(EffectSettled)(event) && effectKey(event.ref) === key)
       if (!Schema.is(EffectSettled)(settlement)) return { status: "pending" }
       if (settlement.outcome.status === "rejected") return { status: "rejected", reason: decodeFailure(settlement.outcome.reason) }
       const outcome = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
@@ -141,13 +146,13 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       kind: "act", identity, ...(origin === undefined ? {} : { origin }), request: { act: options.name, input }, ref, result,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
       ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
-      onSettled: (outcome: Exclude<ActState<Value, Failure | Cancelled | PromiseTimedOut>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
+      onSettled: (outcome: Exclude<ActState<Value, ActFailure<Failure>>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
         const result = outcome.status === "fulfilled"
           ? { status: "fulfilled" as const, value: decodeSuccess(outcome.value) }
           : { status: "rejected" as const, reason: (Schema.is(Cancelled)(outcome.reason) || Schema.is(PromiseTimedOut)(outcome.reason)) ? outcome.reason : decodeFailure(outcome.reason) }
         return invocation.onSettled?.(result, ref, handle) ?? []
       },
-      execute: EffectExecution.use(({ ref }) => Implementation.use(service => service.execute(input, ref))),
+      execute: (acceptedInput: Schema.Json) => EffectExecution.use(({ ref }) => Implementation.use(service => service.execute(acceptedInput, ref))),
     })
     return handle
   }
@@ -161,7 +166,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       const events = get(Context.get(context, EventLog).events)
       return events.filter(Schema.is(EffectAcceptance)).filter(event => event.act === options.name).flatMap(event => {
         const key = effectKey(event.ref)
-        if (Context.get(context, EventLog).effect?.(event.ref)?.cancellation || events.some(item => Schema.is(EffectCancelled)(item) && effectKey(item.ref) === key)) return []
+        if (Context.get(context, EventLog).effect?.(event.ref)?.cleanup?.request || events.some(item => Schema.is(EffectCancelled)(item) && effectKey(item.ref) === key)) return []
         if (events.some(item => Schema.is(PromiseSettled)(item) && effectKey(item.ref) === key)) return []
         const settlement = events.find(item => Schema.is(EffectSettled)(item) && effectKey(item.ref) === key)
         if (!Schema.is(EffectSettled)(settlement) || settlement.outcome.status !== "fulfilled") return []

@@ -1,6 +1,6 @@
 import { Effect, ManagedRuntime, Schema, Semaphore, type Layer } from "effect"
 import { SqlClient } from "effect/unstable/sql"
-import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage } from "@clavia/tardigrade-core"
+import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage, PendingEffectInput, effectKey, type EffectInputChanges } from "@clavia/tardigrade-core"
 import { initializeSqlScheduler, sqlSchedulerTransaction } from "./sql-scheduler"
 import { recordRetryWakes } from "./retry-wakes"
 
@@ -29,6 +29,8 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_messages (actor TEXT NOT NULL, id TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (actor, id), FOREIGN KEY (actor, seq) REFERENCES experimental_events(actor, seq)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK (id = 1), position INTEGER NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL)`
     yield* sql`CREATE TABLE IF NOT EXISTS checkpoint_chunks (ordinal INTEGER PRIMARY KEY CHECK (ordinal >= 0), payload BLOB NOT NULL CHECK (typeof(payload) = 'blob' AND length(payload) > 0))`
+    yield* sql`CREATE TABLE IF NOT EXISTS effect_inputs (actor TEXT NOT NULL, ref TEXT NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL, PRIMARY KEY (actor, ref)) WITHOUT ROWID`
+    yield* sql`CREATE TABLE IF NOT EXISTS effect_input_chunks (actor TEXT NOT NULL, ref TEXT NOT NULL, ordinal INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY (actor, ref, ordinal)) WITHOUT ROWID`
     if (options.scheduler) yield* initializeSqlScheduler(sql)
     return sql
   })
@@ -45,7 +47,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     return result
   }).pipe(Effect.uninterruptible)) } : undefined
   const scheduler = scheduling && schedulerStorage ? createScheduler({ storage: schedulerStorage, deliver: scheduling.deliver, policy: scheduling.policy }) : undefined
-  const append = (expectedLength: number, events: readonly Recorded<Event>[], providedCheckpoint?: StoredCheckpoint) => Effect.gen(function* () {
+  const append = (expectedLength: number, events: readonly Recorded<Event>[], providedCheckpoint?: StoredCheckpoint, inputs: EffectInputChanges = {}) => Effect.gen(function* () {
     const checkpoint = providedCheckpoint && { ...providedCheckpoint, payload: providedCheckpoint.payload.slice() }
     if (!Number.isSafeInteger(expectedLength) || expectedLength < 0) return yield* Effect.fail(new RuntimeError("Invalid expected journal length"))
     if (checkpoint && (!Number.isSafeInteger(checkpoint.position) || checkpoint.position !== expectedLength + events.length || checkpoint.position < 0)) return yield* Effect.fail(new RuntimeError("Invalid checkpoint position"))
@@ -58,6 +60,14 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     }), catch: RuntimeError.from })
     if (checkpoint && checkpoint.digest !== (yield* checkpointDigest(checkpoint.payload))) return yield* Effect.fail(new RuntimeError("Invalid checkpoint digest"))
     const chunks = checkpoint ? encodeCheckpointChunks(checkpoint.payload, chunkBytes) : []
+    const pending = yield* Effect.forEach(inputs.put ?? [], input => Effect.gen(function* () {
+      const value = yield* Schema.decodeEffect(PendingEffectInput)(input).pipe(Effect.mapError(RuntimeError.from))
+      const payload = new TextEncoder().encode(JSON.stringify(value))
+      const ref = effectKey(value.ref)
+      const rowBytes = new TextEncoder().encode(options.actor).byteLength + new TextEncoder().encode(ref).byteLength + CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES
+      const inputChunkBytes = options.limits ? Math.min(chunkBytes, options.limits.maxRowBytes - rowBytes) : chunkBytes
+      return { ref, payload, digest: yield* checkpointDigest(payload), chunks: encodeCheckpointChunks(payload, inputChunkBytes) }
+    }))
     const sql = yield* client
     const work = Effect.gen(function* () {
       const rows = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
@@ -67,6 +77,18 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
         yield* sql`INSERT INTO experimental_events (actor, seq, event) VALUES (${options.actor}, ${expectedLength + index}, ${event})`
         const message = events[index]!.message
         if (message) yield* sql`INSERT INTO experimental_messages (actor, id, seq) VALUES (${options.actor}, ${message.id}, ${expectedLength + index})`
+      }
+      for (const input of pending) {
+        const existing = yield* sql<{ digest: string }>`SELECT digest FROM effect_inputs WHERE actor = ${options.actor} AND ref = ${input.ref}`
+        if (existing.length && existing[0]!.digest !== input.digest) return yield* Effect.fail(new RuntimeError("Accepted effect input cannot change"))
+        if (existing.length) continue
+        yield* sql`INSERT INTO effect_inputs (actor, ref, byte_length, chunk_count, digest) VALUES (${options.actor}, ${input.ref}, ${input.payload.byteLength}, ${input.chunks.length}, ${input.digest})`
+        for (const chunk of input.chunks) yield* sql`INSERT INTO effect_input_chunks (actor, ref, ordinal, payload) VALUES (${options.actor}, ${input.ref}, ${chunk.ordinal}, ${chunk.payload})`
+      }
+      for (const ref of inputs.remove ?? []) {
+        const key = effectKey(ref)
+        yield* sql`DELETE FROM effect_input_chunks WHERE actor = ${options.actor} AND ref = ${key}`
+        yield* sql`DELETE FROM effect_inputs WHERE actor = ${options.actor} AND ref = ${key}`
       }
       if (scheduling) yield* recordRetryWakes(sqlSchedulerTransaction(sql, scheduling.alarm), events)
       if (checkpoint) {
@@ -128,7 +150,22 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
         return JSON.parse(row.event) as Recorded<Event>
       }), catch: RuntimeError.from })
     }),
-    append,
+    readInputs: Effect.gen(function* () {
+      const sql = yield* client
+      return yield* sql.withTransaction(Effect.gen(function* () {
+        const rows = yield* sql<{ ref: string; byte_length: number; chunk_count: number; digest: string }>`SELECT ref, byte_length, chunk_count, digest FROM effect_inputs WHERE actor = ${options.actor}`
+        return yield* Effect.forEach(rows, row => Effect.gen(function* () {
+          const chunks = yield* sql<CheckpointChunk>`SELECT ordinal, payload FROM effect_input_chunks WHERE actor = ${options.actor} AND ref = ${row.ref} ORDER BY ordinal`
+          const payload = yield* Effect.try({ try: () => decodeCheckpointChunks(chunks, row.byte_length, row.chunk_count), catch: RuntimeError.from })
+          if ((yield* checkpointDigest(payload)) !== row.digest) return yield* Effect.fail(new RuntimeError("Pending effect input digest mismatch"))
+          const raw = yield* Effect.try({ try: (): unknown => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload)), catch: RuntimeError.from })
+          const input = yield* Schema.decodeUnknownEffect(PendingEffectInput)(raw).pipe(Effect.mapError(RuntimeError.from))
+          if (effectKey(input.ref) !== row.ref || input.ref.act !== input.request.act) return yield* Effect.fail(new RuntimeError("Pending effect input identity mismatch"))
+          return input
+        }))
+      }))
+    }),
+    append: (position: number, events: readonly Recorded<Event>[], inputs?: EffectInputChanges) => append(position, events, undefined, inputs),
     readCheckpoint: Effect.gen(function* () {
       const sql = yield* client
       return yield* sql.withTransaction(Effect.gen(function* () {

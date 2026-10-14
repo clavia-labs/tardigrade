@@ -1,6 +1,8 @@
 import { Schema, type Effect } from "effect"
 import { MessageMetadata, type MessageReceived } from "../actor/message"
 import type { CoreEvent, ObservedCoreEvent } from "../runtime/events"
+import { EffectRef } from "../runtime/effects"
+import { EffectRequest } from "../runtime/events"
 
 // RecordMetadata carries journal time and host-established delivery context separately from event payloads.
 export const RecordMetadata = Schema.Struct({
@@ -27,14 +29,24 @@ export interface StoredCheckpoint {
   readonly digest: string
 }
 
+export const PendingEffectInput = Schema.Struct({ ref: EffectRef, request: EffectRequest })
+export type PendingEffectInput = typeof PendingEffectInput.Type
+
+// EffectInputChanges commits accepted payloads and terminal releases with journal records (quint/checkpoint/inputLifecycle.qnt, inputRetained).
+export interface EffectInputChanges {
+  readonly put?: readonly PendingEffectInput[]
+  readonly remove?: readonly EffectRef[]
+}
+
 // Journal stores an ordered event prefix; append commits a batch atomically or rejects a stale expected length.
 export interface Journal<Event extends object> {
   readonly read: Effect.Effect<readonly Recorded<Event>[], Error>
   // readAfter returns the suffix starting at the consumed event count; positions beyond the journal length fail.
   readonly readAfter: (position: number) => Effect.Effect<readonly Recorded<Event>[], Error>
-  readonly append: (expectedLength: number, events: readonly Recorded<Event>[]) => Effect.Effect<void, Error>
+  readonly readInputs: Effect.Effect<readonly PendingEffectInput[], Error>
+  readonly append: (expectedLength: number, events: readonly Recorded<Event>[], inputs?: EffectInputChanges) => Effect.Effect<void, Error>
   readonly readCheckpoint: Effect.Effect<StoredCheckpoint | undefined, Error>
-  readonly appendWithCheckpoint: (expectedLength: number, events: readonly Recorded<Event>[], checkpoint: StoredCheckpoint) => Effect.Effect<void, Error>
+  readonly appendWithCheckpoint: (expectedLength: number, events: readonly Recorded<Event>[], checkpoint: StoredCheckpoint, inputs?: EffectInputChanges) => Effect.Effect<void, Error>
 }
 
 export interface MessageJournal<Event extends object> extends Journal<Event> {

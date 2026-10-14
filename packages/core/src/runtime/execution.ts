@@ -1,14 +1,15 @@
 import type { ReadonlyIndex } from "./log-view"
 import { initialStateSeed, type StateSeed } from "../initialise"
-import { ActorCommitError, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, effectKey, type EffectRef } from "./effects"
+import { ActorCommitError, AttemptTimedOut, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, CancellationOutcome, effectKey, type EffectRef } from "./effects"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import { atom, type Atom } from "../atoms/atom"
 import { EventLog, executionDefect } from "../services/event-log"
 import { Scheduler } from "../services/scheduler"
-import { EffectExecution } from "../services/effect-execution"
+import { operationSettlement, cleanupRunnable, cleanupSucceeded } from "./operation"
+import { EffectExecution, DEFAULT_ATTEMPT_TIMEOUT_MS, type AttemptOptions, type RetryOptions } from "../services/effect-execution"
 import { createExecutionStream, type ExecutionStream, type ExecutionStreamPolicy } from "../services/execution-stream"
-import { EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType } from "./events"
+import { EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType, type RetryScheduled } from "./events"
 import { cancelAct, type ActCancellation } from "../atoms/act"
 import type { RuntimeEvent, JournalEvent, Journal, MessageJournal, RecordMetadata } from "../services/journal"
 import type { ActorRuntime, ActorSetup, Requirements } from "./contracts"
@@ -26,6 +27,13 @@ import { observeRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-d
 import { messageReplies } from "./messages"
 import { DeliverMessage, type MessageDelivery } from "../services/invocation"
 import { select } from "./stores/thread"
+
+export interface CancellationOptions extends AttemptOptions {
+  // retryIntervalMs sets the default delay when decide is omitted.
+  readonly retryIntervalMs?: number
+  // decide returns undefined to record a final typed cleanup failure.
+  readonly decide?: RetryOptions<Error>["decide"]
+}
 
 export type CheckpointPolicy =
   | { readonly mode: "threshold"; readonly options: { readonly everyEvents: number; readonly maxBytes?: number } }
@@ -49,6 +57,7 @@ export type ActorServices<Definition> = Definition extends ActorDefinition<infer
 
 // createActorStore instantiates an actor definition and owns its services, journal commits, and execution lifetime.
 export function createActorStore<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: {
+  readonly attemptTimeoutMs?: number | null
   readonly executionStream?: Partial<ExecutionStreamPolicy>
   readonly executionStreamBus?: typeof ExecutionStream.Service
   // inspect validates setup without executing proposals or recovery hooks (packages/platform/test/bun/method-http.test.ts).
@@ -61,7 +70,7 @@ export function createActorStore<Event extends object, State, Services, Contract
   readonly events?: readonly RuntimeEvent<Event>[]
   readonly effectInput?: { readonly digestMinBytes?: number }
   readonly checkpoint?: CheckpointPolicy
-  readonly cancellation?: { readonly retryIntervalMs?: number }
+  readonly cancellation?: CancellationOptions
   readonly promiseDelivery?: { readonly retryIntervalMs?: number }
   readonly promises?: Partial<PromisePolicy>
   readonly journal?: Journal<Event> | MessageJournal<Event>
@@ -86,6 +95,7 @@ export function createActorStore<Event extends object, State, Services, Contract
 
 // createRuntime builds services and an atom graph within an isolated actor lifetime.
 function createRuntime<Event extends object, const Atoms extends Readonly<Record<string, Atom<unknown>>>, Services, Contracts extends ActorMethods<Event>>(options: {
+  readonly attemptTimeoutMs?: number | null
   readonly executionStream?: Partial<ExecutionStreamPolicy>
   readonly executionStreamBus?: typeof ExecutionStream.Service
   readonly inspect?: boolean
@@ -96,7 +106,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
   readonly events?: readonly RuntimeEvent<Event>[]
   readonly effectInput?: { readonly digestMinBytes?: number }
   readonly checkpoint?: CheckpointPolicy
-  readonly cancellation?: { readonly retryIntervalMs?: number }
+  readonly cancellation?: CancellationOptions
   readonly promiseDelivery?: { readonly retryIntervalMs?: number }
   readonly promises?: Partial<PromisePolicy>
   readonly journal?: Journal<Event> | MessageJournal<Event>
@@ -108,6 +118,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const digestMinBytes = options.effectInput?.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
     if (!Number.isSafeInteger(digestMinBytes) || digestMinBytes < 0) return yield* Effect.fail(new RuntimeError("Effect input digest minBytes must be a nonnegative safe integer"))
     const resolutionPolicy = yield* Effect.try({ try: () => promisePolicy(options.promises), catch: RuntimeError.from })
+    const executionAttemptTimeoutMs = options.attemptTimeoutMs
+    if (executionAttemptTimeoutMs !== undefined && executionAttemptTimeoutMs !== null && (!Number.isSafeInteger(executionAttemptTimeoutMs) || executionAttemptTimeoutMs < 1)) return yield* Effect.fail(new RuntimeError("Attempt timeoutMs must be a positive safe integer"))
     const deliveryRetryIntervalMs = options.promiseDelivery?.retryIntervalMs ?? DEFAULT_PROMISE_POLICY.retryIntervalMs
     if (!Number.isSafeInteger(deliveryRetryIntervalMs) || deliveryRetryIntervalMs < 1) return yield* Effect.fail(new RuntimeError("Promise delivery retryIntervalMs must be a positive safe integer"))
     let setup: ActorSetup<Event, Atoms, Contracts>
@@ -157,18 +169,33 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const retryWaits = new Map<string, { readonly dueAt: number; readonly wake: Deferred.Deferred<void> }>()
     const lifetimes = new Map<string, { readonly scope: Scope.Closeable; readonly signal: AbortSignal }>()
     const executions = new Map<string, Fiber.Fiber<{ readonly status: "fulfilled"; readonly value: ExecutionResult } | { readonly status: "rejected"; readonly reason: Schema.Json }, never>>()
+    const completing = new Map<string, Deferred.Deferred<void>>()
     const executionWaiters = new Set<Deferred.Deferred<void>>()
+    const persistedInputRefs = new Map<string, EffectRef>()
+    const cleanupWork = () => snapshot.cancelled().filter(work => cleanupRunnable(snapshot.effect(work.ref)))
     const cleaning = new Set<string>()
-    const pendingCleanup = new Map<string, ActCancellation>()
+    const pendingCleanup = new Set<string>()
+    const reportCleanup = (outcome: CancellationOutcome) => {
+      if (outcome.type === "CancellationDied") report(new WatchdogTerminalError(outcome.diagnostic))
+      else if (outcome.outcome.status === "rejected") report(new WatchdogTerminalError(outcome.outcome.reason))
+    }
     const queueCleanup = (cancellation: ActCancellation) => {
-      const key = JSON.stringify([effectKey(cancellation.ref), cancellation.handle ?? null])
-      if (!cleaning.has(key)) pendingCleanup.set(key, cancellation)
+      const key = effectKey(cancellation.ref)
+      const outcome = snapshot.effect(cancellation.ref)?.cleanup?.outcome
+      if (outcome) { reportCleanup(outcome); return }
+      if (!cleaning.has(key)) pendingCleanup.add(key)
     }
     const cancellationRetryIntervalMs = options.cancellation?.retryIntervalMs ?? DEFAULT_CANCELLATION_RETRY_INTERVAL_MS
     if (!Number.isSafeInteger(cancellationRetryIntervalMs) || cancellationRetryIntervalMs < 1) return yield* Effect.fail(new RuntimeError("Cancellation retryIntervalMs must be a positive safe integer"))
     const background = new Map<string, Fiber.Fiber<void, never>>()
     const deadlineTimers = new Map<string, Fiber.Fiber<void, never>>()
     const errors: Error[] = []
+    const runtimeFailure = (deferTerminal = false): Error | undefined => {
+      const cleanup = deferTerminal && cleanupWork().length > 0
+      const defect = store.get(executionDefect)
+      return persistenceFailure ?? errors.find(error => !cleanup || !(error instanceof WatchdogTerminalError)) ??
+        (defect && !cleanup ? new WatchdogTerminalError(defect.diagnostic) : undefined)
+    }
     const subscriptions = new Set<() => void>()
     let closed = false
     let persistenceFailure: ActorCommitError | undefined
@@ -194,11 +221,24 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       const checkpoint = options.journal && eligible ? next.checkpoint() : undefined
       if (options.journal) {
         const journal = options.journal
+        const inputChanges = {
+          put: records.flatMap(({ event }) => Schema.is(EffectRequested)(event)
+            ? next.pending().filter(work => effectKey(work.ref) === effectKey(event.ref)).map(({ ref, request }) => ({ ref, request })) : []),
+          remove: records.flatMap(({ event }) => {
+            if (Schema.is(EffectDied)(event)) return next.cancelled().length ? [] : [...persistedInputRefs.values()].filter(ref => ref.atom !== "host.message.replies")
+            if (Schema.is(CancellationOutcome)(event) && cleanupSucceeded(event)) return next.defect && !next.cancelled().length
+              ? [...persistedInputRefs.values()].filter(ref => ref.atom !== "host.message.replies") : [event.ref]
+            if (!Schema.is(PromiseSettled)(event) && !Schema.is(EffectSettled)(event)) return []
+            if (next.effect(event.ref)?.cleanup?.request) return []
+            if (Schema.is(EffectSettled)(event) && event.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "promise") return []
+            return [event.ref]
+          }),
+        }
         const persistence = checkpoint
           ? Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from }).pipe(
-            Effect.flatMap(payload => checkpointDigest(payload).pipe(Effect.flatMap(digest => journal.appendWithCheckpoint(snapshot.position, records, { position: next.position, payload, digest })))),
+            Effect.flatMap(payload => checkpointDigest(payload).pipe(Effect.flatMap(digest => journal.appendWithCheckpoint(snapshot.position, records, { position: next.position, payload, digest }, inputChanges)))),
           )
-          : journal.append(snapshot.position, records)
+          : journal.append(snapshot.position, records, inputChanges)
         yield* persistence.pipe(Effect.catchCause(cause => Effect.gen(function* () {
           const operation = checkpoint ? "checkpoint" as const : "append" as const
           yield* Effect.logError("Actor journal commit failed").pipe(Effect.annotateLogs({
@@ -215,12 +255,14 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           })
           return yield* persistenceFailure
         })))
+        for (const input of inputChanges.put) persistedInputRefs.set(effectKey(input.ref), input.ref)
+        for (const ref of inputChanges.remove) persistedInputRefs.delete(effectKey(ref))
       }
       if (options.journal && checkpoint) checkpointPosition = next.position
       snapshot = next
       for (const { event: record } of records) {
         if (Schema.is(EffectDied)(record)) {
-          yield* Fiber.interruptAll([...executions.values(), ...background.values(), ...deadlineTimers.values()]).pipe(Effect.forkIn(scope))
+          yield* Fiber.interruptAll([...executions.values(), ...[...background].filter(([id]) => !id.startsWith("cancellation:")).map(([, fiber]) => fiber), ...deadlineTimers.values()]).pipe(Effect.forkIn(scope))
           for (const lifetime of lifetimes.values()) yield* Scope.close(lifetime.scope, Exit.succeed(undefined))
           lifetimes.clear()
           continue
@@ -238,10 +280,13 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         }
         if (!Schema.is(EffectCancelled)(record) && !Schema.is(EffectSettled)(record)) continue
         const lifecycle = next.effect(record.ref)
-        const cancellation = lifecycle?.cancellation
+        const cancellation = lifecycle?.cleanup?.request
         if (!cancellation) continue
         const cleanup = next.cancelled().find(work => effectKey(work.ref) === effectKey(record.ref))
-        if (!cleanup) return yield* Effect.fail(new RuntimeError("Cancellation requires reconstructed input"))
+        if (!cleanup) {
+          if (lifecycle?.cleanup?.outcome) continue
+          return yield* Effect.fail(new RuntimeError("Cancellation requires reconstructed input"))
+        }
         queueCleanup(cleanup)
         const key = effectKey(cancellation.ref)
         const timer = deadlineTimers.get(key)
@@ -251,6 +296,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         lifetimes.delete(key)
         const executing = executions.get(key)
         const deferred = background.get(key)
+        const retry = retryWaits.get(key)
+        if (retry) yield* Deferred.succeed(retry.wake, undefined)
         if (executing) yield* Fiber.interrupt(executing).pipe(Effect.forkIn(scope))
         if (deferred) yield* Fiber.interrupt(deferred).pipe(Effect.forkIn(scope))
       }
@@ -290,13 +337,13 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     })
     const append = (event: RuntimeEvent<Event>) => enqueue(appendNow(event))
     const recordDeath = (ref: EffectRef, cause: Cause.Cause<unknown>) => enqueue(Effect.suspend(() =>
-      snapshot.defect || snapshot.promise(ref) || snapshot.effect(ref)?.cancellation ? Effect.void
+      snapshot.defect || snapshot.promise(ref) || snapshot.effect(ref)?.cleanup?.request ? Effect.void
         : appendNow({ type: "EffectDied", ref, diagnostic: Cause.pretty(cause) }),
     ))
     const promiseTimeouts = new Map<string, number>()
     const normalizePromise = (ref: EffectRef, value: ExecutionResult) => Effect.gen(function* () {
       if (value.type !== "promise") return value
-      const prior = snapshot.effect(ref)?.settlement?.outcome
+      const prior = operationSettlement(snapshot.effect(ref))?.outcome
       const recorded = prior?.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(prior.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
       const startedAt = yield* Clock.currentTimeMillis
       const timeoutMs = promiseTimeouts.get(effectKey(ref)) ?? resolutionPolicy.timeoutMs
@@ -327,7 +374,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         const record = events.at(observedThrough)!
         if (!Schema.is(EffectSettled)(record) || record.outcome.status !== "fulfilled") continue
         const result = yield* Schema.decodeUnknownEffect(ExecutionResult)(record.outcome.value).pipe(Effect.mapError(RuntimeError.from))
-        if (result.type !== "promise" || snapshot.promise(record.ref) || snapshot.effect(record.ref)?.cancellation) continue
+        if (result.type !== "promise" || snapshot.promise(record.ref) || snapshot.effect(record.ref)?.cleanup?.request) continue
         const key = effectKey(record.ref)
         if (watched.has(key)) continue
         const deadlineAt = promiseDeadline(result.handle, (yield* Clock.currentTimeMillis), resolutionPolicy, result.deadlineAt)
@@ -351,20 +398,56 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         watched.add(key)
       }
     })
+    const waitForRetry = (ref: EffectRef, phase: "execution" | "cancellation", dueAt: number) => Effect.gen(function* () {
+      const key = phase === "execution" ? effectKey(ref) : `cancellation:${effectKey(ref)}`
+      const waiting = { dueAt, wake: Deferred.makeUnsafe<void>() }
+      retryWaits.set(key, waiting)
+      yield* Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        if (dueAt > now) yield* Option.isSome(Context.getOption(services, Scheduler)) ? Deferred.await(waiting.wake) : Effect.raceFirst(Deferred.await(waiting.wake), Effect.sleep(dueAt - now))
+      }).pipe(Effect.ensuring(Effect.sync(() => { retryWaits.delete(key) })))
+    })
     const cleanCancellations = Effect.gen(function* () {
-      for (const [key, cancellation] of pendingCleanup) {
+      for (const key of pendingCleanup) {
         pendingCleanup.delete(key)
         if (cleaning.has(key)) continue
         cleaning.add(key)
-        const observer = Context.getOption(services, Promises)
         const cleanup = Effect.gen(function* () {
-          if (cancellation.handle && cancellation.handle.executor !== "local" && Option.isSome(observer)) {
-            const settlement = snapshot.effect(cancellation.ref)?.settlement?.outcome
-            const value = settlement?.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(settlement.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
-            yield* observer.value.cancel({ ref: cancellation.ref, handle: cancellation.handle, ...(value?.type === "promise" && value.deadlineAt !== undefined ? { deadlineAt: value.deadlineAt } : {}) })
-          }
-          yield* cancelAct(cancellation, { get: store.get, cancel: runtime.cancel }).pipe(Effect.provide(services))
-        }).pipe(Effect.retry({ schedule: Schedule.spaced(cancellationRetryIntervalMs) }))
+          const ref = snapshot.cancelled().find(work => effectKey(work.ref) === key)?.ref
+          if (!ref) return
+          const observer = Context.getOption(services, Promises)
+          const operation = Effect.gen(function* () {
+            const completion = completing.get(key)
+            if (completion) yield* Deferred.await(completion)
+            const producer = background.get(key)
+            if (producer) yield* Fiber.interrupt(producer)
+            const current = snapshot.cancelled().find(work => effectKey(work.ref) === key)
+            if (!current) return
+            if (current.handle && current.handle.executor !== "local" && Option.isSome(observer)) {
+              const settlement = operationSettlement(snapshot.effect(current.ref))?.outcome
+              const value = settlement?.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(settlement.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
+              yield* observer.value.cancel({ ref: current.ref, handle: current.handle, ...(value?.type === "promise" && value.deadlineAt !== undefined ? { deadlineAt: value.deadlineAt } : {}) })
+            }
+            yield* cancelAct(current, { get: store.get, cancel: runtime.cancel }).pipe(Effect.provide(services))
+          })
+          const result = yield* Effect.exit(retryOperation(operation, {
+            attemptTimeoutMs: options.cancellation?.attemptTimeoutMs === undefined ? executionAttemptTimeoutMs : options.cancellation.attemptTimeoutMs,
+            decide: options.cancellation?.decide ?? (error => Effect.succeed({ delayMs: cancellationRetryIntervalMs, reason: error.message })),
+          }, {
+            previous: snapshot.retry(ref, "cancellation"), beforeAttempt: Effect.suspend(() => closed ? Effect.interrupt : Effect.void),
+            wait: dueAt => waitForRetry(ref, "cancellation", dueAt),
+            record: (attempt, dueAt, reason) => append({ type: "RetryScheduled", phase: "cancellation", ref, attempt, dueAt, reason }),
+          }))
+          if (persistenceFailure) return yield* persistenceFailure
+          if (Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause)) return yield* Effect.failCause(result.cause)
+          const outcome: CancellationOutcome = Exit.isSuccess(result)
+            ? { type: "CancellationSettled", ref, outcome: { status: "fulfilled" } }
+            : Cause.hasDies(result.cause)
+              ? { type: "CancellationDied", ref, diagnostic: Cause.pretty(result.cause) }
+              : { type: "CancellationSettled", ref, outcome: { status: "rejected", reason: RuntimeError.from(Cause.squash(result.cause)).message } }
+          yield* append(outcome)
+          reportCleanup(outcome)
+        })
         yield* runtime.fork(`cancellation:${key}`, cleanup)
       }
     })
@@ -396,6 +479,12 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         stop => Effect.sync(stop),
       )
     })
+    // claimWork retains the producer's completion boundary through final handle admission (tla/InputRetention.tla, AcknowledgementRequiresSuccess).
+    const claimWork = <Work extends { readonly ref: EffectRef }>(work: Work) => {
+      const completion = Deferred.makeUnsafe<void>()
+      completing.set(effectKey(work.ref), completion)
+      return { work, completion }
+    }
     const drain = () => Effect.gen(function* () {
       while (true) {
         if (!store.get(executionDefect) && options.canDrive && !(yield* options.canDrive)) return
@@ -416,15 +505,15 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           for (const [key, work] of localRecovery) {
             if (store.get(executionDefect)) { localRecovery.clear(); break }
             localRecovery.delete(key)
-            if (snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cancellation) continue
-            const prior = snapshot.effect(work.ref)?.settlement?.outcome
+            if (snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
+            const prior = operationSettlement(snapshot.effect(work.ref))?.outcome
             const value = prior?.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(prior.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
             if (value?.type === "promise" && value.deadlineAt !== undefined && value.deadlineAt <= (yield* Clock.currentTimeMillis)) {
               yield* appendNow({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: value.deadlineAt } } })
               continue
             }
             dispatched.add(key)
-            return { kind: "work" as const, work, recovering: true as const }
+            return { kind: "work" as const, ...claimWork(work), recovering: true as const }
           }
           const work = yield* Effect.try({ try: () => snapshot.effects().find(work => !work.ref || !dispatched.has(effectKey(work.ref))), catch: RuntimeError.from })
           if (!work) return
@@ -436,135 +525,121 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           const recorded = snapshot.effect(ref)?.request
           if (!recorded) return yield* Effect.fail(new RuntimeError("Effect execution requires a committed request"))
           dispatched.add(effectKey(recorded.ref))
-          return { kind: "work" as const, work: { ...work, ref: recorded.ref }, recovering: false as const }
+          return { kind: "work" as const, ...claimWork({ ...work, ref: recorded.ref }), recovering: false as const }
         }))
         if (!next) return
         if (next.kind === "delivery") continue
-        const { work } = next
-        yield* afterCommit()
+        const { work, completion } = next
         const key = effectKey(work.ref)
-        let lifetime = lifetimes.get(key)
-        if (!lifetime) {
-          const executionScope = yield* Scope.fork(scope)
-          const signal = yield* Effect.abortSignal.pipe(Effect.provideService(Scope.Scope, executionScope))
-          lifetime = { scope: executionScope, signal }
-          lifetimes.set(key, lifetime)
-        }
-        const signal = lifetime.signal
-        if (snapshot.effect(work.ref)?.cancellation) {
-          dispatched.delete(key)
-          continue
-        }
-        let attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
-        let executionSequence = 0
-        let retryStarted = false
-        const durableRetries = Option.isSome(Context.getOption(services, Scheduler))
-        const execution: typeof EffectExecution.Service = {
-          ref: work.ref,
-          signal: signal,
-          retry: (operation, retryOptions) => Effect.gen(function* () {
-            if (retryStarted) return yield* Effect.fail(new RuntimeError("An effect execution supports one retry boundary"))
-            retryStarted = true
-            const previous = snapshot.retry(work.ref)
-            let attempt = previous?.attempt ?? 0
-            let dueAt = previous?.dueAt
-            while (true) {
-              if (signal.aborted || snapshot.effect(work.ref)?.cancellation) return yield* Effect.interrupt
-              if (dueAt !== undefined) {
-                const waiting = { dueAt, wake: Deferred.makeUnsafe<void>() }
-                retryWaits.set(key, waiting)
-                const now = yield* Clock.currentTimeMillis
-                if (dueAt > now) yield* (durableRetries ? Deferred.await(waiting.wake) : Effect.sleep(dueAt - now)).pipe(Effect.ensuring(Effect.sync(() => { retryWaits.delete(key) })))
-                retryWaits.delete(key)
-                attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
-                executionSequence = 0
-              }
-              if (signal.aborted || snapshot.effect(work.ref)?.cancellation) return yield* Effect.interrupt
-              const result = yield* Effect.result(operation)
-              if (result._tag === "Success") return result.success
-              const decision = yield* retryOptions.decide(result.failure, attempt)
-              if (!decision) return yield* Effect.fail(result.failure)
-              if (!Number.isSafeInteger(decision.delayMs) || decision.delayMs < 0) return yield* Effect.fail(new RuntimeError("Retry delayMs must be a nonnegative safe integer"))
-              dueAt = (yield* Clock.currentTimeMillis) + decision.delayMs
-              attempt++
-              yield* execution.record({ type: "RetryScheduled", ref: work.ref, attempt, dueAt, reason: decision.reason })
+        yield* Effect.gen(function* () {
+          yield* afterCommit()
+          let lifetime = lifetimes.get(key)
+          if (!lifetime) {
+            const executionScope = yield* Scope.fork(scope)
+            const signal = yield* Effect.abortSignal.pipe(Effect.provideService(Scope.Scope, executionScope))
+            lifetime = { scope: executionScope, signal }
+            lifetimes.set(key, lifetime)
+          }
+          const signal = lifetime.signal
+          if (snapshot.effect(work.ref)?.cleanup?.request) {
+            dispatched.delete(key)
+            return
+          }
+          let attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
+          let executionSequence = 0
+          let retryStarted = false
+          const registerPromiseTimeout = (timeoutMs: number | undefined) => Effect.try({ try: () => {
+            if (timeoutMs === undefined) return
+            if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new RuntimeError("Promise timeoutMs must be a positive safe integer")
+            promiseTimeouts.set(key, timeoutMs)
+          }, catch: RuntimeError.from })
+          const execution: typeof EffectExecution.Service = {
+            ref: work.ref,
+            signal: signal,
+            retry: (operation, retryOptions) => Effect.gen(function* () {
+              if (retryStarted) return yield* Effect.fail(new RuntimeError("An effect execution supports one retry boundary"))
+              retryStarted = true
+              const beforeAttempt = Effect.suspend(() => closed || signal.aborted || snapshot.effect(work.ref)?.cleanup?.request ? Effect.interrupt : Effect.void)
+              return yield* retryOperation(operation, { ...retryOptions, attemptTimeoutMs: retryOptions.attemptTimeoutMs === undefined ? executionAttemptTimeoutMs : retryOptions.attemptTimeoutMs }, {
+                previous: snapshot.retry(work.ref), beforeAttempt,
+                wait: dueAt => waitForRetry(work.ref, "execution", dueAt).pipe(Effect.andThen(Effect.gen(function* () {
+                  attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
+                  executionSequence = 0
+                }))),
+                record: (attempt, dueAt, reason) => execution.record({ type: "RetryScheduled", ref: work.ref, attempt, dueAt, reason }),
+              })
+            }),
+            publish: payload => Effect.suspend(() => closed || signal.aborted || snapshot.effect(work.ref)?.cleanup?.request
+              ? Effect.void
+              : executionStream.publish({ ...(options.delivery ? { address: options.delivery.address } : {}), ref: work.ref, attemptId, sequence: executionSequence++, payload })),
+            cancel: runtime.cancel,
+            submit: (operation, options) => Effect.gen(function* () {
+              if (signal.aborted) return yield* Effect.interrupt
+              yield* registerPromiseTimeout(options?.timeoutMs)
+              const handle = yield* runAttempt(operation, executionAttemptTimeoutMs, () => retryStarted)
+              const value = yield* normalizePromise(work.ref, { type: "promise", handle })
+              yield* append({ type: "EffectSettled", ref: work.ref, outcome: { status: "fulfilled", value } })
+              return handle
+            }).pipe(Effect.uninterruptible),
+            get: store.get,
+            waitFor,
+            record: event => enqueue(Effect.suspend(() => snapshot.effect(work.ref)?.cleanup?.request ? Effect.void : appendNow(event as unknown as RuntimeEvent<Event>))),
+            fork: (operation, options) => Effect.gen(function* () {
+              const context = yield* Effect.context<Effect.Services<typeof operation>>()
+              const id = effectKey(work.ref)
+              if (signal.aborted) return yield* Effect.interrupt
+              yield* registerPromiseTimeout(options?.timeoutMs)
+              yield* runtime.fork(id, runAttempt(operation, executionAttemptTimeoutMs, () => retryStarted).pipe(
+                Effect.provide(context),
+                Effect.flatMap(result => runtime.deliver(work.ref, (Array.isArray(result) ? result : [result]) as readonly Event[])),
+                Effect.catch(error => Schema.is(AttemptTimedOut)(error) ? append({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: error._tag, timeoutMs: error.timeoutMs } } }) : Effect.fail(error)),
+                Effect.catchCause(cause => Cause.hasDies(cause) ? recordDeath(work.ref, cause) : Effect.failCause(cause)),
+              ))
+              return { executor: "local" as const, id }
+            }),
+          }
+          const fiber = yield* runAttempt(work.execute(work.request.input), executionAttemptTimeoutMs, () => retryStarted).pipe(
+            Effect.provideService(EffectExecution, execution),
+            Effect.provide(services),
+            Effect.flatMap(result => Schema.decodeEffect(ExecutionResult)(result).pipe(Effect.mapError(String))),
+            Effect.map(value => ({ status: "fulfilled" as const, value })),
+            Effect.catch(reason => Effect.succeed({ status: "rejected" as const, reason: Schema.is(AttemptTimedOut)(reason) ? { _tag: reason._tag, timeoutMs: reason.timeoutMs } : reason })),
+            Effect.forkIn(scope),
+          )
+          executions.set(key, fiber)
+          for (const waiter of executionWaiters) yield* Deferred.succeed(waiter, undefined)
+          executionWaiters.clear()
+          if (signal.aborted) yield* Fiber.interrupt(fiber)
+          const exit = yield* Fiber.await(fiber)
+          if (Exit.isFailure(exit)) {
+            executions.delete(key)
+            dispatched.delete(key)
+            if (snapshot.effect(work.ref)?.cleanup?.request || snapshot.promise(work.ref)) return
+            if (!Cause.hasDies(exit.cause)) return yield* Effect.failCause(exit.cause)
+            yield* recordDeath(work.ref, exit.cause)
+            return
+          }
+          const outcome = exit.value.status === "fulfilled" ? { ...exit.value, value: yield* normalizePromise(work.ref, exit.value.value) } : exit.value
+          if (next.recovering) {
+            let result: PromiseSettled["result"] | undefined
+            if (outcome.status === "rejected") result = outcome
+            else if (outcome.value.type === "value") result = { status: "fulfilled", value: outcome.value.value }
+            else if (outcome.value.handle.executor !== "local" || outcome.value.handle.id !== next.work.handle.id) return yield* Effect.fail(new RuntimeError("Recovered local work changed its execution handle"))
+            if (result) {
+              const settlement = yield* Schema.decodeEffect(Schema.toType(PromiseSettled))({ type: "PromiseSettled", ref: work.ref, result }).pipe(Effect.mapError(RuntimeError.from))
+              yield* append(settlement)
             }
-          }),
-          publish: payload => Effect.suspend(() => closed || signal.aborted || snapshot.effect(work.ref)?.cancellation
-            ? Effect.void
-            : executionStream.publish({ ...(options.delivery ? { address: options.delivery.address } : {}), ref: work.ref, attemptId, sequence: executionSequence++, payload })),
-          cancel: runtime.cancel,
-          submit: (operation, options) => Effect.gen(function* () {
-            if (signal.aborted) return yield* Effect.interrupt
-            if (options?.timeoutMs !== undefined) {
-              if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1) return yield* Effect.fail(new RuntimeError("Promise timeoutMs must be a positive safe integer"))
-              promiseTimeouts.set(key, options.timeoutMs)
-            }
-            const handle = yield* operation
-            const value = yield* normalizePromise(work.ref, { type: "promise", handle })
-            yield* append({ type: "EffectSettled", ref: work.ref, outcome: { status: "fulfilled", value } })
-            return handle
-          }).pipe(Effect.uninterruptible),
-          get: store.get,
-          waitFor,
-          record: event => enqueue(Effect.suspend(() => snapshot.effect(work.ref)?.cancellation ? Effect.void : appendNow(event as unknown as RuntimeEvent<Event>))),
-          fork: (operation, options) => Effect.gen(function* () {
-            const context = yield* Effect.context<Effect.Services<typeof operation>>()
-            const id = effectKey(work.ref)
-            if (signal.aborted) return yield* Effect.interrupt
-            if (options?.timeoutMs !== undefined) {
-              if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1) return yield* Effect.fail(new RuntimeError("Promise timeoutMs must be a positive safe integer"))
-              promiseTimeouts.set(key, options.timeoutMs)
-            }
-            yield* runtime.fork(id, operation.pipe(
-              Effect.provide(context),
-              Effect.flatMap(result => runtime.deliver(work.ref, (Array.isArray(result) ? result : [result]) as readonly Event[])),
-              Effect.catchCause(cause => Cause.hasDies(cause) ? recordDeath(work.ref, cause) : Effect.failCause(cause)),
-            ))
-            return { executor: "local" as const, id }
-          }),
-        }
-        const fiber = yield* work.execute.pipe(
-          Effect.provideService(EffectExecution, execution),
-          Effect.provide(services),
-          Effect.flatMap(result => Schema.decodeEffect(ExecutionResult)(result).pipe(Effect.mapError(String))),
-          Effect.map(value => ({ status: "fulfilled" as const, value })),
-          Effect.catch(reason => Effect.succeed({ status: "rejected" as const, reason })),
-          Effect.forkIn(scope),
-        )
-        executions.set(key, fiber)
-        for (const waiter of executionWaiters) yield* Deferred.succeed(waiter, undefined)
-        executionWaiters.clear()
-        if (signal.aborted) yield* Fiber.interrupt(fiber)
-        const exit = yield* Fiber.await(fiber)
-        if (Exit.isFailure(exit)) {
-          executions.delete(key)
-          dispatched.delete(key)
-          if (snapshot.effect(work.ref)?.cancellation || snapshot.promise(work.ref)) continue
-          if (!Cause.hasDies(exit.cause)) return yield* Effect.failCause(exit.cause)
-          yield* recordDeath(work.ref, exit.cause)
-          continue
-        }
-        const outcome = exit.value.status === "fulfilled" ? { ...exit.value, value: yield* normalizePromise(work.ref, exit.value.value) } : exit.value
-        if (next.recovering) {
-          let result: PromiseSettled["result"] | undefined
-          if (outcome.status === "rejected") result = outcome
-          else if (outcome.value.type === "value") result = { status: "fulfilled", value: outcome.value.value }
-          else if (outcome.value.handle.executor !== "local" || outcome.value.handle.id !== next.work.handle.id) return yield* Effect.fail(new RuntimeError("Recovered local work changed its execution handle"))
-          if (result) {
-            const settlement = yield* Schema.decodeEffect(Schema.toType(PromiseSettled))({ type: "PromiseSettled", ref: work.ref, result }).pipe(Effect.mapError(RuntimeError.from))
+          } else {
+            const settlement = yield* Schema.decodeEffect(Schema.toType(EffectSettled))({ type: "EffectSettled", ref: work.ref, outcome }).pipe(Effect.mapError(RuntimeError.from))
             yield* append(settlement)
           }
-        } else {
-          const settlement = yield* Schema.decodeEffect(Schema.toType(EffectSettled))({ type: "EffectSettled", ref: work.ref, outcome }).pipe(Effect.mapError(RuntimeError.from))
-          yield* append(settlement)
-        }
-        executions.delete(key)
-        dispatched.delete(effectKey(work.ref))
-        if (outcome.status === "rejected" || outcome.value.type === "value") {
-          yield* Scope.close(lifetime.scope, Exit.succeed(undefined))
-          lifetimes.delete(key)
-        }
+          executions.delete(key)
+          dispatched.delete(effectKey(work.ref))
+          if (outcome.status === "rejected" || outcome.value.type === "value") {
+            yield* Scope.close(lifetime.scope, Exit.succeed(undefined))
+            lifetimes.delete(key)
+          }
+        }).pipe(Effect.ensuring(Effect.sync(() => { completing.delete(key) }).pipe(Effect.andThen(Deferred.succeed(completion, undefined)))))
       }
     })
     const send = (events: readonly RuntimeEvent<Event>[], when?: (get: ActorRuntime<Event>["get"]) => boolean, owner?: EffectRef) => Effect.gen(function* () {
@@ -577,8 +652,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       yield* enqueue(Effect.gen(function* () {
         if (persistenceFailure) return yield* persistenceFailure
         const defect = store.get(executionDefect)
-        if (defect) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
-        if (owner && snapshot.effect(owner)?.cancellation) return
+        if (defect && !(cleanupWork().length && events.every(event => Schema.is(EffectCancelled)(event)))) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
+        if (owner && snapshot.effect(owner)?.cleanup?.request) return
         if (!admitted) {
           if (when && !(yield* Effect.try({ try: () => when(store.get), catch: RuntimeError.from }))) return
           admitted = true
@@ -632,6 +707,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     )
     const closing = yield* Effect.cached(Effect.gen(function* () {
       closed = true
+      for (const waiting of retryWaits.values()) yield* Deferred.succeed(waiting.wake, undefined)
       for (const unsubscribe of subscriptions) unsubscribe()
       subscriptions.clear()
       yield* Scope.close(scope, Exit.succeed(undefined)).pipe(Effect.ensuring(Effect.gen(function* () {
@@ -659,10 +735,21 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       const history = options.journal
         ? checkpoint ? yield* options.journal.readAfter(checkpoint.position) : yield* options.journal.read
         : (options.events ?? []).map(event => ({ event }))
-      definition = createEventLog({ schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
+      const inputs = options.journal ? yield* options.journal.readInputs : []
+      for (const input of inputs) persistedInputRefs.set(effectKey(input.ref), input.ref)
+      definition = createEventLog({ inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
         methods: setup.contracts, ...(options.delivery ? { address: options.delivery.address } : {}),
       }) }, ...(checkpoint ? { checkpoint } : {}) })
       snapshot = yield* Effect.try({ try: () => definition.replay(history), catch: RuntimeError.from })
+      if (options.journal && !options.inspect) {
+        const retained = [...snapshot.pending(), ...snapshot.deferred(), ...snapshot.cancelled()].map(({ ref, request }) => ({ ref, request }))
+        const known = new Set(inputs.map(input => effectKey(input.ref)))
+        const missing = retained.filter(input => !known.has(effectKey(input.ref)) && snapshot.effect(input.ref)?.request.request.input._tag === "InputDigest")
+        if (missing.length) {
+          yield* options.journal.append(snapshot.position, [], { put: missing })
+          for (const input of missing) persistedInputRefs.set(effectKey(input.ref), input.ref)
+        }
+      }
       for (const cancellation of snapshot.cancelled()) queueCleanup(cancellation)
       const deferred = yield* Effect.try({ try: () => snapshot.deferred(), catch: RuntimeError.from })
       // localRecovery reruns the originating act with its recorded reference and deadline; implementations must recreate local producers (packages/platform/test/properties/runtime/deferred-recovery.ts, ownedProducerRecovery).
@@ -747,35 +834,37 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         })),
         active: () => [...background.keys()],
         recoveryState: (): RecoveryState => {
-          const defect = store.get(executionDefect)
-          if (defect) throw new WatchdogTerminalError(defect.diagnostic)
-          if (errors.length) throw errors[0]!
+          const failure = runtimeFailure(true)
+          if (failure) throw failure
+          const cleanup = cleanupWork()
           // progressCursor is the position after the last settlement, so the scan runs back from the end.
           let progressCursor = snapshot.seed?.position ?? 0
           for (let index = snapshot.records.length - 1; index >= 0; index--) {
             const event = snapshot.records.at(index)!.event
-            if (Schema.is(EffectSettled)(event) || Schema.is(PromiseSettled)(event)) {
+            if (Schema.is(EffectSettled)(event) || Schema.is(PromiseSettled)(event) || Schema.is(CancellationOutcome)(event)) {
               progressCursor = (snapshot.seed?.position ?? 0) + index + 1
               break
             }
           }
           const deferred = snapshot.deferred()
           const pendingRefs = [...snapshot.effects().flatMap(work => work.ref ? [work.ref] : []), ...deferred.map(work => work.ref)]
-          if (pendingRefs.length && pendingRefs.every(ref => retryWaits.has(effectKey(ref))) && !snapshot.cancellations().length && !snapshot.deliveries().length) {
-            const times = pendingRefs.map(ref => retryWaits.get(effectKey(ref))!.dueAt)
+          const pendingKeys = [...pendingRefs.map(effectKey), ...cleanup.map(work => `cancellation:${effectKey(work.ref)}`)]
+          if (pendingKeys.length && pendingKeys.every(key => retryWaits.has(key)) && !snapshot.cancellations().length && !snapshot.deliveries().length) {
+            const times = pendingKeys.map(key => retryWaits.get(key)!.dueAt)
             for (const work of deferred) {
-              const outcome = snapshot.effect(work.ref)?.settlement?.outcome
+              const outcome = operationSettlement(snapshot.effect(work.ref))?.outcome
               const value = outcome?.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(outcome.value) : undefined
               if (value?.type === "promise" && value.deadlineAt !== undefined) times.push(value.deadlineAt)
             }
             return { progressCursor, status: "parked", wakeAt: Math.min(...times) }
           }
+          if (cleanup.length) return { progressCursor, status: "running" }
           // recoveryState preserves live inline execution without a deadline (packages/platform/test/properties/runtime/inline-execution.ts, inlineExecutionSupervision).
           if (executions.size && snapshot.effects().length) return { progressCursor, status: "running" }
           const live = deferred.filter(work => work.handle.executor === "local" && background.has(work.handle.id))
           if (live.length && !snapshot.effects().length && !snapshot.pending().length && !snapshot.cancellations().length && !snapshot.deliveries().length) {
             const deadlines = deferred.map(work => {
-              const outcome = snapshot.effect(work.ref)?.settlement?.outcome
+              const outcome = operationSettlement(snapshot.effect(work.ref))?.outcome
               const value = outcome?.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(outcome.value) : undefined
               return value?.type === "promise" ? value.deadlineAt : undefined
             })
@@ -784,7 +873,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           if (snapshot.effects().length || snapshot.pending().length || snapshot.cancellations().length || snapshot.deliveries().length || deferred.some(work => work.handle.executor === "local")) return { progressCursor, status: "pending" }
           if (!deferred.length) return { progressCursor, status: "settled" }
           const deadlines = deferred.map(work => {
-            const outcome = snapshot.effect(work.ref)?.settlement?.outcome
+            const outcome = operationSettlement(snapshot.effect(work.ref))?.outcome
             const value = outcome?.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(outcome.value) : undefined
             const recordedAt = snapshot.records.find(record => Schema.is(EffectRequested)(record.event) && effectKey(record.event.ref) === effectKey(work.ref))?.recordedAt ?? 0
             return promiseDeadline(work.handle, recordedAt, resolutionPolicy, value?.type === "promise" ? value.deadlineAt : undefined)
@@ -798,9 +887,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             executionWaiters.add(started)
             yield* Effect.raceFirst(Deferred.await(completion), Deferred.await(started)).pipe(Effect.ensuring(Effect.sync(() => { executionWaiters.delete(started) })))
           }
-          const defect = store.get(executionDefect)
-          if (defect) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
-          if (errors.length) return yield* Effect.fail(errors[0]!)
+          const failure = runtimeFailure(true)
+          if (failure) return yield* Effect.fail(failure)
         })),
         // wait observes local processing and failures; external promise delivery can arrive after it returns.
         wait: run(Effect.gen(function* () {
@@ -810,13 +898,47 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             yield* Fiber.awaitAll([...background.values()])
             if (completion === scheduled && background.size === 0) break
           }
-          const defect = store.get(executionDefect)
-          if (defect) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
-          if (errors.length) return yield* Effect.fail(errors[0]!)
+          const failure = runtimeFailure()
+          if (failure) return yield* Effect.fail(failure)
         })),
         close,
       }
       return api
     }).pipe(Effect.onError(() => close))
   })
+}
+
+// retryOperation preserves recorded attempts and absolute wakes for execution and cleanup (platform/test/bun/effect-retry.test.ts, platform/test/properties/runtime/pending-input-recovery.ts).
+function retryOperation<Value, Failure, Services, DecisionServices>(operation: Effect.Effect<Value, Failure, Services>, options: RetryOptions<Failure, DecisionServices>, recovery: {
+  readonly previous: RetryScheduled | undefined
+  readonly beforeAttempt: Effect.Effect<void, Error>
+  readonly wait: (dueAt: number) => Effect.Effect<void, Error>
+  readonly record: (attempt: number, dueAt: number, reason: RetryScheduled["reason"]) => Effect.Effect<void, Error>
+}) {
+  return Effect.gen(function* () {
+    const timeoutMs = options.attemptTimeoutMs
+    if (timeoutMs !== undefined && timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)) return yield* Effect.fail(new RuntimeError("Attempt timeoutMs must be a positive safe integer"))
+    const work = runAttempt(operation, options.attemptTimeoutMs)
+    let attempt = recovery.previous?.attempt ?? 0
+    let dueAt = recovery.previous?.dueAt
+    while (true) {
+      yield* recovery.beforeAttempt
+      if (dueAt !== undefined) yield* recovery.wait(dueAt).pipe(Effect.interruptible)
+      yield* recovery.beforeAttempt
+      const result = yield* Effect.result(work)
+      if (result._tag === "Success") return result.success
+      const decision = yield* options.decide(result.failure, attempt)
+      if (!decision) return yield* Effect.fail(result.failure)
+      if (!Number.isSafeInteger(decision.delayMs) || decision.delayMs < 0) return yield* Effect.fail(new RuntimeError("Retry delayMs must be a nonnegative safe integer"))
+      dueAt = (yield* Clock.currentTimeMillis) + decision.delayMs
+      yield* recovery.record(++attempt, dueAt, decision.reason)
+    }
+  })
+}
+
+// runAttempt hands the fallback deadline to an explicit retry boundary and waits for local finalizers before returning a timeout (quint/attemptDeadline.qnt, interruptedBeforeDecisionTest).
+function runAttempt<Value, Failure, Services>(operation: Effect.Effect<Value, Failure, Services>, timeoutMs: number | null = DEFAULT_ATTEMPT_TIMEOUT_MS, delegated?: () => boolean): Effect.Effect<Value, Failure | AttemptTimedOut, Services> {
+  if (timeoutMs === null) return operation
+  const deadline = Effect.sleep(timeoutMs).pipe(Effect.andThen(Effect.suspend(() => delegated?.() ? Effect.never : Effect.fail(AttemptTimedOut.make({ timeoutMs })))), Effect.interruptible)
+  return Effect.raceFirst(operation.pipe(Effect.interruptible), deadline)
 }

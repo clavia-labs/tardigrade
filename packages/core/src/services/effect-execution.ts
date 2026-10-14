@@ -1,12 +1,19 @@
 import { Context, Effect, type Schema } from "effect"
 import type { Getter, Atom } from "../atoms/atom"
-import type { FiberHandle, ExecutionHandle, EffectRef } from "../runtime/effects"
+import type { AttemptTimedOut, FiberHandle, ExecutionHandle, EffectRef } from "../runtime/effects"
 import type { ExecutionUpdatePayload } from "./execution-stream"
 
 export interface PromiseOptions { readonly timeoutMs?: number | undefined }
+export const DEFAULT_ATTEMPT_TIMEOUT_MS = 60_000
+export interface AttemptOptions {
+  // attemptTimeoutMs requests interruption of each invocation; null disables the deadline.
+  readonly attemptTimeoutMs?: number | null | undefined
+}
 export interface RetryDecision { readonly delayMs: number; readonly reason: Schema.Json }
-export interface RetryOptions<Failure, Services = never> {
-  readonly decide: (failure: Failure, attempt: number) => Effect.Effect<RetryDecision | undefined, Error, Services>
+export interface RetryOptions<Failure, Services = never> extends AttemptOptions {
+  // attemptTimeoutMs requests interruption of each invocation; finalizers finish before decide (quint/attemptDeadline.qnt, interruptedBeforeDecisionTest).
+  // Omission uses DEFAULT_ATTEMPT_TIMEOUT_MS; retry waits and decision callbacks are outside the deadline.
+  readonly decide: (failure: Failure | AttemptTimedOut, attempt: number) => Effect.Effect<RetryDecision | undefined, Error, Services>
 }
 
 // EffectExecution supplies the current reference, cancellation signal, and execution capabilities.
