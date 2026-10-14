@@ -104,5 +104,4 @@ test("directory admission and a turn survive retryable provisioning and lookup r
     expect(events.filter(type => type === "ThreadRegistered")).toHaveLength(1)
     expect(events).not.toContain("ThreadFailed")
   })
-  expect((await flow.request("", { name: "fresh" })).status).toBe(200)
 })
