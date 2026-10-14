@@ -10,21 +10,23 @@ import { EventLog, executionDefect } from "../services/event-log"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "../atoms/act"
-import { ExecutionResult, PromiseTimedOut, type EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady } from "./effects"
-import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, EffectSettled, type EffectDied, PromiseSettled, type RetryScheduled } from "./events"
-import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
+import { ExecutionResult, PromiseTimedOut, EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady, CancellationOutcome } from "./effects"
+import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, EffectSettled, EffectDied, PromiseSettled, RetryScheduled } from "./events"
+import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent, type PendingEffectInput } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
 import { ThreadCreated } from "../actor/thread"
 import { AtomState, initialStateSeed, StateInitialised, type StatefulAtom, type StateSeed } from "../initialise"
+
+
+import { operationSettlement, settlementCompletesExecution, cleanupSubmission, cleanupSucceeded, type StoredOperation } from "./operation"
 
 type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<infer Value> ? Value : never }
 
 export interface EffectCheckpoint {
   readonly position: number
   readonly durable: readonly { readonly name: string; readonly state: unknown; readonly position: number }[]
-  readonly effects: readonly { readonly ref: EffectRef; readonly request: StoredEffectRequested; readonly settlement?: EffectSettled; readonly cancellation?: EffectCancelled }[]
-  readonly promises: readonly PromiseSettled[]
+  readonly operations: readonly StoredOperation[]
 }
 
 // createEventLog replays validated domain events and derives identified effect descriptions without executing them.
@@ -34,6 +36,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   readonly atoms: Atoms
   readonly digestMinBytes?: number
   readonly checkpoint?: EffectCheckpoint
+  readonly inputs?: readonly PendingEffectInput[]
 }) {
   const digestMinBytes = options.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
   if (!Number.isSafeInteger(digestMinBytes) || digestMinBytes < 0) throw new Error("Effect input digest minBytes must be a nonnegative safe integer")
@@ -79,6 +82,18 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     stored.input._tag === "InputDigest" && prepared.stored.input._tag === "InputDigest"
       ? stored.act === prepared.stored.act && isDeepStrictEqual(stored.input, prepared.stored.input)
       : matchesRequest(stored, prepared.request)
+  const persistedInputs = new Map((options.inputs ?? []).map(input => [effectKey(input.ref), prepareRequest(input.request)]))
+  // acceptedInput hydrates durable payloads before using verified reconstruction for legacy digest-only requests (quint/checkpoint/inputLifecycle.qnt, verifiedExecution).
+  const acceptedInput = (record: StoredEffectRequested, proposed: ReturnType<typeof prepareRequest>, concluded: boolean) => {
+    const persisted = persistedInputs.get(effectKey(record.ref))
+    if (persisted) {
+      if (!matchesPrepared(record.request, persisted)) throw new Error(`Pending input differs from accepted request: ${effectKey(record.ref)}`)
+      return persisted.request
+    }
+    if (record.request.input._tag === "InlineInput") return prepareRequest({ act: record.request.act, input: record.request.input.value }).request
+    if (!concluded && !matchesPrepared(record.request, proposed)) throw new Error(`Accepted input is unavailable; effect request differs from its proposal: ${effectKey(record.ref)}`)
+    return proposed.request
+  }
   const eventOf = (event: unknown, reply = false, historical = false): JournalEvent<Event> => {
     const decodeDomain = historical ? (input: unknown) => validate(read(input)) : validate
     if (typeof event !== "object" || event === null || Array.isArray(event)) throw new Error("Domain event must be an object")
@@ -115,8 +130,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly deliveries: () => readonly Event[]
     readonly followups: (event: JournalEvent<Event>) => readonly object[]
     readonly pending: () => readonly { readonly type: "EffectRequested"; readonly ref: EffectRef; readonly request: EffectRequest }[]
-    readonly effect: (ref: EffectRef) => { readonly request: StoredEffectRequested; readonly settlement?: EffectSettled; readonly cancellation?: EffectCancelled } | undefined
-    readonly retry: (ref: EffectRef) => RetryScheduled | undefined
+    readonly effect: (ref: EffectRef) => StoredOperation | undefined
+    readonly retry: (ref: EffectRef, phase?: "execution" | "cancellation") => RetryScheduled | undefined
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
     readonly checkpoint: () => EffectCheckpoint | undefined
   }
@@ -128,7 +143,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     let initialState: { readonly seed: StateSeed | undefined } | undefined
     const initialisedNames = new Set(seed?.durable.map(entry => entry.name))
     let defect: EffectDied | undefined
-    const coreRequests = new Map<string, StoredEffectRequested>()
+    const operations = new Map<string, StoredOperation>()
     // addedAt places checkpoint entries before the suffix and journal entries at their global index (packages/platform/test/properties/runtime/snapshot-lookups.ts).
     const addedAt = new Map<string, number>()
     // retiredRequests preserves the request form visible before retirement (packages/platform/test/properties/runtime/snapshot-lookups.ts).
@@ -145,15 +160,42 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       return input
     }
     const retire = new Set<string>()
-    const coreSettlements = new Map<string, EffectSettled>()
-    const coreCancellations = new Map<string, EffectCancelled>()
-    const promiseSettlements = new Map<string, PromiseSettled>()
-    const concluded = new Set([...[...history].map(record => record.event), ...(seed?.effects.flatMap(entry => entry.settlement ?? []) ?? []), ...(seed?.promises ?? [])].flatMap(event =>
-      Schema.is(PromiseSettled)(event) || (Schema.is(EffectSettled)(event) && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value")) ? [effectKey(event.ref)] : []))
+    const requestOf = (key: string) => operations.get(key)?.request
+    const settlementOf = (key: string) => operationSettlement(operations.get(key))
+    const cancellationOf = (key: string) => operations.get(key)?.cleanup?.request
+    const cleanupOutcomeOf = (key: string) => operations.get(key)?.cleanup?.outcome
+    const promiseOf = (key: string) => operations.get(key)?.execution.promise
+    const hasSettlement = (key: string) => settlementOf(key) !== undefined
+    const hasCancellation = (key: string) => cancellationOf(key) !== undefined
+    const hasCleanupOutcome = (key: string) => cleanupOutcomeOf(key) !== undefined
+    const hasPromise = (key: string) => promiseOf(key) !== undefined
+    const requestEntries = () => [...operations].map(([key, operation]) => [key, operation.request] as const)
+    const settlementEntries = () => [...operations].flatMap(([key, operation]) => {
+      const outcome = operationSettlement(operation)
+      return outcome ? [[key, outcome] as const] : []
+    })
+    const cancellationEntries = () => [...operations].flatMap(([key, operation]) => operation.cleanup ? [[key, operation.cleanup.request] as const] : [])
+    const updateExecution = (key: string, patch: Partial<StoredOperation["execution"]>) => {
+      const operation = operations.get(key)!
+      operations.set(key, { ...operation, execution: { ...operation.execution, ...patch } })
+    }
+    const updateCleanup = (key: string, patch: Partial<NonNullable<StoredOperation["cleanup"]>>) => {
+      const operation = operations.get(key)!
+      const request = patch.request ?? operation.cleanup?.request
+      if (!request) throw new Error("Cleanup requires cancellation")
+      operations.set(key, { ...operation, cleanup: { ...operation.cleanup, ...patch, request } })
+    }
+    const concluded = new Set([...[...history].map(record => record.event), ...(seed?.operations.flatMap(entry => entry.execution.outcome ?? []) ?? []), ...(seed?.operations.flatMap(entry => entry.execution.promise ?? []) ?? []), ...(seed?.operations.flatMap(entry => entry.cleanup?.outcome ?? []) ?? [])].flatMap(event =>
+      (Schema.is(CancellationOutcome)(event) && cleanupSucceeded(event)) || Schema.is(PromiseSettled)(event) || (Schema.is(EffectSettled)(event) && settlementCompletesExecution(event)) ? [effectKey(event.ref)] : []))
+    if ([...history].some(record => Schema.is(EffectDied)(record.event))) {
+      const cleanupPending = new Set([...history].flatMap(({ event }) => Schema.is(EffectCancelled)(event) && !concluded.has(effectKey(event.ref)) ? [effectKey(event.ref)] : []))
+      for (const { event } of history) if (Schema.is(EffectRequested)(event) && event.ref.atom !== "host.message.replies" && !cleanupPending.has(effectKey(event.ref))) concluded.add(effectKey(event.ref))
+    }
     const retries = new Map<string, { readonly position: number; readonly event: RetryScheduled }[]>()
-    const retry = (ref: EffectRef) => retries.get(effectKey(ref))?.at(-1)?.event
-    const retryAt = (ref: EffectRef, position: number) => {
-      const history = retries.get(effectKey(ref)) ?? []
+    const retryKey = (ref: EffectRef, phase = "execution") => `${phase}:${effectKey(ref)}`
+    const retry = (ref: EffectRef, phase = "execution") => phase === "execution" ? operations.get(effectKey(ref))?.execution.retry : operations.get(effectKey(ref))?.cleanup?.retry
+    const retryAt = (ref: EffectRef, position: number, phase = "execution") => {
+      const history = retries.get(retryKey(ref, phase)) ?? []
       let low = 0
       let high = history.length
       while (low < high) {
@@ -163,24 +205,28 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       }
       return history[low - 1]?.event
     }
-    const effect = (ref: EffectRef) => {
-      const request = coreRequests.get(effectKey(ref))
-      if (!request) return undefined
-      const settlement = coreSettlements.get(effectKey(ref))
-      return { request, ...(settlement ? { settlement } : {}), ...(coreCancellations.has(effectKey(ref)) ? { cancellation: coreCancellations.get(effectKey(ref))! } : {}) }
-    }
-    const effectAt = (ref: EffectRef, position: number) => {
+    const effect = (ref: EffectRef) => operations.get(effectKey(ref))
+    const effectAt = (ref: EffectRef, position: number): StoredOperation | undefined => {
       const key = effectKey(ref)
-      if (!visible("request", key, position)) return undefined
+      const current = operations.get(key)
+      if (!current || !visible("request", key, position)) return undefined
       const retired = retiredRequests.get(key)
-      const request = retired && position <= retired.position ? retired.before : coreRequests.get(key)!
-      const settlement = visible("settlement", key, position) ? coreSettlements.get(key) : undefined
-      const cancellation = visible("cancellation", key, position) ? coreCancellations.get(key) : undefined
-      return { request, ...(settlement ? { settlement } : {}), ...(cancellation ? { cancellation } : {}) }
+      const request = retired && position <= retired.position ? retired.before : current.request
+      const settlement = visible("settlement", key, position) ? operationSettlement(current) : undefined
+      const outcome = visible("defect", key, position) ? current.execution.outcome : settlement
+      const promise = visible("promise", key, position) ? current.execution.promise : undefined
+      const executionRetry = retryAt(ref, position)
+      const cancellation = visible("cancellation", key, position) ? current.cleanup?.request : undefined
+      const cleanupOutcome = visible("cancellationOutcome", key, position) ? current.cleanup?.outcome : undefined
+      const cleanupRetry = retryAt(ref, position, "cancellation")
+      return { ref, request, execution: {
+        ...(outcome ? { outcome } : {}), ...(outcome?.type === "EffectDied" && settlement ? { deferred: settlement } : {}),
+        ...(promise ? { promise } : {}), ...(executionRetry ? { retry: executionRetry } : {}),
+      }, ...(cancellation ? { cleanup: { request: cancellation, ...(cleanupOutcome ? { outcome: cleanupOutcome } : {}), ...(cleanupRetry ? { retry: cleanupRetry } : {}) } } : {}) }
     }
     const promiseAt = (ref: EffectRef, position: number) => {
       const key = effectKey(ref)
-      return visible("promise", key, position) ? promiseSettlements.get(key) : undefined
+      return visible("promise", key, position) ? promiseOf(key) : undefined
     }
     const store = createStore(Context.make(EventLog, {
       events: source.observedEvents,
@@ -199,7 +245,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         return state ? { ...state, request: Object.freeze(observeRequest(state.request)) } : undefined
       },
       defect: () => defect,
-      promise: ref => promiseSettlements.get(effectKey(ref)),
+      promise: ref => promiseOf(effectKey(ref)),
     }))
     const actReferences = new Map<object, EffectRef>()
     const actOwners = new Map<object, string>()
@@ -231,21 +277,17 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (prior && effectKey(prior) !== effectKey(record.ref)) throw new Error("Effect origin already has an accepted reference")
       originRefs.set(key, record.ref)
     }
-    for (const entry of seed?.effects ?? []) {
+    for (const entry of seed?.operations ?? []) {
       const key = effectKey(entry.ref)
       rememberOrigin(entry.request)
-      coreRequests.set(key, entry.request)
+      operations.set(key, entry)
       remember("request", key, offset - 1)
-      if (entry.settlement) remember("settlement", key, offset - 1)
-      if (entry.cancellation) remember("cancellation", key, offset - 1)
-      if (entry.cancellation && entry.request.request.input._tag === "InlineInput") loadedInputs.set(key, { act: entry.request.request.act, input: entry.request.request.input.value })
-      if (entry.settlement) coreSettlements.set(key, entry.settlement)
-      if (entry.cancellation) coreCancellations.set(key, entry.cancellation)
-    }
-    for (const entry of seed?.promises ?? []) {
-      const key = effectKey(entry.ref)
-      promiseSettlements.set(key, entry)
-      remember("promise", key, offset - 1)
+      if (operationSettlement(entry)) remember("settlement", key, offset - 1)
+      if (entry.cleanup) remember("cancellation", key, offset - 1)
+      if (entry.cleanup && !cleanupSucceeded(entry.cleanup.outcome) && entry.request.request.input._tag === "InlineInput") loadedInputs.set(key, { act: entry.request.request.act, input: entry.request.request.input.value })
+      if (entry.cleanup?.outcome) remember("cancellationOutcome", key, offset - 1)
+      if (entry.execution.promise) remember("promise", key, offset - 1)
+      for (const event of [entry.execution.retry, entry.cleanup?.retry]) if (event) retries.set(retryKey(entry.ref, event.phase), [{ position: offset - 1, event }])
     }
     const bind = (proposal: ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>, ref: EffectRef) => {
       const prior = acts.get(effectKey(ref))
@@ -257,19 +299,18 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const checkpoint = (): EffectCheckpoint | undefined => {
       // checkpoint retains the journal suffix after a defect (quint/checkpoint/effectRecovery.qnt, capture).
       if (store.get(executionDefect)) return undefined
-      const pendingEffects = [...coreRequests].filter(([key]) => !coreSettlements.has(key) && !coreCancellations.has(key))
-      const pendingPromises = [...coreSettlements].some(([key, settlement]) => {
-        if (coreCancellations.has(key) || settlement.outcome.status !== "fulfilled") return false
-        return Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !promiseSettlements.has(key)
+      const pendingEffects = requestEntries().filter(([key]) => !hasSettlement(key) && !hasCancellation(key))
+      const pendingPromises = settlementEntries().some(([key, settlement]) => {
+        if (hasCancellation(key) || settlement.outcome.status !== "fulfilled") return false
+        return Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !hasPromise(key)
       })
       if (pendingEffects.length || pendingPromises) return undefined
-      const effects = [...coreRequests].map(([key, request]) => {
-        const settlement = coreSettlements.get(key)
-        const cancellation = coreCancellations.get(key)
-        if (!settlement && !cancellation) throw new Error("Effect checkpoint contains an unsettled request")
-        const loaded = cancellation ? inputOf(key) : undefined
+      const checkpointOperations = [...operations.values()].map(operation => {
+        if (!operationSettlement(operation) && !operation.cleanup) throw new Error("Effect checkpoint contains an unsettled request")
+        const loaded = operation.cleanup && !cleanupSucceeded(operation.cleanup.outcome) ? inputOf(effectKey(operation.ref)) : undefined
+        const request = operation.request
         const stored = loaded ? { act: loaded.act, input: { _tag: "InlineInput" as const, value: loaded.input } } : request.request.input._tag === "InlineInput" ? storeRequest({ act: request.request.act, input: request.request.input.value }, digestMinBytes) : request.request
-        return { ref: request.ref, request: { ...request, request: stored }, ...(settlement ? { settlement } : {}), ...(cancellation ? { cancellation } : {}) }
+        return { ...operation, request: { ...request, request: stored } }
       })
       // TODO: Checkpoint capture must preserve recovery for unread durable atoms absent from the registry; suffix-only restore currently loses their prefix state (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent, initSkipPrefix).
       const captured = new Set<unknown>()
@@ -286,8 +327,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       return Object.freeze({
         position: offset + records.length,
         durable: Object.freeze(durable),
-        effects: Object.freeze(effects),
-        promises: Object.freeze([...promiseSettlements.values()]),
+        operations: Object.freeze(checkpointOperations),
       })
     }
     const view = (): Values<Atoms> => Object.fromEntries(Object.entries(options.atoms).map(([name, node]) => [name, store.get(node)])) as Values<Atoms>
@@ -336,9 +376,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           if (event.type !== "EffectCancelled") throw new Error("Invalid cancellation proposal")
           const lifecycle = effect(event.ref)
           if (!lifecycle) throw new Error("Cancellation requires an accepted effect")
-          const settlement = lifecycle.settlement
-          const finished = promiseSettlements.has(effectKey(event.ref)) || (settlement && (settlement.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "value"))
-          if (!lifecycle.cancellation && !finished) cancellations.push(event)
+          const settlement = operationSettlement(lifecycle)
+          const finished = hasPromise(effectKey(event.ref)) || settlementCompletesExecution(settlement)
+          if (!lifecycle.cleanup?.request && !finished) cancellations.push(event)
           return []
         }
         if (!native) throw new Error(`Invalid effect value from ${name}`)
@@ -356,12 +396,12 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (previousRequest && previousRequest !== prepared.stored && !matchesPrepared(previousRequest, prepared)) throw new Error("Effect identity reused with a different request")
         executionDeclarations.set(proposal.identity, prepared.stored)
         if (ref) {
-          const recorded = coreRequests.get(effectKey(ref))
-          if (!recorded || recorded.origin !== proposal.origin || (!concluded.has(effectKey(ref)) && recorded.request !== prepared.stored && !matchesPrepared(recorded.request, prepared))) throw new Error("Restored effect request differs from its proposal")
+          const recorded = requestOf(effectKey(ref))
+          if (!recorded || recorded.origin !== proposal.origin) throw new Error("Restored effect request differs from its proposal")
           const key = effectKey(ref)
-          const settlement = coreSettlements.get(key)
-          const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !promiseSettlements.has(key)
-          if (!settlement || deferred || coreCancellations.has(key)) loadedInputs.set(key, executionRequest)
+          const settlement = settlementOf(key)
+          const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !hasPromise(key)
+          if (!cleanupSucceeded(cleanupOutcomeOf(key)) && (!settlement || deferred || hasCancellation(key))) loadedInputs.set(key, acceptedInput(recorded, prepared, concluded.has(key)))
           if (!assigned) bind(proposal, ref)
           return []
         }
@@ -372,8 +412,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     const validatePromise = (event: PromiseSettled) => {
       const key = effectKey(event.ref)
-      if (!coreRequests.has(key)) throw new Error("Promise settlement requires an accepted effect")
-      const settlement = coreSettlements.get(key)
+      if (!operations.has(key)) throw new Error("Promise settlement requires an accepted effect")
+      const settlement = settlementOf(key)
       if (!settlement) throw new PromiseNotReady(event.ref)
       if (settlement.outcome.status !== "fulfilled") throw new Error("Promise settlement requires successful effect settlement")
     }
@@ -381,10 +421,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const event = record.event
       for (const key of retire) {
         if (Schema.is(MessageDelivered)(event) && key === effectKey(event.ref)) continue
-        const request = coreRequests.get(key)!
+        const request = requestOf(key)!
         const stored = request.request.input._tag === "InlineInput" ? storeRequest({ act: request.request.act, input: request.request.input.value }, digestMinBytes) : request.request
         if (stored.input._tag !== request.request.input._tag) retiredRequests.set(key, { position: offset + records.length, before: request })
-        coreRequests.set(key, { ...request, request: stored })
+        operations.set(key, { ...operations.get(key)!, request: { ...request, request: stored } })
         loadedInputs.delete(key)
         acts.delete(key)
         retire.delete(key)
@@ -397,8 +437,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (Schema.is(CoreEvent)(event) && event.type !== "ThreadCreated" && event.type !== "StateInitialised" && event.type !== "MessageDelivered" && !isMessageReceived(event)) {
         const key = effectKey(event.ref)
         if (event.type === "EffectRequested") {
-          if (coreRequests.has(key)) {
-            const prior = coreRequests.get(key)
+          if (operations.has(key)) {
+            const prior = requestOf(key)
             if (!prior || !isDeepStrictEqual(prior.ref, event.ref) || prior.origin !== event.origin || !sameStoredRequest(prior.request, event.request)) throw new Error("Conflicting core effect request")
             source.append(store, [record])
             records = store.get(source.records)
@@ -410,53 +450,71 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           if (candidates.length > 1) throw new Error("Calls to the same act require distinct origins")
           const offered = candidates[0]
           const offeredPrepared = offered ? preparedRequests.get(offered.request) : undefined
-          if (!offered || (!concluded.has(key) && offeredPrepared?.stored !== event.request && !(offeredPrepared ? matchesPrepared(event.request, offeredPrepared) : matchesRequest(event.request, offered.request)))) throw new Error("Effect request differs from its proposal")
+          if (!offered) throw new Error("Effect request differs from its proposal")
+          const input = acceptedInput(event, offeredPrepared ?? prepareRequest(offered.request), concluded.has(key))
           const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
           rememberOrigin(event)
-          coreRequests.set(key, event)
+          operations.set(key, { ref: event.ref, request: event, execution: {} })
           remember("request", key, offset + records.length)
-          loadedInputs.set(key, offered.request)
+          loadedInputs.set(key, input)
           bind(proposal, event.ref)
-          accepted.set(key, { ...offered, ref: event.ref, request: offered.request })
+          accepted.set(key, { ...offered, ref: event.ref, request: input })
         } else if (event.type === "EffectDied") {
-          if (!coreRequests.has(key)) throw new Error("Defect requires an accepted effect")
-          const settlement = coreSettlements.get(key)
-          if (coreCancellations.has(key) || promiseSettlements.has(key) || settlement && (settlement.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "value")) throw new Error("Defect requires unfinished work")
+          if (!operations.has(key)) throw new Error("Defect requires an accepted effect")
+          const settlement = settlementOf(key)
+          if (hasCancellation(key) || hasPromise(key) || settlementCompletesExecution(settlement)) throw new Error("Defect requires unfinished work")
           defect ??= event
+          updateExecution(key, { outcome: event, ...(settlement ? { deferred: settlement } : {}) })
+          remember("defect", key, offset + records.length)
           accepted.delete(key)
         } else if (event.type === "RetryScheduled") {
-          if (!coreRequests.has(key) || coreCancellations.has(key) || promiseSettlements.has(key)) throw new Error("Retry requires pending accepted work")
-          const settled = coreSettlements.get(key)
-          if (settled && (settled.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(settled.outcome.value).type === "value")) throw new Error("Retry requires pending accepted work")
-          const history = retries.get(key) ?? []
+          if (!operations.has(key)) throw new Error("Retry requires accepted work")
+          if (event.phase === "cancellation") {
+            if (!hasCancellation(key) || hasCleanupOutcome(key)) throw new Error("Cleanup retry requires unfinished cancellation")
+          } else {
+            if (hasCancellation(key) || hasPromise(key)) throw new Error("Retry requires pending accepted work")
+            const settled = settlementOf(key)
+            if (settlementCompletesExecution(settled)) throw new Error("Retry requires pending accepted work")
+          }
+          const retryId = retryKey(event.ref, event.phase)
+          const history = retries.get(retryId) ?? []
           if (event.attempt !== (history.at(-1)?.event.attempt ?? 0) + 1) throw new Error("Retry attempt must advance by one")
           history.push({ position: offset + records.length, event })
-          retries.set(key, history)
+          retries.set(retryId, history)
+          if (event.phase === "cancellation") updateCleanup(key, { retry: event })
+          else updateExecution(key, { retry: event })
         } else if (event.type === "EffectCancelled") {
-          if (!coreRequests.has(key)) throw new Error("Cancellation requires an accepted effect")
+          if (!operations.has(key)) throw new Error("Cancellation requires an accepted effect")
           retire.delete(key)
-          coreCancellations.set(key, event)
+          updateCleanup(key, { request: event })
           remember("cancellation", key, offset + records.length)
           accepted.delete(key)
+        } else if (Schema.is(CancellationOutcome)(event)) {
+          if (!hasCancellation(key)) throw new Error("Cleanup acknowledgement requires cancellation")
+          if (hasCleanupOutcome(key)) throw new Error("Duplicate cleanup acknowledgement")
+          updateCleanup(key, { outcome: event })
+          remember("cancellationOutcome", key, offset + records.length)
+          if (cleanupSucceeded(event)) retire.add(key)
         } else if (event.type === "EffectSettled") {
-          if (!coreRequests.has(key)) throw new Error("Effect must be requested before settlement")
-          if (coreSettlements.has(key)) throw new Error("Duplicate core effect settlement")
-          coreSettlements.set(key, event)
+          if (cleanupSucceeded(cleanupOutcomeOf(key))) throw new Error("Acknowledged cleanup cannot accept a new submission")
+          if (!operations.has(key)) throw new Error("Effect must be requested before settlement")
+          if (hasSettlement(key)) throw new Error("Duplicate core effect settlement")
+          updateExecution(key, { outcome: event })
           remember("settlement", key, offset + records.length)
-          if (!coreCancellations.has(key) && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value")) retire.add(key)
+          if (!hasCancellation(key) && settlementCompletesExecution(event)) retire.add(key)
           accepted.delete(key)
         } else {
           validatePromise(event)
-          const prior = promiseSettlements.get(key)
+          const prior = promiseOf(key)
           if (prior && !isDeepStrictEqual(prior, event)) throw new Error("Conflicting promise settlement")
-          promiseSettlements.set(key, event)
+          updateExecution(key, { promise: event })
           remember("promise", key, offset + records.length)
-          if (!coreCancellations.has(key)) retire.add(key)
+          if (!hasCancellation(key)) retire.add(key)
         }
       }
       if (Schema.is(MessageDelivered)(event)) {
-        const settlement = coreSettlements.get(effectKey(event.ref))
+        const settlement = settlementOf(effectKey(event.ref))
         const input = loadedInputs.get(effectKey(event.ref))?.input
         if (typeof input !== "object" || input === null || !("inReplyTo" in input) || input.inReplyTo !== event.id || !("id" in input) || input.id !== event.receipt.id || settlement?.outcome.status !== "fulfilled") throw new Error("Delivery completion requires its accepted reply effect")
         const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
@@ -484,8 +542,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       validatePromise,
       dispose,
       cancellations: () => cancellations,
-      cancelled: (): readonly ActCancellation[] => [...coreCancellations].map(([key, cancellation]) => {
-        const settlement = coreSettlements.get(key)
+      cancelled: (): readonly ActCancellation[] => cancellationEntries().filter(([key]) => !cleanupSucceeded(cleanupOutcomeOf(key))).map(([key, cancellation]) => {
+        const settlement = settlementOf(key)
         const result = settlement?.outcome.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value) : undefined
         const request = inputOf(key)
         return { request, ref: cancellation.ref, reason: cancellation.reason,
@@ -497,15 +555,15 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const request = acts.get(effectKey(event.ref))
         if (!request) return []
         if (event.type === "EffectCancelled") {
-          const settled = coreSettlements.get(effectKey(event.ref))
+          const settled = settlementOf(effectKey(event.ref))
           const result = settled?.outcome.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(settled.outcome.value) : undefined
           return request.onSettled?.({ status: "rejected", reason: { _tag: "Cancelled", reason: event.reason } }, event.ref, result?.type === "promise" ? result.handle : undefined) ?? []
         }
-        if (coreCancellations.has(effectKey(event.ref))) return []
-        if (event.type === "RetryScheduled" || event.type === "EffectDied") return []
+        if (hasCancellation(effectKey(event.ref))) return []
+        if (event.type === "RetryScheduled" || event.type === "EffectDied" || Schema.is(CancellationOutcome)(event)) return []
         if (event.type === "EffectRequested") return request.onRequested?.(event.ref) ?? []
         if (event.type === "PromiseSettled") {
-          const settled = coreSettlements.get(effectKey(event.ref))
+          const settled = settlementOf(effectKey(event.ref))
           if (!settled || settled.outcome.status !== "fulfilled") return []
           const result = Schema.decodeUnknownSync(ExecutionResult)(settled.outcome.value)
           return result.type === "promise" ? request.onSettled?.(event.result, event.ref, result.handle) ?? [] : []
@@ -526,23 +584,23 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       get: store.get,
       view,
       effects,
-      deferred: (): readonly DeferredWork[] => store.get(executionDefect) ? [] : [...coreSettlements].flatMap(([key, settlement]) => {
-        if (coreCancellations.has(key) || settlement.outcome.status !== "fulfilled" || promiseSettlements.has(key)) return []
+      deferred: (): readonly DeferredWork[] => store.get(executionDefect) ? [] : settlementEntries().flatMap(([key, settlement]) => {
+        if (hasCancellation(key) || settlement.outcome.status !== "fulfilled" || hasPromise(key)) return []
         const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
         if (result.type !== "promise") return []
         const proposal = acts.get(key)
-        const request = coreRequests.get(key)
+        const request = requestOf(key)
         if (!proposal || !request) throw new Error("Deferred work requires its reconstructed execution")
         return [{ kind: "act" as const, atom: settlement.ref.atom, source: actOwners.get(proposal.identity)!, ref: settlement.ref,
           request: inputOf(key), execute: proposal.execute, handle: result.handle }]
       }),
-      pending: () => [...coreRequests].filter(([key]) => !coreSettlements.has(key) && !coreCancellations.has(key)).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
+      pending: () => requestEntries().filter(([key]) => !hasSettlement(key) && !hasCancellation(key) && (!defect || requestOf(key)!.ref.atom === "host.message.replies")).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
       effect,
       effectAt,
       retry,
       retryAt,
       promiseAt,
-      promise: (ref: EffectRef) => promiseSettlements.get(effectKey(ref)),
+      promise: (ref: EffectRef) => promiseOf(effectKey(ref)),
       checkpoint,
     }
   }
@@ -582,7 +640,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       followups: (event: JournalEvent<Event>) => engineOf(snapshot).followups(event),
       pending: () => engineOf(snapshot).pending(),
       effect: (ref: EffectRef) => extends_(engine, snapshot) ? engine.effectAt(ref, snapshot.position) : engineOf(snapshot).effect(ref),
-      retry: (ref: EffectRef) => extends_(engine, snapshot) ? engine.retryAt(ref, snapshot.position) : engineOf(snapshot).retry(ref),
+      retry: (ref: EffectRef, phase?: "execution" | "cancellation") => extends_(engine, snapshot) ? engine.retryAt(ref, snapshot.position, phase) : engineOf(snapshot).retry(ref, phase),
       promise: (ref: EffectRef) => extends_(engine, snapshot) ? engine.promiseAt(ref, snapshot.position) : engineOf(snapshot).promise(ref),
       checkpoint: () => engineOf(snapshot).checkpoint(),
     })
@@ -613,16 +671,19 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const record = eventOf(event, metadata.message?.inReplyTo !== undefined)
       const engine = engineOf(snapshot)
       const defect = snapshot.get(executionDefect)
-      if (defect && !(Schema.is(CoreEvent)(record) && "ref" in record && (record.type === "EffectDied" || record.ref.atom === "host.message.replies"))) return snapshot
+      if (defect && !(Schema.is(CoreEvent)(record) && "ref" in record && (record.type === "EffectDied" || record.type === "EffectCancelled" || (record.type === "EffectSettled" && cleanupSubmission(engine.effect(record.ref), record)) || Schema.is(CancellationOutcome)(record) || (record.type === "RetryScheduled" && record.phase === "cancellation") || record.ref.atom === "host.message.replies"))) return snapshot
       if (Schema.is(CoreEvent)(record) && record.type !== "ThreadCreated" && record.type !== "StateInitialised" && record.type !== "MessageDelivered" && !isMessageReceived(record)) {
         const lifecycle = engine.effect(record.ref)
         if (record.type === "EffectCancelled") {
           if (!lifecycle) throw new Error("Cancellation requires an accepted effect")
-          if (lifecycle.cancellation || engine.promise(record.ref)) return snapshot
-          const settlement = lifecycle.settlement
-          if (settlement && (settlement.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "value")) return snapshot
-        } else if (lifecycle?.cancellation) {
-          if (record.type === "PromiseSettled" || record.type === "RetryScheduled") return snapshot
+          if (lifecycle.cleanup?.request || engine.promise(record.ref)) return snapshot
+          const settlement = operationSettlement(lifecycle)
+          if (settlementCompletesExecution(settlement)) return snapshot
+        } else if (Schema.is(CancellationOutcome)(record)) {
+          if (!lifecycle?.cleanup?.request) throw new Error("Cleanup acknowledgement requires cancellation")
+        } else if (lifecycle?.cleanup?.request) {
+          if (record.type === "EffectSettled" && cleanupSucceeded(lifecycle.cleanup?.outcome) && !operationSettlement(lifecycle)) throw new Error("Acknowledged cleanup cannot accept a new submission")
+          if (record.type === "PromiseSettled" || (record.type === "RetryScheduled" && record.phase !== "cancellation")) return snapshot
           if (record.type === "EffectSettled" && (record.outcome.status !== "fulfilled" || Schema.decodeUnknownSync(ExecutionResult)(record.outcome.value).type !== "promise")) return snapshot
         }
         if (record.type === "EffectDied") {
@@ -632,8 +693,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
             return snapshot
           }
         }
-        const prior = record.type === "RetryScheduled" ? (engine.retry(record.ref)?.attempt === record.attempt ? engine.retry(record.ref) : undefined) : record.type === "EffectRequested" ? lifecycle?.request
-          : record.type === "EffectSettled" ? lifecycle?.settlement : record.type === "EffectCancelled" ? lifecycle?.cancellation : engine.promise(record.ref)
+        const prior = record.type === "RetryScheduled" ? (engine.retry(record.ref, record.phase)?.attempt === record.attempt ? engine.retry(record.ref, record.phase) : undefined) : record.type === "EffectRequested" ? lifecycle?.request
+          : record.type === "EffectSettled" ? operationSettlement(lifecycle) : record.type === "EffectCancelled" ? lifecycle?.cleanup?.request : Schema.is(CancellationOutcome)(record) ? lifecycle?.cleanup?.outcome : engine.promise(record.ref)
         if (prior) {
           if (record.type === "PromiseSettled" && Schema.is(PromiseSettled)(prior) &&
             ((record.result.status === "rejected" && Schema.is(PromiseTimedOut)(record.result.reason)) ||

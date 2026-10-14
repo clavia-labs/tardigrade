@@ -17,6 +17,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
   const records: Recorded<Event>[] = []
   let checkpoint: StoredCheckpoint | undefined
   const journal: Journal<Event> = {
+    readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     readCheckpoint: Effect.sync(() => checkpoint),
     append: (position, events) => Effect.sync(() => {

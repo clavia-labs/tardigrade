@@ -1,11 +1,11 @@
 import { type Effect, Schema } from "effect"
 import type { EffectExecution } from "../services/effect-execution"
 import type { ActRequest } from "./act"
-import { type EffectRef, EffectCancelled } from "../runtime/effects"
+import { type EffectRef, type ExecutionResult, EffectCancelled } from "../runtime/effects"
 import type { EffectRequest } from "../runtime/events"
 import { atom, type Atom, type Getter } from "./atom"
 
-export { EffectExecution, type PromiseOptions, type RetryOptions, type RetryDecision } from "../services/effect-execution"
+export { EffectExecution, DEFAULT_ATTEMPT_TIMEOUT_MS, type AttemptOptions, type PromiseOptions, type RetryOptions, type RetryDecision } from "../services/effect-execution"
 
 // EventValue proposes a domain event for direct journal delivery.
 export interface EventValue<Event> {
@@ -67,7 +67,7 @@ export interface EffectWork<Services = never> {
   readonly request: EffectRequest
   readonly source: string
   readonly ref?: EffectRef
-  readonly execute: Effect.Effect<import("../runtime/effects").ExecutionResult, Schema.Json, Services | EffectExecution>
+  readonly execute: (input: Schema.Json) => Effect.Effect<ExecutionResult, Schema.Json, Services | EffectExecution>
 }
 export interface IdentifiedEffectValue<Services = never> extends EffectWork<Services> {
   readonly ref: EffectRef

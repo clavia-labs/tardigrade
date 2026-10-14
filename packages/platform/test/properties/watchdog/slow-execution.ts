@@ -17,6 +17,7 @@ export const slowExecutionRecovery = fc.asyncProperty(cases, options => Effect.r
   type Input = { readonly type: "RunRequested" }
   const records: Recorded<Input>[] = []
   const journal: Journal<Input> = {
+    readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires an undefined checkpoint.
     readCheckpoint: Effect.succeed(undefined),

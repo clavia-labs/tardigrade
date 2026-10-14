@@ -18,6 +18,11 @@ export class RuntimeError extends Error {
   }
 }
 
+// AttemptTimedOut reports an expired local attempt without acknowledging remote completion (quint/attemptDeadline.qnt, executionTimeoutRetryTest).
+export class AttemptTimedOut extends Schema.TaggedError<AttemptTimedOut>()("AttemptTimedOut", { timeoutMs: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)) }) {
+  override get message() { return `Attempt timed out after ${this.timeoutMs}ms` }
+}
+
 // ActorCommitError latches a failed journal commit and retains its full Effect cause for diagnostics.
 export class ActorCommitError extends Data.TaggedError("ActorCommitError")<{
   readonly message: "Actor state could not be persisted; recreate the actor store before retrying"
@@ -62,6 +67,19 @@ export type EffectDied = typeof EffectDied.Type
 // EffectCancelled records a terminal local cancellation decision; executor cleanup may still be pending.
 export const EffectCancelled = Schema.Struct({ type: Schema.Literal("EffectCancelled"), ref: EffectRef, reason: Schema.Json })
 export type EffectCancelled = typeof EffectCancelled.Type
+
+// CancellationSettled records the final cleanup result; only success discharges the input obligation (quint/workLifecycle.qnt, cleanupDischargeSound).
+export const CancellationSettled = Schema.Struct({
+  type: Schema.Literal("CancellationSettled"), ref: EffectRef,
+  outcome: Schema.Union([Schema.Struct({ status: Schema.Literal("fulfilled") }), Schema.Struct({ status: Schema.Literal("rejected"), reason: Schema.String })]),
+})
+export type CancellationSettled = typeof CancellationSettled.Type
+
+// CancellationDied records a cleanup defect while preserving its input obligation (quint/workLifecycle.qnt, cleanupDeathTest).
+export const CancellationDied = Schema.Struct({ type: Schema.Literal("CancellationDied"), ref: EffectRef, diagnostic: Schema.String })
+export type CancellationDied = typeof CancellationDied.Type
+export const CancellationOutcome = Schema.Union([CancellationSettled, CancellationDied])
+export type CancellationOutcome = typeof CancellationOutcome.Type
 
 export const Cancelled = Schema.TaggedStruct("Cancelled", { reason: Schema.Json })
 export type Cancelled = typeof Cancelled.Type

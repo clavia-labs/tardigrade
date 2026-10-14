@@ -28,6 +28,7 @@ export class Supervisor extends Context.Service<Supervisor, {
 
 // createSupervisor manages per-instance directory actors and provisions their requested threads.
 export function createSupervisor(options: {
+  readonly attemptTimeoutMs?: number | null
   readonly actor: string
   readonly checkpointPolicy?: CheckpointPolicy
   readonly promises?: Partial<PromisePolicy>
@@ -44,6 +45,7 @@ export function createSupervisor(options: {
   const openSupervisor = (instance: string) => Effect.gen(function* () {
     let runtime!: ActorRuntime<SupervisorEvent>
     const store = yield* createActorStore({
+      ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
       actor: supervisorActor,
       ...(options.checkpointPolicy ? { checkpoint: options.checkpointPolicy } : {}),
       ...(options.canDrive ? { canDrive: options.canDrive(instance) } : {}),

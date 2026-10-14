@@ -18,6 +18,7 @@ test("reopening retries the local effect and recreates its producer with the ori
   const refs: EffectRef[] = []
   const producers: Deferred.Deferred<string>[] = []
   const journal: Journal<Event> = {
+    readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires an undefined checkpoint result.
     readCheckpoint: Effect.succeed(undefined),

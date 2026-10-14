@@ -33,6 +33,7 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
   let watches = 0
   let watchAttempts = 0
   const journal: Journal<Event> = {
+    readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined; Effect.void has a void result type.
     readCheckpoint: Effect.succeed(undefined),

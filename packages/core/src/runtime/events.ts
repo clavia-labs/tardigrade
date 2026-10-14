@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { EffectRef, EffectCancelled, EffectDied } from "./effects"
+import { EffectRef, EffectCancelled, EffectDied, CancellationSettled, CancellationDied } from "./effects"
 import { EffectAcceptance, StoredEffectRequested } from "./effect-request"
 import { promiseSchema } from "../atoms/promise"
 import { MessageReceived, MessageDelivered, isMessageReceived } from "../actor/message"
@@ -15,7 +15,7 @@ export type EffectRequest = typeof EffectRequest.Type
 export const EffectRequested = StoredEffectRequested
 export type EffectRequested = typeof EffectRequested.Type
 
-export { EffectCancelled, EffectDied, Cancelled } from "./effects"
+export { EffectCancelled, EffectDied, CancellationSettled, CancellationDied, Cancelled } from "./effects"
 
 // PromiseSettled records the eventual outcome of a durable promise.
 export const PromiseSettled = promiseSchema({ success: Schema.Json, error: Schema.Json })
@@ -29,17 +29,18 @@ export const EffectSettled = Schema.Struct({
 })
 export type EffectSettled = typeof EffectSettled.Type
 
-// RetryScheduled preserves the next attempt's absolute wake while the operation remains pending.
+// RetryScheduled preserves the next attempt's absolute wake; an omitted phase identifies execution retries.
 export const RetryScheduled = Schema.Struct({
   type: Schema.Literal("RetryScheduled"),
   ref: EffectRef,
+  phase: Schema.optionalKey(Schema.Literals(["execution", "cancellation"])),
   attempt: Schema.Int.check(Schema.isGreaterThan(0)),
   dueAt: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
   reason: Schema.Json,
 })
 export type RetryScheduled = typeof RetryScheduled.Type
 
-const lifecycleEvents = [EffectSettled, EffectDied, PromiseSettled, RetryScheduled, EffectCancelled, ThreadCreated, MessageDelivered, MessageReceived, StateInitialised] as const
+const lifecycleEvents = [EffectSettled, EffectDied, CancellationSettled, CancellationDied, PromiseSettled, RetryScheduled, EffectCancelled, ThreadCreated, MessageDelivered, MessageReceived, StateInitialised] as const
 export const CoreEvent = Schema.Union([EffectRequested, ...lifecycleEvents])
 export type CoreEvent = typeof CoreEvent.Type
 export const ObservedCoreEvent = Schema.Union([EffectAcceptance, ...lifecycleEvents])
@@ -47,5 +48,5 @@ export type ObservedCoreEvent = typeof ObservedCoreEvent.Type
 
 // hasCoreEventType identifies event names reserved for framework records.
 export function hasCoreEventType(event: object): boolean {
-  return isMessageReceived(event) || "type" in event && (event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "EffectDied" || event.type === "PromiseSettled" || event.type === "RetryScheduled" || event.type === "EffectCancelled" || event.type === "ThreadCreated" || event.type === "MessageDelivered" || event.type === "StateInitialised")
+  return isMessageReceived(event) || "type" in event && (event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "EffectDied" || event.type === "PromiseSettled" || event.type === "RetryScheduled" || event.type === "EffectCancelled" || event.type === "CancellationSettled" || event.type === "CancellationDied" || event.type === "ThreadCreated" || event.type === "MessageDelivered" || event.type === "StateInitialised")
 }

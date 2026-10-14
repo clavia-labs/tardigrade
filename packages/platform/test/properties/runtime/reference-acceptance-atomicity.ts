@@ -85,13 +85,14 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
     if (checkpoint) stored = checkpoint
   })
   const journal: Journal<Event> = {
+    readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]),
     readAfter: cursor => Effect.sync(() => {
       if (cursor < 0 || cursor > records.length) throw new RuntimeError("Invalid suffix position")
       return records.slice(cursor)
     }),
     readCheckpoint: Effect.sync(() => stored),
-    append, appendWithCheckpoint: append,
+    append: (position, events) => append(position, events), appendWithCheckpoint: append,
   }
   const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(),
     services: () => Job.layer((input, { ref }) => Effect.sync(() => { executions.push(ref); return input.invocation })),

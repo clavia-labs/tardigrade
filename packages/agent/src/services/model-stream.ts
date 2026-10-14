@@ -1,6 +1,6 @@
-import { RuntimeError, type EffectExecution, type ExecutionUpdatePayload } from "@clavia/tardigrade-core"
+import { RuntimeError, withStreamTimeout, type EffectExecution, type ExecutionUpdatePayload } from "@clavia/tardigrade-core"
 import type { ModelRef } from "@clavia/tardigrade-model/reference"
-import { boundedStream, StreamIncomplete } from "@clavia/tardigrade-model/stream/request"
+import { StreamIncomplete } from "@clavia/tardigrade-model/stream/request"
 import type { StreamBounds } from "@clavia/tardigrade-model/stream/policy"
 import { Effect, Stream } from "effect"
 import { LanguageModel, Prompt, Response, type Tool } from "effect/unstable/ai"
@@ -28,7 +28,7 @@ export const collectModelStream = <Tools extends Record<string, Tool.Any>, Mode 
   bounds: StreamBounds,
 ) => Effect.gen(function* () {
   const parts = yield* stream.pipe(
-    stream => boundedStream(stream, bounds),
+    stream => withStreamTimeout(stream, bounds),
     Stream.tap(part => part.type === "error" ? Effect.fail(RuntimeError.from(part.error)) : part.type === "text-delta" || part.type === "reasoning-delta"
       ? context.publish({ type: "model.delta", purpose: context.purpose, model, blockId: part.id,
         kind: part.type === "text-delta" ? "text" : "reasoning", text: part.delta } satisfies ModelDelta)

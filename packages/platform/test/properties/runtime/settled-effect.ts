@@ -48,7 +48,7 @@ export const settledEffect = fc.property(cases, ({ original, edited, text, outco
   }
   try {
     if (replay(original) !== 0) throw new Error("Unchanged replay proposed recorded work again")
-    if (!settled) {
+    if (!settled && digestMinBytes === 0) {
       if (!rejected(() => replay(edited))) throw new Error("Unsettled effect replayed with a changed input")
       return
     }
