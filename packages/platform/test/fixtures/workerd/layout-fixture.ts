@@ -1,5 +1,5 @@
 import { Context, Deferred, Effect, Schema } from "effect"
-import { act, actorMethod, defineActor, durableAtom, effectAtom, event, Invocation, Supervisor, ThreadCoordinate, EffectExecution, durablePromise, type ThreadCreated, type InitialState } from "@clavia/tardigrade-core"
+import { act, actorMethod, defineActor, durableAtom, effectAtom, event, Invocation, Supervisor, ThreadCoordinate, EffectExecution, durablePromise, DEFAULT_PROVISION_RETRY, type ThreadCreated, type InitialState } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
 import { createActorWorker, cloudflareThreadName } from "../../../src/cloudflare"
 
@@ -45,7 +45,7 @@ const paused = new Set<string>()
 const failed = new Set<string>()
 const held = new Map<string, Deferred.Deferred<void>>()
 const attempts = new Map<string, number>()
-const worker = createActorWorker({ actor, checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } }, actorContext: Context.pick(), initialStateAtoms: [value, spawns], http: env => typeof env.FIXTURE_TOKEN === "string" ? { token: env.FIXTURE_TOKEN } : {}, effectInput: { digestMinBytes: 0 }, services: (_env, coordinate) => Spawn.layer(input => Effect.gen(function* () {
+const worker = createActorWorker({ actor, provisionRetry: { ...DEFAULT_PROVISION_RETRY, decide: (failure, attempt) => DEFAULT_PROVISION_RETRY.decide(failure, attempt).pipe(Effect.map(decision => decision && { ...decision, delayMs: 50 })) }, checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } }, actorContext: Context.pick(), initialStateAtoms: [value, spawns], http: env => typeof env.FIXTURE_TOKEN === "string" ? { token: env.FIXTURE_TOKEN } : {}, effectInput: { digestMinBytes: 0 }, services: (_env, coordinate) => Spawn.layer(input => Effect.gen(function* () {
   const name = cloudflareThreadName(coordinate)
   attempts.set(name, (attempts.get(name) ?? 0) + 1)
   const execution = yield* EffectExecution
@@ -76,6 +76,10 @@ export class LayoutActorDO extends worker.ActorObject {
 export class LayoutThreadDO extends worker.ThreadObject {
   private provisionRelease: Deferred.Deferred<void> | undefined
   private provisionEntered = false
+  private provisionAttempts = 0
+  private provisionFailures = 0
+  failNextProvisions(count: number) { this.provisionFailures = count }
+  provisionCalls() { return this.provisionAttempts }
   holdProvision() { this.provisionRelease = Deferred.makeUnsafe<void>() }
   provisioning() { return this.provisionEntered }
   async releaseProvision() {
@@ -84,7 +88,8 @@ export class LayoutThreadDO extends worker.ThreadObject {
   }
   override async provision(created: ThreadCreated, initialState?: InitialState) {
     this.provisionEntered = true
-    if (created.address.instance.startsWith("parallel-") && created.address.thread === "failed") throw new Error("injected provision failure")
+    this.provisionAttempts++
+    if (this.provisionFailures > 0) { this.provisionFailures--; throw new Error("injected transient provision failure") }
     if (this.provisionRelease) await Effect.runPromise(Deferred.await(this.provisionRelease))
     if (created.address.instance.startsWith("parallel-")) await Effect.runPromise(Effect.sleep(200))
     await super.provision(created, initialState)

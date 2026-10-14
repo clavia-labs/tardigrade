@@ -1,3 +1,4 @@
+import type { RetryOptions } from "../services/effect-execution"
 import type { WatchdogTarget } from "../services/watchdog"
 import { prepareInitialState } from "./initialisation"
 import type { ThreadCoordinate, ChildPlacement } from "../actor/thread"
@@ -31,6 +32,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
   readonly actorTransport?: ActorMessageTransport
   readonly transports?: Readonly<Record<string, MessageTransport>>
   readonly delivery?: { readonly retryIntervalMs?: number }
+  readonly provisionRetry?: RetryOptions<Error>
   readonly generateName?: () => string
   readonly defaultChildPlacement?: ChildPlacement
 }) {
@@ -49,6 +51,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
     ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
     ...(options.canDrive ? { canDrive: (instance: string) => options.canDrive!({ actor: options.actor.actorName, instance }) } : {}),
     ...(options.promises ? { promises: options.promises } : {}),
+    ...(options.provisionRetry ? { provisionRetry: options.provisionRetry } : {}),
     journal: instance => options.storage.supervisor(options.actor.actorName, instance),
     validateInitialState: state => prepareInitialState(options.initialStateAtoms ?? [], state).pipe(Effect.asVoid),
     provision: allocation => actors.provision({
@@ -62,7 +65,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
     run,
   })
   const services: ActorExecutionOptions<Event, Services, State, Contracts>["services"] = (coordinate, runtime) => options.services(coordinate, runtime).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, supervisor), Layer.succeed(Invocation, invocation.forSender(coordinate)))))
-  const actors: ReturnType<typeof createActorExecution<Event, Services, State, Contracts>> = createActorExecution({
+  const actors: ReturnType<typeof createActorExecution<Event, Services, State, Contracts>> = createActorExecution<Event, Services, State, Contracts>({
     ...options, executionStreamBus: executionStream, run, from: options.from ?? DEFAULT_EXTERNAL_SENDER,
     delivery: coordinate => ({ ...options.delivery, address: coordinate, send: invocation.forSender(coordinate).send }),
     services,

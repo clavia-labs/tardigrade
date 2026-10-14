@@ -38,7 +38,7 @@ export interface CloudflareObjectBindings {
 }
 
 type ExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event>> = ActorExecutionOptions<Event, Services, State, Contracts>
-export type ActorObjectOptions<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Omit<ExecutionOptions<Event, Services, State, Contracts>, "storage" | "services" | "from" | "delivery" | "actorContext" | "executionStreamBus"> & Pick<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "from" | "delivery" | "transports" | "actorTransport" | "telemetry" | "defaultChildPlacement"> & {
+export type ActorObjectOptions<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Omit<ExecutionOptions<Event, Services, State, Contracts>, "storage" | "services" | "from" | "delivery" | "actorContext" | "executionStreamBus"> & Pick<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "from" | "delivery" | "transports" | "actorTransport" | "telemetry" | "defaultChildPlacement" | "provisionRetry"> & {
   readonly actorContext?: ExecutionOptions<Event, Services, State, Contracts>["actorContext"]
   // services receives the current Durable Object storage for local cache layers.
   readonly services: (env: Env, ...args: [...Parameters<ExecutionOptions<Event, Services, State, Contracts>["services"]>, DurableObjectStorage]) => Layer.Layer<Layer.Success<ReturnType<ExecutionOptions<Event, Services, State, Contracts>["services"]>>, Error, Supervisor | Invocation>
@@ -146,6 +146,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       if (!this.directory) {
         this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
         this.directory = createSupervisor({ actor: options.actor.actorName, journal: () => this.journal!, run: this.run,
+          ...(options.provisionRetry ? { provisionRetry: options.provisionRetry } : {}),
           ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
         ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
           canDrive: () => this.watchdog.status.pipe(Effect.flatMap(entries => entries.get(watchdogKey({ actor: options.actor.actorName, instance }))?.status === "blocked" ? Effect.succeed(false) : options.canDrive ? options.canDrive({ actor: options.actor.actorName, instance }) : Effect.succeed(true))),

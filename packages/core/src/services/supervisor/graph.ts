@@ -16,6 +16,7 @@ const Allocation = Schema.Struct({
   initialState: Schema.optionalKey(InitialState),
 })
 export type ThreadAllocation = typeof Allocation.Type
+const sameAllocation = Schema.toEquivalence(Allocation)
 const Thread = Schema.Struct({ ...Allocation.fields, origin: Schema.Finite, status: Schema.Literals(["requested", "registered", "failed"]), reason: Schema.optionalKey(Schema.String) })
 export const SupervisorEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("ThreadRequested"), allocation: Allocation }),
@@ -24,7 +25,7 @@ export const SupervisorEvent = Schema.Union([
 ])
 export type SupervisorEvent = typeof SupervisorEvent.Type
 
-// threads projects allocation state; provisioning must tolerate repetition after interrupted registration.
+// threads preserves allocation identity across failed re-requests (packages/platform/test/workerd/thread-layout.workers.ts). Provisioning must tolerate repetition after interrupted registration.
 export const threads = durableAtom({ name: "host.supervisor.threads",
   input: SupervisorEvent,
   schema: Schema.Array(Thread),
@@ -32,12 +33,14 @@ export const threads = durableAtom({ name: "host.supervisor.threads",
   reduce: (state, event: SupervisorEvent, _metadata, position) => {
     if (event.type === "ThreadRequested") {
       const next = event.allocation
-      if (state.some(entry => entry.coordinate.thread === next.coordinate.thread || (entry.parent === next.parent && entry.name === next.name))) throw new Error("Duplicate thread allocation")
+      const existing = state.find(entry => entry.coordinate.thread === next.coordinate.thread || (entry.parent === next.parent && entry.name === next.name))
+      if (existing && (existing.status !== "failed" || !sameAllocation(existing, next))) throw new Error("Duplicate thread allocation")
       const parent = next.parent === null ? undefined : state.find(entry => entry.coordinate.thread === next.parent && entry.status === "registered")
       if (next.parent !== null && !parent) throw new Error("Unknown parent thread")
       if (next.depth !== (parent ? parent.depth + 1 : 0)) throw new Error("Invalid thread depth")
       if (state.some(entry => entry.coordinate.actor !== next.coordinate.actor || entry.coordinate.instance !== next.coordinate.instance)) throw new Error("Supervisor instance mismatch")
-      return [...state, { ...next, origin: position, status: "requested" as const }]
+      const requested = { ...next, origin: position, status: "requested" as const }
+      return existing ? state.map(entry => entry === existing ? requested : entry) : [...state, requested]
     }
     const current = state.find(entry => entry.coordinate.thread === event.coordinate.thread)
     if (!current || current.status !== "requested" || current.coordinate.actor !== event.coordinate.actor || current.coordinate.instance !== event.coordinate.instance) throw new Error("Unknown thread registration")
@@ -54,7 +57,7 @@ export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
     const acts = Object.fromEntries(directory.filter(entry => entry.status === "requested").map(allocation => {
       const key = allocation.coordinate.thread
       let request = requests.get(key)
-      if (!request) {
+      if (!request || request.origin !== allocation.origin) {
         request = Provision.request({ origin: allocation.origin, input: allocation, onSettled: result => {
           if (result.status === "rejected") return [{ type: "ThreadFailed", coordinate: allocation.coordinate, reason: typeof result.reason === "string" ? result.reason : JSON.stringify(result.reason) } satisfies SupervisorEvent]
           return [{ type: "ThreadRegistered", coordinate: allocation.coordinate } satisfies SupervisorEvent]
