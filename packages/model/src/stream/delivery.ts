@@ -54,7 +54,6 @@ export const observeResponse = (identity: InferenceIdentity, model: ModelRef, ke
   return {
     onPart: (part: Response.AnyPart) => {
       if (part.type !== "text-delta" && part.type !== "reasoning-delta") return Effect.void
-      // A block opens when the delta's part changes and an empty delta opens none, since OpenRouter reopens reasoning beside empty text (delivery.test.ts).
       if (part.delta === "") return Effect.void
       const block = `${part.type}:${part.id}`
       if (block !== openBlock) {
