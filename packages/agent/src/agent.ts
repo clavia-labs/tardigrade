@@ -2,7 +2,7 @@ import { agentMethods } from "./actor/methods"
 import { Effect } from "effect"
 import { atom, defineActor } from "@clavia/tardigrade-core"
 import { messages } from "./atoms/durable/index"
-import { toolBudget, budgetInstructions } from "./atoms/budget-request"
+import { toolBudget } from "./atoms/budget-request"
 import { compact } from "./atoms/compact"
 import { infer } from "./atoms/infer"
 import { permissions } from "./atoms/permission-request"
@@ -16,10 +16,7 @@ export const createActor = defineActor("tardie", Effect.gen(function* () {
   const permitted = withPermissions(available, permission)
   const budget = toolBudget(pendingTools, { configure: false })
   const tools = withBudget(permitted, budget)
-  const system = systemPrompt(
-    "You are a friendly assistant.",
-    budgetInstructions(budget),
-  )
+  const system = systemPrompt("You are a friendly assistant.")
   const context = yield* compact(messages)
 
   const input = atom(get => ({
