@@ -3,12 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { TestClock } from "effect/testing"
 import { Response } from "effect/unstable/ai"
 import { HttpServerResponse } from "effect/unstable/http"
-import { act, actorMethod, createActorStore, createExecutionStream, defineActor, durableAtom, EffectExecution, effectAtom, event, type ActorRuntime, type ExecutionUpdate } from "@clavia/tardigrade-core"
+import { act, actorMethod, createActorStore, createExecutionStream, DEFAULT_ATTEMPT_TIMEOUT_MS, DEFAULT_STREAM_TIMEOUT, defineActor, durableAtom, EffectExecution, effectAtom, event, StreamTimedOut, withStreamTimeout, type ActorRuntime, type ExecutionUpdate } from "@clavia/tardigrade-core"
 import { createBunHost, methodHttp } from "../../src/bun"
 import { Generate } from "@clavia/tardigrade-agent/contracts/acts"
-import { generate, Model } from "@clavia/tardigrade-agent/services/model"
+import { DEFAULT_MODEL_TIMEOUT_MS, generate, Model } from "@clavia/tardigrade-agent/services/model"
 import { collectModelStream } from "@clavia/tardigrade-agent/services/model-stream"
 import { DEFAULT_TIMEOUT } from "@clavia/tardigrade-model/stream/policy"
 import { executionStreamSse } from "../../src/shared/execution-stream-sse"
@@ -172,3 +173,87 @@ test("host SSE identifies the thread and client disconnect leaves execution runn
     await rm(storage, { recursive: true, force: true })
   }
 })
+
+for (const mode of ["direct", "submit", "fork"] as const) {
+  for (const timeoutMs of [DEFAULT_ATTEMPT_TIMEOUT_MS, 120_000]) {
+    test(`${mode} work uses the framework deadline (${timeoutMs}ms)`, () => Effect.runPromise(Effect.gen(function* () {
+      const Job = act({ name: "test.default-deadline", input: Schema.Null, success: Schema.Null, failure: Schema.Struct({ code: Schema.String }) })
+      const actor = defineActor("default-deadline", Effect.sync(() => {
+        const request = Job.request({ input: null })
+        return { schema: Schema.Struct({ type: Schema.Literal("Unused") }), atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: { job: request } })) }
+      }))
+      const entered = yield* Deferred.make<void>()
+      const store = yield* createActorStore({ actor, ...(timeoutMs === DEFAULT_ATTEMPT_TIMEOUT_MS ? {} : { attemptTimeoutMs: timeoutMs }), actorContext: Context.pick(), services: () => Job.layer(() => Effect.gen(function* () {
+        const execution = yield* EffectExecution
+        const work = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+        if (mode === "submit") return Job.defer(yield* execution.submit(work))
+        if (mode === "fork") return Job.defer(yield* execution.fork(work, { timeoutMs: timeoutMs + 1 }))
+        return yield* work
+      }).pipe(Effect.mapError(error => ({ code: String(error) })))) })
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(timeoutMs - 1)
+        expect(store.getState().view.status).toBe("pending")
+        yield* TestClock.adjust(1)
+        yield* store.wait
+        const result = store.getState().view
+        expect(result.status).toBe("rejected")
+        if (result.status === "rejected") {
+          if (mode === "submit") expect(result.reason).toEqual({ code: `AttemptTimedOut: Attempt timed out after ${timeoutMs}ms` })
+          else expect(result.reason).toEqual({ _tag: "AttemptTimedOut", timeoutMs })
+        }
+      }).pipe(Effect.ensuring(store.close))
+    }).pipe(Effect.provide(TestClock.layer()))))
+  }
+}
+
+for (const mode of ["call", "submit"] as const) {
+  for (const timeoutMs of [DEFAULT_MODEL_TIMEOUT_MS, 120_000]) {
+    test(`inference ${mode} owns its attempt deadline (${timeoutMs}ms)`, () => Effect.runPromise(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const pending = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+      const actor = defineActor("inference-deadline", Effect.sync(() => {
+        const request = Generate.request({ input: { model: { provider: "fixture", model_id: "timeout" }, system: "", tools: [], context: [] } })
+        return { schema: Schema.Struct({ type: Schema.Literal("Unused") }), atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: { generate: request } })) }
+      }))
+      // @effect-diagnostics-next-line effectSucceedWithVoid:off: The retry decision requires an undefined value to stop.
+      const model: typeof Model.Service = { call: () => pending, ...(mode === "submit" ? { submit: () => pending } : {}), ...(timeoutMs === DEFAULT_MODEL_TIMEOUT_MS ? {} : { retry: () => Effect.succeed({ attemptTimeoutMs: timeoutMs, decide: () => Effect.succeed(undefined) }) }) }
+      const store = yield* createActorStore({ actor, actorContext: Context.pick(), services: () => generate.pipe(Layer.provideMerge(Layer.succeed(Model, model))) })
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(DEFAULT_ATTEMPT_TIMEOUT_MS)
+        expect(store.getState().view.status).toBe("pending")
+        yield* TestClock.adjust(timeoutMs - DEFAULT_ATTEMPT_TIMEOUT_MS)
+        yield* store.wait
+        const result = store.getState().view
+        expect(result.status).toBe("rejected")
+        if (result.status === "rejected") expect(String(result.reason)).toContain(`Attempt timed out after ${timeoutMs}ms`)
+      }).pipe(Effect.ensuring(store.close))
+    }).pipe(Effect.provide(TestClock.layer()))))
+  }
+}
+
+for (const bound of ["firstChunkMs", "idleMs"] as const) {
+  test(`transport timeout reports ${bound} and closes the source`, () => Effect.runPromise(Effect.gen(function* () {
+    let closed = false
+    const source = (bound === "idleMs" ? Stream.concat(Stream.make(1), Stream.never) : Stream.never).pipe(Stream.ensuring(Effect.sync(() => { closed = true })))
+    const result = yield* withStreamTimeout(source).pipe(Stream.runCollect, Effect.result, Effect.forkChild)
+    yield* TestClock.adjust(DEFAULT_STREAM_TIMEOUT[bound])
+    const outcome = yield* Fiber.join(result)
+    expect(outcome).toMatchObject({ _tag: "Failure", failure: { _tag: "StreamTimedOut", bound, timeoutMs: DEFAULT_STREAM_TIMEOUT[bound] } })
+    expect(closed).toBe(true)
+  }).pipe(Effect.provide(TestClock.layer()))))
+}
+
+test("transport chunks reset the idle deadline and inference uses the same typed failure", () => Effect.runPromise(Effect.gen(function* () {
+  const source = Stream.range(0, 4).pipe(Stream.mapEffect(value => Effect.sleep(5).pipe(Effect.as(value))))
+  const active = yield* withStreamTimeout(source, { firstChunkMs: 10, idleMs: 10 }).pipe(Stream.runCollect, Effect.forkChild)
+  yield* TestClock.adjust(25)
+  expect(yield* Fiber.join(active)).toEqual([0, 1, 2, 3, 4])
+  const stalled = Stream.concat(Stream.make(Response.makePart("text-delta", { id: "text", delta: "partial" })), Stream.never)
+  const collected = yield* collectModelStream(stalled, { provider: "fixture", model_id: "stream" }, { publish: () => Effect.void, purpose: "inference" }, { firstChunkMs: 10, idleMs: 10 }).pipe(Effect.result, Effect.forkChild)
+  yield* TestClock.adjust(10)
+  const result = yield* Fiber.join(collected)
+  expect(result._tag).toBe("Failure")
+  if (result._tag === "Failure") expect(result.failure).toBeInstanceOf(StreamTimedOut)
+}).pipe(Effect.provide(TestClock.layer()))))

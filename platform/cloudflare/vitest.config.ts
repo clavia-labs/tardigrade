@@ -1,4 +1,4 @@
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers"
+import { cloudflareTest } from "@cloudflare/vitest-plugin"
 import { defineConfig } from "vitest/config"
 import { readFile } from "node:fs/promises"
 
@@ -32,5 +32,6 @@ export default defineConfig({
       }
     }
   })],
-  test: { include: ["test/**/*.workers.ts"] }
+  // fsModuleCache is disabled because workerd cannot read Vitest's host filesystem cache.
+  test: { fsModuleCache: false, include: ["test/**/*.workers.ts"] }
 })

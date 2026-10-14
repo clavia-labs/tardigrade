@@ -17,8 +17,8 @@
     "tardie": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.20.1",
-    "vitest": "^4.1.10",
+    "@cloudflare/vitest-plugin": "^1.4.1",
+    "vitest": "^5.0.4",
     "@cloudflare/workers-types": "^5.20260804.1",
     "typescript": "^7.0.2",
     "wrangler": "^4.119.0"

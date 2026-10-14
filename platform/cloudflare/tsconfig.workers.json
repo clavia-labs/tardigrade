@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node", "@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"]
+    "types": ["node", "@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"]
   },
   "include": ["test/objects.workers.ts", "test/invocation-depth.workers.ts", "test/fixture.worker.ts"]
 }
