@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers"
 import { SELF, runInDurableObject } from "cloudflare:test"
-import { expect, test } from "vitest"
+import { expect, inject, test } from "vitest"
 import { Effect } from "effect"
 import { createWatchdog, watchdogKey } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
@@ -105,3 +105,56 @@ test("directory admission and a turn survive retryable provisioning and lookup r
     expect(events).not.toContain("ThreadFailed")
   })
 })
+
+test("pending allocation survives reopening and concurrent named requests share one thread", async () => {
+  const instance = "parallel-reopen"
+  const actor = bindings.ACTORS.getByName(instance)
+  const flow = threadFlow(request => SELF.fetch(request), instance, { policy: { timeoutMs: 20_000 } })
+  const held = threadStub(instance, "held")
+  await held.holdProvision()
+  const original = flow.request("", { name: "held", initialState: { "layout.value": 32 } }).catch(() => undefined)
+  await expect.poll(() => held.provisioning()).toBe(true)
+  await runInDurableObject(actor, async object => { await object.dispose() })
+  expect((await flow.request("", { name: "unrelated" })).status).toBe(200)
+  expect(await actor.lookup(coordinate(instance, "held"))).toBeUndefined()
+  const pending = Promise.all(Array.from({ length: 5 }, () => flow.request("", { name: "held", initialState: { "layout.value": 32 } })))
+  expect((await flow.request("", { name: "held", initialState: { "layout.value": 99 } })).status).toBeGreaterThanOrEqual(400)
+  await held.releaseProvision()
+  for (const response of await pending) {
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(coordinate(instance, "held"))
+  }
+  await original
+  expect((await held.records()).filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
+  await flow.call("held", "read", null, "read-reopened", 32)
+  expect((await flow.request("", { name: "failed" })).status).toBeGreaterThanOrEqual(400)
+  expect((await flow.request("", { name: "after-failure" })).status).toBe(200)
+})
+
+test.skipIf(!inject("longTests"))("200 concurrent creates finish while another thread is still provisioning", async () => {
+  const instance = "parallel-creates"
+  const actor = bindings.ACTORS.getByName(instance)
+  const flow = threadFlow(request => SELF.fetch(request), instance, { policy: { timeoutMs: 30_000 } })
+  const held = threadStub(instance, "held")
+  await held.holdProvision()
+  const blocked = flow.request("", { name: "held" })
+  await expect.poll(() => held.provisioning()).toBe(true)
+  const started = Date.now()
+  try {
+    const elapsed = await Promise.all(Array.from({ length: 200 }, async (_, index) => {
+      const name = `thread-${index}`
+      const response = await flow.request("", { name, initialState: { "layout.value": index } })
+      expect(response.status).toBe(200)
+      expect(await actor.lookup(coordinate(instance, name))).toEqual(coordinate(instance, name))
+      return Date.now() - started
+    }))
+    elapsed.sort((a, b) => a - b)
+    console.log(JSON.stringify({ creates: elapsed.length, p50Ms: elapsed[100], p95Ms: elapsed[190], maxMs: elapsed[199] }))
+    expect(elapsed[199]).toBeLessThan(20_000)
+    expect(await actor.lookup(coordinate(instance, "held"))).toBeUndefined()
+    await flow.call("thread-199", "read", null, "read-parallel", 199)
+  } finally {
+    await held.releaseProvision()
+    expect((await blocked).status).toBe(200)
+  }
+}, 30_000)
