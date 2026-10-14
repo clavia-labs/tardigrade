@@ -184,8 +184,7 @@
     "./deprecated/agent/projection/messages": "./src/generated/deprecated/agent/projection/messages.ts",
     "./deprecated/agent/projection/transcript": "./src/generated/deprecated/agent/projection/transcript.ts",
     "./deprecated/agent/runtime/resume": "./src/generated/deprecated/agent/runtime/resume.ts",
-    "./deprecated/agent/runtime/turn": "./src/generated/deprecated/agent/runtime/turn.ts",
-    "./platform/cloudflare/retry": "./src/generated/platform/cloudflare/retry.ts"
+    "./deprecated/agent/runtime/turn": "./src/generated/deprecated/agent/runtime/turn.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-deprecated-agent": "workspace:*",
