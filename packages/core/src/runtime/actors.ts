@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Random, Schema, Scope, Semaphore } from "effect"
 import { Actor, ActorRequest, ActorCall, type ActorCaller } from "../services/actor"
 import { atom, type Atom } from "../atoms/atom"
-import { InvalidMessage, type MessageMetadata, type MessageReceipt } from "../actor/message"
+import { InvalidMessage, InvocationNotFound, type MessageMetadata, type MessageReceipt } from "../actor/message"
 import { resolveMethodResult, MethodFailed, MethodCancelled, type ActorMethods, type MethodInput, type MethodOutput, type MethodResult } from "../actor/method"
 import { RuntimeError, type ExecutionHandle } from "./effects"
 import type { ThreadCoordinate, ThreadCreated } from "../actor/thread"
@@ -211,7 +211,8 @@ export function createActorExecution<Event extends object, Services, State, Cont
     const result = <Name extends keyof Contracts & string>(name: Name, id: string): Effect.Effect<MethodResult<MethodOutput<Contracts[Name]>>, Error> => options.run(Effect.gen(function* () {
       const thread = yield* open(coordinate)
       const record = yield* journal.readMessage(id)
-      const invocation = record?.record.message?.invocation
+      if (!record) return yield* Effect.fail(new InvocationNotFound("Invocation not found"))
+      const invocation = record.record.message?.invocation
       const method = thread.contracts[name]
       if (!method || invocation?.method !== name) return yield* Effect.fail(new InvalidMessage("Result requires a matching invocation"))
       const node = atom(get => resolveMethodResult(current(coordinate).contracts[name]!, invocation.input, get, { id, ref: { method: name, id } }))
@@ -235,7 +236,8 @@ export function createActorExecution<Event extends object, Services, State, Cont
     const methodState = <Name extends keyof Contracts & string>(name: Name, id: string) => options.run(Effect.gen(function* () {
       const thread = yield* open(coordinate)
       const record = yield* journal.readMessage(id)
-      const invocation = record?.record.message?.invocation
+      if (!record) return yield* Effect.fail(new InvocationNotFound("Invocation not found"))
+      const invocation = record.record.message?.invocation
       const method = thread.contracts[name]
       if (!method || invocation?.method !== name) return yield* Effect.fail(new InvalidMessage("State requires a matching invocation"))
       return resolveMethodResult(method, invocation.input, thread.get, { id, ref: { method: name, id } }) ?? { status: "pending" as const }

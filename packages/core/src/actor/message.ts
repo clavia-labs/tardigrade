@@ -45,3 +45,5 @@ export class InvalidMessage extends RuntimeError {
     return cause instanceof InvalidMessage ? cause : new InvalidMessage(cause instanceof Error ? cause.message : String(cause), { cause })
   }
 }
+
+export class InvocationNotFound extends RuntimeError {}

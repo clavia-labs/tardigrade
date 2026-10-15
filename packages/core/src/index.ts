@@ -27,7 +27,7 @@ export { Isolate, type IsolateCall, type IsolateInput, type IsolateResult } from
 export * from "./services/actor"
 export * from "./actor/thread"
 
-export { MessageReceived as InboxMessageReceived, MessageMetadata, MessageSender, MessageConflict, InvalidMessage, isMessageReceived, MessageReceipt, MessageAddress, TransportAddress, MessageDelivered } from "./actor/message"
+export { MessageReceived as InboxMessageReceived, MessageMetadata, MessageSender, MessageConflict, InvalidMessage, InvocationNotFound, isMessageReceived, MessageReceipt, MessageAddress, TransportAddress, MessageDelivered } from "./actor/message"
 export * from "./runtime/execution"
 export * from "./runtime/layers"
 export * from "./runtime/actors"
