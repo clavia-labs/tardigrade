@@ -20,7 +20,7 @@ import { ThreadCreated } from "../actor/thread"
 import { AtomState, initialStateSeed, StateInitialised, type StatefulAtom, type StateSeed } from "../initialise"
 
 
-import { operationSettlement, settlementCompletesExecution, cleanupSubmission, cleanupSucceeded, type StoredOperation } from "./operation"
+import { operationSettlement, settlementCompletesExecution, cleanupSubmission, cleanupSucceeded, operationComplete, retireOutcome, sameRetired, type StoredOperation } from "./operation"
 
 type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<infer Value> ? Value : never }
 
@@ -28,6 +28,12 @@ export interface EffectCheckpoint {
   readonly position: number
   readonly durable: readonly { readonly name: string; readonly state: unknown; readonly position: number; readonly tree?: string }[]
   readonly operations: readonly StoredOperation[]
+}
+
+// retireCheckpoint applies retireOutcome to the checkpoint's complete operations, so a restored log holds digests where the checkpoint held values of at least minBytes.
+export function retireCheckpoint(checkpoint: EffectCheckpoint, minBytes: number): EffectCheckpoint {
+  const operations = checkpoint.operations.map(operation => operationComplete(operation) ? retireOutcome(operation, minBytes) : operation)
+  return operations.every((operation, index) => operation === checkpoint.operations[index]) ? checkpoint : Object.freeze({ ...checkpoint, operations: Object.freeze(operations) })
 }
 
 // createEventLog replays validated domain events and derives identified effect descriptions without executing them.
@@ -43,6 +49,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   const trees = options.trees ?? treeSession({ load: () => { throw new Error("Replay cannot load unstaged tree nodes without storage") } })
   const digestMinBytes = options.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
   if (!Number.isSafeInteger(digestMinBytes) || digestMinBytes < 0) throw new Error("Effect input digest minBytes must be a nonnegative safe integer")
+  const restored = options.checkpoint && retireCheckpoint(options.checkpoint, digestMinBytes)
   type EffectValues = Proposed<Values<Atoms>[keyof Atoms]>
   type Work = EffectWork<ServicesOf<EffectValues>>
   type DeferredWork = IdentifiedEffectValue<ServicesOf<EffectValues>> & { readonly handle: ExecutionHandle }
@@ -152,6 +159,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const addedAt = new Map<string, number>()
     // retiredRequests preserves the request form visible before retirement (packages/platform/test/properties/runtime/snapshot-lookups.ts).
     const retiredRequests = new Map<string, { readonly position: number; readonly before: StoredEffectRequested }>()
+    // retiredOutcomes preserves the execution visible before retireOutcome removed its values (packages/platform/test/properties/runtime/snapshot-lookups.ts).
+    const retiredOutcomes = new Map<string, { readonly position: number; readonly before: StoredOperation["execution"] }>()
     const visible = (kind: string, key: string, position: number) => (addedAt.get(`${kind}\0${key}`) ?? Infinity) < position
     const remember = (kind: string, key: string, position: number) => {
       const id = `${kind}\0${key}`
@@ -212,8 +221,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const effect = (ref: EffectRef) => operations.get(effectKey(ref))
     const effectAt = (ref: EffectRef, position: number): StoredOperation | undefined => {
       const key = effectKey(ref)
-      const current = operations.get(key)
-      if (!current || !visible("request", key, position)) return undefined
+      const latest = operations.get(key)
+      if (!latest || !visible("request", key, position)) return undefined
+      const retiredOutcome = retiredOutcomes.get(key)
+      const current = retiredOutcome && position <= retiredOutcome.position ? { ...latest, execution: retiredOutcome.before } : latest
       const retired = retiredRequests.get(key)
       const request = retired && position <= retired.position ? retired.before : current.request
       const settlement = visible("settlement", key, position) ? operationSettlement(current) : undefined
@@ -225,12 +236,13 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const cleanupRetry = retryAt(ref, position, "cancellation")
       return { ref, request, execution: {
         ...(outcome ? { outcome } : {}), ...(outcome?.type === "EffectDied" && settlement ? { deferred: settlement } : {}),
-        ...(promise ? { promise } : {}), ...(executionRetry ? { retry: executionRetry } : {}),
+        ...(promise ? { promise } : {}), ...(executionRetry ? { retry: executionRetry } : {}), ...(current.execution.retired ? { retired: current.execution.retired } : {}),
       }, ...(cancellation ? { cleanup: { request: cancellation, ...(cleanupOutcome ? { outcome: cleanupOutcome } : {}), ...(cleanupRetry ? { retry: cleanupRetry } : {}) } } : {}) }
     }
     const promiseAt = (ref: EffectRef, position: number) => {
       const key = effectKey(ref)
-      return visible("promise", key, position) ? promiseOf(key) : undefined
+      const retiredOutcome = retiredOutcomes.get(key)
+      return visible("promise", key, position) ? (retiredOutcome && position <= retiredOutcome.position ? retiredOutcome.before.promise : promiseOf(key)) : undefined
     }
     const projectionContext: typeof EventLog.Service = {
       trees,
@@ -436,7 +448,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const request = requestOf(key)!
         const stored = request.request.input._tag === "InlineInput" ? storeRequest({ ...request.request, input: request.request.input.value }, digestMinBytes) : request.request
         if (stored.input._tag !== request.request.input._tag) retiredRequests.set(key, { position: offset + records.length, before: request })
-        operations.set(key, { ...operations.get(key)!, request: { ...request, request: stored } })
+        const operation = operations.get(key)!
+        const retiredOperation = retireOutcome({ ...operation, request: { ...request, request: stored } }, digestMinBytes)
+        if (retiredOperation.execution !== operation.execution) retiredOutcomes.set(key, { position: offset + records.length, before: operation.execution })
+        operations.set(key, retiredOperation)
         loadedInputs.delete(key)
         acts.delete(key)
         retire.delete(key)
@@ -666,7 +681,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     return snapshot
   }
   const replay = (history: ReadonlyLog<Recorded<Event>>): Snapshot => {
-    const engine = createEngine(history, options.checkpoint)
+    const engine = createEngine(history, restored)
     try {
       return snapshotOf(engine)
     } catch (error) {
@@ -719,7 +734,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
               (prior.result.status === "rejected" && Schema.is(PromiseTimedOut)(prior.result.reason)))) return snapshot
           const equal = record.type === "EffectRequested" && Schema.is(EffectRequested)(prior)
             ? isDeepStrictEqual(prior.ref, record.ref) && prior.origin === record.origin && sameStoredRequest(prior.request, record.request)
-            : isDeepStrictEqual(prior, record)
+            : isDeepStrictEqual(prior, lifecycle && (record.type === "EffectSettled" || record.type === "PromiseSettled") ? sameRetired(lifecycle, record) : record)
           if (!equal) throw new Error("Conflicting core event delivery")
           return snapshot
         }

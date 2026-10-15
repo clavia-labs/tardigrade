@@ -139,6 +139,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       if (!Schema.is(EffectSettled)(settlement)) return { status: "pending" }
       if (settlement.outcome.status === "rejected") return { status: "rejected", reason: decodeFailure(settlement.outcome.reason) }
       const outcome = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
+      if (operation?.execution.retired?.value || operation?.execution.retired?.promise) throw new Error(`Act result was retired: ${key}`)
       if (outcome.type === "value") return { status: "fulfilled", value: decodeSuccess(outcome.value) }
       const resolved = service.promise ? service.promise(reference) : events.find(event => Schema.is(PromiseSettled)(event) && effectKey(event.ref) === key)
       if (!Schema.is(PromiseSettled)(resolved)) return { status: "pending" }

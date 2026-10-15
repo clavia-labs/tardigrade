@@ -1,6 +1,8 @@
 import { Schema } from "effect"
+import { isDeepStrictEqual } from "node:util"
 import { EffectRef, EffectDied, EffectCancelled, CancellationOutcome, ExecutionResult } from "./effects"
 import { StoredEffectRequested, EffectSettled, PromiseSettled, RetryScheduled, type EffectAcceptance } from "./events"
+import { InputDigest, digestInput } from "./input-digest"
 
 export const StoredOperation = Schema.Struct({
   ref: EffectRef,
@@ -10,6 +12,8 @@ export const StoredOperation = Schema.Struct({
     deferred: Schema.optionalKey(Schema.toType(EffectSettled)),
     promise: Schema.optionalKey(Schema.toType(PromiseSettled)),
     retry: Schema.optionalKey(RetryScheduled),
+    // retired holds digests of the fulfilled values retireOutcome removed from outcome and promise.
+    retired: Schema.optionalKey(Schema.Struct({ value: Schema.optionalKey(InputDigest), promise: Schema.optionalKey(InputDigest) })),
   }),
   cleanup: Schema.optionalKey(Schema.Struct({
     request: EffectCancelled,
@@ -51,3 +55,34 @@ export const cleanupRunnable = (operation: AcceptedOperation<unknown> | undefine
 export function cleanupSubmission(operation: AcceptedOperation<unknown> | undefined, event: EffectSettled): boolean {
   return cleanupOwed(operation) && event.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "promise"
 }
+
+// retireOutcome replaces fulfilled values of at least minBytes canonical bytes with null and records their digests, so a completed operation keeps its identity and outcome kind without its payload.
+export function retireOutcome<Operation extends AcceptedOperation<unknown>>(operation: Operation, minBytes: number): Operation {
+  const settlement = operation.execution.outcome
+  const promise = operation.execution.promise
+  let execution = operation.execution
+  if (settlement?.type === "EffectSettled" && settlement.outcome.status === "fulfilled" && !execution.retired?.value) {
+    const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
+    const digest = result.type === "value" ? digestInput(result.value) : undefined
+    if (digest && digest.bytes >= minBytes) execution = { ...execution, outcome: { ...settlement, outcome: { status: "fulfilled", value: { type: "value", value: null } } }, retired: { ...execution.retired, value: digest } }
+  }
+  if (promise?.result.status === "fulfilled" && !execution.retired?.promise) {
+    const digest = digestInput(promise.result.value)
+    if (digest.bytes >= minBytes) execution = { ...execution, promise: { ...promise, result: { status: "fulfilled", value: null } }, retired: { ...execution.retired, promise: digest } }
+  }
+  return execution === operation.execution ? operation : { ...operation, execution }
+}
+
+// sameRetired compares a redelivered settlement with the retired form of the recorded one by the digest of its value.
+export function sameRetired(operation: AcceptedOperation<unknown>, event: EffectSettled | PromiseSettled): EffectSettled | PromiseSettled {
+  const retired = operation.execution.retired
+  if (event.type === "EffectSettled" && retired?.value && event.outcome.status === "fulfilled") {
+    const result = Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value)
+    if (result.type === "value" && isDeepStrictEqual(digestInput(result.value), retired.value)) return { ...event, outcome: { status: "fulfilled", value: { type: "value", value: null } } }
+  }
+  if (event.type === "PromiseSettled" && retired?.promise && event.result.status === "fulfilled" && isDeepStrictEqual(digestInput(event.result.value), retired.promise)) return { ...event, result: { status: "fulfilled", value: null } }
+  return event
+}
+
+// operationComplete matches the lifecycles replay retires: settled values, settled promises without cleanup, and acknowledged cleanup.
+export const operationComplete = (operation: AcceptedOperation<unknown>): boolean => operation.cleanup ? cleanupSucceeded(operation.cleanup.outcome) : operation.execution.promise !== undefined || settlementCompletesExecution(operationSettlement(operation))
