@@ -1,18 +1,24 @@
 import { expect, test } from "bun:test"
 import { Context, Effect } from "effect"
-import { atom, createStore, EventLog } from "@clavia/tardigrade-core"
+import * as fc from "fast-check"
+import { RUNTIME_PROPERTY_OPTIONS, RUNTIME_PROPERTY_TEST_TIMEOUT_MS } from "../properties/runtime/config"
+import { atom, createStore, createEventLog, EventLog, type EffectCheckpoint } from "@clavia/tardigrade-core"
 import { compact, DEFAULT_COMPACTION_POLICY, type CompactionOptions } from "@clavia/tardigrade-agent/atoms/compact"
 import { ModelInfo } from "@clavia/tardigrade-agent/actor/context"
-import type { Conversation } from "@clavia/tardigrade-agent/contracts/events"
+import { Event, type Conversation } from "@clavia/tardigrade-agent/contracts/events"
+import { infer } from "@clavia/tardigrade-agent/atoms/infer"
+import { messages } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
 
 const file = (mediaType: string) => ({ type: "file" as const, mediaType, object: { algorithm: "sha256" as const, digest: "a".repeat(64) } })
 const selection = { model: { provider: "test", model_id: "test" }, contextWindowTokens: 2_000 }
 
 function project(messages: typeof Conversation.Type, options: CompactionOptions = {}) {
-  const store = createStore(Context.make(EventLog, { events: atom<readonly unknown[]>([]) }))
+  const store = createStore(Context.make(EventLog, { events: atom<readonly unknown[]>([{ type: "ModelConfigured", ...selection }]) }))
   try {
     const node = Effect.runSync(compact(atom(messages), options).pipe(Effect.provideService(ModelInfo, selection)))
-    return store.get(node)
+    const output = store.get(node)
+    if (output.view.position === "configuring") throw new Error("Expected configured model")
+    return { ...output, view: output.view }
   } finally { store.dispose() }
 }
 
@@ -65,3 +71,80 @@ test("tool content text uses the tool clipping policy and retains file refs", ()
   expect(message.text).toContain("[truncated]")
   expect(message.content).toEqual([{ type: "text", text: message.text }, image])
 })
+
+function agentLog(contextWindowTokens: number, checkpoint?: EffectCheckpoint) {
+  const agent = Effect.runSync(Effect.gen(function* () {
+    const context = yield* compact(messages)
+    return yield* infer(atom(get => ({ system: "Test", tools: { view: { specs: [] }, events: {}, acts: {} }, context: get(context) })))
+  }).pipe(Effect.provideService(ModelInfo, { ...selection, contextWindowTokens })))
+  return createEventLog({ schema: Event, atoms: { agent }, ...(checkpoint === undefined ? {} : { checkpoint }) })
+}
+
+type AgentLog = ReturnType<typeof agentLog>
+type Snapshot = ReturnType<AgentLog["replay"]>
+function turn(log: AgentLog, snapshot: Snapshot, turnId: string, text: string) {
+  snapshot = log.append(snapshot, { type: "TurnRequested", turnId, text })
+  for (let step = 0; step < 10; step++) {
+    const work = snapshot.effects().find(work => !work.ref)
+    if (work) {
+      const ref = { seq: snapshot.position, atom: work.atom, act: work.request.act }
+      const request = log.requestEvent(ref, work.request, work.origin)
+      snapshot = log.append(snapshot, request)
+      for (const event of snapshot.followups(request)) snapshot = log.append(snapshot, event as Event)
+      const settled = { type: "EffectSettled" as const, ref, outcome: { status: "fulfilled" as const, value: { type: "value", value: { text: work.request.act === "agent.model.summarize" ? "Summary" : "Answer", toolCalls: [] } } } }
+      snapshot = log.append(snapshot, settled)
+      for (const event of snapshot.followups(settled)) snapshot = log.append(snapshot, event as Event)
+      continue
+    }
+    const proposal = Object.values(snapshot.view().agent.events)[0]
+    if (!proposal) return snapshot
+    snapshot = log.append(snapshot, proposal.event)
+  }
+  throw new Error("Agent turn did not settle")
+}
+
+test("compaction follows logged model configuration", () => fc.assert(fc.property(
+  fc.array(fc.record({
+    window: fc.integer({ min: 1_000, max: 8_000 }),
+    turns: fc.integer({ min: 3, max: 4 }),
+    messageRatio: fc.integer({ min: 35, max: 65 }),
+    character: fc.constantFrom("x", "a", " "),
+  }), { minLength: 1, maxLength: 3 }),
+  fc.integer({ min: 1_000, max: 32_000 }),
+  (phases, hostWindow) => {
+    const original = agentLog(phases[0]!.window)
+    const restored = agentLog(hostWindow)
+    try {
+      let snapshot = original.initial
+      let checkpoint: EffectCheckpoint | undefined
+      for (const [phase, { window, turns, messageRatio, character }] of phases.entries()) {
+        if (phase > 0) snapshot = original.append(snapshot, { type: "ModelUpdated", ...selection, contextWindowTokens: window })
+        for (let index = 0; index < turns; index++) {
+          snapshot = turn(original, snapshot, `${phase}:${index}`, character.repeat(Math.floor(window * messageRatio / 100) * 4))
+          checkpoint ??= snapshot.checkpoint()
+        }
+      }
+      const history = snapshot.records.slice()
+      let window: number | undefined
+      let compactions = 0
+      for (const { event } of history) {
+        if (event.type === "ModelConfigured" || event.type === "ModelUpdated") window = event.contextWindowTokens
+        if (event.type === "ModelCalled") {
+          if (window === undefined) throw new Error("Model call requires logged configuration")
+          expect(event.contextWindowTokens).toBe(window)
+          if (event.purpose === "compaction") compactions++
+        }
+      }
+      expect(compactions).toBeGreaterThan(0)
+      const loaded = restored.replay(history)
+      expect(loaded.view()).toEqual(snapshot.view())
+      const pending = history.findIndex(({ event }) => event.type === "ModelCalled" && event.purpose === "compaction")
+      expect(restored.replay(history.slice(0, pending + 1)).pending()[0]?.request.act).toBe("agent.model.summarize")
+      const suffix = agentLog(hostWindow, checkpoint)
+      try {
+        expect(suffix.replay(history.slice(checkpoint!.position)).view()).toEqual(snapshot.view())
+      } finally { suffix.dispose() }
+      expect(turn(restored, loaded, "next", "Continue").records.slice()).toEqual(turn(original, snapshot, "next", "Continue").records.slice())
+    } finally { original.dispose(); restored.dispose() }
+  },
+), RUNTIME_PROPERTY_OPTIONS), RUNTIME_PROPERTY_TEST_TIMEOUT_MS)

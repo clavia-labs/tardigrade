@@ -23,6 +23,7 @@ export const compactionCancellationRecovery = fc.asyncProperty(fc.record({ reaso
   let summaries = 0
   const model = { provider: "openrouter" as const, model_id: "test" }
   const history: AgentEvent[] = [
+    { type: "ModelConfigured", model, contextWindowTokens: 128 },
     { type: "TurnRequested", turnId: "previous", text: "x".repeat(500) },
     { type: "ModelCalled", purpose: "inference", turnId: "previous", callId: "model:previous:0", model, contextWindowTokens: 128 },
     { type: "ModelReturned", purpose: "inference", callId: "model:previous:0", text: "done", toolCalls: [] },

@@ -3,7 +3,7 @@ import { RuntimeError, effectAtom, type Atom } from "@clavia/tardigrade-core"
 import { Effect } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, ModelCalled, ModelReturned, CompactionFailed } from "../contracts/events"
-import { ModelInfo } from "../actor/context"
+import { modelState } from "./durable/model"
 import { Summarize, requests, failureMessage } from "../contracts/acts"
 
 export const DEFAULT_COMPACTION_POLICY = {
@@ -97,7 +97,9 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
   const compactionState = createCompactionState()
 
   const request = requests(Summarize.request, { latestOnly: true })
-  return Effect.map(ModelInfo, selection => effectAtom(get => {
+  return Effect.succeed(effectAtom(get => {
+    const selection = get(modelState)
+    if (!selection) return { view: { position: "configuring" as const, policy }, events: {}, acts: {} }
     const { messages, totals } = renderTrajectory(get(trajectory))
     const state = get(compactionState)
     const triggerTokens = Math.floor(selection.contextWindowTokens * policy.triggerRatio)

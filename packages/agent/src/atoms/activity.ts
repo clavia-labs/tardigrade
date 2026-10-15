@@ -18,6 +18,8 @@ function describe(event: Event): Pick<ActivityEntry, "summary" | "status"> {
     }
     case "ActorRequestReceived": return { summary: `Request ${event.request.requestId}`, status: "notification" }
     case "ActorReplyReceived": return { summary: `Reply ${event.requestId}`, status: "notification" }
+    case "ModelConfigured":
+    case "ModelUpdated": return { summary: `${event.model.model_id} · window=${event.contextWindowTokens}`, status: "info" }
     case "ModelCalled": return { summary: `${event.purpose} · ${event.model.model_id}`, status: "info" }
     case "CompactionFailed": return { summary: event.reason, status: "failed" }
     case "ModelReturned": return { summary: event.text, status: "info" }
