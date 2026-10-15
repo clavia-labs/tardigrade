@@ -4,7 +4,7 @@ import { ActorCommitError, AttemptTimedOut, RuntimeError, PromiseNotReady, Promi
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import { atom, type Atom } from "../atoms/atom"
-import { EventLog, executionDefect } from "../services/event-log"
+import { EventLog, ReplayContext, executionDefect } from "../services/event-log"
 import { Scheduler } from "../services/scheduler"
 import { operationSettlement, cleanupRunnable, cleanupSucceeded } from "./operation"
 import { EffectExecution, DEFAULT_ATTEMPT_TIMEOUT_MS, type AttemptOptions, type RetryOptions } from "../services/effect-execution"
@@ -725,7 +725,6 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         while (true) yield* (yield* Queue.take(admissions))
       }).pipe(Effect.forkIn(scope))
       services = yield* buildServices()
-      setup = yield* options.setup.pipe(Effect.provideService(Scope.Scope, scope), Effect.provide(options.actorContext(services)))
       const stored = options.journal ? yield* options.journal.readCheckpoint : undefined
       const checkpoint = stored ? yield* Effect.try({ try: () => decodeCheckpoint(stored.payload), catch: RuntimeError.from }) : undefined
       if (stored && checkpoint && checkpoint.position !== stored.position) return yield* Effect.fail(new RuntimeError("Checkpoint payload position differs from journal metadata"))
@@ -735,6 +734,11 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       const history = options.journal
         ? checkpoint ? yield* options.journal.readAfter(checkpoint.position) : yield* options.journal.read
         : (options.events ?? []).map(event => ({ event }))
+      const readFull = yield* Effect.cached(checkpoint && options.journal ? options.journal.read : Effect.succeed(history))
+      setup = yield* options.setup.pipe(
+        Effect.provideService(ReplayContext, { records: history, readFull, ...(checkpoint ? { checkpoint } : {}) }),
+        Effect.provideService(Scope.Scope, scope), Effect.provide(options.actorContext(services)),
+      )
       const inputs = options.journal ? yield* options.journal.readInputs : []
       for (const input of inputs) persistedInputRefs.set(effectKey(input.ref), input.ref)
       definition = createEventLog({ inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,

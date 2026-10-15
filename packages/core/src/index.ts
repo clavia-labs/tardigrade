@@ -1,6 +1,6 @@
 export * from "./atoms/atom"
 export { durableAtom, type DurableAtom } from "./atoms/durable"
-export { EventLog } from "./services/event-log"
+export { EventLog, ReplayContext } from "./services/event-log"
 export type { ReadonlyIndex, ReadonlyLog } from "./runtime/log-view"
 export * from "./atoms/store"
 export type { ActorGraph } from "./atoms/graph"

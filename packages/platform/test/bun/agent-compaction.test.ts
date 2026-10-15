@@ -2,15 +2,14 @@ import { expect, test } from "bun:test"
 import { Context, Effect } from "effect"
 import * as fc from "fast-check"
 import { RUNTIME_PROPERTY_OPTIONS, RUNTIME_PROPERTY_TEST_TIMEOUT_MS } from "../properties/runtime/config"
-import { atom, createStore, createEventLog, EventLog, type EffectCheckpoint } from "@clavia/tardigrade-core"
+import { atom, createStore, EventLog, type EffectCheckpoint } from "@clavia/tardigrade-core"
 import { compact, DEFAULT_COMPACTION_POLICY, type CompactionOptions } from "@clavia/tardigrade-agent/atoms/compact"
+import { agentLog, selection, turn } from "../fixtures/agent"
 import { ModelInfo } from "@clavia/tardigrade-agent/actor/context"
-import { Event, type Conversation } from "@clavia/tardigrade-agent/contracts/events"
-import { infer } from "@clavia/tardigrade-agent/atoms/infer"
-import { messages } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
+import { type Conversation } from "@clavia/tardigrade-agent/contracts/events"
 
 const file = (mediaType: string) => ({ type: "file" as const, mediaType, object: { algorithm: "sha256" as const, digest: "a".repeat(64) } })
-const selection = { model: { provider: "test", model_id: "test" }, contextWindowTokens: 2_000 }
+
 
 function project(messages: typeof Conversation.Type, options: CompactionOptions = {}) {
   const store = createStore(Context.make(EventLog, { events: atom<readonly unknown[]>([{ type: "ModelConfigured", ...selection }]) }))
@@ -71,37 +70,6 @@ test("tool content text uses the tool clipping policy and retains file refs", ()
   expect(message.text).toContain("[truncated]")
   expect(message.content).toEqual([{ type: "text", text: message.text }, image])
 })
-
-function agentLog(contextWindowTokens: number, checkpoint?: EffectCheckpoint) {
-  const agent = Effect.runSync(Effect.gen(function* () {
-    const context = yield* compact(messages)
-    return yield* infer(atom(get => ({ system: "Test", tools: { view: { specs: [] }, events: {}, acts: {} }, context: get(context) })))
-  }).pipe(Effect.provideService(ModelInfo, { ...selection, contextWindowTokens })))
-  return createEventLog({ schema: Event, atoms: { agent }, ...(checkpoint === undefined ? {} : { checkpoint }) })
-}
-
-type AgentLog = ReturnType<typeof agentLog>
-type Snapshot = ReturnType<AgentLog["replay"]>
-function turn(log: AgentLog, snapshot: Snapshot, turnId: string, text: string) {
-  snapshot = log.append(snapshot, { type: "TurnRequested", turnId, text })
-  for (let step = 0; step < 10; step++) {
-    const work = snapshot.effects().find(work => !work.ref)
-    if (work) {
-      const ref = { seq: snapshot.position, atom: work.atom, act: work.request.act }
-      const request = log.requestEvent(ref, work.request, work.origin)
-      snapshot = log.append(snapshot, request)
-      for (const event of snapshot.followups(request)) snapshot = log.append(snapshot, event as Event)
-      const settled = { type: "EffectSettled" as const, ref, outcome: { status: "fulfilled" as const, value: { type: "value", value: { text: work.request.act === "agent.model.summarize" ? "Summary" : "Answer", toolCalls: [] } } } }
-      snapshot = log.append(snapshot, settled)
-      for (const event of snapshot.followups(settled)) snapshot = log.append(snapshot, event as Event)
-      continue
-    }
-    const proposal = Object.values(snapshot.view().agent.events)[0]
-    if (!proposal) return snapshot
-    snapshot = log.append(snapshot, proposal.event)
-  }
-  throw new Error("Agent turn did not settle")
-}
 
 test("compaction follows logged model configuration", () => fc.assert(fc.property(
   fc.array(fc.record({

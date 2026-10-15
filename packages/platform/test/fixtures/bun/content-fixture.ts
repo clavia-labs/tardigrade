@@ -11,7 +11,7 @@ import { decodeCheckpoint, methodResult, RuntimeError } from "@clavia/tardigrade
 import { bunJournal, createBunHost } from "../../../src/bun"
 import { agentDurableAtoms } from "@clavia/tardigrade-agent/atoms/durable"
 import { bunThreadPath } from "../../../src/bun/observe"
-import { contentServices } from "../model-services"
+import { contentServices } from "../agent"
 import type { ContentFixture } from "../../properties/content/hydration"
 
 export async function bunContentFixture(): Promise<ContentFixture & { readonly seed: () => Promise<void> }> {

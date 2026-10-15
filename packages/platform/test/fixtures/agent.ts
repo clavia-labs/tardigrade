@@ -1,5 +1,11 @@
-import { Layer, Effect, Stream, Schema } from "effect"
+import { Context, Effect, Layer, Stream, Schema } from "effect"
 import { AiError, LanguageModel, Prompt, Response } from "effect/unstable/ai"
+import { atom, createEventLog, type EffectCheckpoint, type EffectExecution } from "@clavia/tardigrade-core"
+import { compact } from "@clavia/tardigrade-agent/atoms/compact"
+import { infer } from "@clavia/tardigrade-agent/atoms/infer"
+import { messages } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
+import { ModelInfo } from "@clavia/tardigrade-agent/actor/context"
+import { Event } from "@clavia/tardigrade-agent/contracts/events"
 import { modelActs, modelInfo, modelServices } from "@clavia/tardigrade-agent/services/model"
 import { toolActs } from "@clavia/tardigrade-agent/services/tools"
 import { AskPermission } from "@clavia/tardigrade-agent/contracts/acts"
@@ -8,7 +14,42 @@ import { BindingSettings, ModelSelection } from "@clavia/tardigrade-model/settin
 import { type RequestOptions } from "@clavia/tardigrade-model/stream/request"
 import { requestPolicyOf } from "@clavia/tardigrade-model/stream/request"
 import type { LibraryImplementation } from "@clavia/tardigrade-libraries"
-import type { EffectExecution } from "@clavia/tardigrade-core"
+
+export const selection = { model: { provider: "test", model_id: "test" }, contextWindowTokens: 2_000 }
+
+const agentProjection = Effect.gen(function* () {
+  const context = yield* compact(messages)
+  return yield* infer(atom(get => ({ system: "Test", tools: { view: { specs: [] }, events: {}, acts: {} }, context: get(context) })))
+})
+
+export function agentLog(contextWindowTokens: number, checkpoint?: EffectCheckpoint, context: Context.Context<ModelInfo> = Context.make(ModelInfo, { ...selection, contextWindowTokens })) {
+  const agent = Effect.runSync(agentProjection.pipe(Effect.provide(context)))
+  return createEventLog({ schema: Event, atoms: { agent }, ...(checkpoint === undefined ? {} : { checkpoint }) })
+}
+
+type AgentLog = ReturnType<typeof agentLog>
+type Snapshot = ReturnType<AgentLog["replay"]>
+export function turn(log: AgentLog, snapshot: Snapshot, turnId: string, text: string) {
+  snapshot = log.append(snapshot, { type: "TurnRequested", turnId, text })
+  for (let step = 0; step < 10; step++) {
+    const work = snapshot.effects().find(work => !work.ref)
+    if (work) {
+      const ref = { seq: snapshot.position, atom: work.atom, act: work.request.act }
+      const request = log.requestEvent(ref, work.request, work.origin)
+      snapshot = log.append(snapshot, request)
+      for (const event of snapshot.followups(request)) snapshot = log.append(snapshot, event as Event)
+      const settled = { type: "EffectSettled" as const, ref, outcome: { status: "fulfilled" as const, value: { type: "value", value: { text: work.request.act === "agent.model.summarize" ? "Summary" : "Answer", toolCalls: [] } } } }
+      snapshot = log.append(snapshot, settled)
+      for (const event of snapshot.followups(settled)) snapshot = log.append(snapshot, event as Event)
+      continue
+    }
+    const proposal = Object.values(snapshot.view().agent.events)[0]
+    if (!proposal) return snapshot
+    snapshot = log.append(snapshot, proposal.event)
+  }
+  throw new Error("Agent turn did not settle")
+}
+
 
 const model = { provider: "fixture", model_id: "test" }
 const binding = { provider: "fixture", protocol: "openai-chat-completions", model: "test", endpoint: "https://fixture.invalid", policy: requestPolicyOf({}) }

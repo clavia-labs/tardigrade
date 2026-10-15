@@ -1,12 +1,13 @@
 import type { ReadonlyIndex, ReadonlyLog } from "../runtime/log-view"
-import { Context, Schema } from "effect"
+import { Context, Schema, type Effect } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom } from "../atoms/atom"
-import type { ObservedRecord } from "./journal"
+import type { ObservedRecord, Recorded } from "./journal"
 import { EffectDied, type EffectRef } from "../runtime/effects"
 import type { StateSeed } from "../initialise"
 import type { AcceptedOperation } from "../runtime/operation"
 import type { PromiseSettled } from "../runtime/events"
+import type { EffectCheckpoint } from "../runtime/replay"
 
 export class EventLog extends Context.Service<EventLog, {
   // events extends an immutable prefix; another history requires another source atom.
@@ -20,6 +21,13 @@ export class EventLog extends Context.Service<EventLog, {
   readonly defect?: () => EffectDied | undefined
   readonly promise?: (ref: EffectRef) => PromiseSettled | undefined
 }>()("experimental/EventLog") {}
+
+// ReplayContext supplies committed history during actor setup; runtime/execution.ts caches readFull for the loading attempt.
+export class ReplayContext extends Context.Service<ReplayContext, {
+  readonly records: readonly Recorded<unknown>[]
+  readonly checkpoint?: EffectCheckpoint
+  readonly readFull: Effect.Effect<readonly Recorded<unknown>[], Error>
+}>()("experimental/ReplayContext") {}
 
 export const eventLogContext = atom<Context.Context<EventLog> | undefined>(undefined).pipe(NativeAtom.withLabel("EventLog"))
 

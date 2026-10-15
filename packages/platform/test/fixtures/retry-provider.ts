@@ -1,6 +1,6 @@
 import { Duration } from "effect"
 import { AiError } from "effect/unstable/ai"
-import { contentServices } from "./model-services"
+import { contentServices } from "./agent"
 
 export function retryServices() {
   let calls = 0
