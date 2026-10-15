@@ -1,3 +1,4 @@
+import { onHostScheduler } from "../shared/scheduler"
 import { DurableObject } from "cloudflare:workers"
 import { Context, Effect, Exit, Fiber, Layer, Schema, Scope } from "effect"
 import { isDeepStrictEqual } from "node:util"
@@ -134,7 +135,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     private run = <Value>(work: Effect.Effect<Value, Error>) => Effect.suspend(() => {
       if (options.telemetry && !this.telemetryContext) this.telemetryContext = Effect.runSync(Layer.buildWithScope(options.telemetry, this.scope))
       const instrumented = this.telemetryContext ? Effect.provide(work, this.telemetryContext) : work
-      return Effect.acquireUseRelease(instrumented.pipe(Effect.forkIn(this.scope)), Fiber.join, Fiber.interrupt)
+      return Effect.acquireUseRelease(instrumented.pipe(onHostScheduler, Effect.forkIn(this.scope)), Fiber.join, Fiber.interrupt)
     })
 
     private async init(instance: string) {
@@ -267,7 +268,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     private run = <Value>(work: Effect.Effect<Value, Error>) => Effect.suspend(() => {
       if (options.telemetry && !this.telemetryContext) this.telemetryContext = Effect.runSync(Layer.buildWithScope(options.telemetry, this.scope))
       const instrumented = this.telemetryContext ? Effect.provide(work, this.telemetryContext) : work
-      return Effect.acquireUseRelease(instrumented.pipe(Effect.forkIn(this.scope)), Fiber.join, Fiber.interrupt)
+      return Effect.acquireUseRelease(instrumented.pipe(onHostScheduler, Effect.forkIn(this.scope)), Fiber.join, Fiber.interrupt)
     })
     private address() { if (!this.coordinate) throw new RuntimeError("Thread DO is not provisioned"); return this.coordinate }
     private storage() {
