@@ -2,7 +2,7 @@ import { Context } from "effect"
 import { type ModelRef } from "@clavia/tardigrade-model/reference"
 import { type ToolSpec, type LibraryContract } from "@clavia/tardigrade-libraries/types"
 
-// ModelInfo supplies resolved model metadata to actor construction.
+// ModelInfo supplies initial model metadata; logged configuration controls subsequent calls (packages/platform/test/bun/agent-compaction.test.ts).
 export class ModelInfo extends Context.Service<ModelInfo, {
   readonly model: ModelRef
   readonly contextWindowTokens: number

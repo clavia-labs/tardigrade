@@ -3,13 +3,14 @@ import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled } from "../contracts/events"
 import { ModelInfo } from "../actor/context"
+import { modelState } from "./durable/model"
 import { Generate, requests, failureMessage } from "../contracts/acts"
 import type { OutputContract } from "../contracts/acts"
 import { inferenceState } from "./durable/inference"
 import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
 import { type ToolView } from "./tools"
 
-export type ContextView = ActorOutput<{ readonly position: "compacting" } | { readonly position: "failed"; readonly reason: string } | {
+export type ContextView = ActorOutput<{ readonly position: "configuring" | "compacting" } | { readonly position: "failed"; readonly reason: string } | {
   readonly position: "ready"; readonly messages: typeof Conversation.Type
 }, Event, ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>
 export interface AgentInput<R, ToolEvents extends object = Event> {
@@ -23,7 +24,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
   const agentAtom = typeof agent === "function" ? atom(agent) : agent
   const request = requests(Generate.request, { latestOnly: true })
 
-  const output = Effect.map(ModelInfo, selection => effectAtom(get => {
+  const output = Effect.map(ModelInfo, current => effectAtom(get => {
     get(toolSpend)
     get(tokenSpend)
     get(usdSpend)
@@ -51,6 +52,11 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
         return !Schema.is(TurnRequested)(event) || !event.promiseRef || !cancelled.has(effectKey(event.promiseRef))
       })),
       acts: state.turnId ? { ...input.context.acts, ...input.tools.acts } : {},
+    }
+    const selection = get(modelState)
+    if (!selection) return {
+      view: { position: "configuring" as const }, acts: {},
+      events: { ...proposals.events, model: eventValue({ type: "ModelConfigured", ...current } satisfies Event) },
     }
     if (state.running) return { view: { position: "running" as const }, ...proposals }
     if (turn && turn.failure !== null) return {

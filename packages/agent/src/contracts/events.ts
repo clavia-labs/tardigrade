@@ -78,14 +78,17 @@ export type TurnRequested = typeof TurnRequested.Type
 export const ActorRequestReceived = Schema.Struct({ type: Schema.Literal("ActorRequestReceived"), handle: ExecutionHandle, request: ActorRequest })
 export const ActorReplyReceived = Schema.Struct({ type: Schema.Literal("ActorReplyReceived"), handle: ExecutionHandle, requestId: Schema.String, result: Schema.Json })
 
-const ModelMetadata = {
+export const ModelConfiguration = Schema.Struct({
   model: ModelRef,
   contextWindowTokens: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
-}
+})
+export type ModelConfiguration = typeof ModelConfiguration.Type
+export const ModelConfigured = Schema.Struct({ type: Schema.Literal("ModelConfigured"), ...ModelConfiguration.fields })
+export const ModelUpdated = Schema.Struct({ type: Schema.Literal("ModelUpdated"), ...ModelConfiguration.fields })
 
 export const ModelCalled = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("inference"), ...ModelMetadata, turnId: Schema.String, callId: Schema.String }),
-  Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("compaction"), ...ModelMetadata, callId: Schema.String, through: Schema.Finite }),
+  Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("inference"), ...ModelConfiguration.fields, turnId: Schema.String, callId: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("compaction"), ...ModelConfiguration.fields, callId: Schema.String, through: Schema.Finite }),
 ])
 export type ModelCalled = typeof ModelCalled.Type
 
@@ -123,7 +126,7 @@ export const Event = Schema.Union([
   TurnRequested,
   ActorRequestReceived,
   ActorReplyReceived,
-  ModelCalled,
+  ModelConfigured, ModelUpdated, ModelCalled,
   ModelFailed,
   OutputRejected,
   AbortRequested,
