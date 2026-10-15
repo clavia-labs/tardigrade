@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.1](https://github.com/clavia-labs/tardigrade/compare/v0.49.0...v0.49.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **core:** retire settled outcomes ([#765](https://github.com/clavia-labs/tardigrade/issues/765)) ([66b9bd0](https://github.com/clavia-labs/tardigrade/commit/66b9bd0e528e7a410eb0b69ca31c50563aa7f8dd))
+
 ## [0.49.0](https://github.com/clavia-labs/tardigrade/compare/v0.48.0...v0.49.0) (2026-10-15)
 
 
