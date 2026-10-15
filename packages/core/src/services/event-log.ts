@@ -22,7 +22,7 @@ export class EventLog extends Context.Service<EventLog, {
   readonly promise?: (ref: EffectRef) => PromiseSettled | undefined
 }>()("experimental/EventLog") {}
 
-// ReplayContext supplies committed history during actor setup; readFull is cached for the loading attempt (packages/platform/test/bun/agent-model-compatibility.test.ts).
+// ReplayContext supplies committed history during actor setup; runtime/execution.ts caches readFull for the loading attempt.
 export class ReplayContext extends Context.Service<ReplayContext, {
   readonly records: readonly Recorded<unknown>[]
   readonly checkpoint?: EffectCheckpoint

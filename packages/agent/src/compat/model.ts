@@ -4,7 +4,7 @@ import { EventLog, eventLogContext } from "@clavia/tardigrade-core/services/even
 import { ModelCalled, ModelConfigured, ModelConfiguration } from "../contracts/events"
 import { modelState } from "../atoms/durable/model"
 
-// prepareModel indexes old calls only when the loading boundary lacks durable model configuration (packages/platform/test/bun/agent-model-compatibility.test.ts).
+// prepareModel indexes old calls when the loading boundary lacks durable model configuration.
 const prepareModel = (replay: typeof ReplayContext.Service) => Effect.gen(function* () {
   const configured = replay.checkpoint?.durable.find(entry => entry.name === modelState[AtomState].name)
   if (configured && Schema.is(ModelConfiguration)(configured.state)) return undefined
@@ -15,7 +15,7 @@ const prepareModel = (replay: typeof ReplayContext.Service) => Effect.gen(functi
   return { end, calls }
 })
 
-// modelSelection prefers logged configuration and reconstructs metadata for an unconfigured prefix (packages/platform/test/bun/agent-model-compatibility.test.ts).
+// modelSelection prefers logged configuration and reconstructs metadata for an unconfigured prefix.
 export const modelSelection = Effect.gen(function* () {
   const replay = yield* Effect.serviceOption(ReplayContext)
   const plan = Option.isSome(replay) ? yield* prepareModel(replay.value) : undefined
