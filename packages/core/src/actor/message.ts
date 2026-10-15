@@ -46,5 +46,4 @@ export class InvalidMessage extends RuntimeError {
   }
 }
 
-// InvocationNotFound reports an invocation id absent from the thread journal (packages/platform/test/bun/method-http.test.ts).
 export class InvocationNotFound extends RuntimeError {}
