@@ -17,7 +17,7 @@ import type { LibraryImplementation } from "@clavia/tardigrade-libraries"
 
 export const selection = { model: { provider: "test", model_id: "test" }, contextWindowTokens: 2_000 }
 
-export const agentProjection = Effect.gen(function* () {
+const agentProjection = Effect.gen(function* () {
   const context = yield* compact(messages)
   return yield* infer(atom(get => ({ system: "Test", tools: { view: { specs: [] }, events: {}, acts: {} }, context: get(context) })))
 })
