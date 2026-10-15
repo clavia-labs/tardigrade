@@ -129,14 +129,15 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       const service = Context.get(context, EventLog)
       const events = get(service.events)
       const key = effectKey(reference)
-      const cancellation = service.effect?.(reference)?.cleanup?.request ?? events.find(event => Schema.is(EffectCancelled)(event) && effectKey(event.ref) === key)
+      const operation = service.effect?.(reference)
+      const cancellation = service.effect ? operation?.cleanup?.request : events.find(event => Schema.is(EffectCancelled)(event) && effectKey(event.ref) === key)
       if (Schema.is(EffectCancelled)(cancellation)) return { status: "rejected", reason: { _tag: "Cancelled", reason: cancellation.reason } }
-      const settlement = operationSettlement(service.effect?.(reference)) ?? events.find(event => Schema.is(EffectSettled)(event) && effectKey(event.ref) === key)
+      const settlement = service.effect ? operationSettlement(operation) : events.find(event => Schema.is(EffectSettled)(event) && effectKey(event.ref) === key)
       if (!Schema.is(EffectSettled)(settlement)) return { status: "pending" }
       if (settlement.outcome.status === "rejected") return { status: "rejected", reason: decodeFailure(settlement.outcome.reason) }
       const outcome = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
       if (outcome.type === "value") return { status: "fulfilled", value: decodeSuccess(outcome.value) }
-      const resolved = service.promise?.(reference) ?? events.find(event => Schema.is(PromiseSettled)(event) && effectKey(event.ref) === key)
+      const resolved = service.promise ? service.promise(reference) : events.find(event => Schema.is(PromiseSettled)(event) && effectKey(event.ref) === key)
       if (!Schema.is(PromiseSettled)(resolved)) return { status: "pending" }
       return resolved.result.status === "fulfilled"
         ? { status: "fulfilled", value: decodeSuccess(resolved.result.value) }
