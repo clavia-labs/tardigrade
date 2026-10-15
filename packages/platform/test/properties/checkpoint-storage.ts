@@ -1,6 +1,6 @@
 import { Cause, Effect, Exit } from "effect"
 import { isDeepStrictEqual } from "node:util"
-import { checkpointDigest, encodeCheckpoint, decodeCheckpoint, type Recorded, type PendingEffectInput } from "@clavia/tardigrade-core"
+import { checkpointEncoder, checkpointDigest, encodeCheckpoint, decodeCheckpoint, type Recorded, type PendingEffectInput } from "@clavia/tardigrade-core"
 import type { sqlJournal } from "../../src/shared/sql-journal"
 
 type Event = { readonly type: "Stored"; readonly value: string }
@@ -9,7 +9,7 @@ type Journal = ReturnType<typeof sqlJournal<Event>>
 // checkpointStorage checks replacement, rollback, reopening and corruption through the same SQL flow on both hosts.
 export async function checkpointStorage(fixture: {
   readonly maxChunkBytes?: number
-  readonly open: (chunkBytes: number) => Journal
+  readonly open: (chunkBytes: number, checkpointTree?: { readonly collectEvery?: number }) => Journal
   readonly execute: (query: string) => Promise<readonly Record<string, unknown>[]>
 }) {
   const chunkBytes = fixture.maxChunkBytes ?? 2 * 1024 * 1024
@@ -77,6 +77,38 @@ export async function checkpointStorage(fixture: {
     await rejects(journal.readInputs, "digest mismatch")
     await Effect.runPromise(journal.append(3, [record("settled")], { remove: [pending.ref] }))
     if ((await Effect.runPromise(journal.readInputs)).length || (await fixture.execute("SELECT * FROM effect_input_chunks")).length) throw new Error("Terminal input release retained payloads")
+    await Effect.runPromise(journal.close)
+    journal = fixture.open(127, { collectEvery: 1 })
+    const encodeTree = checkpointEncoder()
+    const history = Object.freeze(Array.from({ length: 10000 }, (_, n) => Object.freeze({ n, text: `message ${n}` })))
+    const treeCheckpoint = (position: number, status: string) => {
+      const payload = encodeTree({ position, durable: [{ name: "history", state: Object.freeze({ history, status }), position }], operations: [] })
+      return { position, payload, digest: payload.root }
+    }
+    const tree = treeCheckpoint(5, "ready")
+    await fixture.execute("CREATE TRIGGER fail_tree_chunk BEFORE INSERT ON grove_chunks WHEN NEW.ordinal = 1 BEGIN SELECT RAISE(ABORT, 'Injected tree failure'); END")
+    await rejects(journal.treeCheckpoint.append(4, [record("tree")], tree), "Injected tree failure")
+    if ((await Effect.runPromise(journal.read)).length !== 4 || (await Effect.runPromise(journal.readCheckpoint))?.digest !== boundary.digest) throw new Error("Tree failure replaced the legacy checkpoint or journal")
+    if ((await fixture.execute("SELECT * FROM grove_nodes")).length) throw new Error("Tree failure leaked nodes")
+    await fixture.execute("DROP TRIGGER fail_tree_chunk")
+    await Effect.runPromise(journal.treeCheckpoint.append(4, [record("tree")], tree))
+    if ((await fixture.execute("SELECT * FROM checkpoint")).length || (await fixture.execute("SELECT * FROM checkpoint_chunks")).length) throw new Error("Tree migration retained legacy checkpoint bytes")
+    await Effect.runPromise(journal.close)
+    journal = fixture.open(1024, { collectEvery: 1 })
+    const restored = await Effect.runPromise(journal.treeCheckpoint.read)
+    if (!restored || restored.payload instanceof Uint8Array || restored.payload.root !== tree.payload.root || !isDeepStrictEqual(decodeCheckpoint(restored.payload), decodeCheckpoint(tree.payload))) throw new Error("Tree checkpoint did not survive reopening")
+    const bytes = await Effect.runPromise(journal.readCheckpoint)
+    if (!bytes || !isDeepStrictEqual(decodeCheckpoint(bytes.payload), decodeCheckpoint(tree.payload)) || bytes.digest !== await Effect.runPromise(checkpointDigest(bytes.payload))) throw new Error("Byte checkpoint export differs from tree checkpoint")
+    const before = (await fixture.execute("SELECT COUNT(*) AS n FROM grove_nodes"))[0]!.n as number
+    const next = treeCheckpoint(5, "changed")
+    await rejects(journal.treeCheckpoint.append(4, [], next), "Invalid checkpoint position")
+    await Effect.runPromise(journal.treeCheckpoint.append(5, [], next))
+    const after = (await fixture.execute("SELECT COUNT(*) AS n FROM grove_nodes"))[0]!.n as number
+    if (Math.abs(after - before) > 10) throw new Error("Checkpoint replacement retained obsolete tree nodes")
+    const replacement = await checkpoint(5, "legacy writer")
+    await Effect.runPromise(journal.appendWithCheckpoint(5, [], replacement))
+    if ((await fixture.execute("SELECT * FROM grove_nodes")).length || (await fixture.execute("SELECT * FROM checkpoint_trees")).length) throw new Error("Byte replacement retained tree ownership")
+    if ((await Effect.runPromise(journal.readCheckpoint))?.digest !== replacement.digest) throw new Error("Byte replacement restored an older tree")
   } finally { await Effect.runPromise(journal.close) }
 }
 

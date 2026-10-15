@@ -12,8 +12,8 @@ type Task = {
 const root = `${realpathSync(fileURLToPath(new URL("../", import.meta.url)))}/`
 const pkg = (name: string) => `${root}packages/${name}`
 const deprecated = ["core", "agent", "host", "channels", "client", "http"].map((name) => `deprecated/${name}`)
-const packages = ["tardie", "core", "code", "agent", "libraries", "platform", "examples", "apps/cli", "model", ...deprecated]
-const testedPackages = ["tardie", "code", "model", "core"]
+const packages = ["grove", "tardie", "core", "code", "agent", "libraries", "platform", "examples", "apps/cli", "model", ...deprecated]
+const testedPackages = ["grove", "tardie", "code", "model", "core"]
 const packageId = (name: string) => name.replaceAll("/", "-")
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["bun", "worker-loader", "cloudflare"]
@@ -67,6 +67,7 @@ const tasks: ReadonlyArray<Task> = [
   { id: "lint:component-purity", cmd: ["bun", "run", "tools/lint-component-purity.ts"] },
   { id: "test:component-purity", cmd: ["bun", "test", "tools/component-purity.test.ts"] },
   { id: "lint:boundaries", cmd: ["bun", "run", "tools/code-graph.ts", "--check"] },
+  { id: "pack:grove", cmd: ["bun", "run", "tools/publish-grove.ts", "--pack-only"] },
   { id: "test:publish-paths", cmd: ["bun", "test", "tools/publish-paths.test.ts"] },
   { id: "test:code-graph", cmd: ["bun", "test", "tools/code-graph/analyze.test.ts"] },
   { id: "lint", cmd: ["bun", "--bun", "node_modules/.bin/oxlint"] },
@@ -83,6 +84,7 @@ const tasks: ReadonlyArray<Task> = [
   ...examplePackages.map((name) => ({ id: `typecheck:example-react-rlm-chat-${name}`, cwd: examplePkg(name), cmd: ["bun", "run", "typecheck"] })),
   { id: "typecheck:example-codex-provider", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit", "-p", "examples/codex-provider/tsconfig.json"] },
   ...testedPackages.map((name) => ({ id: `test:${packageId(name)}`, cwd: pkg(name), cmd: ["bun", "test"] })),
+  { id: "test:grove:workers", cwd: pkg("grove"), cmd: ["bun", "run", "test:workers"] },
   { id: "test:platform", cwd: pkg("platform"), cmd: ["bun", "run", "test"] },
   { id: "test:platform:workers", cwd: pkg("platform"), cmd: ["bun", "run", "test:workers"] },
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),

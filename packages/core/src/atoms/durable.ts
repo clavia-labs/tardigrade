@@ -1,11 +1,11 @@
-import type { ReadonlyLog } from "../runtime/log-view"
-import { Context, Option, Schema } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { atom, type Atom } from "./atom"
+import { durableProjection } from "./durable-projection"
+import { Schema, SchemaAST } from "effect"
+import { type Atom } from "./atom"
+import { incrementalDecoder } from "./incremental/decode"
+import { frozenPlainData } from "./incremental/frozen"
 import { incrementalValidator, invalid } from "./incremental/validate"
 import type { RecordMetadata } from "../services/journal"
-import { EventLog, eventLogContext } from "../services/event-log"
-import { AtomState, type StatefulAtom } from "../initialise"
+import { type StatefulAtom } from "../initialise"
 
 export interface DurableAtom<State, Event> extends Atom<State>, StatefulAtom {
   readonly input: Schema.Schema<Event>
@@ -29,7 +29,6 @@ export function durableAtom<State, Event>(options: {
   readonly initial: NoInfer<State>
   readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<State>
 }): DurableAtom<State, Event> {
-  const accepts = Schema.is(options.input)
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
   const fast = incrementalValidator(options.schema, () => console.warn(`Durable atom "${options.name}" state is not plain data; validation is O(state)`))
@@ -42,6 +41,8 @@ export function durableAtom<State, Event>(options: {
   }
   const decode = (Schema.decodeUnknownSync as unknown as (schema: unknown, options: { readonly onExcessProperty: "error" }) => (value: unknown) => unknown)(options.schema, { onExcessProperty: "error" }) as (value: unknown) => State
   const encode = (Schema.encodeUnknownSync as unknown as (schema: unknown) => (value: unknown) => unknown)(options.schema) as (value: State) => unknown
+  // encodeFrozen preserves subtree identity when reversing the schema leaves its AST unchanged (properties/durable-state.test.ts).
+  const encodeFrozen = SchemaAST.flip(options.schema.ast) === options.schema.ast ? incrementalDecoder(options.schema) : undefined
   const restore = (state: unknown): State => {
     const decoded = decode(state)
     return fast.trust(decoded) as State
@@ -49,38 +50,9 @@ export function durableAtom<State, Event>(options: {
   const initial = structuredClone(options.initial)
   validate(initial)
   check(initial)
-  type Frame = { readonly source: Atom<ReadonlyLog<unknown>>; readonly position: number; readonly state: State }
-  const reduced = NativeAtom.readable((get): Frame => {
-    const context = get(eventLogContext)
-    if (!context) throw new Error("Missing EventLog service")
-    const service = Context.get(context, EventLog)
-    const source = service.events
-    const configuredPosition = service.position
-    const offset = (typeof configuredPosition === "function" ? configuredPosition() : configuredPosition) ?? 0
-    const configuredSeed = service.initialState
-    const seed = typeof configuredSeed === "function" ? configuredSeed() : configuredSeed
-    const events = get(source)
-    const records = service.records ? get(service.records) : undefined
-    const previous = Option.getOrUndefined(get.self<Frame>())
-    const sameSource = previous !== undefined && previous.source === source
-    if (sameSource && previous.position > offset + events.length) throw new Error("EventLog source must be append-only")
-    if (seed && (seed.position < offset || seed.position > offset + events.length)) throw new Error(`Atom seed position is outside the event source: ${options.name}`)
-    const continued = sameSource && previous.position >= (seed?.position ?? offset)
-    let state = continued ? previous.state : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : check(structuredClone(initial))
-    const start = (continued ? previous.position : seed?.position ?? offset) - offset
-    for (let index = Math.max(0, start); index < events.length; index++) {
-      const event = events.at(index)
-      if (!accepts(event)) continue
-      const record = records?.at(index)
-      const metadata: RecordMetadata = record ? { ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), ...(record.message ? { message: record.message } : {}) } : {}
-      const next = options.reduce(state, event, metadata, offset + index)
-      state = Object.is(next, state) ? next : check(next)
-    }
-    return { source, position: offset + events.length, state }
-  }).pipe(NativeAtom.keepAlive)
-  const output = atom(get => get(reduced).state)
-  return Object.assign(output, {
-    input: options.input,
-    [AtomState]: { name: options.name, decode: restore, encode: (value: unknown) => encode(value as State) },
+  return durableProjection(options, {
+    initial: () => check(structuredClone(initial)),
+    restore: state => restore(state), check,
+    state: { name: options.name, decode: restore, encode: (value: unknown) => typeof value === "object" && value !== null && frozenPlainData.has(value) ? encodeFrozen?.(value)?.value ?? encode(value as State) : encode(value as State) },
   })
 }

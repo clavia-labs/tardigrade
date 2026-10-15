@@ -12,7 +12,7 @@ import { makeRetryingAlarms, makeRetryingRpc, type CloudflareAlarmOptions, type 
 import { recordRetryWakes } from "../shared/retry-wakes"
 import { cloudflareSchedulerStorage, cloudflareSchedulerTransaction } from "./scheduler"
 import { cloudflareWatchdogStorage, cloudflareWatchdogTransaction } from "./watchdog"
-import { sqlJournal } from "../shared/sql-journal"
+import { sqlJournal, type CheckpointChunkOptions } from "../shared/sql-journal"
 import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
@@ -48,6 +48,7 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
   readonly scheduler?: Partial<SchedulerPolicy>
   readonly watchdog?: { readonly policy?: Partial<WatchdogPolicy>; readonly retryable?: (error: Error) => boolean }
   readonly http?: (env: Env) => MethodHttpOptions
+  readonly checkpointTree?: CheckpointChunkOptions["checkpointTree"]
   readonly checkpointChunkBytes?: number
   readonly eventInlineBytes?: number
   readonly generateName?: () => string
@@ -60,6 +61,7 @@ export const cloudflareThreadName = (coordinate: ThreadCoordinate): string => JS
 export function objectJournal<Event extends object>(options: {
   readonly storage: DurableObjectStorage
   readonly key: string
+  readonly checkpointTree?: CheckpointChunkOptions["checkpointTree"]
   readonly checkpointChunkBytes?: number | undefined
   readonly eventInlineBytes?: number | undefined
   readonly target: WatchdogTarget
@@ -67,7 +69,7 @@ export function objectJournal<Event extends object>(options: {
   readonly watchdog: ReturnType<typeof createWatchdog>
 }) {
   const alarms = makeRetryingAlarms(options.storage, options.alarms)
-  return sqlJournal<Event>({ actor: options.key, limits: CLOUDFLARE_SQL_LIMITS, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, layer: SqliteClient.layer({ storage: options.storage }), flush: alarms.sync,
+  return sqlJournal<Event>({ syncTreeReads: true, actor: options.key, limits: CLOUDFLARE_SQL_LIMITS, checkpointChunkBytes: options.checkpointChunkBytes, checkpointTree: options.checkpointTree, eventInlineBytes: options.eventInlineBytes, layer: SqliteClient.layer({ storage: options.storage }), flush: alarms.sync,
     commit: (work, records, position) => Effect.gen(function* () {
       const context = yield* Effect.context<never>()
       yield* Effect.tryPromise({ try: () => options.storage.transaction(tx => Effect.runPromiseWith(context)(Effect.gen(function* () {
@@ -150,7 +152,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     private supervisor(instance: string) {
       if (this.instance !== instance) throw new RuntimeError("Actor DO instance is not initialized")
       if (!this.directory) {
-        this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
+        this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, checkpointTree: options.checkpointTree, eventInlineBytes: options.eventInlineBytes, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
         this.directory = createSupervisor({ actor: options.actor.actorName, journal: () => this.journal!, run: this.run,
           ...(options.provisionRetry ? { provisionRetry: options.provisionRetry } : {}),
           ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
@@ -271,7 +273,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     })
     private address() { if (!this.coordinate) throw new RuntimeError("Thread DO is not provisioned"); return this.coordinate }
     private storage() {
-      if (!this.journal) this.journal = objectJournal({ storage: this.ctx.storage, key: "events", checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, target: this.address(), watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
+      if (!this.journal) this.journal = objectJournal({ storage: this.ctx.storage, key: "events", checkpointChunkBytes: options.checkpointChunkBytes, checkpointTree: options.checkpointTree, eventInlineBytes: options.eventInlineBytes, target: this.address(), watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
       return this.journal
     }
     async provision(input: ThreadCreated, initialState?: InitialState): Promise<void> {

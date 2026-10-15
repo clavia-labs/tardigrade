@@ -10,6 +10,7 @@
     "./event-log": "./src/runtime/replay.ts"
   },
   "dependencies": {
+    "@tardie/grove": "0.1.0",
     "effect": "4.0.0-rc.115"
   },
   "devDependencies": {

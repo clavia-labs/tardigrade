@@ -147,3 +147,56 @@ test("R2 content persists as refs in the journal and hydrates after thread evict
     expect(fixture.calls()).toBe(calls)
   } finally { await fixture.close() }
 })
+
+
+test("compaction keeps the full archive and restores only the active context after eviction", async () => {
+  const instance = `http-model-${crypto.randomUUID()}`
+  const model = (env as unknown as AgentEnv).MODELS.getByName(instance)
+  await model.enqueue([{ text: "ok" }, { text: "Earlier archived message" }, { text: "ok" }, { text: "ok" }])
+  const fixture = await workerdContentFixture({ instance })
+  const text = "archived-".repeat(2_000)
+  try {
+    expect(await fixture.message([{ type: "text", text }], "long")).toEqual({ status: "completed", output: { text: "ok" } })
+    expect(await fixture.message([{ type: "text", text: "Keep this tail." }], "tail")).toEqual({ status: "completed", output: { text: "ok" } })
+    await fixture.restart()
+    const states = await fixture.states()
+    expect(states["agent.trajectory"]).toMatchObject({ entries: [{ message: { content: [{ text }] } }, {}, { message: { content: [{ text: "Keep this tail." }] } }, {}] })
+    expect(states["agent.context"]).toMatchObject({ entries: [{ message: { text: expect.stringContaining("Earlier conversation summary") } }, { message: { content: [{ text: "Keep this tail." }] } }, {}], compaction: { through: 2, summary: "Earlier archived message", pending: null } })
+    expect(await fixture.message([{ type: "text", text: "Continue after eviction." }], "recovered")).toEqual({ status: "completed", output: { text: "ok" } })
+    const prompt = JSON.stringify((await model.inspect()).requests.at(-1))
+    expect(prompt).toContain("Earlier conversation summary")
+    expect(prompt).toContain("Keep this tail.")
+    expect(prompt).toContain("Continue after eviction.")
+    expect(prompt).not.toContain("archived-")
+  } finally { await fixture.close() }
+})
+
+
+test("real agent retries HTTP errors, assembles streamed tools and restores their context after eviction", async () => {
+  const instance = `http-model-${crypto.randomUUID()}`
+  const model = (env as unknown as AgentEnv).MODELS.getByName(instance)
+  await model.enqueue([
+    { status: 429, retryAfter: "0" },
+    { text: "Let me look.", tools: [{ id: "capture", name: "screen__capture", arguments: JSON.stringify({ screen: "main" }) }], chunkChars: 3 },
+    { text: "The screenshot is ready.", chunkChars: 2, chunkDelayMs: 1 },
+    { text: "Still here.", chunkChars: 1 },
+  ])
+  const fixture = await workerdContentFixture({ instance })
+  try {
+    expect(await fixture.message([{ type: "text", text: "Capture the screen." }], "capture")).toEqual({ status: "completed", output: { text: "The screenshot is ready." } })
+    const before = await model.inspect()
+    expect(before.requests).toHaveLength(3)
+    expect(before.requests[0]).toEqual(before.requests[1])
+    expect(JSON.stringify(before.requests[2])).toContain("capture")
+    expect(JSON.stringify(before.requests[2])).toContain("Screenshot captured.")
+    expect(before.streams.every(stream => stream.sent > 2)).toBe(true)
+    await fixture.restart()
+    expect(await fixture.message([{ type: "text", text: "Remember that screenshot?" }], "recovered")).toEqual({ status: "completed", output: { text: "Still here." } })
+    const after = await model.inspect()
+    expect(after.remaining).toBe(0)
+    expect(after.requests).toHaveLength(4)
+    expect(JSON.stringify(after.requests[3])).toContain("The screenshot is ready.")
+    expect(JSON.stringify(after.requests[3])).toContain("Screenshot captured.")
+    expect((await fixture.records()).some(record => record.event.type === "RetryScheduled")).toBe(true)
+  } finally { await fixture.close() }
+})

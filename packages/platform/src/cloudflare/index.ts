@@ -8,7 +8,7 @@ import { SqliteClient } from "@effect/sql-sqlite-do"
 import { CLOUDFLARE_SQL_LIMITS } from "./limits"
 export { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_SQLITE_MAX_ROW_BYTES, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
 import { sqlJournal, type CheckpointChunkOptions, type JournalRecordOptions } from "../shared/sql-journal"
-export { sqlJournal, DEFAULT_EVENT_INLINE_BYTES, type JournalRecordOptions, decodeSqlJournalRecord, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
+export { sqlJournal, DEFAULT_CHECKPOINT_COLLECT_EVERY, DEFAULT_CHECKPOINT_SCHEDULER, type CheckpointTreeOptions, DEFAULT_EVENT_INLINE_BYTES, type JournalRecordOptions, decodeSqlJournalRecord, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
 export { workerLoaderIsolate, DEFAULT_WORKER_LOADER_ISOLATE_POLICY, type WorkerLoaderIsolatePolicy } from "./isolate"
 import { hostRoutes, type HttpHost } from "../shared/http"
@@ -18,9 +18,10 @@ import { HttpRouter } from "effect/unstable/http"
 export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string, options: CloudflareAlarmOptions & CheckpointChunkOptions & JournalRecordOptions = {}) {
   const alarms = makeRetryingAlarms(storage, options)
   return sqlJournal<Event>({
+    syncTreeReads: true,
     actor,
     limits: CLOUDFLARE_SQL_LIMITS,
-    checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes,
+    checkpointChunkBytes: options.checkpointChunkBytes, checkpointTree: options.checkpointTree, eventInlineBytes: options.eventInlineBytes,
     layer: SqliteClient.layer({ storage }),
     flush: alarms.sync,
   })

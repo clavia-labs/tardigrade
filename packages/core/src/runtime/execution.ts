@@ -1,3 +1,4 @@
+import { treeSession } from "../services/tree-state"
 import type { ReadonlyIndex } from "./log-view"
 import { initialStateSeed, type StateSeed } from "../initialise"
 import { ActorCommitError, AttemptTimedOut, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, CancellationOutcome, effectKey, type EffectRef } from "./effects"
@@ -11,7 +12,7 @@ import { EffectExecution, DEFAULT_ATTEMPT_TIMEOUT_MS, type AttemptOptions, type 
 import { createExecutionStream, type ExecutionStream, type ExecutionStreamPolicy } from "../services/execution-stream"
 import { EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType, type RetryScheduled } from "./events"
 import { cancelAct, type ActCancellation } from "../atoms/act"
-import type { RuntimeEvent, JournalEvent, Journal, MessageJournal, RecordMetadata } from "../services/journal"
+import type { RuntimeEvent, JournalEvent, Journal, MessageJournal, RecordMetadata, Recorded, EffectInputChanges } from "../services/journal"
 import type { ActorRuntime, ActorSetup, Requirements } from "./contracts"
 import type { ActorDefinition } from "../actor/definition"
 import { type MessageMetadata as DeliveryMetadata, type MessageReceipt, MessageAddress, MessageDelivered, MessageMetadata, MessageConflict, InvalidMessage, isMessageReceived } from "../actor/message"
@@ -22,7 +23,8 @@ import { isDeepStrictEqual } from "node:util"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue, Schedule, Clock, Random } from "effect"
 import { WatchdogTerminalError, type RecoveryState } from "../services/watchdog"
 import { Promises, DEFAULT_PROMISE_POLICY, promiseDeadline, promisePolicy, type PromisePolicy } from "../services/promises"
-import { DEFAULT_CHECKPOINT_MAX_BYTES, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "../services/checkpoint"
+import type { Options as JsonTreeOptions } from "@tardie/grove"
+import { checkpointEncoder, DEFAULT_CHECKPOINT_MAX_BYTES, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "../services/checkpoint"
 import { observeRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
 import { messageReplies } from "./messages"
 import { DeliverMessage, type MessageDelivery } from "../services/invocation"
@@ -36,8 +38,8 @@ export interface CancellationOptions extends AttemptOptions {
 }
 
 export type CheckpointPolicy =
-  | { readonly mode: "threshold"; readonly options: { readonly everyEvents: number; readonly maxBytes?: number } }
-  | { readonly mode: "manual"; readonly options?: { readonly maxBytes?: number } }
+  | { readonly mode: "threshold"; readonly options: { readonly everyEvents: number; readonly maxBytes?: number; readonly tree?: JsonTreeOptions } }
+  | { readonly mode: "manual"; readonly options?: { readonly maxBytes?: number; readonly tree?: JsonTreeOptions } }
 
 export const DEFAULT_MESSAGE_RETRY_INTERVAL_MS = 5_000
 
@@ -127,6 +129,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     let definition: ReturnType<typeof createEventLog<Event, RuntimeAtoms>>
     let snapshot: ReturnType<typeof definition.replay>
     const localRecovery = new Map<string, ReturnType<typeof snapshot.deferred>[number]>()
+    const trees = options.journal?.trees ? treeSession(options.journal.trees) : options.journal ? undefined : treeSession({ load: () => { throw new RuntimeError("In-memory execution cannot load unstaged tree nodes") } })
     const source = createRecordSource<Event>()
     const bindings = atom<ReadonlyIndex<object, EffectRef>>(new Map())
     let checkpointSeed: EffectCheckpoint | undefined
@@ -137,12 +140,26 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     if (checkpointPolicy.mode === "threshold" && (!Number.isSafeInteger(checkpointPolicy.options.everyEvents) || checkpointPolicy.options.everyEvents < 1)) return yield* Effect.fail(new RuntimeError("Checkpoint everyEvents must be a positive safe integer"))
     const checkpointMaxBytes = checkpointPolicy.options?.maxBytes ?? DEFAULT_CHECKPOINT_MAX_BYTES
     if (!Number.isSafeInteger(checkpointMaxBytes) || checkpointMaxBytes < 1) return yield* Effect.fail(new RuntimeError("Checkpoint maxBytes must be a positive safe integer"))
-    const encodeChecked = (checkpoint: EffectCheckpoint) => {
-      const payload = encodeCheckpoint(checkpoint)
-      if (payload.byteLength > checkpointMaxBytes) throw new RuntimeError(`Checkpoint exceeds maxBytes ${checkpointMaxBytes}`)
-      return payload
-    }
-    const store = createStore(Context.make(EventLog, {
+    const encodeTree = checkpointEncoder(checkpointPolicy.options?.tree)
+    const persistCheckpoint = (position: number, records: readonly Recorded<Event>[], checkpoint: EffectCheckpoint, inputs?: EffectInputChanges) => Effect.gen(function* () {
+      const journal = options.journal!
+      const staged = inputs?.trees ?? (trees ? { nodes: trees.nodes(), roots: checkpoint.durable.flatMap(entry => entry.tree ? [{ name: entry.name, root: entry.tree }] : []), held: trees.held() } : undefined)
+      const changes = staged ? { ...inputs, trees: staged } : inputs
+      const referencedBytes = yield* Effect.try({ try: () => checkpoint.durable.reduce((bytes, entry) => bytes + (entry.tree ? trees!.bytes(entry.tree) : 0), 0), catch: RuntimeError.from })
+      if (journal.treeCheckpoint) {
+        const payload = yield* Effect.try({ try: () => encodeTree(checkpoint), catch: RuntimeError.from })
+        if (payload.logicalBytes + referencedBytes > checkpointMaxBytes) return yield* Effect.fail(new RuntimeError(`Checkpoint exceeds maxBytes ${checkpointMaxBytes}`))
+        yield* journal.treeCheckpoint.append(position, records, { position: checkpoint.position, payload, digest: payload.root, roots: checkpoint.durable.flatMap(entry => entry.tree ? [{ name: entry.name, root: entry.tree }] : []) }, changes)
+      } else {
+        const payload = yield* Effect.try({ try: () => encodeCheckpoint(checkpoint), catch: RuntimeError.from })
+        if (payload.byteLength + referencedBytes > checkpointMaxBytes) return yield* Effect.fail(new RuntimeError(`Checkpoint exceeds maxBytes ${checkpointMaxBytes}`))
+        const digest = yield* checkpointDigest(payload)
+        yield* journal.appendWithCheckpoint(position, records, { position: checkpoint.position, payload, digest }, changes)
+      }
+      if (staged) trees!.committed(staged.nodes)
+    })
+    const projectionContext: typeof EventLog.Service = {
+      ...(trees ? { trees } : {}),
       events: source.observedEvents,
       records: source.observedRecords,
       bindings,
@@ -154,7 +171,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       },
       defect: () => snapshot?.defect,
       promise: ref => snapshot?.promise(ref),
-    }))
+    }
+    const store = createStore(Context.make(EventLog, projectionContext))
     const sync = () => {
       const position = store.get(source.records).length
       if (position > snapshot.events.length) throw new RuntimeError("Committed event history cannot shrink")
@@ -221,9 +239,14 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       const checkpoint = options.journal && eligible ? next.checkpoint() : undefined
       if (options.journal) {
         const journal = options.journal
+        const put = records.flatMap(({ event }) => Schema.is(EffectRequested)(event)
+          ? next.pending().filter(work => effectKey(work.ref) === effectKey(event.ref)).map(({ ref, request }) => ({ ref, request })) : [])
+        const roots = next.treeRoots()
+        const held = trees?.held() ?? []
+        const treeChanges = trees ? { nodes: trees.nodes([...roots.map(entry => entry.root), ...held, ...put.flatMap(({ request }) => request.selections?.map(ref => ref.root) ?? []), ...(checkpoint?.durable.flatMap(entry => entry.tree ? [entry.tree] : []) ?? [])]), roots, held } : undefined
         const inputChanges = {
-          put: records.flatMap(({ event }) => Schema.is(EffectRequested)(event)
-            ? next.pending().filter(work => effectKey(work.ref) === effectKey(event.ref)).map(({ ref, request }) => ({ ref, request })) : []),
+          ...(treeChanges ? { trees: treeChanges } : {}),
+          put,
           remove: records.flatMap(({ event }) => {
             if (Schema.is(EffectDied)(event)) return next.cancelled().length ? [] : [...persistedInputRefs.values()].filter(ref => ref.atom !== "host.message.replies")
             if (Schema.is(CancellationOutcome)(event) && cleanupSucceeded(event)) return next.defect && !next.cancelled().length
@@ -235,9 +258,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           }),
         }
         const persistence = checkpoint
-          ? Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from }).pipe(
-            Effect.flatMap(payload => checkpointDigest(payload).pipe(Effect.flatMap(digest => journal.appendWithCheckpoint(snapshot.position, records, { position: next.position, payload, digest }, inputChanges)))),
-          )
+          ? persistCheckpoint(snapshot.position, records, checkpoint, inputChanges)
           : journal.append(snapshot.position, records, inputChanges)
         yield* persistence.pipe(Effect.catchCause(cause => Effect.gen(function* () {
           const operation = checkpoint ? "checkpoint" as const : "append" as const
@@ -255,6 +276,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           })
           return yield* persistenceFailure
         })))
+        if (treeChanges) trees!.committed(treeChanges.nodes)
         for (const input of inputChanges.put) persistedInputRefs.set(effectKey(input.ref), input.ref)
         for (const ref of inputChanges.remove) persistedInputRefs.delete(effectKey(ref))
       }
@@ -428,7 +450,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
               const value = settlement?.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(settlement.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
               yield* observer.value.cancel({ ref: current.ref, handle: current.handle, ...(value?.type === "promise" && value.deadlineAt !== undefined ? { deadlineAt: value.deadlineAt } : {}) })
             }
-            yield* cancelAct(current, { get: store.get, cancel: runtime.cancel }).pipe(Effect.provide(services))
+            const request = trees ? { ...current.request, input: yield* Effect.try({ try: () => trees.resolve(current.request), catch: RuntimeError.from }) } : current.request
+            yield* cancelAct({ ...current, request }, { get: store.get, cancel: runtime.cancel }).pipe(Effect.provide(services))
           })
           const result = yield* Effect.exit(retryOperation(operation, {
             attemptTimeoutMs: options.cancellation?.attemptTimeoutMs === undefined ? executionAttemptTimeoutMs : options.cancellation.attemptTimeoutMs,
@@ -598,7 +621,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
               return { executor: "local" as const, id }
             }),
           }
-          const fiber = yield* runAttempt(work.execute(work.request.input), executionAttemptTimeoutMs, () => retryStarted).pipe(
+          const fiber = yield* runAttempt(Effect.suspend(() => work.execute(trees ? trees.resolve(work.request) : work.request.input)), executionAttemptTimeoutMs, () => retryStarted).pipe(
             Effect.provideService(EffectExecution, execution),
             Effect.provide(services),
             Effect.flatMap(result => Schema.decodeEffect(ExecutionResult)(result).pipe(Effect.mapError(String))),
@@ -716,6 +739,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         yield* Queue.shutdown(notifications)
         if (!options.executionStreamBus) yield* executionStream.close
         definition?.dispose()
+        trees?.release(projectionContext)
         store.dispose()
       })))
     }).pipe(Effect.uninterruptible))
@@ -725,7 +749,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         while (true) yield* (yield* Queue.take(admissions))
       }).pipe(Effect.forkIn(scope))
       services = yield* buildServices()
-      const stored = options.journal ? yield* options.journal.readCheckpoint : undefined
+      const stored = options.journal ? yield* (options.journal.treeCheckpoint?.read ?? options.journal.readCheckpoint) : undefined
       const checkpoint = stored ? yield* Effect.try({ try: () => decodeCheckpoint(stored.payload), catch: RuntimeError.from }) : undefined
       if (stored && checkpoint && checkpoint.position !== stored.position) return yield* Effect.fail(new RuntimeError("Checkpoint payload position differs from journal metadata"))
       checkpointSeed = checkpoint
@@ -741,7 +765,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       )
       const inputs = options.journal ? yield* options.journal.readInputs : []
       for (const input of inputs) persistedInputRefs.set(effectKey(input.ref), input.ref)
-      definition = createEventLog({ inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
+      definition = createEventLog({ ...(trees ? { trees } : {}), inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
         methods: setup.contracts, ...(options.delivery ? { address: options.delivery.address } : {}),
       }) }, ...(checkpoint ? { checkpoint } : {}) })
       snapshot = yield* Effect.try({ try: () => definition.replay(history), catch: RuntimeError.from })
@@ -831,9 +855,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           if (!options.journal) return yield* Effect.fail(new RuntimeError("Checkpointing requires a journal"))
           const checkpoint = snapshot.checkpoint()
           if (!checkpoint) return yield* Effect.fail(new RuntimeError("Cannot checkpoint while work is pending or initialised atoms are unread"))
-          const payload = yield* Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from })
-          const digest = yield* checkpointDigest(payload).pipe(Effect.mapError(RuntimeError.from))
-          yield* options.journal.appendWithCheckpoint(snapshot.position, [], { position: snapshot.position, payload, digest }).pipe(Effect.mapError(RuntimeError.from))
+          yield* persistCheckpoint(snapshot.position, [], checkpoint).pipe(Effect.mapError(RuntimeError.from))
           checkpointPosition = snapshot.position
         })),
         active: () => [...background.keys()],

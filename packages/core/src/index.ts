@@ -1,4 +1,6 @@
 export * from "./atoms/atom"
+export { durableMerkleAtom } from "./atoms/durable-merkle"
+export type { MerkleTree, TreeSelection, SelectedInput, TreeStorage, TreeChanges } from "./services/tree-state"
 export { durableAtom, type DurableAtom } from "./atoms/durable"
 export { EventLog, ReplayContext } from "./services/event-log"
 export type { ReadonlyIndex, ReadonlyLog } from "./runtime/log-view"

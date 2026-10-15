@@ -2,6 +2,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:f
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import grove from "../packages/grove/package.json"
 import { dependencies } from "../package.json"
 
 const root = fileURLToPath(new URL("../", import.meta.url))
@@ -66,6 +67,9 @@ const main = async (): Promise<void> => {
     const tarballName = (await readdir(packed)).find((name) => name.endsWith(".tgz"))
     if (tarballName === undefined) throw new Error("packed Tardigrade tarball is missing")
     const tarball = join(packed, tarballName)
+    await run([process.execPath, "pm", "pack", "--destination", packed], join(root, "packages/grove"))
+    const groveTarball = join(packed, `tardie-grove-${grove.version}.tgz`)
+    const overrides = { [grove.name]: `file:${groveTarball}` }
 
     const fixtures = ["anthropic", "codex", "openai", "openai-compat", "openrouter"] as const
 
@@ -74,6 +78,7 @@ const main = async (): Promise<void> => {
     await writeFile(join(directory, "package.json"), `${JSON.stringify({
       private: true,
       type: "module",
+      overrides,
       dependencies: { tardie: `file:${tarball}` },
       devDependencies: { "@types/node": dependencies["@types/node"] }
     }, undefined, 2)}\n`)
@@ -127,6 +132,7 @@ const main = async (): Promise<void> => {
     await writeFile(join(bedrockDirectory, "package.json"), `${JSON.stringify({
       private: true,
       type: "module",
+      overrides,
       dependencies: { tardie: `file:${tarball}`, ...providerDependencies }
     }, undefined, 2)}\n`)
     await writeFile(join(bedrockDirectory, "worker.ts"), workerSource(["bedrock"]))

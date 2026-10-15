@@ -8,6 +8,7 @@ export const AtomState = Symbol("AtomState")
 export interface StatefulAtom {
   readonly [AtomState]: {
     readonly name: string
+    readonly tree?: (value: unknown) => string
     readonly decode: (state: unknown) => unknown
     readonly encode: (value: unknown) => unknown
   }

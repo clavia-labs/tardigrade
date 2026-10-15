@@ -10,7 +10,7 @@ import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { sqlJournal, type CheckpointChunkOptions, type JournalRecordOptions } from "../shared/sql-journal"
-export { sqlJournal, decodeSqlJournalRecord, DEFAULT_EVENT_INLINE_BYTES, type JournalRecordOptions, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
+export { sqlJournal, decodeSqlJournalRecord, DEFAULT_CHECKPOINT_COLLECT_EVERY, DEFAULT_CHECKPOINT_SCHEDULER, type CheckpointTreeOptions, DEFAULT_EVENT_INLINE_BYTES, type JournalRecordOptions, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
 import { captureHostCheckpoint, type CheckpointPolicy } from "./backup"
 export { serve, DEFAULT_SERVE_OPTIONS, type ServeOptions } from "./serve"
@@ -18,13 +18,14 @@ export { bunBackup, restoreHostCheckpoint, DEFAULT_CHECKPOINT_POLICY, type Check
 
 // bunJournal opens a SQLite event journal; its caller closes it after closing the actor.
 export function bunJournal<Event extends object>(options: SqliteClient.SqliteClientConfig & CheckpointChunkOptions & JournalRecordOptions & { readonly actor: string; readonly scheduler?: Parameters<typeof sqlJournal<Event>>[0]["scheduler"] }) {
-  return sqlJournal<Event>({ actor: options.actor, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, layer: SqliteClient.layer(options), scheduler: options.scheduler })
+  return sqlJournal<Event>({ syncTreeReads: true, actor: options.actor, checkpointChunkBytes: options.checkpointChunkBytes, checkpointTree: options.checkpointTree, eventInlineBytes: options.eventInlineBytes, layer: SqliteClient.layer(options), scheduler: options.scheduler })
 }
 
 // createBunHost keeps an instance supervisor database and separate thread databases beneath storage.
 export function createBunHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "storage"> & {
   readonly storage: string
   readonly scheduler?: Partial<SchedulerPolicy>
+  readonly checkpointTree?: CheckpointChunkOptions["checkpointTree"]
   readonly checkpointChunkBytes?: number
   readonly eventInlineBytes?: number
   readonly sqlite?: Omit<SqliteClient.SqliteClientConfig, "filename">
@@ -38,7 +39,7 @@ export function createBunHost<Event extends object, Services, State, Contracts e
     const journal = <Entry extends object>(filename: string, actor: string, target?: { actor: string; instance: string; thread: string }) => {
       mkdirSync(dirname(filename), { recursive: true })
       const alarm: ReturnType<typeof bunAlarm> | undefined = target ? bunAlarm(Effect.suspend(() => opened.scheduler!.alarm), { retryIntervalMs: options.scheduler?.deliveryRetryMs }) : undefined
-      const opened: ReturnType<typeof bunJournal<Entry>> = bunJournal<Entry>({ ...options.sqlite, filename, actor, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, ...(alarm ? { scheduler: {
+      const opened: ReturnType<typeof bunJournal<Entry>> = bunJournal<Entry>({ ...options.sqlite, filename, actor, checkpointChunkBytes: options.checkpointChunkBytes, checkpointTree: options.checkpointTree, eventInlineBytes: options.eventInlineBytes, ...(alarm ? { scheduler: {
         alarm: alarm.alarm, policy: options.scheduler,
         deliver: () => Effect.suspend(() => host.getThread(target!).pipe(Effect.flatMap(thread => thread ? thread.resume : Effect.fail(new RuntimeError("Scheduled thread was not found"))))),
       } } : {}) })

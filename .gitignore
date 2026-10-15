@@ -43,3 +43,6 @@ examples/.data/
 
 # Workspace public facade, generated from tools/public-exports.json on install
 packages/tardie/src/generated/
+
+# Local experiment reports
+.experiments/

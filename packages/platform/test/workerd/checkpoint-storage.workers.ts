@@ -1,3 +1,4 @@
+import type { TreeStateDO } from "../fixtures/workerd/tree-state.worker"
 import { effectServiceClient, type EffectServiceClient } from "../fixtures/effect-service"
 import type { EffectServiceDO } from "../fixtures/workerd/effect-service.worker"
 import { createWatchdog, effectKey, type CancellationOutcome, type Journal } from "@clavia/tardigrade-core"
@@ -21,7 +22,7 @@ import type { TestPromiseResolver, InputLifecycleDO } from "../fixtures/workerd/
 test("checkpointStorage", async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
   await runInDurableObject(namespace.getByName("checkpoint-storage"), async (_instance, state) => {
-    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES, open: checkpointChunkBytes => cloudflareJournal(state.storage, "events", { checkpointChunkBytes }), execute: async query => state.storage.sql.exec(query).toArray() })
+    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES, open: (checkpointChunkBytes, checkpointTree) => cloudflareJournal(state.storage, "events", { checkpointChunkBytes, checkpointTree }), execute: async query => state.storage.sql.exec(query).toArray() })
   })
 })
 
@@ -248,3 +249,35 @@ for (const scenario of operationRaceCases) {
   test(`operation race ${scenario.order} (fault: ${scenario.fault})`, () =>
     withEffectService((journal, service, execute) => operationRace(journal, service, execute, scenario)))
 }
+
+for (const cleanup of [false, true]) test(`native tree state recovers ${cleanup ? "cleanup" : "execution"} with frozen selection`, async () => {
+  const namespace = (env as unknown as { TREE_STATE: DurableObjectNamespace<TreeStateDO> }).TREE_STATE
+  let stub = namespace.getByName(`tree-state-${cleanup}`)
+  await testStage("tree seed", () => stub.seed())
+  await evictDurableObject(stub)
+  let state = await stub.inspect()
+  expect(state.state.count).toBe(4096)
+  expect(state.loadedBytes).toBeLessThan(16000)
+  await testStage("tree start", () => stub.start())
+  state = await waitFor(() => stub.inspect(), state => state.calls.length === 1)
+  const accepted = state.inputs[0]!
+  const root = accepted.request.selections![0]!.root
+  expect(accepted.request.input).toEqual({ messages: null })
+  await testStage("tree append", () => stub.append())
+  if (cleanup) {
+    await stub.cancel()
+    await waitFor(() => stub.inspect(), state => state.calls.length === 2)
+    await stub.checkpoint()
+  }
+  try { await stub.abort() } catch (error) { expect(String(error)).toContain("Native tree reset fixture") }
+  stub = namespace.getByName(`tree-state-${cleanup}`)
+  state = await waitFor(() => stub.inspect(), state => state.calls.length >= (cleanup ? 3 : 2))
+  expect(state.state.count).toBe(4097)
+  expect(state.calls.every(call => call.count === 4096 && call.digest === state.calls[0]!.digest && call.ref === JSON.stringify(accepted.ref))).toBe(true)
+  expect(state.owners.filter(owner => owner.name.includes('"input"')).length).toBe(1)
+  await testStage("tree finish", () => stub.finish(cleanup))
+  state = await stub.inspect()
+  expect(state.inputs).toHaveLength(0)
+  expect(state.owners.filter(owner => owner.name.includes('"input"'))).toHaveLength(0)
+  expect(state.nodes).not.toContain(root)
+}, 30000)

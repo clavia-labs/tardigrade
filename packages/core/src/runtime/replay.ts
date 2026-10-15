@@ -1,3 +1,4 @@
+import { treeSession, type TreeSession } from "../services/tree-state"
 import { IndexView, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
 import { historicalEventDecoder } from "../event/versioned"
 import { frozenPlainData } from "../atoms/incremental/frozen"
@@ -25,7 +26,7 @@ type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<in
 
 export interface EffectCheckpoint {
   readonly position: number
-  readonly durable: readonly { readonly name: string; readonly state: unknown; readonly position: number }[]
+  readonly durable: readonly { readonly name: string; readonly state: unknown; readonly position: number; readonly tree?: string }[]
   readonly operations: readonly StoredOperation[]
 }
 
@@ -37,7 +38,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   readonly digestMinBytes?: number
   readonly checkpoint?: EffectCheckpoint
   readonly inputs?: readonly PendingEffectInput[]
+  readonly trees?: TreeSession
 }) {
+  const trees = options.trees ?? treeSession({ load: () => { throw new Error("Replay cannot load unstaged tree nodes without storage") } })
   const digestMinBytes = options.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
   if (!Number.isSafeInteger(digestMinBytes) || digestMinBytes < 0) throw new Error("Effect input digest minBytes must be a nonnegative safe integer")
   type EffectValues = Proposed<Values<Atoms>[keyof Atoms]>
@@ -69,7 +72,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const previous = preparedRequests.get(source)
     if (previous) return previous
     freeze(source)
-    const trusted = typeof source.input === "object" && source.input !== null && actInputs.has(source.input) && typeof source.act === "string" && source.act.length > 0 && Object.keys(source).length === 2
+    const trusted = typeof source.input === "object" && source.input !== null && actInputs.has(source.input) && typeof source.act === "string" && source.act.length > 0 && source.selections === undefined && Object.keys(source).length === 2
     const request = trusted ? source : freeze(Schema.decodeSync(EffectRequest)(source))
     const stored = freeze(storeRequest(request, digestMinBytes))
     const prepared = { request, stored }
@@ -80,7 +83,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   // matchesPrepared is matchesRequest(stored, prepared.request), reusing the digest prepareRequest stored when both sides are digests (storeRequest and digestInput hash the same canonical bytes).
   const matchesPrepared = (stored: StoredEffectRequested["request"], prepared: { readonly request: EffectRequest; readonly stored: StoredEffectRequested["request"] }) =>
     stored.input._tag === "InputDigest" && prepared.stored.input._tag === "InputDigest"
-      ? stored.act === prepared.stored.act && isDeepStrictEqual(stored.input, prepared.stored.input)
+      ? stored.act === prepared.stored.act && isDeepStrictEqual(stored.selections, prepared.stored.selections) && isDeepStrictEqual(stored.input, prepared.stored.input)
       : matchesRequest(stored, prepared.request)
   const persistedInputs = new Map((options.inputs ?? []).map(input => [effectKey(input.ref), prepareRequest(input.request)]))
   // acceptedInput hydrates durable payloads before using verified reconstruction for legacy digest-only requests (quint/checkpoint/inputLifecycle.qnt, verifiedExecution).
@@ -90,7 +93,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (!matchesPrepared(record.request, persisted)) throw new Error(`Pending input differs from accepted request: ${effectKey(record.ref)}`)
       return persisted.request
     }
-    if (record.request.input._tag === "InlineInput") return prepareRequest({ act: record.request.act, input: record.request.input.value }).request
+    if (record.request.input._tag === "InlineInput") return prepareRequest({ ...record.request, input: record.request.input.value }).request
     if (!concluded && !matchesPrepared(record.request, proposed)) throw new Error(`Accepted input is unavailable; effect request differs from its proposal: ${effectKey(record.ref)}`)
     return proposed.request
   }
@@ -133,6 +136,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly effect: (ref: EffectRef) => StoredOperation | undefined
     readonly retry: (ref: EffectRef, phase?: "execution" | "cancellation") => RetryScheduled | undefined
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
+    readonly treeRoots: () => readonly { readonly name: string; readonly root: string }[]
     readonly checkpoint: () => EffectCheckpoint | undefined
   }
   const createEngine = (history: ReadonlyLog<Recorded<Event>>, seed?: EffectCheckpoint) => {
@@ -228,7 +232,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const key = effectKey(ref)
       return visible("promise", key, position) ? promiseOf(key) : undefined
     }
-    const store = createStore(Context.make(EventLog, {
+    const projectionContext: typeof EventLog.Service = {
+      trees,
       events: source.observedEvents,
       records: source.observedRecords,
       bindings,
@@ -246,15 +251,20 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       },
       defect: () => defect,
       promise: ref => promiseOf(effectKey(ref)),
-    }))
+    }
+    const store = createStore(Context.make(EventLog, projectionContext))
     const actReferences = new Map<object, EffectRef>()
     const actOwners = new Map<object, string>()
     let records: ReadonlyLog<Recorded<Event>> = store.get(source.records)
+    // proposalRoots retains input snapshots before journal acceptance (properties/durable-state.test.ts).
+    const proposalRoots = {}
     let disposed = false
     const dispose = () => {
       if (disposed) return
       disposed = true
       disposers.delete(dispose)
+      trees.release(projectionContext)
+      trees.release(proposalRoots)
       store.dispose()
     }
     disposers.add(dispose)
@@ -284,7 +294,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       remember("request", key, offset - 1)
       if (operationSettlement(entry)) remember("settlement", key, offset - 1)
       if (entry.cleanup) remember("cancellation", key, offset - 1)
-      if (entry.cleanup && !cleanupSucceeded(entry.cleanup.outcome) && entry.request.request.input._tag === "InlineInput") loadedInputs.set(key, { act: entry.request.request.act, input: entry.request.request.input.value })
+      if (entry.cleanup && !cleanupSucceeded(entry.cleanup.outcome) && entry.request.request.input._tag === "InlineInput") loadedInputs.set(key, { ...entry.request.request, input: entry.request.request.input.value })
       if (entry.cleanup?.outcome) remember("cancellationOutcome", key, offset - 1)
       if (entry.execution.promise) remember("promise", key, offset - 1)
       for (const event of [entry.execution.retry, entry.cleanup?.retry]) if (event) retries.set(retryKey(entry.ref, event.phase), [{ position: offset - 1, event }])
@@ -309,14 +319,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (!operationSettlement(operation) && !operation.cleanup) throw new Error("Effect checkpoint contains an unsettled request")
         const loaded = operation.cleanup && !cleanupSucceeded(operation.cleanup.outcome) ? inputOf(effectKey(operation.ref)) : undefined
         const request = operation.request
-        const stored = loaded ? { act: loaded.act, input: { _tag: "InlineInput" as const, value: loaded.input } } : request.request.input._tag === "InlineInput" ? storeRequest({ act: request.request.act, input: request.request.input.value }, digestMinBytes) : request.request
+        const stored = loaded ? { ...loaded, input: { _tag: "InlineInput" as const, value: loaded.input } } : request.request.input._tag === "InlineInput" ? storeRequest({ ...request.request, input: request.request.input.value }, digestMinBytes) : request.request
         return { ...operation, request: { ...request, request: stored } }
       })
       // TODO: Checkpoint capture must preserve recovery for unread durable atoms absent from the registry; suffix-only restore currently loses their prefix state (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent, initSkipPrefix).
       const captured = new Set<unknown>()
       const durable = [...store.nodes().values()].flatMap(node => {
         const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
-        return codec && !captured.has(codec) && captured.add(codec) ? [{ name: codec.name, state: codec.encode(store.get(node.atom)), position: offset + records.length }] : []
+        return codec && !captured.has(codec) && captured.add(codec) ? [{ name: codec.name, state: codec.encode(store.get(node.atom)), ...(codec.tree ? { tree: codec.tree(store.get(node.atom)) } : {}), position: offset + records.length }] : []
       })
       const names = new Set<string>()
       for (const entry of durable) {
@@ -335,6 +345,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const defect = store.get(executionDefect)
       const values = view()
       proposals.clear()
+      trees.release(proposalRoots)
       deliveries = []
       cancellations = []
       const identify = (name: string, owner: string, value: unknown): [string, unknown] => {
@@ -390,6 +401,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const owner = actOwners.get(proposal.identity)
         if (owner !== undefined && owner !== name) throw new Error("An act request must belong to one source")
         actOwners.set(proposal.identity, name)
+        for (const [index, selection] of (proposal.request.selections ?? []).entries()) trees.hold(proposalRoots, JSON.stringify([name, index]), selection.root)
         const prepared = prepareRequest(proposal.request)
         const executionRequest = prepared.request
         const previousRequest = executionDeclarations.get(proposal.identity)
@@ -422,7 +434,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       for (const key of retire) {
         if (Schema.is(MessageDelivered)(event) && key === effectKey(event.ref)) continue
         const request = requestOf(key)!
-        const stored = request.request.input._tag === "InlineInput" ? storeRequest({ act: request.request.act, input: request.request.input.value }, digestMinBytes) : request.request
+        const stored = request.request.input._tag === "InlineInput" ? storeRequest({ ...request.request, input: request.request.input.value }, digestMinBytes) : request.request
         if (stored.input._tag !== request.request.input._tag) retiredRequests.set(key, { position: offset + records.length, before: request })
         operations.set(key, { ...operations.get(key)!, request: { ...request, request: stored } })
         loadedInputs.delete(key)
@@ -601,6 +613,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       retryAt,
       promiseAt,
       promise: (ref: EffectRef) => promiseOf(effectKey(ref)),
+      storeNodes: () => store.nodes().values(),
       checkpoint,
     }
   }
@@ -623,6 +636,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const cancellations = Object.freeze([...engine.cancellations()])
     const deliveries = Object.freeze([...engine.deliveries()])
     const values = Object.freeze(engine.view())
+    const roots = [...engine.storeNodes()].flatMap(node => {
+      const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
+      return codec?.tree ? [{ name: codec.name, root: codec.tree(engine.get(node.atom)) }] : []
+    })
     const snapshot: Snapshot = Object.freeze({
       events: engine.events,
       records: engine.records,
@@ -642,6 +659,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       effect: (ref: EffectRef) => extends_(engine, snapshot) ? engine.effectAt(ref, snapshot.position) : engineOf(snapshot).effect(ref),
       retry: (ref: EffectRef, phase?: "execution" | "cancellation") => extends_(engine, snapshot) ? engine.retryAt(ref, snapshot.position, phase) : engineOf(snapshot).retry(ref, phase),
       promise: (ref: EffectRef) => extends_(engine, snapshot) ? engine.promiseAt(ref, snapshot.position) : engineOf(snapshot).promise(ref),
+      treeRoots: () => roots,
       checkpoint: () => engineOf(snapshot).checkpoint(),
     })
     engines.set(snapshot, engine)

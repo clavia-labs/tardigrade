@@ -90,7 +90,7 @@ export function digestInput(input: Schema.Json): InputDigest {
 export function storeRequest(request: EffectRequest, minBytes = DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES): StoredEffectRequest {
   if (!Number.isSafeInteger(minBytes) || minBytes < 0) throw new Error("Effect input digest minBytes must be a nonnegative safe integer")
   const digest = digestInput(request.input)
-  return { act: request.act, input: digest.bytes < minBytes ? { _tag: "InlineInput", value: request.input } : digest }
+  return { ...(request.selections ? { selections: request.selections } : {}), act: request.act, input: digest.bytes < minBytes ? { _tag: "InlineInput", value: request.input } : digest }
 }
 
 // observeRequest projects acceptance without copying stored input (quint/checkpoint/inputLifecycle.qnt, observationIndependent).
@@ -100,12 +100,12 @@ export function observeRequest(record: StoredEffectRequested): EffectAcceptance 
 
 // matchesRequest validates the act and reconstructed input across storage representations (properties/runtime/input-representation.ts).
 export function matchesRequest(stored: StoredEffectRequest, proposal: EffectRequest): boolean {
-  if (stored.act !== proposal.act) return false
+  if (stored.act !== proposal.act || !isDeepStrictEqual(stored.selections, proposal.selections)) return false
   if (stored.input._tag === "InlineInput") return canonicalInput(stored.input.value) === canonicalInput(proposal.input)
   return isDeepStrictEqual(stored.input, digestInput(proposal.input))
 }
 
 // sameStoredRequest compares accepted declarations independently of their representation (inputRepresentation).
 export function sameStoredRequest(left: StoredEffectRequest, right: StoredEffectRequest): boolean {
-  return left.act === right.act && isDeepStrictEqual(left.input._tag === "InputDigest" ? left.input : digestInput(left.input.value), right.input._tag === "InputDigest" ? right.input : digestInput(right.input.value))
+  return left.act === right.act && isDeepStrictEqual(left.selections, right.selections) && isDeepStrictEqual(left.input._tag === "InputDigest" ? left.input : digestInput(left.input.value), right.input._tag === "InputDigest" ? right.input : digestInput(right.input.value))
 }
