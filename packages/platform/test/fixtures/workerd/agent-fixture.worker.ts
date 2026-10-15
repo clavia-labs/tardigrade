@@ -6,7 +6,7 @@ import { actorContext, createActor } from "@clavia/tardigrade-agent"
 import { objectStorageFromR2 } from "@clavia/tardigrade-cloudflare/object-storage/r2"
 import { createActorWorker } from "../../../src/cloudflare"
 import { retryServices } from "../retry-provider"
-import { contentServices } from "../model-services"
+import { contentServices } from "../agent"
 
 export interface AgentEnv { readonly OBJECTS: R2Bucket }
 export let observedPrompt: Prompt.Prompt | undefined

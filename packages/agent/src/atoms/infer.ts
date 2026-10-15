@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled } from "../contracts/events"
 import { ModelInfo } from "../actor/context"
-import { modelState } from "./durable/model"
+import { modelSelection } from "../compat/model"
 import { Generate, requests, failureMessage } from "../contracts/acts"
 import type { OutputContract } from "../contracts/acts"
 import { inferenceState } from "./durable/inference"
@@ -24,7 +24,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
   const agentAtom = typeof agent === "function" ? atom(agent) : agent
   const request = requests(Generate.request, { latestOnly: true })
 
-  const output = Effect.map(ModelInfo, current => effectAtom(get => {
+  const output = Effect.map(Effect.all([ModelInfo, modelSelection]), ([current, model]) => effectAtom(get => {
     get(toolSpend)
     get(tokenSpend)
     get(usdSpend)
@@ -53,10 +53,10 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
       })),
       acts: state.turnId ? { ...input.context.acts, ...input.tools.acts } : {},
     }
-    const selection = get(modelState)
+    const selection = get(model)
     if (!selection) return {
       view: { position: "configuring" as const }, acts: {},
-      events: { ...proposals.events, model: eventValue({ type: "ModelConfigured", ...current } satisfies Event) },
+      events: { ...proposals.events, model: eventValue({ type: "ModelConfigured", model: current.model, contextWindowTokens: current.contextWindowTokens } satisfies Event) },
     }
     if (state.running) return { view: { position: "running" as const }, ...proposals }
     if (turn && turn.failure !== null) return {
