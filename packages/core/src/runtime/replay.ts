@@ -434,7 +434,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (offset !== 0 || records.length > 1 || records.some(record => !Schema.is(ThreadCreated)(record.event))) throw new Error("State initialisation requires a fresh journal")
         for (const name of Object.keys(event.initialState)) initialisedNames.add(name)
       }
-      if (Schema.is(CoreEvent)(event) && event.type !== "ThreadCreated" && event.type !== "StateInitialised" && event.type !== "MessageDelivered" && !isMessageReceived(event)) {
+      if (Schema.is(CoreEvent)(event) && event.type !== "ThreadCreated" && event.type !== "ThreadUpdated" && event.type !== "StateInitialised" && event.type !== "MessageDelivered" && !isMessageReceived(event)) {
         const key = effectKey(event.ref)
         if (event.type === "EffectRequested") {
           if (operations.has(key)) {
@@ -551,7 +551,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       }),
       deliveries: () => deliveries,
       followups: (event: JournalEvent<Event>): readonly object[] => {
-        if (!Schema.is(CoreEvent)(event) || isMessageReceived(event) || event.type === "ThreadCreated" || event.type === "StateInitialised" || event.type === "MessageDelivered") return []
+        if (!Schema.is(CoreEvent)(event) || isMessageReceived(event) || event.type === "ThreadCreated" || event.type === "ThreadUpdated" || event.type === "StateInitialised" || event.type === "MessageDelivered") return []
         const request = acts.get(effectKey(event.ref))
         if (!request) return []
         if (event.type === "EffectCancelled") {
@@ -672,7 +672,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const engine = engineOf(snapshot)
       const defect = snapshot.get(executionDefect)
       if (defect && !(Schema.is(CoreEvent)(record) && "ref" in record && (record.type === "EffectDied" || record.type === "EffectCancelled" || (record.type === "EffectSettled" && cleanupSubmission(engine.effect(record.ref), record)) || Schema.is(CancellationOutcome)(record) || (record.type === "RetryScheduled" && record.phase === "cancellation") || record.ref.atom === "host.message.replies"))) return snapshot
-      if (Schema.is(CoreEvent)(record) && record.type !== "ThreadCreated" && record.type !== "StateInitialised" && record.type !== "MessageDelivered" && !isMessageReceived(record)) {
+      if (Schema.is(CoreEvent)(record) && record.type !== "ThreadCreated" && record.type !== "ThreadUpdated" && record.type !== "StateInitialised" && record.type !== "MessageDelivered" && !isMessageReceived(record)) {
         const lifecycle = engine.effect(record.ref)
         if (record.type === "EffectCancelled") {
           if (!lifecycle) throw new Error("Cancellation requires an accepted effect")

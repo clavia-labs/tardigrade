@@ -1,3 +1,4 @@
+import { ThreadCreated, ThreadUpdated } from "@clavia/tardigrade-core"
 import { Effect, ManagedRuntime, Schema, Semaphore, type Layer } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage, PendingEffectInput, effectKey, type EffectInputChanges } from "@clavia/tardigrade-core"
@@ -51,6 +52,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
   const setup = Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_events (actor TEXT NOT NULL, seq INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY (actor, seq)) WITHOUT ROWID`
+    yield* sql`CREATE INDEX IF NOT EXISTS experimental_thread_versions ON experimental_events (actor, seq DESC) WHERE json_extract(event, '$.event.type') IN ('ThreadCreated', 'ThreadUpdated')`
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_event_chunks (actor TEXT NOT NULL, seq INTEGER NOT NULL, ordinal INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY (actor, seq, ordinal), FOREIGN KEY (actor, seq) REFERENCES experimental_events(actor, seq)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_messages (actor TEXT NOT NULL, id TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (actor, id), FOREIGN KEY (actor, seq) REFERENCES experimental_events(actor, seq)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK (id = 1), position INTEGER NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL)`
@@ -157,6 +159,22 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       if (!row) return undefined
       if (row.seq !== 0 || typeof row.event !== "string") return yield* Effect.fail(new RuntimeError("Invalid first journal sequence"))
       return yield* readSqlJournalRecord<Event>(sql, options.actor, row)
+    }),
+    readVersion: Effect.gen(function* () {
+      const sql = yield* client
+      return yield* sql.withTransaction(Effect.gen(function* () {
+        const head = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
+        const position = head.length === 0 ? 0 : head[0]!.seq + 1
+        if (!Number.isSafeInteger(position) || position < 0) return yield* Effect.fail(new RuntimeError("Invalid journal position"))
+        const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND json_extract(event, '$.event.type') IN ('ThreadCreated', 'ThreadUpdated') ORDER BY seq DESC LIMIT 1`
+        const pending = yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM effect_inputs WHERE actor = ${options.actor}`
+        const pendingEffects = pending[0]!.count
+        const row = rows[0]
+        if (!row) return { position, pendingEffects }
+        const record = yield* readSqlJournalRecord<Event>(sql, options.actor, row)
+        const lifecycle = yield* Schema.decodeUnknownEffect(Schema.Union([ThreadCreated, ThreadUpdated]))(record.event).pipe(Effect.mapError(RuntimeError.from))
+        return { position, pendingEffects, ...(lifecycle.version === undefined ? {} : { version: lifecycle.version }) }
+      }))
     }),
     read: Effect.gen(function* () {
       if (scheduler) yield* scheduler.restore

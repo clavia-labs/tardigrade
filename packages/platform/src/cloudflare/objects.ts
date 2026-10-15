@@ -1,10 +1,10 @@
 import { DurableObject } from "cloudflare:workers"
 import { Context, Effect, Exit, Fiber, Layer, Schema, Scope } from "effect"
 import { isDeepStrictEqual } from "node:util"
-import { createActorExecution, createActorStore, createSupervisor, createScheduler, createWatchdog, DEFAULT_EXTERNAL_SENDER, Invocation, RuntimeError, Scheduler, schedulerAlarm, Supervisor, ThreadCoordinate, ThreadCreated, watchdogKey, type ActorMethods, type IncomingMessage, type InitialState, type MessageReceipt, type MessageDelivery, type ThreadRequest, type RecoveryState, type WatchdogTarget, type WatchdogPolicy, type SchedulerPolicy, type Recorded, type StoredCheckpoint, type ActorExecutionOptions } from "@clavia/tardigrade-core"
+import { createActorExecution, createActorStore, createSupervisor, createScheduler, createWatchdog, DEFAULT_EXTERNAL_SENDER, Invocation, RuntimeError, Scheduler, schedulerAlarm, Supervisor, ThreadCoordinate, ThreadCreated, ThreadUpdated, watchdogKey, type ActorMethods, type IncomingMessage, type InitialState, type MessageReceipt, type MessageDelivery, type ThreadRequest, type RecoveryState, type WatchdogTarget, type WatchdogPolicy, type SchedulerPolicy, type Recorded, type StoredCheckpoint, type ActorExecutionOptions } from "@clavia/tardigrade-core"
 import { createInvocation } from "@clavia/tardigrade-core/services/invocation"
 import type { createThreadHost } from "@clavia/tardigrade-core/runtime/layers"
-import { initializeThread } from "@clavia/tardigrade-core/services/journal/thread"
+import { initializeThread, updateThreadVersion } from "@clavia/tardigrade-core/services/journal/thread"
 import { prepareInitialState } from "@clavia/tardigrade-core/runtime/initialisation"
 import type { SupervisorEvent } from "@clavia/tardigrade-core/services/supervisor/graph"
 import { SqliteClient } from "@effect/sql-sqlite-do"
@@ -38,7 +38,8 @@ export interface CloudflareObjectBindings {
 }
 
 type ExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event>> = ActorExecutionOptions<Event, Services, State, Contracts>
-export type ActorObjectOptions<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Omit<ExecutionOptions<Event, Services, State, Contracts>, "storage" | "services" | "from" | "delivery" | "actorContext" | "executionStreamBus"> & Pick<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "from" | "delivery" | "transports" | "actorTransport" | "telemetry" | "defaultChildPlacement" | "provisionRetry"> & {
+export type ActorObjectOptions<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Omit<ExecutionOptions<Event, Services, State, Contracts>, "storage" | "services" | "from" | "delivery" | "actorContext" | "executionStreamBus" | "version"> & Pick<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "from" | "delivery" | "transports" | "actorTransport" | "telemetry" | "defaultChildPlacement" | "provisionRetry"> & {
+  readonly version?: (env: Env) => string | undefined
   readonly actorContext?: ExecutionOptions<Event, Services, State, Contracts>["actorContext"]
   // services receives the current Durable Object storage for local cache layers.
   readonly services: (env: Env, ...args: [...Parameters<ExecutionOptions<Event, Services, State, Contracts>["services"]>, DurableObjectStorage]) => Layer.Layer<Layer.Success<ReturnType<ExecutionOptions<Event, Services, State, Contracts>["services"]>>, Error, Supervisor | Invocation>
@@ -77,6 +78,7 @@ export function objectJournal<Event extends object>(options: {
         let admission = false
         for (const [index, record] of records.entries()) {
           const event: object = record.event
+          if ("type" in event && event.type === "ThreadUpdated") yield* options.watchdog.adoptVersion(cloudflareWatchdogTransaction(tx, options.alarms), options.target, (yield* Schema.decodeUnknownEffect(ThreadUpdated)(event)).version)
           if ("type" in event && (event.type === "EffectSettled" || event.type === "PromiseSettled")) progressCursor = position - records.length + index + 1
           if ("type" in event && (event.type === "MessageReceived" || event.type === "ThreadCreated" || event.type === "ThreadRequested" || event.type === "EffectCancelled")) admission = true
         }
@@ -109,13 +111,17 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
 
   class ActorObject extends DurableObject<Env & CloudflareObjectBindings> {
     private instance: string | undefined
-    private readonly identityReady = this.ctx.blockConcurrencyWhile(async () => { this.instance = await this.ctx.storage.get<string>("tardie:actor:instance") })
+    private readonly version = options.version?.(this.env)
+    private readonly identityReady = this.ctx.blockConcurrencyWhile(async () => {
+      this.instance = await this.ctx.storage.get<string>("tardie:actor:instance")
+      await Effect.runPromise(this.watchdog.restore)
+    })
     private journal: ReturnType<typeof objectJournal<SupervisorEvent>> | undefined
     private directory: ReturnType<typeof createSupervisor> | undefined
     private scope = Scope.makeUnsafe()
     private readonly recovering = new Set<Fiber.Fiber<void, Error>>()
     private readonly scheduler = createScheduler({ storage: cloudflareSchedulerStorage(this.ctx.storage, options.alarms), policy: options.scheduler, deliver: () => Effect.suspend(() => this.watchdog.alarm) })
-    private readonly watchdog = createWatchdog({ storage: cloudflareWatchdogStorage(this.ctx.storage, options.alarms), ...options.watchdog,
+    private readonly watchdog = createWatchdog({ storage: cloudflareWatchdogStorage(this.ctx.storage, options.alarms), ...options.watchdog, ...(this.version === undefined ? {} : { version: this.version }),
       recover: target => Effect.suspend(() => this.supervisor(target.instance).recover(target.instance)),
       invalidate: target => Effect.suspend(() => this.supervisor(target.instance).invalidate(target.instance)),
       launch: work => Effect.sync(() => {
@@ -232,13 +238,21 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
 
   class ThreadObject extends DurableObject<Env & CloudflareObjectBindings> {
     private coordinate: ThreadCoordinate | undefined
-    private readonly identityReady = this.ctx.blockConcurrencyWhile(async () => { this.coordinate = await this.ctx.storage.get<ThreadCoordinate>("tardie:thread:coordinate") })
+    private readonly version = options.version?.(this.env)
+    private readonly identityReady = this.ctx.blockConcurrencyWhile(async () => {
+      this.coordinate = await this.ctx.storage.get<ThreadCoordinate>("tardie:thread:coordinate")
+      if (this.coordinate && this.version !== undefined) {
+        const journal = this.storage()
+        if (await Effect.runPromise(journal.readFirst)) await Effect.runPromise(updateThreadVersion(journal, this.coordinate, this.version))
+      }
+      await Effect.runPromise(this.watchdog.restore)
+    })
     private journal: ReturnType<typeof objectJournal<Event>> | undefined
     private execution: ReturnType<typeof createActorExecution<Event, Services, State, Contracts>> | undefined
     private scope = Scope.makeUnsafe()
     private readonly recovering = new Set<Fiber.Fiber<void, Error>>()
     private readonly scheduler = createScheduler({ storage: cloudflareSchedulerStorage(this.ctx.storage, options.alarms), policy: options.scheduler, deliver: wake => Effect.suspend(() => typeof wake.target === "object" && wake.target !== null && "owner" in wake.target && wake.target.owner === "effect" ? this.registered().pipe(Effect.andThen(this.actors().open(this.address())), Effect.flatMap(thread => thread.resume)) : this.watchdog.alarm) })
-    private readonly watchdog = createWatchdog({ storage: cloudflareWatchdogStorage(this.ctx.storage, options.alarms), ...options.watchdog,
+    private readonly watchdog = createWatchdog({ storage: cloudflareWatchdogStorage(this.ctx.storage, options.alarms), ...options.watchdog, ...(this.version === undefined ? {} : { version: this.version }),
       recover: () => Effect.suspend(() => this.recover()),
       // @effect-diagnostics-next-line effectSucceedWithVoid:off: Watchdog probes require an absent state with an undefined result type.
       probe: () => Effect.suspend(() => this.execution ? this.execution.probe(this.address()) : Effect.succeed(undefined)),
@@ -262,7 +276,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     }
     async provision(input: ThreadCreated, initialState?: InitialState): Promise<void> {
       await this.identityReady
-      const created = Schema.decodeSync(ThreadCreated, { onExcessProperty: "error" })(input)
+      const created = Schema.decodeSync(ThreadCreated, { onExcessProperty: "error" })({ ...input, ...(this.version === undefined ? {} : { version: this.version }) })
       if (created.address.actor !== options.actor.actorName || created.placement !== "independent") throw new RuntimeError("Thread DO requires independent placement for its actor")
       if (this.ctx.id.name !== undefined && this.ctx.id.name !== cloudflareThreadName(created.address)) throw new RuntimeError("Thread coordinate differs from its DO address")
       if (this.coordinate && !isDeepStrictEqual(this.coordinate, created.address)) throw new RuntimeError("Thread DO coordinate identity cannot change")

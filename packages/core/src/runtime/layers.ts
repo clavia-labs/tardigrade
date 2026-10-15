@@ -56,6 +56,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
     validateInitialState: state => prepareInitialState(options.initialStateAtoms ?? [], state).pipe(Effect.asVoid),
     provision: allocation => actors.provision({
       type: "ThreadCreated", address: allocation.coordinate,
+      ...(options.version === undefined ? {} : { version: options.version }),
       parent: allocation.parent === null ? null : { ...allocation.coordinate, thread: allocation.parent },
       depth: allocation.depth, placement: allocation.placement,
     }, allocation.initialState),

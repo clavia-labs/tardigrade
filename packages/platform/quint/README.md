@@ -4,7 +4,7 @@ The [system contract map](../../core/quint/README.md) connects host recovery to 
 
 [watchdog.qnt](watchdog.qnt) models atomic message admission and a shared durable recovery alarm for two actors. Each actor receives one message that requires two recorded effect settlements. Crashes discard staged messages and volatile execution; committed messages, settlements, and persisted alarms survive.
 
-[Deferred recovery](deferred-recovery.md) covers bounded recovery, local fibre supervision, parent invocation replay, remote promise parking, and deadlines. Run `python3 packages/platform/quint/verify.py` from the repository root to check all four models and require the named negative variants to produce counterexamples. The runner uses the installed TLC and cached Apalache JAR, keeps compiler output and traces in `/tmp`, and fails on an unexpected checker result.
+[Deferred recovery](deferred-recovery.md) covers bounded recovery, local fibre supervision, parent invocation replay, remote promise parking, and deadlines. Run `python3 packages/platform/quint/verify.py` from the repository root to check all five models and require the named negative variants to produce counterexamples. The runner uses the installed TLC and cached Apalache JAR, keeps compiler output and traces in `/tmp`, and fails on an unexpected checker result.
 
 ```text
 receive -> commit(message + immediate alarm) -> acknowledge
@@ -89,3 +89,9 @@ EOF
 ```
 
 The compiler uses a localhost Apalache server and requires sandbox access to bind its port. `quint compile` writes TLA+ to stdout; its `--out` option writes compiler JSON.
+
+## Interpreter versions
+
+[interpreterVersion.qnt](interpreterVersion.qnt) separates deployment from thread activation. Creation records the initial interpreter version; activation appends a version change only when the interpreter differs. An unfinished budget adopts the version, increments its fencing epoch, resets its attempts, and schedules a wake atomically. Pending work also receives the fresh budget and fence. Restarting under the same version cannot renew an exhausted budget. A rollback reuses an opaque version identifier with a fresh epoch.
+
+The model checks two version identifiers, an absent legacy version, at most two deployment changes, and two attempts per budget. `invariant` checks bounded budgets, pending wake coverage, version history, and stale-attempt fencing. `eventualStop` assumes fair activation and recovery with finitely many deployment changes. Deterministic scenarios cover a fixed version, a same-version restart, an unversioned blocked record, a still-broken version, a crash after the final precharge, pending adoption, a stale probe, and rollback. Negative variants reset a same-version budget, preserve a pending budget, omit the epoch fence, charge a stale probe to a fresh budget, or omit the replacement wake. This model abstracts actor decoding and effect execution; the Workerd regression checks recovery of an accepted inline effect after a decoding failure.

@@ -103,6 +103,33 @@ createActorWorker({
 
 `DEFAULT_WATCHDOG_POLICY` and `DEFAULT_PROMISE_POLICY` are exported from `tardie/core`. The watchdog retries typed failures by default; defects and `WatchdogTerminalError` block recovery. Supply `watchdog.retryable(error)` to classify application failures. Promise expiry records `PromiseTimedOut` without requesting backend cancellation. A scheduled clock receives its timeout budget after its scheduled time. Configure a dedicated promise resolver's observation cadence with `createCloudflarePromiseResolver({ policy: { pollIntervalMs }, ... })`; the host supplies each recorded absolute deadline.
 
+### Interpreter versions
+
+Supply `version(env)` to identify the interpreter running an actor. Cloudflare exposes its Worker version ID through a version metadata binding:
+
+```json
+{
+  "version_metadata": { "binding": "CF_VERSION_METADATA" }
+}
+```
+
+```ts
+type Env = { CF_VERSION_METADATA: { id: string } }
+
+createActorWorker({
+  // actor, services, actorContext
+  version: (env: Env) => env.CF_VERSION_METADATA.id,
+})
+```
+
+`ThreadCreated.version` records the creation version. On activation under a different version, the host appends `ThreadUpdated { version }` before decoding actor-defined events. The creation record and existing journal prefix remain immutable. When unfinished effects are retained, the framework logs a warning before resuming them under the new version, including the thread, previous version, new version, and pending effect count. Changes with no pending effects and same-version restarts stay quiet. Version identifiers are opaque strings; a rollback is also a version change. Omit `version` to leave version adoption disabled.
+
+A watchdog receives a fresh budget when its recorded `recoveryVersion` differs from the supplied version, including when the record has no version. The version event, budget reset, fence increment, and immediate wake commit together. Same-version activations preserve the block. Pending work also receives the fresh budget and fence. The directory watchdog also adopts the supplied version on activation. A watchdog instance adopts its configured version on its first successful restore; later alarms reschedule without adopting again. A deployment takes effect when an object next activates; it does not wake dormant objects by itself.
+
+Custom hosts restore the watchdog after loading durable records and before accepting work. Hosts serialize interpreter replacement and finish invalidating the old runtime before starting the replacement; fencing rejects late probes and outcomes, but cannot undo invalidation already in progress. Omitting the version disables adoption while allowing pending work to recover.
+
+Version adoption permits another recovery attempt; it does not establish journal or effect-input compatibility. Actor schemas must decode the recorded history, and reconstructed pending effects must still satisfy the runtime's input verification. The Quint model `packages/platform/quint/interpreterVersion.qnt` checks budget bounds, wake coverage, rollback epochs, and stale-attempt fencing within its finite abstraction.
+
 Background library methods can override the host's promise timeout. The override is recorded as an absolute deadline when the handle is accepted; replay retains that deadline.
 
 ```ts

@@ -13,7 +13,11 @@ export const ThreadCreated = Schema.Struct({
   parent: Schema.NullOr(ThreadCoordinate),
   depth: ThreadDepth,
   placement: ChildPlacement,
+  version: Schema.optionalKey(Schema.NonEmptyString),
 }).check(Schema.makeFilter(created => created.parent === null ? created.depth === 0 : created.depth > 0 && (
   created.address.actor !== created.parent.actor || created.address.instance !== created.parent.instance || created.address.thread !== created.parent.thread
 ), { title: "Root depth is zero; children have positive depth and a distinct parent address" }))
 export type ThreadCreated = typeof ThreadCreated.Type
+
+export const ThreadUpdated = Schema.Struct({ type: Schema.Literal("ThreadUpdated"), version: Schema.NonEmptyString })
+export type ThreadUpdated = typeof ThreadUpdated.Type
