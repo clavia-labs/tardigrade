@@ -69,15 +69,16 @@ export function createWatchdog(options: {
       : { target, ...(options.version === undefined ? {} : { recoveryVersion: options.version }), generation: 1, progressCursor, attempts: 0, consecutiveNoProgress: 0, nextWakeAt: now, status: "pending" })
     yield* schedule(tx)
   })
-  // adoptVersion renews and fences a recovery budget once per interpreter change (packages/platform/quint/interpreterVersion.qnt, boundedBudgets).
-  const adoptVersion = (tx: WatchdogTransaction, target: WatchdogTarget, version: string) => Effect.gen(function* () {
-    if (!version.length) return yield* Effect.fail(new RuntimeError("Watchdog version must be nonempty"))
+  const resetBudget = (tx: WatchdogTransaction, target: WatchdogTarget, version?: string) => Effect.gen(function* () {
     const key = watchdogKey(target)
     const current = yield* tx.get(key)
-    if (!current || current.recoveryVersion === version) return
-    yield* tx.put(key, { target: current.target, recoveryVersion: version, generation: current.generation + 1, budgetGeneration: (current.budgetGeneration ?? 0) + 1, progressCursor: current.progressCursor, attempts: 0, consecutiveNoProgress: 0, status: "pending", nextWakeAt: yield* Clock.currentTimeMillis })
+    if (!current || (version !== undefined && current.recoveryVersion === version)) return
+    const recoveryVersion = version ?? current.recoveryVersion
+    yield* tx.put(key, { target: current.target, ...(recoveryVersion === undefined ? {} : { recoveryVersion }), generation: current.generation + 1, budgetGeneration: (current.budgetGeneration ?? 0) + 1, progressCursor: current.progressCursor, attempts: 0, consecutiveNoProgress: 0, status: "pending", nextWakeAt: yield* Clock.currentTimeMillis })
     yield* schedule(tx)
   })
+  // adoptVersion renews and fences a recovery budget once per interpreter change (packages/platform/quint/interpreterVersion.qnt, boundedBudgets).
+  const adoptVersion = (tx: WatchdogTransaction, target: WatchdogTarget, version: string) => version.length ? resetBudget(tx, target, version) : Effect.fail(new RuntimeError("Watchdog version must be nonempty"))
   const retryDelay = (failures: number) => Math.min(policy.maxRetryIntervalMs, policy.retryIntervalMs * 2 ** Math.min(Math.ceil(Math.log2(policy.maxRetryIntervalMs / policy.retryIntervalMs)), Math.max(0, failures - 1)))
   const finish = (key: string, covered: WatchdogEntry, result: Exit.Exit<RecoveryState, Error>, charged = true) => options.storage.transaction(tx => Effect.gen(function* () {
     const current = yield* tx.get(key)
@@ -114,13 +115,7 @@ export function createWatchdog(options: {
       versionAdopted = true
     })),
     status: options.storage.transaction(tx => tx.list),
-    resume: (target: WatchdogTarget) => cleanupLock.withPermit(options.storage.transaction(tx => Effect.gen(function* () {
-      const key = watchdogKey(target)
-      const current = yield* tx.get(key)
-      if (!current) return
-      yield* tx.put(key, { target: current.target, ...(current.recoveryVersion === undefined ? {} : { recoveryVersion: current.recoveryVersion }), generation: current.generation + 1, budgetGeneration: (current.budgetGeneration ?? 0) + 1, progressCursor: current.progressCursor, attempts: 0, consecutiveNoProgress: 0, status: "pending", nextWakeAt: yield* Clock.currentTimeMillis })
-      yield* schedule(tx)
-    }))),
+    resume: (target: WatchdogTarget) => cleanupLock.withPermit(options.storage.transaction(tx => resetBudget(tx, target))),
     alarm: lock.withPermit(Effect.gen(function* () {
       const entries = yield* options.storage.transaction(tx => tx.list)
       for (const [key, entry] of entries) {
