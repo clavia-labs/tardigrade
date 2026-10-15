@@ -5,7 +5,7 @@ import { RuntimeError, type ExecutionHandle, type ActCancellation, durablePromis
 import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit, Option, Stream } from "effect"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { ObjectStorage, objectKeyOf } from "@clavia/tardigrade-model/object"
-import { AiError, LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
+import { AiError, LanguageModel, Prompt, type Response, Tool as AiTool, Toolkit } from "effect/unstable/ai"
 import { ResponseFormat } from "@tardie/ai"
 import type { Content as ToolResultContent } from "@tardie/ai/ToolResult"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
@@ -117,6 +117,10 @@ const promptPartsOf = (content: ReadonlyArray<MessageContentPart>, objects: Read
   return Prompt.filePart({ mediaType: part.mediaType, data, ...(part.filename === undefined ? {} : { fileName: part.filename }) })
 })
 
+// carriesProviderMetadata detects metadata that rebuilding plain tool calls would discard.
+const carriesProviderMetadata = (metadata: Response.ProviderMetadata) =>
+  Object.values(metadata).some(entry => entry !== null && (typeof entry !== "object" || Object.values(entry).some(value => value !== null)))
+
 // modelServices adapts native AI providers to the agent's model service without executing tools.
 export function modelServices(options: ModelServiceOptions = {}) {
   for (const [name, value] of Object.entries(options)) if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) throw new RuntimeError(`${name} must be a positive safe integer`)
@@ -208,7 +212,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const finish = response.content.find(part => part.type === "finish")
       const usd = finish ? reportedCostOf(finish) : undefined
       const reasoning = response.reasoningText
-      const continuation = response.reasoning.length === 0 ? undefined : {
+      const continuation = response.reasoning.length === 0 && !response.toolCalls.some(call => carriesProviderMetadata(call.metadata)) ? undefined : {
         provider: settings.provider, protocol: settings.protocol, model: resolved.model.model_id,
         payload: yield* Schema.encodeEffect(Prompt.Prompt)(collected.continuation).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json))),
       }
