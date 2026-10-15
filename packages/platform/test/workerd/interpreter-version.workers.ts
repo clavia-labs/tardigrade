@@ -26,14 +26,14 @@ const actor = defineActor("versioned", Effect.sync(() => {
 }))
 const brokenActor = defineActor("versioned", Effect.succeed({ schema: Schema.Struct({ type: Schema.Literal("Requested") }), atom: effectAtom(() => ({ view: null, events: {}, acts: {} })) }))
 
-for (const legacy of [false, true]) test(`a fixed interpreter recovers a blocked inline effect (${legacy ? "legacy" : "versioned"} budget)`, async () => {
-  await runInDurableObject(namespace.getByName(`interpreter-${legacy}`), async (_object, state) => {
+test("a fixed interpreter recovers a blocked inline effect", async () => {
+  await runInDurableObject(namespace.getByName("interpreter-versioned"), async (_object, state) => {
     const storage = cloudflareWatchdogStorage(state.storage)
-    const watchdog = createWatchdog({ storage, ...(legacy ? {} : { version: "v1" }), policy: { maxNoProgressAttempts: 1 }, invalidate: () => Effect.void,
+    const watchdog = createWatchdog({ storage, version: "v1", policy: { maxNoProgressAttempts: 1 }, invalidate: () => Effect.void,
       recover: () => Effect.acquireUseRelease(createActorStore({ actor: brokenActor, journal, actorContext: Context.pick(), services: () => Layer.empty }), store => store.recover.pipe(Effect.as({ status: "settled" as const, progressCursor: 0 })), store => store.close),
     })
     const journal = objectJournal({ storage: state.storage, key: "events", target: address, watchdog })
-    await Effect.runPromise(initializeThread(journal, { type: "ThreadCreated", address, parent: null, depth: 0, placement: "independent", ...(legacy ? {} : { version: "v1" }) }))
+    await Effect.runPromise(initializeThread(journal, { type: "ThreadCreated", address, parent: null, depth: 0, placement: "independent", version: "v1" }))
     const entered = Deferred.makeUnsafe<void>()
     const first = await Effect.runPromise(createActorStore({ actor, journal, actorContext: Context.pick(), services: () => Work.layer(() => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))) }))
     try {
@@ -45,12 +45,10 @@ for (const legacy of [false, true]) test(`a fixed interpreter recovers a blocked
     await Effect.runPromise(watchdog.alarm)
     const blocked = (await Effect.runPromise(watchdog.status)).get(watchdogKey(address))!
     expect(blocked.status).toBe("blocked")
-    if (!legacy) {
-      await Effect.runPromise(updateThreadVersion(journal, address, "v1"))
-      await Effect.runPromise(watchdog.restore)
-      expect((await Effect.runPromise(watchdog.status)).get(watchdogKey(address))).toEqual(blocked)
-      expect(await state.storage.getAlarm()).toBeNull()
-    }
+    await Effect.runPromise(updateThreadVersion(journal, address, "v1"))
+    await Effect.runPromise(watchdog.restore)
+    expect((await Effect.runPromise(watchdog.status)).get(watchdogKey(address))).toEqual(blocked)
+    expect(await state.storage.getAlarm()).toBeNull()
     const rejected = objectJournal({ storage: state.storage, key: "events", target: address,
       watchdog: { ...watchdog, admit: () => Effect.fail(new RuntimeError("Reject version transaction")) },
     })

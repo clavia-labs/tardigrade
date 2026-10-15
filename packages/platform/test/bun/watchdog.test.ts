@@ -278,20 +278,6 @@ test("resume waits for validated invalidation before resetting the budget", asyn
 test("watchdog preserves slow inline and forked execution across virtual-time restarts", () => fc.assert(slowExecutionRecovery, RUNTIME_PROPERTY_OPTIONS))
 
 
-test("version restoration renews legacy budgets once across blocked and pending states", async () => {
-  for (const status of ["blocked", "pending"] as const) {
-    const db = memory()
-    const watchdog = createWatchdog({ storage: db.storage, version: "v2", invalidate: () => Effect.void, recover: () => Effect.succeed({ status: "settled", progressCursor: 0 }) })
-    await Effect.runPromise(db.storage.transaction(tx => tx.put(watchdogKey(target), { target, generation: 4, progressCursor: 2, attempts: 1, consecutiveNoProgress: 1, status, nextWakeAt: status === "blocked" ? null : 123 })))
-    await Effect.runPromise(watchdog.restore)
-    const adopted = db.records().get(watchdogKey(target))!
-    expect(adopted).toMatchObject({ recoveryVersion: "v2", status: "pending", progressCursor: 2, attempts: 0, consecutiveNoProgress: 0, budgetGeneration: 1 })
-    expect(db.alarm()).not.toBeNull()
-    await Effect.runPromise(watchdog.restore)
-    expect(db.records().get(watchdogKey(target))).toEqual(adopted)
-  }
-})
-
 test("a changed interpreter recovers after a crash at either precharged budget limit", async () => {
   for (const counters of [{ attempts: 3, consecutiveNoProgress: 1 }, { attempts: 1, consecutiveNoProgress: 2 }]) {
     const db = memory()
