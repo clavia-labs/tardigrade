@@ -18,7 +18,7 @@ import type { ActorDefinition } from "../actor/definition"
 import { type MessageMetadata as DeliveryMetadata, type MessageReceipt, MessageAddress, MessageDelivered, MessageMetadata, MessageConflict, InvalidMessage, isMessageReceived } from "../actor/message"
 import type { ThreadCoordinate } from "../actor/thread"
 import { MethodInvocation, MethodCancellation, type ActorMethods } from "../actor/method"
-import { createEventLog, type EffectCheckpoint } from "./replay"
+import { createEventLog, retireCheckpoint, type EffectCheckpoint } from "./replay"
 import { isDeepStrictEqual } from "node:util"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue, Schedule, Clock, Random } from "effect"
 import { WatchdogTerminalError, type RecoveryState } from "../services/watchdog"
@@ -750,7 +750,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }).pipe(Effect.forkIn(scope))
       services = yield* buildServices()
       const stored = options.journal ? yield* (options.journal.treeCheckpoint?.read ?? options.journal.readCheckpoint) : undefined
-      const checkpoint = stored ? yield* Effect.try({ try: () => decodeCheckpoint(stored.payload), catch: RuntimeError.from }) : undefined
+      const checkpoint = stored ? yield* Effect.try({ try: () => retireCheckpoint(decodeCheckpoint(stored.payload), digestMinBytes), catch: RuntimeError.from }) : undefined
       if (stored && checkpoint && checkpoint.position !== stored.position) return yield* Effect.fail(new RuntimeError("Checkpoint payload position differs from journal metadata"))
       checkpointSeed = checkpoint
       checkpointPosition = checkpoint?.position ?? 0
