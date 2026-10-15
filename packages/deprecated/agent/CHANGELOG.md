@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.0](https://github.com/clavia-labs/tardigrade/compare/v0.48.0...v0.49.0) (2026-10-15)
+
+
+### Features
+
+* **grove:** add persistent JSON trees ([#763](https://github.com/clavia-labs/tardigrade/issues/763)) ([f434a5d](https://github.com/clavia-labs/tardigrade/commit/f434a5d22ae718ca022b7061d7593a086f39299a))
+
 ## [0.48.0](https://github.com/clavia-labs/tardigrade/compare/v0.47.2...v0.48.0) (2026-10-15)
 
 
