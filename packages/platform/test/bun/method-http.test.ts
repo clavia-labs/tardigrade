@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Schema } from "effect"
 import { Validator } from "@cfworker/json-schema"
-import { act, actorMethod, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
+import { act, actorMethod, defineActor, durableAtom, effectAtom, event, InvalidMessage, InvocationNotFound } from "@clavia/tardigrade-core"
 import { createBunHost, methodHttp } from "@clavia/tardigrade-platform/bun"
 import { Generate, requestBudget } from "@clavia/tardigrade-agent"
 
@@ -111,3 +111,39 @@ test("budget request specifications can enter a model act", () => {
   expect(request.request.input).toMatchObject({ tools: [{ name: "request_budget", execution: "foreground" }] })
 })
 
+
+test("method lookups distinguish absent invocations from method mismatches", async () => {
+  const Received = event({ type: "Received", value: Schema.Finite })
+  const value = durableAtom({ name: "lookup.value", input: Received, schema: Schema.Finite, initial: 0, reduce: (_, event) => event.value })
+  const method = actorMethod({ inputSchema: Schema.Finite, outputSchema: Schema.Finite,
+    onReceive: Received.from(value => ({ value })), result: (_, get) => ({ status: "completed", output: get(value) }),
+  })
+  const actor = defineActor("lookup", Effect.succeed({ atom: effectAtom(get => ({ view: get(value), events: {}, acts: {} })), methods: { set: method, other: method } }))
+  const storage = await mkdtemp(join(tmpdir(), "tardie-method-lookup-"))
+  directories.push(storage)
+  const host = await Effect.runPromise(createBunHost({ actor, storage, actorContext: Context.pick(), services: () => Layer.empty }))
+  const handler = methodHttp(host)
+  const request = (path: string, init?: RequestInit) => handler(new Request(`http://test/v1/actors/main/threads${path}`, init))
+  try {
+    expect((await request("", { method: "POST", body: JSON.stringify({ name: "lookup" }) })).status).toBe(200)
+    const missing = await request("/lookup/methods/set/calls/one")
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toEqual({ code: "call_not_found", message: "Invocation not found" })
+    const thread = (await Effect.runPromise(host.getThread({ instance: "main", thread: "lookup" })))!
+    for (const lookup of [thread.methodState, thread.result]) {
+      expect(await Effect.runPromise(Effect.flip(lookup("set", "one")))).toBeInstanceOf(InvocationNotFound)
+    }
+    expect((await request("/lookup/methods/set", { method: "POST", headers: { "idempotency-key": "one" }, body: "7" })).status).toBe(202)
+    await Effect.runPromise(thread.wait)
+    const completed = await request("/lookup/methods/set/calls/one")
+    expect(completed.status).toBe(200)
+    expect(await completed.json()).toEqual({ id: "one", method: "set", status: "completed", output: 7 })
+    expect(await Effect.runPromise(thread.result("set", "one"))).toEqual({ status: "completed", output: 7 })
+    const mismatch = await request("/lookup/methods/other/calls/one")
+    expect(mismatch.status).toBe(400)
+    expect(await mismatch.json()).toEqual({ code: "invalid_message", message: "State requires a matching invocation" })
+    for (const lookup of [thread.methodState, thread.result]) {
+      expect(await Effect.runPromise(Effect.flip(lookup("other", "one")))).toBeInstanceOf(InvalidMessage)
+    }
+  } finally { await Effect.runPromise(host.close) }
+})

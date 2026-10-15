@@ -190,3 +190,25 @@ test.skipIf(!inject("longTests"))("200 concurrent creates finish while another t
     expect((await blocked).status).toBe(200)
   }
 }, 30_000)
+
+test("method call state returns not-found before admission and preserves pending and completed states", async () => {
+  const instance = "call-state"
+  const flow = threadFlow(request => SELF.fetch(request), instance)
+  expect((await flow.request("", { name: "parent" })).status).toBe(200)
+  const path = "/parent/methods/spawn/calls/child"
+  const missing = await flow.request(path)
+  expect(missing.status).toBe(404)
+  expect(await missing.json()).toEqual({ code: "call_not_found", message: "Invocation not found" })
+  const parent = threadStub(instance, "parent")
+  await parent.holdSpawns()
+  try {
+    expect((await flow.request("/parent/methods/spawn", 73, "child")).status).toBe(202)
+    const pending = await flow.request(path)
+    expect(pending.status).toBe(200)
+    expect(await pending.json()).toEqual({ id: "child", method: "spawn", status: "pending" })
+    const mismatch = await flow.request("/parent/methods/read/calls/child")
+    expect(mismatch.status).toBe(400)
+    expect(await mismatch.json()).toEqual({ code: "invalid_message", message: "State requires a matching invocation" })
+  } finally { await parent.releaseSpawns() }
+  await flow.completed("parent", "spawn", "child", coordinate(instance, "child"))
+})

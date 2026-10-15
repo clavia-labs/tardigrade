@@ -45,3 +45,6 @@ export class InvalidMessage extends RuntimeError {
     return cause instanceof InvalidMessage ? cause : new InvalidMessage(cause instanceof Error ? cause.message : String(cause), { cause })
   }
 }
+
+// InvocationNotFound reports an invocation id absent from the thread journal (packages/platform/test/bun/method-http.test.ts).
+export class InvocationNotFound extends RuntimeError {}
