@@ -276,3 +276,103 @@ test("resume waits for validated invalidation before resetting the budget", asyn
 })
 
 test("watchdog preserves slow inline and forked execution across virtual-time restarts", () => fc.assert(slowExecutionRecovery, RUNTIME_PROPERTY_OPTIONS))
+
+
+test("a changed interpreter recovers after a crash at either precharged budget limit", async () => {
+  for (const counters of [{ attempts: 3, consecutiveNoProgress: 1 }, { attempts: 1, consecutiveNoProgress: 2 }]) {
+    const db = memory()
+    let executions = 0
+    const watchdog = createWatchdog({ storage: db.storage, version: "v2", policy, invalidate: () => Effect.void,
+      recover: () => Effect.sync(() => { executions++; return { status: "settled" as const, progressCursor: 1 } }),
+    })
+    await Effect.runPromise(db.storage.transaction(tx => tx.put(watchdogKey(target), { target, generation: 1, recoveryVersion: "v1", progressCursor: 0, ...counters, status: "pending", nextWakeAt: 0 })))
+    await Effect.runPromise(watchdog.restore)
+    expect(db.records().get(watchdogKey(target))).toMatchObject({ recoveryVersion: "v2", budgetGeneration: 1, attempts: 0, consecutiveNoProgress: 0, status: "pending" })
+    await Effect.runPromise(watchdog.alarm)
+    expect(executions).toBe(1)
+    expect(db.records().size).toBe(0)
+  }
+})
+
+test("a changed interpreter receives its full budget when pending work needs multiple recovery passes", async () => {
+  const db = memory()
+  let executions = 0
+  const watchdog = createWatchdog({ storage: db.storage, version: "v2", policy: { ...policy, retryIntervalMs: 1 }, invalidate: () => Effect.void,
+    recover: () => Effect.sync(() => ({ status: ++executions === 1 ? "pending" as const : "settled" as const, progressCursor: executions })),
+  })
+  await Effect.runPromise(db.storage.transaction(tx => tx.put(watchdogKey(target), { target, generation: 1, recoveryVersion: "v1", attempts: 2, consecutiveNoProgress: 1, progressCursor: 0, status: "pending", nextWakeAt: 0 })))
+  await Effect.runPromise(watchdog.restore.pipe(Effect.andThen(watchdog.alarm)))
+  expect(db.records().get(watchdogKey(target))).toMatchObject({ status: "pending", attempts: 1, recoveryVersion: "v2", budgetGeneration: 1 })
+  await Effect.runPromise(pause().pipe(Effect.andThen(watchdog.alarm)))
+  expect(executions).toBe(2)
+  expect(db.records().size).toBe(0)
+})
+
+test("version adoption fences a late previous-interpreter failure before it can invalidate or block", async () => {
+  await Effect.runPromise(Effect.gen(function* () {
+    const db = memory()
+    const scope = yield* Scope.Scope
+    const entered = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const finished = yield* Deferred.make<void>()
+    let invalidated = 0
+    const old = createWatchdog({ storage: db.storage, version: "v1", policy: { attemptTimeoutMs: 1_000 },
+      launch: work => Effect.forkIn(work.pipe(Effect.ensuring(Deferred.succeed(finished, undefined))), scope).pipe(Effect.asVoid),
+      invalidate: () => Effect.sync(() => { invalidated++ }),
+      recover: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(Effect.fail(new WatchdogTerminalError("Old interpreter failed")))),
+    })
+    yield* old.restore
+    yield* db.storage.transaction(tx => old.admit(tx, target))
+    yield* old.alarm
+    yield* Deferred.await(entered)
+    const current = createWatchdog({ storage: db.storage, version: "v2", invalidate: () => Effect.void, recover: () => Effect.succeed({ status: "settled", progressCursor: 1 }) })
+    yield* current.restore
+    yield* Deferred.succeed(release, undefined)
+    yield* Deferred.await(finished)
+    yield* old.restore.pipe(Effect.andThen(old.alarm))
+    expect(invalidated).toBe(0)
+    expect(db.records().get(watchdogKey(target))).toMatchObject({ status: "pending", recoveryVersion: "v2", attempts: 0, budgetGeneration: 1 })
+    yield* current.alarm
+    expect(db.records().size).toBe(0)
+  }).pipe(Effect.scoped, Effect.timeout(2_000)))
+})
+
+test("an old probe cannot charge a newly adopted interpreter budget", async () => {
+  await Effect.runPromise(Effect.gen(function* () {
+    const db = memory()
+    const entered = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    let invalidated = 0
+    let oldRecoveries = 0
+    const old = createWatchdog({ storage: db.storage, version: "v1", policy: { maxNoProgressAttempts: 1 },
+      probe: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(Effect.fail(new WatchdogTerminalError("Old probe failed")))),
+      invalidate: () => Effect.sync(() => { invalidated++ }),
+      recover: () => Effect.sync(() => { oldRecoveries++; return { status: "settled" as const, progressCursor: 0 } }),
+    })
+    yield* old.restore
+    yield* db.storage.transaction(tx => old.admit(tx, target))
+    const alarm = yield* Effect.forkScoped(old.alarm)
+    yield* Deferred.await(entered)
+    const current = createWatchdog({ storage: db.storage, version: "v2", invalidate: () => Effect.void, recover: () => Effect.succeed({ status: "settled", progressCursor: 1 }) })
+    yield* current.restore
+    yield* Deferred.succeed(release, undefined)
+    yield* Fiber.join(alarm)
+    yield* old.restore.pipe(Effect.andThen(old.alarm))
+    expect(invalidated).toBe(0)
+    expect(oldRecoveries).toBe(0)
+    expect(db.records().get(watchdogKey(target))).toMatchObject({ status: "pending", recoveryVersion: "v2", attempts: 0, budgetGeneration: 1 })
+    yield* current.alarm
+    expect(db.records().size).toBe(0)
+  }).pipe(Effect.scoped, Effect.timeout(2_000)))
+})
+
+test("omitting version keeps existing versioned pending work recoverable", async () => {
+  const db = memory()
+  const old = createWatchdog({ storage: db.storage, version: "v1", invalidate: () => Effect.void, recover: () => Effect.never })
+  await Effect.runPromise(db.storage.transaction(tx => old.admit(tx, target)))
+  let executions = 0
+  const unversioned = createWatchdog({ storage: db.storage, invalidate: () => Effect.void, recover: () => Effect.sync(() => { executions++; return { status: "settled" as const, progressCursor: 1 } }) })
+  await Effect.runPromise(unversioned.restore.pipe(Effect.andThen(unversioned.alarm)))
+  expect(executions).toBe(1)
+  expect(db.records().size).toBe(0)
+})

@@ -2,9 +2,11 @@ import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Deferred, Effect, Fiber, Layer, Schema } from "effect"
+import { Database } from "bun:sqlite"
+import { Context, Deferred, Effect, Fiber, Layer, Logger, Schema } from "effect"
 import { actorMethod, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
-import { createBunHost } from "../../src/bun"
+import { initializeThread, updateThreadVersion } from "@clavia/tardigrade-core/services/journal/thread"
+import { bunJournal, createBunHost } from "../../src/bun"
 
 const Changed = event({ type: "Changed", done: Schema.Boolean })
 const done = durableAtom({ name: "recovery.done", input: Changed, schema: Schema.Boolean, initial: false, reduce: (_, event) => event.done })
@@ -86,4 +88,49 @@ test("replacement waits until the old runtime releases its services", async () =
     await Effect.runPromise(host.close)
     await rm(storage, { recursive: true, force: true })
   }
+})
+
+test("thread versions record adoption once per change and preserve creation and state across rollback", async () => {
+  const storage = await mkdtemp(join(tmpdir(), "tardie-thread-version-"))
+  try {
+    for (const [index, version] of ["v1", "v1", "v2", "v1"].entries()) {
+      const host = await Effect.runPromise(createBunHost({ actor, storage, version, actorContext: Context.pick(), services: () => Layer.empty }))
+      try {
+        const thread = await Effect.runPromise(host.allocateRootThread({ instance: "main", name: "one" }))
+        if (index === 0) await Effect.runPromise(thread.invoke("set", true, { id: "initial" }))
+        await Effect.runPromise(thread.wait)
+        expect(thread.get(done)).toBe(true)
+        const records = await Effect.runPromise(thread.records())
+        expect(records[0]!.event).toHaveProperty("version", "v1")
+        const versions = records.flatMap(({ event }) => event.type === "ThreadUpdated" ? [event.version] : [])
+        expect(versions).toEqual([[], [], ["v2"], ["v2", "v1"]][index]!)
+      } finally { await Effect.runPromise(host.close) }
+    }
+  } finally { await rm(storage, { recursive: true, force: true }) }
+})
+
+test("version adoption reads lifecycle metadata without hydrating unrelated chunked history", async () => {
+  const storage = await mkdtemp(join(tmpdir(), "tardie-version-metadata-"))
+  const filename = join(storage, "thread.sqlite")
+  const journal = bunJournal<{ type: "Payload"; body: string }>({ filename, actor: "events", eventInlineBytes: 128, checkpointChunkBytes: 64 })
+  const address = { actor: "versioned", instance: "main", thread: "one" }
+  try {
+    await Effect.runPromise(initializeThread(journal, { type: "ThreadCreated", address, parent: null, depth: 0, placement: "independent", version: "v1" }))
+    await Effect.runPromise(journal.append(1, [{ event: { type: "Payload", body: "payload".repeat(1_000) } }]))
+    const database = new Database(filename)
+    try { database.exec("DELETE FROM experimental_event_chunks WHERE seq = 1") }
+    finally { database.close() }
+    expect(await Effect.runPromise(Effect.flip(journal.read))).toBeInstanceOf(Error)
+    const messages: unknown[] = []
+    const logger = Logger.make(options => { messages.push(options.message) })
+    const loggers = new Set([logger])
+    const metadataOnly = { ...journal, read: Effect.die("Version adoption must not read actor history") }
+    await Effect.runPromise(updateThreadVersion(metadataOnly, address, "v1").pipe(Effect.provideService(Logger.CurrentLoggers, loggers)))
+    expect(await Effect.runPromise(journal.readVersion)).toEqual({ version: "v1", position: 2, pendingEffects: 0 })
+    await Effect.runPromise(updateThreadVersion(metadataOnly, address, "v2").pipe(Effect.provideService(Logger.CurrentLoggers, loggers)))
+    expect(await Effect.runPromise(journal.readVersion)).toEqual({ version: "v2", position: 3, pendingEffects: 0 })
+    await Effect.runPromise(updateThreadVersion(metadataOnly, address, "v2").pipe(Effect.provideService(Logger.CurrentLoggers, loggers)))
+    expect(await Effect.runPromise(journal.readVersion)).toEqual({ version: "v2", position: 3, pendingEffects: 0 })
+    expect(messages).toEqual([])
+  } finally { await Effect.runPromise(journal.close); await rm(storage, { recursive: true, force: true }) }
 })

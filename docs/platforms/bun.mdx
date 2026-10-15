@@ -81,4 +81,6 @@ Set `PORT` to change the HTTP port and `TARDIGRADE_ACTOR_DATA` to change the sto
 
 `createBunHost({ promises: { timeoutMs: 60_000, pollIntervalMs: 1_000 }, ... })` configures deferred work at the host. `bunPromises(runtime, ...)` inherits this policy; its `policy` option can override resolver scheduling. `DEFAULT_PROMISE_POLICY` is exported from `tardie/core`. Each promise records an absolute deadline, so a restart preserves its expiry. Expiry rejects with `PromiseTimedOut` without invoking backend cancellation; scheduled clocks receive the timeout budget after their scheduled time.
 
+`createBunHost({ version: "build-id", ... })` records the interpreter version in `ThreadCreated` and appends `ThreadUpdated { version }` when an existing thread opens under a different version. Version strings identify builds and are compared for equality; rollbacks also record a change. Omit `version` to disable version adoption. The host preserves the existing journal prefix and creation version.
+
 Background library methods override the host waiting budget with `.annotate(MethodPromiseTimeout, timeoutMs)` from `tardie/libraries`. `modelServices({ timeoutMs })` carries the configured model timeout into inference promises. Overrides become fixed recorded deadlines, so replay does not renew the waiting budget.

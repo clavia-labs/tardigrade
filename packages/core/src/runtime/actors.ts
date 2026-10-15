@@ -17,7 +17,7 @@ import { prepareInitialState } from "./initialisation"
 import { createActorStore, type CheckpointPolicy, type DeliveryOptions, type CancellationOptions } from "./execution"
 import { createThreadStore } from "./stores/thread"
 import type { ExecutionStream, ExecutionStreamPolicy } from "../services/execution-stream"
-import { initializeThread, readThreadCreation, type ThreadJournal } from "../services/journal/thread"
+import { initializeThread, readThreadCreation, updateThreadVersion, type ThreadJournal } from "../services/journal/thread"
 
 // localActors retains child results for its scope; handles from another scope reject instead of restarting work.
 export function localActors(options: {
@@ -112,6 +112,7 @@ export interface ActorStorage<Event extends object> {
 }
 
 export interface ActorExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+  readonly version?: string
   readonly attemptTimeoutMs?: number | null
   readonly executionStream?: Partial<ExecutionStreamPolicy>
   readonly executionStreamBus?: typeof ExecutionStream.Service
@@ -183,7 +184,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
     let pending = threads.get(key)
     if (!pending) {
       const journal = journalFor(coordinate)
-      pending = yield* Effect.cached(readThreadCreation(journal, coordinate).pipe(Effect.andThen(createActorStore<Event, State, Services, Contracts>({
+      pending = yield* Effect.cached((options.version === undefined ? readThreadCreation(journal, coordinate) : updateThreadVersion(journal, coordinate, options.version)).pipe(Effect.andThen(createActorStore<Event, State, Services, Contracts>({
         ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
         ...(options.cancellation ? { cancellation: options.cancellation } : {}),
         ...(options.checkpointPolicy ? { checkpoint: options.checkpointPolicy } : {}),
@@ -263,7 +264,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
     })),
     provision: (created: ThreadCreated, initialState?: InitialState) => Effect.gen(function* () {
       const seeded = initialState === undefined ? undefined : yield* prepareInitialState(options.initialStateAtoms ?? [], initialState)
-      yield* initializeThread(journalFor(created.address), created, seeded)
+      yield* initializeThread(journalFor(created.address), { ...created, ...(options.version === undefined ? {} : { version: options.version }) }, seeded)
       yield* open(created.address)
     }).pipe(Effect.asVoid),
     reference,

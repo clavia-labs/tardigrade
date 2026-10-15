@@ -24,6 +24,7 @@ EffectRequested
 | --- | --- | --- | --- |
 | [watchdog.qnt](watchdog.qnt) | `init` | 236 | Admission coverage, replacement before execution, later wakes preserved, eventual settlement |
 | [recoveryBudget.qnt](recoveryBudget.qnt) | `init` | 128 | Bounded attempts, terminal failures stop, settled and blocked work have no recovery alarm, eventual stop |
+| [interpreterVersion.qnt](interpreterVersion.qnt) | `init`, `initLegacy` | 146, 207 | Version adoption, per-budget attempt bounds, durable wake, stale-attempt fencing, eventual stop after deployment changes cease |
 | [invocationReplay.qnt](invocationReplay.qnt) | `init`, `initUnsafe` | 53, 37 | Stable invocation identity, one logical child execution, durable reply acceptance, eventual parent outcome |
 | [promiseLifecycle.qnt](promiseLifecycle.qnt) | `init` | 170 | Durable completion, supervised fibre exit, safe handoff, unchanged deadlines, one terminal winner, eventual settlement |
 

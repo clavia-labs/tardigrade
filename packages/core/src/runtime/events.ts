@@ -3,7 +3,7 @@ import { EffectRef, EffectCancelled, EffectDied, CancellationSettled, Cancellati
 import { EffectAcceptance, StoredEffectRequested } from "./effect-request"
 import { promiseSchema } from "../atoms/promise"
 import { MessageReceived, MessageDelivered, isMessageReceived } from "../actor/message"
-import { ThreadCreated } from "../actor/thread"
+import { ThreadCreated, ThreadUpdated } from "../actor/thread"
 import { StateInitialised } from "../initialise"
 export { StateInitialised } from "../initialise"
 export { InlineInput, StoredEffectRequest, StoredEffectRequested, EffectAcceptance } from "./effect-request"
@@ -40,7 +40,7 @@ export const RetryScheduled = Schema.Struct({
 })
 export type RetryScheduled = typeof RetryScheduled.Type
 
-const lifecycleEvents = [EffectSettled, EffectDied, CancellationSettled, CancellationDied, PromiseSettled, RetryScheduled, EffectCancelled, ThreadCreated, MessageDelivered, MessageReceived, StateInitialised] as const
+const lifecycleEvents = [EffectSettled, EffectDied, CancellationSettled, CancellationDied, PromiseSettled, RetryScheduled, EffectCancelled, ThreadCreated, ThreadUpdated, MessageDelivered, MessageReceived, StateInitialised] as const
 export const CoreEvent = Schema.Union([EffectRequested, ...lifecycleEvents])
 export type CoreEvent = typeof CoreEvent.Type
 export const ObservedCoreEvent = Schema.Union([EffectAcceptance, ...lifecycleEvents])
@@ -48,5 +48,5 @@ export type ObservedCoreEvent = typeof ObservedCoreEvent.Type
 
 // hasCoreEventType identifies event names reserved for framework records.
 export function hasCoreEventType(event: object): boolean {
-  return isMessageReceived(event) || "type" in event && (event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "EffectDied" || event.type === "PromiseSettled" || event.type === "RetryScheduled" || event.type === "EffectCancelled" || event.type === "CancellationSettled" || event.type === "CancellationDied" || event.type === "ThreadCreated" || event.type === "MessageDelivered" || event.type === "StateInitialised")
+  return isMessageReceived(event) || "type" in event && (event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "EffectDied" || event.type === "PromiseSettled" || event.type === "RetryScheduled" || event.type === "EffectCancelled" || event.type === "CancellationSettled" || event.type === "CancellationDied" || event.type === "ThreadCreated" || event.type === "ThreadUpdated" || event.type === "MessageDelivered" || event.type === "StateInitialised")
 }

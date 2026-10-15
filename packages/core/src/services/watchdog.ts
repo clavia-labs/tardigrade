@@ -15,7 +15,7 @@ export function watchdogPolicy(overrides: Partial<WatchdogPolicy> = {}): Watchdo
 
 export const WatchdogTarget = Schema.Struct({ actor: Schema.NonEmptyString, instance: Schema.NonEmptyString, thread: Schema.optionalKey(Schema.NonEmptyString) })
 export type WatchdogTarget = typeof WatchdogTarget.Type
-export const WatchdogEntry = Schema.Struct({ target: WatchdogTarget, generation: Schema.Int, budgetGeneration: Schema.optionalKey(Schema.Int), progressCursor: Schema.Int, attempts: Schema.Int, consecutiveNoProgress: Schema.Int, nextWakeAt: Schema.NullOr(Schema.Finite), status: Schema.Literals(["pending", "blocked"]), reason: Schema.optionalKey(Schema.String) })
+export const WatchdogEntry = Schema.Struct({ target: WatchdogTarget, generation: Schema.Int, budgetGeneration: Schema.optionalKey(Schema.Int), recoveryVersion: Schema.optionalKey(Schema.NonEmptyString), progressCursor: Schema.Int, attempts: Schema.Int, consecutiveNoProgress: Schema.Int, nextWakeAt: Schema.NullOr(Schema.Finite), status: Schema.Literals(["pending", "blocked"]), reason: Schema.optionalKey(Schema.String) })
 export type WatchdogEntry = typeof WatchdogEntry.Type
 export interface RecoveryState { readonly progressCursor: number; readonly status: "settled" | "pending" | "parked" | "running"; readonly wakeAt?: number }
 export interface WatchdogTransaction {
@@ -29,13 +29,14 @@ export interface WatchdogStorage {
   readonly transaction: <Value>(work: (tx: WatchdogTransaction) => Effect.Effect<Value, Error>) => Effect.Effect<Value, Error>
 }
 
-// WatchdogTerminalError blocks automatic recovery until an explicit resume.
+// WatchdogTerminalError blocks recovery until an explicit resume or interpreter version change (packages/platform/quint/interpreterVersion.qnt, sameVersionTest).
 export class WatchdogTerminalError extends Error { readonly _tag = "WatchdogTerminalError" }
 export const watchdogKey = (target: WatchdogTarget) => JSON.stringify([target.actor, target.instance, target.thread ?? null])
 
 // createWatchdog precharges durable attempts before recovery (packages/platform/quint/recoveryBudget.qnt, boundedAttempts).
 export function createWatchdog(options: {
   readonly storage: WatchdogStorage
+  readonly version?: string
   readonly recover: (target: WatchdogTarget) => Effect.Effect<RecoveryState, Error>
   readonly invalidate: (target: WatchdogTarget) => Effect.Effect<void, Error>
   readonly policy?: Partial<WatchdogPolicy>
@@ -44,8 +45,10 @@ export function createWatchdog(options: {
   readonly launch?: (work: Effect.Effect<void, Error>) => Effect.Effect<void, Error>
 }) {
   const policy = watchdogPolicy(options.policy)
+  if (options.version !== undefined && !options.version.length) throw new RuntimeError("Watchdog version must be nonempty")
   const lock = Semaphore.makeUnsafe(1)
   const cleanupLock = Semaphore.makeUnsafe(1)
+  let versionAdopted = false
   const active = new Map<string, { readonly expires: number }>()
   const schedule = (tx: WatchdogTransaction) => Effect.gen(function* () {
     const entries = yield* tx.list
@@ -63,9 +66,19 @@ export function createWatchdog(options: {
     const now = yield* Clock.currentTimeMillis
     yield* tx.put(key, previous
       ? { ...previous, generation: previous.generation + (admission ? 1 : 0), progressCursor: Math.max(previous.progressCursor, progressCursor), consecutiveNoProgress: progressCursor > previous.progressCursor ? 0 : previous.consecutiveNoProgress, ...(previous.status === "blocked" ? {} : { nextWakeAt: admission ? Math.min(previous.nextWakeAt ?? now, now) : previous.nextWakeAt ?? now }) }
-      : { target, generation: 1, progressCursor, attempts: 0, consecutiveNoProgress: 0, nextWakeAt: now, status: "pending" })
+      : { target, ...(options.version === undefined ? {} : { recoveryVersion: options.version }), generation: 1, progressCursor, attempts: 0, consecutiveNoProgress: 0, nextWakeAt: now, status: "pending" })
     yield* schedule(tx)
   })
+  const resetBudget = (tx: WatchdogTransaction, target: WatchdogTarget, version?: string) => Effect.gen(function* () {
+    const key = watchdogKey(target)
+    const current = yield* tx.get(key)
+    if (!current || (version !== undefined && current.recoveryVersion === version)) return
+    const recoveryVersion = version ?? current.recoveryVersion
+    yield* tx.put(key, { target: current.target, ...(recoveryVersion === undefined ? {} : { recoveryVersion }), generation: current.generation + 1, budgetGeneration: (current.budgetGeneration ?? 0) + 1, progressCursor: current.progressCursor, attempts: 0, consecutiveNoProgress: 0, status: "pending", nextWakeAt: yield* Clock.currentTimeMillis })
+    yield* schedule(tx)
+  })
+  // adoptVersion renews and fences a recovery budget once per interpreter change (packages/platform/quint/interpreterVersion.qnt, boundedBudgets).
+  const adoptVersion = (tx: WatchdogTransaction, target: WatchdogTarget, version: string) => version.length ? resetBudget(tx, target, version) : Effect.fail(new RuntimeError("Watchdog version must be nonempty"))
   const retryDelay = (failures: number) => Math.min(policy.maxRetryIntervalMs, policy.retryIntervalMs * 2 ** Math.min(Math.ceil(Math.log2(policy.maxRetryIntervalMs / policy.retryIntervalMs)), Math.max(0, failures - 1)))
   const finish = (key: string, covered: WatchdogEntry, result: Exit.Exit<RecoveryState, Error>, charged = true) => options.storage.transaction(tx => Effect.gen(function* () {
     const current = yield* tx.get(key)
@@ -93,19 +106,21 @@ export function createWatchdog(options: {
   return {
     policy,
     admit,
-    restore: options.storage.transaction(schedule),
+    adoptVersion,
+    restore: cleanupLock.withPermit(Effect.gen(function* () {
+      yield* options.storage.transaction(tx => Effect.gen(function* () {
+        if (!versionAdopted && options.version !== undefined) for (const entry of (yield* tx.list).values()) yield* adoptVersion(tx, entry.target, options.version)
+        yield* schedule(tx)
+      }))
+      versionAdopted = true
+    })),
     status: options.storage.transaction(tx => tx.list),
-    resume: (target: WatchdogTarget) => cleanupLock.withPermit(options.storage.transaction(tx => Effect.gen(function* () {
-      const key = watchdogKey(target)
-      const current = yield* tx.get(key)
-      if (!current) return
-      yield* tx.put(key, { target: current.target, generation: current.generation + 1, budgetGeneration: (current.budgetGeneration ?? 0) + 1, progressCursor: current.progressCursor, attempts: 0, consecutiveNoProgress: 0, status: "pending", nextWakeAt: yield* Clock.currentTimeMillis })
-      yield* schedule(tx)
-    }))),
+    resume: (target: WatchdogTarget) => cleanupLock.withPermit(options.storage.transaction(tx => resetBudget(tx, target))),
     alarm: lock.withPermit(Effect.gen(function* () {
       const entries = yield* options.storage.transaction(tx => tx.list)
       for (const [key, entry] of entries) {
         const now = yield* Clock.currentTimeMillis
+        if (options.version !== undefined && entry.recoveryVersion !== options.version) continue
         if (active.has(key)) { yield* options.storage.transaction(schedule); continue }
         if (entry.status !== "pending" || entry.nextWakeAt === null || entry.nextWakeAt > now) continue
         const observed = options.probe ? yield* Effect.exit(options.probe(entry.target)) : Exit.succeed(undefined)
@@ -114,15 +129,16 @@ export function createWatchdog(options: {
           continue
         }
         const covered = yield* options.storage.transaction(tx => Effect.gen(function* () {
-          const entry = yield* tx.get(key)
+          const latest = yield* tx.get(key)
+          if (latest && ((latest.budgetGeneration ?? 0) !== (entry.budgetGeneration ?? 0) || (options.version !== undefined && latest.recoveryVersion !== options.version))) { yield* schedule(tx); return undefined }
           const now = yield* Clock.currentTimeMillis
-          if (!entry || entry.status !== "pending" || entry.nextWakeAt === null || entry.nextWakeAt > now) { yield* schedule(tx); return undefined }
-          if (entry.attempts >= policy.maxAttempts || entry.consecutiveNoProgress >= policy.maxNoProgressAttempts) {
-            yield* tx.put(key, { ...entry, status: "blocked", nextWakeAt: null, reason: "Recovery budget exhausted" })
+          if (!latest || latest.status !== "pending" || latest.nextWakeAt === null || latest.nextWakeAt > now) { yield* schedule(tx); return undefined }
+          if (latest.attempts >= policy.maxAttempts || latest.consecutiveNoProgress >= policy.maxNoProgressAttempts) {
+            yield* tx.put(key, { ...latest, status: "blocked", nextWakeAt: null, reason: "Recovery budget exhausted" })
             yield* schedule(tx)
             return undefined
           }
-          const next = { ...entry, attempts: entry.attempts + 1, consecutiveNoProgress: entry.consecutiveNoProgress + 1, nextWakeAt: now + policy.attemptTimeoutMs }
+          const next = { ...latest, attempts: latest.attempts + 1, consecutiveNoProgress: latest.consecutiveNoProgress + 1, nextWakeAt: now + policy.attemptTimeoutMs }
           yield* tx.put(key, next)
           yield* schedule(tx)
           return next
