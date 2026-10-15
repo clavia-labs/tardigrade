@@ -24,7 +24,9 @@ export function compactState(state: typeof CompactionState.Type, event: Event, _
   return state
 }
 
+export const initialCompaction: typeof CompactionState.Type = { origin: null, through: 0, attempts: 0, summary: "", pending: null, failure: null }
+
 // createCompactionState constructs the durable summary state for a compaction projection.
 export function createCompactionState() {
-  return durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed, TurnSettled]), schema: CompactionState, initial: { origin: null, through: 0, attempts: 0, summary: "", pending: null, failure: null }, reduce: compactState })
+  return durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed, TurnSettled]), schema: CompactionState, initial: initialCompaction, reduce: compactState })
 }

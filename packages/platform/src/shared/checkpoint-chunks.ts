@@ -1,9 +1,10 @@
+import type { CheckpointTreeOptions } from "./checkpoint-trees"
 import { RuntimeError } from "@clavia/tardigrade-core"
 
 // CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES bounds integer ordinal and SQLite record encoding overhead (https://www.sqlite.org/fileformat.html#record_format).
 export const CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES = 32
 export const DEFAULT_CHECKPOINT_CHUNK_BYTES = 512 * 1024
-export interface CheckpointChunkOptions { readonly checkpointChunkBytes?: number | undefined }
+export interface CheckpointChunkOptions { readonly checkpointChunkBytes?: number | undefined; readonly checkpointTree?: CheckpointTreeOptions | undefined }
 export interface CheckpointChunk { readonly ordinal: number; readonly payload: Uint8Array }
 
 // validateCheckpointChunkBytes rejects write limits outside the supported SQL row capacity before storage opens (checkpointChunks).

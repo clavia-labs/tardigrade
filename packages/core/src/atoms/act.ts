@@ -1,3 +1,4 @@
+import { prepareTreeInput, type SelectedInput } from "../services/tree-state"
 import { operationSettlement } from "../runtime/operation"
 import { incrementalDecoder } from "./incremental/decode"
 import { Context, Effect, Layer, Schema, Option } from "effect"
@@ -109,10 +110,12 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
     }
   }))
 
+  type Invocation<A> = { readonly origin?: number; readonly input: A; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }
   // request creates an invocation handle retained across reevaluation; another invocation requires another handle.
-  const request = (invocation: { readonly origin?: number; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
-    const decoded = decodeInput(invocation.input, { freeze: true })
-    const input = decoded ? decoded.value as Schema.Json : Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
+  const request = (invocation: Invocation<Input> | Invocation<SelectedInput<Input>>, select = false): ActRequest<Value, Failure, ActService<Name>> => {
+    const planned = select ? prepareTreeInput(invocation.input) : { input: invocation.input as Input }
+    const decoded = planned.selections ? undefined : decodeInput(invocation.input, { freeze: true })
+    const input = planned.selections ? Schema.decodeSync(Schema.Json)(planned.input) : decoded ? decoded.value as Schema.Json : Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input as Input)))
     if (typeof input === "object" && input !== null) actInputs.add(input)
     const origin = invocation.origin === undefined ? undefined : Schema.decodeSync(EffectRef.fields.seq)(invocation.origin)
     const identity = {}
@@ -144,7 +147,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
         : { status: "rejected", reason: Schema.is(PromiseTimedOut)(resolved.result.reason) ? resolved.result.reason : decodeFailure(resolved.result.reason) }
     })
     const handle: ActRequest<Value, Failure, ActService<Name>> = Object.freeze({
-      kind: "act", identity, ...(origin === undefined ? {} : { origin }), request: { act: options.name, input }, ref, result,
+      kind: "act", identity, ...(origin === undefined ? {} : { origin }), request: { act: options.name, input, ...(planned.selections ? { selections: planned.selections } : {}) }, ref, result,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
       ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
       onSettled: (outcome: Exclude<ActState<Value, ActFailure<Failure>>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
@@ -178,7 +181,8 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       })
     }),
     layer,
-    request,
+    request: (invocation: Invocation<Input>) => request(invocation),
+    requestTree: (invocation: Invocation<SelectedInput<Input>>) => request(invocation, true),
     defer: (handle: ExecutionHandle): DeferredAct => ({ [DeferredType]: true, handle: Schema.decodeSync(ExecutionHandle)(handle) }),
   }
 }

@@ -14,19 +14,23 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
   let now = options.start
   const base = yield* Clock.clockWith(Effect.succeed)
   const clock: Clock.Clock = { ...base, currentTimeMillisUnsafe: () => now, currentTimeMillis: Effect.sync(() => now) }
+  const nodes = new Map<string, string>()
   const records: Recorded<Event>[] = []
   let checkpoint: StoredCheckpoint | undefined
   const journal: Journal<Event> = {
+    trees: { load: hash => { const value = nodes.get(hash); if (value === undefined) throw new RuntimeError("Missing tree node"); return value } },
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     readCheckpoint: Effect.sync(() => checkpoint),
-    append: (position, events) => Effect.sync(() => {
+    append: (position, events, inputs) => Effect.sync(() => {
       if (position !== records.length) throw new RuntimeError("Unexpected journal position")
+      for (const [hash, node] of inputs?.trees?.nodes ?? []) nodes.set(hash, node.text)
       records.push(...events)
     }),
-    appendWithCheckpoint: (position, events, value) => Effect.sync(() => {
+    appendWithCheckpoint: (position, events, value, inputs) => Effect.sync(() => {
       if (position !== records.length) throw new RuntimeError("Unexpected checkpoint position")
       if (value.position !== (checkpoint?.position ?? 0) + 2) throw new RuntimeError("Checkpoint threshold cadence changed across recovery")
+      for (const [hash, node] of inputs?.trees?.nodes ?? []) nodes.set(hash, node.text)
       records.push(...events)
       checkpoint = value
     }),

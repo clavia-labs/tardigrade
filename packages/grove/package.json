@@ -1,0 +1,29 @@
+{
+  "name": "@tardie/grove",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/clavia-labs/tardigrade.git", "directory": "packages/grove" },
+  "description": "Persistent JSON trees with selective reads and incremental writes.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./effect": "./src/effect.ts",
+    "./sqlite": "./src/sqlite.ts"
+  },
+  "files": ["src"],
+  "publishConfig": { "access": "public" },
+  "peerDependencies": { "effect": "4.0.0-rc.115" },
+  "devDependencies": {
+    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+    "@effect/sql-sqlite-do": "4.0.0-rc.115",
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "@cloudflare/vitest-plugin": "^1.4.1",
+    "fast-check": "^4.9.0",
+    "vitest": "^5.0.4"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test test/*.test.ts",
+    "test:workers": "vitest run"
+  }
+}

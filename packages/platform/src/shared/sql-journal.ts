@@ -1,11 +1,14 @@
+import { nativeLoader } from "@tardie/grove/sqlite"
 import { ThreadCreated, ThreadUpdated } from "@clavia/tardigrade-core"
-import { Effect, ManagedRuntime, Schema, Semaphore, type Layer } from "effect"
+import { Effect, Scheduler, ManagedRuntime, Schema, Semaphore, type Layer } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage, PendingEffectInput, effectKey, type EffectInputChanges } from "@clavia/tardigrade-core"
 import { initializeSqlScheduler, sqlSchedulerTransaction } from "./sql-scheduler"
 import { recordRetryWakes } from "./retry-wakes"
 
-import { checkpointDigest } from "@clavia/tardigrade-core"
+import { checkpointTrees, DEFAULT_CHECKPOINT_SCHEDULER } from "./checkpoint-trees"
+export { DEFAULT_CHECKPOINT_COLLECT_EVERY, DEFAULT_CHECKPOINT_SCHEDULER, type CheckpointTreeOptions } from "./checkpoint-trees"
+import { encodeCheckpoint, decodeCheckpoint, type TreeCheckpoint, checkpointDigest } from "@clavia/tardigrade-core"
 import { CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES, DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes, encodeCheckpointChunks, decodeCheckpointChunks, type CheckpointChunk, type CheckpointChunkOptions } from "./checkpoint-chunks"
 export { DEFAULT_CHECKPOINT_CHUNK_BYTES, type CheckpointChunkOptions } from "./checkpoint-chunks"
 
@@ -33,6 +36,8 @@ export interface SqlJournalLimits { readonly maxRowBytes: number }
 // sqlJournal owns a database with one checkpoint and commits checkpoint chunks with journal events (checkpointStorage).
 export function sqlJournal<Event extends object>(options: CheckpointChunkOptions & JournalRecordOptions & {
   readonly actor: string
+  // syncTreeReads requires a single-connection SQLite driver whose raw reads finish synchronously.
+  readonly syncTreeReads?: boolean
   readonly scheduler?: { readonly alarm: typeof Alarm.Service; readonly deliver: (wake: ScheduledWake) => Effect.Effect<void, Error>; readonly policy?: Partial<SchedulerPolicy> | undefined } | undefined
   readonly limits?: SqlJournalLimits
   readonly layer: Layer.Layer<SqlClient.SqlClient, Error>
@@ -60,11 +65,13 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     yield* sql`CREATE TABLE IF NOT EXISTS effect_inputs (actor TEXT NOT NULL, ref TEXT NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL, PRIMARY KEY (actor, ref)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS effect_input_chunks (actor TEXT NOT NULL, ref TEXT NOT NULL, ordinal INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY (actor, ref, ordinal)) WITHOUT ROWID`
     if (options.scheduler) yield* initializeSqlScheduler(sql)
-    return sql
+    const trees = yield* checkpointTrees(options.actor, options.limits ? Math.min(chunkBytes, options.limits.maxRowBytes - 64 - CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES) : chunkBytes, options.checkpointTree)
+    const loadNode = options.syncTreeReads ? yield* nativeLoader : undefined
+    return { sql, trees, loadNode }
   })
   const initialized = Effect.runSync(Effect.cached(runtime.contextEffect.pipe(Effect.flatMap(context => setup.pipe(Effect.provide(context))))))
   let closed = false
-  const client = Effect.suspend(() => closed ? Effect.fail(new RuntimeError("Journal is closed")) : initialized)
+  const client = Effect.suspend(() => closed ? Effect.fail(new RuntimeError("Journal is closed")) : initialized.pipe(Effect.map(({ sql }) => sql)))
   const scheduling = options.scheduler
   const wakeLock = Semaphore.makeUnsafe(1)
   const syncAlarm = (sql: SqlClient.SqlClient) => scheduling ? schedulerAlarm(sqlSchedulerTransaction(sql, scheduling.alarm)) : Effect.void
@@ -75,8 +82,8 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     return result
   }).pipe(Effect.uninterruptible)) } : undefined
   const scheduler = scheduling && schedulerStorage ? createScheduler({ storage: schedulerStorage, deliver: scheduling.deliver, policy: scheduling.policy }) : undefined
-  const append = (expectedLength: number, events: readonly Recorded<Event>[], providedCheckpoint?: StoredCheckpoint, inputs: EffectInputChanges = {}) => Effect.gen(function* () {
-    const checkpoint = providedCheckpoint && { ...providedCheckpoint, payload: providedCheckpoint.payload.slice() }
+  const append = (expectedLength: number, events: readonly Recorded<Event>[], providedCheckpoint?: StoredCheckpoint | TreeCheckpoint, inputs: EffectInputChanges = {}) => Effect.gen(function* () {
+    const checkpoint = providedCheckpoint && { ...providedCheckpoint, payload: providedCheckpoint.payload instanceof Uint8Array ? providedCheckpoint.payload.slice() : providedCheckpoint.payload }
     if (!Number.isSafeInteger(expectedLength) || expectedLength < 0) return yield* Effect.fail(new RuntimeError("Invalid expected journal length"))
     if (checkpoint && (!Number.isSafeInteger(checkpoint.position) || checkpoint.position !== expectedLength + events.length || checkpoint.position < 0)) return yield* Effect.fail(new RuntimeError("Invalid checkpoint position"))
     const encoded = yield* Effect.try({ try: () => events.map(record => {
@@ -94,7 +101,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       return { text: stored, chunks }
     }), catch: RuntimeError.from })
     if (checkpoint && checkpoint.digest !== (yield* checkpointDigest(checkpoint.payload))) return yield* Effect.fail(new RuntimeError("Invalid checkpoint digest"))
-    const chunks = checkpoint ? encodeCheckpointChunks(checkpoint.payload, chunkBytes) : []
+    const chunks = checkpoint?.payload instanceof Uint8Array ? encodeCheckpointChunks(checkpoint.payload, chunkBytes) : []
     const pending = yield* Effect.forEach(inputs.put ?? [], input => Effect.gen(function* () {
       const value = yield* Schema.decodeEffect(PendingEffectInput)(input).pipe(Effect.mapError(RuntimeError.from))
       const payload = new TextEncoder().encode(JSON.stringify(value))
@@ -105,6 +112,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     }))
     const sql = yield* client
     const work = Effect.gen(function* () {
+      const { trees } = yield* initialized
       const rows = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
       const count = rows.length === 0 ? 0 : rows[0]!.seq + 1
       if (count !== expectedLength) return yield* Effect.fail(new JournalConflict(`Journal conflict for ${options.actor}: expected ${expectedLength}, found ${String(count)}`))
@@ -113,6 +121,26 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
         for (const chunk of event.chunks) yield* sql`INSERT INTO experimental_event_chunks (actor, seq, ordinal, payload) VALUES (${options.actor}, ${expectedLength + index}, ${chunk.ordinal}, ${chunk.payload})`
         const message = events[index]!.message
         if (message) yield* sql`INSERT INTO experimental_messages (actor, id, seq) VALUES (${options.actor}, ${message.id}, ${expectedLength + index})`
+      }
+      if (inputs.trees) {
+        yield* trees.stage(inputs.trees.nodes)
+        for (const state of inputs.trees.roots) {
+          const owner = JSON.stringify([options.actor, "state", state.name])
+          const previous = yield* trees.root(owner)
+          if (previous !== state.root) yield* trees.retain(owner, state.root, previous ?? null)
+        }
+        // view owners keep every root a live projection frame reads, since frames advance lazily and can trail many commits (test/bun/tree-state.test.ts).
+        if (inputs.trees.held) {
+          const prefix = JSON.stringify([options.actor, "view"])
+          yield* trees.replaceOwners(prefix, [...new Set(inputs.trees.held)].map(root => ({ name: root, root })))
+        }
+      }
+      for (const input of inputs.put ?? []) {
+        const prefix = JSON.stringify([options.actor, "input", effectKey(input.ref)])
+        for (const root of new Set(input.request.selections?.map(ref => ref.root) ?? [])) {
+          const owner = `${prefix}${root}`
+          yield* trees.retain(owner, root, (yield* trees.root(owner)) ?? null)
+        }
       }
       for (const input of pending) {
         const existing = yield* sql<{ digest: string }>`SELECT digest FROM effect_inputs WHERE actor = ${options.actor} AND ref = ${input.ref}`
@@ -123,23 +151,53 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       }
       for (const ref of inputs.remove ?? []) {
         const key = effectKey(ref)
+        const prefix = JSON.stringify([options.actor, "input", key])
+        yield* trees.replaceOwners(prefix, [])
         yield* sql`DELETE FROM effect_input_chunks WHERE actor = ${options.actor} AND ref = ${key}`
         yield* sql`DELETE FROM effect_inputs WHERE actor = ${options.actor} AND ref = ${key}`
       }
       if (scheduling) yield* recordRetryWakes(sqlSchedulerTransaction(sql, scheduling.alarm), events)
       if (checkpoint) {
+        const { trees } = yield* initialized
+        if (!(checkpoint.payload instanceof Uint8Array)) {
+          yield* trees.write({ ...checkpoint, payload: checkpoint.payload })
+          yield* sql`DELETE FROM checkpoint_chunks`
+          yield* sql`DELETE FROM checkpoint`
+          return
+        }
+        yield* trees.clear
         yield* sql`DELETE FROM checkpoint_chunks`
         yield* sql`INSERT INTO checkpoint (id, position, byte_length, chunk_count, digest) VALUES (1, ${checkpoint.position}, ${checkpoint.payload.byteLength}, ${chunks.length}, ${checkpoint.digest}) ON CONFLICT(id) DO UPDATE SET position = excluded.position, byte_length = excluded.byte_length, chunk_count = excluded.chunk_count, digest = excluded.digest`
         for (const chunk of chunks) yield* sql`INSERT INTO checkpoint_chunks (ordinal, payload) VALUES (${chunk.ordinal}, ${chunk.payload})`
       }
-    }).pipe(Effect.mapError(RuntimeError.from))
+    }).pipe(Effect.mapError(RuntimeError.from), Effect.provideService(Scheduler.Scheduler, options.checkpointTree?.scheduler ?? DEFAULT_CHECKPOINT_SCHEDULER))
     yield* wakeLock.withPermit(Effect.gen(function* () {
       yield* options.commit ? options.commit(work, events, expectedLength + events.length) : sql.withTransaction(work)
       if (options.flush) yield* options.flush
       yield* syncAlarm(sql)
     }).pipe(Effect.uninterruptible))
   })
+  const readCheckpoint = Effect.gen(function* () {
+    const sql = yield* client
+    return yield* sql.withTransaction(Effect.gen(function* () {
+      const { trees } = yield* initialized
+      const tree = yield* trees.read
+      if (tree) return tree
+      const rows = yield* sql<{ position: number; byte_length: number; chunk_count: number; digest: string }>`SELECT position, byte_length, chunk_count, digest FROM checkpoint WHERE id = 1`
+      const row = rows[0]
+      if (!row) return undefined
+      if (!Number.isSafeInteger(row.position) || row.position < 0 || typeof row.digest !== "string") return yield* Effect.fail(new RuntimeError("Invalid journal checkpoint"))
+      const chunks = yield* sql<CheckpointChunk>`SELECT ordinal, payload FROM checkpoint_chunks ORDER BY ordinal`
+      const payload = yield* Effect.try({ try: () => decodeCheckpointChunks(chunks, row.byte_length, row.chunk_count), catch: RuntimeError.from })
+      if ((yield* checkpointDigest(payload)) !== row.digest) return yield* Effect.fail(new RuntimeError("Journal checkpoint digest mismatch"))
+      return { position: row.position, payload, digest: row.digest } satisfies StoredCheckpoint
+    }))
+  })
   return {
+    ...(options.syncTreeReads ? { trees: {
+      load: (hash: string) => Effect.runSync(initialized).loadNode!(hash),
+      ...(options.checkpointTree ? { options: options.checkpointTree } : {}),
+    } } : {}),
     scheduler,
     acknowledge: client.pipe(Effect.andThen(options.flush ?? Effect.void)),
     readMessage: (id: string) => Effect.gen(function* () {
@@ -214,18 +272,13 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       }))
     }),
     append: (position: number, events: readonly Recorded<Event>[], inputs?: EffectInputChanges) => append(position, events, undefined, inputs),
+    treeCheckpoint: { read: readCheckpoint, append: (position: number, events: readonly Recorded<Event>[], checkpoint: TreeCheckpoint, inputs?: EffectInputChanges) => append(position, events, checkpoint, inputs) },
     readCheckpoint: Effect.gen(function* () {
-      const sql = yield* client
-      return yield* sql.withTransaction(Effect.gen(function* () {
-        const rows = yield* sql<{ position: number; byte_length: number; chunk_count: number; digest: string }>`SELECT position, byte_length, chunk_count, digest FROM checkpoint WHERE id = 1`
-        const row = rows[0]
-        if (!row) return undefined
-        if (!Number.isSafeInteger(row.position) || row.position < 0 || typeof row.digest !== "string") return yield* Effect.fail(new RuntimeError("Invalid journal checkpoint"))
-        const chunks = yield* sql<CheckpointChunk>`SELECT ordinal, payload FROM checkpoint_chunks ORDER BY ordinal`
-        const payload = yield* Effect.try({ try: () => decodeCheckpointChunks(chunks, row.byte_length, row.chunk_count), catch: RuntimeError.from })
-        if ((yield* checkpointDigest(payload)) !== row.digest) return yield* Effect.fail(new RuntimeError("Journal checkpoint digest mismatch"))
-        return { position: row.position, payload, digest: row.digest } satisfies StoredCheckpoint
-      }))
+      const stored = yield* readCheckpoint
+      if (!stored) return undefined
+      if (stored.payload instanceof Uint8Array) return { ...stored, payload: stored.payload }
+      const payload = yield* Effect.try({ try: () => encodeCheckpoint(decodeCheckpoint(stored.payload)), catch: RuntimeError.from })
+      return { position: stored.position, payload, digest: yield* checkpointDigest(payload) }
     }),
     appendWithCheckpoint: append,
     close: Effect.sync(() => { closed = true }).pipe(Effect.andThen(runtime.disposeEffect)),

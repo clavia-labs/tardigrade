@@ -1,4 +1,4 @@
-import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter } from "@clavia/tardigrade-core"
+import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter, type SelectedInput } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled } from "../contracts/events"
@@ -11,7 +11,7 @@ import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
 import { type ToolView } from "./tools"
 
 export type ContextView = ActorOutput<{ readonly position: "configuring" | "compacting" } | { readonly position: "failed"; readonly reason: string } | {
-  readonly position: "ready"; readonly messages: typeof Conversation.Type
+  readonly position: "ready"; readonly messages: SelectedInput<typeof Conversation.Type>
 }, Event, ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>
 export interface AgentInput<R, ToolEvents extends object = Event> {
   readonly system: string
@@ -22,7 +22,7 @@ export interface AgentInput<R, ToolEvents extends object = Event> {
 
 export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>> | ((get: Getter) => AgentInput<R, ToolEvents>)) {
   const agentAtom = typeof agent === "function" ? atom(agent) : agent
-  const request = requests(Generate.request, { latestOnly: true })
+  const request = requests(Generate.requestTree, { latestOnly: true })
 
   const output = Effect.map(Effect.all([ModelInfo, modelSelection]), ([current, model]) => effectAtom(get => {
     get(toolSpend)
