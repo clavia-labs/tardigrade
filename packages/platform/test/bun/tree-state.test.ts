@@ -12,14 +12,14 @@ import { bunJournal } from "../../src/bun"
 import { treeActorFixture, TreeEvent } from "../properties/runtime/tree-state"
 import { waitFor } from "../fixtures/wait"
 
-for (const kind of ["tree", "log"] as const) for (const cancellation of [false, true]) test(`${kind} atom checkpoint and ${cancellation ? "cleanup" : "execution"} root retention`, async () => {
+for (const cancellation of [false, true]) test(`tree atom checkpoint and ${cancellation ? "cleanup" : "execution"} root retention`, async () => {
   const directory = mkdtempSync(join(tmpdir(), "tree-state-"))
   const filename = join(directory, "actor.db")
   const db = new Database(filename)
   let journal = bunJournal<typeof TreeEvent.Type>({ filename, actor: "tree", checkpointTree: { collectEvery: 1, cacheBytes: 0 } })
   const calls: { phase: string; length: number; first: string | undefined; ref: unknown }[] = []
   const observe: Parameters<typeof treeActorFixture>[1] = (phase, input, ref) => Effect.sync(() => { calls.push({ phase, length: input.messages.length, first: input.messages[0]?.text, ref }) })
-  let live = await Effect.runPromise(treeActorFixture(journal, observe, undefined, kind))
+  let live = await Effect.runPromise(treeActorFixture(journal, observe))
   try {
     await Effect.runPromise(live.seed)
     await Effect.runPromise(live.store.checkpoint)
@@ -27,8 +27,7 @@ for (const kind of ["tree", "log"] as const) for (const cancellation of [false, 
     await waitFor(() => Promise.resolve(calls), calls => calls.length > 0)
     const accepted = (await Effect.runPromise(journal.readInputs))[0]!
     const selection = accepted.request.selections![0]!
-    const root = "root" in selection ? selection.root : undefined
-    expect("log" in selection).toBe(kind === "log")
+    const root = selection.root
     expect(accepted.request.input).toEqual({ messages: null })
     expect(JSON.stringify(accepted).length).toBeLessThan(1024)
     await Effect.runPromise(live.append)
@@ -38,11 +37,11 @@ for (const kind of ["tree", "log"] as const) for (const cancellation of [false, 
       await waitFor(() => Promise.resolve(calls), calls => calls.some(call => call.phase === "cleanup"))
       await Effect.runPromise(live.store.checkpoint)
     }
-    expect((db.query("SELECT * FROM grove_owners WHERE name LIKE '%input%'").all()).length).toBe(kind === "tree" ? 1 : 0)
+    expect((db.query("SELECT * FROM grove_owners WHERE name LIKE '%input%'").all()).length).toBe(1)
     await Effect.runPromise(live.store.close)
     await Effect.runPromise(journal.close)
     journal = bunJournal<typeof TreeEvent.Type>({ filename, actor: "tree", checkpointTree: { collectEvery: 1, cacheBytes: 0 } })
-    live = await Effect.runPromise(treeActorFixture(journal, observe, undefined, kind))
+    live = await Effect.runPromise(treeActorFixture(journal, observe))
     await waitFor(() => Promise.resolve(calls), calls => calls.length >= (cancellation ? 3 : 2))
     expect(calls.every(call => call.length === 4096 && call.first === `0:${"x".repeat(2048)}`)).toBe(true)
     expect(calls.every(call => JSON.stringify(call.ref) === JSON.stringify(accepted.ref))).toBe(true)
@@ -52,8 +51,7 @@ for (const kind of ["tree", "log"] as const) for (const cancellation of [false, 
     await Effect.runPromise(live.store.checkpoint)
     expect((await Effect.runPromise(journal.readInputs)).length).toBe(0)
     expect(db.query("SELECT * FROM grove_owners WHERE name LIKE '%input%'").all().length).toBe(0)
-    if (root) expect(db.query("SELECT * FROM grove_nodes WHERE hash = ?").all(root).length).toBe(0)
-    else expect(db.query("SELECT COUNT(*) count FROM log_entries").get()).toEqual({ count: 4097 })
+    expect(db.query("SELECT * FROM grove_nodes WHERE hash = ?").all(root).length).toBe(0)
     const saved = await Effect.runPromise(journal.readCheckpoint)
     expect(saved!.payload.length).toBeLessThan(4096)
   } finally {
@@ -103,19 +101,4 @@ for (const treeCheckpoint of [false, true]) test(`checkpoint maxBytes includes r
     await Effect.runPromise(live.store.close)
     await Effect.runPromise(journal.close)
   }
-})
-
-
-test("log row commits are idempotent and roll back conflicting prefixes", async () => {
-  const journal = bunJournal({ filename: ":memory:", actor: "log-rows" })
-  const entry = { log: "history#0", index: 0, value: { text: "original" } }
-  try {
-    await Effect.runPromise(journal.append(0, [], { logs: { entries: [entry] } }))
-    await Effect.runPromise(journal.append(0, [], { logs: { entries: [entry] } }))
-    await expect(Effect.runPromise(journal.append(0, [], { logs: { entries: [
-      { ...entry, index: 1, value: { text: "rollback" } },
-      { ...entry, value: { text: "conflict" } },
-    ] } }))).rejects.toThrow()
-    expect(journal.logs!.load("history#0", 0, 2)).toEqual([{ text: "original" }])
-  } finally { await Effect.runPromise(journal.close) }
 })

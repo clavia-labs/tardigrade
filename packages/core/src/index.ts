@@ -1,4 +1,3 @@
-export { durableLogAtom, LOG_CHUNK, DEFAULT_LOG_CACHE_CHUNKS, type Log } from "./atoms/durable/log"
 export * from "./atoms/atom"
 export { durableMerkleAtom } from "./atoms/durable/merkle"
 export type { MerkleTree, TreeSelection, SelectedInput, TreeStorage, TreeChanges } from "./services/tree-state"

@@ -55,7 +55,7 @@ export function compactHistory(options: CompactionOptions = {}) {
     const start = Number(state.summary !== "")
     const length = view.length(["entries"])
     return {
-      state, messages: view.selectEach(["entries"], ["message"]), length: length - start, size,
+      state, messages: view.selectEach(["entries"], ["message"], { start: 0, end: length }), length: length - start, size,
       tailSize: (index: number) => size - view.read(["totals", start + index]),
       read: (index: number) => view.read(["entries", start + index]).message,
       prefix: (end: number) => view.slice(["entries"], 0, start + end).map(entry => entry.message),

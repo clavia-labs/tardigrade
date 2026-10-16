@@ -175,6 +175,12 @@ export function makeReader(load: (hash: string) => Effect.Effect<string, GroveEr
     return after
   }
   const read = (root: string, path: Path = []) => at(root, path).pipe(Effect.flatMap(selected => "value" in selected ? Effect.succeed(selected.value) : materialize(selected.node)))
+  const slice = (root: string, path: Path, start: number, end: number) => at(root, path).pipe(Effect.flatMap((selected): Effect.Effect<readonly Json[], GroveError> => {
+    if (!natural(start) || !natural(end) || start > end) return error("Invalid Merkle range")
+    if ("value" in selected) return Array.isArray(selected.value) ? Effect.succeed(selected.value.slice(start, end)) : error("Range target must be an array")
+    const n = size(selected.node)
+    return n === undefined ? error("Range target must be an array") : range(selected.node, Math.min(start, n), Math.min(end, n))
+  }))
   return {
     bytes: (root: string) => readNode(root).pipe(Effect.map(node => node.logicalBytes)),
     tree: (root: string) => hydrate(root).pipe(Effect.map(node => plan(node, { hashedNodes: 0, hashedBytes: 0, visitedValues: 0, reusedNodes: 0 }))),
@@ -187,12 +193,8 @@ export function makeReader(load: (hash: string) => Effect.Effect<string, GroveEr
       const n = "value" in selected ? Array.isArray(selected.value) ? selected.value.length : undefined : size(selected.node)
       return n === undefined ? error("Length target must be an array") : Effect.succeed(n)
     })),
-    slice: (root: string, path: Path, start: number, end: number) => at(root, path).pipe(Effect.flatMap((selected): Effect.Effect<readonly Json[], GroveError> => {
-      if (!natural(start) || !natural(end) || start > end) return error("Invalid Merkle range")
-      if ("value" in selected) return Array.isArray(selected.value) ? Effect.succeed(selected.value.slice(start, end)) : error("Range target must be an array")
-      const n = size(selected.node)
-      return n === undefined ? error("Range target must be an array") : range(selected.node, Math.min(start, n), Math.min(end, n))
-    })),
+    slice,
+    sliceEach: (root: string, path: Path, start: number, end: number, each: Path) => slice(root, path, start, end).pipe(Effect.flatMap(values => attempt(() => values.map(value => jsonPath(value, each))))),
     set: (root: string, path: Path, value: Json) => prepare(root, path, false).pipe(Effect.flatMap(node => attempt(() => superseded(node, tree.set(plan(node, { hashedNodes: 0, hashedBytes: 0, visitedValues: 0, reusedNodes: 0 }), path, value))))),
     append: (root: string, path: Path, values: readonly Json[]) => prepare(root, path, true).pipe(Effect.flatMap(node => attempt(() => superseded(node, tree.append(plan(node, { hashedNodes: 0, hashedBytes: 0, visitedValues: 0, reusedNodes: 0 }), path, values))))),
     stats: () => ({ ...metrics, cachedNodes: cache.size, cachedBytes, cacheBudgetBytes: cacheBytes }),

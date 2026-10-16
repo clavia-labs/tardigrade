@@ -58,6 +58,9 @@ test("cold and hydrated updates produce identical roots across mixed operations"
       expect(cold.logicalBytes).toBe(Buffer.byteLength(JSON.stringify(value)))
       for (const node of cold.nodes.values()) stored.set(node.hash, node.text)
       expect(tree.materialize(JsonTree.hydrate(cold.root, stored))).toEqual(value)
+      const start = step.index % (value.history.length + 1)
+      const end = Math.min(value.history.length, start + step.count)
+      expect(await Effect.runPromise(reader.sliceEach(current.root, ["history"], start, end, ["nested"]))).toEqual(value.history.slice(start, end).map(item => (item as { readonly nested: Json }).nested))
       expect(reader.stats().cachedBytes).toBeLessThanOrEqual(options.cacheBytes)
     }
     expect(tree.materialize(JsonTree.hydrate(first, stored))).toEqual({ history: [], state: { count: 0 } })

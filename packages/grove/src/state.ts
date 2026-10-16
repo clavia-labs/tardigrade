@@ -4,7 +4,8 @@ import { freezeJson, type Json, type Path, type Node } from "./codec"
 import { GroveError, makeReader, type ReaderOptions } from "./effect"
 
 const ReferencePath = Schema.Array(Schema.Union([Schema.String, Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))]))
-export const Reference = Schema.Struct({ root: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)), path: ReferencePath, each: Schema.optionalKey(ReferencePath) })
+const Range = Schema.Struct({ start: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), end: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) })
+export const Reference = Schema.Struct({ range: Schema.optionalKey(Range), root: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)), path: ReferencePath, each: Schema.optionalKey(ReferencePath) })
 const SelectionType = Symbol("GroveSelection")
 export interface Selection<Value> { readonly [SelectionType]: Value }
 const selections = new WeakMap<object, typeof Reference.Type>()
@@ -20,7 +21,7 @@ export interface MerkleTree<State> {
   readonly root: string
   readonly read: <const P extends Path>(path: Valid<State, P>) => At<State, P>
   readonly select: <const P extends Path>(path: Valid<State, P>) => Selection<At<State, P>>
-  readonly selectEach: <const P extends Path, const Q extends Path>(path: ArrayPath<State, P>, each: Valid<Item<At<State, P>>, Q>) => Selection<readonly At<Item<At<State, P>>, Q>[]>
+  readonly selectEach: <const P extends Path, const Q extends Path>(path: ArrayPath<State, P>, each: Valid<Item<At<State, P>>, Q>, range?: typeof Range.Type) => Selection<readonly At<Item<At<State, P>>, Q>[]>
   readonly length: <const P extends Path>(path: ArrayPath<State, P>) => number
   readonly slice: <const P extends Path>(path: ArrayPath<State, P>, start: number, end: number) => readonly Item<At<State, P>>[]
   readonly set: <const P extends Path>(path: Valid<State, P>, value: At<State, P>) => MerkleTree<State>
@@ -93,12 +94,13 @@ export function make(storage: Storage) {
           selections.set(ref, { root, path: Object.freeze([...path]) })
           return ref
         },
-        selectEach: (path: Path, each: Path) => {
+        selectEach: (path: Path, each: Path, range?: typeof Range.Type) => {
           const ast = schemaAt(path)
           if (ast._tag !== "Arrays") throw new Error("Selection target must be an array")
           each.reduce(child, ast.rest[0]!)
           const ref = Object.freeze({}) as Selection<never>
-          selections.set(ref, { root, path: Object.freeze([...path]), each: Object.freeze([...each]) })
+          if (range && (!Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end) || range.start < 0 || range.end < range.start || range.end > Effect.runSync(reader.length(root, path)))) throw new RangeError("Invalid selection range")
+          selections.set(ref, { root, path: Object.freeze([...path]), each: Object.freeze([...each]), ...(range ? { range: Object.freeze({ ...range }) } : {}) })
           return ref
         },
         length: (path: Path) => Effect.runSync(reader.length(root, path)),
@@ -145,7 +147,7 @@ export function make(storage: Storage) {
     stats: reader.stats,
     bytes: (root: string) => Effect.runSync(reader.bytes(root)),
     read: (root: string, path: Path = []) => Effect.runSync(reader.read(root, path)),
-    readReference: (ref: typeof Reference.Type) => Effect.runSync(ref.each === undefined ? reader.read(ref.root, ref.path) : reader.readEach(ref.root, ref.path, ref.each)),
+    readReference: (ref: typeof Reference.Type) => Effect.runSync(ref.range ? reader.sliceEach(ref.root, ref.path, ref.range.start, ref.range.end, ref.each ?? []) : ref.each === undefined ? reader.read(ref.root, ref.path) : reader.readEach(ref.root, ref.path, ref.each)),
   }
 }
 export type Instance = ReturnType<typeof make>

@@ -60,3 +60,24 @@ test("rich messages validate atomically and preserve container refinements", () 
   expect(() => refined.set(["rows", 0, "a"], 3)).toThrow("whole-value")
   expect(() => refined.set(["rows", 0], { a: 3, b: 2 })).toThrow()
 })
+
+
+test("selected ranges survive edits, commit release and a fresh reader", () => {
+  const stored = new Map<string, string>()
+  const options = { pageItems: 2, leafBytes: 128, cacheBytes: 0 }
+  const storage = { options, load: (hash: string) => { const text = stored.get(hash); if (text === undefined) throw new Error("Missing node"); return text } }
+  const grove = Grove.make(storage)
+  const initial = grove.bind(State).initial({ count: 0, messages: Array.from({ length: 12 }, (_, n) => ({ text: `message ${n}` })) })
+  const selected = Grove.selectionReference(initial.selectEach(["messages"], ["text"], { start: 3, end: 7 }))!
+  const next = initial.append(["messages"], [{ text: "new" }]).set(["messages", 4, "text"], "changed")
+  const nodes = grove.nodes([initial.root, next.root])
+  for (const [hash, node] of nodes) stored.set(hash, node.text)
+  grove.committed(nodes)
+  expect(grove.nodes().size).toBe(0)
+  const restored = Grove.make(storage)
+  expect(restored.readReference(selected)).toEqual(["message 3", "message 4", "message 5", "message 6"])
+  expect(restored.bind(State).open(next.root).read(["messages", 4, "text"])).toBe("changed")
+  expect(restored.stats().cachedBytes).toBe(0)
+  expect(() => initial.selectEach(["messages"], ["text"], { start: 4, end: 3 })).toThrow("range")
+  expect(() => initial.selectEach(["messages"], ["text"], { start: 0, end: 13 })).toThrow("range")
+})

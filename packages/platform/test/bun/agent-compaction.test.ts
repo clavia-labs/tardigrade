@@ -1,13 +1,17 @@
+import * as Grove from "@tardie/grove"
 import { expect, test } from "bun:test"
-import { Context, Effect } from "effect"
+import { Context, Effect, Schema } from "effect"
 import * as fc from "fast-check"
 import { RUNTIME_PROPERTY_OPTIONS, RUNTIME_PROPERTY_TEST_TIMEOUT_MS } from "../properties/runtime/config"
-import { AtomState, atom, createStore, EventLog, type StatefulAtom, type EffectCheckpoint } from "@clavia/tardigrade-core"
+import { AtomState, effectKey, atom, createEventLog, createStore, EventLog, type StatefulAtom, type EffectCheckpoint } from "@clavia/tardigrade-core"
 import { compact, compactHistory, DEFAULT_COMPACTION_POLICY, type CompactionOptions } from "@clavia/tardigrade-agent/atoms/compact"
 import { agentLog, selection, turn } from "../fixtures/agent"
 import { ModelInfo } from "@clavia/tardigrade-agent/actor/context"
 import { initialCompaction } from "@clavia/tardigrade-agent/atoms/durable/compaction"
-import { messages, trajectoryState, TrajectoryState } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
+import { inferenceState, initialInference, InferenceState, findTurn, readInference } from "@clavia/tardigrade-agent/atoms/durable/inference"
+import { agentReply } from "@clavia/tardigrade-agent/actor/methods"
+import { compactionRendering } from "@clavia/tardigrade-agent/atoms/durable/context"
+import { messages, trajectoryState } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
 import { treeSession, prepareTreeInput } from "@clavia/tardigrade-core/services/tree-state"
 import type { Event, Conversation } from "@clavia/tardigrade-agent/contracts/events"
 
@@ -152,16 +156,16 @@ function historyProjection(seed?: ReadonlyMap<string, unknown>, stored = new Map
         const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
         if (codec) seed.set(codec.name, codec.encode(store.get(node.atom)))
       }
-      const staged = trees.nodes()
-      for (const [hash, node] of staged) stored.set(hash, node.text)
-      trees.committed(staged)
+      const nodes = trees.nodes()
+      for (const [hash, node] of nodes) stored.set(hash, node.text)
+      trees.committed(nodes)
       return seed
     },
     archive: () => store.get(trajectoryState).read(["entries"]),
   }
 }
 
-test("Grove context matches compaction while the archive and accepted inputs retain original messages", () => {
+test("tree context matches compaction while the archive and accepted inputs retain original messages", () => {
   const projection = historyProjection(undefined, undefined, { toolOutputTokenLimit: 10, imageTokenEstimate: 0 })
   const model = { model: selection.model, contextWindowTokens: selection.contextWindowTokens }
   const text = "x".repeat(100_000)
@@ -191,7 +195,7 @@ test("Grove context matches compaction while the archive and accepted inputs ret
   } finally { projection.store.dispose() }
 })
 
-for (const tree of [false, true]) test(`context upgrades ${tree ? "tree" : "inline"} checkpoints and reapplies changed clipping policy`, () => {
+for (const tree of [false, true]) for (const context of [false, true]) test(`context upgrades ${tree ? "tree" : "inline"} ${context ? "context" : "archive"} checkpoints and reapplies changed clipping policy`, () => {
   const stored = new Map<string, string>()
   const archive = { entries: [
     { turnId: "old", message: { role: "user" as const, text: "summarized" } },
@@ -199,9 +203,19 @@ for (const tree of [false, true]) test(`context upgrades ${tree ? "tree" : "inli
   ], models: [] }
   const seed = new Map<string, unknown>([["agent.trajectory", archive], ["agent.compaction.state", { ...initialCompaction, through: 1, summary: "Earlier" }]])
   if (tree) {
-    const session = treeSession({ load: () => { throw new Error("Unexpected load") } })
-    seed.set("agent.trajectory", { _tag: "TreeState", root: session.bind(TrajectoryState).initial(archive).root })
-    for (const [hash, node] of session.nodes()) stored.set(hash, node.text)
+    const snapshot = Grove.JsonTree.make().from(archive)
+    seed.set("agent.trajectory", { _tag: "TreeState", root: snapshot.root })
+    for (const [hash, node] of snapshot.nodes) stored.set(hash, node.text)
+  }
+  if (context) {
+    const entries = [{ turnId: "", message: { role: "user" as const, text: "Earlier conversation summary (compaction applied):\nEarlier" } }, archive.entries[1]!]
+    const sizes = entries.map(entry => compactionRendering({}).sizeOf(entry.message))
+    const legacy = { entries, models: [], totals: [0, sizes[0]!, sizes[0]! + sizes[1]!], compaction: { ...initialCompaction, through: 1, summary: "Earlier" }, policy: JSON.stringify(compactionRendering({}).policy) }
+    if (tree) {
+      const snapshot = Grove.JsonTree.make().from(legacy)
+      seed.set("agent.context", { _tag: "TreeState", root: snapshot.root })
+      for (const [hash, node] of snapshot.nodes) stored.set(hash, node.text)
+    } else seed.set("agent.context", legacy)
   }
   const original = historyProjection(seed, stored)
   let restored: ReturnType<typeof historyProjection> | undefined
@@ -215,4 +229,48 @@ for (const tree of [false, true]) test(`context upgrades ${tree ? "tree" : "inli
     expect(restored.output().view).toMatchObject({ messages: [{ text: expect.stringContaining("Earlier") }, { text: expect.stringContaining("[truncated]") }, { text: "Suffix" }] })
     expect(restored.archive()).toEqual([...archive.entries, { turnId: "new", message: { role: "user", text: "Suffix" } }])
   } finally { original.store.dispose(); restored?.store.dispose() }
+})
+
+
+for (const legacy of [false, true]) test(`tree inference retains turns and duplicate checks (${legacy ? "legacy" : "current"} checkpoint)`, () => {
+  const turn = { turnId: "done", invocationRef: { method: "message", id: "completed" }, settlement: "completed" as const, answer: "saved reply", answerCallId: "call", rejection: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }
+  const cancelled = { ...turn, turnId: "cancelled", invocationRef: { method: "message", id: "cancelled" }, settlement: "cancelled" as const, cancellation: "stop", effects: [{ ref: { seq: 1, atom: "tools", act: "execute" }, pending: false }] }
+  const active = { ...turn, turnId: "active", invocationRef: { method: "message", id: "active" }, settlement: null, answer: null }
+  const state = Schema.decodeSync(InferenceState)({ ...initialInference, turns: [turn, cancelled, active], turnId: "active" })
+  const Requested = Schema.Union([Schema.Struct({ type: Schema.Literal("TurnRequested"), turnId: Schema.String, text: Schema.String, invocationRef: Schema.optionalKey(Schema.Struct({ method: Schema.String, id: Schema.String })) }), Schema.Struct({ type: Schema.Literal("TurnSettled"), turnId: Schema.String, outcome: Schema.Literal("failed"), reason: Schema.String })])
+  const stored = new Map<string, string>()
+  const treeStorage = { options: { cacheBytes: 0 }, load: (hash: string) => { const value = stored.get(hash); if (value === undefined) throw new Error("Missing tree node"); return value } }
+  const trees = treeSession(treeStorage)
+  const saved = { ...state, head: 2, seen: state.turns.map(turn => turn.turnId), invocations: state.turns.map(turn => JSON.stringify([turn.invocationRef!.method, turn.invocationRef!.id])), cancelled: cancelled.effects.map(work => effectKey(work.ref)) }
+  const options = { schema: Requested, atoms: { inferenceState }, trees, checkpoint: { position: 2, durable: [{ name: "agent.inference.state", position: 2, state: legacy ? state : saved }], operations: [] } }
+  const log = createEventLog(options)
+  let reopened: ReturnType<typeof createEventLog<typeof Requested.Type, typeof options.atoms>> | undefined
+  try {
+    const initial = log.initial
+    expect(readInference(initial.get(inferenceState)).turns.map(turn => turn.turnId)).toEqual(["active"])
+    expect(initial.get(inferenceState).read(["head"])).toBe(2)
+    expect(inferenceState[AtomState].decode(state)).toEqual(saved)
+    expect(initial.get(inferenceState).length(["turns"])).toBe(3)
+    expect(agentReply("done", initial.get)).toEqual({ status: "completed", output: { text: "saved reply" } })
+    expect(findTurn(initial.get(inferenceState), "cancelled")?.cancellation).toBe("stop")
+    const checkpoint = initial.checkpoint()!
+    const nodes = trees.nodes()
+    for (const [hash, node] of nodes) stored.set(hash, node.text)
+    trees.committed(nodes)
+    reopened = createEventLog({ ...options, trees: treeSession(treeStorage), checkpoint })
+    const restored = reopened.initial
+    expect(agentReply("done", restored.get)).toEqual(agentReply("done", initial.get))
+    expect(restored.get(inferenceState).read(["cancelled"])).toEqual(initial.get(inferenceState).read(["cancelled"]))
+    expect(() => reopened!.append(restored, { type: "TurnRequested", turnId: "done", text: "duplicate" })).toThrow("Duplicate turn")
+    expect(() => reopened!.append(restored, { type: "TurnRequested", turnId: "another", text: "duplicate", invocationRef: { method: "message", id: "completed" } })).toThrow("Duplicate turn for invocation")
+    const first = reopened.append(restored, { type: "TurnRequested", turnId: "colon-first", text: "First", invocationRef: { method: "a:b", id: "c" } })
+    const queued = reopened.append(first, { type: "TurnRequested", turnId: "colon-second", text: "Second", invocationRef: { method: "a", id: "b:c" } })
+    let finished = reopened.append(queued, { type: "TurnSettled", turnId: "active", outcome: "failed", reason: "fixture" })
+    expect(finished.get(inferenceState).read(["head"])).toBe(3)
+    expect(readInference(finished.get(inferenceState)).turns.map(turn => turn.turnId)).toEqual(["colon-first", "colon-second"])
+    for (const turnId of ["colon-first", "colon-second"]) finished = reopened.append(finished, { type: "TurnSettled", turnId, outcome: "failed", reason: "fixture" })
+    expect(finished.get(inferenceState).read(["head"])).toBe(5)
+    expect(readInference(finished.get(inferenceState)).turns).toEqual([])
+    expect(agentReply("done", finished.get)).toEqual({ status: "completed", output: { text: "saved reply" } })
+  } finally { log.dispose(); reopened?.dispose() }
 })
