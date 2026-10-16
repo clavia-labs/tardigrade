@@ -756,10 +756,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       checkpointSeed = checkpoint
       checkpointPosition = checkpoint?.position ?? 0
       // Atomic checkpoint commits make the prefix durable; recovery only needs its suffix.
-      const history = options.journal
+      let history: readonly Recorded<Event>[] | undefined = options.journal
         ? checkpoint ? yield* options.journal.readAfter(checkpoint.position) : yield* options.journal.read
         : (options.events ?? []).map(event => ({ event }))
-      const readFull = yield* Effect.cached(checkpoint && options.journal ? options.journal.read : Effect.succeed(history))
+      let readFull: typeof ReplayContext.Service["readFull"] | undefined = yield* Effect.cached(checkpoint && options.journal ? options.journal.read : Effect.succeed(history))
       setup = yield* options.setup.pipe(
         Effect.provideService(ReplayContext, { records: history, readFull, ...(checkpoint ? { checkpoint } : {}) }),
         Effect.provideService(Scope.Scope, scope), Effect.provide(options.actorContext(services)),
@@ -769,7 +769,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       definition = createEventLog({ ...(trees ? { trees } : {}), inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
         methods: setup.contracts, ...(options.delivery ? { address: options.delivery.address } : {}),
       }) }, ...(checkpoint ? { checkpoint } : {}) })
-      snapshot = yield* Effect.try({ try: () => definition.replay(history), catch: RuntimeError.from })
+      // takeHistory releases startup records and their cached reader before the actor's generator suspends for its lifetime.
+      const takeHistory = () => { const records = history!; history = undefined; readFull = undefined; return records }
+      snapshot = yield* Effect.try({ try: () => definition.replay(takeHistory()), catch: RuntimeError.from })
       if (options.journal && !options.inspect) {
         const retained = [...snapshot.pending(), ...snapshot.deferred(), ...snapshot.cancelled()].map(({ ref, request }) => ({ ref, request }))
         const known = new Set(inputs.map(input => effectKey(input.ref)))
