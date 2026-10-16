@@ -9,15 +9,18 @@ import type { RecordMetadata } from "../../services/journal"
 export type CheckpointReader = <Value extends Json>(name: string, schema: Schema.Decoder<Value>) => Value | undefined
 
 // durableMerkleAtom folds structured edits into lazy JSON snapshots; storage must support synchronous tree reads.
-export function durableMerkleAtom<State extends Json, Event>({ schema, initial, initialize, restore, ...options }: {
+export function durableMerkleAtom<State extends Json, Event>({ schema, initial, initialize, restore, migrate, ...options }: {
   readonly name: string
   readonly schema: Schema.Decoder<State>
   readonly input: Schema.Schema<Event>
   readonly initialize?: (read: CheckpointReader) => State
   readonly restore?: (state: MerkleTree<State>, read: CheckpointReader) => MerkleTree<State>
+  // migrate prepares inline checkpoint state before validation; stored tree roots reopen directly (platform/test/bun/agent-compaction.test.ts).
+  readonly migrate?: (stored: unknown) => unknown
   readonly initial: State
   readonly reduce: (state: MerkleTree<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => MerkleTree<State>
 }) {
+  const prepare = (value: unknown) => migrate ? migrate(value) : value
   treeSchema(schema.ast)
   const makeBound = (session: TreeSession) => session.bind(schema)
   const bindings = new WeakMap<TreeSession, ReturnType<typeof makeBound>>()
@@ -42,14 +45,14 @@ export function durableMerkleAtom<State extends Json, Event>({ schema, initial, 
     initial: service => binding(service.trees).initial(initialize ? initialize(readCheckpoint(service)) : initial),
     restore: (value, service) => {
       const bound = binding(service.trees)
-      const view = Schema.is(TreeState)(value) ? bound.open(value.root) : bound.initial(value)
+      const view = Schema.is(TreeState)(value) ? bound.open(value.root) : bound.initial(prepare(value))
       return restore ? bound.check(restore(view, readCheckpoint(service))) : view
     },
     check: (view, service) => binding(service.trees).check(view),
     hold: (view, service) => service.trees?.hold(service, options.name, view.root),
     state: {
       name: options.name,
-      decode: Schema.decodeUnknownSync(schema),
+      decode: value => Schema.decodeUnknownSync(schema)(prepare(value)),
       encode: value => ({ _tag: "TreeState", root: (value as MerkleTree<State>).root }),
       tree: value => (value as MerkleTree<State>).root,
     },

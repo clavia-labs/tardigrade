@@ -6,7 +6,7 @@ import { ModelInfo } from "../actor/context"
 import { modelSelection } from "../compat/model"
 import { Generate, requests, failureMessage } from "../contracts/acts"
 import type { OutputContract } from "../contracts/acts"
-import { inferenceState } from "./durable/inference"
+import { inferenceState, readInference } from "./durable/inference"
 import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
 import { type ToolView } from "./tools"
 
@@ -30,7 +30,8 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
     get(usdSpend)
     get(timeSpend)
     const input = get(agentAtom)
-    const state = get(inferenceState)
+    const tree = get(inferenceState)
+    const state = readInference(tree)
     const turn = state.turns.find(turn => turn.turnId === state.turnId)
 
     if (turn && turn.cancellation !== null) {
@@ -45,7 +46,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
       }
     }
 
-    const cancelled = new Set(state.turns.filter(turn => turn.cancellation !== null).flatMap(turn => turn.effects.map(work => effectKey(work.ref))))
+    const cancelled = new Set([...tree.read(["cancelled"]), ...state.turns.filter(turn => turn.cancellation !== null).flatMap(turn => turn.effects.map(work => effectKey(work.ref)))])
     const proposals = {
       events: Object.fromEntries(Object.entries({ ...input.context.events, ...input.tools.events }).filter(([, proposal]) => {
         const event = proposal.event

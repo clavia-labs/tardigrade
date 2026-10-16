@@ -58,6 +58,9 @@ test("cold and hydrated updates produce identical roots across mixed operations"
       expect(cold.logicalBytes).toBe(Buffer.byteLength(JSON.stringify(value)))
       for (const node of cold.nodes.values()) stored.set(node.hash, node.text)
       expect(tree.materialize(JsonTree.hydrate(cold.root, stored))).toEqual(value)
+      const start = step.index % (value.history.length + 1)
+      const end = Math.min(value.history.length, start + step.count)
+      expect(await Effect.runPromise(reader.sliceEach(current.root, ["history"], start, end, ["nested"]))).toEqual(value.history.slice(start, end).map(item => (item as { readonly nested: Json }).nested))
       expect(reader.stats().cachedBytes).toBeLessThanOrEqual(options.cacheBytes)
     }
     expect(tree.materialize(JsonTree.hydrate(first, stored))).toEqual({ history: [], state: { count: 0 } })
@@ -137,4 +140,53 @@ test("concurrent reads account for each cached node once", async () => {
   expect(reader.stats().cachedBytes).toBe(Buffer.byteLength(text))
   reader.clear()
   expect(reader.stats().cachedBytes).toBe(0)
+})
+
+test("batches preserve sequential roots across overlapping and mixed edits", async () => {
+  const edit = fc.record({ kind: fc.nat(6), index: fc.nat(30), value: fc.nat(1000) })
+  await fc.assert(fc.asyncProperty(fc.constantFrom(2, 4, 16), fc.array(edit, { minLength: 1, maxLength: 60 }), async (pageItems, steps) => {
+    const tree = JsonTree.make({ pageItems, fanout: 3, tailBytes: 16, leafBytes: 64 })
+    const initial = tree.from({ items: Array.from({ length: 32 }, (_, n) => ({ n, text: "x".repeat(80), nested: [0, 1] })), control: { a: 0, b: 0 }, added: null })
+    const edits: JsonTree.Edit[] = steps.map(({ kind, index, value }) => {
+      switch (kind) {
+        case 0: return { type: "set", path: ["control", "a"], value }
+        case 1: return { type: "set", path: ["control"], value: { a: value, b: value } }
+        case 2: return { type: "set", path: ["items", index % 32, "n"], value }
+        case 3: return { type: "append", path: ["items", index % 32, "nested"], values: [value] }
+        case 4: return { type: "set", path: ["added"], value: { value } }
+        case 5: return { type: "append", path: ["items"], values: [{ n: value, text: "new", nested: [] }] }
+        default: return { type: "set", path: ["fresh", "value"], value }
+      }
+    })
+    edits.unshift({ type: "set", path: ["fresh"], value: { value: 0 } })
+    let sequential = initial
+    for (const edit of edits) sequential = edit.type === "set" ? tree.set(sequential, edit.path, edit.value) : tree.append(sequential, edit.path, edit.values)
+    const batched = tree.batch(initial, edits)
+    const stored = texts(initial)
+    const reader = makeReader(load(stored), { pageItems, fanout: 3, tailBytes: 16, leafBytes: 64, cacheBytes: 0 })
+    const cold = await Effect.runPromise(reader.batch(initial.root, edits))
+    expect(cold.root).toBe(sequential.root)
+    for (const [hash, node] of cold.nodes) stored.set(hash, node.text)
+    expect(tree.materialize(JsonTree.hydrate(cold.root, stored))).toEqual(tree.materialize(sequential))
+    expect(batched.root).toBe(sequential.root)
+    expect(tree.materialize(batched)).toEqual(tree.materialize(sequential))
+    expect(tree.materialize(initial)).not.toHaveProperty("fresh")
+    expect(tree.batch(initial, []).root).toBe(initial.root)
+  }), { numRuns: 150 })
+})
+
+test("batches hash shared ancestors once and leave failed edits unpublished", () => {
+  const tree = JsonTree.make({ pageItems: 2, fanout: 2, tailBytes: 16, leafBytes: 64 })
+  const initial = tree.from({ items: Array.from({ length: 64 }, (_, n) => ({ n, text: "x".repeat(80) })), status: "idle" })
+  const edits: JsonTree.Edit[] = Array.from({ length: 8 }, (_, n) => ({ type: "set", path: ["items", n, "n"], value: n + 100 }))
+  let sequential = initial, hashes = 0
+  for (const edit of edits) {
+    sequential = tree.set(sequential, edit.path, (edit as Extract<JsonTree.Edit, { type: "set" }>).value)
+    hashes += sequential.metrics.hashedNodes
+  }
+  const batched = tree.batch(initial, edits)
+  expect(batched.root).toBe(sequential.root)
+  expect(batched.metrics.hashedNodes).toBeLessThan(hashes / 2)
+  expect(() => tree.batch(initial, [...edits, { type: "set", path: ["items", 64], value: 0 }])).toThrow("Invalid array path")
+  expect(tree.materialize(initial)).toHaveProperty("status", "idle")
 })

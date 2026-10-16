@@ -60,3 +60,57 @@ test("rich messages validate atomically and preserve container refinements", () 
   expect(() => refined.set(["rows", 0, "a"], 3)).toThrow("whole-value")
   expect(() => refined.set(["rows", 0], { a: 3, b: 2 })).toThrow()
 })
+
+
+test("selected ranges survive edits, commit release and a fresh reader", () => {
+  const stored = new Map<string, string>()
+  const options = { pageItems: 2, leafBytes: 128, cacheBytes: 0 }
+  const storage = { options, load: (hash: string) => { const text = stored.get(hash); if (text === undefined) throw new Error("Missing node"); return text } }
+  const grove = Grove.make(storage)
+  const initial = grove.bind(State).initial({ count: 0, messages: Array.from({ length: 12 }, (_, n) => ({ text: `message ${n}` })) })
+  const selected = Grove.selectionReference(initial.selectEach(["messages"], ["text"], { start: 3, end: 7 }))!
+  const next = initial.append(["messages"], [{ text: "new" }]).set(["messages", 4, "text"], "changed")
+  const nodes = grove.nodes([initial.root, next.root])
+  for (const [hash, node] of nodes) stored.set(hash, node.text)
+  grove.committed(nodes)
+  expect(grove.nodes().size).toBe(0)
+  const restored = Grove.make(storage)
+  expect(restored.readReference(selected)).toEqual(["message 3", "message 4", "message 5", "message 6"])
+  expect(restored.bind(State).open(next.root).read(["messages", 4, "text"])).toBe("changed")
+  expect(restored.stats().cachedBytes).toBe(0)
+  expect(() => initial.selectEach(["messages"], ["text"], { start: 4, end: 3 })).toThrow("range")
+  expect(() => initial.selectEach(["messages"], ["text"], { start: 0, end: 13 })).toThrow("range")
+})
+
+test("typed batches publish a final root atomically and preserve frozen selections", () => {
+  const stored = new Map<string, string>()
+  const storage = { options: { pageItems: 2, tailBytes: 16, leafBytes: 64, cacheBytes: 0 }, load: (hash: string) => { const text = stored.get(hash); if (text === undefined) throw new Error("Missing node"); return text } }
+  const grove = Grove.make(storage)
+  const initial = grove.bind(State).initial({ count: 0, messages: Array.from({ length: 100 }, (_, n) => ({ text: `message ${n}` })) })
+  const selected = Grove.selectionReference(initial.selectEach(["messages"], ["text"], { start: 0, end: 2 }))!
+  const first = grove.nodes([initial.root])
+  for (const [hash, node] of first) stored.set(hash, node.text)
+  grove.committed(first)
+  const next = initial.batch(edit => {
+    edit.set(["count"], 1)
+    edit.set(["messages", 0, "text"], "changed")
+    edit.append(["messages"], [{ text: "new" }])
+    edit.set(["messages", 100, "text"], "newer")
+  })
+  expect(next.root).toBe(initial.set(["count"], 1).set(["messages", 0, "text"], "changed").append(["messages"], [{ text: "new" }]).set(["messages", 100, "text"], "newer").root)
+  const before = [...grove.nodes().keys()]
+  expect(() => initial.batch(edit => { edit.set(["count"], 2); edit.set(["messages", 999, "text"], "invalid") })).toThrow()
+  expect([...grove.nodes().keys()]).toEqual(before)
+  expect(() => initial.batch(edit => { edit.set(["count"], "invalid" as never) })).toThrow()
+  expect(() => initial.batch((async () => {}) as never)).toThrow("synchronous")
+  expect(initial.batch(() => {})).toBe(initial)
+  const nodes = grove.nodes([initial.root, next.root])
+  for (const [hash, node] of nodes) stored.set(hash, node.text)
+  grove.committed(nodes)
+  const reopened = Grove.make(storage)
+  expect(reopened.readReference(selected)).toEqual(["message 0", "message 1"])
+  const restored = reopened.bind(State).open(next.root)
+  expect(restored.read(["count"])).toBe(1)
+  expect(restored.read(["messages", 100, "text"])).toBe("newer")
+  expect(reopened.stats().cachedBytes).toBe(0)
+})

@@ -1,4 +1,3 @@
-import { logRegistry } from "../services/log-state"
 import { treeSession, resolveInput } from "../services/tree-state"
 import type { ReadonlyIndex } from "./log-view"
 import { initialStateSeed, type StateSeed } from "../initialise"
@@ -131,8 +130,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     let snapshot: ReturnType<typeof definition.replay>
     const localRecovery = new Map<string, ReturnType<typeof snapshot.deferred>[number]>()
     const trees = options.journal?.trees ? treeSession(options.journal.trees) : options.journal ? undefined : treeSession({ load: () => { throw new RuntimeError("In-memory execution cannot load unstaged tree nodes") } })
-    const logs = logRegistry(options.journal?.logs)
-    const resolve = (request: Parameters<typeof resolveInput>[0]) => resolveInput(request, trees ? ref => trees.readReference(ref) : undefined, logs)
+    const resolve = (request: Parameters<typeof resolveInput>[0]) => resolveInput(request, trees ? ref => trees.readReference(ref) : undefined)
     const source = createRecordSource<Event>()
     const bindings = atom<ReadonlyIndex<object, EffectRef>>(new Map())
     let checkpointSeed: EffectCheckpoint | undefined
@@ -147,8 +145,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const persistCheckpoint = (position: number, records: readonly Recorded<Event>[], checkpoint: EffectCheckpoint, inputs?: EffectInputChanges) => Effect.gen(function* () {
       const journal = options.journal!
       const staged = inputs?.trees ?? (trees ? { nodes: trees.nodes(), roots: checkpoint.durable.flatMap(entry => entry.tree ? [{ name: entry.name, root: entry.tree }] : []), held: trees.held() } : undefined)
-      const logChanges = inputs?.logs ?? logs.staged()
-      const changes = { ...inputs, ...(staged ? { trees: staged } : {}), logs: logChanges }
+      const changes = { ...inputs, ...(staged ? { trees: staged } : {}) }
       const referencedBytes = yield* Effect.try({ try: () => checkpoint.durable.reduce((bytes, entry) => bytes + (entry.tree ? trees!.bytes(entry.tree) : 0), 0), catch: RuntimeError.from })
       if (journal.treeCheckpoint) {
         const payload = yield* Effect.try({ try: () => encodeTree(checkpoint), catch: RuntimeError.from })
@@ -161,11 +158,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         yield* journal.appendWithCheckpoint(position, records, { position: checkpoint.position, payload, digest }, changes)
       }
       if (staged) trees!.committed(staged.nodes)
-      logs.committed(logChanges)
     })
     const projectionContext: typeof EventLog.Service = {
       ...(trees ? { trees } : {}),
-      logs,
       events: source.observedEvents,
       records: source.observedRecords,
       bindings,
@@ -249,10 +244,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           ? next.pending().filter(work => effectKey(work.ref) === effectKey(event.ref)).map(({ ref, request }) => ({ ref, request })) : [])
         const roots = next.treeRoots()
         const held = trees?.held() ?? []
-        const treeChanges = trees ? { nodes: trees.nodes([...roots.map(entry => entry.root), ...held, ...put.flatMap(({ request }) => request.selections?.flatMap(ref => "root" in ref ? [ref.root] : []) ?? []), ...(checkpoint?.durable.flatMap(entry => entry.tree ? [entry.tree] : []) ?? [])]), roots, held } : undefined
-        const logChanges = checkpoint || put.some(({ request }) => request.selections?.length) ? logs.staged() : undefined
+        const treeChanges = trees ? { nodes: trees.nodes([...roots.map(entry => entry.root), ...held, ...put.flatMap(({ request }) => request.selections?.map(ref => ref.root) ?? []), ...(checkpoint?.durable.flatMap(entry => entry.tree ? [entry.tree] : []) ?? [])]), roots, held } : undefined
         const inputChanges = {
-          ...(logChanges ? { logs: logChanges } : {}),
           ...(treeChanges ? { trees: treeChanges } : {}),
           put,
           remove: records.flatMap(({ event }) => {
@@ -285,7 +278,6 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           return yield* persistenceFailure
         })))
         if (treeChanges) trees!.committed(treeChanges.nodes)
-        if (logChanges && !checkpoint) logs.committed(logChanges)
         for (const input of inputChanges.put) persistedInputRefs.set(effectKey(input.ref), input.ref)
         for (const ref of inputChanges.remove) persistedInputRefs.delete(effectKey(ref))
       }
@@ -774,7 +766,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       )
       const inputs = options.journal ? yield* options.journal.readInputs : []
       for (const input of inputs) persistedInputRefs.set(effectKey(input.ref), input.ref)
-      definition = createEventLog({ logs, ...(trees ? { trees } : {}), inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
+      definition = createEventLog({ ...(trees ? { trees } : {}), inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
         methods: setup.contracts, ...(options.delivery ? { address: options.delivery.address } : {}),
       }) }, ...(checkpoint ? { checkpoint } : {}) })
       snapshot = yield* Effect.try({ try: () => definition.replay(history), catch: RuntimeError.from })

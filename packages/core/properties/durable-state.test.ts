@@ -1,5 +1,3 @@
-import { durableLogAtom, type Log } from "../src/atoms/durable/log"
-import { logRegistry, logSelectionReference } from "../src/services/log-state"
 import { expect, test } from "bun:test"
 import { Context, Effect, Layer, Schema } from "effect"
 import { AtomState } from "../src/initialise"
@@ -133,7 +131,6 @@ test("projection and proposal roots survive advancement and release with their r
   try {
     const first = log.replay([{ event: { type: "Changed", value: 1 } }])
     const selection = first.effects()[0]!.request.selections![0]!
-    if (!("root" in selection)) throw new Error("Expected tree selection")
     const original = selection.root
     const next = log.append(first, { type: "Changed", value: 2 })
     expect(next.view().node.view).toBe(2)
@@ -151,104 +148,4 @@ test("projection and proposal roots survive advancement and release with their r
     log.replay([{ event: { type: "Changed", value: 8 } }])
   } finally { log.dispose() }
   expect(trees.held()).toHaveLength(0)
-})
-
-test("log generations accept replayed prefixes and reject divergent versions", () => {
-  const Added = Schema.Struct({ type: Schema.Literal("Added"), text: Schema.String })
-  const history = durableLogAtom({ name: "history", entry: Schema.String, meta: { schema: Schema.Struct({ count: Schema.Int }), initial: { count: 0 } }, input: Added, reduce: (state, event) => ({ ...state, log: state.log.append([event.text]) }) })
-  const registry = logRegistry()
-  const events = createEventLog({ schema: Added, atoms: { history }, logs: registry })
-  try {
-    const initial = events.initial
-    const a = events.append(initial, { type: "Added", text: "A" })
-    const original = a.get(history).log
-    const selected = logSelectionReference(original.select(0, 1))!
-    expect(registry.read(selected)).toEqual(["A"])
-    expect(events.append(initial, { type: "Added", text: "A" }).get(history).log.slice(0, 1)).toEqual(["A"])
-    expect(() => events.append(initial, { type: "Added", text: "B" }).get(history)).toThrow("Conflicting log generation")
-    original.append(["B"]).append(["C"])
-    expect(() => original.append(["D", "E"])).toThrow("Conflicting log generation")
-    expect(registry.read(selected)).toEqual(["A"])
-    const restarted = original.restart(["replacement"])
-    expect(registry.read(logSelectionReference(restarted.select(0, 1))!)).toEqual(["replacement"])
-  } finally { events.dispose() }
-})
-
-test("log metadata validates its initial value and snapshots the configuration", () => {
-  const Added = Schema.Struct({ type: Schema.Literal("Added") })
-  const meta = Schema.Struct({ count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) })
-  const options = { name: "initial", entry: Schema.String, input: Added, meta: { schema: meta, initial: { count: -1 } }, reduce: (state: { readonly log: Log<string>; readonly meta: { readonly count: number } }) => state }
-  expect(() => durableLogAtom(options)).toThrow()
-  const initial = { count: 0 }
-  const history = durableLogAtom({ ...options, meta: { schema: meta, initial } })
-  expect(() => durableLogAtom({ ...options, meta: { schema: meta, initial }, chunkItems: 0 })).toThrow("chunkItems")
-  initial.count = -1
-  const events = createEventLog({ schema: Added, atoms: { history } })
-  try { expect(events.initial.get(history).meta).toEqual({ count: 0 }) } finally { events.dispose() }
-})
-
-test("log entries and headers freeze descendants of already-frozen containers", () => {
-  const Added = Schema.Struct({ type: Schema.Literal("Added") })
-  const entry = Object.freeze({ nested: { count: 0 } })
-  const meta = Object.freeze({ nested: { count: 1 } })
-  const history = durableLogAtom({ name: "frozen", entry: Schema.Struct({ nested: Schema.Struct({ count: Schema.Int }) }), input: Added, meta: { schema: Schema.Struct({ nested: Schema.Struct({ count: Schema.Int }) }), initial: { nested: { count: 0 } } }, reduce: state => ({ log: state.log.append([entry]), meta }) })
-  const events = createEventLog({ schema: Added, atoms: { history } })
-  try {
-    const state = events.append(events.initial, { type: "Added" }).get(history)
-    expect(Object.isFrozen(state.log.at(0).nested)).toBe(true)
-    expect(Object.isFrozen(state.meta.nested)).toBe(true)
-    expect(() => { entry.nested.count = 2 }).toThrow()
-    expect(() => { meta.nested.count = 3 }).toThrow()
-    expect(state.log.at(0).nested.count).toBe(0)
-    expect(state.meta.nested.count).toBe(1)
-  } finally { events.dispose() }
-})
-
-
-test("log checkpoints restore a lazy immutable prefix and stage only new rows", () => {
-  const Added = Schema.Struct({ type: Schema.Literal("Added"), count: Schema.Int })
-  const history = durableLogAtom({ name: "stored", chunkItems: 2, cacheChunks: 1, entry: Schema.Struct({ nested: Schema.Struct({ count: Schema.Int }) }), input: Added, meta: { schema: Schema.Struct({ count: Schema.Int }), initial: { count: 0 } }, reduce: (state, event) => ({ ...state, log: state.log.append([{ nested: { count: event.count } }]) }) })
-  let loads = 0
-  const rows = new Map<number, unknown>()
-  const storage = { load: (_name: string, start: number, end: number) => { loads++; return Array.from({ length: end - start }, (_, index) => Object.freeze({ nested: { count: (rows.get(start + index) as { nested: { count: number } }).nested.count } })) } }
-  const logs = logRegistry(storage)
-  const original = createEventLog({ schema: Added, atoms: { history }, logs })
-  let stored: unknown
-  try {
-    const snapshot = original.append(original.initial, { type: "Added", count: 1 })
-    stored = history[AtomState].encode(snapshot.get(history))
-    const changes = logs.staged()
-    for (const entry of changes.entries) rows.set(entry.index, entry.value)
-    logs.committed(changes)
-    expect(logs.staged().entries).toEqual([])
-  } finally { original.dispose() }
-  const recovered = logRegistry(storage)
-  const replay = createEventLog({ schema: Added, atoms: { history }, logs: recovered, checkpoint: { position: 0, durable: [{ name: "stored", state: stored, position: 0 }], operations: [] } })
-  try {
-    const state = replay.initial.get(history)
-    expect(state.log.length).toBe(1)
-    expect(loads).toBe(0)
-    const next = state.log.append([{ nested: { count: 2 } }, { nested: { count: 3 } }, { nested: { count: 4 } }])
-    expect(recovered.staged().entries).toEqual([2, 3, 4].map((count, index) => ({ log: next.name, index: index + 1, value: { nested: { count } } })))
-    expect(next.slice(1, 4)).toEqual([2, 3, 4].map(count => ({ nested: { count } })))
-    expect(loads).toBe(0)
-    const entry = state.log.at(0)
-    expect(Object.isFrozen(entry.nested)).toBe(true)
-    expect(Reflect.set(entry.nested, "count", 3)).toBe(false)
-    expect(recovered.read(logSelectionReference(state.log.select(0, 1))!)).toEqual([{ nested: { count: 1 } }])
-  } finally { replay.dispose() }
-})
-
-
-test("log reducers reject another atom's log", () => {
-  const Added = Schema.Struct({ type: Schema.Literal("Added") })
-  const foreign = durableLogAtom({ name: "foreign", entry: Schema.String, input: Added, meta: { schema: Schema.Struct({}), initial: {} }, reduce: state => state })
-  let other!: Log<string>
-  const history = durableLogAtom({ name: "history", entry: Schema.String, input: Added, meta: { schema: Schema.Struct({}), initial: {} }, reduce: state => ({ ...state, log: other }) })
-  const events = createEventLog({ schema: Added, atoms: { foreign, history }, logs: logRegistry() })
-  try {
-    const initial = events.initial
-    other = initial.get(foreign).log
-    expect(() => events.append(initial, { type: "Added" }).get(history)).toThrow("foreign log")
-  } finally { events.dispose() }
 })

@@ -1,5 +1,7 @@
 import { FORMAT_VERSION, digest, elementBytes, bytes, descriptor, mergeablePages, payload, plan, type Descriptor, type Json, type Node, type Options, type Path, type Tree, DEFAULT_FANOUT, DEFAULT_LEAF_BYTES, DEFAULT_PAGE_ITEMS, DEFAULT_TAIL_BYTES } from "./codec"
 
+export type Edit = { readonly type: "set"; readonly path: Path; readonly value: Json } | { readonly type: "append"; readonly path: Path; readonly values: readonly Json[] }
+
 // make's memo reuses nodes for repeated imports of the same frozen values; a builder that only edits loaded trees passes memo: false so it retains no built nodes.
 export function make(options: Options = {}, { memo = true }: { readonly memo?: boolean } = {}) {
   const pageItems = options.pageItems ?? DEFAULT_PAGE_ITEMS
@@ -171,6 +173,76 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
     if (tail[1]) children.push(tail[1])
     return children.length <= fanout ? [concat(children)] : [concat(children.slice(0, fanout)), concat(children.slice(fanout))]
   }
+  const append = (node: Node, values: readonly Json[]): Node => {
+    if (node.tag === "v") {
+      const value = materialize(node)
+      if (!Array.isArray(value)) throw new Error("Append target must be an array")
+      return importValue([...value, ...values])
+    }
+    if (node.tag !== "a") throw new Error("Append target must be an array")
+    let segment = node.links[0]!
+    for (const value of values) {
+      const next = push(segment, importValue(value))
+      segment = next.length === 1 ? next[0]! : concat(next)
+    }
+    return array(segment)
+  }
+  const apply = (node: Node, edit: Edit) => updateAt(node, edit.path, child => edit.type === "set" ? importValue(edit.value) : append(child, edit.values))
+  const groups = (edits: readonly Edit[]) => {
+    const result = new Map<string | number, Edit[]>()
+    for (const edit of edits) {
+      const [key, ...path] = edit.path
+      const group = result.get(key!) ?? []
+      group.push({ ...edit, path }); result.set(key!, group)
+    }
+    return result
+  }
+  const editSegment = (node: Node, edits: readonly Edit[]): Node => {
+    if (node.tag === "p") {
+      let current = node
+      for (const edit of edits) current = updateSegment(current, edit.path[0] as number, child => apply(child, { ...edit, path: edit.path.slice(1) }))
+      return current
+    }
+    if (node.tag === "r") {
+      const links = [...node.links]
+      for (const [key, group] of groups(edits)) links[key as number] = batch(links[key as number]!, group)
+      return refs(links)
+    }
+    let offset = 0
+    return concat(node.links.map(child => {
+      const start = offset; offset += child.count
+      const group = edits.filter(edit => (edit.path[0] as number) >= start && (edit.path[0] as number) < offset).map(edit => ({ ...edit, path: [(edit.path[0] as number) - start, ...edit.path.slice(1)] }))
+      return group.length ? editSegment(child, group) : child
+    }))
+  }
+  // batch preserves edit order within each subtree and hashes shared structured ancestors once between whole-subtree edits (test/tree.test.ts).
+  const batch = (original: Node, edits: readonly Edit[]): Node => {
+    if (!edits.length) return original
+    const replacement = edits.findIndex(edit => !edit.path.length)
+    if (replacement >= 0) {
+      const before = batch(original, edits.slice(0, replacement))
+      return batch(apply(before, edits[replacement]!), edits.slice(replacement + 1))
+    }
+    if (original.tag === "v") return edits.reduce(apply, original)
+    if (original.tag === "a") {
+      for (const edit of edits) {
+        const key = edit.path[0]
+        if (typeof key !== "number" || !Number.isSafeInteger(key) || key < 0 || key >= original.count) throw new Error("Invalid array path")
+      }
+      return array(editSegment(original.links[0]!, edits))
+    }
+    if (original.tag !== "o") throw new Error("Invalid object path")
+    const fields: [string, Node][] = fieldNames(original).map((key, index) => [key, original.links[index]!])
+    for (const [key, group] of groups(edits)) {
+      if (typeof key !== "string") throw new Error("Invalid object path")
+      const index = fields.findIndex(([name]) => name === key)
+      if (index < 0) {
+        if (group[0]!.path.length) throw new Error("Missing object path")
+        fields.push([key, batch(leaf(null), group)])
+      } else fields[index] = [key, batch(fields[index]![1], group)]
+    }
+    return object(fields)
+  }
   const run = (work: () => Node) => {
     metrics = { hashedNodes: 0, hashedBytes: 0, visitedValues: 0, reusedNodes: 0 }
     return plan(work(), metrics)
@@ -178,20 +250,8 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
   return {
     from: (value: Json) => run(() => importValue(value)),
     set: (plan: Tree, path: Path, value: Json) => run(() => updateAt(plan.node, path, () => importValue(value))),
-    append: (plan: Tree, path: Path, values: readonly Json[]) => run(() => updateAt(plan.node, path, node => {
-      if (node.tag === "v") {
-        const value = materialize(node)
-        if (!Array.isArray(value)) throw new Error("Append target must be an array")
-        return importValue([...value, ...values])
-      }
-      if (node.tag !== "a") throw new Error("Append target must be an array")
-      let segment = node.links[0]!
-      for (const value of values) {
-        const next = push(segment, importValue(value))
-        segment = next.length === 1 ? next[0]! : concat(next)
-      }
-      return array(segment)
-    })),
+    append: (plan: Tree, path: Path, values: readonly Json[]) => run(() => updateAt(plan.node, path, node => append(node, values))),
+    batch: (plan: Tree, edits: readonly Edit[]) => run(() => batch(plan.node, edits)),
     materialize: (plan: Tree) => materialize(plan.node),
   }
 }
