@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.50.0](https://github.com/clavia-labs/tardigrade/compare/v0.49.1...v0.50.0) (2026-10-16)
+
+
+### Features
+
+* **core:** add durable log atoms ([#767](https://github.com/clavia-labs/tardigrade/issues/767)) ([7ac621b](https://github.com/clavia-labs/tardigrade/commit/7ac621b7a7c3d46723513a1b512e31e4c7049fc3))
+
+
+### Bug Fixes
+
+* **core:** release replay history ([#770](https://github.com/clavia-labs/tardigrade/issues/770)) ([c841b2f](https://github.com/clavia-labs/tardigrade/commit/c841b2f9dcd90480512f145803aa1cd699a5a556))
+
 ## [0.49.1](https://github.com/clavia-labs/tardigrade/compare/v0.49.0...v0.49.1) (2026-10-15)
 
 
