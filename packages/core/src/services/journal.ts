@@ -1,3 +1,4 @@
+import type { LogStorage, LogChanges } from "./log-state"
 import type { TreeStorage, TreeChanges } from "./tree-state"
 import type { Tree } from "@tardie/grove"
 import { Schema, type Effect } from "effect"
@@ -46,6 +47,7 @@ export type PendingEffectInput = typeof PendingEffectInput.Type
 // EffectInputChanges commits accepted payloads and terminal releases with journal records (quint/checkpoint/inputLifecycle.qnt, inputRetained).
 export interface EffectInputChanges {
   readonly trees?: TreeChanges
+  readonly logs?: LogChanges
   readonly put?: readonly PendingEffectInput[]
   readonly remove?: readonly EffectRef[]
 }
@@ -53,6 +55,7 @@ export interface EffectInputChanges {
 // Journal stores an ordered event prefix; append commits a batch atomically or rejects a stale expected length.
 export interface Journal<Event extends object> {
   readonly trees?: TreeStorage
+  readonly logs?: LogStorage
   readonly treeCheckpoint?: {
     readonly read: Effect.Effect<StoredCheckpoint | TreeCheckpoint | undefined, Error>
     readonly append: (expectedLength: number, events: readonly Recorded<Event>[], checkpoint: TreeCheckpoint, inputs?: EffectInputChanges) => Effect.Effect<void, Error>

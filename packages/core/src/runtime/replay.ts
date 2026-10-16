@@ -1,3 +1,4 @@
+import type { LogRegistry } from "../services/log-state"
 import { treeSession, type TreeSession } from "../services/tree-state"
 import { IndexView, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
 import { historicalEventDecoder } from "../event/versioned"
@@ -44,6 +45,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   readonly digestMinBytes?: number
   readonly checkpoint?: EffectCheckpoint
   readonly inputs?: readonly PendingEffectInput[]
+  readonly logs?: LogRegistry
   readonly trees?: TreeSession
 }) {
   const trees = options.trees ?? treeSession({ load: () => { throw new Error("Replay cannot load unstaged tree nodes without storage") } })
@@ -246,6 +248,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     const projectionContext: typeof EventLog.Service = {
       trees,
+      ...(options.logs ? { logs: options.logs } : {}),
       events: source.observedEvents,
       records: source.observedRecords,
       bindings,
@@ -413,7 +416,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const owner = actOwners.get(proposal.identity)
         if (owner !== undefined && owner !== name) throw new Error("An act request must belong to one source")
         actOwners.set(proposal.identity, name)
-        for (const [index, selection] of (proposal.request.selections ?? []).entries()) trees.hold(proposalRoots, JSON.stringify([name, index]), selection.root)
+        for (const [index, selection] of (proposal.request.selections ?? []).entries()) if ("root" in selection) trees.hold(proposalRoots, JSON.stringify([name, index]), selection.root)
         const prepared = prepareRequest(proposal.request)
         const executionRequest = prepared.request
         const previousRequest = executionDeclarations.get(proposal.identity)

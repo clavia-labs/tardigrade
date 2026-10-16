@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util"
 import { Schema } from "effect"
 import { Atom } from "effect/unstable/reactivity"
-import { durableAtom } from "./durable"
+import { durableAtom } from "./durable/atom"
 import { EffectRef, effectKey, RuntimeError, Cancelled, EffectCancelled, PromiseTimedOut } from "../runtime/effects"
 
 export type PromiseState<Value, Error> =

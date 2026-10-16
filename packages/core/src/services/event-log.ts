@@ -1,3 +1,4 @@
+import type { LogRegistry } from "./log-state"
 import type { TreeSession } from "./tree-state"
 import type { ReadonlyIndex, ReadonlyLog } from "../runtime/log-view"
 import { Context, Schema, type Effect } from "effect"
@@ -13,6 +14,7 @@ import type { EffectCheckpoint } from "../runtime/replay"
 export class EventLog extends Context.Service<EventLog, {
   // events extends an immutable prefix; another history requires another source atom.
   readonly trees?: TreeSession
+  readonly logs?: LogRegistry
   readonly events: Atom<ReadonlyLog<unknown>>
   readonly records?: Atom<ReadonlyLog<ObservedRecord<unknown>>>
   // position is the absolute log position immediately before events[0].

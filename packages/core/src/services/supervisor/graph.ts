@@ -4,7 +4,7 @@ import { effectAtom } from "../../atoms/effect"
 import { ChildPlacement, ThreadDepth, ThreadCoordinate } from "../../actor/thread"
 import { defineActor } from "../../actor/definition"
 import { InitialState } from "../../initialise"
-import { durableAtom } from "../../atoms/durable"
+import { durableAtom } from "../../atoms/durable/atom"
 
 
 const Allocation = Schema.Struct({

@@ -1,10 +1,10 @@
 import { Schema } from "effect"
 import type { Json } from "@tardie/grove"
 import { treeSchema } from "@tardie/grove"
-import { durableProjection } from "./durable-projection"
-import { TreeState, type MerkleTree, type TreeSession } from "../services/tree-state"
-import { EventLog } from "../services/event-log"
-import type { RecordMetadata } from "../services/journal"
+import { durableProjection } from "./projection"
+import { TreeState, type MerkleTree, type TreeSession } from "../../services/tree-state"
+import { EventLog } from "../../services/event-log"
+import type { RecordMetadata } from "../../services/journal"
 
 export type CheckpointReader = <Value extends Json>(name: string, schema: Schema.Decoder<Value>) => Value | undefined
 

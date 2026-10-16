@@ -9,20 +9,23 @@ export class TreeStateDO extends DurableObject {
   private live: ReturnType<typeof this.open> | undefined
   private loadedNodes = 0
   private loadedBytes = 0
-  private open() {
+  private loadedEntries = 0
+  private async open() {
+    const kind = await this.ctx.storage.get<"tree" | "log">("kind") ?? "tree"
     this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS tree_calls (phase TEXT, digest TEXT, count INTEGER, ref TEXT)")
     const storage = this.journal.trees!
-    return Effect.runPromise(treeActorFixture({ ...this.journal, trees: { ...storage, load: hash => {
+    return Effect.runPromise(treeActorFixture({ ...this.journal, logs: { load: (name, start, end) => { this.loadedEntries += end - start; return this.journal.logs!.load(name, start, end) } }, trees: { ...storage, load: hash => {
       const text = storage.load(hash)
       this.loadedNodes++; this.loadedBytes += Buffer.byteLength(text)
       return text
     } } }, (phase, input, ref) => Effect.sync(() => {
       const digest = createHash("sha256").update(JSON.stringify(input.messages)).digest("hex")
       this.ctx.storage.sql.exec("INSERT INTO tree_calls VALUES (?, ?, ?, ?)", phase, digest, input.messages.length, JSON.stringify(ref))
-    })))
+    }), undefined, kind))
   }
   private current() { return this.live ??= this.open() }
-  async seed() {
+  async seed(kind: "tree" | "log" = "tree") {
+    await this.ctx.storage.put("kind", kind)
     const live = await this.current()
     await Effect.runPromise(live.seed)
     await Effect.runPromise(live.store.checkpoint)
@@ -45,7 +48,7 @@ export class TreeStateDO extends DurableObject {
   async inspect() {
     const live = await this.current()
     return {
-      state: live.store.getState().view, loadedNodes: this.loadedNodes, loadedBytes: this.loadedBytes,
+      state: live.store.getState().view, loadedEntries: this.loadedEntries, loadedNodes: this.loadedNodes, loadedBytes: this.loadedBytes,
       calls: this.ctx.storage.sql.exec<{ phase: string; digest: string; count: number; ref: string }>("SELECT * FROM tree_calls").toArray(),
       inputs: await Effect.runPromise(this.journal.readInputs),
       owners: this.ctx.storage.sql.exec<{ name: string; root: string }>("SELECT * FROM grove_owners").toArray(),
