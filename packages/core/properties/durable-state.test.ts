@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { AtomState } from "../src/initialise"
 import type { ActorRuntime } from "../src/runtime/contracts"
 import { createEventLog } from "../src/runtime/replay"
@@ -12,6 +12,7 @@ import { durableMerkleAtom } from "../src/atoms/durable/merkle"
 import { prepareTreeInput, treeSession } from "../src/services/tree-state"
 import type { Journal, Recorded, StoredCheckpoint, TreeCheckpoint } from "../src/services/journal"
 import { checkpointEncoder, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "../src/services/checkpoint"
+import { ReplayContext } from "../src/services/event-log"
 
 test("tree and byte checkpoints restore identical state", async () => {
   const history = Object.freeze(Array.from({ length: 100000 }, (_, n) => Object.freeze({ n, text: `message ${n}` })))
@@ -35,6 +36,7 @@ for (const tree of [false, true]) {
     const Added = Schema.Struct({ type: Schema.Literal("Added"), amount: Schema.Int })
     type Event = typeof Added.Type
     let records: readonly Recorded<Event>[] = []
+    let fullReads = 0
     let saved: StoredCheckpoint | TreeCheckpoint | undefined
     const append = (position: number, batch: readonly Recorded<Event>[], checkpoint?: StoredCheckpoint | TreeCheckpoint) => Effect.sync(() => {
       if (position !== records.length) throw new Error("Journal conflict")
@@ -42,12 +44,16 @@ for (const tree of [false, true]) {
       if (checkpoint) saved = checkpoint
     })
     const journal: Journal<Event> = {
-      read: Effect.sync(() => records), readAfter: position => Effect.sync(() => records.slice(position)), readInputs: Effect.succeed([]),
+      read: Effect.sync(() => { fullReads++; return records }), readAfter: position => Effect.sync(() => records.slice(position)), readInputs: Effect.succeed([]),
       readCheckpoint: Effect.sync(() => saved?.payload instanceof Uint8Array ? { ...saved, payload: saved.payload } : undefined),
       append: (position, batch) => append(position, batch), appendWithCheckpoint: append,
       ...(tree ? { treeCheckpoint: { read: Effect.sync(() => saved), append } } : {}),
     }
-    const actor = defineActor("counter", Effect.sync(() => {
+    const actor = defineActor("counter", Effect.gen(function* () {
+      const replay = Option.getOrThrow(yield* Effect.serviceOption(ReplayContext))
+      const full = yield* replay.readFull
+      expect(yield* replay.readFull).toBe(full)
+      expect(full).toEqual(records)
       const state = durableAtom({ name: "total", input: Added, schema: Schema.Int, initial: 0, reduce: (n, event) => n + event.amount })
       return { schema: Added, atom: effectAtom(get => ({ view: get(state), events: {}, acts: {} })) }
     }))
@@ -62,6 +68,9 @@ for (const tree of [false, true]) {
       await Effect.runPromise(runtime.close)
       runtime = await open()
       expect(runtime.getState().view).toBe(5)
+      expect(fullReads).toBe(2)
+      await Effect.runPromise(send([{ type: "Added", amount: 4 }]))
+      expect(runtime.getState().view).toBe(9)
     } finally { await Effect.runPromise(runtime.close) }
   })
 }
