@@ -1,5 +1,5 @@
 import { Data, Effect } from "effect"
-import { make } from "./tree"
+import { make, type Edit } from "./tree"
 import { decodeNode, matchNode, mergeablePages, plan, payload, type Json, type Path, type Options, type Node, type Tree, DEFAULT_LEAF_BYTES, DEFAULT_PAGE_ITEMS } from "./codec"
 
 // DEFAULT_READ_CACHE_BYTES bounds encoded text rather than total heap usage.
@@ -24,6 +24,7 @@ export function makeReader(load: (hash: string) => Effect.Effect<string, GroveEr
   let cachedBytes = 0
   const metrics = { loadedNodes: 0, loadedBytes: 0, hits: 0, evictions: 0 }
   const readNode = (ref: string | Node): Effect.Effect<Node, GroveError> => Effect.suspend(() => {
+    if (typeof ref !== "string" && !ref.opaque) return Effect.succeed(ref)
     const hash = typeof ref === "string" ? ref : ref.hash
     const check = (node: Node) => attempt(() => typeof ref === "string" ? node : matchNode(ref, node))
     const cached = cache.get(hash)
@@ -197,6 +198,24 @@ export function makeReader(load: (hash: string) => Effect.Effect<string, GroveEr
     sliceEach: (root: string, path: Path, start: number, end: number, each: Path) => slice(root, path, start, end).pipe(Effect.flatMap(values => attempt(() => values.map(value => jsonPath(value, each))))),
     set: (root: string, path: Path, value: Json) => prepare(root, path, false).pipe(Effect.flatMap(node => attempt(() => superseded(node, tree.set(plan(node, { hashedNodes: 0, hashedBytes: 0, visitedValues: 0, reusedNodes: 0 }), path, value))))),
     append: (root: string, path: Path, values: readonly Json[]) => prepare(root, path, true).pipe(Effect.flatMap(node => attempt(() => superseded(node, tree.append(plan(node, { hashedNodes: 0, hashedBytes: 0, visitedValues: 0, reusedNodes: 0 }), path, values))))),
+    batch: (root: string, edits: readonly Edit[]): Effect.Effect<Tree, GroveError> => Effect.gen(function* () {
+      let node = yield* readNode(root)
+      const metrics = { hashedNodes: 0, hashedBytes: 0, visitedValues: 0, reusedNodes: 0 }
+      let group: Edit[] = []
+      const flush = () => Effect.gen(function* () {
+        if (!group.length) return
+        for (const edit of group) node = yield* prepare(node, edit.path, edit.type === "append")
+        const changed = yield* attempt(() => superseded(node, tree.batch(plan(node, metrics), group)))
+        for (const key of Object.keys(metrics) as (keyof typeof metrics)[]) metrics[key] += changed.metrics[key]
+        node = changed.node; group = []
+      })
+      for (const edit of edits) {
+        if (group.some(previous => previous.path.slice(0, Math.min(previous.path.length, edit.path.length)).every((key, index) => key === edit.path[index]))) yield* flush()
+        group.push(edit)
+      }
+      yield* flush()
+      return plan(node, metrics)
+    }),
     stats: () => ({ ...metrics, cachedNodes: cache.size, cachedBytes, cacheBudgetBytes: cacheBytes }),
     clear: () => { cache.clear(); sizes.clear(); cachedBytes = 0 },
   }

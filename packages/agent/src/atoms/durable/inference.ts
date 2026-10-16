@@ -129,16 +129,17 @@ export const inferenceState = durableMerkleAtom({
     if (invocation && state.read(["invocations"]).includes(invocation)) throw new RuntimeError(`Duplicate turn for invocation: ${invocation}`)
     const next = inferState(before, event, metadata, position)
     if (next === before) return state
-    for (let index = 0; index < before.turns.length; index++) if (next.turns[index] !== before.turns[index]) state = state.set(["turns", head + index], next.turns[index]!)
-    if (next.turns.length > before.turns.length) state = state.append(["turns"], next.turns.slice(before.turns.length))
-    const pending = next.turns.findIndex(turn => turn.settlement === null)
-    const nextHead = head + (pending < 0 ? next.turns.length : pending)
-    if (nextHead !== head) state = state.set(["head"], nextHead)
-    for (const key of controls) if (next[key] !== before[key]) state = state.set([key], next[key])
-    if (event.type === "TurnRequested") state = state.append(["seen"], [event.turnId])
-    if (invocation) state = state.append(["invocations"], [invocation])
-    if (event.type === "TurnSettled" && event.outcome === "cancelled") state = state.append(["cancelled"], next.turns.find(turn => turn.turnId === event.turnId)!.effects.map(work => effectKey(work.ref)))
-    return state
+    return state.batch(edit => {
+      for (let index = 0; index < before.turns.length; index++) if (next.turns[index] !== before.turns[index]) edit.set(["turns", head + index], next.turns[index]!)
+      if (next.turns.length > before.turns.length) edit.append(["turns"], next.turns.slice(before.turns.length))
+      const pending = next.turns.findIndex(turn => turn.settlement === null)
+      const nextHead = head + (pending < 0 ? next.turns.length : pending)
+      if (nextHead !== head) edit.set(["head"], nextHead)
+      for (const key of controls) if (next[key] !== before[key]) edit.set([key], next[key])
+      if (event.type === "TurnRequested") edit.append(["seen"], [event.turnId])
+      if (invocation) edit.append(["invocations"], [invocation])
+      if (event.type === "TurnSettled" && event.outcome === "cancelled") edit.append(["cancelled"], next.turns.find(turn => turn.turnId === event.turnId)!.effects.map(work => effectKey(work.ref)))
+    })
   },
 })
 
