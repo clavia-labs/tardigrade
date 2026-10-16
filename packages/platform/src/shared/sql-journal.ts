@@ -33,6 +33,16 @@ export interface JournalRecordOptions { readonly eventInlineBytes?: number | und
 
 export interface SqlJournalLimits { readonly maxRowBytes: number }
 
+// nativeLogLoader reads stored log rows through a reserved native connection whose execute finishes synchronously, like nativeLoader for tree nodes.
+const nativeLogLoader = (actor: string) => Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  const context = yield* Effect.context<never>()
+  const connection = yield* Effect.scoped(sql.reserve)
+  return (log: string, start: number, end: number): readonly unknown[] => Effect.runSyncWith(context)(connection.execute("SELECT entry FROM log_entries WHERE actor = ? AND log = ? AND idx >= ? AND idx < ? ORDER BY idx", [actor, log, start, end], undefined).pipe(
+    Effect.map(rows => (rows as readonly { readonly entry: string }[]).map(row => JSON.parse(row.entry) as unknown)),
+  ))
+})
+
 // sqlJournal owns a database with one checkpoint and commits checkpoint chunks with journal events (checkpointStorage).
 export function sqlJournal<Event extends object>(options: CheckpointChunkOptions & JournalRecordOptions & {
   readonly actor: string
@@ -64,10 +74,12 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     yield* sql`CREATE TABLE IF NOT EXISTS checkpoint_chunks (ordinal INTEGER PRIMARY KEY CHECK (ordinal >= 0), payload BLOB NOT NULL CHECK (typeof(payload) = 'blob' AND length(payload) > 0))`
     yield* sql`CREATE TABLE IF NOT EXISTS effect_inputs (actor TEXT NOT NULL, ref TEXT NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL, PRIMARY KEY (actor, ref)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS effect_input_chunks (actor TEXT NOT NULL, ref TEXT NOT NULL, ordinal INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY (actor, ref, ordinal)) WITHOUT ROWID`
+    yield* sql`CREATE TABLE IF NOT EXISTS log_entries (actor TEXT NOT NULL, log TEXT NOT NULL, idx INTEGER NOT NULL, entry TEXT NOT NULL, PRIMARY KEY (actor, log, idx)) WITHOUT ROWID`
     if (options.scheduler) yield* initializeSqlScheduler(sql)
     const trees = yield* checkpointTrees(options.actor, options.limits ? Math.min(chunkBytes, options.limits.maxRowBytes - 64 - CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES) : chunkBytes, options.checkpointTree)
     const loadNode = options.syncTreeReads ? yield* nativeLoader : undefined
-    return { sql, trees, loadNode }
+    const loadLog = options.syncTreeReads ? yield* nativeLogLoader(options.actor) : undefined
+    return { sql, trees, loadNode, loadLog }
   })
   const initialized = Effect.runSync(Effect.cached(runtime.contextEffect.pipe(Effect.flatMap(context => setup.pipe(Effect.provide(context))))))
   let closed = false
@@ -122,6 +134,8 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
         const message = events[index]!.message
         if (message) yield* sql`INSERT INTO experimental_messages (actor, id, seq) VALUES (${options.actor}, ${message.id}, ${expectedLength + index})`
       }
+      // log_entries rejects conflicting values at an existing generation/index, including across recovery.
+      for (const entry of inputs.logs?.entries ?? []) yield* sql`INSERT INTO log_entries (actor, log, idx, entry) VALUES (${options.actor}, ${entry.log}, ${entry.index}, ${JSON.stringify(entry.value)}) ON CONFLICT(actor, log, idx) DO UPDATE SET entry = NULL WHERE log_entries.entry != excluded.entry`
       if (inputs.trees) {
         yield* trees.stage(inputs.trees.nodes)
         for (const state of inputs.trees.roots) {
@@ -137,7 +151,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       }
       for (const input of inputs.put ?? []) {
         const prefix = JSON.stringify([options.actor, "input", effectKey(input.ref)])
-        for (const root of new Set(input.request.selections?.map(ref => ref.root) ?? [])) {
+        for (const root of new Set(input.request.selections?.flatMap(ref => "root" in ref ? [ref.root] : []) ?? [])) {
           const owner = `${prefix}${root}`
           yield* trees.retain(owner, root, (yield* trees.root(owner)) ?? null)
         }
@@ -194,6 +208,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     }))
   })
   return {
+    ...(options.syncTreeReads ? { logs: { load: (log: string, start: number, end: number) => Effect.runSync(initialized).loadLog!(log, start, end) } } : {}),
     ...(options.syncTreeReads ? { trees: {
       load: (hash: string) => Effect.runSync(initialized).loadNode!(hash),
       ...(options.checkpointTree ? { options: options.checkpointTree } : {}),

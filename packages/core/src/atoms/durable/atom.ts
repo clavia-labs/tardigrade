@@ -1,11 +1,11 @@
-import { durableProjection } from "./durable-projection"
+import { durableProjection } from "./projection"
 import { Schema, SchemaAST } from "effect"
-import { type Atom } from "./atom"
-import { incrementalDecoder } from "./incremental/decode"
-import { frozenPlainData } from "./incremental/frozen"
-import { incrementalValidator, invalid } from "./incremental/validate"
-import type { RecordMetadata } from "../services/journal"
-import { type StatefulAtom } from "../initialise"
+import { type Atom } from "../atom"
+import { incrementalDecoder } from "../incremental/decode"
+import { frozenPlainData } from "../incremental/frozen"
+import { incrementalValidator, invalid } from "../incremental/validate"
+import type { RecordMetadata } from "../../services/journal"
+import { type StatefulAtom } from "../../initialise"
 
 export interface DurableAtom<State, Event> extends Atom<State>, StatefulAtom {
   readonly input: Schema.Schema<Event>

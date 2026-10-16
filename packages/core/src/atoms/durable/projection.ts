@@ -1,11 +1,11 @@
-import type { ReadonlyLog } from "../runtime/log-view"
+import type { ReadonlyLog } from "../../runtime/log-view"
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { atom, type Atom } from "./atom"
-import { EventLog, eventLogContext } from "../services/event-log"
-import { AtomState, type StatefulAtom } from "../initialise"
-import type { RecordMetadata } from "../services/journal"
-import type { DurableAtom } from "./durable"
+import { atom, type Atom } from "../atom"
+import { EventLog, eventLogContext } from "../../services/event-log"
+import { AtomState, type StatefulAtom } from "../../initialise"
+import type { RecordMetadata } from "../../services/journal"
+import type { DurableAtom } from "./atom"
 
 // durableProjection shares journal folding between value and tree-backed atoms.
 export function durableProjection<State, Event>(options: {
