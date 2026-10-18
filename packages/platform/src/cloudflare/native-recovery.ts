@@ -59,5 +59,8 @@ export function cloudflareNativeRecovery(storage: DurableObjectStorage, options:
     grove.transaction(initializeSyncRecovery)
     return synchronousRecoveryStorage(grove, driver.identity, { set: at => alarms.set(Math.max(1, at)), clear: alarms.delete }, alarms.sync)
   }, catch: RuntimeError.from })))))
-  return { transaction: <Value>(work: (tx: ReturnType<typeof syncRecoveryTransaction>) => Effect.Effect<Value, Error>) => initialized.pipe(Effect.flatMap(store => store.transaction(work))) }
+  return {
+    transaction: <Value>(work: (tx: ReturnType<typeof syncRecoveryTransaction>) => Effect.Effect<Value, Error>) => initialized.pipe(Effect.flatMap(store => store.transaction(work))),
+    read: <Value>(work: (tx: ReturnType<typeof syncRecoveryTransaction>) => Effect.Effect<Value, Error>) => initialized.pipe(Effect.flatMap(store => store.read(work))),
+  }
 }
