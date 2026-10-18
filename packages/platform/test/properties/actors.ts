@@ -29,7 +29,9 @@ export function agentCollections(driver: SyncSqlite, options: Case) {
   let inference = initialInference, spend = spendStateValue(), permissions: ReturnType<typeof reducePermissions> = { policy: null, decisions: [] }, budget: ReturnType<typeof reduceBudget> = [], tools: ReturnType<typeof toolState> = { queue: [], pending: null, origin: null, running: false }, code: ReturnType<typeof codeModeState> = []
   const verify = () => {
     snapshot.get(atoms.all)
-    same(snapshot.get(spendState), spend); const lookup = snapshot.get(permissionState); same(lookup.policy, permissions.policy); same(lookup.decision("tool.execute", "never-requested"), undefined)
+    const view = snapshot.get(spendState); same(view.pending, spend.turns); same(view.models, spend.models); same(view.tools, spend.tools); same(view.turn("never-requested"), undefined)
+    spend.toolSpend.forEach(({ turnId, count }, index) => same(view.turn(turnId), { turnId, count, input: spend.tokenSpend[index]!.input, output: spend.tokenSpend[index]!.output, usd: spend.usdSpend[index]!.usd, ms: spend.timeSpend[index]!.ms, startedAt: spend.timers.find(timer => timer.turnId === turnId)?.startedAt ?? null }))
+    const lookup = snapshot.get(permissionState); same(lookup.policy, permissions.policy); same(lookup.decision("tool.execute", "never-requested"), undefined)
     for (const { action, requestId } of permissions.decisions) same(lookup.decision(action, requestId), permissions.decisions.findLast(entry => entry.action === action && entry.requestId === requestId)!.decision)
     same(snapshot.get(budgetState), budget); same(snapshot.get(pendingTools), tools); same(snapshot.get(executions), code)
     same(readInference(snapshot.get(inferenceState)), { ...inference, turns: inference.turns.filter(turn => turn.settlement === null) })

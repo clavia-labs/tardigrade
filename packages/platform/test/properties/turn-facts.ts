@@ -44,7 +44,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
   }
   const actor = defineActor("turn-facts", Effect.sync(() => ({
     atom: effectAtom(get => ({
-      view: { trajectory: get(trajectory), messages: get(messages), timeSpend: get(timeSpend) }, events: {}, acts: {},
+      view: { trajectory: get(trajectory), messages: get(messages), timeSpend: Object.fromEntries(["first", "second", "third"].flatMap(turnId => { const ms = get(timeSpend)(turnId); return ms === undefined ? [] : [[turnId, ms]] })) }, events: {}, acts: {},
     })), schema: Event
   })))
   const open = () => createTestStore({ actor, journal, checkpoint: options.checkpoint ? { mode: "threshold", options: { everyEvents: 2 } } : { mode: "manual" }, actorContext: () => Context.empty(), services: () => Layer.empty })
@@ -72,7 +72,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       const state = store.getState().view
       if (JSON.stringify(state.trajectory.map(entry => entry.turnId)) !== JSON.stringify(["first", "second", "first", "second", "first"])) return yield* Effect.fail(new RuntimeError("Trajectory lost arrival order or turn attribution"))
       if (JSON.stringify(state.messages) !== JSON.stringify(state.trajectory.map(entry => entry.message))) return yield* Effect.fail(new RuntimeError("Model messages diverged from trajectory"))
-      if (JSON.stringify(state.timeSpend) !== JSON.stringify([{ turnId: "first", ms: options.first }, { turnId: "second", ms: options.first + options.second }])) return yield* Effect.fail(new RuntimeError("Turn timing omitted queue time or downtime"))
+      if (JSON.stringify(state.timeSpend) !== JSON.stringify({ first: options.first, second: options.first + options.second })) return yield* Effect.fail(new RuntimeError("Turn timing omitted queue time or downtime"))
       if (options.checkpoint && checkpoint?.position !== records.length - 1) return yield* Effect.fail(new RuntimeError("Threshold checkpoint omitted the recovery suffix"))
       const settled = JSON.stringify(store.getState())
       yield* store.close
@@ -84,7 +84,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       now += options.first + options.second
       yield* store.send([{ type: "AbortRequested", reason: "stop", ref: { method: "turn", id: "third" } }])
       const pending = store.getState().view.timeSpend
-      if (pending[0] !== completed[0] || pending[1] !== completed[1] || pending[2]?.ms !== options.first + options.second) return yield* Effect.fail(new RuntimeError("Pending timing changed completed totals or used a stale index"))
+      if (pending.first !== completed.first || pending.second !== completed.second || pending.third !== options.first + options.second) return yield* Effect.fail(new RuntimeError("Pending timing changed completed totals"))
       yield* store.send([{ type: "TurnSettled", turnId: "third", outcome: "cancelled", reason: "stop" }])
     }).pipe(Effect.ensuring(Effect.suspend(() => store.close)))
   }).pipe(Effect.provideService(Clock.Clock, clock))

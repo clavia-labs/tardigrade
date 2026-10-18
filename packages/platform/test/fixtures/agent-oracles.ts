@@ -1,9 +1,12 @@
 import type { ObservedCoreEvent, RecordMetadata } from "@clavia/tardigrade-core"
-import type { Atom } from "effect/unstable/reactivity"
 import type { Event } from "@clavia/tardigrade-agent/contracts/events"
-import type { spendState } from "@clavia/tardigrade-agent/atoms/durable/spend"
 
-type SpendState = Atom.Type<typeof spendState>
+type Calls = ReadonlyArray<{ readonly callId: string; readonly turnId: string }>
+type SpendState = {
+  readonly toolSpend: ReadonlyArray<{ readonly turnId: string; readonly count: number }>; readonly tokenSpend: ReadonlyArray<{ readonly turnId: string; readonly input: number; readonly output: number }>
+  readonly usdSpend: ReadonlyArray<{ readonly turnId: string; readonly usd: number | null }>; readonly timeSpend: ReadonlyArray<{ readonly turnId: string; readonly ms: number | null }>
+  readonly timers: ReadonlyArray<{ readonly turnId: string; readonly index: number; readonly startedAt: number | null }>; readonly turns: ReadonlyArray<string>; readonly models: Calls; readonly tools: Calls
+}
 
 // reduceSpend models array-based spend transitions for native collection comparison (../properties/actors.ts).
 export function reduceSpend(state: SpendState, event: Event | ObservedCoreEvent, metadata: RecordMetadata): SpendState {

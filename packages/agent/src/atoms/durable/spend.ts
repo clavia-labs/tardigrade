@@ -1,6 +1,5 @@
 import { atom, keyValue, tree, durableAtom, ObservedCoreEvent } from "@clavia/tardigrade-core"
-import { Option, Schema } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Schema } from "effect"
 import { Event } from "../../contracts/events"
 
 const Count = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
@@ -75,22 +74,28 @@ export const spendRecords = durableAtom({
   },
 })
 
-export const spendState = atom(get => {
-  const state = get(spendRecords), totals = Object.values(state.read(["totals"])), pending = state.read(["pending"])
-  return { toolSpend: totals.map(({ turnId, count }) => ({ turnId, count })), tokenSpend: totals.map(({ turnId, input, output }) => ({ turnId, input, output })), usdSpend: totals.map(({ turnId, usd }) => ({ turnId, usd })), timeSpend: totals.map(({ turnId, ms }) => ({ turnId, ms })), turns: pending,
-    timers: pending.map(turnId => ({ turnId, index: totals.findIndex(turn => turn.turnId === turnId), startedAt: state.read(["totals", JSON.stringify(turnId)]).startedAt })),
+// SpendTurn is one turn's recorded spend; startedAt is non-null only while the turn is pending with a recorded start time.
+export type SpendTurn = typeof Spend.Type
+export interface SpendView {
+  readonly pending: ReadonlyArray<string>
+  readonly turn: (turnId: string) => SpendTurn | undefined
+  readonly models: ReadonlyArray<{ readonly callId: string; readonly turnId: string }>
+  readonly tools: ReadonlyArray<{ readonly callId: string; readonly turnId: string }>
+}
+// spendState reads one turn's totals by point lookup; turn returns undefined for a turn never requested.
+export const spendState = atom((get): SpendView => {
+  const state = get(spendRecords)
+  return {
+    pending: state.read(["pending"]), turn: turnId => state.has(["totals", JSON.stringify(turnId)]) ? state.read(["totals", JSON.stringify(turnId)]) : undefined,
     models: Object.entries(state.read(["models"])).map(([callId, turnId]) => ({ callId, turnId })), tools: Object.entries(state.read(["tools"])).map(([callId, turnId]) => ({ callId, turnId })),
   }
 })
 
-// toolSpend records budget-counted tool calls per turn, including execution failures.
-export const toolSpend = atom(get => get(spendState).toolSpend)
-// tokenSpend sums recorded provider input and output tokens per turn, including compaction.
-export const tokenSpend = atom(get => get(spendState).tokenSpend)
-// usdSpend sums reported provider costs per turn; a missing cost makes that turn's total unknown.
-export const usdSpend = atom(get => get(spendState).usdSpend)
-// timeSpend records wall milliseconds from turn request to turn settlement at journal boundaries, including queueing and downtime; missing timestamps produce unknown totals.
-export const timeSpend = NativeAtom.readable(get => {
-  const next = get(spendState).timeSpend, previous = Option.getOrUndefined(get.self<typeof next>())
-  return next.map((value, index) => { const before = previous?.[index]; return before?.turnId === value.turnId && before.ms === value.ms ? before : value })
-}).pipe(NativeAtom.keepAlive)
+// toolSpend returns a turn's budget-counted tool calls, including execution failures, or undefined for a turn never requested.
+export const toolSpend = atom(get => { const view = get(spendState); return (turnId: string): number | undefined => view.turn(turnId)?.count })
+// tokenSpend returns a turn's recorded provider input and output tokens, including compaction, or undefined for a turn never requested.
+export const tokenSpend = atom(get => { const view = get(spendState); return (turnId: string): { readonly input: number; readonly output: number } | undefined => { const turn = view.turn(turnId); return turn && { input: turn.input, output: turn.output } } })
+// usdSpend returns a turn's summed provider cost, null when a missing cost makes the total unknown, or undefined for a turn never requested.
+export const usdSpend = atom(get => { const view = get(spendState); return (turnId: string): number | null | undefined => view.turn(turnId)?.usd })
+// timeSpend returns a turn's wall milliseconds from request to settlement at journal boundaries, including queueing and downtime; null when timestamps are missing, undefined for a turn never requested.
+export const timeSpend = atom(get => { const view = get(spendState); return (turnId: string): number | null | undefined => view.turn(turnId)?.ms })
