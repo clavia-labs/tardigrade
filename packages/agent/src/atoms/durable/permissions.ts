@@ -45,7 +45,6 @@ export const permissionRecords = durableAtom({
     })
   },
 })
-// PermissionView reads the latest decision for one request through the latest index, so a lookup costs the same at any decision count.
 export interface PermissionView {
   readonly policy: typeof PermissionPolicy.Type | null
   readonly decision: (action: typeof PermissionAction.Type, requestId: string) => typeof Decision.Type | undefined
