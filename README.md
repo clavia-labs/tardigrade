@@ -48,38 +48,25 @@ Derive values from atoms using `get`.
 const system = atom(get => `${get(role)}\n${get(style)}`)
 ```
 
-### Durable atoms materialize collections
+### Durable atoms reduce state from event log
 
-Durable atoms reduce an immutable event log into versioned state. Collection declarations select Grove storage and constrain the available edits.
+Durable atoms reduce an immutable event log into state.
 
 ```ts
 import { Schema } from "effect"
-import { durableAtom, tree, appendOnly, keyValue } from "tardie/core"
+import { durableAtom } from "tardie/core"
+import { Event, TrajectoryState, reduceTrajectory } from "tardie/agent"
 
-const Received = Schema.Struct({
-  type: Schema.Literal("Received"), id: Schema.String, text: Schema.String,
-})
-const State = Schema.Struct({
-  document: tree(Schema.Struct({ title: Schema.String })),
-  messages: appendOnly(Schema.Array(Schema.String)),
-  jobs: keyValue(Schema.Struct({ status: Schema.String })),
-})
 const history = durableAtom({
   name: "researcher.history",
-  input: Received,
-  schema: State,
-  initial: { document: { title: "" }, messages: [], jobs: {} },
-  reduce: (state, event) => state.batch(edit => {
-    edit.set(["document", "title"], event.text)
-    edit.append(["messages"], [event.text])
-    edit.set(["jobs", event.id], { status: "pending" })
-  }),
+  input: Event,
+  schema: TrajectoryState,
+  initial: { entries: [], models: [] },
+  reduce: reduceTrajectory,
 })
 
-const messages = atom(get => get(history).select(["messages"]))
+const messages = atom(get => get(history).entries.map(entry => entry.message))
 ```
-
-Trees support localized path edits, append-only collections preserve existing entries, and key-value collections replace or remove whole entries by key. Whole-collection replacement creates a version for compaction. Grove owns storage, caching and cleanup; Core owns event folding and effect lifetimes. Untagged schemas retain plain value reducers and emit a deprecation warning when the atom is constructed.
 
 ### Effect atoms propose actions
 

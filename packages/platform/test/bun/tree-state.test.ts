@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { Context, Deferred, Effect, Fiber, Layer, Schema } from "effect"
-import { createActorStore, defineActor, durableAtom, tree, effectAtom, type ActorRuntime } from "@clavia/tardigrade-core"
-import { decodeReference } from "@tardie/grove"
+import { SqlClient } from "effect/unstable/sql"
+import { SqliteClient } from "@effect/sql-sqlite-bun"
+import { createActorStore, defineActor, durableMerkleAtom, effectAtom, type ActorRuntime } from "@clavia/tardigrade-core"
+import { sqlJournal } from "../../src/shared/sql-journal"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -25,7 +27,7 @@ for (const cancellation of [false, true]) test(`tree atom checkpoint and ${cance
     await waitFor(() => Promise.resolve(calls), calls => calls.length > 0)
     const accepted = (await Effect.runPromise(journal.readInputs))[0]!
     const selection = accepted.request.selections![0]!
-    const root = selection.reference
+    const root = selection.root
     expect(accepted.request.input).toEqual({ messages: null })
     expect(JSON.stringify(accepted).length).toBeLessThan(1024)
     await Effect.runPromise(live.append)
@@ -35,7 +37,7 @@ for (const cancellation of [false, true]) test(`tree atom checkpoint and ${cance
       await waitFor(() => Promise.resolve(calls), calls => calls.some(call => call.phase === "cleanup"))
       await Effect.runPromise(live.store.checkpoint)
     }
-    expect((db.query("SELECT * FROM grove_value_owners WHERE name LIKE '%input%'").all()).length).toBe(1)
+    expect((db.query("SELECT * FROM grove_owners WHERE name LIKE '%input%'").all()).length).toBe(1)
     await Effect.runPromise(live.store.close)
     await Effect.runPromise(journal.close)
     journal = bunJournal<typeof TreeEvent.Type>({ filename, actor: "tree", checkpointTree: { collectEvery: 1, cacheBytes: 0 } })
@@ -48,8 +50,8 @@ for (const cancellation of [false, true]) test(`tree atom checkpoint and ${cance
     await Effect.runPromise(live.store.wait)
     await Effect.runPromise(live.store.checkpoint)
     expect((await Effect.runPromise(journal.readInputs)).length).toBe(0)
-    expect(db.query("SELECT * FROM grove_value_owners WHERE name LIKE '%input%'").all().length).toBe(0)
-    expect(() => journal.grove.view(decodeReference(root), Schema.Array(Schema.Json)).materialize()).toThrow()
+    expect(db.query("SELECT * FROM grove_owners WHERE name LIKE '%input%'").all().length).toBe(0)
+    expect(db.query("SELECT * FROM grove_nodes WHERE hash = ?").all(root).length).toBe(0)
     const saved = await Effect.runPromise(journal.readCheckpoint)
     expect(saved!.payload.length).toBeLessThan(4096)
   } finally {
@@ -60,20 +62,17 @@ for (const cancellation of [false, true]) test(`tree atom checkpoint and ${cance
   }
 }, 30000)
 
-test("synchronous projections read published state while journal acknowledgement is suspended", async () => {
+test("synchronous projections read published state during a suspended journal transaction", async () => {
   const Changed = Schema.Struct({ type: Schema.Literal("Changed"), value: Schema.Int })
   await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
     const entered = Deferred.makeUnsafe<void>()
     const release = Deferred.makeUnsafe<void>()
     let suspended = false
     let send!: ActorRuntime<typeof Changed.Type>["send"]
-    const native = bunJournal<typeof Changed.Type>({ actor: "concurrent-tree", filename: ":memory:", checkpointTree: { cacheBytes: 0, collectEvery: 1 } })
-    const journal = { ...native, appendWithCheckpoint: (...args: Parameters<typeof native.appendWithCheckpoint>) => Effect.gen(function* () {
-      yield* native.appendWithCheckpoint(...args)
-      if (suspended) { yield* Deferred.succeed(entered, undefined); yield* Deferred.await(release) }
-    }) }
+    const journal = sqlJournal<typeof Changed.Type>({ actor: "concurrent-tree", syncTreeReads: true, checkpointTree: { cacheBytes: 0, collectEvery: 1 }, layer: Layer.succeed(SqlClient.SqlClient, sql), commit: work => sql.withTransaction(work.pipe(Effect.andThen(Effect.suspend(() => suspended ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))) : Effect.void)))) })
     const actor = defineActor("concurrent-tree", Effect.sync(() => {
-      const state = durableAtom({ name: "value", input: Changed, schema: tree(Schema.Struct({ value: Schema.Int })), initial: { value: 0 }, reduce: (state, event) => state.set(["value"], event.value) })
+      const state = durableMerkleAtom({ name: "value", input: Changed, schema: Schema.Struct({ value: Schema.Int }), initial: { value: 0 }, reduce: (state, event) => state.set(["value"], event.value) })
       return { schema: Changed, atom: effectAtom(get => ({ view: get(state), events: {}, acts: {} })) }
     }))
     const store = yield* createActorStore({ actor, journal, checkpoint: { mode: "threshold", options: { everyEvents: 1 } }, actorContext: Context.pick(), services: runtime => { send = runtime.send; return Layer.empty } })
@@ -87,12 +86,13 @@ test("synchronous projections read published state while journal acknowledgement
     expect(store.getState().view.read(["value"])).toBe(2)
     yield* store.close
     yield* journal.close
-  })))
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })))))
 }, 10000)
 
-test("checkpoint maxBytes includes referenced tree state", async () => {
+for (const treeCheckpoint of [false, true]) test(`checkpoint maxBytes includes referenced tree state (${treeCheckpoint ? "tree" : "byte"})`, async () => {
   const journal = bunJournal<typeof TreeEvent.Type>({ filename: ":memory:", actor: "tree-limit" })
-  const live = await Effect.runPromise(treeActorFixture(journal, () => Effect.void, { maxBytes: 1024 }))
+  const { treeCheckpoint: _treeCheckpoint, ...byteJournal } = journal
+  const live = await Effect.runPromise(treeActorFixture(treeCheckpoint ? journal : byteJournal, () => Effect.void, { maxBytes: 1024 }))
   try {
     await Effect.runPromise(live.seed)
     await expect(Effect.runPromise(live.store.checkpoint)).rejects.toThrow("Checkpoint exceeds maxBytes 1024")

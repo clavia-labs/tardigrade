@@ -5,7 +5,7 @@ import { makeSync, type SyncSqlite, type SyncOptions, type Transaction } from "@
 import { storedSession, JournalConflict, RuntimeError, PendingEffectInput, effectKey, checkpointDigest, decodeCheckpoint, MessageMetadata, InboxMessageReceived, ThreadCreated, type MessageJournal, type Recorded, type EffectInputChanges, type StoredCheckpoint } from "@clavia/tardigrade-core"
 
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES, validateCheckpointChunkBytes, encodeCheckpointChunks, type CheckpointChunkOptions } from "./checkpoint-chunks"
-import { DEFAULT_EVENT_INLINE_BYTES, type JournalRecordOptions, type SqlJournalLimits } from "./journal-records"
+import { DEFAULT_EVENT_INLINE_BYTES, decodeSqlJournalRecord, type JournalRecordOptions, type SqlJournalLimits } from "./journal-records"
 import { storedPayloadBytes, storedPayloadDigest, type StoredPayloadRow, type StoredPayloadChunk } from "./stored-journal-payloads"
 import { createScheduler, createWatchdog, ThreadUpdated, type Alarm, type SchedulerStorage, type SchedulerPolicy, type ScheduledWake, type WatchdogStorage, type WatchdogTarget } from "@clavia/tardigrade-core"
 import { initializeSyncRecovery, syncRecoveryTransaction, synchronousRecoveryStorage, recoveryLock } from "./synchronous-recovery"
@@ -34,7 +34,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
   const chunkCapacity = maxRowBytes === undefined ? Number.MAX_SAFE_INTEGER : maxRowBytes - actorBytes - CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES
   const checkpointChunkBytes = options.checkpointChunkBytes ?? Math.min(DEFAULT_CHECKPOINT_CHUNK_BYTES, chunkCapacity)
   validateCheckpointChunkBytes(checkpointChunkBytes, chunkCapacity)
-  const inlineCapacity = chunkCapacity - 64
+  const inlineCapacity = chunkCapacity
   const eventInlineBytes = options.eventInlineBytes ?? Math.min(DEFAULT_EVENT_INLINE_BYTES, inlineCapacity)
   if (!Number.isSafeInteger(eventInlineBytes) || eventInlineBytes < 1 || eventInlineBytes > inlineCapacity) throw new Error(`eventInlineBytes must be between 1 and ${inlineCapacity}`)
   const inputChunkBytes = (key: string) => {
@@ -54,7 +54,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
     if (encoder.encode(message.id).byteLength > chunkCapacity) throw new Error("Message identity exceeds the journal row capacity")
     return message.id
   }
-  for (const table of ["experimental_events", "checkpoint", "checkpoint_trees", "effect_inputs"]) {
+  for (const table of ["checkpoint", "checkpoint_trees", "effect_inputs"]) {
     if (!query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [table]).length) continue
     const rows = table === "checkpoint" ? query("SELECT 1 FROM checkpoint LIMIT 1") : query(`SELECT 1 FROM ${table} WHERE actor=? LIMIT 1`, [actor])
     if (rows.length) throw new Error("Legacy journal data requires migration before using synchronousJournal")
@@ -63,31 +63,34 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
   grove.transaction(tx => {
     if (options.collectEvery !== undefined) tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_collections(actor TEXT PRIMARY KEY,checkpoints INTEGER NOT NULL) WITHOUT ROWID", [])
     if (options.scheduler) initializeSyncRecovery(tx)
-    tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_events(actor TEXT NOT NULL,seq INTEGER NOT NULL,record TEXT NOT NULL,PRIMARY KEY(actor,seq)) WITHOUT ROWID", [])
+    tx.execute("CREATE TABLE IF NOT EXISTS experimental_events(actor TEXT NOT NULL,seq INTEGER NOT NULL,event TEXT NOT NULL,PRIMARY KEY(actor,seq)) WITHOUT ROWID", [])
     tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_inputs(actor TEXT NOT NULL,ref TEXT NOT NULL,input TEXT NOT NULL,PRIMARY KEY(actor,ref)) WITHOUT ROWID", [])
-    for (const table of ["stored_journal_events", "stored_journal_inputs"]) {
+    for (const table of ["stored_journal_inputs"]) {
       const fields = tx.execute(`PRAGMA table_info(${table})`, []).map(row => row.name)
       for (const [column, type] of [["byte_length", "INTEGER"], ["chunk_count", "INTEGER"], ["digest", "TEXT"]]) if (!fields.includes(column)) tx.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`, [])
     }
-    tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_event_chunks(actor TEXT NOT NULL,seq INTEGER NOT NULL,ordinal INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(actor,seq,ordinal)) WITHOUT ROWID", [])
+    tx.execute("CREATE TABLE IF NOT EXISTS experimental_event_chunks(actor TEXT NOT NULL,seq INTEGER NOT NULL,ordinal INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(actor,seq,ordinal),FOREIGN KEY(actor,seq) REFERENCES experimental_events(actor,seq)) WITHOUT ROWID", [])
     tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_input_chunks(actor TEXT NOT NULL,ref TEXT NOT NULL,ordinal INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(actor,ref,ordinal)) WITHOUT ROWID", [])
     tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_checkpoint_chunks(actor TEXT NOT NULL,ordinal INTEGER NOT NULL,payload BLOB NOT NULL,PRIMARY KEY(actor,ordinal)) WITHOUT ROWID", [])
     tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_checkpoints(actor TEXT PRIMARY KEY,position INTEGER NOT NULL,payload BLOB NOT NULL,digest TEXT NOT NULL) WITHOUT ROWID", [])
     const fields = tx.execute("PRAGMA table_info(stored_journal_checkpoints)", []).map(row => row.name)
     for (const column of ["byte_length", "chunk_count"]) if (!fields.includes(column)) tx.execute(`ALTER TABLE stored_journal_checkpoints ADD COLUMN ${column} INTEGER`, [])
-    tx.execute("CREATE INDEX IF NOT EXISTS stored_journal_thread_versions ON stored_journal_events(actor,seq DESC) WHERE json_extract(record,'$.event.type') IN ('ThreadCreated','ThreadUpdated')", [])
-    tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_messages(actor TEXT NOT NULL,id TEXT NOT NULL,seq INTEGER NOT NULL,PRIMARY KEY(actor,id),FOREIGN KEY(actor,seq) REFERENCES stored_journal_events(actor,seq)) WITHOUT ROWID", [])
+    tx.execute("CREATE INDEX IF NOT EXISTS experimental_thread_versions ON experimental_events(actor,seq DESC) WHERE json_extract(event,'$.event.type') IN ('ThreadCreated','ThreadUpdated')", [])
+    tx.execute("CREATE TABLE IF NOT EXISTS experimental_messages(actor TEXT NOT NULL,id TEXT NOT NULL,seq INTEGER NOT NULL,PRIMARY KEY(actor,id),FOREIGN KEY(actor,seq) REFERENCES experimental_events(actor,seq)) WITHOUT ROWID", [])
     tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_message_indexes(actor TEXT PRIMARY KEY) WITHOUT ROWID", [])
     if (!tx.execute("SELECT actor FROM stored_journal_message_indexes WHERE actor=?", [actor]).length) {
       let cursor = -1
       while (true) {
-        const row = query<StoredPayloadRow & { seq: number }>("SELECT seq,record AS payload,byte_length,chunk_count,digest FROM stored_journal_events WHERE actor=? AND seq>? ORDER BY seq LIMIT 1", [actor, cursor])[0]
+        const row = query<{ seq: number; event: string }>("SELECT seq,event FROM experimental_events WHERE actor=? AND seq>? ORDER BY seq LIMIT 1", [actor, cursor])[0]
         if (!row) break
         if (!Number.isSafeInteger(row.seq) || row.seq !== cursor + 1) throw new Error("Invalid journal sequence during message index backfill")
-        const payload = bytes(row, "stored_journal_event_chunks", "seq", row.seq)
-        if (row.digest !== null && storedPayloadDigest(payload) !== row.digest) throw new Error("Journal payload digest mismatch during message index backfill")
-        const id = messageIdentity(JSON.parse(decoder.decode(payload)) as Recorded<Event>)
-        if (id !== undefined) tx.execute("INSERT INTO stored_journal_messages(actor,id,seq) VALUES(?,?,?)", [actor, id, row.seq])
+        const record = decodeSqlJournalRecord<Event>(row.event, () => query<{ ordinal: number; payload: Uint8Array }>("SELECT ordinal,payload FROM experimental_event_chunks WHERE actor=? AND seq=? ORDER BY ordinal", [actor, row.seq]))
+        const id = messageIdentity(record)
+        if (id !== undefined) {
+          const existing = tx.execute("SELECT seq FROM experimental_messages WHERE actor=? AND id=?", [actor, id])[0]
+          if (existing && existing.seq !== row.seq) throw new Error("Message index differs from its journal record")
+          if (!existing) tx.execute("INSERT INTO experimental_messages(actor,id,seq) VALUES(?,?,?)", [actor, id, row.seq])
+        }
         cursor = row.seq
       }
       tx.execute("INSERT INTO stored_journal_message_indexes(actor) VALUES(?)", [actor])
@@ -123,7 +126,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
     const batch = yield* attempt(() => ({
       documents: changes.documents && { references: changes.documents.references.map(reference => ({ ...reference })) },
       remove: changes.remove?.map(ref => ({ ...ref })),
-      texts: events.map(record => { messageIdentity(record); return JSON.stringify(Schema.decodeUnknownSync(Schema.Json)(record)) }),
+      texts: events.map(record => { messageIdentity(record); return JSON.stringify(record) }),
       inputs: (changes.put ?? []).map(input => JSON.stringify(Schema.decodeSync(PendingEffectInput)(input))),
     }))
     if (!Number.isSafeInteger(position) || position < 0) return yield* Effect.fail(new RuntimeError("Invalid expected journal position"))
@@ -133,15 +136,14 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
       if (value.position !== checkpoint.position) throw new Error("Checkpoint payload position mismatch")
       return value
     }) : undefined
-    const encoded = yield* Effect.forEach(batch.texts, text => {
+    const encoded = yield* attempt(() => batch.texts.map(text => {
       const payload = encoder.encode(text)
-      return prepare(payload, checkpointChunkBytes, payload.byteLength <= eventInlineBytes).pipe(Effect.flatMap(value => attempt(() => {
-        const record = JSON.parse(text) as { event?: { type?: unknown } }
-        const stub = JSON.stringify({ event: typeof record.event?.type === "string" ? { type: record.event.type } : {} })
-        if (value.chunks.length && encoder.encode(stub).byteLength > inlineCapacity) throw new Error("Journal event metadata exceeds the row capacity")
-        return { ...value, text: value.chunks.length ? stub : text }
-      })))
-    })
+      const chunks = payload.byteLength > eventInlineBytes ? encodeCheckpointChunks(payload, checkpointChunkBytes) : []
+      const record = JSON.parse(text) as { event?: { type?: unknown } }
+      const stored = chunks.length ? JSON.stringify({ event: typeof record.event?.type === "string" ? { type: record.event.type } : undefined, chunkCount: chunks.length, byteLength: payload.byteLength }) : text
+      if (chunks.length && encoder.encode(stored).byteLength > inlineCapacity) throw new Error("Journal event metadata exceeds the row capacity")
+      return { text: stored, chunks }
+    }))
     const pending = yield* Effect.forEach(batch.inputs, text => attempt(() => {
       const input = Schema.decodeUnknownSync(PendingEffectInput)(JSON.parse(text))
       const key = effectKey(input.ref)
@@ -152,7 +154,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
     yield* wakeLock.withPermit(attempt(() => {
       if (grove.transactionActive()) throw new Error("Journal append must own the native transaction")
       grove.transaction(tx => {
-        const rows = tx.execute("SELECT MAX(seq) AS seq FROM stored_journal_events WHERE actor=?", [actor])
+        const rows = tx.execute("SELECT MAX(seq) AS seq FROM experimental_events WHERE actor=?", [actor])
         const count = rows[0]?.seq === null ? 0 : Number(rows[0]?.seq) + 1
         if (count !== position) throw new JournalConflict(`Journal conflict: expected ${position}, found ${count}`)
         for (const document of batch.documents?.references ?? []) {
@@ -176,10 +178,10 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
           for (const chunk of prepared.chunks) tx.execute("INSERT INTO stored_journal_input_chunks VALUES(?,?,?,?)", [actor, key, chunk.ordinal, chunk.payload])
         }
         for (const [index, record] of encoded.entries()) {
-          tx.execute("INSERT INTO stored_journal_events(actor,seq,record,byte_length,chunk_count,digest) VALUES(?,?,?,?,?,?)", [actor, position + index, record.text, record.payload.byteLength, record.chunks.length, record.digest])
-          for (const chunk of record.chunks) tx.execute("INSERT INTO stored_journal_event_chunks VALUES(?,?,?,?)", [actor, position + index, chunk.ordinal, chunk.payload])
+          tx.execute("INSERT INTO experimental_events(actor,seq,event) VALUES(?,?,?)", [actor, position + index, record.text])
+          for (const chunk of record.chunks) tx.execute("INSERT INTO experimental_event_chunks VALUES(?,?,?,?)", [actor, position + index, chunk.ordinal, chunk.payload])
           const id = messageIdentity(JSON.parse(batch.texts[index]!) as Recorded<Event>)
-          if (id !== undefined) tx.execute("INSERT INTO stored_journal_messages(actor,id,seq) VALUES(?,?,?)", [actor, id, position + index])
+          if (id !== undefined) tx.execute("INSERT INTO experimental_messages(actor,id,seq) VALUES(?,?,?)", [actor, id, position + index])
         }
         for (const ref of batch.remove ?? []) {
           const key = effectKey(ref)
@@ -218,29 +220,28 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
       grove.discard()
     }).pipe(Effect.andThen(finishCommit), Effect.uninterruptible))
   })
+  const captureRecord = (row: { readonly seq: number; readonly event: string }) => {
+    if (!Number.isSafeInteger(row.seq) || row.seq < 0) throw new Error("Invalid journal sequence")
+    return { seq: row.seq, record: decodeSqlJournalRecord<Event>(row.event, () => query<{ ordinal: number; payload: Uint8Array }>("SELECT ordinal,payload FROM experimental_event_chunks WHERE actor=? AND seq=? ORDER BY ordinal", [actor, row.seq])) }
+  }
   const readAfter = (position: number) => Effect.gen(function* () {
     if (scheduler) yield* scheduler.restore
-    const rows = yield* attempt(() => grove.transaction(() => {
-      const count = Number(query<{ count: number }>("SELECT COUNT(*) count FROM stored_journal_events WHERE actor=?", [actor])[0]!.count)
+    return yield* attempt(() => grove.transaction(() => {
+      const count = Number(query<{ count: number }>("SELECT COUNT(*) count FROM experimental_events WHERE actor=?", [actor])[0]!.count)
       if (!Number.isSafeInteger(position) || position < 0 || position > count) throw new Error("Invalid journal suffix position")
-      return query<StoredPayloadRow & { seq: number }>("SELECT seq,record AS payload,byte_length,chunk_count,digest FROM stored_journal_events WHERE actor=? AND seq>=? ORDER BY seq", [actor, position]).map((row, index) => {
+      return query<{ seq: number; event: string }>("SELECT seq,event FROM experimental_events WHERE actor=? AND seq>=? ORDER BY seq", [actor, position]).map((row, index) => {
         if (row.seq !== position + index) throw new Error("Invalid journal sequence")
-        return { ...row, payload: bytes(row, "stored_journal_event_chunks", "seq", row.seq) }
+        return captureRecord(row).record
       })
     }))
-    return yield* Effect.forEach(rows, row => verify(row.payload, row.digest).pipe(Effect.flatMap(payload => attempt(() => JSON.parse(decoder.decode(payload)) as Recorded<Event>))))
   })
-  const captureRecord = (row: StoredPayloadRow & { seq: number }) => {
-    if (!Number.isSafeInteger(row.seq) || row.seq < 0) throw new Error("Invalid journal sequence")
-    return { ...row, payload: bytes(row, "stored_journal_event_chunks", "seq", row.seq) }
-  }
-  const decodeRecord = (row: StoredPayloadRow & { payload: Uint8Array }) => verify(row.payload, row.digest).pipe(Effect.flatMap(payload => attempt(() => JSON.parse(decoder.decode(payload)) as Recorded<Event>)))
+  const decodeRecord = (row: ReturnType<typeof captureRecord>) => attempt(() => row.record)
   const journal: MessageJournal<Event> = {
     storedValues: session, read: readAfter(0), readAfter,
     acknowledge: wakeLock.withPermit(attempt(guard).pipe(Effect.andThen(finishCommit), Effect.uninterruptible)),
     readMessage: id => Effect.gen(function* () {
       const row = yield* attempt(() => grove.transaction(() => {
-        const row = query<StoredPayloadRow & { seq: number | null }>("SELECT e.seq,e.record AS payload,e.byte_length,e.chunk_count,e.digest FROM stored_journal_messages m LEFT JOIN stored_journal_events e ON e.actor=m.actor AND e.seq=m.seq WHERE m.actor=? AND m.id=?", [actor, id])[0]
+        const row = query<{ seq: number | null; event: string }>("SELECT e.seq,e.event FROM experimental_messages m LEFT JOIN experimental_events e ON e.actor=m.actor AND e.seq=m.seq WHERE m.actor=? AND m.id=?", [actor, id])[0]
         if (!row) return undefined
         if (row.seq === null) throw new Error("Message index references a missing journal record")
         return captureRecord({ ...row, seq: row.seq })
@@ -274,7 +275,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
   return { ...journal, storedValues: session, grove, scope, scheduler, watchdog, watchdogStorage,
     readFirst: Effect.gen(function* () {
       const row = yield* attempt(() => grove.transaction(() => {
-        const row = query<StoredPayloadRow & { seq: number }>("SELECT seq,record AS payload,byte_length,chunk_count,digest FROM stored_journal_events WHERE actor=? ORDER BY seq LIMIT 1", [actor])[0]
+        const row = query<{ seq: number; event: string }>("SELECT seq,event FROM experimental_events WHERE actor=? ORDER BY seq LIMIT 1", [actor])[0]
         if (!row) return undefined
         if (row.seq !== 0) throw new Error("Invalid first journal sequence")
         return captureRecord(row)
@@ -283,10 +284,10 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
     }),
     readVersion: Effect.gen(function* () {
       const snapshot = yield* attempt(() => grove.transaction(() => {
-        const head = query<{ seq: number | null }>("SELECT MAX(seq) seq FROM stored_journal_events WHERE actor=?", [actor])[0]!
+        const head = query<{ seq: number | null }>("SELECT MAX(seq) seq FROM experimental_events WHERE actor=?", [actor])[0]!
         const position = head.seq === null ? 0 : head.seq + 1
         if (!Number.isSafeInteger(position) || position < 0) throw new Error("Invalid journal position")
-        const row = query<StoredPayloadRow & { seq: number }>("SELECT seq,record AS payload,byte_length,chunk_count,digest FROM stored_journal_events WHERE actor=? AND json_extract(record,'$.event.type') IN ('ThreadCreated','ThreadUpdated') ORDER BY seq DESC LIMIT 1", [actor])[0]
+        const row = query<{ seq: number; event: string }>("SELECT seq,event FROM experimental_events WHERE actor=? AND json_extract(event,'$.event.type') IN ('ThreadCreated','ThreadUpdated') ORDER BY seq DESC LIMIT 1", [actor])[0]
         const pendingEffects = Number(query<{ n: number }>("SELECT COUNT(*) n FROM stored_journal_inputs WHERE actor=?", [actor])[0]!.n)
         return { position, pendingEffects, row: row && captureRecord(row) }
       }))

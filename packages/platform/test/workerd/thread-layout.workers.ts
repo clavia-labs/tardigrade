@@ -23,13 +23,13 @@ test("a fresh instance creates, queries, and messages flat independent threads w
   })
   expect((await threadStub(instance, "child").records()).find(record => record.message?.id === "child:child")).toMatchObject({ message: { from: coordinate(instance, "parent") } })
   await runInDurableObject(actor, async (_object, state) => {
-    const types = state.storage.sql.exec<{ event: string }>("SELECT record AS event FROM stored_journal_events").toArray().map(row => JSON.parse(row.event).event.type)
+    const types = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events").toArray().map(row => JSON.parse(row.event).event.type)
     expect(types).toContain("ThreadRequested")
     expect(types).not.toContain("ThreadCreated")
   })
   for (const name of ["parent", "child"]) {
     await runInDurableObject(threadStub(instance, name), async (_object, state) => {
-      const rows = state.storage.sql.exec<{ event: string }>("SELECT record AS event FROM stored_journal_events ORDER BY seq").toArray()
+      const rows = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray()
       expect(JSON.parse(rows[0]!.event).event).toEqual({
         type: "ThreadCreated", address: coordinate(instance, name), placement: "independent",
         parent: name === "parent" ? null : coordinate(instance, "parent"), depth: name === "parent" ? 0 : 1,
@@ -100,7 +100,7 @@ test("directory admission and a turn survive retryable provisioning and lookup r
   expect(records.filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
   expect(records.filter(record => record.message?.id === "same-call")).toHaveLength(1)
   await runInDurableObject(actor, async (_object, state) => {
-    const events = state.storage.sql.exec<{ event: string }>("SELECT record AS event FROM stored_journal_events").toArray().map(row => JSON.parse(row.event).event.type)
+    const events = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events").toArray().map(row => JSON.parse(row.event).event.type)
     expect(events.filter(type => type === "ThreadRegistered")).toHaveLength(1)
     expect(events).not.toContain("ThreadFailed")
   })
@@ -137,8 +137,8 @@ test("provisioning retries survive reopening and concurrent named requests share
     expect((await flow.request("", { name: "failed", initialState: { "layout.value": 99 } })).status).toBeGreaterThanOrEqual(400)
     await runInDurableObject(actor, async (object, state) => {
       await object.dispose()
-      state.storage.sql.exec("DELETE FROM stored_journal_checkpoint_chunks")
-      state.storage.sql.exec("DELETE FROM stored_journal_checkpoints")
+      state.storage.sql.exec("DELETE FROM checkpoint_chunks")
+      state.storage.sql.exec("DELETE FROM checkpoint")
     })
     await failed.failNextProvisions(1)
     const retried = await Promise.all(Array.from({ length: 5 }, () => flow.request("", { name: "failed" })))
@@ -151,7 +151,7 @@ test("provisioning retries survive reopening and concurrent named requests share
     expect((await flow.request("", { name: "failed" })).status).toBe(200)
     expect(await failed.provisionCalls()).toBe(2 * (DEFAULT_PROVISION_RETRY_LIMIT + 1) + 2)
     await runInDurableObject(actor, async (_object, state) => {
-      const events = state.storage.sql.exec<{ event: string }>("SELECT record AS event FROM stored_journal_events ORDER BY seq").toArray().map(row => JSON.parse(row.event).event)
+      const events = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray().map(row => JSON.parse(row.event).event)
       const requests = events.filter(event => event.type === "ThreadRequested" && event.allocation.coordinate.thread === "failed")
       expect(events.filter(event => event.type === "RetryScheduled")).toHaveLength(2 * DEFAULT_PROVISION_RETRY_LIMIT + 2)
       expect(events.filter(event => event.type === "EffectRequested")).toHaveLength(5)
@@ -200,7 +200,7 @@ test("large checkpoints survive native abort", async () => {
   await flow.call("parent", "read", null, "initial", 32)
   const parent = threadStub(instance, "parent")
   await runInDurableObject(parent, async (_object, state) => {
-    expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) count FROM stored_journal_checkpoint_chunks").one().count).toBeGreaterThan(1)
+    expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) count FROM grove_nodes").one().count).toBeGreaterThan(50)
   })
   try { await runInDurableObject(parent, (_object, state) => state.abort("injected checkpoint reset")) }
   catch (error) { expect(String(error)).toContain("injected checkpoint reset") }

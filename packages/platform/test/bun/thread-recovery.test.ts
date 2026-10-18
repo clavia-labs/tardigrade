@@ -118,7 +118,7 @@ test("version adoption reads lifecycle metadata without hydrating unrelated chun
     await Effect.runPromise(initializeThread(journal, { type: "ThreadCreated", address, parent: null, depth: 0, placement: "independent", version: "v1" }))
     await Effect.runPromise(journal.append(1, [{ event: { type: "Payload", body: "payload".repeat(1_000) } }]))
     const database = new Database(filename)
-    try { database.exec("DELETE FROM stored_journal_event_chunks WHERE seq = 1") }
+    try { database.exec("DELETE FROM experimental_event_chunks WHERE seq = 1") }
     finally { database.close() }
     expect(await Effect.runPromise(Effect.flip(journal.read))).toBeInstanceOf(Error)
     const messages: unknown[] = []

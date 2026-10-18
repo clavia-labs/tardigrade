@@ -76,24 +76,24 @@ test("watchdog record and alarm roll back together", async () => {
   })
 })
 
-test("journal admission remains durable when physical alarm synchronization fails", async () => {
-  await runInDurableObject(namespace.getByName("watchdog-admission-alarm"), async (_instance, state) => {
-    let fail = true
+test("journal admission rolls back when alarm staging fails", async () => {
+  await runInDurableObject(namespace.getByName("watchdog-admission-rollback"), async (_instance, state) => {
     const storage = new Proxy(state.storage, { get(target, property) {
-      if (property === "setAlarm") return (at: number) => fail ? Promise.reject(new Error("alarm unavailable")) : target.setAlarm(at)
+      if (property === "transaction") return <Value>(callback: (tx: DurableObjectTransaction) => Promise<Value>) => target.transaction(tx => callback(new Proxy(tx, { get(transaction, key) {
+        if (key === "setAlarm") return () => Promise.reject(new Error("alarm unavailable"))
+        const value = Reflect.get(transaction, key)
+        return typeof value === "function" ? value.bind(transaction) : value
+      } })))
       const value = Reflect.get(target, property)
       return typeof value === "function" ? value.bind(target) : value
     } })
     const watchdog = createWatchdog({ storage: cloudflareWatchdogStorage(storage), recover: () => Effect.succeed({ status: "settled", progressCursor: 0 }), invalidate: () => Effect.void })
-    const journal = objectJournal({ storage, key: "events", target: address, watchdog, alarms: { retry: false } })
+    const journal = objectJournal({ storage, key: "events", target: address, watchdog })
     try {
       await expect(Effect.runPromise(journal.append(0, [{ event: ThreadCreated.make({ type: "ThreadCreated", address, parent: null, depth: 0, placement: "independent" }) }]))).rejects.toThrow()
-      expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) n FROM stored_journal_events").one().n).toBe(1)
+      expect(await Effect.runPromise(journal.read)).toEqual([])
+      expect((await Effect.runPromise(watchdog.status)).size).toBe(0)
       expect(await state.storage.getAlarm()).toBeNull()
-      fail = false
-      expect((await Effect.runPromise(journal.read)).length).toBe(1)
-      expect((await Effect.runPromise(watchdog.status)).size).toBe(1)
-      expect(await state.storage.getAlarm()).not.toBeNull()
     } finally { await Effect.runPromise(journal.close) }
   })
 })
@@ -128,6 +128,6 @@ test.skip("thread heartbeats retain a live producer without renewing its deadlin
     expect(await parent.executions()).toBe(1)
     await parent.releaseSpawns()
     await flow.completed("parent", "spawn", "child", flow.coordinate("child"))
-    await expect.poll(async () => runInDurableObject(parent, async (_object, state) => (await Effect.runPromise(cloudflareWatchdogStorage(state.storage).transaction(tx => tx.list))).size)).toBe(0)
+    await expect.poll(async () => runInDurableObject(parent, async (_object, state) => (await state.storage.list({ prefix: "tardie:watchdog:" })).size)).toBe(0)
   } finally { await runInDurableObject(parent, object => object.dispose()) }
 })

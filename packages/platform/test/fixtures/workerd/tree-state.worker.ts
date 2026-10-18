@@ -1,25 +1,22 @@
 import { DurableObject } from "cloudflare:workers"
 import { Effect } from "effect"
 import { createHash } from "node:crypto"
-import { platformJournal } from "../../../src/shared/platform-journal"
-import { cloudflareNativeDriver } from "../../../src/cloudflare/native-recovery"
-import { CLOUDFLARE_SQL_LIMITS } from "../../../src/cloudflare/limits"
+import { cloudflareJournal } from "../../../src/cloudflare"
 import { treeActorFixture, TreeEvent } from "../../properties/runtime/tree-state"
 
 export class TreeStateDO extends DurableObject {
-  private readonly journal = platformJournal<typeof TreeEvent.Type>({ actor: "tree", limits: CLOUDFLARE_SQL_LIMITS,
-    driver: { ...cloudflareNativeDriver(this.ctx.storage), execute: (sql, parameters) => {
-      const rows = cloudflareNativeDriver(this.ctx.storage).execute(sql, parameters)
-      if (sql.startsWith("SELECT n.payload AS inline")) { this.loadedNodes++; this.loadedBytes += Number(rows[0]?.byte_length ?? 0) }
-      return rows
-    } }, flush: Effect.tryPromise(() => this.ctx.storage.sync()),
-  }, { collectEvery: 1, cacheBytes: 8192 })
+  private readonly journal = cloudflareJournal<typeof TreeEvent.Type>(this.ctx.storage, "tree", { checkpointTree: { collectEvery: 1, cacheBytes: 8192 } })
   private live: ReturnType<typeof this.open> | undefined
   private loadedNodes = 0
   private loadedBytes = 0
   private async open() {
     this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS tree_calls (phase TEXT, digest TEXT, count INTEGER, ref TEXT)")
-    return Effect.runPromise(treeActorFixture(this.journal, (phase, input, ref) => Effect.sync(() => {
+    const storage = this.journal.trees!
+    return Effect.runPromise(treeActorFixture({ ...this.journal, trees: { ...storage, load: hash => {
+      const text = storage.load(hash)
+      this.loadedNodes++; this.loadedBytes += Buffer.byteLength(text)
+      return text
+    } } }, (phase, input, ref) => Effect.sync(() => {
       const digest = createHash("sha256").update(JSON.stringify(input.messages)).digest("hex")
       this.ctx.storage.sql.exec("INSERT INTO tree_calls VALUES (?, ?, ?, ?)", phase, digest, input.messages.length, JSON.stringify(ref))
     })))
@@ -51,8 +48,8 @@ export class TreeStateDO extends DurableObject {
       state: live.store.getState().view, loadedNodes: this.loadedNodes, loadedBytes: this.loadedBytes,
       calls: this.ctx.storage.sql.exec<{ phase: string; digest: string; count: number; ref: string }>("SELECT * FROM tree_calls").toArray(),
       inputs: await Effect.runPromise(this.journal.readInputs),
-      owners: this.ctx.storage.sql.exec<{ name: string; root: string }>("SELECT * FROM grove_value_owners").toArray(),
-      nodes: this.ctx.storage.sql.exec<{ hash: string }>("SELECT hash FROM grove_value_nodes").toArray().map(row => row.hash),
+      owners: this.ctx.storage.sql.exec<{ name: string; root: string }>("SELECT * FROM grove_owners").toArray(),
+      nodes: this.ctx.storage.sql.exec<{ hash: string }>("SELECT hash FROM grove_nodes").toArray().map(row => row.hash),
     }
   }
   abort() { this.ctx.abort("Native tree reset fixture") }

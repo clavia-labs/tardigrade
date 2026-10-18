@@ -2,8 +2,6 @@
 
 Typed actor methods turn inputs into domain events. Durable atoms reduce those events into state, reactive atoms propose work, and service layers execute it.
 
-Every agent durable atom uses Grove. Trajectory, rendered context and activity use append-only rows. Turn records, invocation and cancellation indexes, per-turn spending, permission records, budgets, queued tools, code executions and promise submissions use key-value collections. Small configuration and control records use tree values. Pending IDs retain execution order; consumer views materialize arrays when needed.
-
 ```text
 src/
 ├── index.ts                   public authoring exports
