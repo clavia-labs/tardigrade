@@ -107,7 +107,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
   const scheduler = scheduling && schedulerStorage ? createScheduler({ storage: schedulerStorage, deliver: scheduling.deliver, policy: scheduling.policy }) : undefined
   const watchdog = options.watchdog && watchdogStorage ? "instance" in options.watchdog ? options.watchdog.instance : createWatchdog({ ...options.watchdog, storage: watchdogStorage }) : undefined
   const replace = (tx: Transaction, prefix: string, values: readonly string[]) => grove.replaceOwners(tx, prefix, values.map(decodeReference))
-  const syncViews = (tx: Transaction) => grove.replaceOwners(tx, viewPrefix, grove.held())
+  const syncViews = (tx: Transaction) => grove.syncHeld(tx, viewPrefix)
   const verify = (payload: Uint8Array, digest: string | null) => Effect.gen(function* () {
     if (digest !== null && (yield* checkpointDigest(payload)) !== digest) return yield* Effect.fail(new RuntimeError("Journal payload digest mismatch"))
     return payload
