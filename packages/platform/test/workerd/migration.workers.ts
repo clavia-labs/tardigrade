@@ -19,14 +19,14 @@ test("recovery transfer rolls back partial SQL writes before clearing KV and ret
     const entries = { ["tardie:scheduler:" + wake.id]: wake, ["tardie:watchdog:" + fixture.recovery.key]: fixture.recovery.watchdog, "tardie:scheduler-generation": generation }
     await state.storage.put(entries)
     await state.storage.setAlarm(fixture.recovery.dueAt)
-    state.storage.sql.exec("CREATE TABLE runtime_watchdogs(id TEXT PRIMARY KEY,entry TEXT NOT NULL) WITHOUT ROWID")
-    state.storage.sql.exec("CREATE TRIGGER recovery_migration_fault BEFORE INSERT ON runtime_watchdogs BEGIN SELECT RAISE(ABORT,'recovery migration fault'); END")
+    state.storage.sql.exec("CREATE TABLE watchdogs(id TEXT PRIMARY KEY,entry TEXT NOT NULL) WITHOUT ROWID")
+    state.storage.sql.exec("CREATE TRIGGER recovery_migration_fault BEFORE INSERT ON watchdogs BEGIN SELECT RAISE(ABORT,'recovery migration fault'); END")
     const journal = cloudflareJournal(state.storage, "events")
     try {
       await expect(Effect.runPromise(journal.readVersion)).rejects.toThrow("requires migration")
       expect(Object.fromEntries(await state.storage.list({ prefix: "tardie:" }))).toEqual(entries)
       expect(await state.storage.getAlarm()).toBe(fixture.recovery.dueAt)
-      for (const table of ["scheduled_wakes", "runtime_watchdogs", "scheduler_generation"]) {
+      for (const table of ["scheduled_wakes", "watchdogs", "scheduler_generation"]) {
         if (state.storage.sql.exec("SELECT name FROM sqlite_master WHERE name=?", table).toArray().length) expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) n FROM ${table}`).one().n).toBe(0)
       }
       state.storage.sql.exec("DROP TRIGGER recovery_migration_fault")
@@ -41,7 +41,7 @@ test("recovery transfer rolls back partial SQL writes before clearing KV and ret
       expect(await state.storage.list({ prefix: "tardie:" })).toEqual(new Map())
       expect(await state.storage.getAlarm()).toBe(fixture.recovery.dueAt)
       expect(JSON.parse(state.storage.sql.exec<{ entry: string }>("SELECT entry FROM scheduled_wakes").one().entry)).toEqual(expected["tardie:scheduler:" + fixture.recovery.wake.id])
-      expect(JSON.parse(state.storage.sql.exec<{ entry: string }>("SELECT entry FROM runtime_watchdogs").one().entry)).toEqual(fixture.recovery.watchdog)
+      expect(JSON.parse(state.storage.sql.exec<{ entry: string }>("SELECT entry FROM watchdogs").one().entry)).toEqual(fixture.recovery.watchdog)
       const recovery = cloudflareNativeRecovery(state.storage)
       expect(await Effect.runPromise(recovery.transaction(tx => tx.scheduler.allocateGeneration))).toBe(generation + 1)
     } finally { await Effect.runPromise(journal.close) }

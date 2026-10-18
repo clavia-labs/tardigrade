@@ -33,7 +33,7 @@ export function checkNativeRecovery(storage: DurableObjectStorage) {
         if (wakeEntries.some(value => value.entry.generation > savedGeneration)) throw new Error("Legacy scheduler generation precedes a wake")
         const sql = storage.sql
         initializeSyncRecovery(cloudflareNativeDriver(storage))
-        for (const [table, entries] of [["scheduled_wakes", wakeEntries], ["runtime_watchdogs", watchdogEntries]] as const) for (const value of entries) {
+        for (const [table, entries] of [["scheduled_wakes", wakeEntries], ["watchdogs", watchdogEntries]] as const) for (const value of entries) {
           const existing = sql.exec<{ entry: string }>(`SELECT entry FROM ${table} WHERE id=?`, value.id).toArray()[0]
           const encoded = JSON.stringify(value.entry)
           if (existing && existing.entry !== encoded) throw new Error("Conflicting legacy and native recovery records")

@@ -437,7 +437,7 @@ test("watchdog failure rolls back journal chunks, retry wakes, checkpoint and Gr
   const db = new Database(":memory:"), native = driverFor(db)
   let fail = true, at: number | null = null, flushes = 0
   const driver: SyncSqlite = { ...native, execute: (sql, parameters) => {
-    if (fail && sql.startsWith("INSERT INTO runtime_watchdogs")) throw new Error("Injected admission failure")
+    if (fail && sql.startsWith("INSERT INTO watchdogs")) throw new Error("Injected admission failure")
     return native.execute(sql, parameters)
   } }
   const journal = synchronousJournal({ actor: "atomic", driver, eventInlineBytes: 64, checkpointChunkBytes: 64,
@@ -451,7 +451,7 @@ test("watchdog failure rolls back journal chunks, retry wakes, checkpoint and Gr
     const saved = { position: 1, payload, digest: await Effect.runPromise(checkpointDigest(payload)) }
     const changes = { documents: { references: [{ name: "state", reference: encodeReference(document.reference!) }] }, put: [{ ref: recoveryRef, request: { act: recoveryRef.act, input: { text: "x".repeat(256) } } }] }
     await expect(Effect.runPromise(journal.appendWithCheckpoint(0, [retry(1)], saved, changes))).rejects.toThrow("admission failure")
-    for (const table of ["experimental_events", "experimental_event_chunks", "journal_accepted_inputs", "journal_accepted_input_chunks", "journal_checkpoints", "journal_checkpoint_chunks", "scheduled_wakes", "scheduler_generation", "runtime_watchdogs"]) expect(db.query<{ n: number }, []>(`SELECT COUNT(*) n FROM ${table}`).get()!.n).toBe(0)
+    for (const table of ["experimental_events", "experimental_event_chunks", "journal_accepted_inputs", "journal_accepted_input_chunks", "journal_checkpoints", "journal_checkpoint_chunks", "scheduled_wakes", "scheduler_generation", "watchdogs"]) expect(db.query<{ n: number }, []>(`SELECT COUNT(*) n FROM ${table}`).get()!.n).toBe(0)
     expect(journal.grove.owners("")).toEqual([])
     expect(at).toBeNull()
     expect(flushes).toBe(0)

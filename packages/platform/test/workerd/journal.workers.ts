@@ -101,7 +101,7 @@ test("native recovery admission rolls back with publication and restores alarms 
     const native = driverFor(state.storage)
     let fail = true
     const driver: SyncSqlite = { ...native, execute: (sql, parameters) => {
-      if (fail && sql.startsWith("INSERT INTO runtime_watchdogs")) throw new Error("Injected native watchdog failure")
+      if (fail && sql.startsWith("INSERT INTO watchdogs")) throw new Error("Injected native watchdog failure")
       return native.execute(sql, parameters)
     } }
     const journal = synchronousJournal({ actor: "recovery", driver,

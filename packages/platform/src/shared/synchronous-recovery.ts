@@ -35,8 +35,8 @@ export function synchronousRecoveryStorage(grove: ReturnType<typeof makeSync>, i
 export function initializeSyncRecovery(tx: Pick<Transaction, "execute">) {
   tx.execute("CREATE TABLE IF NOT EXISTS scheduled_wakes(id TEXT PRIMARY KEY,entry TEXT NOT NULL) WITHOUT ROWID", [])
   tx.execute("CREATE TABLE IF NOT EXISTS scheduler_generation(id INTEGER PRIMARY KEY CHECK(id=1),value INTEGER NOT NULL) WITHOUT ROWID", [])
-  tx.execute("CREATE TABLE IF NOT EXISTS runtime_watchdogs(id TEXT PRIMARY KEY,entry TEXT NOT NULL) WITHOUT ROWID", [])
-  const sources = [["stored_scheduler_wakes", "scheduled_wakes", "id,entry"], ["stored_scheduler_generation", "scheduler_generation", "value"], ["stored_watchdog_entries", "runtime_watchdogs", "id,entry"]] as const
+  tx.execute("CREATE TABLE IF NOT EXISTS watchdogs(id TEXT PRIMARY KEY,entry TEXT NOT NULL) WITHOUT ROWID", [])
+  const sources = [["stored_scheduler_wakes", "scheduled_wakes", "id,entry"], ["stored_scheduler_generation", "scheduler_generation", "value"], ["stored_watchdog_entries", "watchdogs", "id,entry"]] as const
   let identity: unknown
   for (const [source, target, columns] of sources) {
     if (!tx.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [source]).length) continue
@@ -72,5 +72,5 @@ export function syncRecoveryTransaction(tx: Transaction, alarm: typeof Alarm.Ser
       return Number(row.value)
     }),
   }
-  return { scheduler, watchdog: { ...entries("runtime_watchdogs", WatchdogEntry), alarm: schedulerOwner(scheduler, "watchdog", { owner: "watchdog" }) } }
+  return { scheduler, watchdog: { ...entries("watchdogs", WatchdogEntry), alarm: schedulerOwner(scheduler, "watchdog", { owner: "watchdog" }) } }
 }
