@@ -185,7 +185,7 @@
       "name": "@clavia/tardigrade-core",
       "version": "0.0.1",
       "dependencies": {
-        "@tardie/grove": "0.3.0",
+        "@tardie/grove": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
       "devDependencies": {
@@ -341,7 +341,7 @@
         "@clavia/tardigrade-worker-loader": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-bun": "4.0.0-rc.115",
-        "@tardie/grove": "0.3.0",
+        "@tardie/grove": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
       "devDependencies": {

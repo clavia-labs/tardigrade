@@ -105,16 +105,12 @@ jobs:
       # CI runs the full gate on the release PR before merge. Publication only needs to validate
       # the assembled package again; rerunning the repository test matrix makes npm publishing
       # depend on unrelated network and worker tests.
-      - name: Validate Grove package
-        run: bun run tools/publish-grove.ts --pack-only
       - name: Validate candidate package
         run: bun run tools/publish.ts --pack-only --version ${{ steps.candidate.outputs.version }} --tag ${RC_NPM_TAG} --source-tree ${{ steps.candidate-tree.outputs.sha }}
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      - name: Publish Grove dependency
-        run: bun run tools/publish-grove.ts
       - name: Publish candidate
         run: bun run tools/publish.ts --version ${{ steps.candidate.outputs.version }} --tag ${RC_NPM_TAG} --source-tree ${{ steps.candidate-tree.outputs.sha }}
       - name: Record release PR checks
@@ -151,8 +147,6 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      - name: Validate Grove package
-        run: bun run tools/publish-grove.ts --pack-only
       - name: Validate stable package
         run: bun run tools/publish.ts --pack-only --source-tree ${{ steps.stable-tree.outputs.sha }}
       - name: Verify release candidate
@@ -166,7 +160,5 @@ jobs:
             exit 1
           fi
           echo "npm ${RC_NPM_TAG} matches stable tree ${STABLE_TREE}."
-      - name: Publish Grove dependency
-        run: bun run tools/publish-grove.ts ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && '--dry-run' || '' }}
       - name: Publish
         run: bun run tools/publish.ts --tag ${STABLE_NPM_TAG} --source-tree ${{ steps.stable-tree.outputs.sha }} ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && '--dry-run' || '' }}
