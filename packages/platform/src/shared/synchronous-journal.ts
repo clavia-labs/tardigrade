@@ -8,7 +8,7 @@ import { DEFAULT_CHECKPOINT_CHUNK_BYTES, CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES, va
 import { DEFAULT_EVENT_INLINE_BYTES, decodeSqlJournalRecord, type JournalRecordOptions, type SqlJournalLimits } from "./journal-records"
 import { storedPayloadBytes, storedPayloadDigest, type StoredPayloadRow, type StoredPayloadChunk } from "./stored-journal-payloads"
 import { createScheduler, createWatchdog, ThreadUpdated, type Alarm, type SchedulerStorage, type SchedulerPolicy, type ScheduledWake, type WatchdogStorage, type WatchdogTarget } from "@clavia/tardigrade-core"
-import { initializeSyncRecovery, syncRecoveryTransaction, synchronousRecoveryStorage, recoveryLock } from "./synchronous-recovery"
+import { initializeSyncRecovery, syncRecoveryTransaction, synchronousRecoveryStorage, recoveryLock, stageWakes, commitWakes } from "./synchronous-recovery"
 import { initializeJournal } from "./journal-schema"
 import { journalMigration } from "./migrate-journal"
 import { recordRetryWakes } from "./retry-wakes"
@@ -146,6 +146,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
     const context = yield* Effect.context<never>()
     yield* wakeLock.withPermit(attempt(() => {
       if (grove.transactionActive()) throw new Error("Journal append must own the native transaction")
+      let wakes: ReturnType<typeof stageWakes>
       grove.transaction(tx => {
         const rows = tx.execute("SELECT MAX(seq) AS seq FROM experimental_events WHERE actor=?", [actor])
         const count = rows[0]?.seq === null ? 0 : Number(rows[0]?.seq) + 1
@@ -189,7 +190,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
           for (const chunk of checkpointPayload!.chunks) tx.execute("INSERT INTO journal_checkpoint_chunks VALUES(?,?)", [chunk.ordinal, chunk.payload])
         }
         if (scheduling) {
-          const recovery = syncRecoveryTransaction(tx, scheduling.alarm)
+          const recovery = syncRecoveryTransaction(tx, scheduling.alarm, driver.identity)
           const records = batch.texts.map(text => JSON.parse(text) as Recorded<Event>)
           Effect.runSyncWith(context)(Effect.gen(function* () {
             yield* recordRetryWakes(recovery.scheduler, records)
@@ -208,7 +209,9 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
           const row = tx.execute("UPDATE journal_metadata SET checkpoints=checkpoints+1 WHERE id=1 RETURNING checkpoints", [])[0]!
           if (Number(row.checkpoints) % options.collectEvery === 0) grove.collect()
         }
+        if (scheduling) wakes = stageWakes(tx, driver.identity)
       })
+      commitWakes(driver.identity, wakes)
       for (const document of batch.documents?.references ?? []) heads.set(statePrefix + document.name, decodeReference(document.reference))
       grove.discard()
     }).pipe(Effect.andThen(finishCommit), Effect.uninterruptible))

@@ -10,20 +10,54 @@ export const recoveryLock = (identity: object) => {
   return lock
 }
 
-// synchronousRecoveryStorage serializes native recovery commits and physical alarm updates (test/bun/journal.test.ts).
+// wakeStates records per database whether scheduled wakes changed since the earliest wake was last read, and that wake.
+const wakeStates = new WeakMap<object, { changed: boolean; earliest: number | undefined }>()
+const wakeState = (identity: object) => {
+  let state = wakeStates.get(identity)
+  if (!state) { state = { changed: true, earliest: undefined }; wakeStates.set(identity, state) }
+  return state
+}
+const earliestWake = (tx: Pick<Transaction, "execute">) => {
+  let earliest: number | undefined
+  for (const row of tx.execute("SELECT entry FROM scheduled_wakes", [])) {
+    const at = Schema.decodeUnknownSync(ScheduledWake)(JSON.parse(String(row.entry))).nextWakeAt
+    earliest = earliest === undefined ? at : Math.min(earliest, at)
+  }
+  return earliest
+}
+// stageWakes reads the earliest wake inside tx when its database's wakes changed; commitWakes records it once tx commits, so the alarm needs no separate scan.
+export const stageWakes = (tx: Pick<Transaction, "execute">, identity: object) => wakeState(identity).changed ? { earliest: earliestWake(tx) } : undefined
+export const commitWakes = (identity: object, staged: { readonly earliest: number | undefined } | undefined) => {
+  if (!staged) return
+  const state = wakeState(identity)
+  state.changed = false; state.earliest = staged.earliest
+}
+
+// synchronousRecoveryStorage serializes native recovery commits and physical alarm updates; it rescans wakes only after a write to them (test/bun/journal.test.ts).
 export function synchronousRecoveryStorage(grove: ReturnType<typeof makeSync>, identity: object, alarm: typeof Alarm.Service, flush: Effect.Effect<void, Error>, guard: () => void = () => {}) {
   const attempt = <Value>(work: () => Value) => Effect.try({ try: () => { guard(); return work() }, catch: RuntimeError.from })
-  const sync = attempt(() => grove.transaction(tx => Effect.runSync(syncRecoveryTransaction(tx, alarm).scheduler.list))).pipe(Effect.flatMap(entries => {
-    let earliest: number | undefined
-    for (const entry of entries.values()) earliest = earliest === undefined ? entry.nextWakeAt : Math.min(earliest, entry.nextWakeAt)
-    return earliest === undefined ? alarm.clear : alarm.set(earliest)
-  }))
+  const arm = (earliest: number | undefined) => earliest === undefined ? alarm.clear : alarm.set(earliest)
+  const sync = Effect.suspend(() => {
+    const state = wakeState(identity)
+    if (!state.changed) return arm(state.earliest)
+    return attempt(() => grove.transaction(tx => stageWakes(tx, identity))).pipe(Effect.flatMap(staged => {
+      commitWakes(identity, staged)
+      return arm(state.earliest)
+    }))
+  })
   const finish = flush.pipe(Effect.andThen(sync))
   const transaction = <Value>(work: (tx: ReturnType<typeof syncRecoveryTransaction>) => Effect.Effect<Value, Error>) => recoveryLock(identity).withPermit(Effect.gen(function* () {
     const context = yield* Effect.context<never>()
     const result = yield* attempt(() => {
       if (grove.transactionActive()) throw new Error("Recovery must own the native transaction")
-      return grove.transaction(tx => Effect.runSyncWith(context)(work(syncRecoveryTransaction(tx, alarm))))
+      let staged: ReturnType<typeof stageWakes>
+      const value = grove.transaction(tx => {
+        const value = Effect.runSyncWith(context)(work(syncRecoveryTransaction(tx, alarm, identity)))
+        staged = stageWakes(tx, identity)
+        return value
+      })
+      commitWakes(identity, staged)
+      return value
     })
     yield* finish
     return result
@@ -50,19 +84,19 @@ export function initializeSyncRecovery(tx: Pick<Transaction, "execute">) {
   }
 }
 
-// syncRecoveryTransaction expires with its Grove transaction (test/bun/journal.test.ts).
-export function syncRecoveryTransaction(tx: Transaction, alarm: typeof Alarm.Service): { scheduler: SchedulerTransaction; watchdog: WatchdogTransaction } {
+// syncRecoveryTransaction expires with its Grove transaction; writes to scheduled wakes mark the database for an alarm rescan (test/bun/journal.test.ts).
+export function syncRecoveryTransaction(tx: Transaction, alarm: typeof Alarm.Service, identity: object): { scheduler: SchedulerTransaction; watchdog: WatchdogTransaction } {
   const io = <Value>(work: () => Value) => Effect.try({ try: work, catch: RuntimeError.from })
-  const entries = <Value>(table: string, schema: Schema.Decoder<Value>) => {
+  const entries = <Value>(table: string, schema: Schema.Decoder<Value>, changed = () => {}) => {
     const decode = (entry: unknown) => Schema.decodeUnknownSync(schema)(JSON.parse(String(entry)))
     return {
       get: (id: string) => io(() => { const row = tx.execute(`SELECT entry FROM ${table} WHERE id=?`, [id])[0]; return row ? decode(row.entry) : undefined }),
-      put: (id: string, entry: Value) => io(() => { const value = Schema.decodeUnknownSync(schema)(entry); tx.execute(`INSERT INTO ${table}(id,entry) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET entry=excluded.entry`, [id, JSON.stringify(value)]) }),
-      delete: (id: string) => io(() => { tx.execute(`DELETE FROM ${table} WHERE id=?`, [id]) }),
+      put: (id: string, entry: Value) => io(() => { const value = Schema.decodeUnknownSync(schema)(entry); changed(); tx.execute(`INSERT INTO ${table}(id,entry) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET entry=excluded.entry`, [id, JSON.stringify(value)]) }),
+      delete: (id: string) => io(() => { changed(); tx.execute(`DELETE FROM ${table} WHERE id=?`, [id]) }),
       list: io(() => new Map(tx.execute(`SELECT id,entry FROM ${table} ORDER BY id`, []).map(row => [String(row.id), decode(row.entry)]))),
     }
   }
-  const wakes = entries("scheduled_wakes", ScheduledWake)
+  const wakes = entries("scheduled_wakes", ScheduledWake, () => { wakeState(identity).changed = true })
   const scheduler: SchedulerTransaction = {
     ...wakes, alarm,
     put: entry => wakes.put(entry.id, entry),
