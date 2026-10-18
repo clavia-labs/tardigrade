@@ -1,7 +1,8 @@
 import { Schema } from "effect"
-import { collectionSchema, type CollectionSchema, type Json, type MerkleTree } from "@tardie/grove"
+import { isValue, collectionSchema, type CollectionSchema, type Json, type MerkleTree } from "@tardie/grove"
 import { documentAtom, type CheckpointReader, type DocumentOptions } from "./merkle"
 import { valueAtom } from "./value"
+import { wholeValueAtom } from "./whole-value"
 import type { Atom } from "../atom"
 import type { StatefulAtom } from "../../initialise"
 import type { RecordMetadata } from "../../services/journal"
@@ -16,7 +17,7 @@ type Hooks<S extends Schema.Top> = CollectionSchema<S> extends true ? {
   readonly migrate?: (stored: unknown) => unknown
 } : {}
 
-// durableAtom selects Grove documents from collection declarations and warns at construction for legacy plain reducers (properties/collections.test.ts).
+// durableAtom selects whole values or documents from schema declarations and warns at construction for legacy plain reducers (properties/collections.test.ts).
 export function durableAtom<S extends Schema.Schema<unknown>, Event>(options: {
   readonly name: string
   readonly schema: S
@@ -24,7 +25,7 @@ export function durableAtom<S extends Schema.Schema<unknown>, Event>(options: {
   readonly initial: NoInfer<S["Type"]>
   readonly reduce: (state: NoInfer<DurableState<S>>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<DurableState<S>>
 } & Hooks<S>): DurableAtom<DurableState<S>, Event>
-/** @deprecated durableAtom with plain state should declare tree, appendOnly or keyValue. */
+/** @deprecated Wrap the schema in value(schema) for whole-value state, or declare tree, appendOnly or keyValue collections. */
 export function durableAtom<State, Event>(options: {
   readonly name: string
   readonly schema: Schema.Schema<State>
@@ -39,6 +40,7 @@ export function durableAtom<S extends Schema.Schema<unknown>, Event>(options: {
   readonly initial: NoInfer<S["Type"]>
   readonly reduce: (state: NoInfer<DurableState<S>>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<DurableState<S>>
 } & Hooks<S>): DurableAtom<DurableState<S>, Event> {
+  if (isValue(options.schema.ast)) return wholeValueAtom(options as unknown as Parameters<typeof wholeValueAtom<S["Type"] & Json, Event>>[0]) as unknown as DurableAtom<DurableState<S>, Event>
   if (collectionSchema(options.schema.ast)) {
     return documentAtom(options as unknown as DocumentOptions<S["Type"] & Json, Event>) as unknown as DurableAtom<DurableState<S>, Event>
   }

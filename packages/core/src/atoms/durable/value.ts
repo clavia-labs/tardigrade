@@ -15,7 +15,7 @@ export function valueAtom<State, Event>(options: {
   readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<State>
 }): DurableAtom<State, Event> {
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
-  console.warn(`durableAtom "${options.name}" uses deprecated plain state; declare its schema with tree, appendOnly or keyValue to use Grove`)
+  console.warn(`durableAtom "${options.name}" uses deprecated plain state; wrap its schema in value(schema) for whole-value state, or declare tree, appendOnly or keyValue collections`)
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
   const fast = incrementalValidator(options.schema, () => console.warn(`Durable atom "${options.name}" state is not plain data; validation is O(state)`))
   // check returns the state to keep: the parsed value when the incremental path accepts it, otherwise state after Effect's validation.

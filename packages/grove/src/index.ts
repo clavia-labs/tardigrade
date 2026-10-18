@@ -11,10 +11,13 @@ export type { ValueReference, ValueRange, View } from "./value"
 export { GroveError, DEFAULT_READ_CACHE_BYTES } from "./session/reader"
 export type { ReaderOptions } from "./session/reader"
 
-export { tree, appendOnly, keyValue, collectionSchema } from "./schema"
+export { value, isValue, tree, appendOnly, keyValue, collectionSchema } from "./schema"
 export type { Tree, AppendOnly, KeyValue, CollectionSchema } from "./schema"
 
 export { DEFAULT_ROW_BATCH_ITEMS } from "./collections/append-only"
 export type { RowStorage, LogBatch, LogWrite, LogSpan } from "./collections/append-only"
 
 export type { MapStorage, MapEntry, MapSpan, MapChange, MapWrite, MapBatch } from "./collections/key-value"
+
+export { bindValue, ValueState } from "./collections/value"
+export { incrementalValidator, invalid } from "./session/validation"

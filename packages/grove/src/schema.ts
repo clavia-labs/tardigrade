@@ -23,16 +23,23 @@ interface Declaration<Kind extends string, Value, Encoded, RD, RE> extends Schem
   readonly [DeclarationMark]: Kind
   readonly Rebuild: Declaration<Kind, Value, Encoded, RD, RE>
 }
-type Declared<S> = S extends { readonly [DeclarationMark]: string } ? true : false
+type Declared<S> = S extends { readonly [DeclarationMark]: infer Kind } ? Kind extends "value" ? false : true : false
 type DeclaredFields<S> = S extends { readonly fields: infer Fields extends Record<string, Schema.Top> } ? { [Key in keyof Fields]: Declared<Fields[Key]> }[keyof Fields] : false
 type StateCollections<Value> = Collection<Value> extends true ? true : [Value] extends [readonly unknown[]] ? false : string extends keyof Value ? false : [Value] extends [object] ? true extends { [Key in keyof Value]-?: Collection<Value[Key]> }[keyof Value] ? true : false : false
-export type CollectionSchema<S extends Schema.Top> = true extends Declared<S> | DeclaredFields<S> | StateCollections<S["Type"]> ? true : false
+export type CollectionSchema<S extends Schema.Top> = S extends { readonly [DeclarationMark]: "value" } ? false : true extends Declared<S> | DeclaredFields<S> | StateCollections<S["Type"]> ? true : false
 
 type Editable<Value, P extends Path, Operation extends "set" | "append" | "splice"> = P extends readonly [infer Key extends string | number, ...infer Rest extends Path] ? Marked<Value> extends true ? false : Keyed<Value> extends true ? Operation extends "set" ? Rest extends readonly [] ? true : false : false : Editable<At<Value, [Key]>, Rest, Operation> : Operation extends "splice" ? Marked<Value> extends true ? false : true : true
 export type EditPath<Value, P extends Path> = Editable<Value, P, "set"> extends true ? Valid<Value, P> : never
 export type AppendPath<Value, P extends Path> = Editable<Value, P, "append"> extends true ? ArrayPath<Value, P> : never
 export type SplicePath<Value, P extends Path> = Editable<Value, P, "splice"> extends true ? ArrayPath<Value, P> : never
 const COLLECTION_ANNOTATION = "grove/collection"
+
+// value declares a whole JSON value with replacement semantics (test/collections/value.test.ts).
+export function value<S extends Schema.Top>(schema: S): Declaration<"value", S["Type"], S["Encoded"], S["DecodingServices"], S["EncodingServices"]> {
+  jsonSchema(schema.ast)
+  return Schema.make(schema.annotate({ [COLLECTION_ANNOTATION]: "value" }).ast)
+}
+export const isValue = (ast: SchemaAST.AST): boolean => collectionKind(ast) === "value"
 
 // tree permits localized JSON edits within a declared collection (test/collections/mixed.test.ts; test/storage.test.ts).
 export function tree<S extends Schema.Top>(schema: S): Declaration<"tree", Tree<S["Type"]>, S["Encoded"], S["DecodingServices"], S["EncodingServices"]> {
@@ -52,6 +59,8 @@ const collection = (ast: SchemaAST.AST): boolean => isAppendOnly(ast) || collect
 
 // collectionSchema recognizes declared roots or structs whose fields each declare a collection (test/collections/mixed.test.ts; test/storage.test.ts).
 export function collectionSchema(ast: SchemaAST.AST): boolean {
+  if (isValue(ast)) return false
+  if (ast._tag === "Objects" && ast.propertySignatures.some(field => isValue(field.type))) throw new Error("Whole values require value(schema) at the state root")
   if (collection(ast)) { treeSchema(ast); return true }
   const declarations = (ast: SchemaAST.AST, seen = new Set<SchemaAST.AST>()): boolean => {
     if (seen.has(ast)) return false
