@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { encodeReference, tree } from "@tardie/grove"
+import fc from "fast-check"
+import { make as makeGrove, encodeReference, tree } from "@tardie/grove"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { AtomState } from "../src/initialise"
 import type { ActorRuntime } from "../src/runtime/contracts"
@@ -11,6 +12,7 @@ import { act } from "../src/atoms/act"
 import { effectAtom } from "../src/atoms/effect"
 import { prepareDocumentInput, documentSession } from "../src/services/tree-state"
 import type { Journal, Recorded, StoredCheckpoint } from "../src/services/journal"
+import { incrementalDecoder } from "../src/atoms/incremental/decode"
 import { ReplayContext } from "../src/services/event-log"
 
 test("runtime restores checkpoints and replays the suffix", async () => {
@@ -138,4 +140,17 @@ test("projection and proposal roots survive advancement and release with their r
     log.replay([{ event: { type: "Changed", value: 8 } }])
   } finally { log.dispose() }
   expect(documents.held()).toHaveLength(0)
+})
+
+
+test("Grove immutable values retain input validation while reusing valid subtrees", () => {
+  fc.assert(fc.property(fc.integer(), value => {
+    const grove = makeGrove({ scope: "input-validation", load: () => { throw new Error("Unexpected cold read") } })
+    const input = grove.bind(Schema.Struct({ value: Schema.Int })).initial({ value }).read([])
+    const decode = incrementalDecoder(Schema.Struct({ value: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) }))
+    const result = decode(input)
+    if (value < 0) expect(result).toBeUndefined()
+    else expect(result?.value).toBe(input)
+    expect(Object.isFrozen(input)).toBe(true)
+  }), { numRuns: 100, includeErrorInReport: true })
 })
