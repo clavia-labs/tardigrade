@@ -63,3 +63,13 @@ export function documentAtom<State extends Json, Event>({ schema, initial, initi
     },
   })
 }
+
+/**
+ * durableMerkleAtom preserves explicit Grove reducer authoring (properties/collections.test.ts).
+ * @deprecated Use durableAtom with tree(schema), appendOnly or keyValue declarations.
+ */
+export function durableMerkleAtom<State extends Json, Event>(options: DocumentOptions<State, Event>) {
+  const node = documentAtom(options)
+  console.warn(`durableMerkleAtom "${options.name}" is deprecated; use durableAtom with tree(schema), appendOnly or keyValue declarations`)
+  return node
+}

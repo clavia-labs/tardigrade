@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
 import { Schema } from "effect"
 import fc from "fast-check"
-import { durableAtom } from "../src/atoms/durable/atom"
+import { durableAtom, durableMerkleAtom } from "../src/index"
 import { createEventLog } from "../src/runtime/replay"
 import { documentSession } from "../src/services/tree-state"
 import { AtomState } from "../src/initialise"
@@ -117,4 +117,30 @@ test("null states preserve plain and declared collection dispatch", () => {
       expect(warnings).toHaveBeenCalledTimes(1)
     } finally { log.dispose(); warnings.mockRestore() }
   }))
+})
+
+
+test("deprecated durableMerkleAtom preserves untagged document reducers and checkpoint replay", () => {
+  fc.assert(fc.property(fc.array(fc.integer({ min: -10, max: 10 }), { minLength: 2, maxLength: 20 }), amounts => {
+    const warnings = spyOn(console, "warn").mockImplementation(() => {})
+    const Added = Schema.Struct({ type: Schema.Literal("Added"), amount: Schema.Int }), Value = Schema.Struct({ count: Schema.Int })
+    try {
+      const legacy = durableMerkleAtom<typeof Value.Type, typeof Added.Type>({ name: "legacy-merkle", input: Added, schema: Value, initial: { count: 0 }, reduce: (state, event) => state.set(["count"], state.read(["count"]) + event.amount) })
+      const modern = durableAtom({ name: "declared", input: Added, schema: tree(Value), initial: { count: 0 }, reduce: (state, event) => state.set(["count"], state.read(["count"]) + event.amount) })
+      const documents = documentSession({ load: () => { throw new Error("Unexpected cold read") } })
+      const log = createEventLog({ schema: Added, atoms: { legacy, modern }, documents })
+      let reopened: typeof log | undefined
+      try {
+        const halfway = Math.floor(amounts.length / 2)
+        const first = log.replay(amounts.slice(0, halfway).map(amount => ({ event: { type: "Added", amount } })))
+        reopened = createEventLog({ schema: Added, atoms: { legacy, modern }, documents, checkpoint: first.checkpoint()! })
+        const result = reopened.replay(amounts.slice(halfway).map(amount => ({ event: { type: "Added", amount } })))
+        expect(result.get(legacy).read([])).toEqual({ count: amounts.reduce((sum, value) => sum + value, 0) })
+        expect(result.get(legacy).read([])).toEqual(result.get(modern).read([]))
+        expect(legacy[AtomState].encode(result.get(legacy))).toEqual(modern[AtomState].encode(result.get(modern)))
+        expect(warnings).toHaveBeenCalledTimes(1)
+        expect(warnings.mock.calls[0]![0]).toContain("durableMerkleAtom")
+      } finally { reopened?.dispose(); log.dispose() }
+    } finally { warnings.mockRestore() }
+  }), { numRuns: 30, includeErrorInReport: true })
 })
