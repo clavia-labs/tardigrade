@@ -1,6 +1,6 @@
 # Grove
 
-Grove is a highly performant TypeScript library to materialise state from immutable logs, using persistent data structures.
+Grove is a highly performant TypeScript library to materialise versioned state from immutable logs, using persistent data structures and automatic reclamation of state you no longer retain.
 
 ```sh
 bun add @tardie/grove effect
