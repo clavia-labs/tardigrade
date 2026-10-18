@@ -39,7 +39,7 @@ export interface ActRequest<Value, Failure, Services> {
   // onSettled derives domain events committed with the terminal decision; handle identifies deferred completion and callbacks must be pure.
   onSettled?(result: Exclude<ActState<Value, ActFailure<Failure>>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
   readonly ref: Atom<EffectRef | undefined>
-  // result exposes execution status and loads fulfilled cold values when value is read (platform/test/bun/cold-results.test.ts). Cancellation returns a rejected Cancelled value (quint/terminalDelivery.qnt, deliverySound).
+  // result exposes execution status and loads fulfilled cold values when value is read (platform/test/properties/accepted-work.ts). Cancellation returns a rejected Cancelled value (quint/terminalDelivery.qnt, deliverySound).
   readonly result: Atom<ActState<Value, ActFailure<Failure>>>
 }
 

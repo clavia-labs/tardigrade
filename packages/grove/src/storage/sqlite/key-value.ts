@@ -10,7 +10,7 @@ const metadata = (branch: string, row: Header) => {
   return { branch, key, revision: row.revision, order: fields[0] as number, bytes: fields[1] as number, chunks: fields[2] as number, deleted: fields[3] === 1 }
 }
 
-// makeMapStorage stores whole per-key revisions and collects versions invisible to retained snapshots (test/mvcc.ts; test/workerd/mvcc.workers.ts).
+// makeMapStorage stores whole per-key revisions and collects versions invisible to retained snapshots (test/collections/key-value.ts; test/workerd/properties.workers.ts).
 export function makeMapStorage(query: Query, chunkBytes: number) {
   for (const statement of [
     "CREATE TABLE IF NOT EXISTS grove_map_rows(branch TEXT NOT NULL,key TEXT NOT NULL,revision INTEGER NOT NULL,metadata TEXT NOT NULL,payload BLOB,PRIMARY KEY(branch,key,revision)) WITHOUT ROWID",

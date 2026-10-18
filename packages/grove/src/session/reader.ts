@@ -285,7 +285,7 @@ export function makeReader(load: (hash: string) => string, options: ReaderOption
       }
     } else return error("Scan target must be an array")
   }
-  // scan streams a bounded array range and closes nested iterators when consumption stops (test/value.test.ts).
+  // scan streams a bounded array range and closes nested iterators when consumption stops (test/references.test.ts).
   const scan = function* (root: string, path: Path, requested?: { readonly start: number; readonly end: number }, each: Path = []): IterableIterator<Json> {
     try {
       const selected = at(root, path)
@@ -348,7 +348,7 @@ export function makeReader(load: (hash: string) => string, options: ReaderOption
     }),
     stats: () => ({ ...metrics, ...cache.stats() }),
     clear: cache.clear,
-    // evict removes decoded entries for discarded staged hashes (test/state.test.ts).
+    // evict removes decoded entries for discarded staged hashes (test/transactions.test.ts; test/collections/tree.test.ts).
     evict: (hashes: Iterable<string>) => {
       for (const hash of hashes) cache.remove(hash)
     },

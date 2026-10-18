@@ -24,7 +24,7 @@ import type { TestPromiseResolver, InputLifecycleDO } from "../fixtures/workerd/
 test("checkpointStorage", async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
   await runInDurableObject(namespace.getByName("checkpoint-storage"), async (_instance, state) => {
-    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES - new TextEncoder().encode("events").byteLength, open: checkpointChunkBytes => synchronousJournal({ actor: "events", driver: cloudflareNativeDriver(state.storage), limits: { maxRowBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES + 32 }, checkpointChunkBytes }), execute: async query => state.storage.sql.exec(query).toArray() })
+    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES, open: checkpointChunkBytes => synchronousJournal({ actor: "events", driver: cloudflareNativeDriver(state.storage), limits: { maxRowBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES + 32 }, checkpointChunkBytes }), execute: async query => state.storage.sql.exec(query).toArray() })
   })
 })
 
@@ -35,12 +35,13 @@ test("accepted input recovery", async () => {
       await pendingInputRecovery({ open: actor => cloudflareJournal(state.storage, actor, { checkpointChunkBytes: 127 }) }, legacy)
     })
   }
-  await runInDurableObject(namespace.getByName("accepted-input-recovery"), async (_instance, state) => {
-    const fixture: Parameters<typeof cancellationInputRecovery>[0] = { open: (actor: string) => cloudflareJournal(state.storage, actor, { checkpointChunkBytes: 127 }), execute: async (_name: string, query: string) => state.storage.sql.exec(query).toArray() }
-    await stoppedInputRecovery(fixture)
-    await stoppedInputRecovery(fixture, true)
-    await cancellationInputRecovery(fixture)
-  })
+  for (const scenario of ["stopped", "failed-cleanup", "cancelled"]) {
+    await runInDurableObject(namespace.getByName(`accepted-input-recovery-${scenario}`), async (_instance, state) => {
+      const fixture: Parameters<typeof cancellationInputRecovery>[0] = { open: (actor: string) => cloudflareJournal(state.storage, actor, { checkpointChunkBytes: 127 }), execute: async (_name: string, query: string) => state.storage.sql.exec(query).toArray() }
+      if (scenario === "cancelled") await cancellationInputRecovery(fixture)
+      else await stoppedInputRecovery(fixture, scenario === "failed-cleanup")
+    })
+  }
 })
 
 for (const mode of ["producer", "cleanup", "failure", "defect", "rejected"] as const) {

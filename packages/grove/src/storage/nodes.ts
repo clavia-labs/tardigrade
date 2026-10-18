@@ -6,7 +6,7 @@ export type Path = readonly (string | number)[]
 export const DEFAULT_PAGE_ITEMS = 64
 export const DEFAULT_FANOUT = 32
 export const DEFAULT_LEAF_BYTES = 128 * 1024
-// DEFAULT_TAIL_BYTES caps the page that appends rewrite; a sealed tail merges into its previous page up to DEFAULT_LEAF_BYTES (test/tree.test.ts).
+// DEFAULT_TAIL_BYTES caps the page that appends rewrite; a sealed tail merges into its previous page up to DEFAULT_LEAF_BYTES (test/collections/tree.test.ts).
 export const DEFAULT_TAIL_BYTES = 16 * 1024
 export const DEFAULT_OBJECT_PAGE_ITEMS = 64
 export interface Node {
@@ -59,7 +59,7 @@ export const plan = (node: Node, metrics: Metrics): Tree => {
   } })
 }
 
-// Descriptor authenticates child sizes and levels so cold edits can leave siblings unloaded (test/tree.test.ts).
+// Descriptor authenticates child sizes and levels so cold edits can leave siblings unloaded (test/collections/tree.test.ts).
 export type Descriptor = readonly [hash: string, tag: Node["tag"], logicalBytes: number, count: number, level: number, ...keyed: [] | [order: number, firstKey: string | null, lastKey: string | null]]
 export const descriptor = (node: Node): Descriptor => node.tag === "k" || node.tag === "b" ? [node.hash, node.tag, node.logicalBytes, node.count, node.level, node.order!, node.firstKey!, node.lastKey!] : [node.hash, node.tag, node.logicalBytes, node.count, node.level]
 export const payload = (node: Node): Json => {
@@ -69,7 +69,7 @@ export const payload = (node: Node): Json => {
 const tags = ["v", "p", "r", "c", "a", "o", "k", "b", "l", "m"] as const
 const natural = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0
 const frozenJson = new WeakSet<object>()
-// isFrozenJson recognizes plain JSON verified and frozen by Grove (test/value.test.ts).
+// isFrozenJson recognizes plain JSON verified and frozen by Grove (test/references.test.ts).
 export const isFrozenJson = (value: unknown): boolean => typeof value === "object" && value !== null && frozenJson.has(value)
 export const freezeJson = (value: unknown): Json => {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value

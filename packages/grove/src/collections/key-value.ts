@@ -1,3 +1,4 @@
+import { snapshotWrites } from "./staging"
 import { FORMAT_VERSION, bytes, digest, payload, freezeJson, type Json, type Node } from "../storage/nodes"
 import type { ReadCache } from "../session/cache"
 import { memoryMaps } from "../storage/memory/key-value"
@@ -20,7 +21,7 @@ export interface MapWriter extends MapStorage {
   readonly publish: (hash: string, spans: readonly MapSpan[]) => void
 }
 
-// commitMaps places immutable revisions without making logical references depend on which speculative branch committed first (test/mvcc.ts).
+// commitMaps places immutable revisions without making logical references depend on which speculative branch committed first (test/collections/key-value.ts).
 export function commitMaps(storage: MapWriter, batch: MapBatch) {
   let rows = 0, writtenBytes = 0
   for (const write of batch.writes) {
@@ -44,7 +45,7 @@ const build = (id: string, count: number, logicalBytes: number, order: number): 
   return Object.freeze({ hash: digest(text), text, tag: "m", count, logicalBytes, level: 0, links: Object.freeze([]), children: Object.freeze([]) })
 }
 
-// makeMaps resolves keys through version branch manifests and shares the reader's encoded-byte cache (test/mvcc.ts; test/collections.test.ts).
+// makeMaps resolves keys through version branch manifests and shares the reader's encoded-byte cache (test/collections/key-value.ts; test/collections/mixed.test.ts; test/storage.test.ts).
 export function makeMaps(backend: MapStorage | undefined, cache: ReadCache, batchItems: number) {
   const memory = backend ? undefined : memoryMaps(), storage = backend ?? memory!
   const pending = new Map<string, MapWrite>()
@@ -104,19 +105,7 @@ export function makeMaps(backend: MapStorage | undefined, cache: ReadCache, batc
     const id = digest(JSON.stringify(["map", [...changes].map(([key, change]) => [key, change.text])]))
     return stage(build(id, changes.size, size, changes.size), changes)
   }
-  const snapshot = (nodes: Iterable<Node>): MapBatch => {
-    const writes: MapWrite[] = [], seen = new Set<string>()
-    const visit = (node: Version) => {
-      if (seen.has(node.hash)) return
-      seen.add(node.hash)
-      const write = pending.get(node.hash)
-      if (!write) return
-      if (write.parent) visit(write.parent)
-      writes.push(write)
-    }
-    for (const node of nodes) if (node.tag === "m") visit(node)
-    return Object.freeze({ writes: Object.freeze(writes) })
-  }
+  const snapshot = (nodes: Iterable<Node>): MapBatch => Object.freeze({ writes: snapshotWrites(pending, nodes, "m") })
   return {
     create,
     change: (current: Node, key: string, next: Json | undefined) => {

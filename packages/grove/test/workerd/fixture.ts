@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers"
 import { Schema } from "effect"
 import { decodeReference, encodeReference, type Path } from "@tardie/grove"
 import { makeSync } from "@tardie/grove/sqlite"
+import { commitStore, commitProbe, type CommitAction, type CommitProbe } from "./commits"
 
 const State = Schema.Struct({ history: Schema.Array(Schema.Struct({ n: Schema.Int, text: Schema.String })), archive: Schema.String })
 const outcome = <Value>(work: () => Value) => {
@@ -10,6 +11,8 @@ const outcome = <Value>(work: () => Value) => {
 }
 
 export class GroveDO extends DurableObject {
+  private readonly values = commitStore(this.ctx)
+  valueProbe(action: CommitAction): CommitProbe { return commitProbe(this.ctx, this.values, action) }
   private open(cacheBytes = 8192) {
     return makeSync({
       identity: this.ctx.storage.sql,
@@ -55,6 +58,20 @@ export class GroveDO extends DurableObject {
   readFresh(owner: string, path: Path): unknown {
     const store = this.open(0)
     return store.bind(State).open(this.owner(store, owner)).read(path as [])
+  }
+  reference(owner: string) {
+    const store = this.open(0)
+    const document = store.bind(State).open(this.owner(store, owner))
+    const selected = document.selectEach(["history"], ["text"], { start: 0, end: 2 })
+    return { encoded: encodeReference(store.reference(selected)), stats: store.stats() }
+  }
+  readView(encoded: string) {
+    return outcome(() => {
+      const store = this.open(0), view = store.view(decodeReference(encoded), Schema.Array(Schema.String))
+      const iterator = view.scan([]), first = iterator.next().value
+      iterator.return?.()
+      return { first, values: view.materialize(), length: view.length([]), stats: store.stats() }
+    })
   }
   slice(owner: string, start: number, end: number) { return this.store.bind(State).open(this.owner(this.store, owner)).slice(["history"], start, end) }
   release(owner: string, expected: string) { return this.store.transaction(tx => this.store.commit(tx, { release: [{ owner, expected: decodeReference(expected) }] })) }

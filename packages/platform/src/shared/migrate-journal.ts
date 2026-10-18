@@ -7,7 +7,7 @@ import { checkpointFromJson } from "@clavia/tardigrade-core/services/checkpoint"
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
 
-// journalMigration converts retained 0.50 materials without rewriting event rows (test/workerd/migration.workers.ts).
+// journalMigration converts retained 0.50 materials without rewriting event rows (test/workerd/upgrade.workers.ts).
 export function journalMigration(driver: SyncSqlite, grove: SyncStore, actor: string, scope: string, chunkBytes: number, inputBytes: (key: string) => number, readerOptions: Omit<SyncOptions, "scope"> = {}) {
   const exists = (table: string) => driver.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [table]).length !== 0
   let oldStore: ReturnType<typeof legacyStore> | undefined
@@ -39,7 +39,7 @@ export function journalMigration(driver: SyncSqlite, grove: SyncStore, actor: st
     const inputs = exists("effect_inputs") ? tx.execute("SELECT ref,byte_length,chunk_count,digest FROM effect_inputs WHERE actor=? ORDER BY ref", [actor]) : []
     if (!tree && !byteCheckpoint && !inputs.length) return
     if (byteCheckpoint && tx.execute("SELECT DISTINCT actor FROM experimental_events", []).some(row => row.actor !== actor)) throw new Error("Unscoped legacy checkpoint requires an unambiguous actor")
-    if (tx.execute("SELECT actor FROM stored_journal_checkpoints WHERE actor=?", [actor]).length || tx.execute("SELECT actor FROM stored_journal_inputs WHERE actor=?", [actor]).length) throw new Error("Conflicting legacy and native journal materials")
+    if (tx.execute("SELECT id FROM journal_checkpoints", []).length || tx.execute("SELECT ref FROM journal_accepted_inputs", []).length) throw new Error("Conflicting legacy and native journal materials")
     const statePrefix = JSON.stringify([actor, "state"]).slice(0, -1) + ","
     const checkpointPrefix = JSON.stringify([actor, "checkpoint-state"])
     const checkpointOwner = JSON.stringify([actor, "checkpoint"])
@@ -54,11 +54,11 @@ export function journalMigration(driver: SyncSqlite, grove: SyncStore, actor: st
     const write = (table: string, key: string | undefined, payload: Uint8Array, position?: number) => {
       const digest = storedPayloadDigest(payload), size = key === undefined ? chunkBytes : inputBytes(key)
       const count = Math.ceil(payload.byteLength / size)
-      if (key === undefined) tx.execute("INSERT INTO stored_journal_checkpoints(actor,position,payload,digest,byte_length,chunk_count) VALUES(?,?,?,?,?,?)", [actor, position!, new Uint8Array(), digest, payload.byteLength, count])
-      else tx.execute("INSERT INTO stored_journal_inputs(actor,ref,input,byte_length,chunk_count,digest) VALUES(?,?,?,?,?,?)", [actor, key, "", payload.byteLength, count, digest])
+      if (key === undefined) tx.execute("INSERT INTO journal_checkpoints(id,position,payload,digest,byte_length,chunk_count) VALUES(1,?,?,?,?,?)", [position!, new Uint8Array(), digest, payload.byteLength, count])
+      else tx.execute("INSERT INTO journal_accepted_inputs(ref,input,byte_length,chunk_count,digest) VALUES(?,?,?,?,?)", [key, "", payload.byteLength, count, digest])
       for (let ordinal = 0; ordinal < count; ordinal++) {
         const part = payload.subarray(ordinal * size, Math.min(payload.byteLength, (ordinal + 1) * size))
-        tx.execute(`INSERT INTO ${table}(actor,${key === undefined ? "" : "ref,"}ordinal,payload) VALUES(${key === undefined ? "?,?,?" : "?,?,?,?"})`, key === undefined ? [actor, ordinal, part] : [actor, key, ordinal, part])
+        tx.execute(`INSERT INTO ${table}(${key === undefined ? "" : "ref,"}ordinal,payload) VALUES(${key === undefined ? "?,?" : "?,?,?"})`, key === undefined ? [ordinal, part] : [key, ordinal, part])
       }
     }
     let checkpoint: unknown
@@ -85,7 +85,7 @@ export function journalMigration(driver: SyncSqlite, grove: SyncStore, actor: st
       if (saved.position !== Number((tree ?? byteCheckpoint)!.position)) throw new Error("Legacy checkpoint position mismatch")
       if (saved.position > Number(tx.execute("SELECT COUNT(*) count FROM experimental_events WHERE actor=?", [actor])[0]!.count)) throw new Error("Legacy checkpoint exceeds journal length")
       const payload = encodeCheckpoint(saved)
-      write("stored_journal_checkpoint_chunks", undefined, payload, saved.position)
+      write("journal_checkpoint_chunks", undefined, payload, saved.position)
       grove.replaceOwners(tx, JSON.stringify([actor, "checkpoint"]) + "/", saved.operations.flatMap(operation => operation.request.request.selections?.map(selected => decodeReference(selected.reference)) ?? []))
     }
     for (const row of inputs) {
@@ -95,7 +95,7 @@ export function journalMigration(driver: SyncSqlite, grove: SyncStore, actor: st
       if (effectKey(input.ref) !== key || input.ref.act !== input.request.act) throw new Error("Legacy accepted input identity mismatch")
       for (const selected of input.request.selections ?? []) legacy().copy(tx, decodeReference(selected.reference))
       grove.replaceOwners(tx, JSON.stringify([actor, "input", key]) + "/", input.request.selections?.map(selected => decodeReference(selected.reference)) ?? [])
-      write("stored_journal_input_chunks", key, new TextEncoder().encode(JSON.stringify(input)))
+      write("journal_accepted_input_chunks", key, new TextEncoder().encode(JSON.stringify(input)))
     }
     if (tree) tx.execute("DELETE FROM checkpoint_trees WHERE actor=?", [actor])
     if (byteCheckpoint) { tx.execute("DELETE FROM checkpoint_chunks", []); tx.execute("DELETE FROM checkpoint WHERE id=1", []) }

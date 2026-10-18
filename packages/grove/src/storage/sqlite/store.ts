@@ -11,7 +11,7 @@ import { NODE_QUERY, decodeNodeChunks, textChunks, packDigests, unpackDigests, D
 import type { ReaderOptions } from "../../session/reader"
 
 export type SqliteParameter = string | number | null | Uint8Array
-// SyncSqlite requires exclusive access through a synchronous connection; handles for that connection share identity (test/sqlite-sync.test.ts; test/workerd/commits.workers.ts).
+// SyncSqlite requires exclusive access through a synchronous connection; handles for that connection share identity (test/transactions.test.ts; test/workerd/recovery.workers.ts).
 export interface SyncSqlite {
   readonly identity: object
   readonly execute: (statement: string, parameters: readonly SqliteParameter[]) => readonly Record<string, unknown>[]
@@ -42,7 +42,7 @@ const transactions = new WeakMap<object, Context>()
 const thenable = (value: unknown) => value !== null && (typeof value === "object" || typeof value === "function") && "then" in value && typeof value.then === "function"
 const ownerName = (name: string) => { if (typeof name !== "string" || !name.trim()) throw new Error("Grove owner name must be nonempty"); return name }
 
-// makeSync commits references and application writes on a synchronous SQLite connection (test/sqlite-sync.test.ts; test/workerd/commits.workers.ts).
+// makeSync commits references and application writes on a synchronous SQLite connection (test/transactions.test.ts; test/workerd/recovery.workers.ts).
 export function makeSync(driver: SyncSqlite, options: SyncOptions) {
   if (typeof options.scope !== "string" || !options.scope.trim()) throw new Error("Grove storage scope must be nonempty")
   const scope = options.scope
@@ -197,7 +197,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     context.committed.push(() => base.staging.acknowledge(batch))
     return { nodes, bytes, rows: written.rows }
   })
-  // replaceOwners reconciles a prefixed durable owner group atomically (test/sqlite-sync.test.ts).
+  // replaceOwners reconciles a prefixed durable owner group atomically (test/transactions.test.ts).
   const replaceOwners = (tx: Transaction, prefix: string, references: readonly ValueReference<unknown>[]) => mutate(tx, () => {
     ownerName(prefix)
     const desired = new Map(references.map((ref, index) => {
@@ -294,13 +294,9 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
       } }
     },
     owners, replaceOwners, hold, release, held: ownership.held,
-    bytes: (ref: ValueReference<unknown>) => {
-      const locator = referenceLocator(ref, scope)
-      if (locator.path.length || locator.each !== undefined || locator.range !== undefined) throw new Error("Byte measurement requires a whole-document reference")
-      return base.bytes(ref)
-    },
+    bytes: base.bytes,
     capture: base.capture,
-    // readValue reads captured drafts or persisted values while local owners protect their dependencies (platform/test/bun/cold-results.test.ts).
+    // readValue reads captured drafts or persisted values while local owners protect their dependencies (platform/test/properties/accepted-work.ts).
     readValue: (ref: ValueReference<unknown>): Json => {
       const { root } = referenceLocator(ref, scope)
       return base.staging.prepare([ref]).nodes.has(root) ? base.view(ref, Schema.Json).materialize() : view(ref, Schema.Json).materialize()

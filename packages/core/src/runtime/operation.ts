@@ -5,7 +5,7 @@ import { EffectRef, EffectDied, EffectCancelled, CancellationOutcome, ExecutionR
 import { StoredEffectRequested, EffectSettled, PromiseSettled, RetryScheduled, type EffectAcceptance } from "./events"
 import { InputDigest, digestInput } from "./input-digest"
 
-// DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES moves large fulfilled results into Grove storage (platform/test/bun/cold-results.test.ts).
+// DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES moves large fulfilled results into Grove storage (platform/test/properties/accepted-work.ts).
 export const DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES = 2 * 1024
 
 export const StoredOperation = Schema.Struct({
@@ -61,7 +61,7 @@ export function cleanupSubmission(operation: AcceptedOperation<unknown> | undefi
   return cleanupOwed(operation) && event.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "promise"
 }
 
-// retireOutcome replaces large fulfilled payloads with digests and readable cold references (platform/test/bun/cold-results.test.ts).
+// retireOutcome replaces large fulfilled payloads with digests and readable cold references (platform/test/properties/accepted-work.ts).
 export function retireOutcome<Operation extends AcceptedOperation<unknown>>(operation: Operation, minBytes: number, capture?: (value: Schema.Json) => string): Operation {
   if (!capture) return operation
   const settlement = operation.execution.outcome

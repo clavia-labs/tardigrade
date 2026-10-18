@@ -40,7 +40,7 @@ export interface EffectInputChanges {
   readonly remove?: readonly EffectRef[]
 }
 
-// Journal colocates events and Grove values; append commits records, referenced dependencies and retention atomically (platform/test/bun/stored-journal.test.ts).
+// Journal colocates events and Grove values; append commits records, referenced dependencies and retention atomically (platform/test/bun/journal.test.ts).
 export interface Journal<Event extends object> {
   readonly storedValues: DocumentSession
   readonly read: Effect.Effect<readonly Recorded<Event>[], Error>
@@ -54,7 +54,7 @@ export interface Journal<Event extends object> {
 
 export interface MessageJournal<Event extends object> extends Journal<Event> {
   readonly readMessage: (id: string) => Effect.Effect<{ readonly position: number; readonly record: Recorded<Event> } | undefined, Error>
-  // acknowledge completes durability and recovery synchronization before confirming an existing receipt (platform/test/properties/journal-acknowledgement.ts).
+  // acknowledge completes durability and recovery synchronization before confirming an existing receipt (platform/test/properties/recovery.ts).
   readonly acknowledge: Effect.Effect<void, Error>
 }
 

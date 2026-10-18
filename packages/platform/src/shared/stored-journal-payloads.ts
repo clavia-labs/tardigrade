@@ -10,7 +10,7 @@ export interface StoredPayloadRow {
 }
 export interface StoredPayloadChunk { readonly ordinal: number; readonly payload: Uint8Array | ArrayBuffer }
 
-// storedPayloadBytes restores complete bytes and rejects partial headers and chunk sequences (test/bun/stored-journal-chunks.test.ts).
+// storedPayloadBytes restores complete bytes and rejects partial headers and chunk sequences (test/bun/journal.test.ts).
 export function storedPayloadBytes(row: StoredPayloadRow, chunks: () => readonly StoredPayloadChunk[]): Uint8Array {
   const inline = () => typeof row.payload === "string" ? new TextEncoder().encode(row.payload) : new Uint8Array(row.payload)
   if (row.byte_length === null && row.chunk_count === null) return inline()

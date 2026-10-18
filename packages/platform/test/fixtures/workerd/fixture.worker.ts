@@ -1,3 +1,4 @@
+export { MigrationDO } from "./migration.worker"
 export { TreeStateDO } from "./tree-state.worker"
 import { effectServiceClient, type EffectServicePolicy } from "../effect-service"
 import { waitFor } from "../wait"

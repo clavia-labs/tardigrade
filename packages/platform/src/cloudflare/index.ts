@@ -8,8 +8,7 @@ import { CLOUDFLARE_SQL_LIMITS } from "./limits"
 export { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_SQLITE_MAX_ROW_BYTES, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
 import { type CheckpointChunkOptions, type JournalRecordOptions } from "../shared/sql-journal"
 import { platformJournal } from "../shared/platform-journal"
-import { cloudflareNativeDriver, checkNativeRecovery, CLOUDFLARE_RECOVERY_ACTOR } from "./native-recovery"
-export { CLOUDFLARE_RECOVERY_ACTOR } from "./native-recovery"
+import { cloudflareNativeDriver, checkNativeRecovery } from "./native-recovery"
 import type { SynchronousRecoveryOptions } from "../shared/synchronous-journal"
 export { synchronousJournal, DEFAULT_CHECKPOINT_COLLECT_EVERY, DEFAULT_CHECKPOINT_SCHEDULER, type CheckpointTreeOptions, DEFAULT_EVENT_INLINE_BYTES, type JournalRecordOptions, decodeSqlJournalRecord, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { hostRoutes, type HttpHost } from "../shared/http"
@@ -18,13 +17,13 @@ import { hostRoutes, type HttpHost } from "../shared/http"
 import { HttpRouter } from "effect/unstable/http"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
-export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string, options: CloudflareAlarmOptions & CheckpointChunkOptions & JournalRecordOptions & Pick<SynchronousRecoveryOptions, "scheduler" | "watchdog" | "recoveryActor"> = {}) {
+export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string, options: CloudflareAlarmOptions & CheckpointChunkOptions & JournalRecordOptions & Pick<SynchronousRecoveryOptions, "scheduler" | "watchdog"> = {}) {
   const alarms = makeRetryingAlarms(storage, options)
   return platformJournal<Event>({
     actor,
     limits: CLOUDFLARE_SQL_LIMITS,
     checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes,
-    driver: cloudflareNativeDriver(storage), scheduler: options.scheduler, watchdog: options.watchdog, recoveryActor: options.recoveryActor ?? CLOUDFLARE_RECOVERY_ACTOR,
+    driver: cloudflareNativeDriver(storage), scheduler: options.scheduler, watchdog: options.watchdog,
     flush: alarms.sync,
   }, options.checkpointTree, checkNativeRecovery(storage))
 }

@@ -6,7 +6,7 @@ export interface SqlJournalLimits { readonly maxRowBytes: number }
 import type { Recorded } from "@clavia/tardigrade-core"
 import { decodeCheckpointChunks } from "./checkpoint-chunks"
 
-// decodeSqlJournalRecord reads the 0.50 inline and chunked event encoding (test/properties/journal-event-chunks.ts; test/properties/event-log-compatibility.ts).
+// decodeSqlJournalRecord reads the 0.50 inline and chunked event encoding (test/properties/journal-event-chunks.ts; test/properties/migration.ts).
 export function decodeSqlJournalRecord<Event extends object>(text: string, chunks: readonly { readonly ordinal: number; readonly payload: Uint8Array | ArrayBuffer }[] | (() => readonly { readonly ordinal: number; readonly payload: Uint8Array | ArrayBuffer }[]) = []): Recorded<Event> {
   const stored = JSON.parse(text) as Recorded<Event> | { chunkCount: number; byteLength: number }
   if (!("chunkCount" in stored)) return stored

@@ -6,7 +6,7 @@ import { FORMAT_VERSION, digest, elementBytes, bytes, descriptor, mergeablePages
 export type Edit = { readonly type: "set"; readonly path: Path; readonly value: Json } | { readonly type: "append"; readonly path: Path; readonly values: readonly Json[] } | { readonly type: "splice"; readonly path: Path; readonly index: number; readonly deleteCount: number; readonly values: readonly Json[] } | { readonly type: "entry"; readonly path: Path; readonly key: string; readonly value?: Json } | { readonly type: "remove"; readonly path: Path }
 
 const embedded = new WeakMap<object, Node>()
-// embed carries an internally prepared node through an import without exposing a storage representation in JSON (test/append-only.test.ts).
+// embed carries an internally prepared node through an import without exposing a storage representation in JSON (test/collections/append-only.test.ts; test/storage.test.ts).
 export const embed = (node: Node): Json => { const token = Object.freeze({}); embedded.set(token, node); return token }
 
 // make's memo reuses nodes for repeated imports of the same frozen values; a builder that only edits loaded trees passes memo: false so it retains no built nodes.
@@ -87,7 +87,7 @@ export function make(options: Options = {}, { memo = true, logs, maps }: { reado
     if (!classification.large) {
       const text = JSON.stringify(value)
       if (text === undefined) throw new Error("Merkle values must be JSON")
-      // A container above tailBytes is structured so appends and sets inside it rewrite only the changed path (test/tree.test.ts).
+      // A container above tailBytes is structured so appends and sets inside it rewrite only the changed path (test/collections/tree.test.ts).
       if (!objectValue || bytes(text) <= tailBytes) node = make("v", undefined, [], bytes(text), 0, 0, text)
     }
     if (!node && Array.isArray(value)) {
@@ -268,7 +268,7 @@ export function make(options: Options = {}, { memo = true, logs, maps }: { reado
     const joined = join(left, right)
     return joined.length === 1 ? joined[0]! : concat(joined)
   }
-  // splice rebuilds boundary segments and shares untouched storage (test/edits.test.ts).
+  // splice rebuilds boundary segments and shares untouched storage (test/collections/tree.test.ts).
   const splice = (node: Node, index: number, deleteCount: number, values: readonly Json[]): Node => {
     if (!Number.isSafeInteger(index) || !Number.isSafeInteger(deleteCount) || index < 0 || deleteCount < 0) throw new RangeError("Invalid splice bounds")
     if (node.tag === "v") {
@@ -328,7 +328,7 @@ export function make(options: Options = {}, { memo = true, logs, maps }: { reado
       return group.length ? editSegment(child, group) : child
     }))
   }
-  // batch preserves edit order within each subtree and hashes shared structured ancestors once between whole-subtree edits (test/tree.test.ts).
+  // batch preserves edit order within each subtree and hashes shared structured ancestors once between whole-subtree edits (test/collections/tree.test.ts).
   const batch = (original: Node, edits: readonly Edit[]): Node => {
     if (!edits.length) return original
     const replacement = edits.findIndex(edit => !edit.path.length || edit.type === "remove" && edit.path.length === 1)

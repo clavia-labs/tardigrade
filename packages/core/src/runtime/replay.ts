@@ -30,7 +30,7 @@ export interface EffectCheckpoint {
   readonly operations: readonly StoredOperation[]
 }
 
-// retireCheckpoint gives complete large results readable cold references when storage is available (platform/test/bun/cold-results.test.ts).
+// retireCheckpoint gives complete large results readable cold references when storage is available (platform/test/properties/accepted-work.ts).
 export function retireCheckpoint(checkpoint: EffectCheckpoint, minBytes: number, capture?: (value: Schema.Json) => string): EffectCheckpoint {
   const operations = checkpoint.operations.map(operation => operationComplete(operation) ? retireOutcome(operation, minBytes, capture) : operation)
   return operations.every((operation, index) => operation === checkpoint.operations[index]) ? checkpoint : Object.freeze({ ...checkpoint, operations: Object.freeze(operations) })

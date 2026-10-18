@@ -137,8 +137,8 @@ test("provisioning retries survive reopening and concurrent named requests share
     expect((await flow.request("", { name: "failed", initialState: { "layout.value": 99 } })).status).toBeGreaterThanOrEqual(400)
     await runInDurableObject(actor, async (object, state) => {
       await object.dispose()
-      state.storage.sql.exec("DELETE FROM stored_journal_checkpoint_chunks")
-      state.storage.sql.exec("DELETE FROM stored_journal_checkpoints")
+      state.storage.sql.exec("DELETE FROM journal_checkpoint_chunks")
+      state.storage.sql.exec("DELETE FROM journal_checkpoints")
     })
     await failed.failNextProvisions(1)
     const retried = await Promise.all(Array.from({ length: 5 }, () => flow.request("", { name: "failed" })))
@@ -200,7 +200,7 @@ test("large checkpoints survive native abort", async () => {
   await flow.call("parent", "read", null, "initial", 32)
   const parent = threadStub(instance, "parent")
   await runInDurableObject(parent, async (_object, state) => {
-    expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) count FROM stored_journal_checkpoint_chunks").one().count).toBeGreaterThan(1)
+    expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) count FROM journal_checkpoint_chunks").one().count).toBeGreaterThan(1)
   })
   try { await runInDurableObject(parent, (_object, state) => state.abort("injected checkpoint reset")) }
   catch (error) { expect(String(error)).toContain("injected checkpoint reset") }

@@ -12,7 +12,7 @@ export const keyedIndex = (node: Node, key: string): number => {
   return index < 0 ? node.links.length - 1 : index
 }
 
-// makeKeyed maintains key-sorted pages and insertion ordinals for JSON enumeration (test/keyed.test.ts).
+// makeKeyed maintains key-sorted pages and insertion ordinals for JSON enumeration (test/collections/tree.test.ts).
 export function makeKeyed(create: Create, pageItems: number, fanout: number) {
   const page = (entries: readonly KeyedEntry[]): Node => Object.freeze({
     ...create("k", entries.map(([key, order, value]) => [key, order, descriptor(value)]), entries.map(entry => entry[2]), 2 + Math.max(0, entries.length - 1) + entries.reduce((sum, [key, , value]) => sum + bytes(JSON.stringify(key)) + 1 + value.logicalBytes, 0), entries.length),
@@ -47,15 +47,10 @@ export function makeKeyed(create: Create, pageItems: number, fanout: number) {
   const build = (fields: readonly (readonly [string, Node])[]): Node => {
     const entries: KeyedEntry[] = fields.map(([key, value], order) => [key, order, value])
     entries.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
-    let level: Node[] = []
+    const level: Node[] = []
     const pages = Math.max(1, Math.ceil(entries.length / pageItems))
     for (let index = 0; index < pages; index++) level.push(page(entries.slice(Math.floor(index * entries.length / pages), Math.floor((index + 1) * entries.length / pages))))
-    while (level.length > 1) {
-      const next: Node[] = [], count = Math.ceil(level.length / fanout)
-      for (let index = 0; index < count; index++) next.push(branch(level.slice(Math.floor(index * level.length / count), Math.floor((index + 1) * level.length / count))))
-      level = next
-    }
-    return level[0]!
+    return finish(level)
   }
   const change = (node: Node, key: string, order: number, update: (value: Node | undefined) => Node | undefined, remove: boolean): readonly Node[] => {
     if (node.opaque) throw new Error("Keyed edit requires an explicit read")

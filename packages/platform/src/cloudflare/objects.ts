@@ -11,7 +11,7 @@ import { makeRetryingAlarms, makeRetryingRpc, type CloudflareAlarmOptions, type 
 import { cloudflareWatchdogStorage } from "./watchdog"
 import { type CheckpointChunkOptions } from "../shared/sql-journal"
 import { platformJournal } from "../shared/platform-journal"
-import { cloudflareNativeDriver, checkNativeRecovery, CLOUDFLARE_RECOVERY_ACTOR } from "./native-recovery"
+import { cloudflareNativeDriver, checkNativeRecovery } from "./native-recovery"
 import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
@@ -72,7 +72,6 @@ export function objectJournal<Event extends object>(options: {
   const alarms = makeRetryingAlarms(options.storage, options.alarms)
   return platformJournal<Event>({ actor: options.key, driver: cloudflareNativeDriver(options.storage), limits: CLOUDFLARE_SQL_LIMITS,
     checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, flush: alarms.sync,
-    recoveryActor: CLOUDFLARE_RECOVERY_ACTOR,
     scheduler: { alarm: { set: at => alarms.set(Math.max(1, at)), clear: alarms.delete }, deliver: options.deliver ?? (() => options.watchdog.alarm), policy: options.scheduler },
     watchdog: { target: options.target, instance: options.watchdog },
   }, options.checkpointTree, checkNativeRecovery(options.storage))
