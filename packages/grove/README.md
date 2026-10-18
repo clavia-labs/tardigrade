@@ -1,6 +1,6 @@
 # Grove
 
-Schema-bound, immutable JSON with synchronous reads and SQLite persistence.
+Grove is a highly performant TypeScript library to materialise state from immutable logs, using persistent data structures.
 
 ```sh
 bun add @tardie/grove effect
