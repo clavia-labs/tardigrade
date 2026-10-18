@@ -45,4 +45,17 @@ export const permissionRecords = durableAtom({
     })
   },
 })
-export const permissionState = atom(get => { const state = get(permissionRecords); return { policy: state.read(["policy"]), decisions: Object.values(state.read(["decisions"])) } })
+export interface PermissionView {
+  readonly policy: typeof PermissionPolicy.Type | null
+  readonly decision: (action: typeof PermissionAction.Type, requestId: string) => typeof Decision.Type | undefined
+}
+export const permissionState = atom((get): PermissionView => {
+  const state = get(permissionRecords)
+  return {
+    policy: state.read(["policy"]),
+    decision: (action, requestId) => {
+      const key = JSON.stringify([action, requestId])
+      return state.has(["latest", key]) ? state.read(["decisions", state.read(["latest", key])]).decision : undefined
+    },
+  }
+})
