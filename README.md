@@ -13,167 +13,98 @@
 
 # Tardigrade
 
-Build durable actors and agents from an immutable event log, reducers, reactive views and effects. Built on [Effect](https://effect.website/).
+Tardigrade is a typescript framework for building composable agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and takes a functional approach to managing agent state and effects, drawing inspiration from [Elm](https://elm-lang.org/), and [Jotai](https://jotai.org/).
 
-```text
-events -> reduce -> state -> views
-  ^                    |
-  +---- results <--- effects
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/event-log-equation-dark.svg"><img src="assets/event-log-equation.svg" alt="{ view, effects } = f(event log)" width="240" height="34"></picture></p>
+
+## Quickstart
+
+If you use the legacy component API, see the [migration guide](docs/migration/state-initialisation.mdx) for moving existing state to atoms.
+
+```sh
+bunx tardie init meeseeks --template quickstart
 ```
+
+For coding agents, use the [Tardigrade skill](https://github.com/clavia-labs/tardigrade/blob/main/skills/tardigrade/SKILL.md).
+
+### Atoms hold state
 
 ```sh
 bun add tardie
 ```
 
-## Events accumulate
-
-```ts
-import { Effect, Schema } from "effect"
-
-const Added = Schema.Struct({
-  type: Schema.Literal("Added"),
-  amount: Schema.Int,
-})
-
-const events: readonly (typeof Added.Type)[] = [
-  { type: "Added", amount: 2 },
-  { type: "Added", amount: 3 },
-]
-```
-
-## Reducers build state
-
-```ts
-const reduce = (state: { count: number }, event: typeof Added.Type) => ({
-  count: state.count + event.amount,
-})
-
-const current = events.reduce(reduce, { count: 0 })
-// { count: 5 }
-```
-
-## Durable atoms fold the log
-
-```ts
-import { durableAtom, tree } from "tardie/core"
-
-const counter = durableAtom({
-  name: "counter",
-  input: Added,
-  schema: tree(Schema.Struct({ count: Schema.Int })),
-  initial: { count: 0 },
-  reduce: (state, event) =>
-    state.set(["count"], state.read(["count"]) + event.amount),
-})
-```
-
-Each edit returns an immutable version. Grove owns its representation, synchronous reads, cache and collection.
-
-```text
-                SQLite
-      immutable events + Grove state
-                      |
-               bounded read cache
-                      |
-              read / select / edit
-```
-
-## Collection shapes define edits
-
-```ts
-import { appendOnly, keyValue } from "tardie/core"
-
-const Received = Schema.Struct({
-  type: Schema.Literal("Received"),
-  id: Schema.String,
-  text: Schema.String,
-})
-
-const State = Schema.Struct({
-  document: tree(Schema.Struct({ title: Schema.String })),
-  messages: appendOnly(Schema.Array(Schema.String)),
-  jobs: keyValue(Schema.Struct({ status: Schema.String })),
-})
-
-const history = durableAtom({
-  name: "history",
-  input: Received,
-  schema: State,
-  initial: { document: { title: "" }, messages: [], jobs: {} },
-  reduce: (state, event) => state.batch(edit => {
-    edit.set(["document", "title"], event.text)
-    edit.append(["messages"], [event.text])
-    edit.set(["jobs", event.id], { status: "pending" })
-  }),
-})
-```
-
-```text
-tree         -> set paths, remove fields, splice arrays
-append-only  -> append entries, replace the collection
-key-value    -> set or remove whole entries by key
-```
-
-## Atoms derive views
+Use atoms to store values for other atoms to use.
 
 ```ts
 import { atom } from "tardie/core"
 
-const count = atom(get => get(counter).read(["count"]))
-const label = atom(get => `Count: ${get(count)}`)
-const messages = atom(get => get(history).select(["messages"]))
+const role = atom("You are a research assistant.")
+const style = atom("Cite your sources and keep answers concise.")
 ```
 
-## Effect atoms propose work
+Derive values from atoms using `get`.
 
 ```ts
-import { act, effectAtom } from "tardie/core"
+const system = atom(get => `${get(role)}\n${get(style)}`)
+```
 
-const Greet = act({
-  name: "greet",
-  input: Schema.String,
-  success: Schema.String,
-  failure: Schema.String,
+### Durable atoms reduce state from event log
+
+Durable atoms reduce an immutable event log into state.
+
+```ts
+import { Schema } from "effect"
+import { durableAtom } from "tardie/core"
+import { Event, TrajectoryState, reduceTrajectory } from "tardie/agent"
+
+const history = durableAtom({
+  name: "researcher.history",
+  input: Event,
+  schema: TrajectoryState,
+  initial: { entries: [], models: [] },
+  reduce: reduceTrajectory,
 })
-const greeting = Greet.request({ input: "Ada" })
 
-const root = effectAtom(get => {
-  const result = get(greeting.result)
+const messages = atom(get => get(history).entries.map(entry => entry.message))
+```
+
+### Effect atoms propose actions
+
+Effect atoms derive views and propose actions.
+
+Simplified [`compact`](packages/agent/src/atoms/compact.ts):
+
+```ts
+const compact = messages => effectAtom(get => {
+  const history = get(messages)
+  const state = get(compactionState)
+  const context = prepareMessages(history, state)
+  const shouldSummarize = !state.pending && exceedsThreshold(context)
+
   return {
-    view: { count: get(count), greeting: result },
+    view: { messages: context, compacting: Boolean(state.pending) },
     events: {},
-    acts: result.status === "pending" ? { greet: greeting } : {},
+    acts: shouldSummarize ? { summarize: summarizeRequest(context, state) } : {},
   }
 })
 ```
 
-Service layers execute accepted work. The runtime records results in the log; implementations must tolerate retries with the same effect reference.
+Recorded results update durable compaction state.
+
+### It's atoms all the way
+
+Compose the atoms into an agent actor.
 
 ```ts
-const services = Greet.layer(name => Effect.succeed(`Hello, ${name}!`))
-```
-
-## Actors compose atoms
-
-```ts
-import { defineActor } from "tardie/core"
-
-export const counterActor = defineActor("counter", Effect.succeed({
-  schema: Added,
-  atom: root,
-}))
-```
-
-The same primitives compose an agent:
-
-```ts
+import { Effect } from "effect"
+import { atom, defineActor } from "tardie/core"
 import { workspace, fetch } from "tardie/libraries"
-import { agentMethods, codeMode, compact, infer, messages as trajectory } from "tardie/agent"
+import { agentMethods, codeMode, compact, infer, messages } from "tardie/agent"
 
-export const researcher = defineActor("researcher", Effect.gen(function* () {
+const researcher = defineActor("researcher", Effect.gen(function* () {
   const system = atom("You are a careful research assistant.")
   const tools = yield* codeMode([workspace(), fetch()])
-  const context = yield* compact(trajectory, {
+  const context = yield* compact(messages, {
     triggerRatio: 0.8,
     retainRatio: 0.5,
   })
@@ -182,38 +113,69 @@ export const researcher = defineActor("researcher", Effect.gen(function* () {
     tools: get(tools),
     context: get(context),
   }))
+
   return { atom: agent, methods: agentMethods }
 }))
 ```
 
-## Hosts provide persistence
+```text
+event log -> history -> messages -> compact --+
+                                              |
+                                    system ---+-> infer -> researcher
+                                              |
+                                     tools ---+
+```
+
+## Hosting
+
+Host each actor instance with an ActorDO for its supervisor directory and a separate SQLite-backed ThreadDO for each thread on Cloudflare or a self-hosted [Celld fleet](https://github.com/denoland/celld/blob/main/docs/README.md). The same Worker entrypoint runs on both.
 
 ```ts
+import { actorContext } from "tardie/agent"
 import { createActorWorker } from "tardie/platform/cloudflare"
+import { researcher } from "./actor"
+import { services } from "./services"
 
 const worker = createActorWorker({
-  actor: counterActor,
-  services: () => services,
+  actor: researcher,
+  actorContext,
+  services: () => services(),
 })
-
 export const ActorDO = worker.ActorObject
 export const ThreadDO = worker.ThreadObject
 export default worker
 ```
 
+`createActorWorker` routes requests and provides the ActorDO and ThreadDO classes.
+
+ActorDO allocates and routes to threads; each ThreadDO owns a separate database with its state and journal. Each thread records its parent, through which we derive the logical lineage, here A -> B -> C.
+
 ```text
-Worker -> ActorDO: thread directory
-             |
-             +-- ThreadDO A: events + materialized state
-             +-- ThreadDO B: events + materialized state
+ActorWorker -> ActorDO [supervisor DB]
+               └── directory
+                   ├── A [ThreadDO, thread DB]
+                   ├── B [ThreadDO, thread DB, parent: A]
+                   └── C [ThreadDO, thread DB, parent: B]
 ```
 
-## Run an agent
+The [Quickstart](docs/getting-started/quickstart.mdx) generates services and deployment configs with both DO bindings. Configure your model and credentials, then run or deploy.
+
+Run locally with `bunx wrangler dev`; see [local setup](docs/platforms/cloudflare.mdx#verify-locally).
+
+[Cloudflare](https://developers.cloudflare.com/workers/wrangler/commands/#deploy):
 
 ```sh
-bunx tardie init meeseeks --template quickstart
-cd meeseeks
-bunx wrangler dev
+bunx wrangler deploy
 ```
 
-[Quickstart](docs/getting-started/quickstart.mdx) · [Cloudflare](docs/platforms/cloudflare.mdx) · [Celld](docs/platforms/celld.mdx) · [Bun](packages/examples/bun.ts) · [Agent authoring skill](skills/tardigrade/SKILL.md) · [Contributing](CONTRIBUTING.md)
+Or deploy to a Celld fleet, using its storage bucket:
+
+```sh
+celld deploy --config celld.jsonc --bucket s3://actors
+```
+
+See the [Cloudflare](docs/platforms/cloudflare.mdx) and [Celld](docs/platforms/celld.mdx) guides for configuration and credentials. For a Bun process, see the [Bun example](packages/examples/bun.ts) and [service wiring](packages/examples/services.ts).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).

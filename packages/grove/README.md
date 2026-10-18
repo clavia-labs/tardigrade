@@ -1,114 +1,209 @@
 # Grove
 
-Immutable JSON trees with structural sharing, selective reads and incremental persistence.
-
-Grove stores JSON as Merkle snapshots. Updates share unchanged nodes; `MerkleTree<State>` provides typed edits and selective reads.
-
-```text
- snapshot A                                        snapshot B
-      │                                                 │
-      ├───────────────► shared subtree ◄────────────────┤
-      │                        │                        │
-      │                   ┌────┴────┐                   │
-      ▼                   ▼         ▼                   ▼
-  old data             data 1    data 2           updated data
-```
-
-Use Grove for growing histories, versioned documents and durable state. Applications define schemas and retain the roots they need.
-
-## Quickstart
+Schema-bound, immutable JSON with synchronous reads and SQLite persistence.
 
 ```sh
 bun add @tardie/grove effect
 ```
 
-Create Grove with a synchronous node loader. This example stores encoded nodes in memory.
+## Start with JSON
+
+```ts
+const initial = {
+  document: { title: "Untitled" },
+  messages: [],
+  jobs: {},
+}
+```
+
+## Give each collection an edit vocabulary
 
 ```ts
 import { Schema } from "effect"
 import * as Grove from "@tardie/grove"
 
-const storage = new Map<string, string>()
-const load = (hash: string) => {
-  const text = storage.get(hash)
-  if (text === undefined) throw new Error(`Missing node: ${hash}`)
-  return text
-}
-
+const Message = Schema.Struct({ text: Schema.String })
+const Job = Schema.Struct({ status: Schema.String })
 const State = Schema.Struct({
-  status: Schema.String,
-  messages: Schema.Array(Schema.Struct({
-    role: Schema.String,
-    text: Schema.String,
-  })),
-})
-
-const grove = Grove.make({ load })
-const snapshots = grove.bind(State)
-const original = snapshots.initial({ status: "idle", messages: [] })
-
-const next = original
-  .append(["messages"], [{ role: "user", text: "Hello" }])
-  .set(["status"], "ready")
-
-console.log(original.length(["messages"]))
-console.log(next.read(["messages", 0, "text"]))
-```
-
-The outputs are `0` and `"Hello"`. Updates return new snapshots; the schema types paths and values and validates reads and edits.
-
-## Read the working set
-
-Choose what to load.
-
-```ts
-next.read(["status"])
-next.length(["messages"])
-next.slice(["messages"], 0, 10)
-next.read(["messages"])
-```
-
-`read` and `slice` materialize selected data. `length` uses size metadata where available. A full conversation read loads the full conversation.
-
-Selections capture a snapshot without loading its values.
-
-```ts
-const selected = next.select(["messages"])
-const reference = Grove.selectionReference(selected)!
-const messages = grove.readReference(reference)
-```
-
-`selectionReference` converts an opaque selection into a serializable descriptor. `selectEach` adds a per-item projection. Retain the referenced root while needed.
-
-## Persist a snapshot
-
-Write staged nodes and publish the root before acknowledging the batch.
-
-```ts
-const staged = grove.nodes()
-for (const [hash, node] of staged) storage.set(hash, node.text)
-const root = next.root
-grove.committed(staged)
-
-const reopened = Grove.make({ load }).bind(State).open(root)
-console.log(reopened.read(["status"]))
-```
-
-The output is `"ready"`. Durable stores must save the root too. Publish nodes and root atomically when readers or collection can observe changes; acknowledge successful writes with `committed`, which preserves newer edits.
-
-The SQLite adapter provides named roots, transactional publication, stale-write checks and collection. Release ownership when finished; collection removes unreachable nodes.
-
-## Tune the working set
-
-Configure caching and tree layout.
-
-```ts
-const cached = Grove.make({
-  load,
-  options: { cacheBytes: 16 * 1024 * 1024 },
+  document: Grove.tree(Schema.Struct({ title: Schema.String })),
+  messages: Grove.appendOnly(Schema.Array(Message)),
+  jobs: Grove.keyValue(Job),
 })
 ```
 
-The default cache budget is 256 KiB of encoded node bytes; decoded values use additional memory. Size it for the working set to avoid repeated loads. `grove.stats()` reports loads, hits, evictions and cached bytes.
+```text
+tree        set paths / remove fields / splice arrays
+appendOnly  append entries / replace the collection
+keyValue    set or remove whole entries by key
+```
 
-Layout options are `leafBytes`, `tailBytes`, `pageItems` and `fanout`. SQLite adds `chunkBytes` and `maxParameters`. Defaults are exported from their respective modules.
+## Connect synchronous storage
+
+```ts
+import { Database } from "bun:sqlite"
+import { makeSync, type SyncSqlite } from "@tardie/grove/sqlite"
+
+const db = new Database(":memory:")
+const driver: SyncSqlite = {
+  identity: db,
+  execute: (sql, parameters) =>
+    db.query<Record<string, unknown>, (typeof parameters)[number][]>(sql)
+      .all(...parameters),
+  transaction: work => db.transaction(work)(),
+}
+const options = {
+  scope: "workspace",
+  cacheBytes: Grove.DEFAULT_READ_CACHE_BYTES,
+}
+const store = makeSync(driver, options)
+const documents = store.bind(State)
+```
+
+Use a file-backed database for durability. A Durable Object supplies the same driver through `storage.sql.exec` and `storage.transactionSync`.
+
+## Edits produce versions
+
+```ts
+const a = documents.initial(initial)
+const b = a.set(["document", "title"], "Research")
+const c = b.append(["messages"], [{ text: "Hello" }])
+const d = c.set(["jobs", "summarize"], { status: "pending" })
+const e = d.remove(["jobs", "summarize"])
+
+a.read(["document", "title"])  // "Untitled"
+b.read(["document", "title"])  // "Research"
+a.length(["messages"])         // 0
+c.length(["messages"])         // 1
+d.has(["jobs", "summarize"])  // true
+e.has(["jobs", "summarize"])  // false
+```
+
+```text
+version a -> document A + messages A + jobs A
+version b -> document B + messages A + jobs A
+version c -> document B + messages C + jobs A
+version d -> document B + messages C + jobs D
+```
+
+Batch related edits into a version:
+
+```ts
+const completed = d.batch(edit => {
+  edit.append(["messages"], [{ text: "Summary ready" }])
+  edit.remove(["jobs", "summarize"])
+})
+```
+
+Paths and values follow the schema. Append-only entries cannot be edited in place; key-value entries are replaced as a whole.
+
+## Read what you need
+
+```ts
+d.read(["document", "title"])
+d.read(["jobs", "summarize"])
+d.length(["messages"])
+d.slice(["messages"], 0, 10)
+d.read([])
+```
+
+`read([])` materializes the entire document. Selections describe a version and a subset without loading its values:
+
+```ts
+const selected = d.selectEach(["messages"], ["text"], { start: 0, end: 1 })
+const reference = store.reference(selected)
+const encoded = Grove.encodeReference(reference)
+```
+
+References belong to a storage scope. Persist them with `encodeReference`; restore them with `decodeReference`.
+
+## Publish atomically
+
+```ts
+db.exec("CREATE TABLE app_events(seq INTEGER PRIMARY KEY, event TEXT NOT NULL)")
+
+store.transaction(tx => {
+  store.commit(tx, {
+    publish: [{ owner: "head", expected: null, document: d }],
+  })
+  tx.execute("INSERT INTO app_events VALUES(?,?)", [
+    0, JSON.stringify({ type: "Received", text: "Hello" }),
+  ])
+})
+store.discard()
+
+const view = store.view(reference, Schema.Array(Schema.String))
+view.read([0])      // "Hello"
+view.materialize()  // ["Hello"]
+```
+
+```text
+one SQLite transaction
+  + application event
+  + changed tree nodes / appended rows / keyed revisions
+  + head ownership
+```
+
+`expected` checks the owner's previous reference. A failed transaction preserves its published version; staged edits remain available for retry. `discard()` drops staged edits after publication or abandonment.
+
+## Reopen a version
+
+```ts
+const reopened = makeSync(driver, options)
+const head = reopened.owner("head")!
+const restored = reopened.bind(State).open(head)
+const selectedAgain = reopened.view(
+  Grove.decodeReference(encoded),
+  Schema.Array(Schema.String),
+)
+
+restored.read(["document", "title"])  // "Research"
+selectedAgain.read([0])               // "Hello"
+```
+
+## Retain what future reads need
+
+```ts
+reopened.transaction(tx => reopened.commit(tx, {
+  retain: [{ owner: "input/1", selection: Grove.decodeReference(encoded) }],
+}))
+
+const next = restored.append(["messages"], [{ text: "Another message" }])
+reopened.transaction(tx => reopened.commit(tx, {
+  publish: [{ owner: "head", expected: head, document: next }],
+}))
+reopened.discard()
+reopened.collect()
+
+selectedAgain.materialize()  // ["Hello"]
+```
+
+Release an obsolete owner, then collect:
+
+```ts
+reopened.transaction(tx => reopened.commit(tx, {
+  release: [{ owner: "input/1", expected: Grove.decodeReference(encoded) }],
+}))
+reopened.collect()
+```
+
+```text
+head --------> current version
+input/1 -----> selected version
+                    |
+               shared storage
+
+release input/1 -> collect unreachable material
+```
+
+## Size the read cache
+
+```ts
+const tuned = makeSync(driver, {
+  scope: "workspace",
+  cacheBytes: 4 * 1024 * 1024,
+})
+
+tuned.stats()
+```
+
+The cache budget counts encoded bytes for nodes, log rows and keyed entries. Decoded objects, application views and staged edits use additional memory. `cacheBytes: 0` disables the committed read cache. Tree layout and SQLite chunking defaults are exported from `@tardie/grove` and `@tardie/grove/sqlite`.
