@@ -185,7 +185,7 @@
       "name": "@clavia/tardigrade-core",
       "version": "0.0.1",
       "dependencies": {
-        "@tardie/grove": "0.1.0",
+        "@tardie/grove": "0.2.0",
         "effect": "4.0.0-rc.115",
       },
       "devDependencies": {
@@ -283,12 +283,10 @@
     },
     "packages/grove": {
       "name": "@tardie/grove",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@cloudflare/vitest-plugin": "^1.4.1",
         "@cloudflare/workers-types": "^5.20260804.1",
-        "@effect/sql-sqlite-bun": "4.0.0-rc.115",
-        "@effect/sql-sqlite-do": "4.0.0-rc.115",
         "fast-check": "^4.9.0",
         "vitest": "^5.0.4",
       },
@@ -343,8 +341,7 @@
         "@clavia/tardigrade-worker-loader": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-bun": "4.0.0-rc.115",
-        "@effect/sql-sqlite-do": "4.0.0-rc.115",
-        "@tardie/grove": "0.1.0",
+        "@tardie/grove": "0.2.0",
         "effect": "4.0.0-rc.115",
       },
       "devDependencies": {

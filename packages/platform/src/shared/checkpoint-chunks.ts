@@ -1,4 +1,4 @@
-import type { CheckpointTreeOptions } from "./checkpoint-trees"
+import type { CheckpointTreeOptions } from "./storage-policy"
 import { RuntimeError } from "@clavia/tardigrade-core"
 
 // CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES bounds integer ordinal and SQLite record encoding overhead (https://www.sqlite.org/fileformat.html#record_format).

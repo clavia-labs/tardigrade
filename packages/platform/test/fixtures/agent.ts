@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Stream, Schema } from "effect"
 import { AiError, LanguageModel, Prompt, Response } from "effect/unstable/ai"
 import { atom, createEventLog, type EffectCheckpoint, type EffectExecution } from "@clavia/tardigrade-core"
-import { treeSession, type TreeSession } from "@clavia/tardigrade-core/services/tree-state"
+import { documentSession, type DocumentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { compact } from "@clavia/tardigrade-agent/atoms/compact"
 import { infer } from "@clavia/tardigrade-agent/atoms/infer"
 import { messages } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
@@ -23,9 +23,9 @@ const agentProjection = Effect.gen(function* () {
   return yield* infer(atom(get => ({ system: "Test", tools: { view: { specs: [] }, events: {}, acts: {} }, context: get(context) })))
 })
 
-export function agentLog(contextWindowTokens: number, checkpoint?: EffectCheckpoint, context: Context.Context<ModelInfo> = Context.make(ModelInfo, { ...selection, contextWindowTokens }), trees: TreeSession = treeSession({ load: () => { throw new Error("Missing test checkpoint node") } })) {
+export function agentLog(contextWindowTokens: number, checkpoint?: EffectCheckpoint, context: Context.Context<ModelInfo> = Context.make(ModelInfo, { ...selection, contextWindowTokens }), documents: DocumentSession = documentSession({ load: () => { throw new Error("Missing test checkpoint node") } })) {
   const agent = Effect.runSync(agentProjection.pipe(Effect.provide(context)))
-  return Object.assign(createEventLog({ schema: Event, atoms: { agent }, trees, ...(checkpoint === undefined ? {} : { checkpoint }) }), { trees })
+  return Object.assign(createEventLog({ schema: Event, atoms: { agent }, documents, ...(checkpoint === undefined ? {} : { checkpoint }) }), { documents })
 }
 
 type AgentLog = ReturnType<typeof agentLog>

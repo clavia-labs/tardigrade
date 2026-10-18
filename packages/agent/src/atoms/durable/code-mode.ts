@@ -1,11 +1,14 @@
 import { MethodRequested, MethodReturned, CodeCalled, CodeReturned, DomainEvent, EvaluateCode, ExecutePackage, type Event } from "../../contracts/code-mode"
 import { Schema } from "effect"
-import { EffectRef, durableAtom, effectKey, RuntimeError, EffectAcceptance, type RecordMetadata } from "@clavia/tardigrade-core"
+import { EffectRef, atom, keyValue, durableAtom, effectKey, RuntimeError, EffectAcceptance, type RecordMetadata } from "@clavia/tardigrade-core"
 import { ToolCall, ToolCalled, ModelReturned, ToolReturned } from "../../contracts/events"
+
+import { keyedChanges } from "./keyed-changes"
 
 const Position = EffectRef.fields.seq
 const MethodRecord = Schema.Struct({ origin: Position, ordinal: MethodRequested.fields.ordinal, package: MethodRequested.fields.package, method: MethodRequested.fields.method, input: MethodRequested.fields.input, ref: Schema.NullOr(EffectRef), outcome: Schema.NullOr(MethodReturned.fields.outcome) })
-export const CodeModeState = Schema.Array(Schema.Struct({ call: ToolCall, origin: Schema.NullOr(Position), codeMode: Schema.NullOr(Schema.String), evaluation: Schema.NullOr(EffectRef), ambient: Schema.NullOr(CodeCalled.fields.ambient), returned: Schema.Boolean, calls: Schema.Array(MethodRecord), outcome: Schema.NullOr(CodeReturned.fields.outcome) }))
+const Execution = Schema.Struct({ call: ToolCall, origin: Schema.NullOr(Position), codeMode: Schema.NullOr(Schema.String), evaluation: Schema.NullOr(EffectRef), ambient: Schema.NullOr(CodeCalled.fields.ambient), returned: Schema.Boolean, calls: Schema.Array(MethodRecord), outcome: Schema.NullOr(CodeReturned.fields.outcome) })
+export const CodeModeState = Schema.Array(Execution)
 
 // codeModeState retains code inputs and method receipts until their tool results are delivered.
 export function codeModeState(state: typeof CodeModeState.Type, event: typeof Event.Type | EffectAcceptance, _metadata: RecordMetadata = {}, position?: number): typeof CodeModeState.Type {
@@ -54,4 +57,11 @@ export function codeModeState(state: typeof CodeModeState.Type, event: typeof Ev
   return state.flatMap(value => value !== entry ? [value] : next.returned && next.calls.every(call => call.outcome !== null) ? [] : [next])
 }
 
-export const executions = durableAtom({ name: "agent.code-mode.executions", input: Schema.Union([ModelReturned, ToolCalled, ToolReturned, DomainEvent, EffectAcceptance]), schema: CodeModeState, initial: [], reduce: codeModeState })
+export const executionRecords = durableAtom({ name: "agent.code-mode.executions", input: Schema.Union([ModelReturned, ToolCalled, ToolReturned, DomainEvent, EffectAcceptance]), schema: keyValue(Execution), initial: {},
+  migrate: value => Array.isArray(value) ? Object.fromEntries(Schema.decodeSync(CodeModeState)(value).map(entry => [JSON.stringify(entry.call.callId), entry])) : value,
+  reduce: (state, event, metadata, position) => {
+    const before = Object.values(state.read([])), next = codeModeState(before, event, metadata, position)
+    return next === before ? state : state.batch(edit => { for (const [key, value] of keyedChanges(before, next, entry => JSON.stringify(entry.call.callId))) { if (value === undefined) edit.remove([key]); else edit.set([key], value) } })
+  }, })
+
+export const executions = atom(get => Object.values(get(executionRecords).read([])))

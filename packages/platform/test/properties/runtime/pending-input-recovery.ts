@@ -116,7 +116,7 @@ export async function cancellationInputRecovery(fixture: CleanupFixture) {
   try {
     await Effect.runPromise(Deferred.await(entered).pipe(Effect.timeout(1_000)))
     const pending = (await Effect.runPromise(journal.readInputs))[0]!
-    await fixture.execute(name, "CREATE TRIGGER fail_cleanup_release BEFORE DELETE ON effect_inputs BEGIN SELECT RAISE(ABORT, 'Injected cleanup release failure'); END")
+    await fixture.execute(name, "CREATE TRIGGER fail_cleanup_release BEFORE DELETE ON stored_journal_inputs BEGIN SELECT RAISE(ABORT, 'Injected cleanup release failure'); END")
     await Effect.runPromise(store.cancel(pending.ref, "stop"))
     if (Number(cleanups) !== 0 || (await Effect.runPromise(journal.readInputs)).length !== 1) throw new Error("Cleanup acknowledged before the producer stopped")
     await Effect.runPromise(Deferred.succeed(releaseSubmission, undefined))
@@ -202,7 +202,7 @@ export async function stoppedInputRecovery(fixture: CleanupFixture, failCleanupC
     await waitFor(() => Effect.runPromise(journal.read), records => records.some(record => record.event.type === "EffectDied"))
     const retained = await Effect.runPromise(journal.readInputs)
     if (retained.length !== 2 || !retained.some(input => effectKey(input.ref) === effectKey(submitted.ref))) throw new Error("Death released cleanup or forwarding input")
-    if (failCleanupCommit) await fixture.execute(name, "CREATE TRIGGER fail_stopped_cleanup BEFORE DELETE ON effect_inputs BEGIN SELECT RAISE(ABORT, 'Injected stopped cleanup failure'); END")
+    if (failCleanupCommit) await fixture.execute(name, "CREATE TRIGGER fail_stopped_cleanup BEFORE DELETE ON stored_journal_inputs BEGIN SELECT RAISE(ABORT, 'Injected stopped cleanup failure'); END")
     await Effect.runPromise(Deferred.succeed(releaseCleanup, undefined))
     if (failCleanupCommit) {
       const waitFailure = await Effect.runPromise(Effect.flip(store.wait))

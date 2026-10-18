@@ -1,57 +1,88 @@
 import { DurableObject } from "cloudflare:workers"
-import { Effect, Layer, ManagedRuntime } from "effect"
-import { SqlClient } from "effect/unstable/sql"
-import { SqliteClient } from "@effect/sql-sqlite-do"
-import { JsonTree, type Path } from "@tardie/grove"
-import { GroveError } from "@tardie/grove/effect"
-import * as Grove from "@tardie/grove"
-import { Grove as GroveStorage, layer, nativeLoader } from "@tardie/grove/sqlite"
+import { Schema } from "effect"
+import { decodeReference, encodeReference, type Path } from "@tardie/grove"
+import { makeSync } from "@tardie/grove/sqlite"
+import { commitStore, commitProbe, type CommitAction, type CommitProbe } from "./commits"
 
-const outcome = <A, E, R>(work: Effect.Effect<A, E, R>) => work.pipe(Effect.match({ onSuccess: success => ({ _tag: "Success" as const, success }), onFailure: failure => ({ _tag: "Failure" as const, failure: { message: GroveError.from(failure).message } }) }))
+const State = Schema.Struct({ history: Schema.Array(Schema.Struct({ n: Schema.Int, text: Schema.String })), archive: Schema.String })
+const outcome = <Value>(work: () => Value) => {
+  try { return { _tag: "Success" as const, success: work() } }
+  catch (cause) { return { _tag: "Failure" as const, failure: { message: cause instanceof Error ? cause.message : String(cause) } } }
+}
 
 export class GroveDO extends DurableObject {
-  private readonly runtime = ManagedRuntime.make(layer({ chunkBytes: 4096, cacheBytes: 8192 }).pipe(Layer.provideMerge(SqliteClient.layer({ storage: this.ctx.storage }))))
-  seed(size: number) { return this.runtime.runPromise(Effect.gen(function* () {
-    const grove = yield* GroveStorage
-    const sql = yield* SqlClient.SqlClient
-    yield* sql`CREATE TABLE IF NOT EXISTS events (name TEXT PRIMARY KEY)`
-    const value = { history: Array.from({ length: size }, (_, n) => ({ n, text: `message ${n}` })), archive: "x".repeat(150000) }
-    const original = yield* grove.publish("checkpoint", JsonTree.make().from(value), null)
-    yield* grove.replaceOwners("pending", [{ name: "", root: original.root }])
-    return original
-  })) }
-  append(expected: string, fail = false) { return this.runtime.runPromise(Effect.gen(function* () {
-    const grove = yield* GroveStorage
-    const sql = yield* SqlClient.SqlClient
-    return yield* grove.transaction(Effect.gen(function* () {
-      const result = yield* grove.append("checkpoint", expected, ["history"], [{ n: 100000, text: "next" }])
-      yield* sql`INSERT INTO events (name) VALUES ('appended')`
-      if (fail) return yield* new GroveError({ message: "Injected rollback" })
-      return result
+  private readonly values = commitStore(this.ctx)
+  valueProbe(action: CommitAction): CommitProbe { return commitProbe(this.ctx, this.values, action) }
+  private open(cacheBytes = 8192) {
+    return makeSync({
+      identity: this.ctx.storage.sql,
+      execute: (statement, parameters) => this.ctx.storage.sql.exec(statement, ...parameters).toArray(),
+      transaction: work => this.ctx.storage.transactionSync(work),
+    }, { scope: this.ctx.id.toString(), chunkBytes: 4096, cacheBytes })
+  }
+  private readonly store = this.open()
+  private owner(store: typeof this.store, name: string) {
+    const reference = store.owner(name)
+    if (!reference) throw new Error("Missing owner")
+    return reference
+  }
+  seed(size: number) {
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS events (name TEXT PRIMARY KEY)")
+    const document = this.store.bind(State).initial({ history: Array.from({ length: size }, (_, n) => ({ n, text: `message ${n}` })), archive: "x".repeat(150000) })
+    const result = this.store.transaction(tx => this.store.commit(tx, {
+      publish: [{ owner: "checkpoint", expected: null, document }],
+      retain: [{ owner: "pending", selection: document.reference! }],
     }))
-  }).pipe(outcome)) }
-  set(expected: string) { return this.runtime.runPromise(GroveStorage.use(grove => grove.set("checkpoint", expected, ["history", 0, "text"], "edited")).pipe(outcome)) }
-  read(owner: string, path: Path): Promise<unknown> { return this.runtime.runPromise(GroveStorage.use(grove => grove.read(owner, path)).pipe(outcome)) }
-  readNative(owner: string, path: Path): Promise<unknown> { return this.runtime.runPromise(Effect.gen(function* () {
-    const grove = yield* GroveStorage
-    const root = yield* grove.root(owner)
-    if (!root) return yield* new GroveError({ message: "Missing owner" })
-    const load = yield* nativeLoader
-    return Grove.make({ load, options: { cacheBytes: 0 } }).read(root, path)
-  })) }
-  slice(owner: string, start: number, end: number): Promise<unknown> { return this.runtime.runPromise(GroveStorage.use(grove => grove.slice(owner, ["history"], start, end))) }
-  release(owner: string, expected: string) { return this.runtime.runPromise(GroveStorage.use(grove => grove.release(owner, expected))) }
-  collect() { return this.runtime.runPromise(GroveStorage.use(grove => grove.collect)) }
-  inspect() { return this.runtime.runPromise(Effect.gen(function* () {
-    const grove = yield* GroveStorage
-    const sql = yield* SqlClient.SqlClient
-    return { cache: grove.stats(), root: yield* grove.root("checkpoint"), nodes: (yield* sql<{ n: number }>`SELECT COUNT(*) n FROM grove_nodes`)[0]!.n, events: (yield* sql<{ n: number }>`SELECT COUNT(*) n FROM events`)[0]!.n }
-  })) }
-  corrupt() { return this.runtime.runPromise(Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient
-    yield* sql`UPDATE grove_nodes SET payload = NULL WHERE hash = (SELECT root FROM grove_owners WHERE name = 'checkpoint')`
-    yield* sql`DELETE FROM grove_chunks WHERE hash = (SELECT root FROM grove_owners WHERE name = 'checkpoint')`
-  })) }
+    return { ...result, root: encodeReference(document.reference!) }
+  }
+  private edit(expected: string, append: boolean, fail = false) {
+    return outcome(() => {
+      const before = this.store.stats(), previous = decodeReference(expected)
+      const document = this.store.bind(State).open(previous)
+      const next = append ? document.append(["history"], [{ n: 100000, text: "next" }]) : document.set(["history", 0, "text"], "edited")
+      try {
+        const result = this.store.transaction(tx => {
+          const result = this.store.commit(tx, { publish: [{ owner: "checkpoint", expected: previous, document: next }] })
+          if (append) tx.execute("INSERT INTO events (name) VALUES ('appended')", [])
+          if (fail) throw new Error("Injected rollback")
+          return result
+        })
+        const after = this.store.stats()
+        return { ...result, root: encodeReference(next.reference!), loadedNodes: after.loadedNodes - before.loadedNodes, loadedBytes: after.loadedBytes - before.loadedBytes }
+      } finally { this.store.discard() }
+    })
+  }
+  append(expected: string, fail = false) { return this.edit(expected, true, fail) }
+  set(expected: string) { return this.edit(expected, false) }
+  read(owner: string, path: Path): unknown { return outcome(() => this.store.bind(State).open(this.owner(this.store, owner)).read(path as [])) }
+  readFresh(owner: string, path: Path): unknown {
+    const store = this.open(0)
+    return store.bind(State).open(this.owner(store, owner)).read(path as [])
+  }
+  reference(owner: string) {
+    const store = this.open(0)
+    const document = store.bind(State).open(this.owner(store, owner))
+    const selected = document.selectEach(["history"], ["text"], { start: 0, end: 2 })
+    return { encoded: encodeReference(store.reference(selected)), stats: store.stats() }
+  }
+  readView(encoded: string) {
+    return outcome(() => {
+      const store = this.open(0), view = store.view(decodeReference(encoded), Schema.Array(Schema.String))
+      const iterator = view.scan([]), first = iterator.next().value
+      iterator.return?.()
+      return { first, values: view.materialize(), length: view.length([]), stats: store.stats() }
+    })
+  }
+  slice(owner: string, start: number, end: number) { return this.store.bind(State).open(this.owner(this.store, owner)).slice(["history"], start, end) }
+  release(owner: string, expected: string) { return this.store.transaction(tx => this.store.commit(tx, { release: [{ owner, expected: decodeReference(expected) }] })) }
+  collect() { return this.store.collect() }
+  inspect() {
+    const root = this.store.owner("checkpoint")
+    return { cache: this.store.stats(), root: root && encodeReference(root), nodes: this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) n FROM grove_value_nodes").one().n, events: this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) n FROM events").one().n }
+  }
+  corrupt() {
+    this.ctx.storage.sql.exec("DELETE FROM grove_value_chunks WHERE hash = (SELECT root FROM grove_value_owners WHERE name = 'checkpoint')")
+  }
 }
 
 export default { fetch: () => new Response("Grove fixture") }

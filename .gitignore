@@ -46,3 +46,6 @@ packages/tardie/src/generated/
 
 # Local experiment reports
 .experiments/
+
+# Local Grove benchmark harnesses
+/packages/grove/bench/

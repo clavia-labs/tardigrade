@@ -1,14 +1,22 @@
-import { FORMAT_VERSION, digest, elementBytes, bytes, descriptor, mergeablePages, payload, plan, type Descriptor, type Json, type Node, type Options, type Path, type Tree, DEFAULT_FANOUT, DEFAULT_LEAF_BYTES, DEFAULT_PAGE_ITEMS, DEFAULT_TAIL_BYTES } from "./codec"
+import type { Maps } from "./key-value"
+import type { Logs } from "./append-only"
+import { makeKeyed, keyedEntries } from "./tree-keys"
+import { FORMAT_VERSION, digest, elementBytes, bytes, descriptor, mergeablePages, payload, plan, type Descriptor, type Json, type Node, type Options, type Path, type Tree, DEFAULT_FANOUT, DEFAULT_LEAF_BYTES, DEFAULT_PAGE_ITEMS, DEFAULT_TAIL_BYTES, DEFAULT_OBJECT_PAGE_ITEMS } from "../storage/nodes"
 
-export type Edit = { readonly type: "set"; readonly path: Path; readonly value: Json } | { readonly type: "append"; readonly path: Path; readonly values: readonly Json[] }
+export type Edit = { readonly type: "set"; readonly path: Path; readonly value: Json } | { readonly type: "append"; readonly path: Path; readonly values: readonly Json[] } | { readonly type: "splice"; readonly path: Path; readonly index: number; readonly deleteCount: number; readonly values: readonly Json[] } | { readonly type: "entry"; readonly path: Path; readonly key: string; readonly value?: Json } | { readonly type: "remove"; readonly path: Path }
+
+const embedded = new WeakMap<object, Node>()
+// embed carries an internally prepared node through an import without exposing a storage representation in JSON (test/append-only.test.ts).
+export const embed = (node: Node): Json => { const token = Object.freeze({}); embedded.set(token, node); return token }
 
 // make's memo reuses nodes for repeated imports of the same frozen values; a builder that only edits loaded trees passes memo: false so it retains no built nodes.
-export function make(options: Options = {}, { memo = true }: { readonly memo?: boolean } = {}) {
+export function make(options: Options = {}, { memo = true, logs, maps }: { readonly memo?: boolean; readonly logs?: Logs; readonly maps?: Maps } = {}) {
   const pageItems = options.pageItems ?? DEFAULT_PAGE_ITEMS
+  const objectPageItems = options.objectPageItems ?? DEFAULT_OBJECT_PAGE_ITEMS
   const fanout = options.fanout ?? DEFAULT_FANOUT
   const leafBytes = options.leafBytes ?? DEFAULT_LEAF_BYTES
   const tailBytes = Math.min(options.tailBytes ?? DEFAULT_TAIL_BYTES, leafBytes)
-  for (const [name, value] of Object.entries({ pageItems, fanout, leafBytes, tailBytes })) if (!Number.isSafeInteger(value) || value < 2) throw new Error(`${name} must be at least two`)
+  for (const [name, value] of Object.entries({ pageItems, fanout, leafBytes, tailBytes, objectPageItems })) if (!Number.isSafeInteger(value) || value < 2) throw new Error(`${name} must be at least two`)
   const classified = new WeakMap<object, { immutable: boolean; large: boolean }>()
   const imported = new WeakMap<object, Node>()
   const pages = new WeakMap<object, { items: readonly Json[]; node: Node }>()
@@ -16,6 +24,7 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
   const classify = (value: Json): { immutable: boolean; large: boolean } => {
     if (typeof value === "number" && !Number.isFinite(value)) throw new Error("Merkle numbers must be finite")
     if (typeof value !== "object" || value === null) return { immutable: true, large: false }
+    if (embedded.has(value)) return { immutable: true, large: true }
     const cached = classified.get(value)
     if (cached) return cached
     const plain = Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null
@@ -38,6 +47,7 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
     metrics.hashedBytes += bytes(text)
     return Object.freeze({ hash: digest(text), text, tag, links: Object.freeze([...links]), children: Object.freeze(links.map(child => child.hash)), logicalBytes, count, level })
   }
+  const keyed = makeKeyed(make, objectPageItems, fanout)
   const leaf = (value: Json) => {
     const text = JSON.stringify(value)
     if (text === undefined) throw new Error("Merkle values must be JSON")
@@ -49,7 +59,7 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
     return make("c", children.map(descriptor), children, 2 + children.reduce((n, child) => n + elementBytes(child), 0) + Math.max(0, count - 1), count, children[0]!.level + 1)
   }
   const array = (segment: Node) => make("a", descriptor(segment), [segment], segment.logicalBytes, segment.count)
-  const object = (fields: readonly [string, Node][]) => make("o", fields.map(([key, child]) => [key, descriptor(child)]), fields.map(([, child]) => child), 2 + Math.max(0, fields.length - 1) + fields.reduce((n, [key, child]) => n + bytes(JSON.stringify(key)) + 1 + child.logicalBytes, 0))
+  const object = (fields: readonly [string, Node][]) => fields.length > objectPageItems ? keyed.build(fields) : make("o", fields.map(([key, child]) => [key, descriptor(child)]), fields.map(([, child]) => child), 2 + Math.max(0, fields.length - 1) + fields.reduce((n, [key, child]) => n + bytes(JSON.stringify(key)) + 1 + child.logicalBytes, 0))
   const page = (items: readonly Json[]): Node => {
     const first = items[0]
     const immutable = items.every(item => classify(item).immutable)
@@ -68,6 +78,8 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
   const importValue = (value: Json): Node => {
     metrics.visitedValues++
     const objectValue = value !== null && typeof value === "object" ? value : undefined
+    const prepared = objectValue && embedded.get(objectValue)
+    if (prepared) { metrics.reusedNodes++; return prepared }
     const cached = objectValue && imported.get(objectValue)
     if (cached) { metrics.reusedNodes++; return cached }
     const classification = classify(value)
@@ -100,9 +112,17 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
     if (objectValue && classification.immutable && memo) imported.set(objectValue, node)
     return node
   }
+
+  const ordered = (node: Node): [string, number, Json][] => {
+    if (node.opaque) throw new Error("Merkle reference requires an explicit read")
+    return node.tag === "k" ? keyedEntries(node).map(([key, order, value]) => [key, order, materialize(value)]) : node.links.flatMap(ordered)
+  }
   const materialize = (node: Node): Json => {
     if (node.opaque) throw new Error("Merkle reference requires an explicit read")
     switch (node.tag) {
+      case "m": if (!maps) throw new Error("Key-value storage is unavailable"); return maps.materialize(node)
+      case "l": if (!logs) throw new Error("Log rows are unavailable"); return logs.read(node, 0, node.count)
+      case "k": case "b": return Object.fromEntries(ordered(node).sort((a, b) => a[1] - b[1]).map(([key, , value]) => [key, value]))
       case "v": case "p": return payload(node)
       case "a": return materialize(node.links[0]!)
       case "r": return node.links.map(materialize)
@@ -149,6 +169,10 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
       if (typeof key !== "number" || !Number.isSafeInteger(key) || key < 0 || key >= node.count) throw new Error("Invalid array path")
       return array(updateSegment(node.links[0]!, key, child => updateAt(child, tail, update)))
     }
+    if ((node.tag === "k" || node.tag === "b") && typeof key === "string") return keyed.edit(node, key, value => {
+      if (!value && tail.length) throw new Error("Missing object path")
+      return updateAt(value ?? leaf(null), tail, update)
+    })
     if (node.tag !== "o" || typeof key !== "string") throw new Error("Invalid object path")
     const names = fieldNames(node)
     const index = names.indexOf(key)
@@ -174,6 +198,7 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
     return children.length <= fanout ? [concat(children)] : [concat(children.slice(0, fanout)), concat(children.slice(fanout))]
   }
   const append = (node: Node, values: readonly Json[]): Node => {
+    if (node.tag === "l") { if (!logs) throw new Error("Log rows are unavailable"); return logs.append(node, values) }
     if (node.tag === "v") {
       const value = materialize(node)
       if (!Array.isArray(value)) throw new Error("Append target must be an array")
@@ -187,7 +212,95 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
     }
     return array(segment)
   }
-  const apply = (node: Node, edit: Edit) => updateAt(node, edit.path, child => edit.type === "set" ? importValue(edit.value) : append(child, edit.values))
+  const removeField = (node: Node, key: string): Node => {
+    if (node.tag === "v") {
+      const value = materialize(node)
+      if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("Removal target must be an object")
+      if (!Object.hasOwn(value, key)) return node
+      return importValue(Object.fromEntries(Object.entries(value).filter(([name]) => name !== key)))
+    }
+    if (node.tag === "k" || node.tag === "b") return keyed.edit(node, key, () => undefined, true)
+    if (node.tag !== "o") throw new Error("Removal target must be an object")
+    const names = fieldNames(node)
+    if (!names.includes(key)) return node
+    return object(names.flatMap((name, index) => name === key ? [] : [[name, node.links[index]!] as [string, Node]]))
+  }
+  const cut = (node: Node, start: number, end: number): Node | null => {
+    if (start === end) return null
+    if (start === 0 && end === node.count) return node
+    if (node.opaque) throw new Error("Splice boundary requires an explicit read")
+    if (node.tag === "p") return page((payload(node) as readonly Json[]).slice(start, end))
+    if (node.tag === "r") return refs(node.links.slice(start, end))
+    if (node.tag !== "c") throw new Error("Invalid splice segment")
+    let offset = 0
+    const children: Node[] = []
+    for (const child of node.links) {
+      if (offset >= end) break
+      if (offset + child.count > start) {
+        const part = cut(child, Math.max(0, start - offset), Math.min(child.count, end - offset))
+        if (part) children.push(part)
+      }
+      offset += child.count
+    }
+    return concat(children)
+  }
+  const pack = (children: readonly Node[]): readonly Node[] => {
+    if (children.length <= fanout) return [concat(children)]
+    const middle = Math.ceil(children.length / 2)
+    return [concat(children.slice(0, middle)), concat(children.slice(middle))]
+  }
+  const join = (left: Node, right: Node): readonly Node[] => {
+    if (left.level === 0 && right.level === 0) {
+      if (left.count + right.count <= pageItems) {
+        if (!left.opaque && !right.opaque && mergeablePages(left, right, pageItems, leafBytes)) return [page([...(payload(left) as readonly Json[]), ...(payload(right) as readonly Json[])])]
+        if (left.tag === "r" && right.tag === "r" && !left.opaque && !right.opaque) return [refs([...left.links, ...right.links])]
+      }
+      return [left, right]
+    }
+    if ((left.level >= right.level && left.opaque) || (right.level >= left.level && right.opaque)) throw new Error("Splice join requires an explicit read")
+    if (left.level === right.level) return pack([...left.links.slice(0, -1), ...join(left.links.at(-1)!, right.links[0]!), ...right.links.slice(1)])
+    if (left.level > right.level) return pack([...left.links.slice(0, -1), ...join(left.links.at(-1)!, right)])
+    return pack([...join(left, right.links[0]!), ...right.links.slice(1)])
+  }
+  const connect = (left: Node | null, right: Node | null): Node | null => {
+    if (!left) return right
+    if (!right) return left
+    const joined = join(left, right)
+    return joined.length === 1 ? joined[0]! : concat(joined)
+  }
+  // splice rebuilds boundary segments and shares untouched storage (test/edits.test.ts).
+  const splice = (node: Node, index: number, deleteCount: number, values: readonly Json[]): Node => {
+    if (!Number.isSafeInteger(index) || !Number.isSafeInteger(deleteCount) || index < 0 || deleteCount < 0) throw new RangeError("Invalid splice bounds")
+    if (node.tag === "v") {
+      const items = materialize(node)
+      if (!Array.isArray(items)) throw new Error("Splice target must be an array")
+      if (index > items.length || deleteCount > items.length - index) throw new RangeError("Invalid splice bounds")
+      if (!deleteCount && !values.length) return node
+      return importValue([...items.slice(0, index), ...values, ...items.slice(index + deleteCount)])
+    }
+    if (node.tag !== "a") throw new Error("Splice target must be an array")
+    if (index > node.count || deleteCount > node.count - index) throw new RangeError("Invalid splice bounds")
+    if (!deleteCount && !values.length) return node
+    const source = node.links[0]!
+    const inserted = values.length ? importValue(values) : null
+    const insertion = inserted?.tag === "a" ? inserted.links[0]! : values.length ? page(values) : null
+    let segment = connect(connect(cut(source, 0, index), insertion), cut(source, index + deleteCount, node.count)) ?? page([])
+    while (segment.tag === "c" && segment.links.length === 1) segment = segment.links[0]!
+    return array(segment)
+  }
+  const apply = (node: Node, edit: Edit): Node => {
+    if (edit.type === "entry") return updateAt(node, edit.path, child => { if (!maps || child.tag !== "m") throw new Error("Invalid key-value target"); return maps.change(child, edit.key, edit.value) })
+    if (edit.type === "remove") {
+      const key = edit.path.at(-1)
+      if (typeof key !== "string") throw new Error("Removal target must be an object field")
+      return updateAt(node, edit.path.slice(0, -1), parent => removeField(parent, key))
+    }
+    return updateAt(node, edit.path, child => {
+      if (edit.type === "set") return importValue(edit.value)
+      if (edit.type === "append") return append(child, edit.values)
+      return splice(child, edit.index, edit.deleteCount, edit.values)
+    })
+  }
   const groups = (edits: readonly Edit[]) => {
     const result = new Map<string | number, Edit[]>()
     for (const edit of edits) {
@@ -218,7 +331,7 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
   // batch preserves edit order within each subtree and hashes shared structured ancestors once between whole-subtree edits (test/tree.test.ts).
   const batch = (original: Node, edits: readonly Edit[]): Node => {
     if (!edits.length) return original
-    const replacement = edits.findIndex(edit => !edit.path.length)
+    const replacement = edits.findIndex(edit => !edit.path.length || edit.type === "remove" && edit.path.length === 1)
     if (replacement >= 0) {
       const before = batch(original, edits.slice(0, replacement))
       return batch(apply(before, edits[replacement]!), edits.slice(replacement + 1))
@@ -231,6 +344,7 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
       }
       return array(editSegment(original.links[0]!, edits))
     }
+    if (original.tag === "m" || original.tag === "k" || original.tag === "b") return edits.reduce(apply, original)
     if (original.tag !== "o") throw new Error("Invalid object path")
     const fields: [string, Node][] = fieldNames(original).map((key, index) => [key, original.links[index]!])
     for (const [key, group] of groups(edits)) {
@@ -249,12 +363,12 @@ export function make(options: Options = {}, { memo = true }: { readonly memo?: b
   }
   return {
     from: (value: Json) => run(() => importValue(value)),
+    entry: (plan: Tree, path: Path, key: string, value: Json | undefined) => run(() => updateAt(plan.node, path, node => { if (!maps || node.tag !== "m") throw new Error("Invalid key-value target"); return maps.change(node, key, value) })),
     set: (plan: Tree, path: Path, value: Json) => run(() => updateAt(plan.node, path, () => importValue(value))),
     append: (plan: Tree, path: Path, values: readonly Json[]) => run(() => updateAt(plan.node, path, node => append(node, values))),
+    splice: (plan: Tree, path: Path, index: number, deleteCount: number, values: readonly Json[] = []) => run(() => apply(plan.node, { type: "splice", path, index, deleteCount, values })),
+    remove: (plan: Tree, path: Path) => run(() => apply(plan.node, { type: "remove", path })),
     batch: (plan: Tree, edits: readonly Edit[]) => run(() => batch(plan.node, edits)),
     materialize: (plan: Tree) => materialize(plan.node),
   }
 }
-
-
-export { hydrate } from "./codec"

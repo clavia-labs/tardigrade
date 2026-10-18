@@ -7,7 +7,7 @@ import { modelSelection } from "../compat/model"
 import { Generate, requests, failureMessage } from "../contracts/acts"
 import type { OutputContract } from "../contracts/acts"
 import { inferenceState, readInference } from "./durable/inference"
-import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
+import { spendRecords } from "./durable/spend"
 import { type ToolView } from "./tools"
 
 export type ContextView = ActorOutput<{ readonly position: "configuring" | "compacting" } | { readonly position: "failed"; readonly reason: string } | {
@@ -25,10 +25,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
   const request = requests(Generate.requestTree, { latestOnly: true })
 
   const output = Effect.map(Effect.all([ModelInfo, modelSelection]), ([current, model]) => effectAtom(get => {
-    get(toolSpend)
-    get(tokenSpend)
-    get(usdSpend)
-    get(timeSpend)
+    get(spendRecords)
     const input = get(agentAtom)
     const tree = get(inferenceState)
     const state = readInference(tree)
@@ -46,11 +43,11 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
       }
     }
 
-    const cancelled = new Set([...tree.read(["cancelled"]), ...state.turns.filter(turn => turn.cancellation !== null).flatMap(turn => turn.effects.map(work => effectKey(work.ref)))])
+    const cancelled = new Set(state.turns.filter(turn => turn.cancellation !== null).flatMap(turn => turn.effects.map(work => effectKey(work.ref))))
     const proposals = {
       events: Object.fromEntries(Object.entries({ ...input.context.events, ...input.tools.events }).filter(([, proposal]) => {
         const event = proposal.event
-        return !Schema.is(TurnRequested)(event) || !event.promiseRef || !cancelled.has(effectKey(event.promiseRef))
+        return !Schema.is(TurnRequested)(event) || !event.promiseRef || !(tree.has(["cancelled", effectKey(event.promiseRef)]) || cancelled.has(effectKey(event.promiseRef)))
       })),
       acts: state.turnId ? { ...input.context.acts, ...input.tools.acts } : {},
     }

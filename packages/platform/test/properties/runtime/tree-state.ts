@@ -1,5 +1,5 @@
 import { Context, Deferred, Effect, Schema } from "effect"
-import { act, createActorStore, defineActor, durableMerkleAtom, effectAtom, type ActorRuntime, type EffectRef, type Journal } from "@clavia/tardigrade-core"
+import { act, createActorStore, defineActor, durableAtom, tree, effectAtom, type ActorRuntime, type EffectRef, type Journal } from "@clavia/tardigrade-core"
 
 const Message = Schema.Struct({ text: Schema.String })
 const Added = Schema.Struct({ type: Schema.Literal("Added"), messages: Schema.Array(Message) })
@@ -14,7 +14,7 @@ export function treeActorFixture(journal: Journal<typeof TreeEvent.Type>, observ
   const execution = Deferred.makeUnsafe<void>()
   const cleanup = Deferred.makeUnsafe<void>()
   const actor = defineActor("tree-fixture", Effect.sync(() => {
-    const history = durableMerkleAtom({ name: "history", schema: State, input: TreeEvent, initial: { messages: [], origin: -1, done: false }, reduce: (state, event, _metadata, position) => {
+    const history = durableAtom({ name: "history", schema: tree(State), input: TreeEvent, initial: { messages: [], origin: -1, done: false }, reduce: (state, event, _metadata, position) => {
       if (event.type === "Added") return state.append(["messages"], event.messages)
       return event.type === "Started" ? state.set(["origin"], position) : state.set(["done"], true)
     } })

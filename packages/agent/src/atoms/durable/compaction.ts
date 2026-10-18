@@ -1,4 +1,4 @@
-import { RuntimeError, durableAtom } from "@clavia/tardigrade-core"
+import { RuntimeError, tree, durableAtom } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
 import { type Event, ModelCalled, ModelReturned, CompactionFailed, TurnSettled } from "../../contracts/events"
 
@@ -28,5 +28,5 @@ export const initialCompaction: typeof CompactionState.Type = { origin: null, th
 
 // createCompactionState constructs the durable summary state for a compaction projection.
 export function createCompactionState() {
-  return durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed, TurnSettled]), schema: CompactionState, initial: initialCompaction, reduce: compactState })
+  return durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, CompactionFailed, TurnSettled]), schema: tree(CompactionState), initial: initialCompaction, reduce: (state, event, metadata, position) => { const before = state.read([]), next = compactState(before, event, metadata, position); return next === before ? state : state.set([], next) } })
 }

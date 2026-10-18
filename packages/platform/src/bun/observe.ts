@@ -7,6 +7,7 @@ import { createJournalStore, createSupervisorStore, createThreadStore, Superviso
 
 import { decodeSqlJournalRecord } from "../shared/sql-journal"
 import type { CheckpointChunk } from "../shared/checkpoint-chunks"
+import { storedPayloadBytes, storedPayloadDigest, type StoredPayloadRow, type StoredPayloadChunk } from "../shared/stored-journal-payloads"
 
 const encoded = (value: string) => Buffer.from(value).toString("base64url")
 export const bunSupervisorPath = (storage: string, actor: string, instance: string) => join(storage, `${encoded(JSON.stringify([actor, instance]))}.sqlite`)
@@ -17,7 +18,17 @@ function reader<Event extends object>(filename: string, actor: string) {
     if (!existsSync(filename)) return []
     const database = new Database(filename, { readonly: true })
     try {
-      if (!database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'experimental_events'").get()) return []
+      const legacy = database.query("SELECT name FROM sqlite_master WHERE type='table' AND name='experimental_events'").get()
+      const stored = database.query("SELECT name FROM sqlite_master WHERE type='table' AND name='stored_journal_events'").get()
+      const hasStored = stored && database.query("SELECT seq FROM stored_journal_events WHERE actor=? LIMIT 1").get(actor)
+      if (hasStored && legacy && database.query("SELECT seq FROM experimental_events WHERE actor=? LIMIT 1").get(actor)) throw new RuntimeError("Mixed journal formats require migration")
+      if (stored && (hasStored || !legacy)) return database.transaction(() => database.query<StoredPayloadRow & { seq: number }, [string, number]>("SELECT seq,record AS payload,byte_length,chunk_count,digest FROM stored_journal_events WHERE actor=? AND seq>? ORDER BY seq").all(actor, after).map((row, index) => {
+        if (row.seq !== after + index + 1) throw new RuntimeError("Invalid journal sequence")
+        const payload = storedPayloadBytes(row, () => database.query<StoredPayloadChunk, [string, number]>("SELECT ordinal,payload FROM stored_journal_event_chunks WHERE actor=? AND seq=? ORDER BY ordinal").all(actor, row.seq))
+        if (row.digest !== null && storedPayloadDigest(payload) !== row.digest) throw new RuntimeError("Journal payload digest mismatch")
+        return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload)) as Recorded<Event>
+      }))()
+      if (!legacy) return []
       return database.query<{ seq: number; event: string }, [string, number]>("SELECT seq, event FROM experimental_events WHERE actor = ? AND seq > ? ORDER BY seq").all(actor, after).map((row, index) => {
         if (row.seq !== after + index + 1) throw new RuntimeError("Invalid journal sequence")
         return decodeSqlJournalRecord<Event>(row.event, () => database.query<CheckpointChunk, [string, number]>("SELECT ordinal, payload FROM experimental_event_chunks WHERE actor = ? AND seq = ? ORDER BY ordinal").all(actor, row.seq))

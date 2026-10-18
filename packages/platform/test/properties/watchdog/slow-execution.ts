@@ -1,3 +1,4 @@
+import { documentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { strict as assert } from "node:assert"
 import * as fc from "fast-check"
 import { Clock, Context, Effect } from "effect"
@@ -17,6 +18,7 @@ export const slowExecutionRecovery = fc.asyncProperty(cases, options => Effect.r
   type Input = { readonly type: "RunRequested" }
   const records: Recorded<Input>[] = []
   const journal: Journal<Input> = {
+    storedValues: documentSession({ load: () => { throw new RuntimeError("Missing test document") } }),
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires an undefined checkpoint.

@@ -6,7 +6,8 @@
   ],
   "workspaces": {
     "packages/grove": {
-      "entry": ["test/workerd/fixture.ts", "test/workerd/*.workers.ts"]
+      "entry": ["test/workerd/fixture.ts", "test/workerd/*.workers.ts"],
+      "project": ["src/**/*.ts!", "test/**/*.ts"]
     },
     "packages/tardie": {
       "entry": ["src/generated/**/*.ts!", "src/deprecated/*.ts!"],
