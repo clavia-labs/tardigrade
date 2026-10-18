@@ -3,7 +3,7 @@ import { effectServiceClient, type EffectServiceClient } from "../fixtures/effec
 import type { EffectServiceDO } from "../fixtures/workerd/effect-service.worker"
 import { createWatchdog, effectKey, type CancellationOutcome, type Journal } from "@clavia/tardigrade-core"
 import { objectJournal } from "../../src/cloudflare/objects"
-import { cloudflareSchedulerStorage } from "../../src/cloudflare/scheduler"
+import { cloudflareSchedulerStorage } from "../fixtures/workerd/scheduler"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { Effect } from "effect"
 import * as fc from "fast-check"
@@ -15,6 +15,8 @@ import { runInDurableObject, evictDurableObject } from "cloudflare:test"
 import { cloudflareJournal, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "../../src/cloudflare"
 import { pendingInputRecovery, cancellationInputRecovery, stoppedInputRecovery, cancellationStall, cancellationRetryRecovery } from "../properties/runtime/pending-input-recovery"
 import { DEFAULT_WAIT_POLICY, testStage, waitFor } from "../fixtures/wait"
+import { synchronousJournal } from "../../src/shared/synchronous-journal"
+import { cloudflareNativeDriver } from "../../src/cloudflare/native-recovery"
 import { checkpointStorage } from "../properties/checkpoint-storage"
 import type { TestPromiseResolver, InputLifecycleDO } from "../fixtures/workerd/fixture.worker"
 
@@ -22,7 +24,7 @@ import type { TestPromiseResolver, InputLifecycleDO } from "../fixtures/workerd/
 test("checkpointStorage", async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
   await runInDurableObject(namespace.getByName("checkpoint-storage"), async (_instance, state) => {
-    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES, open: (checkpointChunkBytes, checkpointTree) => cloudflareJournal(state.storage, "events", { checkpointChunkBytes, checkpointTree }), execute: async query => state.storage.sql.exec(query).toArray() })
+    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES - new TextEncoder().encode("events").byteLength, open: checkpointChunkBytes => synchronousJournal({ actor: "events", driver: cloudflareNativeDriver(state.storage), limits: { maxRowBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES + 32 }, checkpointChunkBytes }), execute: async query => state.storage.sql.exec(query).toArray() })
   })
 })
 
@@ -262,7 +264,7 @@ for (const cleanup of [false, true]) test(`native tree state recovers ${cleanup 
   state = await waitFor(() => stub.inspect(), state => state.calls.length === 1)
   const accepted = state.inputs[0]!
   const selection = accepted.request.selections![0]!
-  const root = selection.root
+  const root = selection.reference
   expect(accepted.request.input).toEqual({ messages: null })
   await testStage("tree append", () => stub.append())
   if (cleanup) {

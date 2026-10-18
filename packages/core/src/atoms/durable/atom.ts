@@ -1,58 +1,46 @@
-import { durableProjection } from "./projection"
-import { Schema, SchemaAST } from "effect"
-import { type Atom } from "../atom"
-import { incrementalDecoder } from "../incremental/decode"
-import { frozenPlainData } from "../incremental/frozen"
-import { incrementalValidator, invalid } from "../incremental/validate"
+import { Schema } from "effect"
+import { collectionSchema, type CollectionSchema, type Json, type MerkleTree } from "@tardie/grove"
+import { documentAtom, type CheckpointReader, type DocumentOptions } from "./merkle"
+import { valueAtom } from "./value"
+import type { Atom } from "../atom"
+import type { StatefulAtom } from "../../initialise"
 import type { RecordMetadata } from "../../services/journal"
-import { type StatefulAtom } from "../../initialise"
 
 export interface DurableAtom<State, Event> extends Atom<State>, StatefulAtom {
   readonly input: Schema.Schema<Event>
 }
+export type DurableState<S extends Schema.Top> = CollectionSchema<S> extends true ? S["Type"] extends Json ? MerkleTree<S["Type"]> : never : S["Type"]
+type Hooks<S extends Schema.Top> = CollectionSchema<S> extends true ? {
+  readonly initialize?: (read: CheckpointReader) => S["Type"]
+  readonly restore?: (state: NoInfer<DurableState<S>>, read: CheckpointReader) => NoInfer<DurableState<S>>
+  readonly migrate?: (stored: unknown) => unknown
+} : {}
 
-/*
-const count = durableAtom({
-  name: "example.count",
-  input: Incremented,       // event schema
-  schema: Schema.Finite,    // state schema
-  initial: 0,
-  reduce: (state, event) => state + event.amount,
-})
-*/
-
-// durableAtom folds matching input events into validated state and supplies their zero-based journal positions. Schemas must be pure; reducers preserve unchanged references and leave published state unchanged. Plain-data states are frozen (packages/platform/test/properties/runtime/state-validation.ts).
+// durableAtom selects Grove documents from collection declarations and warns at construction for legacy plain reducers (properties/collections.test.ts).
+export function durableAtom<S extends Schema.Schema<unknown>, Event>(options: {
+  readonly name: string
+  readonly schema: S
+  readonly input: Schema.Schema<Event>
+  readonly initial: NoInfer<S["Type"]>
+  readonly reduce: (state: NoInfer<DurableState<S>>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<DurableState<S>>
+} & Hooks<S>): DurableAtom<DurableState<S>, Event>
+/** @deprecated durableAtom with plain state should declare tree, appendOnly or keyValue. */
 export function durableAtom<State, Event>(options: {
   readonly name: string
-  readonly input: Schema.Schema<Event>
   readonly schema: Schema.Schema<State>
+  readonly input: Schema.Schema<Event>
   readonly initial: NoInfer<State>
   readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<State>
-}): DurableAtom<State, Event> {
-  if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
-  const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
-  const fast = incrementalValidator(options.schema, () => console.warn(`Durable atom "${options.name}" state is not plain data; validation is O(state)`))
-  // check returns the state to keep: the parsed value when the incremental path accepts it, otherwise state after Effect's validation.
-  const check = (state: State): State => {
-    const parsed = fast.parse(state)
-    if (parsed !== invalid) return parsed as State
-    validate(state)
-    return state
+}): DurableAtom<State, Event>
+export function durableAtom<S extends Schema.Schema<unknown>, Event>(options: {
+  readonly name: string
+  readonly schema: S
+  readonly input: Schema.Schema<Event>
+  readonly initial: NoInfer<S["Type"]>
+  readonly reduce: (state: NoInfer<DurableState<S>>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<DurableState<S>>
+} & Hooks<S>): DurableAtom<DurableState<S>, Event> {
+  if (collectionSchema(options.schema.ast)) {
+    return documentAtom(options as unknown as DocumentOptions<S["Type"] & Json, Event>) as unknown as DurableAtom<DurableState<S>, Event>
   }
-  const decode = (Schema.decodeUnknownSync as unknown as (schema: unknown, options: { readonly onExcessProperty: "error" }) => (value: unknown) => unknown)(options.schema, { onExcessProperty: "error" }) as (value: unknown) => State
-  const encode = (Schema.encodeUnknownSync as unknown as (schema: unknown) => (value: unknown) => unknown)(options.schema) as (value: State) => unknown
-  // encodeFrozen preserves subtree identity when reversing the schema leaves its AST unchanged (properties/durable-state.test.ts).
-  const encodeFrozen = SchemaAST.flip(options.schema.ast) === options.schema.ast ? incrementalDecoder(options.schema) : undefined
-  const restore = (state: unknown): State => {
-    const decoded = decode(state)
-    return fast.trust(decoded) as State
-  }
-  const initial = structuredClone(options.initial)
-  validate(initial)
-  check(initial)
-  return durableProjection(options, {
-    initial: () => check(structuredClone(initial)),
-    restore: state => restore(state), check,
-    state: { name: options.name, decode: restore, encode: (value: unknown) => typeof value === "object" && value !== null && frozenPlainData.has(value) ? encodeFrozen?.(value)?.value ?? encode(value as State) : encode(value as State) },
-  })
+  return valueAtom(options as unknown as Parameters<typeof valueAtom<S["Type"], Event>>[0]) as unknown as DurableAtom<DurableState<S>, Event>
 }

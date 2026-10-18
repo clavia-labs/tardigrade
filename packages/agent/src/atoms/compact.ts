@@ -30,7 +30,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
   const compactionState = createCompactionState()
   return planCompaction(atom(get => {
     const { messages, totals } = renderTrajectory(get(trajectory))
-    const state = get(compactionState)
+    const state = get(compactionState).read([])
     const summary = render(state.summary ? [{ role: "user" as const, text: `Earlier conversation summary (compaction applied):\n${state.summary}` }] : [])
     const start = Math.min(state.through, messages.length)
     return {

@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { RuntimeError, durableMerkleAtom } from "@clavia/tardigrade-core"
+import { RuntimeError, durableAtom, tree } from "@clavia/tardigrade-core"
 import { Trajectory, CompactionFailed, type Conversation } from "../../contracts/events"
 import { CompactionState, compactState, initialCompaction } from "./compaction"
 import { TrajectoryState, TrajectoryEvent, trajectoryChange, findTrajectoryTool } from "./trajectory"
@@ -85,9 +85,9 @@ export function compactionRendering(options: CompactionOptions) {
 
 export const ContextState = Schema.Struct({
   ...TrajectoryState.fields,
-  totals: Schema.Array(Schema.Finite),
-  compaction: CompactionState,
-  policy: Schema.String,
+  totals: tree(Schema.Array(Schema.Finite)),
+  compaction: tree(CompactionState),
+  policy: tree(Schema.String),
 })
 
 // createContextState preserves the active rendered tail separately from the full archive (packages/platform/test/bun/agent-compaction.test.ts).
@@ -105,7 +105,7 @@ export function createContextState(options: CompactionOptions = {}) {
     const entries = [...summarized(compaction.summary), ...(archive?.entries.slice(compaction.through) ?? []).map(entry => ({ ...entry, message: render(entry.message) }))]
     return { entries, models: archive?.models ?? [], totals: totalsOf(entries), compaction, policy }
   }
-  return durableMerkleAtom({
+  return durableAtom({
     name: "agent.context", schema: ContextState, input: Schema.Union([TrajectoryEvent, CompactionFailed]), initial: initial(undefined),
     initialize: read => initial(read("agent.trajectory", TrajectoryState), read("agent.compaction.state", CompactionState)),
     restore: (state, read) => state.read(["policy"]) === policy ? state : state.set([], initial(read("agent.trajectory", TrajectoryState), state.read(["compaction"]))),

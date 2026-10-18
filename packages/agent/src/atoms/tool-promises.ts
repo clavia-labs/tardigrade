@@ -1,19 +1,23 @@
 import { Schema } from "effect"
 import { Atom } from "effect/unstable/reactivity"
-import { effectAtom, durableAtom, durablePromise, eventValue, EffectCancelled, effectKey } from "@clavia/tardigrade-core"
+import { effectAtom, atom, keyValue, durableAtom, durablePromise, eventValue, EffectCancelled, effectKey } from "@clavia/tardigrade-core"
 import { ToolPromise } from "@clavia/tardigrade-libraries/types"
 import { ToolReturned, TurnRequested } from "../contracts/events"
 import { StoredToolResult } from "@clavia/tardigrade-model/object/content"
 
-export const toolPromiseSubmissions = durableAtom({
-  name: "agent.promises.submissions",
-  input: Schema.Union([ToolReturned, TurnRequested, EffectCancelled]),
-  schema: Schema.Array(Schema.Struct({ callId: Schema.String, promise: ToolPromise })), initial: [],
-  reduce: (state, event) => event.type === "ToolReturned" && event.promise
-    ? [...state, { callId: event.callId, promise: event.promise }]
-    : event.type === "EffectCancelled" ? state.filter(item => effectKey(item.promise.ref) !== effectKey(event.ref))
-    : event.type === "TurnRequested" ? state.filter(item => event.turnId !== `promise:${item.callId}`) : state,
+const Submission = Schema.Struct({ callId: Schema.String, promise: ToolPromise })
+export const promiseRecords = durableAtom({
+  name: "agent.promises.submissions", input: Schema.Union([ToolReturned, TurnRequested, EffectCancelled]),
+  schema: keyValue(Submission), initial: {},
+  migrate: value => Array.isArray(value) ? Object.fromEntries(Schema.decodeSync(Schema.Array(Submission))(value).map(entry => [JSON.stringify(entry.callId), entry])) : value,
+  reduce: (state, event) => {
+    if (event.type === "ToolReturned" && event.promise) return state.set([JSON.stringify(event.callId)], { callId: event.callId, promise: event.promise })
+    if (event.type === "TurnRequested" && event.turnId.startsWith("promise:")) return state.remove([JSON.stringify(event.turnId.slice("promise:".length))])
+    if (event.type !== "EffectCancelled") return state
+    return state.batch(edit => { for (const item of Object.values(state.read([]))) if (effectKey(item.promise.ref) === effectKey(event.ref)) edit.remove([JSON.stringify(item.callId)]) })
+  },
 })
+export const toolPromiseSubmissions = atom(get => Object.values(get(promiseRecords).read([])))
 const replies = new Map<string, ReturnType<typeof makeReply>>()
 const makeReply = (promise: ToolPromise) => durablePromise(promise.ref, { success: Schema.Json, error: Schema.String })
 

@@ -1,3 +1,4 @@
+import { documentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -118,6 +119,7 @@ test("pure interruption remains pending and reuses the accepted reference on reo
 test("failed defect persistence leaves the committed invocation pending", async () => {
   const records: Recorded<Event>[] = [{ event: Started.make({ id: "uncommitted", mode: "defect" }) }]
   const journal: Journal<Event> = {
+    storedValues: documentSession({ load: () => { throw new RuntimeError("Missing test document") } }),
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined.

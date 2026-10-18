@@ -1,5 +1,4 @@
-import type { TreeStorage, TreeChanges } from "./tree-state"
-import type { Tree } from "@tardie/grove"
+import type { DocumentChanges, DocumentSession } from "./tree-state"
 import { Schema, type Effect } from "effect"
 import { MessageMetadata, type MessageReceived } from "../actor/message"
 import type { CoreEvent, ObservedCoreEvent } from "../runtime/events"
@@ -31,32 +30,19 @@ export interface StoredCheckpoint {
   readonly digest: string
 }
 
-// TreeCheckpoint uses the Grove root hash as its digest (properties/durable-state.test.ts).
-export interface TreeCheckpoint {
-  // roots retains external atom snapshots alongside the checkpoint metadata tree.
-  readonly roots?: readonly { readonly name: string; readonly root: string }[]
-  readonly position: number
-  readonly payload: Tree
-  readonly digest: string
-}
-
 export const PendingEffectInput = Schema.Struct({ ref: EffectRef, request: EffectRequest })
 export type PendingEffectInput = typeof PendingEffectInput.Type
 
 // EffectInputChanges commits accepted payloads and terminal releases with journal records (quint/checkpoint/inputLifecycle.qnt, inputRetained).
 export interface EffectInputChanges {
-  readonly trees?: TreeChanges
+  readonly documents?: DocumentChanges
   readonly put?: readonly PendingEffectInput[]
   readonly remove?: readonly EffectRef[]
 }
 
-// Journal stores an ordered event prefix; append commits a batch atomically or rejects a stale expected length.
+// Journal colocates events and Grove values; append commits records, referenced dependencies and retention atomically (platform/test/bun/stored-journal.test.ts).
 export interface Journal<Event extends object> {
-  readonly trees?: TreeStorage
-  readonly treeCheckpoint?: {
-    readonly read: Effect.Effect<StoredCheckpoint | TreeCheckpoint | undefined, Error>
-    readonly append: (expectedLength: number, events: readonly Recorded<Event>[], checkpoint: TreeCheckpoint, inputs?: EffectInputChanges) => Effect.Effect<void, Error>
-  }
+  readonly storedValues: DocumentSession
   readonly read: Effect.Effect<readonly Recorded<Event>[], Error>
   // readAfter returns the suffix starting at the consumed event count; positions beyond the journal length fail.
   readonly readAfter: (position: number) => Effect.Effect<readonly Recorded<Event>[], Error>
@@ -68,6 +54,7 @@ export interface Journal<Event extends object> {
 
 export interface MessageJournal<Event extends object> extends Journal<Event> {
   readonly readMessage: (id: string) => Effect.Effect<{ readonly position: number; readonly record: Recorded<Event> } | undefined, Error>
+  // acknowledge completes durability and recovery synchronization before confirming an existing receipt (platform/test/properties/journal-acknowledgement.ts).
   readonly acknowledge: Effect.Effect<void, Error>
 }
 

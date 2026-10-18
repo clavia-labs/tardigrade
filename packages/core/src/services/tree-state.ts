@@ -1,19 +1,20 @@
 import { Schema } from "effect"
 import type { Json, Path } from "@tardie/grove"
 import * as Grove from "@tardie/grove"
-import { frozenPlainData } from "../atoms/incremental/frozen"
 
-export const InputSelection = Schema.Struct({ ...Grove.Reference.fields, target: Grove.Reference.fields.path })
+export const StateReference = Grove.EncodedReference
+const InputPath = Schema.Array(Schema.Union([Schema.String, Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))]))
+export const InputSelection = Schema.Struct({ reference: StateReference, target: InputPath })
 export type InputSelection = typeof InputSelection.Type
-export const TreeState = Schema.TaggedStruct("TreeState", { root: Grove.Reference.fields.root })
-export type { Selection as TreeSelection, MerkleTree, Storage as TreeStorage } from "@tardie/grove"
-export interface TreeChanges { readonly nodes: Grove.StagedNodes; readonly roots: readonly { readonly name: string; readonly root: string }[]; readonly held?: readonly string[] }
+export const DocumentState = Schema.TaggedStruct("DocumentState", { reference: StateReference })
+export type { Selection as ValueSelection, MerkleTree } from "@tardie/grove"
+export interface DocumentChanges { readonly references: readonly { readonly name: string; readonly reference: string }[] }
 export type SelectedInput<Value> = Value | Grove.Selection<Value> | (Value extends readonly (infer A)[] ? readonly SelectedInput<A>[] : Value extends object ? { readonly [K in keyof Value]: SelectedInput<Value[K]> } : never)
-export const prepareTreeInput = (value: unknown) => {
+export const prepareDocumentInput = (value: unknown) => {
   const refs: InputSelection[] = []
   const visit = (value: unknown, target: Path): Json => {
-    const ref = Grove.selectionReference(value)
-    if (ref) { refs.push({ ...ref, target }); return null }
+    const reference = Grove.selectionValueReference(value)
+    if (reference) { refs.push({ reference: Grove.encodeReference(reference), target }); return null }
     if (Array.isArray(value)) return value.map((value, index) => visit(value, [...target, index]))
     if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map(key => [key, visit((value as Readonly<Record<string, unknown>>)[key], [...target, key])]))
     return value as Json
@@ -22,51 +23,59 @@ export const prepareTreeInput = (value: unknown) => {
   return { input, ...(refs.length ? { selections: refs } : {}) }
 }
 
-// recognizeFrozen records Grove's deep-frozen decoded payloads in frozenPlainData so act input decoding reuses them across resolutions; containers the reader assembles stay mutable and unrecorded, and act schemas still decode every resolved input.
-const recognizeFrozen = (value: Json): boolean => {
-  if (value === null || typeof value !== "object") return true
-  if (frozenPlainData.has(value)) return true
-  const prototype = Object.getPrototypeOf(value)
-  let deep = Array.isArray(value) || prototype === Object.prototype || prototype === null
-  for (const child of Object.values(value)) deep = recognizeFrozen(child) && deep
-  if (!deep || !Object.isFrozen(value)) return false
-  frozenPlainData.add(value)
-  return true
-}
-// treeSession binds Grove snapshots to projection and accepted-operation lifetimes.
-export function treeSession(storage: Grove.Storage) {
-  const grove = Grove.make(storage)
-  const holders = new Map<object, Map<string, string>>()
-  return {
-    ...grove,
-    hold: (holder: object, name: string, root: string) => {
-      let roots = holders.get(holder)
-      if (!roots) { roots = new Map(); holders.set(holder, roots) }
-      roots.set(name, root)
-    },
-    release: (holder: object) => { holders.delete(holder) },
-    held: (): readonly string[] => [...new Set([...holders.values()].flatMap(roots => [...roots.values()]))],
-    resolve: (request: { readonly input: Json; readonly selections?: readonly InputSelection[] }): Json => resolveInput(request, ref => grove.readReference(ref)),
+// documentSession binds Grove snapshots to projection and accepted-operation lifetimes.
+export function documentSession(storage: Omit<Grove.Storage, "scope"> & { readonly scope?: string }) {
+  const grove = Grove.make({ ...storage, scope: storage.scope ?? "tardigrade/memory" })
+  const bind = <State extends Json>(schema: Schema.Decoder<State>) => {
+    const binding = grove.bind(schema)
+    return { initial: binding.initial, check: binding.check, open: (encoded: string) => binding.open(Grove.decodeReference(encoded)) }
   }
+  const readReference = (encoded: string): Json => grove.view(Grove.decodeReference(encoded), Schema.Json).materialize()
+  const session = {
+    ...grove, bind,
+    hold: (holder: object, name: string, encoded: string) => grove.hold(holder, name, Grove.decodeReference(encoded)),
+    held: () => grove.held().map(Grove.encodeReference),
+    capture: (value: Json) => Grove.encodeReference(grove.capture(value)),
+    bytes: (encoded: string) => grove.bytes(Grove.decodeReference(encoded)),
+    read: readReference,
+    readReference,
+    resolve: (request: { readonly input: Json; readonly selections?: readonly InputSelection[] }): Json => resolveInput(request, readReference),
+  }
+  return session satisfies DocumentSession
 }
-export type TreeSession = ReturnType<typeof treeSession>
 
-// resolveInput fills each selection target with its recorded tree values.
-export function resolveInput(request: { readonly input: Json; readonly selections?: readonly InputSelection[] }, readTree: ((ref: typeof Grove.Reference.Type) => Json) | undefined): Json {
+// DocumentSession provides synchronous document access and retention for projections (properties/durable-state.test.ts; platform/test/bun/stored-journal.test.ts).
+export interface DocumentSession {
+  readonly bind: <State extends Json>(schema: Schema.Decoder<State>) => {
+    readonly initial: (value: unknown) => Grove.MerkleTree<State>
+    readonly check: (document: Grove.MerkleTree<State>) => Grove.MerkleTree<State>
+    readonly open: (reference: string) => Grove.MerkleTree<State>
+  }
+  readonly capture: (value: Json) => string
+  readonly bytes: (reference: string) => number
+  readonly read: (reference: string) => Json
+  readonly readReference: (reference: string) => Json
+  readonly hold: (holder: object, name: string, reference: string) => void
+  readonly release: (holder: object) => void
+  readonly resolve: (request: { readonly input: Json; readonly selections?: readonly InputSelection[] }) => Json
+  readonly stats: Grove.Instance["stats"]
+}
+
+// resolveInput fills each selection target with its recorded values.
+export function resolveInput(request: { readonly input: Json; readonly selections?: readonly InputSelection[] }, readValue: ((reference: string) => Json) | undefined): Json {
   if (!request.selections?.length) return request.input
   let input = structuredClone(request.input)
   for (const ref of request.selections) {
-    if (!readTree) throw new Error("Tree selections require synchronous tree storage")
-    const value = readTree(ref)
-    recognizeFrozen(value)
-    if (!ref.target.length) { if (input !== null) throw new Error("Invalid tree input target"); input = value; continue }
+    if (!readValue) throw new Error("Value selections require synchronous document storage")
+    const value = readValue(ref.reference)
+    if (!ref.target.length) { if (input !== null) throw new Error("Invalid selected input target"); input = value; continue }
     let parent: Json = input
     for (const key of ref.target.slice(0, -1)) {
-      if (parent === null || typeof parent !== "object" || !Object.hasOwn(parent, key)) throw new Error("Invalid tree input target")
+      if (parent === null || typeof parent !== "object" || !Object.hasOwn(parent, key)) throw new Error("Invalid selected input target")
       parent = (parent as Readonly<Record<string, Json>>)[key]!
     }
     const key = ref.target.at(-1)!
-    if (parent === null || typeof parent !== "object" || !Object.hasOwn(parent, key) || (parent as Readonly<Record<string, Json>>)[key] !== null) throw new Error("Invalid tree input target")
+    if (parent === null || typeof parent !== "object" || !Object.hasOwn(parent, key) || (parent as Readonly<Record<string, Json>>)[key] !== null) throw new Error("Invalid selected input target")
     Object.defineProperty(parent, key, { value, enumerable: true, writable: true, configurable: true })
   }
   return input

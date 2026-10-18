@@ -1,4 +1,4 @@
-import { JsonTree, type Tree, type Options } from "@tardie/grove"
+import { DocumentState } from "./tree-state"
 import { Schema, Crypto, Effect, Encoding, PlatformError } from "effect"
 import { RuntimeError, ExecutionResult, effectKey } from "../runtime/effects"
 import { StoredOperation, operationSettlement, cleanupSucceeded } from "../runtime/operation"
@@ -12,23 +12,13 @@ const crypto = Crypto.make({
   digest: (algorithm, data) => Effect.tryPromise({ try: () => globalThis.crypto.subtle.digest(algorithm, data.slice().buffer as ArrayBuffer).then(value => new Uint8Array(value)), catch: cause => PlatformError.systemError({ _tag: "Unknown", module: "Crypto", method: "digest", description: "Checkpoint digest failed", cause }) }),
 })
 
-export const checkpointDigest = (payload: Uint8Array | Tree): Effect.Effect<string, RuntimeError> => payload instanceof Uint8Array ? crypto.digest("SHA-256", payload).pipe(Effect.map(Encoding.encodeHex), Effect.mapError(RuntimeError.from)) : Effect.succeed(payload.root)
+export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => crypto.digest("SHA-256", payload).pipe(Effect.map(Encoding.encodeHex), Effect.mapError(RuntimeError.from))
 
 const checkpointValue = (checkpoint: EffectCheckpoint) => {
   if (!Number.isSafeInteger(checkpoint.position) || checkpoint.position < 0) throw new Error("Invalid checkpoint position")
   if (checkpoint.durable.some(entry => entry.position !== checkpoint.position)) throw new Error("Durable entry position differs from checkpoint position")
   if (checkpoint.durable.some(entry => !Schema.is(Schema.Json)(entry.state))) throw new Error("Checkpoint state must be JSON")
   return { version: 3, ...checkpoint }
-}
-
-// checkpointEncoder retains a Grove builder across snapshots to reuse frozen state subtrees (properties/durable-state.test.ts).
-export const checkpointEncoder = (options: Options = {}) => {
-  const tree = JsonTree.make(options)
-  return (checkpoint: EffectCheckpoint): Tree => {
-    const value = checkpointValue(checkpoint)
-    Schema.asserts(Schema.Json, value)
-    return tree.from(value)
-  }
 }
 
 export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
@@ -42,8 +32,10 @@ export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
   return new TextEncoder().encode(encoded)
 }
 
-export const decodeCheckpoint = (payload: Uint8Array | Tree): EffectCheckpoint => {
-  const value: unknown = payload instanceof Uint8Array ? JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload)) : JsonTree.make().materialize(payload)
+export const decodeCheckpoint = (payload: Uint8Array): EffectCheckpoint => checkpointFromJson(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload)))
+
+// checkpointFromJson validates decoded checkpoint data before encoding a converted version (platform/test/bun/migration.test.ts).
+export function checkpointFromJson(value: unknown): EffectCheckpoint {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid checkpoint payload")
   const record = migrateCheckpoint(value as Record<string, unknown>)
   if (!Number.isSafeInteger(record.position) || (record.position as number) < 0 ||
@@ -53,8 +45,8 @@ export const decodeCheckpoint = (payload: Uint8Array | Tree): EffectCheckpoint =
     const item = entry as Record<string, unknown>
     if (typeof item.name !== "string" || !item.name || !Number.isSafeInteger(item.position) || (item.position as number) < 0 || item.state === undefined) throw new Error("Invalid durable checkpoint entry")
     if (item.position !== record.position) throw new Error("Durable entry position differs from checkpoint position")
-    if (item.tree !== undefined && (typeof item.tree !== "string" || !/^[a-f0-9]{64}$/.test(item.tree) || typeof item.state !== "object" || item.state === null || !("root" in item.state) || item.state.root !== item.tree)) throw new Error("Invalid durable tree reference")
-    return { name: item.name, state: item.state, position: item.position as number, ...(item.tree === undefined ? {} : { tree: item.tree }) }
+    if (item.reference !== undefined && (!Schema.is(DocumentState)(item.state) || item.state.reference !== item.reference)) throw new Error("Invalid durable document reference")
+    return { name: item.name, state: item.state, position: item.position as number, ...(item.reference === undefined ? {} : { reference: item.reference }) }
   })
   if (!Array.isArray(record.operations)) throw new Error("Invalid checkpoint operations")
   const operations = record.operations.map(entry => Schema.decodeUnknownSync(StoredOperation)(entry))

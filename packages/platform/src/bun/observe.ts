@@ -17,7 +17,7 @@ function reader<Event extends object>(filename: string, actor: string) {
     if (!existsSync(filename)) return []
     const database = new Database(filename, { readonly: true })
     try {
-      if (!database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'experimental_events'").get()) return []
+      if (!database.query("SELECT name FROM sqlite_master WHERE type='table' AND name='experimental_events'").get()) return []
       return database.query<{ seq: number; event: string }, [string, number]>("SELECT seq, event FROM experimental_events WHERE actor = ? AND seq > ? ORDER BY seq").all(actor, after).map((row, index) => {
         if (row.seq !== after + index + 1) throw new RuntimeError("Invalid journal sequence")
         return decodeSqlJournalRecord<Event>(row.event, () => database.query<CheckpointChunk, [string, number]>("SELECT ordinal, payload FROM experimental_event_chunks WHERE actor = ? AND seq = ? ORDER BY ordinal").all(actor, row.seq))

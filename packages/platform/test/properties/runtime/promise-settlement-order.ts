@@ -1,3 +1,4 @@
+import { documentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, PromiseNotReady, RuntimeError, type ActorRuntime, type Journal, type PromiseSettled, type Recorded } from "@clavia/tardigrade-core"
@@ -34,6 +35,7 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
   let earlyResult!: PromiseSettled
   let externalAcknowledged = false
   const journal: Journal<Event> = {
+    storedValues: documentSession({ load: () => { throw new RuntimeError("Missing test document") } }),
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]),
     readAfter: position => Effect.sync(() => records.slice(position)),

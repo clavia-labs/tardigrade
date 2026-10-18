@@ -1,11 +1,11 @@
 import { Trajectory, TurnRequested, ModelCalled, ModelReturned, ModelFailed, ToolReturned, TurnSettled, type Event } from "../../contracts/events"
 import { Schema } from "effect"
-import { atom, durableMerkleAtom, type MerkleTree } from "@clavia/tardigrade-core"
+import { atom, appendOnly, durableAtom, tree, type MerkleTree } from "@clavia/tardigrade-core"
 import { Atom } from "effect/unstable/reactivity"
 
 export const TrajectoryState = Schema.Struct({
-  entries: Trajectory,
-  models: Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String })),
+  entries: appendOnly(Trajectory),
+  models: tree(Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String }))),
 })
 export const TrajectoryEvent = Schema.Union([TurnRequested, ModelCalled, ModelReturned, ModelFailed, ToolReturned, TurnSettled])
 type Entry = typeof Trajectory.Type[number]
@@ -46,7 +46,7 @@ export function reduceTrajectory(state: typeof TrajectoryState.Type, event: Even
   return change.entry || change.models ? { entries: change.entry ? [...state.entries, change.entry] : state.entries, models: change.models ?? state.models } : state
 }
 
-export const trajectoryState = durableMerkleAtom({ name: "agent.trajectory", input: TrajectoryEvent, schema: TrajectoryState, initial: { entries: [], models: [] },
+export const trajectoryState = durableAtom({ name: "agent.trajectory", input: TrajectoryEvent, schema: TrajectoryState, initial: { entries: [], models: [] },
   reduce: (state: MerkleTree<typeof TrajectoryState.Type>, event) => {
     const change = trajectoryChange(event, state.read(["models"]), callId => findTrajectoryTool(state.length(["entries"]), index => state.read(["entries", index]), callId))
     if (change.entry) state = state.append(["entries"], [change.entry])

@@ -6,7 +6,7 @@ import { decodeCheckpoint, methodResult, ThreadCoordinate } from "@clavia/tardig
 import { ObjectStorage, type InputContentPart, type ContentPart } from "@clavia/tardigrade-model/object"
 import { objectStorageFromR2 } from "@clavia/tardigrade-cloudflare/object-storage/r2"
 import * as Grove from "@tardie/grove"
-import { TreeState } from "@clavia/tardigrade-core/services/tree-state"
+import { DocumentState } from "@clavia/tardigrade-core/services/tree-state"
 import { cloudflareJournal, cloudflareThreadName } from "../../../src/cloudflare"
 import { waitFor } from "../wait"
 import type { ContentFixture } from "../../properties/content/hydration"
@@ -40,8 +40,7 @@ export async function workerdContentFixture(options: { readonly cache?: boolean;
       try {
         const checkpoint = await Effect.runPromise(journal.readCheckpoint)
         if (!checkpoint) throw new Error("Expected agent checkpoint")
-        const trees = Grove.make(journal.trees!)
-        return Object.fromEntries(decodeCheckpoint(checkpoint.payload).durable.map(entry => [entry.name, Schema.is(TreeState)(entry.state) ? trees.read(entry.state.root) : Schema.decodeUnknownSync(Schema.Json)(entry.state)]))
+        return Object.fromEntries(decodeCheckpoint(checkpoint.payload).durable.map(entry => [entry.name, Schema.is(DocumentState)(entry.state) ? journal.grove.view(Grove.decodeReference(entry.state.reference), Schema.Json).materialize() : Schema.decodeUnknownSync(Schema.Json)(entry.state)]))
       } finally { await Effect.runPromise(journal.close) }
     }),
     restart: async () => { await stub.dispose(); await evictDurableObject(stub) },

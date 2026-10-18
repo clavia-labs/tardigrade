@@ -1,3 +1,4 @@
+import { documentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, type RuntimeEvent, type StoredCheckpoint } from "@clavia/tardigrade-core"
@@ -47,6 +48,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
     if (events.some(({ event }) => event.type === "EffectSettled")) yield* Deferred.succeed(settled, undefined)
   })
   const journal: Journal<Event> = {
+    storedValues: documentSession({ load: () => { throw new RuntimeError("Missing test document") } }),
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     readCheckpoint: Effect.sync(() => saved), append: (position, events) => append(position, events), appendWithCheckpoint: append,

@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { durableMerkleAtom, ObservedCoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage, type Atom } from "@clavia/tardigrade-core"
+import { durableAtom, tree, keyValue, ObservedCoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage, type Atom } from "@clavia/tardigrade-core"
 import { TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled, AbortRequested, type Event } from "../../contracts/events"
 
 const Turn = Schema.Struct({
@@ -104,57 +104,57 @@ export function turnOutput(events: readonly Event[], settlement: TurnSettled): s
 }
 
 const controls = ["turnId", "callId", "origin", "needsReply", "running", "waiting"] as const
-const State = Schema.Struct({ ...InferenceState.fields, head: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), seen: Schema.Array(Schema.String), invocations: Schema.Array(Schema.String), cancelled: Schema.Array(Schema.String) })
+export const InferenceCollections = Schema.Struct({
+  turns: keyValue(Turn), pending: tree(Schema.Array(Schema.String)),
+  invocations: keyValue(Schema.String), cancelled: keyValue(Schema.Boolean),
+  turnId: tree(Schema.String), callId: tree(Schema.String), origin: tree(Schema.NullOr(Schema.Finite)),
+  needsReply: tree(Schema.Boolean), running: tree(Schema.Boolean), waiting: tree(Schema.Boolean),
+})
 
-// inferenceState updates the unsettled suffix of its turn history; head advances after settlement (platform/test/bun/agent-compaction.test.ts).
-export const inferenceState = durableMerkleAtom({
-  name: "agent.inference.state", schema: State,
+// inferenceCollections indexes turn records and retains pending order (platform/test/bun/agent-compaction.test.ts).
+export function inferenceCollections(value: typeof InferenceState.Type): typeof InferenceCollections.Type {
+  return { ...value, turns: Object.fromEntries(value.turns.map(turn => [turn.turnId, turn])),
+    pending: value.turns.filter(turn => turn.settlement === null).map(turn => turn.turnId),
+    invocations: Object.fromEntries(value.turns.flatMap(turn => turn.invocationRef ? [[JSON.stringify([turn.invocationRef.method, turn.invocationRef.id]), turn.turnId]] : [])),
+    cancelled: Object.fromEntries(value.turns.filter(turn => turn.cancellation !== null && turn.settlement !== null).flatMap(turn => turn.effects.map(work => [effectKey(work.ref), true]))),
+  }
+}
+
+// inferenceState updates keyed turn records and reads pending turns for inference (platform/test/bun/agent-compaction.test.ts).
+export const inferenceState = durableAtom({
+  name: "agent.inference.state", schema: InferenceCollections,
   input: Schema.Union([TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled, AbortRequested, ObservedCoreEvent]),
-  initial: { ...initialInference, head: 0, seen: [], invocations: [], cancelled: [] },
-  migrate: value => {
-    if (Schema.is(State)(value)) return value
-    const legacy = Schema.decodeUnknownSync(InferenceState)(value)
-    const head = legacy.turns.findIndex(turn => turn.settlement === null)
-    return { ...legacy, head: head < 0 ? legacy.turns.length : head,
-      seen: legacy.turns.map(turn => turn.turnId),
-      invocations: legacy.turns.flatMap(turn => turn.invocationRef ? [JSON.stringify([turn.invocationRef.method, turn.invocationRef.id])] : []),
-      cancelled: legacy.turns.filter(turn => turn.cancellation !== null && turn.settlement !== null).flatMap(turn => turn.effects.map(work => effectKey(work.ref))),
-    }
-  },
+  initial: inferenceCollections(initialInference),
+  migrate: value => Schema.is(InferenceCollections)(value) ? value : inferenceCollections(Schema.decodeUnknownSync(InferenceState)(value)),
   reduce: (state, event, metadata, position) => {
-    const head = state.read(["head"])
     const before = readInference(state)
     const invocation = event.type === "TurnRequested" && event.invocationRef ? JSON.stringify([event.invocationRef.method, event.invocationRef.id]) : undefined
-    if (event.type === "TurnRequested" && state.read(["seen"]).includes(event.turnId)) throw new RuntimeError(`Duplicate turn: ${event.turnId}`)
-    if (invocation && state.read(["invocations"]).includes(invocation)) throw new RuntimeError(`Duplicate turn for invocation: ${invocation}`)
+    if (event.type === "TurnRequested" && state.has(["turns", event.turnId])) throw new RuntimeError(`Duplicate turn: ${event.turnId}`)
+    if (invocation && state.has(["invocations", invocation])) throw new RuntimeError(`Duplicate turn for invocation: ${invocation}`)
     const next = inferState(before, event, metadata, position)
     if (next === before) return state
     return state.batch(edit => {
-      for (let index = 0; index < before.turns.length; index++) if (next.turns[index] !== before.turns[index]) edit.set(["turns", head + index], next.turns[index]!)
-      if (next.turns.length > before.turns.length) edit.append(["turns"], next.turns.slice(before.turns.length))
-      const pending = next.turns.findIndex(turn => turn.settlement === null)
-      const nextHead = head + (pending < 0 ? next.turns.length : pending)
-      if (nextHead !== head) edit.set(["head"], nextHead)
+      for (let index = 0; index < next.turns.length; index++) if (next.turns[index] !== before.turns[index]) edit.set(["turns", next.turns[index]!.turnId], next.turns[index]!)
+      const pending = next.turns.filter(turn => turn.settlement === null).map(turn => turn.turnId)
+      if (pending.length !== before.turns.length || pending.some((id, index) => id !== before.turns[index]!.turnId)) edit.set(["pending"], pending)
       for (const key of controls) if (next[key] !== before[key]) edit.set([key], next[key])
-      if (event.type === "TurnRequested") edit.append(["seen"], [event.turnId])
-      if (invocation) edit.append(["invocations"], [invocation])
-      if (event.type === "TurnSettled" && event.outcome === "cancelled") edit.append(["cancelled"], next.turns.find(turn => turn.turnId === event.turnId)!.effects.map(work => effectKey(work.ref)))
+      if (invocation && event.type === "TurnRequested") edit.set(["invocations", invocation], event.turnId)
+      if (event.type === "TurnSettled" && event.outcome === "cancelled") for (const work of next.turns.find(turn => turn.turnId === event.turnId)!.effects) edit.set(["cancelled", effectKey(work.ref)], true)
     })
   },
 })
 
 type InferenceTree = typeof inferenceState extends Atom<infer Value> ? Value : never
 
-// readInference reads current controls and the unsettled suffix (platform/test/bun/agent-compaction.test.ts).
+// readInference reads controls and pending records without loading settled turns (platform/test/bun/agent-compaction.test.ts).
 export function readInference(state: InferenceTree): typeof InferenceState.Type {
-  return { turns: state.slice(["turns"], state.read(["head"]), state.length(["turns"])),
+  return { turns: state.read(["pending"]).map(id => state.read(["turns", id])),
     turnId: state.read(["turnId"]), callId: state.read(["callId"]), origin: state.read(["origin"]),
     needsReply: state.read(["needsReply"]), running: state.read(["running"]), waiting: state.read(["waiting"]),
   }
 }
 
-// findTurn returns a turn with id, searching the history from the newest.
+// findTurn reads a retained turn by identifier (platform/test/bun/agent-compaction.test.ts).
 export function findTurn(state: InferenceTree, id: string) {
-  for (let index = state.length(["turns"]) - 1; index >= 0; index--) { const turn = state.read(["turns", index]); if (turn.turnId === id) return turn }
-  return undefined
+  return state.has(["turns", id]) ? state.read(["turns", id]) : undefined
 }
