@@ -20,12 +20,12 @@ export async function databaseIdentity(driver: SyncSqlite, value: { identity: st
     assert.deepEqual(driver.execute("SELECT * FROM experimental_events", []), before)
     journal = synchronousJournal({ driver, actor: identity, scheduler })
     assert.deepEqual(await Effect.runPromise(journal.read), value.written ? [{ event: { type: "Recorded" } }] : [])
-    for (const table of ["journal_metadata", "journal_checkpoints", "journal_checkpoint_chunks", "journal_accepted_inputs", "journal_accepted_input_chunks", "runtime_wakes", "runtime_generation", "runtime_watchdogs"]) {
+    for (const table of ["journal_metadata", "journal_checkpoints", "journal_checkpoint_chunks", "journal_accepted_inputs", "journal_accepted_input_chunks", "scheduled_wakes", "scheduler_generation", "runtime_watchdogs"]) {
       assert(!driver.execute(`PRAGMA table_info(${table})`, []).some(row => row.name === "actor"))
     }
     assert.throws(() => driver.execute("INSERT INTO journal_metadata(id,identity) VALUES(2,?)", [identity]))
     assert.throws(() => driver.execute("INSERT INTO journal_checkpoints(id,position,payload,digest) VALUES(2,0,?,'')", [new Uint8Array()]))
-    assert.throws(() => driver.execute("INSERT INTO runtime_generation(id,value) VALUES(2,0)", []))
+    assert.throws(() => driver.execute("INSERT INTO scheduler_generation(id,value) VALUES(2,0)", []))
   } finally { await Effect.runPromise(journal.close) }
 }
 
@@ -79,7 +79,7 @@ export async function nativeMaterialMigration(driver: SyncSqlite, value: { text:
     assert.throws(open, value.multiple ? /exactly one/ : /Injected/)
     assert.deepEqual(execute("SELECT * FROM experimental_events ORDER BY actor,seq", []), before)
     assert.deepEqual(execute("SELECT * FROM stored_journal_checkpoints", []), checkpointBefore)
-    assert.equal(execute("SELECT name FROM sqlite_master WHERE name IN ('journal_metadata','runtime_wakes')", []).length, 0)
+    assert.equal(execute("SELECT name FROM sqlite_master WHERE name IN ('journal_metadata','scheduled_wakes')", []).length, 0)
     if (value.multiple) return
     fail = false
   }
@@ -89,9 +89,9 @@ export async function nativeMaterialMigration(driver: SyncSqlite, value: { text:
     assert.deepEqual(await Effect.runPromise(journal.readInputs), [input])
     assert.deepEqual(execute("SELECT * FROM experimental_events ORDER BY actor,seq", []), before)
     assert.deepEqual(execute("SELECT checkpoints,receipts_backfilled FROM journal_metadata", []), [{ checkpoints: 7, receipts_backfilled: 1 }])
-    assert.deepEqual(execute("SELECT * FROM runtime_wakes", []), [{ id: fixture.recovery.wake.id, entry: JSON.stringify(fixture.recovery.wake) }])
+    assert.deepEqual(execute("SELECT * FROM scheduled_wakes", []), [{ id: fixture.recovery.wake.id, entry: JSON.stringify(fixture.recovery.wake) }])
     assert.deepEqual(execute("SELECT * FROM runtime_watchdogs", []), [{ id: fixture.recovery.key, entry: JSON.stringify(fixture.recovery.watchdog) }])
-    assert.deepEqual(execute("SELECT * FROM runtime_generation", []), [{ id: 1, value: fixture.recovery.generation }])
+    assert.deepEqual(execute("SELECT * FROM scheduler_generation", []), [{ id: 1, value: fixture.recovery.generation }])
     assert.equal(execute("SELECT name FROM sqlite_master WHERE name GLOB 'stored_*'", []).length, 0)
     await Effect.runPromise(journal.close)
     journal = open()

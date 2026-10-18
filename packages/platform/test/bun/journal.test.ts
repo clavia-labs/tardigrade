@@ -451,7 +451,7 @@ test("watchdog failure rolls back journal chunks, retry wakes, checkpoint and Gr
     const saved = { position: 1, payload, digest: await Effect.runPromise(checkpointDigest(payload)) }
     const changes = { documents: { references: [{ name: "state", reference: encodeReference(document.reference!) }] }, put: [{ ref: recoveryRef, request: { act: recoveryRef.act, input: { text: "x".repeat(256) } } }] }
     await expect(Effect.runPromise(journal.appendWithCheckpoint(0, [retry(1)], saved, changes))).rejects.toThrow("admission failure")
-    for (const table of ["experimental_events", "experimental_event_chunks", "journal_accepted_inputs", "journal_accepted_input_chunks", "journal_checkpoints", "journal_checkpoint_chunks", "runtime_wakes", "runtime_generation", "runtime_watchdogs"]) expect(db.query<{ n: number }, []>(`SELECT COUNT(*) n FROM ${table}`).get()!.n).toBe(0)
+    for (const table of ["experimental_events", "experimental_event_chunks", "journal_accepted_inputs", "journal_accepted_input_chunks", "journal_checkpoints", "journal_checkpoint_chunks", "scheduled_wakes", "scheduler_generation", "runtime_watchdogs"]) expect(db.query<{ n: number }, []>(`SELECT COUNT(*) n FROM ${table}`).get()!.n).toBe(0)
     expect(journal.grove.owners("")).toEqual([])
     expect(at).toBeNull()
     expect(flushes).toBe(0)
@@ -461,7 +461,7 @@ test("watchdog failure rolls back journal chunks, retry wakes, checkpoint and Gr
     expect(flushes).toBe(1)
     expect((await Effect.runPromise(journal.watchdog!.status)).get(watchdogKey(target))).toMatchObject({ attempts: 0, progressCursor: 0, recoveryVersion: "v1" })
     await Effect.runPromise(journal.append(1, [{ event: { type: "PromiseSettled", ref: recoveryRef, result: { status: "fulfilled", value: null } } }], { remove: [recoveryRef] }))
-    expect(db.query<{ n: number }, []>("SELECT COUNT(*) n FROM runtime_wakes WHERE id LIKE 'effect:%'").get()!.n).toBe(0)
+    expect(db.query<{ n: number }, []>("SELECT COUNT(*) n FROM scheduled_wakes WHERE id LIKE 'effect:%'").get()!.n).toBe(0)
     expect((await Effect.runPromise(journal.watchdog!.status)).get(watchdogKey(target))!.progressCursor).toBe(2)
     await Effect.runPromise(journal.append(2, [{ event: { type: "ThreadUpdated", version: "v2" } }]))
     expect((await Effect.runPromise(journal.watchdog!.status)).get(watchdogKey(target))).toMatchObject({ recoveryVersion: "v2", budgetGeneration: 1, attempts: 0 })

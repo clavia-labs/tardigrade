@@ -33,10 +33,10 @@ export function synchronousRecoveryStorage(grove: ReturnType<typeof makeSync>, i
 
 // initializeSyncRecovery creates wake and recovery tables for one database (test/bun/journal.test.ts).
 export function initializeSyncRecovery(tx: Pick<Transaction, "execute">) {
-  tx.execute("CREATE TABLE IF NOT EXISTS runtime_wakes(id TEXT PRIMARY KEY,entry TEXT NOT NULL) WITHOUT ROWID", [])
-  tx.execute("CREATE TABLE IF NOT EXISTS runtime_generation(id INTEGER PRIMARY KEY CHECK(id=1),value INTEGER NOT NULL) WITHOUT ROWID", [])
+  tx.execute("CREATE TABLE IF NOT EXISTS scheduled_wakes(id TEXT PRIMARY KEY,entry TEXT NOT NULL) WITHOUT ROWID", [])
+  tx.execute("CREATE TABLE IF NOT EXISTS scheduler_generation(id INTEGER PRIMARY KEY CHECK(id=1),value INTEGER NOT NULL) WITHOUT ROWID", [])
   tx.execute("CREATE TABLE IF NOT EXISTS runtime_watchdogs(id TEXT PRIMARY KEY,entry TEXT NOT NULL) WITHOUT ROWID", [])
-  const sources = [["stored_scheduler_wakes", "runtime_wakes", "id,entry"], ["stored_scheduler_generation", "runtime_generation", "value"], ["stored_watchdog_entries", "runtime_watchdogs", "id,entry"]] as const
+  const sources = [["stored_scheduler_wakes", "scheduled_wakes", "id,entry"], ["stored_scheduler_generation", "scheduler_generation", "value"], ["stored_watchdog_entries", "runtime_watchdogs", "id,entry"]] as const
   let identity: unknown
   for (const [source, target, columns] of sources) {
     if (!tx.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [source]).length) continue
@@ -44,7 +44,7 @@ export function initializeSyncRecovery(tx: Pick<Transaction, "execute">) {
       if (row.actor === null || (identity !== undefined && identity !== row.actor)) throw new Error("A database must contain exactly one recovery namespace")
       identity = row.actor
     }
-    const singleton = target === "runtime_generation"
+    const singleton = target === "scheduler_generation"
     tx.execute(`INSERT INTO ${target}(${singleton ? "id," : ""}${columns}) SELECT ${singleton ? "1," : ""}${columns} FROM ${source}`, [])
     tx.execute(`DROP TABLE ${source}`, [])
   }
@@ -62,12 +62,12 @@ export function syncRecoveryTransaction(tx: Transaction, alarm: typeof Alarm.Ser
       list: io(() => new Map(tx.execute(`SELECT id,entry FROM ${table} ORDER BY id`, []).map(row => [String(row.id), decode(row.entry)]))),
     }
   }
-  const wakes = entries("runtime_wakes", ScheduledWake)
+  const wakes = entries("scheduled_wakes", ScheduledWake)
   const scheduler: SchedulerTransaction = {
     ...wakes, alarm,
     put: entry => wakes.put(entry.id, entry),
     allocateGeneration: io(() => {
-      const row = tx.execute("INSERT INTO runtime_generation(id,value) VALUES(1,1) ON CONFLICT(id) DO UPDATE SET value=value+1 WHERE value<? RETURNING value", [Number.MAX_SAFE_INTEGER])[0]
+      const row = tx.execute("INSERT INTO scheduler_generation(id,value) VALUES(1,1) ON CONFLICT(id) DO UPDATE SET value=value+1 WHERE value<? RETURNING value", [Number.MAX_SAFE_INTEGER])[0]
       if (!row) throw new Error("Scheduler generation exhausted")
       return Number(row.value)
     }),

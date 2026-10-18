@@ -38,9 +38,9 @@ export async function acknowledgementRetry(driver: SyncSqlite, options: Acknowle
       const result = await run(Effect.exit(initializeThread(journal, creation)))
       assert(Exit.isFailure(result) && Cause.pretty(result.cause).includes("Injected physical alarm failure"), "Provisioning acknowledged a failed alarm update")
       assert(armed === null, "Failed alarm update unexpectedly armed recovery")
-      assert(count("experimental_events") === 1 && count("runtime_wakes") === 1, "Alarm failure lost or duplicated committed creation and recovery")
+      assert(count("experimental_events") === 1 && count("scheduled_wakes") === 1, "Alarm failure lost or duplicated committed creation and recovery")
     }
-    const persisted = () => driver.execute("SELECT entry FROM runtime_wakes", []).map(row => String(row.entry))
+    const persisted = () => driver.execute("SELECT entry FROM scheduled_wakes", []).map(row => String(row.entry))
     const committed = persisted()
     for (let repeat = 0; repeat <= options.repeats; repeat++) {
       await run(initializeThread(journal, creation))
@@ -50,7 +50,7 @@ export async function acknowledgementRetry(driver: SyncSqlite, options: Acknowle
     }
     assert(order.length === 2 * (options.failures + options.repeats + 1) && order.every((step, index) => step === (index % 2 ? "set" : "flush")), "Acknowledgement did not flush before synchronizing the alarm")
     await run(journal.scheduler!.alarm)
-    assert(recoveries === 1 && armed === null && count("runtime_wakes") === 0, "Acknowledged recovery did not run and clear its wake")
+    assert(recoveries === 1 && armed === null && count("scheduled_wakes") === 0, "Acknowledged recovery did not run and clear its wake")
   } finally { await run(journal.close) }
 }
 

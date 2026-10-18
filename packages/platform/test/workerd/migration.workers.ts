@@ -26,7 +26,7 @@ test("recovery transfer rolls back partial SQL writes before clearing KV and ret
       await expect(Effect.runPromise(journal.readVersion)).rejects.toThrow("requires migration")
       expect(Object.fromEntries(await state.storage.list({ prefix: "tardie:" }))).toEqual(entries)
       expect(await state.storage.getAlarm()).toBe(fixture.recovery.dueAt)
-      for (const table of ["runtime_wakes", "runtime_watchdogs", "runtime_generation"]) {
+      for (const table of ["scheduled_wakes", "runtime_watchdogs", "scheduler_generation"]) {
         if (state.storage.sql.exec("SELECT name FROM sqlite_master WHERE name=?", table).toArray().length) expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) n FROM ${table}`).one().n).toBe(0)
       }
       state.storage.sql.exec("DROP TRIGGER recovery_migration_fault")
@@ -40,7 +40,7 @@ test("recovery transfer rolls back partial SQL writes before clearing KV and ret
       await Effect.runPromise(journal.readVersion)
       expect(await state.storage.list({ prefix: "tardie:" })).toEqual(new Map())
       expect(await state.storage.getAlarm()).toBe(fixture.recovery.dueAt)
-      expect(JSON.parse(state.storage.sql.exec<{ entry: string }>("SELECT entry FROM runtime_wakes").one().entry)).toEqual(expected["tardie:scheduler:" + fixture.recovery.wake.id])
+      expect(JSON.parse(state.storage.sql.exec<{ entry: string }>("SELECT entry FROM scheduled_wakes").one().entry)).toEqual(expected["tardie:scheduler:" + fixture.recovery.wake.id])
       expect(JSON.parse(state.storage.sql.exec<{ entry: string }>("SELECT entry FROM runtime_watchdogs").one().entry)).toEqual(fixture.recovery.watchdog)
       const recovery = cloudflareNativeRecovery(state.storage)
       expect(await Effect.runPromise(recovery.transaction(tx => tx.scheduler.allocateGeneration))).toBe(generation + 1)

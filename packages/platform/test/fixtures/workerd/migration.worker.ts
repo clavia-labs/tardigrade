@@ -90,9 +90,9 @@ export class MigrationDO extends DurableObject<{ EFFECT_SERVICE: { getByName(nam
     return {
       legacy: [...await this.ctx.storage.list({ prefix: "tardie:" })].map(([key, value]) => [key, JSON.stringify(value)]),
       alarm: await this.ctx.storage.getAlarm(),
-      wakes: read("runtime_wakes"), watchdog: read("runtime_watchdogs"),
-      generation: sql.exec("SELECT name FROM sqlite_master WHERE name='runtime_generation'").toArray().length
-        ? sql.exec<{ id: number; value: number }>("SELECT id,value FROM runtime_generation ORDER BY id").toArray() : [],
+      wakes: read("scheduled_wakes"), watchdog: read("runtime_watchdogs"),
+      generation: sql.exec("SELECT name FROM sqlite_master WHERE name='scheduler_generation'").toArray().length
+        ? sql.exec<{ id: number; value: number }>("SELECT id,value FROM scheduler_generation ORDER BY id").toArray() : [],
     }
   }
 
