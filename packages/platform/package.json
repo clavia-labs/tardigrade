@@ -9,7 +9,7 @@
     "./journal": "./src/shared/sql-journal.ts"
   },
   "dependencies": {
-    "@tardie/grove": "0.3.0",
+    "@tardie/grove": "workspace:*",
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-cloudflare": "workspace:*",

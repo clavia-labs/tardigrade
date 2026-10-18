@@ -113,7 +113,7 @@ const rewriteSources = async (dir: string, sourceRoot = dir): Promise<void> => {
     }
     if (!entry.isFile() || !entry.name.endsWith(".ts")) continue
     let source = await readFile(path, "utf8")
-    source = source.replace(/(["'])(@clavia\/[^"']+)\1/g, (match, quote: string, specifier: string) => {
+    source = source.replace(/(["'])(@(?:clavia|tardie)\/[^"']+)\1/g, (match, quote: string, specifier: string) => {
       for (const source of publishSources) {
         if (specifier !== source.pkg.name && !specifier.startsWith(`${source.pkg.name}/`)) continue
         const key = specifier === source.pkg.name ? "." : `.${specifier.slice(source.pkg.name.length)}`
