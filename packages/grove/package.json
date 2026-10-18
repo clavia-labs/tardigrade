@@ -1,6 +1,6 @@
 {
   "name": "@tardie/grove",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/clavia-labs/tardigrade.git", "directory": "packages/grove" },
