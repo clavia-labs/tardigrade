@@ -37,6 +37,11 @@ export function durableProjection<State, Event>(options: {
     const sameSource = previous !== undefined && previous.source === source
     if (sameSource && previous.position > offset + events.length) throw new Error("EventLog source must be append-only")
     if (seed && (seed.position < offset || seed.position > offset + events.length)) throw new Error(`Atom seed position is outside the event source: ${options.name}`)
+    const shared = service.reduced?.(reduced)
+    if (shared && shared.position === offset + events.length) {
+      codec.hold?.(shared.state, service)
+      return { source, position: shared.position, state: shared.state }
+    }
     const continued = sameSource && previous.position >= (seed?.position ?? offset)
     let state = continued ? previous.state : seed?.state.has(options.name) ? codec.restore(seed.state.get(options.name), service) : codec.initial(service)
     const start = (continued ? previous.position : seed?.position ?? offset) - offset

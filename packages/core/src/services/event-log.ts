@@ -22,6 +22,8 @@ export class EventLog extends Context.Service<EventLog, {
   readonly effect?: (ref: EffectRef) => AcceptedOperation | undefined
   readonly defect?: () => EffectDied | undefined
   readonly promise?: (ref: EffectRef) => PromiseSettled | undefined
+  // reduced returns another store's fold of the same journal for a durable projection, which reuses it at an equal position instead of folding again.
+  readonly reduced?: <Value>(node: Atom<Value>) => Value | undefined
 }>()("experimental/EventLog") {}
 
 // ReplayContext supplies committed history during actor setup; runtime/execution.ts caches readFull for the loading attempt.
