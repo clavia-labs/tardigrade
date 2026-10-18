@@ -4,7 +4,7 @@ import type { SqliteParameter } from "./store"
 
 type Query = <Row>(statement: string, parameters?: readonly SqliteParameter[]) => readonly Row[]
 
-// makeRowStorage stores append-only entries and version manifests in the caller's SQLite transaction (test/append-only.test.ts; test/workerd/append-only.workers.ts).
+// makeRowStorage stores append-only entries and version manifests in the caller's SQLite transaction (test/collections/append-only.test.ts; test/storage.test.ts; test/workerd/properties.workers.ts).
 export function makeRowStorage(query: Query, chunkBytes: number) {
   for (const statement of [
     "CREATE TABLE IF NOT EXISTS grove_value_rows(log TEXT NOT NULL,idx INTEGER NOT NULL,byte_length INTEGER NOT NULL,chunk_count INTEGER NOT NULL,payload BLOB,PRIMARY KEY(log,idx)) WITHOUT ROWID",

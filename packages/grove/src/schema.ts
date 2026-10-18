@@ -12,7 +12,7 @@ declare const AppendOnlyMark: unique symbol
 declare const DeclarationMark: unique symbol
 declare const TreeMark: unique symbol
 declare const KeyValueMark: unique symbol
-// AppendOnly constrains edits through existing entries while accepting ordinary array values (test/append-only.test.ts).
+// AppendOnly constrains edits through existing entries while accepting ordinary array values (test/collections/append-only.test.ts; test/storage.test.ts).
 export type AppendOnly<Value> = Value & { readonly [AppendOnlyMark]?: true }
 export type Tree<Value> = Value extends null ? null : Value & { readonly [TreeMark]?: true }
 export type KeyValue<Value> = Value & { readonly [KeyValueMark]?: true }
@@ -34,13 +34,13 @@ export type AppendPath<Value, P extends Path> = Editable<Value, P, "append"> ext
 export type SplicePath<Value, P extends Path> = Editable<Value, P, "splice"> extends true ? ArrayPath<Value, P> : never
 const COLLECTION_ANNOTATION = "grove/collection"
 
-// tree permits localized JSON edits within a declared collection (test/collections.test.ts).
+// tree permits localized JSON edits within a declared collection (test/collections/mixed.test.ts; test/storage.test.ts).
 export function tree<S extends Schema.Top>(schema: S): Declaration<"tree", Tree<S["Type"]>, S["Encoded"], S["DecodingServices"], S["EncodingServices"]> {
   treeSchema(schema.ast)
   return Schema.make(schema.annotate({ [COLLECTION_ANNOTATION]: "tree" }).ast)
 }
 
-// keyValue declares a string-keyed collection with whole-entry replacement and deletion (test/collections.test.ts).
+// keyValue declares a string-keyed collection with whole-entry replacement and deletion (test/collections/mixed.test.ts; test/storage.test.ts).
 export function keyValue<S extends Schema.Top>(value: S): Declaration<"keyValue", KeyValue<Readonly<Record<string, S["Type"]>>>, Readonly<Record<string, S["Encoded"]>>, S["DecodingServices"], S["EncodingServices"]> {
   jsonSchema(value.ast)
   return Schema.make(Schema.Record(Schema.String, value).annotate({ [COLLECTION_ANNOTATION]: "keyValue" }).ast)
@@ -50,7 +50,7 @@ const collectionKind = (ast: SchemaAST.AST): unknown => ast.annotations?.[COLLEC
 export const isKeyValue = (ast: SchemaAST.AST): boolean => collectionKind(ast) === "keyValue"
 const collection = (ast: SchemaAST.AST): boolean => isAppendOnly(ast) || collectionKind(ast) === "tree" || isKeyValue(ast)
 
-// collectionSchema recognizes declared roots or structs whose fields each declare a collection (test/collections.test.ts).
+// collectionSchema recognizes declared roots or structs whose fields each declare a collection (test/collections/mixed.test.ts; test/storage.test.ts).
 export function collectionSchema(ast: SchemaAST.AST): boolean {
   if (collection(ast)) { treeSchema(ast); return true }
   const declarations = (ast: SchemaAST.AST, seen = new Set<SchemaAST.AST>()): boolean => {
@@ -70,7 +70,7 @@ export function collectionSchema(ast: SchemaAST.AST): boolean {
 
 const APPEND_ONLY_ANNOTATION = "grove/appendOnly"
 
-// appendOnly stores array entries independently and permits appends and whole replacements (test/append-only.test.ts).
+// appendOnly stores array entries independently and permits appends and whole replacements (test/collections/append-only.test.ts; test/storage.test.ts).
 export function appendOnly<S extends Schema.Top & { readonly Type: readonly unknown[] }>(schema: S): Declaration<"appendOnly", AppendOnly<S["Type"]>, S["Encoded"], S["DecodingServices"], S["EncodingServices"]> {
   if (schema.ast._tag !== "Arrays" || schema.ast.elements.length || schema.ast.rest.length !== 1 || schema.ast.checks?.length) throw new Error("appendOnly requires a homogeneous array schema without container checks")
   return Schema.make(schema.annotate({ [APPEND_ONLY_ANNOTATION]: true }).ast)
@@ -99,7 +99,7 @@ export function hasCollectionStorage(ast: SchemaAST.AST): boolean {
   return found
 }
 
-// editableSchema enforces collection edit vocabularies before a mutation stages values (test/collections.test.ts; test/append-only.test.ts).
+// editableSchema enforces collection edit vocabularies before a mutation stages values (test/collections/mixed.test.ts; test/storage.test.ts; test/collections/append-only.test.ts).
 export function editableSchema(ast: SchemaAST.AST, path: Path, operation: "set" | "append" | "splice" | "remove" = "set"): SchemaAST.AST {
   for (const [index, key] of path.entries()) {
     if (isAppendOnly(ast)) throw new Error("Append-only arrays reject indexed edits")
@@ -131,7 +131,7 @@ const jsonSchema = (ast: SchemaAST.AST, seen = new Set<SchemaAST.AST>()): void =
     default: throw new Error(`Unsupported tree schema: ${ast._tag}`)
   }
 }
-// treeSchema excludes container checks because selective edits cannot validate constraints spanning siblings (test/state.test.ts).
+// treeSchema excludes container checks because selective edits cannot validate constraints spanning siblings (test/transactions.test.ts; test/collections/tree.test.ts).
 export const treeSchema = (ast: SchemaAST.AST): void => {
   if (ast.encoding || ast.context?.constructorDefault !== undefined) throw new Error("Tree schemas must describe plain JSON")
   switch (ast._tag) {
@@ -169,7 +169,7 @@ export const childSchema = (ast: SchemaAST.AST, key: string | number): SchemaAST
 }
 
 
-// removableSchema permits optional fields and string-record entries while preserving required fields (test/edits.test.ts).
+// removableSchema permits optional fields and string-record entries while preserving required fields (test/collections/tree.test.ts).
 export const removableSchema = (ast: SchemaAST.AST, path: Path): void => {
   if (!path.length) throw new Error("Cannot remove a document root")
   const parent = path.slice(0, -1).reduce(childSchema, ast)

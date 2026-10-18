@@ -3,7 +3,7 @@ import { GroveError } from "../../session/reader"
 export interface NodeChunk { readonly inline: string | Uint8Array | ArrayBuffer | null; readonly ordinal: number | null; readonly payload: string | Uint8Array | ArrayBuffer | null; readonly byte_length: number; readonly chunk_count: number }
 
 const utf8 = (value: Uint8Array | ArrayBuffer) => new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(value)
-// decodeNodeChunks verifies a complete UTF-8 node, stored inline or in ordered chunks as text or bytes, before the reader authenticates its hash (test/sqlite-sync.test.ts).
+// decodeNodeChunks verifies a complete UTF-8 node, stored inline or in ordered chunks as text or bytes, before the reader authenticates its hash (test/transactions.test.ts).
 export const decodeNodeChunks = (rows: readonly NodeChunk[]): string => {
   const first = rows[0]
   if (first?.inline) {
@@ -29,7 +29,7 @@ export const decodeNodeChunks = (rows: readonly NodeChunk[]): string => {
   return utf8(payload)
 }
 
-// textChunks preserves UTF-8 boundaries and uses bytes for leading U+FEFF or U+FFFE chunks because Bun strips those characters from bound strings (test/sqlite-sync.test.ts).
+// textChunks preserves UTF-8 boundaries and uses bytes for leading U+FEFF or U+FFFE chunks because Bun strips those characters from bound strings (test/transactions.test.ts).
 export const textChunks = (text: string, chunkBytes: number): readonly (string | Uint8Array)[] => {
   if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1) throw new Error("chunkBytes must be a positive safe integer")
   if (chunkBytes < 4) {

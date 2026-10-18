@@ -19,7 +19,7 @@ export interface RowWriter extends RowStorage {
   readonly publish: (hash: string, spans: readonly LogSpan[]) => void
 }
 
-// commitLogs chooses physical prefixes at commit time while logical version identities stay independent of speculative placement (test/append-only.test.ts).
+// commitLogs chooses physical prefixes at commit time while logical version identities stay independent of speculative placement (test/collections/append-only.test.ts; test/storage.test.ts).
 export function commitLogs(storage: RowWriter, batch: LogBatch): { readonly rows: number; readonly bytes: number } {
   let rows = 0, writtenBytes = 0
   for (const write of batch.writes) {
@@ -47,7 +47,7 @@ const build = (id: string, count: number, logicalBytes: number): Node => {
   return Object.freeze({ hash: digest(text), text, tag: "l", links: Object.freeze([]), children: Object.freeze([]), logicalBytes, count, level: 0 })
 }
 
-// makeLogs stores logical versions independently of their physical prefix placement so replay and speculative branches retain stable references (test/append-only.test.ts).
+// makeLogs stores logical versions independently of their physical prefix placement so replay and speculative branches retain stable references (test/collections/append-only.test.ts; test/storage.test.ts).
 export function makeLogs(backend: RowStorage | undefined, cache: ReadCache, batchItems = DEFAULT_ROW_BATCH_ITEMS) {
   if (!Number.isSafeInteger(batchItems) || batchItems < 1) throw new Error("rowBatchItems must be a positive safe integer")
   const memory = backend ? undefined : memoryRows(), storage = backend ?? memory!

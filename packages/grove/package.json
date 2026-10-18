@@ -20,7 +20,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test test/*.test.ts",
+    "test": "bun test test",
     "test:workers": "vitest run"
   }
 }

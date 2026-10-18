@@ -22,7 +22,7 @@ export interface AppendCase {
 export const appendCases = fc.record({ initial: fc.array(fc.string(), { maxLength: 12 }), edits: fc.array(fc.record({ kind: fc.constantFrom("append", "replace", "batch", "rollback", "branch"), values: fc.array(fc.string(), { maxLength: 5 }) }), { minLength: 5, maxLength: 20 }), pageItems: fc.integer({ min: 2, max: 8 }), fanout: fc.integer({ min: 2, max: 5 }), cacheBytes: fc.constantFrom(0, 128, 8192) })
 
 
-// appendOnlyScenario compares retained document versions with JSON through native commit, rollback, branching, collection and reopen (append-only.test.ts; workerd/append-only.workers.ts).
+// appendOnlyScenario compares retained document versions with JSON through native commit, rollback, branching, collection and reopen (../storage.test.ts; ../workerd/properties.workers.ts).
 export function appendOnlyScenario(driver: SyncSqlite, options: AppendCase) {
   const config = { scope: "append-only", pageItems: options.pageItems, fanout: options.fanout, cacheBytes: options.cacheBytes, leafBytes: 128, tailBytes: 32 }
   const open = () => makeSync(driver, config)
@@ -73,7 +73,7 @@ export function appendOnlyScenario(driver: SyncSqlite, options: AppendCase) {
 
 export const rowCases = fc.record({ values: fc.array(fc.string(), { minLength: 1, maxLength: 8 }), suffix: fc.array(fc.string(), { minLength: 1, maxLength: 5 }), chunkBytes: fc.constantFrom(1, 3, 17, 4096), rowBatchItems: fc.integer({ min: 1, max: 5 }), cacheBytes: fc.constantFrom(0, 128, 8192) })
 
-// rowLogScenario exercises prefix reuse, replay identity, pending dependencies, native rollback and live scans against both SQLite adapters (append-only.test.ts; workerd/append-only.workers.ts).
+// rowLogScenario exercises prefix reuse, replay identity, pending dependencies, native rollback and live scans against both SQLite adapters (../storage.test.ts; ../workerd/properties.workers.ts).
 export function rowLogScenario(driver: SyncSqlite, options: typeof rowCases extends fc.Arbitrary<infer Value> ? Value : never) {
   const config = { scope: "row-lifetimes", chunkBytes: options.chunkBytes, maxParameters: 5, rowBatchItems: options.rowBatchItems, cacheBytes: options.cacheBytes }
   const open = () => makeSync(driver, config), store = open(), peer = open(), schema = appendOnly(Schema.Array(Schema.String))
@@ -139,7 +139,7 @@ export function rowLogScenario(driver: SyncSqlite, options: typeof rowCases exte
   }
 }
 
-// rowCorruptionScenario rejects missing entries and incomplete UTF-8 chunks before yielding them (append-only.test.ts; workerd/append-only.workers.ts).
+// rowCorruptionScenario rejects missing entries and incomplete UTF-8 chunks before yielding them (../storage.test.ts; ../workerd/properties.workers.ts).
 export function rowCorruptionScenario(driver: SyncSqlite, suffix: string, chunkBytes: number, mode: "row" | "chunk" | "length") {
   const schema = appendOnly(Schema.Array(Schema.String)), store = makeSync(driver, { scope: "row-corruption", cacheBytes: 0, chunkBytes })
   const document = store.bind(schema).initial(["before", "\uFEFF\uFFFE界🙂".repeat(5) + suffix, "after"])

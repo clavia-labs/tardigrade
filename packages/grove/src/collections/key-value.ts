@@ -21,7 +21,7 @@ export interface MapWriter extends MapStorage {
   readonly publish: (hash: string, spans: readonly MapSpan[]) => void
 }
 
-// commitMaps places immutable revisions without making logical references depend on which speculative branch committed first (test/mvcc.ts).
+// commitMaps places immutable revisions without making logical references depend on which speculative branch committed first (test/collections/key-value.ts).
 export function commitMaps(storage: MapWriter, batch: MapBatch) {
   let rows = 0, writtenBytes = 0
   for (const write of batch.writes) {
@@ -45,7 +45,7 @@ const build = (id: string, count: number, logicalBytes: number, order: number): 
   return Object.freeze({ hash: digest(text), text, tag: "m", count, logicalBytes, level: 0, links: Object.freeze([]), children: Object.freeze([]) })
 }
 
-// makeMaps resolves keys through version branch manifests and shares the reader's encoded-byte cache (test/mvcc.ts; test/collections.test.ts).
+// makeMaps resolves keys through version branch manifests and shares the reader's encoded-byte cache (test/collections/key-value.ts; test/collections/mixed.test.ts; test/storage.test.ts).
 export function makeMaps(backend: MapStorage | undefined, cache: ReadCache, batchItems: number) {
   const memory = backend ? undefined : memoryMaps(), storage = backend ?? memory!
   const pending = new Map<string, MapWrite>()

@@ -1,6 +1,6 @@
 import { make as makeState, type Storage, type Instance } from "./document"
 
-// make exposes scoped documents and encoded staging entries without node representation details (test/state.test.ts; test/value.test.ts).
+// make exposes scoped documents and encoded staging entries without node representation details (test/transactions.test.ts; test/collections/tree.test.ts; test/references.test.ts).
 export const make: (storage: Storage) => Instance = makeState
 export { isFrozenJson, DEFAULT_PAGE_ITEMS, DEFAULT_FANOUT, DEFAULT_LEAF_BYTES, DEFAULT_TAIL_BYTES, DEFAULT_OBJECT_PAGE_ITEMS } from "./storage/nodes"
 export type { Json, Path, Options } from "./storage/nodes"

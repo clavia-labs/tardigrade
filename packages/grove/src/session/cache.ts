@@ -1,6 +1,6 @@
 export const DEFAULT_READ_CACHE_BYTES = 32 * 1024 * 1024
 
-// makeCache shares an encoded-byte budget between immutable node, row-page and manifest decodings (test/append-only.test.ts).
+// makeCache shares an encoded-byte budget between immutable node, row-page and manifest decodings (test/collections/append-only.test.ts; test/storage.test.ts).
 export function makeCache(budget: number) {
   if (!Number.isSafeInteger(budget) || budget < 0) throw new Error("Invalid Grove read cache budget")
   const entries = new Map<string, { readonly value: unknown; readonly bytes: number }>()

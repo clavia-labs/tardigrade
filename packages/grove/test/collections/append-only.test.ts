@@ -4,15 +4,7 @@ import { Schema } from "effect"
 import fc from "fast-check"
 import { appendOnly, make } from "@tardie/grove"
 import { makeSync } from "@tardie/grove/sqlite"
-import { appendOnlyScenario, AppendState, appendCases, rowCases, rowLogScenario, rowCorruptionScenario } from "./append-only"
-
-
-test("append-only native histories match immutable JSON versions", () => {
-  fc.assert(fc.property(appendCases, options => {
-    const db = new Database(":memory:")
-    try { appendOnlyScenario({ identity: db, execute: (sql, parameters) => db.query<Record<string, unknown>, (typeof parameters)[number][]>(sql).all(...parameters), transaction: work => db.transaction(work)() }, options) } finally { db.close() }
-  }), { numRuns: 60, includeErrorInReport: true })
-})
+import { AppendState } from "./append-only"
 
 test("append-only schemas reject generated indexed edits without staging partial batches", () => {
   fc.assert(fc.property(fc.string(), fc.nat(5), (text, index) => {
@@ -55,14 +47,6 @@ test("append-only root arrays preserve ordinary JSON authoring", () => {
   }))
 })
 
-
-test("row versions retain draft dependencies and replay identity across prefix reuse", () => {
-  fc.assert(fc.property(rowCases, options => {
-    const db = new Database(":memory:")
-    try { rowLogScenario({ identity: db, execute: (sql, parameters) => db.query<Record<string, unknown>, (typeof parameters)[number][]>(sql).all(...parameters), transaction: work => db.transaction(work)() }, options) } finally { db.close() }
-  }), { numRuns: 60, includeErrorInReport: true })
-})
-
 test("cold appends write only new rows and scans obey the shared cache and batch budgets", () => {
   fc.assert(fc.property(fc.integer({ min: 3, max: 200 }), fc.integer({ min: 1, max: 12 }), fc.integer({ min: 32, max: 2048 }), fc.constantFrom(0, 512, 8192), (count, rowBatchItems, textBytes, cacheBytes) => {
     const db = new Database(":memory:"), reads: unknown[][] = []
@@ -88,12 +72,4 @@ test("cold appends write only new rows and scans obey the shared cache and batch
       expect(cold.stats().rowBatchItems).toBe(rowBatchItems)
     } finally { db.close() }
   }), { numRuns: 50, includeErrorInReport: true })
-})
-
-
-test("row readers reject generated missing entries, broken chunks and wrong lengths", () => {
-  fc.assert(fc.property(fc.string(), fc.integer({ min: 1, max: 12 }), fc.constantFrom("row", "chunk", "length"), (suffix, chunkBytes, mode) => {
-    const db = new Database(":memory:")
-    try { rowCorruptionScenario({ identity: db, execute: (sql, parameters) => db.query<Record<string, unknown>, (typeof parameters)[number][]>(sql).all(...parameters), transaction: work => db.transaction(work)() }, suffix, chunkBytes, mode) } finally { db.close() }
-  }), { numRuns: 60, includeErrorInReport: true })
 })

@@ -3,7 +3,7 @@ import type { Node } from "../storage/nodes"
 interface Version { readonly hash: string }
 interface Write { readonly node: Version; readonly parent?: Version }
 
-// snapshotWrites returns pending writes in dependency order (test/append-only.test.ts; test/mvcc.ts).
+// snapshotWrites returns pending writes in dependency order (test/collections/append-only.test.ts; test/storage.test.ts; test/collections/key-value.ts).
 export function snapshotWrites<Value extends Write>(pending: ReadonlyMap<string, Value>, nodes: Iterable<Node>, tag: "l" | "m"): readonly Value[] {
   const writes: Value[] = [], seen = new Set<string>()
   const visit = (node: Version) => {

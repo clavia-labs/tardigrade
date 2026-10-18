@@ -12,7 +12,7 @@ export const keyedIndex = (node: Node, key: string): number => {
   return index < 0 ? node.links.length - 1 : index
 }
 
-// makeKeyed maintains key-sorted pages and insertion ordinals for JSON enumeration (test/keyed.test.ts).
+// makeKeyed maintains key-sorted pages and insertion ordinals for JSON enumeration (test/collections/tree.test.ts).
 export function makeKeyed(create: Create, pageItems: number, fanout: number) {
   const page = (entries: readonly KeyedEntry[]): Node => Object.freeze({
     ...create("k", entries.map(([key, order, value]) => [key, order, descriptor(value)]), entries.map(entry => entry[2]), 2 + Math.max(0, entries.length - 1) + entries.reduce((sum, [key, , value]) => sum + bytes(JSON.stringify(key)) + 1 + value.logicalBytes, 0), entries.length),

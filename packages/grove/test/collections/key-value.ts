@@ -7,12 +7,12 @@ import { makeSync, type SyncSqlite } from "@tardie/grove/sqlite"
 const Value = Schema.Struct({ text: Schema.String, items: Schema.Array(Schema.String) })
 const State = keyValue(Value)
 const keys = fc.constantFrom("", "a", "b", "__proto__", "constructor", "\uFEFFkey", "\uFFFEkey", "界", "🙂", "\uE000")
-export const mvccCases = fc.record({ edits: fc.array(fc.record({ key: keys, text: fc.string(), remove: fc.boolean(), rollback: fc.boolean(), fork: fc.boolean() }), { minLength: 5, maxLength: 20 }), cacheBytes: fc.constantFrom(0, 256, 8192), chunkBytes: fc.constantFrom(1, 3, 17, 4096), rowBatchItems: fc.integer({ min: 1, max: 5 }) })
-type Case = typeof mvccCases extends fc.Arbitrary<infer Value> ? Value : never
+export const keyValueCases = fc.record({ edits: fc.array(fc.record({ key: keys, text: fc.string(), remove: fc.boolean(), rollback: fc.boolean(), fork: fc.boolean() }), { minLength: 5, maxLength: 20 }), cacheBytes: fc.constantFrom(0, 256, 8192), chunkBytes: fc.constantFrom(1, 3, 17, 4096), rowBatchItems: fc.integer({ min: 1, max: 5 }) })
+type Case = typeof keyValueCases extends fc.Arbitrary<infer Value> ? Value : never
 const same = (actual: unknown, expected: unknown) => { if (!isDeepStrictEqual(actual, expected)) throw new Error("MVCC snapshot differs from JSON model") }
 
-// mvccScenario compares native version rows with JSON snapshots through forks, rollback, collection and reopen (mvcc.test.ts; workerd/mvcc.workers.ts).
-export function mvccScenario(driver: SyncSqlite, options: Case) {
+// keyValueHistory compares native version rows with JSON snapshots through forks, rollback, collection and reopen (../storage.test.ts; ../workerd/properties.workers.ts).
+export function keyValueHistory(driver: SyncSqlite, options: Case) {
   const config = { scope: "mvcc", ...options, maxParameters: 5 }, open = () => makeSync(driver, config)
   let store = open(), model: typeof State.Type = { anchor: { text: "界🙂", items: [] } }, document = store.bind(State).initial(model)
   const saved: { reference: ValueReference<unknown>; value: typeof State.Type }[] = []
@@ -45,8 +45,8 @@ export function mvccScenario(driver: SyncSqlite, options: Case) {
   for (const table of ["grove_map_rows", "grove_map_chunks", "grove_map_heads", "grove_map_manifests", "grove_value_nodes"]) same(driver.execute(`SELECT COUNT(*) n FROM ${table}`, [])[0]?.n, 0)
 }
 
-// mvccLifetimes preserves held descendants across native acknowledgement, collection and rollback (mvcc.test.ts; workerd/mvcc.workers.ts).
-export function mvccLifetimes(driver: SyncSqlite, text: string, cacheBytes: number, chunkBytes: number) {
+// keyValueLifetimes preserves held descendants across native acknowledgement, collection and rollback (../storage.test.ts; ../workerd/properties.workers.ts).
+export function keyValueLifetimes(driver: SyncSqlite, text: string, cacheBytes: number, chunkBytes: number) {
   const config = { scope: "mvcc-lifetimes", cacheBytes, chunkBytes, rowBatchItems: 2, maxParameters: 5 }, store = makeSync(driver, config), peer = makeSync(driver, config), holder = {}
   const initial = store.bind(State).initial({ anchor: { text, items: [] } }), extra = { text: "界🙂" + text, items: [text] }
   const publish = (document: { readonly reference: ValueReference<unknown> }) => store.transaction(tx => store.commit(tx, { publish: [{ owner: "head", expected: store.owner("head"), document }] }))
@@ -79,8 +79,8 @@ export function mvccLifetimes(driver: SyncSqlite, text: string, cacheBytes: numb
   same(driver.execute("SELECT COUNT(*) n FROM grove_map_rows", [])[0]?.n, 0)
 }
 
-// mvccChurn removes overwritten rows and obsolete base-branch tombstones while preserving pinned snapshots (mvcc.test.ts; workerd/mvcc.workers.ts).
-export function mvccChurn(driver: SyncSqlite, count: number, text: string) {
+// keyValueChurn removes overwritten rows and obsolete base-branch tombstones while preserving pinned snapshots (../storage.test.ts; ../workerd/properties.workers.ts).
+export function keyValueChurn(driver: SyncSqlite, count: number, text: string) {
   const store = makeSync(driver, { scope: "mvcc-churn", cacheBytes: 8192 }), schema = keyValue(Schema.String)
   let document = store.bind(schema).initial({ anchor: text, changed: "first" })
   const publish = () => store.transaction(tx => store.commit(tx, { publish: [{ owner: "head", expected: store.owner("head"), document }] }))
@@ -103,8 +103,8 @@ export function mvccChurn(driver: SyncSqlite, count: number, text: string) {
   same(driver.execute("SELECT COUNT(*) n FROM grove_map_rows", [])[0]?.n, 1)
 }
 
-// mvccReplay preserves version identities when a different fork wins placement and old manifests are collected (mvcc.test.ts; workerd/mvcc.workers.ts).
-export function mvccReplay(driver: SyncSqlite, text: string) {
+// keyValueReplay preserves version identities when a different fork wins placement and old manifests are collected (../storage.test.ts; ../workerd/properties.workers.ts).
+export function keyValueReplay(driver: SyncSqlite, text: string) {
   const store = makeSync(driver, { scope: "mvcc-replay", cacheBytes: 0 }), schema = keyValue(Schema.String), base = store.bind(schema).initial({ anchor: text })
   store.transaction(tx => store.commit(tx, { publish: [{ owner: "head", expected: null, document: base }], retain: [{ owner: "base", selection: base.reference }] }))
   const first = base.set(["key"], "A:" + text), expected = encodeReference(first.reference), rival = base.set(["key"], "B:" + text)
@@ -118,8 +118,8 @@ export function mvccReplay(driver: SyncSqlite, text: string) {
   same(replay.read([]), { anchor: text, key: "A:" + text })
 }
 
-// mvccCorruption rejects missing revisions and malformed chunks before consumer schema decoding (mvcc.test.ts; workerd/mvcc.workers.ts).
-export function mvccCorruption(driver: SyncSqlite, text: string, chunkBytes: number, mode: "row" | "chunk" | "length") {
+// keyValueCorruption rejects missing revisions and malformed chunks before consumer schema decoding (../storage.test.ts; ../workerd/properties.workers.ts).
+export function keyValueCorruption(driver: SyncSqlite, text: string, chunkBytes: number, mode: "row" | "chunk" | "length") {
   const store = makeSync(driver, { scope: "mvcc-corruption", cacheBytes: 0, chunkBytes }), schema = keyValue(Schema.String), value = "界🙂\uFEFF\uFFFE".repeat(10) + text
   const document = store.bind(schema).initial({ key: value })
   store.transaction(tx => store.commit(tx, { publish: [{ owner: "head", expected: null, document }] }))
@@ -133,8 +133,8 @@ export function mvccCorruption(driver: SyncSqlite, text: string, chunkBytes: num
 }
 
 
-// mvccForkChurn removes transient fork keys while retaining deletion markers that hide inherited values (mvcc.test.ts; workerd/mvcc.workers.ts).
-export function mvccForkChurn(driver: SyncSqlite, count: number, text: string) {
+// keyValueForkChurn removes transient fork keys while retaining deletion markers that hide inherited values (../storage.test.ts; ../workerd/properties.workers.ts).
+export function keyValueForkChurn(driver: SyncSqlite, count: number, text: string) {
   const store = makeSync(driver, { scope: "mvcc-fork-churn", cacheBytes: 128 }), schema = keyValue(Schema.String), base = store.bind(schema).initial({ anchor: text, deleted: "old" })
   let document = base
   const publish = () => store.transaction(tx => store.commit(tx, { publish: [{ owner: "head", expected: store.owner("head"), document }] }))

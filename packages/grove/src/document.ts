@@ -36,14 +36,14 @@ export interface MerkleTree<State> extends Mutations<State, MerkleTree<State>> {
   readonly batch: (edit: (mutations: Mutations<State, void>) => undefined) => MerkleTree<State>
 }
 const documentSessions = new WeakMap<object, (document: object) => ValueReference<unknown>>()
-// documentReference rejects documents from other authoring sessions before persistence (test/sqlite-sync.test.ts).
+// documentReference rejects documents from other authoring sessions before persistence (test/transactions.test.ts).
 export const documentReference = (instance: object, document: object) => {
   const describe = documentSessions.get(instance)
   if (!describe) throw new Error("Unknown Grove document session")
   return describe(document)
 }
 
-// make stages immutable edits until committed; load must complete synchronously (test/state.test.ts).
+// make stages immutable edits until committed; load must complete synchronously (test/transactions.test.ts; test/collections/tree.test.ts).
 export function make(storage: Storage) {
   const ownership = localOwners<ValueReference<unknown>>(encodeReference)
   const pending = new Map<string, Node>()
@@ -173,7 +173,7 @@ export function make(storage: Storage) {
     }
   }
   const staging = {
-    // prepare snapshots reachable staged entries, or all staging when references are omitted (test/state.test.ts).
+    // prepare snapshots reachable staged entries, or all staging when references are omitted (test/transactions.test.ts; test/collections/tree.test.ts).
     prepare: (references?: Iterable<ValueReference<unknown>>): InternalPreparedBatch => {
       const found = new Map<string, Node>()
       const walk = (hash: string) => {
@@ -188,7 +188,7 @@ export function make(storage: Storage) {
       prepared.set(batch, { nodes: found, logs: batch.logs, maps: batch.maps })
       return batch
     },
-    // acknowledge releases exact entries captured by this session after persistence succeeds (test/state.test.ts; test/sqlite-sync.test.ts).
+    // acknowledge releases exact entries captured by this session after persistence succeeds (test/transactions.test.ts; test/collections/tree.test.ts).
     acknowledge: (batch: PreparedBatch) => {
       const captured = prepared.get(batch)
       if (!captured) throw new Error("Grove staging batch is foreign or already acknowledged")
@@ -197,7 +197,7 @@ export function make(storage: Storage) {
       for (const [hash, node] of captured.nodes) if (pending.get(hash) === node) pending.delete(hash)
       prepared.delete(batch)
     },
-    // discard abandons unheld staging while preserving draft dependencies and cached committed values (test/sqlite-sync.test.ts; platform/test/bun/stored-journal.test.ts).
+    // discard abandons unheld staging while preserving draft dependencies and cached committed values (test/transactions.test.ts; platform/test/bun/stored-journal.test.ts).
     discard: (references: Iterable<ValueReference<unknown>> = ownership.held()) => {
       const retained = staging.prepare(references).nodes
       logs.discard(retained.values())
@@ -214,7 +214,7 @@ export function make(storage: Storage) {
     },
     release: ownership.release, held: ownership.held,
     bind,
-    // capture stages immutable JSON without an editable document schema (test/value.test.ts).
+    // capture stages immutable JSON without an editable document schema (test/references.test.ts).
     capture: (value: Json): ValueReference<Json> => {
       const tree = builder.from(freezeJson(Schema.decodeSync(Schema.Json)(value)))
       for (const [hash, node] of tree.nodes) pending.set(hash, node)
