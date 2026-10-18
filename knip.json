@@ -14,7 +14,7 @@
       "project": ["src/**/*.ts"]
     },
     "packages/platform": {
-      "entry": ["test/fixtures/workerd/fixture.worker.ts", "test/fixtures/workerd/agent-fixture.worker.ts", "test/workerd/*.workers.ts"],
+      "entry": ["test/fixtures/workerd/fixture.worker.ts", "test/fixtures/workerd/agent-fixture.worker.ts", "test/fixtures/migration/generate-050.ts", "test/workerd/*.workers.ts"],
       "project": ["src/**/*.ts!", "test/**/*.ts"],
       "ignoreIssues": {
         "src/cloudflare/index.ts": ["duplicates"]
