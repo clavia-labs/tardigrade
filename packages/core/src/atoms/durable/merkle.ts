@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { Json } from "@tardie/grove"
-import { encodeReference, treeSchema } from "@tardie/grove"
+import { encodeReference, treeSchema, ValueState } from "@tardie/grove"
 import { durableProjection } from "./projection"
 import { DocumentState, type MerkleTree, type DocumentSession } from "../../services/tree-state"
 import { EventLog } from "../../services/event-log"
@@ -42,7 +42,7 @@ export function documentAtom<State extends Json, Event>({ schema, initial, initi
       const stored = seed?.state.get(name)
       return stored === undefined ? undefined : Schema.is(DocumentState)(stored)
         ? Schema.decodeSync(schema)(service.documents!.read(stored.reference))
-        : Schema.decodeSync(schema)(stored)
+        : Schema.decodeSync(schema)(Schema.is(ValueState)(stored) ? stored.value : stored)
     }
     return read
   }

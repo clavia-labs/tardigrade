@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
 import { Schema } from "effect"
 import fc from "fast-check"
-import { durableAtom, durableMerkleAtom } from "../src/index"
+import { durableAtom, durableMerkleAtom, value } from "../src/index"
 import { createEventLog } from "../src/runtime/replay"
 import { documentSession } from "../src/services/tree-state"
 import { AtomState } from "../src/initialise"
@@ -61,12 +61,15 @@ test("legacy reducers retain values and codec behavior with a construction-time 
     const warnings = spyOn(console, "warn").mockImplementation(() => {})
     const Added = Schema.Struct({ type: Schema.Literal("Added"), amount: Schema.Int })
     const total = durableAtom<number, typeof Added.Type>({ name: "legacy", input: Added, schema: Schema.Int, initial: 0, reduce: (state, event) => state + event.amount })
-    const log = createEventLog({ schema: Added, atoms: { total } })
+    const tagged = durableAtom({ name: "tagged-value", input: Added, schema: value(Schema.Int), initial: 0, reduce: (state, event) => state + event.amount })
+    const log = createEventLog({ schema: Added, atoms: { total, tagged } })
     try {
       const final = log.replay(values.map(amount => ({ event: { type: "Added", amount } })))
       expect(final.get(total)).toBe(values.reduce((sum, value) => sum + value, 0))
       expect(warnings).toHaveBeenCalledTimes(1)
       expect(warnings.mock.calls[0]![0]).toContain("deprecated plain state")
+      expect(warnings.mock.calls[0]![0]).toContain("value(schema)")
+      expect(final.get(tagged)).toBe(final.get(total))
       expect(total[AtomState].decode(7)).toBe(7)
     } finally { log.dispose(); warnings.mockRestore() }
   }))
@@ -142,5 +145,37 @@ test("deprecated durableMerkleAtom preserves untagged document reducers and chec
         expect(warnings.mock.calls[0]![0]).toContain("durableMerkleAtom")
       } finally { reopened?.dispose(); log.dispose() }
     } finally { warnings.mockRestore() }
+  }), { numRuns: 30, includeErrorInReport: true })
+})
+
+test("whole-value atoms migrate stored tree checkpoints and resume with inline state", () => {
+  fc.assert(fc.property(fc.array(fc.integer({ min: -100, max: 100 }), { minLength: 2, maxLength: 30 }), values => {
+    const Event = Schema.Struct({ type: Schema.Literal("Added"), n: Schema.Int })
+    const State = Schema.Struct({ count: Schema.Int, items: Schema.Array(Schema.Int) })
+    const old = durableAtom({ name: "value-migration", schema: tree(State), input: Event, initial: { count: 0, items: [] }, reduce: (state, event) => state.set([], { count: state.read(["count"]) + event.n, items: [...state.read(["items"]), event.n] }) })
+    const next = durableAtom({ name: "value-migration", schema: value(State), input: Event, initial: { count: 0, items: [] }, reduce: (state, event) => ({ count: state.count + event.n, items: [...state.items, event.n] }) })
+    const documents = documentSession({ load: () => { throw new Error("Unexpected cold read") } })
+    const events = values.map(n => ({ type: "Added" as const, n })), halfway = Math.floor(events.length / 2)
+    const before = createEventLog({ schema: Event, atoms: { state: old }, documents })
+    const written = before.replay(events.slice(0, halfway).map(event => ({ event })))
+    const checkpoint = written.checkpoint()!
+    const after = createEventLog({ schema: Event, atoms: { state: next }, checkpoint, documents })
+    let restored: ReturnType<typeof createEventLog<typeof Event.Type, { state: typeof next }>> | undefined
+    try {
+      const completed = after.replay(events.slice(halfway).map(event => ({ event })))
+      const expected = { count: values.reduce((sum, n) => sum + n, 0), items: values }
+      expect(completed.get(next)).toEqual(expected)
+      const inline = completed.checkpoint()!
+      expect(inline.durable[0]!.state).toEqual({ _tag: "ValueState", value: expected })
+      expect(inline.durable[0]!.reference).toBeUndefined()
+      expect(next[AtomState].decode(inline.durable[0]!.state)).toEqual(expected)
+      expect(next[AtomState].decode(expected)).toEqual(expected)
+      expect(Object.isFrozen(completed.get(next).items)).toBe(true)
+      restored = createEventLog({ schema: Event, atoms: { state: next }, checkpoint: JSON.parse(JSON.stringify(inline)) })
+      expect(restored.initial.get(next)).toEqual(expected)
+      const reader = durableAtom({ name: "value-reader", schema: tree(Schema.Int), input: Event, initial: 0, initialize: read => read("value-migration", State)?.count ?? 0, reduce: state => state })
+      const derived = createEventLog({ schema: Event, atoms: { reader }, checkpoint: inline })
+      try { expect(derived.initial.get(reader).read([])).toBe(expected.count) } finally { derived.dispose() }
+    } finally { restored?.dispose(); after.dispose(); before.dispose() }
   }), { numRuns: 30, includeErrorInReport: true })
 })

@@ -1,4 +1,4 @@
-export { tree, appendOnly, keyValue, type Tree, type AppendOnly, type KeyValue } from "@tardie/grove"
+export { value, tree, appendOnly, keyValue, type Tree, type AppendOnly, type KeyValue } from "@tardie/grove"
 export { DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES } from "./runtime/operation"
 export { storedSession } from "./services/stored-session"
 export { memoryDocuments } from "./services/tree-state"
