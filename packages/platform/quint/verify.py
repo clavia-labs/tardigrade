@@ -59,6 +59,10 @@ def check(model, initializer, invariant="", temporal="", expected=0):
 
 
 print(f"Checker artifacts: {output}", flush=True)
+check("journalMigration", "init", "invariant")
+check("journalMigration", "initCorrupt", "invariant")
+check("journalMigration", "initEarlyDrop", "sourceAvailable", expected=12)
+check("journalMigration", "initEarlyAdmission", "verifiedExecution", expected=12)
 check("watchdog", "init", "invariant", "eventualSettlement")
 check("recoveryBudget", "init", "invariant", "eventualStop")
 check("interpreterVersion", "init", "invariant", "eventualStop")

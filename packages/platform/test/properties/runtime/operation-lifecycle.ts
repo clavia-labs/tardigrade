@@ -602,7 +602,7 @@ export async function operationRace(journal: Journal<typeof Event.Type>, service
         assert.equal((yield* journal.readInputs)[0]!.request.input, original, "in-flight commit released input")
         if (scenario.fault === "rollback") {
           const trigger = gateType === "CancellationSettled"
-            ? "CREATE TRIGGER fail_race_commit BEFORE DELETE ON stored_journal_inputs BEGIN SELECT RAISE(ABORT, 'Injected race failure'); END"
+            ? "CREATE TRIGGER fail_race_commit BEFORE DELETE ON journal_accepted_inputs BEGIN SELECT RAISE(ABORT, 'Injected race failure'); END"
             : `CREATE TRIGGER fail_race_commit AFTER INSERT ON experimental_events WHEN json_extract(NEW.event, '$.event.type') = '${gateType}' BEGIN SELECT RAISE(ABORT, 'Injected race failure'); END`
           yield* Effect.promise(() => execute(trigger))
         }

@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers"
 import { Context, Deferred, Effect, Schema } from "effect"
 import { createHash } from "node:crypto"
-import { act, appendOnly, createActorStore, defineActor, durableAtom, effectAtom, effectKey, keyValue, type EffectRef } from "@clavia/tardigrade-core"
+import { act, appendOnly, createActorStore, defineActor, durableAtom, effectAtom, effectKey, keyValue, RuntimeError, type EffectRef } from "@clavia/tardigrade-core"
 import { cloudflareJournal } from "../../../src/cloudflare"
 import { effectServiceClient } from "../effect-service"
 import { waitFor } from "../wait"
@@ -58,14 +58,14 @@ export class MigrationDO extends DurableObject<{ EFFECT_SERVICE: { getByName(nam
       }) }
     }))
     return Effect.runPromise(createActorStore({ actor, journal, checkpoint: { mode: "manual" }, attemptTimeoutMs: null, actorContext: Context.pick(), services: () => Job.layer((input, { ref }) => Effect.gen({ self: this }, function* () {
-      yield* Effect.promise(async () => {
+      yield* Effect.tryPromise({ try: async () => {
         const calls = await this.ctx.storage.get<readonly Call[]>("migration:calls") ?? []
         await this.ctx.storage.put("migration:calls", [...calls, { instance: this.instance, ref, input }])
         await this.external.submit(effectKey(ref), input)
-      })
+      }, catch: RuntimeError.from })
       yield* Deferred.await(this.completion)
       return input.messages.length
-    })) }))
+    }).pipe(Effect.mapError(String))) }))
   }
 
   async attemptUpgrade(): Promise<{ readonly error: string | null }> {
@@ -86,13 +86,13 @@ export class MigrationDO extends DurableObject<{ EFFECT_SERVICE: { getByName(nam
   async inspectRecovery() {
     const sql = this.ctx.storage.sql
     const read = (table: string) => sql.exec("SELECT name FROM sqlite_master WHERE name=?", table).toArray().length
-      ? sql.exec<{ actor: string; id: string; entry: string }>(`SELECT actor,id,entry FROM ${table} ORDER BY actor,id`).toArray() : []
+      ? sql.exec<{ id: string; entry: string }>(`SELECT id,entry FROM ${table} ORDER BY id`).toArray() : []
     return {
       legacy: [...await this.ctx.storage.list({ prefix: "tardie:" })].map(([key, value]) => [key, JSON.stringify(value)]),
       alarm: await this.ctx.storage.getAlarm(),
-      wakes: read("stored_scheduler_wakes"), watchdog: read("stored_watchdog_entries"),
-      generation: sql.exec("SELECT name FROM sqlite_master WHERE name='stored_scheduler_generation'").toArray().length
-        ? sql.exec<{ actor: string; value: number }>("SELECT actor,value FROM stored_scheduler_generation ORDER BY actor").toArray() : [],
+      wakes: read("runtime_wakes"), watchdog: read("runtime_watchdogs"),
+      generation: sql.exec("SELECT name FROM sqlite_master WHERE name='runtime_generation'").toArray().length
+        ? sql.exec<{ id: number; value: number }>("SELECT id,value FROM runtime_generation ORDER BY id").toArray() : [],
     }
   }
 

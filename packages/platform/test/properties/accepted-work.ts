@@ -92,7 +92,7 @@ export async function acceptedInputLifetime(native: SyncSqlite, text: string) {
   let fail = true, failRelease = false
   const driver: SyncSqlite = { ...native, execute: (sql, parameters) => {
     if (fail && sql.startsWith("INSERT INTO experimental_events")) throw new Error("Injected journal write failure")
-    if (failRelease && sql.startsWith("DELETE FROM stored_journal_inputs")) throw new Error("Injected release failure")
+    if (failRelease && sql.startsWith("DELETE FROM journal_accepted_inputs")) throw new Error("Injected release failure")
     return native.execute(sql, parameters)
   } }
   let journal = synchronousJournal<{ type: string }>({ actor: "stored", driver, cacheBytes: 0 })

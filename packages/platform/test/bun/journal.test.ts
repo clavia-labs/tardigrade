@@ -175,7 +175,7 @@ test("large UTF-8 events, accepted inputs and checkpoints reopen and remove obso
     const saved = await checkpoint(1)
     const request = { act: ref.act, input: { text } }
     await Effect.runPromise(journal.appendWithCheckpoint(0, [{ event: { type: "Large", text } }], saved, { put: [{ ref, request }] }))
-    for (const table of ["experimental_event_chunks", "stored_journal_input_chunks", "stored_journal_checkpoint_chunks"]) {
+    for (const table of ["experimental_event_chunks", "journal_accepted_input_chunks", "journal_checkpoint_chunks"]) {
       expect(count(db, table)).toBeGreaterThan(1)
       expect(db.query<{ n: number }, []>(`SELECT MAX(length(payload)) n FROM ${table}`).get()!.n).toBeLessThanOrEqual(511)
     }
@@ -185,14 +185,14 @@ test("large UTF-8 events, accepted inputs and checkpoints reopen and remove obso
     expect(await Effect.runPromise(journal.read)).toEqual([{ event: { type: "Large", text } }])
     expect(await Effect.runPromise(journal.readInputs)).toEqual([{ ref, request }])
     expect((await Effect.runPromise(journal.readCheckpoint))!.payload).toEqual(saved.payload)
-    const before = count(db, "stored_journal_input_chunks")
+    const before = count(db, "journal_accepted_input_chunks")
     await Effect.runPromise(journal.append(1, [], { put: [{ ref, request }] }))
-    expect(count(db, "stored_journal_input_chunks")).toBe(before)
+    expect(count(db, "journal_accepted_input_chunks")).toBe(before)
     await expect(Effect.runPromise(journal.append(1, [{ event: { type: "Invalid" } }], { put: [{ ref, request: { ...request, input: { text: "changed" } } }] }))).rejects.toThrow("cannot change")
     const small = await checkpoint(2, "small")
     await Effect.runPromise(journal.appendWithCheckpoint(1, [{ event: { type: "Completed" } }], small, { remove: [ref] }))
-    expect(count(db, "stored_journal_input_chunks")).toBe(0)
-    expect(count(db, "stored_journal_checkpoint_chunks")).toBe(1)
+    expect(count(db, "journal_accepted_input_chunks")).toBe(0)
+    expect(count(db, "journal_checkpoint_chunks")).toBe(1)
     expect(await Effect.runPromise(journal.readAfter(1))).toEqual([{ event: { type: "Completed" } }])
     expect((await Effect.runPromise(journal.readCheckpoint))!.payload).toEqual(small.payload)
     expect(journal.chunking).toMatchObject({ checkpointChunkBytes: 511, eventInlineBytes: 256, maxRowBytes: 4096 })
@@ -203,7 +203,7 @@ test("partial event and replacement checkpoint writes roll back chunks and Grove
   const db = new Database(":memory:"), native = driverFor(db)
   let failTable: string | undefined = "experimental_event_chunks"
   const driver: SyncSqlite = { ...native, execute: (sql, parameters) => {
-    if (failTable && sql.startsWith(`INSERT INTO ${failTable}`) && Number(parameters[failTable === "stored_journal_checkpoint_chunks" ? 1 : 2]) === 1) throw new Error("Injected partial chunk failure")
+    if (failTable && sql.startsWith(`INSERT INTO ${failTable}`) && Number(parameters[failTable === "journal_checkpoint_chunks" ? 0 : 2]) === 1) throw new Error("Injected partial chunk failure")
     return native.execute(sql, parameters)
   } }
   const journal = synchronousJournal<{ type: string; text?: string }>({ actor: "rollback", driver, checkpointChunkBytes: 127, eventInlineBytes: 128 })
@@ -214,13 +214,13 @@ test("partial event and replacement checkpoint writes roll back chunks and Grove
     const first = await checkpoint(1, text, encodeReference(a.reference!))
     const changes = { documents: { references: [{ name: "document", reference: encodeReference(a.reference!) }] }, put: [{ ref, request }] }
     await expect(Effect.runPromise(journal.appendWithCheckpoint(0, [{ event: { type: "Accepted", text } }], first, changes))).rejects.toThrow("Injected")
-    for (const table of ["experimental_events", "experimental_event_chunks", "stored_journal_inputs", "stored_journal_input_chunks", "stored_journal_checkpoints", "stored_journal_checkpoint_chunks"]) expect(count(db, table)).toBe(0)
+    for (const table of ["experimental_events", "experimental_event_chunks", "journal_accepted_inputs", "journal_accepted_input_chunks", "journal_checkpoints", "journal_checkpoint_chunks"]) expect(count(db, table)).toBe(0)
     expect(journal.grove.owners("")).toEqual([])
     expect(journal.grove.stats().stagedNodes).toBeGreaterThan(0)
     failTable = undefined
     await Effect.runPromise(journal.appendWithCheckpoint(0, [{ event: { type: "Accepted", text } }], first, changes))
     const b = a.set(["value"], "B"), next = await checkpoint(2, text + "next", encodeReference(b.reference!))
-    failTable = "stored_journal_checkpoint_chunks"
+    failTable = "journal_checkpoint_chunks"
     const completion = { documents: { references: [{ name: "document", reference: encodeReference(b.reference!) }] }, remove: [ref] }
     await expect(Effect.runPromise(journal.appendWithCheckpoint(1, [{ event: { type: "Completed" } }], next, completion))).rejects.toThrow("Injected")
     expect((await Effect.runPromise(journal.readCheckpoint))!.payload).toEqual(first.payload)
@@ -241,7 +241,7 @@ for (const kind of ["event", "input", "checkpoint"] as const) test(`${kind} chun
     const db = new Database(":memory:"), journal = synchronousJournal<{ type: string; text: string }>({ actor: "corrupt", driver: driverFor(db), checkpointChunkBytes: 127, eventInlineBytes: 128 })
     try {
       await Effect.runPromise(journal.appendWithCheckpoint(0, [{ event: { type: "Large", text } }], await checkpoint(1), { put: [{ ref, request: { act: ref.act, input: { text } } }] }))
-      const table = kind === "event" ? "experimental_event_chunks" : `stored_journal_${kind}_chunks`, header = kind === "event" ? "experimental_events" : kind === "input" ? "stored_journal_inputs" : "stored_journal_checkpoints"
+      const table = kind === "event" ? "experimental_event_chunks" : kind === "input" ? "journal_accepted_input_chunks" : "journal_checkpoint_chunks", header = kind === "event" ? "experimental_events" : kind === "input" ? "journal_accepted_inputs" : "journal_checkpoints"
       if (corruption === "missing") db.exec(`DELETE FROM ${table} WHERE ordinal=0`)
       if (corruption === "ordinal") db.exec(`UPDATE ${table} SET ordinal=9999 WHERE ordinal=0`)
       if (corruption === "length") db.exec(kind === "event" ? "UPDATE experimental_events SET event=json_set(event,'$.byteLength',json_extract(event,'$.byteLength')+1)" : `UPDATE ${header} SET byte_length=byte_length+1`)
@@ -260,7 +260,7 @@ for (const kind of ["event", "input", "checkpoint"] as const) test(`${kind} chun
 test("row budgets account for Unicode actor and effect identities and expose actual policies", async () => {
   const db = new Database(":memory:"), native = driverFor(db), maxRowBytes = 512
   const driver: SyncSqlite = { ...native, execute: (sql, parameters) => {
-    if ((sql.startsWith("INSERT INTO stored_journal_") || sql.startsWith("INSERT INTO experimental_"))) {
+    if ((sql.startsWith("INSERT INTO journal_") || sql.startsWith("INSERT INTO experimental_"))) {
       const bytes = parameters.reduce<number>((sum, value) => sum + (typeof value === "string" ? Buffer.byteLength(value) : value instanceof Uint8Array ? value.byteLength : 0), 32)
       if (bytes > maxRowBytes) throw new Error(`Row exceeded budget: ${bytes}`)
     }
@@ -292,7 +292,7 @@ test("existing inline rows remain readable while new writes use chunked envelope
     expect(await Effect.runPromise(journal.readInputs)).toEqual([input])
     expect((await Effect.runPromise(journal.readCheckpoint))!.payload).toEqual(saved.payload)
     await Effect.runPromise(journal.append(1, [{ event: { type: "Large", text } }], { put: [input] }))
-    expect(count(db, "stored_journal_input_chunks")).toBe(0)
+    expect(count(db, "journal_accepted_input_chunks")).toBe(0)
     expect((await Effect.runPromise(journal.readAfter(1)))[0]!.event).toEqual({ type: "Large", text })
     expect(count(db, "experimental_event_chunks")).toBeGreaterThan(1)
   } finally { await Effect.runPromise(journal.close); db.close() }
@@ -381,16 +381,13 @@ test("message envelopes validate before writes and identities obey configured ro
   } finally { await Effect.runPromise(journal.close); db.close() }
 })
 
-test("stored journals backfill inline and chunked receipt indexes once per actor", async () => {
+test("stored journals backfill inline and chunked receipt indexes once per database", async () => {
   const db = new Database(":memory:"), driver = driverFor(db)
   let journal = synchronousJournal({ actor: "upgrade", driver, eventInlineBytes: 256, checkpointChunkBytes: 128 })
   await Effect.runPromise(journal.append(0, [record("inline", "small"), record("chunked")]))
   await Effect.runPromise(journal.close)
   db.exec("DROP TABLE experimental_messages")
-  db.exec("DROP TABLE stored_journal_message_indexes")
-  journal = synchronousJournal({ actor: "other", driver })
-  await Effect.runPromise(journal.append(0, [record("chunked", "other actor")]))
-  await Effect.runPromise(journal.close)
+  db.exec("UPDATE journal_metadata SET receipts_backfilled=0")
   journal = synchronousJournal({ actor: "upgrade", driver })
   try {
     expect(await Effect.runPromise(journal.readMessage("inline"))).toEqual({ position: 1, record: record("inline", "small") })
@@ -410,11 +407,11 @@ for (const corrupt of [false, true]) test(`receipt backfill rolls back on ${corr
     await Effect.runPromise(journal.append(0, [record("one"), record("two")]))
     await Effect.runPromise(journal.close)
     db.exec("DROP TABLE experimental_messages")
-    db.exec("DROP TABLE stored_journal_message_indexes")
+    db.exec("UPDATE journal_metadata SET receipts_backfilled=0")
     if (corrupt) db.exec("DELETE FROM experimental_event_chunks WHERE seq=1 AND ordinal=0")
     else db.query("UPDATE experimental_events SET event=? WHERE seq=1").run(JSON.stringify(record("one")))
     expect(() => synchronousJournal({ actor: "invalid-upgrade", driver })).toThrow()
-    expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('experimental_messages','stored_journal_message_indexes')").all()).toEqual([])
+    expect(db.query("SELECT name FROM sqlite_master WHERE name='experimental_messages'").all()).toEqual([])
     expect(db.query<{ n: number }, []>("SELECT COUNT(*) n FROM experimental_events").get()!.n).toBe(2)
   } finally { await Effect.runPromise(journal.close); db.close() }
 })
@@ -440,7 +437,7 @@ test("watchdog failure rolls back journal chunks, retry wakes, checkpoint and Gr
   const db = new Database(":memory:"), native = driverFor(db)
   let fail = true, at: number | null = null, flushes = 0
   const driver: SyncSqlite = { ...native, execute: (sql, parameters) => {
-    if (fail && sql.startsWith("INSERT INTO stored_watchdog_entries")) throw new Error("Injected admission failure")
+    if (fail && sql.startsWith("INSERT INTO runtime_watchdogs")) throw new Error("Injected admission failure")
     return native.execute(sql, parameters)
   } }
   const journal = synchronousJournal({ actor: "atomic", driver, eventInlineBytes: 64, checkpointChunkBytes: 64,
@@ -454,7 +451,7 @@ test("watchdog failure rolls back journal chunks, retry wakes, checkpoint and Gr
     const saved = { position: 1, payload, digest: await Effect.runPromise(checkpointDigest(payload)) }
     const changes = { documents: { references: [{ name: "state", reference: encodeReference(document.reference!) }] }, put: [{ ref: recoveryRef, request: { act: recoveryRef.act, input: { text: "x".repeat(256) } } }] }
     await expect(Effect.runPromise(journal.appendWithCheckpoint(0, [retry(1)], saved, changes))).rejects.toThrow("admission failure")
-    for (const table of ["experimental_events", "experimental_event_chunks", "stored_journal_inputs", "stored_journal_input_chunks", "stored_journal_checkpoints", "stored_journal_checkpoint_chunks", "stored_scheduler_wakes", "stored_scheduler_generation", "stored_watchdog_entries"]) expect(db.query<{ n: number }, []>(`SELECT COUNT(*) n FROM ${table}`).get()!.n).toBe(0)
+    for (const table of ["experimental_events", "experimental_event_chunks", "journal_accepted_inputs", "journal_accepted_input_chunks", "journal_checkpoints", "journal_checkpoint_chunks", "runtime_wakes", "runtime_generation", "runtime_watchdogs"]) expect(db.query<{ n: number }, []>(`SELECT COUNT(*) n FROM ${table}`).get()!.n).toBe(0)
     expect(journal.grove.owners("")).toEqual([])
     expect(at).toBeNull()
     expect(flushes).toBe(0)
@@ -464,7 +461,7 @@ test("watchdog failure rolls back journal chunks, retry wakes, checkpoint and Gr
     expect(flushes).toBe(1)
     expect((await Effect.runPromise(journal.watchdog!.status)).get(watchdogKey(target))).toMatchObject({ attempts: 0, progressCursor: 0, recoveryVersion: "v1" })
     await Effect.runPromise(journal.append(1, [{ event: { type: "PromiseSettled", ref: recoveryRef, result: { status: "fulfilled", value: null } } }], { remove: [recoveryRef] }))
-    expect(db.query<{ n: number }, []>("SELECT COUNT(*) n FROM stored_scheduler_wakes WHERE id LIKE 'effect:%'").get()!.n).toBe(0)
+    expect(db.query<{ n: number }, []>("SELECT COUNT(*) n FROM runtime_wakes WHERE id LIKE 'effect:%'").get()!.n).toBe(0)
     expect((await Effect.runPromise(journal.watchdog!.status)).get(watchdogKey(target))!.progressCursor).toBe(2)
     await Effect.runPromise(journal.append(2, [{ event: { type: "ThreadUpdated", version: "v2" } }]))
     expect((await Effect.runPromise(journal.watchdog!.status)).get(watchdogKey(target))).toMatchObject({ recoveryVersion: "v2", budgetGeneration: 1, attempts: 0 })

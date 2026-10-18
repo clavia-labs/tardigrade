@@ -5,7 +5,6 @@ import { makeSync, type SyncSqlite } from "@tardie/grove/sqlite"
 import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"
 import { initializeSyncRecovery, synchronousRecoveryStorage, type syncRecoveryTransaction } from "../shared/synchronous-recovery"
 
-export const CLOUDFLARE_RECOVERY_ACTOR = "recovery"
 export const cloudflareNativeDriver = (storage: DurableObjectStorage): SyncSqlite => ({ identity: storage.sql, execute: (sql, parameters) => storage.sql.exec(sql, ...parameters).toArray(), transaction: work => storage.transactionSync(work) })
 const checks = new WeakMap<object, Effect.Effect<void, RuntimeError>>()
 
@@ -34,15 +33,15 @@ export function checkNativeRecovery(storage: DurableObjectStorage) {
         if (wakeEntries.some(value => value.entry.generation > savedGeneration)) throw new Error("Legacy scheduler generation precedes a wake")
         const sql = storage.sql
         initializeSyncRecovery(cloudflareNativeDriver(storage))
-        for (const [table, entries] of [["stored_scheduler_wakes", wakeEntries], ["stored_watchdog_entries", watchdogEntries]] as const) for (const value of entries) {
-          const existing = sql.exec<{ entry: string }>(`SELECT entry FROM ${table} WHERE actor=? AND id=?`, CLOUDFLARE_RECOVERY_ACTOR, value.id).toArray()[0]
+        for (const [table, entries] of [["runtime_wakes", wakeEntries], ["runtime_watchdogs", watchdogEntries]] as const) for (const value of entries) {
+          const existing = sql.exec<{ entry: string }>(`SELECT entry FROM ${table} WHERE id=?`, value.id).toArray()[0]
           const encoded = JSON.stringify(value.entry)
           if (existing && existing.entry !== encoded) throw new Error("Conflicting legacy and native recovery records")
-          if (!existing) sql.exec(`INSERT INTO ${table}(actor,id,entry) VALUES(?,?,?)`, CLOUDFLARE_RECOVERY_ACTOR, value.id, encoded)
+          if (!existing) sql.exec(`INSERT INTO ${table}(id,entry) VALUES(?,?)`, value.id, encoded)
         }
-        const existingGeneration = sql.exec<{ value: number }>("SELECT value FROM stored_scheduler_generation WHERE actor=?", CLOUDFLARE_RECOVERY_ACTOR).toArray()[0]
+        const existingGeneration = sql.exec<{ value: number }>("SELECT value FROM runtime_generation WHERE id=1").toArray()[0]
         if (existingGeneration && existingGeneration.value !== savedGeneration) throw new Error("Conflicting legacy and native recovery generation")
-        if (!existingGeneration) sql.exec("INSERT INTO stored_scheduler_generation(actor,value) VALUES(?,?)", CLOUDFLARE_RECOVERY_ACTOR, savedGeneration)
+        if (!existingGeneration) sql.exec("INSERT INTO runtime_generation(id,value) VALUES(1,?)", savedGeneration)
         await tx.delete([...wakeEntries.map(value => value.key), ...watchdogEntries.map(value => value.key), "tardie:scheduler-generation"])
       })
       await storage.sync()
@@ -56,9 +55,9 @@ export function checkNativeRecovery(storage: DurableObjectStorage) {
 export function cloudflareNativeRecovery(storage: DurableObjectStorage, options: CloudflareAlarmOptions = {}) {
   const alarms = makeRetryingAlarms(storage, options)
   const initialized = Effect.runSync(Effect.cached(checkNativeRecovery(storage).pipe(Effect.flatMap(() => Effect.try({ try: () => {
-    const driver = cloudflareNativeDriver(storage), grove = makeSync(driver, { scope: JSON.stringify(["tardigrade", CLOUDFLARE_RECOVERY_ACTOR]) })
+    const driver = cloudflareNativeDriver(storage), grove = makeSync(driver, { scope: JSON.stringify(["tardigrade", "recovery"]) })
     grove.transaction(initializeSyncRecovery)
-    return synchronousRecoveryStorage(grove, driver.identity, CLOUDFLARE_RECOVERY_ACTOR, { set: at => alarms.set(Math.max(1, at)), clear: alarms.delete }, alarms.sync)
+    return synchronousRecoveryStorage(grove, driver.identity, { set: at => alarms.set(Math.max(1, at)), clear: alarms.delete }, alarms.sync)
   }, catch: RuntimeError.from })))))
   return { transaction: <Value>(work: (tx: ReturnType<typeof syncRecoveryTransaction>) => Effect.Effect<Value, Error>) => initialized.pipe(Effect.flatMap(store => store.transaction(work))) }
 }

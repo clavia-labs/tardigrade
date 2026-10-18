@@ -101,7 +101,7 @@ test("native recovery admission rolls back with publication and restores alarms 
     const native = driverFor(state.storage)
     let fail = true
     const driver: SyncSqlite = { ...native, execute: (sql, parameters) => {
-      if (fail && sql.startsWith("INSERT INTO stored_watchdog_entries")) throw new Error("Injected native watchdog failure")
+      if (fail && sql.startsWith("INSERT INTO runtime_watchdogs")) throw new Error("Injected native watchdog failure")
       return native.execute(sql, parameters)
     } }
     const journal = synchronousJournal({ actor: "recovery", driver,
@@ -165,10 +165,10 @@ test("native oversized journal envelopes roll back partial chunks and reopen aft
     expect(await Effect.runPromise(journal.read)).toEqual([])
     expect(await Effect.runPromise(journal.readInputs)).toEqual([])
     expect(journal.grove.owners("")).toEqual([])
-    for (const table of ["experimental_event_chunks", "stored_journal_input_chunks", "stored_journal_checkpoint_chunks"]) expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) n FROM ${table}`).one().n).toBe(0)
+    for (const table of ["experimental_event_chunks", "journal_accepted_input_chunks", "journal_checkpoint_chunks"]) expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) n FROM ${table}`).one().n).toBe(0)
     fail = false
     await Effect.runPromise(journal.appendWithCheckpoint(0, [{ event: { type: "Large", text } }], saved, changes))
-    for (const table of ["experimental_event_chunks", "stored_journal_input_chunks", "stored_journal_checkpoint_chunks"]) expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) n FROM ${table}`).one().n).toBeGreaterThan(1)
+    for (const table of ["experimental_event_chunks", "journal_accepted_input_chunks", "journal_checkpoint_chunks"]) expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) n FROM ${table}`).one().n).toBeGreaterThan(1)
     await Effect.runPromise(journal.close)
   })
   await evictDurableObject(stub)
@@ -182,8 +182,8 @@ test("native oversized journal envelopes roll back partial chunks and reopen aft
     expect(JSON.parse(new TextDecoder().decode(old.payload)).durable[0].state).toEqual({ text })
     const payload = encodeCheckpoint({ position: 2, durable: [], operations: [] })
     await Effect.runPromise(journal.appendWithCheckpoint(1, [{ event: { type: "Done" } }], { position: 2, payload, digest: await Effect.runPromise(checkpointDigest(payload)) }, { remove: [ref] }))
-    expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) n FROM stored_journal_input_chunks").one().n).toBe(0)
-    expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) n FROM stored_journal_checkpoint_chunks").one().n).toBe(1)
+    expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) n FROM journal_accepted_input_chunks").one().n).toBe(0)
+    expect(state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) n FROM journal_checkpoint_chunks").one().n).toBe(1)
     expect((await Effect.runPromise(journal.readCheckpoint))!.payload).toEqual(payload)
     await Effect.runPromise(journal.close)
   })

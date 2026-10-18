@@ -37,8 +37,8 @@ if(!tables.some(table=>table.name==='grove_nodes')||tables.some(table=>table.nam
 const indexes=db.query<{name:string;sql:string},[]>("SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL ORDER BY name").all()
 const target={actor:'migration',instance:'upgrade',thread:'one'}
 const dueAt=4102444800000
-const wake=Schema.decodeUnknownSync(ScheduledWake)({id:'watchdog',target:{owner:'watchdog'},generation:7,dueAt,nextWakeAt:dueAt})
-const watchdog=Schema.decodeUnknownSync(WatchdogEntry)({target,generation:4,progressCursor:records.length,attempts:2,consecutiveNoProgress:1,nextWakeAt:dueAt,status:'pending'})
+const wake=Schema.decodeSync(ScheduledWake)({id:'watchdog',target:{owner:'watchdog'},generation:7,dueAt,nextWakeAt:dueAt})
+const watchdog=Schema.decodeSync(WatchdogEntry)({target,generation:4,progressCursor:records.length,attempts:2,consecutiveNoProgress:1,nextWakeAt:dueAt,status:'pending'})
 const recovery={dueAt,wake,watchdog,key:watchdogKey(target),generation:7}
 writeFileSync(filename+'.json',JSON.stringify({source:'d0191382c92c63d820a9e07c7e95b4d4ecbc0094',input,acceptedInput,inputs,records,recovery,ref:inputs[0]!.ref,effectKey:effectKey(inputs[0]!.ref),view:store.getState().view,tables,indexes})+'\n')
 await Effect.runPromise(store.close)
