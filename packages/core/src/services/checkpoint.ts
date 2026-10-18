@@ -32,8 +32,10 @@ export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
   return new TextEncoder().encode(encoded)
 }
 
-export const decodeCheckpoint = (payload: Uint8Array): EffectCheckpoint => {
-  const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload))
+export const decodeCheckpoint = (payload: Uint8Array): EffectCheckpoint => checkpointFromJson(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload)))
+
+// checkpointFromJson validates decoded checkpoint data before encoding a converted version (platform/test/bun/migration.test.ts).
+export function checkpointFromJson(value: unknown): EffectCheckpoint {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid checkpoint payload")
   const record = migrateCheckpoint(value as Record<string, unknown>)
   if (!Number.isSafeInteger(record.position) || (record.position as number) < 0 ||

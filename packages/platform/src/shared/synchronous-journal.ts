@@ -9,6 +9,7 @@ import { DEFAULT_EVENT_INLINE_BYTES, decodeSqlJournalRecord, type JournalRecordO
 import { storedPayloadBytes, storedPayloadDigest, type StoredPayloadRow, type StoredPayloadChunk } from "./stored-journal-payloads"
 import { createScheduler, createWatchdog, ThreadUpdated, type Alarm, type SchedulerStorage, type SchedulerPolicy, type ScheduledWake, type WatchdogStorage, type WatchdogTarget } from "@clavia/tardigrade-core"
 import { initializeSyncRecovery, syncRecoveryTransaction, synchronousRecoveryStorage, recoveryLock } from "./synchronous-recovery"
+import { journalMigration } from "./migrate-journal"
 import { recordRetryWakes } from "./retry-wakes"
 
 export interface SynchronousRecoveryOptions {
@@ -57,9 +58,14 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
   for (const table of ["checkpoint", "checkpoint_trees", "effect_inputs"]) {
     if (!query("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [table]).length) continue
     const rows = table === "checkpoint" ? query("SELECT 1 FROM checkpoint LIMIT 1") : query(`SELECT 1 FROM ${table} WHERE actor=? LIMIT 1`, [actor])
-    if (rows.length) throw new Error("Legacy journal data requires migration before using synchronousJournal")
+    if (rows.length) {
+      const fields = query<{ name: string }>(`PRAGMA table_info(${table})`).map(row => row.name)
+      const required = table === "checkpoint" ? ["position", "byte_length", "chunk_count", "digest"] : table === "checkpoint_trees" ? ["position", "commits"] : ["ref", "byte_length", "chunk_count", "digest"]
+      if (required.some(field => !fields.includes(field))) throw new Error("Legacy journal data requires migration: unsupported table layout")
+    }
   }
   const grove = makeSync(driver, { ...options, scope })
+  const migration = journalMigration(driver, grove, actor, scope, checkpointChunkBytes, inputChunkBytes, options)
   grove.transaction(tx => {
     if (options.collectEvery !== undefined) tx.execute("CREATE TABLE IF NOT EXISTS stored_journal_collections(actor TEXT PRIMARY KEY,checkpoints INTEGER NOT NULL) WITHOUT ROWID", [])
     if (options.scheduler) initializeSyncRecovery(tx)
@@ -95,6 +101,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
       }
       tx.execute("INSERT INTO stored_journal_message_indexes(actor) VALUES(?)", [actor])
     }
+    migration.migrate(tx)
   })
   const session = storedSession(grove)
   const statePrefix = JSON.stringify([actor, "state"]) + "/"
@@ -222,7 +229,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
   })
   const captureRecord = (row: { readonly seq: number; readonly event: string }) => {
     if (!Number.isSafeInteger(row.seq) || row.seq < 0) throw new Error("Invalid journal sequence")
-    return { seq: row.seq, record: decodeSqlJournalRecord<Event>(row.event, () => query<{ ordinal: number; payload: Uint8Array }>("SELECT ordinal,payload FROM experimental_event_chunks WHERE actor=? AND seq=? ORDER BY ordinal", [actor, row.seq])) }
+    return { seq: row.seq, record: migration.event(decodeSqlJournalRecord<Event>(row.event, () => query<{ ordinal: number; payload: Uint8Array }>("SELECT ordinal,payload FROM experimental_event_chunks WHERE actor=? AND seq=? ORDER BY ordinal", [actor, row.seq]))) }
   }
   const readAfter = (position: number) => Effect.gen(function* () {
     if (scheduler) yield* scheduler.restore
