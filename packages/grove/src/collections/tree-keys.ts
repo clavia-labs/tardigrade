@@ -47,15 +47,10 @@ export function makeKeyed(create: Create, pageItems: number, fanout: number) {
   const build = (fields: readonly (readonly [string, Node])[]): Node => {
     const entries: KeyedEntry[] = fields.map(([key, value], order) => [key, order, value])
     entries.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
-    let level: Node[] = []
+    const level: Node[] = []
     const pages = Math.max(1, Math.ceil(entries.length / pageItems))
     for (let index = 0; index < pages; index++) level.push(page(entries.slice(Math.floor(index * entries.length / pages), Math.floor((index + 1) * entries.length / pages))))
-    while (level.length > 1) {
-      const next: Node[] = [], count = Math.ceil(level.length / fanout)
-      for (let index = 0; index < count; index++) next.push(branch(level.slice(Math.floor(index * level.length / count), Math.floor((index + 1) * level.length / count))))
-      level = next
-    }
-    return level[0]!
+    return finish(level)
   }
   const change = (node: Node, key: string, order: number, update: (value: Node | undefined) => Node | undefined, remove: boolean): readonly Node[] => {
     if (node.opaque) throw new Error("Keyed edit requires an explicit read")

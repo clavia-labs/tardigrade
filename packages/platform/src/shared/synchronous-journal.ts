@@ -146,10 +146,10 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
     const encoded = yield* attempt(() => batch.texts.map(text => {
       const payload = encoder.encode(text)
       const chunks = payload.byteLength > eventInlineBytes ? encodeCheckpointChunks(payload, checkpointChunkBytes) : []
-      const record = JSON.parse(text) as { event?: { type?: unknown } }
+      const record = JSON.parse(text) as Recorded<Event> & { readonly event: { readonly type?: unknown } }
       const stored = chunks.length ? JSON.stringify({ event: typeof record.event?.type === "string" ? { type: record.event.type } : undefined, chunkCount: chunks.length, byteLength: payload.byteLength }) : text
       if (chunks.length && encoder.encode(stored).byteLength > inlineCapacity) throw new Error("Journal event metadata exceeds the row capacity")
-      return { text: stored, chunks }
+      return { text: stored, chunks, messageId: messageIdentity(record) }
     }))
     const pending = yield* Effect.forEach(batch.inputs, text => attempt(() => {
       const input = Schema.decodeUnknownSync(PendingEffectInput)(JSON.parse(text))
@@ -187,7 +187,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
         for (const [index, record] of encoded.entries()) {
           tx.execute("INSERT INTO experimental_events(actor,seq,event) VALUES(?,?,?)", [actor, position + index, record.text])
           for (const chunk of record.chunks) tx.execute("INSERT INTO experimental_event_chunks VALUES(?,?,?,?)", [actor, position + index, chunk.ordinal, chunk.payload])
-          const id = messageIdentity(JSON.parse(batch.texts[index]!) as Recorded<Event>)
+          const id = record.messageId
           if (id !== undefined) tx.execute("INSERT INTO experimental_messages(actor,id,seq) VALUES(?,?,?)", [actor, id, position + index])
         }
         for (const ref of batch.remove ?? []) {

@@ -8,11 +8,13 @@ import { makeSync, type SyncSqlite } from "@tardie/grove/sqlite"
 import { Event } from "@clavia/tardigrade-agent/contracts/events"
 import { agentDurableAtoms } from "@clavia/tardigrade-agent/atoms/durable/atoms"
 import { inferState, initialInference, inferenceState, findTurn, readInference } from "@clavia/tardigrade-agent/atoms/durable/inference"
-import { reduceSpend, spendState } from "@clavia/tardigrade-agent/atoms/durable/spend"
+import { spendState } from "@clavia/tardigrade-agent/atoms/durable/spend"
 import { reducePermissions, permissionState } from "@clavia/tardigrade-agent/atoms/durable/permissions"
 import { reduceBudget, budgetState } from "@clavia/tardigrade-agent/atoms/durable/budget"
 import { toolState, pendingTools } from "@clavia/tardigrade-agent/atoms/durable/tools"
 import { codeModeState, executions } from "@clavia/tardigrade-agent/atoms/durable/code-mode"
+
+import { reduceSpend } from "./spend-oracle"
 
 export const agentCollectionCases = fc.record({ turns: fc.array(fc.record({ text: fc.string(), allowed: fc.boolean(), unknownCost: fc.boolean(), missingTime: fc.boolean() }), { minLength: 2, maxLength: 5 }), cacheBytes: fc.constantFrom(0, 1024, 32768), chunkBytes: fc.constantFrom(3, 4096) })
 type Case = typeof agentCollectionCases extends fc.Arbitrary<infer Value> ? Value : never

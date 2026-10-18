@@ -32,7 +32,7 @@ export function synchronousRecoveryStorage(grove: ReturnType<typeof makeSync>, i
 }
 
 // initializeSyncRecovery creates actor-scoped wake and recovery tables (test/bun/stored-journal-recovery.test.ts).
-export function initializeSyncRecovery(tx: Transaction) {
+export function initializeSyncRecovery(tx: Pick<Transaction, "execute">) {
   tx.execute("CREATE TABLE IF NOT EXISTS stored_scheduler_wakes(actor TEXT NOT NULL,id TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(actor,id)) WITHOUT ROWID", [])
   tx.execute("CREATE TABLE IF NOT EXISTS stored_scheduler_generation(actor TEXT PRIMARY KEY,value INTEGER NOT NULL) WITHOUT ROWID", [])
   tx.execute("CREATE TABLE IF NOT EXISTS stored_watchdog_entries(actor TEXT NOT NULL,id TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(actor,id)) WITHOUT ROWID", [])

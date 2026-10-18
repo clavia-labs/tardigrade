@@ -294,11 +294,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
       } }
     },
     owners, replaceOwners, hold, release, held: ownership.held,
-    bytes: (ref: ValueReference<unknown>) => {
-      const locator = referenceLocator(ref, scope)
-      if (locator.path.length || locator.each !== undefined || locator.range !== undefined) throw new Error("Byte measurement requires a whole-document reference")
-      return base.bytes(ref)
-    },
+    bytes: base.bytes,
     capture: base.capture,
     // readValue reads captured drafts or persisted values while local owners protect their dependencies (platform/test/bun/cold-results.test.ts).
     readValue: (ref: ValueReference<unknown>): Json => {

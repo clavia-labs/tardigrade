@@ -1,3 +1,4 @@
+import { snapshotWrites } from "./staging"
 import { memoryRows } from "../storage/memory/append-only"
 import { FORMAT_VERSION, digest, payload, freezeJson, bytes, type Json, type Node } from "../storage/nodes"
 import type { ReadCache } from "../session/cache"
@@ -99,19 +100,7 @@ export function makeLogs(backend: RowStorage | undefined, cache: ReadCache, batc
       if (offset >= end) break
     }
   }
-  const snapshot = (nodes: Iterable<Node>): LogBatch => {
-    const writes: LogWrite[] = [], seen = new Set<string>()
-    const visit = (node: LogVersion) => {
-      if (seen.has(node.hash)) return
-      seen.add(node.hash)
-      const write = pending.get(node.hash)
-      if (!write) return
-      if (write.parent) visit(write.parent)
-      writes.push(write)
-    }
-    for (const node of nodes) if (node.tag === "l") visit(node)
-    return Object.freeze({ writes: Object.freeze(writes) })
-  }
+  const snapshot = (nodes: Iterable<Node>): LogBatch => Object.freeze({ writes: snapshotWrites(pending, nodes, "l") })
   const stage = (node: Node, texts: readonly string[], parent?: Node) => {
     if (!pending.has(node.hash)) pending.set(node.hash, Object.freeze({ node, texts: Object.freeze(texts), ...(parent ? { parent } : {}) }))
     return node

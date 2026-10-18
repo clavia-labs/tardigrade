@@ -26,22 +26,25 @@ export const prepareDocumentInput = (value: unknown) => {
 // documentSession binds Grove snapshots to projection and accepted-operation lifetimes.
 export function documentSession(storage: Omit<Grove.Storage, "scope"> & { readonly scope?: string }) {
   const grove = Grove.make({ ...storage, scope: storage.scope ?? "tardigrade/memory" })
-  const bind = <State extends Json>(schema: Schema.Decoder<State>) => {
-    const binding = grove.bind(schema)
-    return { initial: binding.initial, check: binding.check, open: (encoded: string) => binding.open(Grove.decodeReference(encoded)) }
+  return { ...grove, ...encodedSession(grove, grove.read), held: () => grove.held().map(Grove.encodeReference) }
+}
+
+// encodedSession adapts Grove references to Core's recorded strings while preserving the caller's value-read lifetime (platform/test/bun/cold-results.test.ts).
+export function encodedSession(grove: Pick<Grove.Instance, "bind" | "capture" | "stats" | "bytes" | "view" | "hold" | "release">, read: (reference: Grove.ValueReference<unknown>) => Json): DocumentSession {
+  const bind: DocumentSession["bind"] = <State extends Json>(schema: Schema.Decoder<State>) => {
+    const binding = grove.bind<State>(schema)
+    return { initial: binding.initial, check: binding.check, open: encoded => binding.open(Grove.decodeReference(encoded)) }
   }
-  const readReference = (encoded: string): Json => grove.view(Grove.decodeReference(encoded), Schema.Json).materialize()
-  const session = {
-    ...grove, bind,
-    hold: (holder: object, name: string, encoded: string) => grove.hold(holder, name, Grove.decodeReference(encoded)),
-    held: () => grove.held().map(Grove.encodeReference),
-    capture: (value: Json) => Grove.encodeReference(grove.capture(value)),
-    bytes: (encoded: string) => grove.bytes(Grove.decodeReference(encoded)),
-    read: readReference,
+  const readReference: DocumentSession["readReference"] = encoded => grove.view(Grove.decodeReference(encoded), Schema.Json).materialize()
+  return {
+    bind, capture: value => Grove.encodeReference(grove.capture(value)), stats: grove.stats,
+    bytes: encoded => grove.bytes(Grove.decodeReference(encoded)),
+    read: encoded => read(Grove.decodeReference(encoded)),
     readReference,
-    resolve: (request: { readonly input: Json; readonly selections?: readonly InputSelection[] }): Json => resolveInput(request, readReference),
+    resolve: request => resolveInput(request, readReference),
+    hold: (holder, name, encoded) => grove.hold(holder, name, Grove.decodeReference(encoded)),
+    release: grove.release,
   }
-  return session satisfies DocumentSession
 }
 
 // DocumentSession provides synchronous document access and retention for projections (properties/durable-state.test.ts; platform/test/bun/stored-journal.test.ts).

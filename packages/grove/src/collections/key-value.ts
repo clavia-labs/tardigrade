@@ -1,3 +1,4 @@
+import { snapshotWrites } from "./staging"
 import { FORMAT_VERSION, bytes, digest, payload, freezeJson, type Json, type Node } from "../storage/nodes"
 import type { ReadCache } from "../session/cache"
 import { memoryMaps } from "../storage/memory/key-value"
@@ -104,19 +105,7 @@ export function makeMaps(backend: MapStorage | undefined, cache: ReadCache, batc
     const id = digest(JSON.stringify(["map", [...changes].map(([key, change]) => [key, change.text])]))
     return stage(build(id, changes.size, size, changes.size), changes)
   }
-  const snapshot = (nodes: Iterable<Node>): MapBatch => {
-    const writes: MapWrite[] = [], seen = new Set<string>()
-    const visit = (node: Version) => {
-      if (seen.has(node.hash)) return
-      seen.add(node.hash)
-      const write = pending.get(node.hash)
-      if (!write) return
-      if (write.parent) visit(write.parent)
-      writes.push(write)
-    }
-    for (const node of nodes) if (node.tag === "m") visit(node)
-    return Object.freeze({ writes: Object.freeze(writes) })
-  }
+  const snapshot = (nodes: Iterable<Node>): MapBatch => Object.freeze({ writes: snapshotWrites(pending, nodes, "m") })
   return {
     create,
     change: (current: Node, key: string, next: Json | undefined) => {

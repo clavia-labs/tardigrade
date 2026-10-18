@@ -33,9 +33,7 @@ export function checkNativeRecovery(storage: DurableObjectStorage) {
         const savedGeneration = Schema.decodeUnknownSync(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)))(rawGeneration ?? 0)
         if (wakeEntries.some(value => value.entry.generation > savedGeneration)) throw new Error("Legacy scheduler generation precedes a wake")
         const sql = storage.sql
-        sql.exec("CREATE TABLE IF NOT EXISTS stored_scheduler_wakes(actor TEXT NOT NULL,id TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(actor,id)) WITHOUT ROWID")
-        sql.exec("CREATE TABLE IF NOT EXISTS stored_scheduler_generation(actor TEXT PRIMARY KEY,value INTEGER NOT NULL) WITHOUT ROWID")
-        sql.exec("CREATE TABLE IF NOT EXISTS stored_watchdog_entries(actor TEXT NOT NULL,id TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(actor,id)) WITHOUT ROWID")
+        initializeSyncRecovery(cloudflareNativeDriver(storage))
         for (const [table, entries] of [["stored_scheduler_wakes", wakeEntries], ["stored_watchdog_entries", watchdogEntries]] as const) for (const value of entries) {
           const existing = sql.exec<{ entry: string }>(`SELECT entry FROM ${table} WHERE actor=? AND id=?`, CLOUDFLARE_RECOVERY_ACTOR, value.id).toArray()[0]
           const encoded = JSON.stringify(value.entry)
