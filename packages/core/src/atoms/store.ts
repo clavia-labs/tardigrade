@@ -6,7 +6,7 @@ import { actorGraph } from "./graph"
 import { atomInput, atomValidator } from "./effect"
 import { memoryDocuments } from "../services/tree-state"
 
-// createStore supplies private in-memory documents when EventLog omits storage (properties/collections.test.ts).
+// createStore owns an Effect registry and provides documents to durable projections.
 export function createStore(services?: Context.Context<EventLog>) {
   const registry = AtomRegistry.make()
   let documents: ReturnType<typeof memoryDocuments> | undefined
