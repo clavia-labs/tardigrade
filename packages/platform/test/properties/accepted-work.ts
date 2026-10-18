@@ -1,3 +1,6 @@
+import assert from "node:assert/strict"
+import { decodeReference, encodeReference } from "@tardie/grove"
+import { prepareDocumentInput } from "@clavia/tardigrade-core/services/tree-state"
 import { Effect, Schema } from "effect"
 import { act, createEventLog, effectAtom, encodeCheckpoint, decodeCheckpoint, checkpointDigest, type EffectCheckpoint, type JournalEvent } from "@clavia/tardigrade-core"
 import { storeRequest } from "@clavia/tardigrade-core/runtime/input-digest"
@@ -81,4 +84,48 @@ export async function coldResultScenario(driver: SyncSqlite, payload: string, pr
     snapshot = log.append(snapshot, duplicate)
     if (snapshot.view().root.view.status !== "fulfilled") throw new Error("Duplicate settlement changed status")
   } finally { log.dispose(); await Effect.runPromise(journal.close) }
+}
+
+// acceptedInputLifetime checks that acceptance retains its selected version until completion commits (integration.ts).
+export async function acceptedInputLifetime(native: SyncSqlite, text: string) {
+  const State = Schema.Struct({ messages: Schema.Array(Schema.Struct({ text: Schema.String })) })
+  let fail = true, failRelease = false
+  const driver: SyncSqlite = { ...native, execute: (sql, parameters) => {
+    if (fail && sql.startsWith("INSERT INTO experimental_events")) throw new Error("Injected journal write failure")
+    if (failRelease && sql.startsWith("DELETE FROM stored_journal_inputs")) throw new Error("Injected release failure")
+    return native.execute(sql, parameters)
+  } }
+  let journal = synchronousJournal<{ type: string }>({ actor: "stored", driver, cacheBytes: 0 })
+  try {
+    const first = journal.storedValues.bind(State).initial({ messages: [{ text: "A:" + text }] })
+    const reference = encodeReference(first.reference), ref = { atom: "model", act: "model", seq: 1 }
+    const request = { act: "model", ...prepareDocumentInput({ messages: first.selectEach(["messages"], ["text"], { start: 0, end: 1 }) }) }
+    const changes = { documents: { references: [{ name: "history", reference }] }, put: [{ ref, request }] }
+    await assert.rejects(Effect.runPromise(journal.append(0, [{ event: { type: "Accepted" } }], changes)), /Injected/)
+    assert.deepEqual(await Effect.runPromise(journal.read), [])
+    assert.deepEqual(await Effect.runPromise(journal.readInputs), [])
+    assert.deepEqual(journal.grove.owners(""), [])
+    fail = false
+    await Effect.runPromise(journal.append(0, [{ event: { type: "Accepted" } }], changes))
+    const next = first.set(["messages", 0, "text"], "B:" + text), nextReference = encodeReference(next.reference)
+    await Effect.runPromise(journal.append(1, [{ event: { type: "Advanced" } }], { documents: { references: [{ name: "history", reference: nextReference }] } }))
+    await Effect.runPromise(journal.collect)
+    assert.deepEqual(journal.storedValues.resolve(request), { messages: ["A:" + text] })
+    await Effect.runPromise(journal.close)
+    journal = synchronousJournal({ actor: "stored", driver, cacheBytes: 0 })
+    const accepted = (await Effect.runPromise(journal.readInputs))[0]!
+    assert.deepEqual(journal.storedValues.resolve(accepted.request), { messages: ["A:" + text] })
+    assert.equal(journal.storedValues.bind(State).open(nextReference).read(["messages", 0, "text"]), "B:" + text)
+    failRelease = true
+    await assert.rejects(Effect.runPromise(journal.append(2, [{ event: { type: "Completed" } }], { remove: [ref] })), /Injected/)
+    assert.equal((await Effect.runPromise(journal.readInputs)).length, 1)
+    assert.deepEqual(journal.storedValues.resolve(request), { messages: ["A:" + text] })
+    failRelease = false
+    await Effect.runPromise(journal.append(2, [{ event: { type: "Completed" } }], { remove: [ref] }))
+    await Effect.runPromise(journal.collect)
+    assert.deepEqual(await Effect.runPromise(journal.readInputs), [])
+    assert.throws(() => journal.grove.view(decodeReference(reference), State).materialize())
+    assert.equal(journal.grove.stats().activeLeases, 0)
+    assert.equal(journal.grove.stats().stagedNodes, 0)
+  } finally { await Effect.runPromise(journal.close) }
 }

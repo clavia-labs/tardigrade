@@ -1,6 +1,3 @@
-import fc from "fast-check"
-import { acknowledgementRetry, acknowledgementOrdering } from "../properties/journal-acknowledgement"
-import { coldResultScenario } from "../properties/cold-results"
 import { env } from "cloudflare:workers"
 import { evictDurableObject, runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
@@ -12,6 +9,8 @@ import { synchronousJournal } from "../../src/shared/synchronous-journal"
 import { CLOUDFLARE_SQL_LIMITS } from "../../src/cloudflare/limits"
 import type { TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
 import type { SyncSqlite } from "@tardie/grove/sqlite"
+import { journalProperties } from "../properties/integration"
+import { withSqlite } from "../fixtures/workerd/sqlite"
 
 const State = Schema.Struct({ messages: Schema.Array(Schema.Struct({ text: Schema.String })) })
 const driverFor = (storage: DurableObjectStorage): SyncSqlite => ({ identity: storage.sql, execute: (sql, parameters) => storage.sql.exec(sql, ...parameters).toArray(), transaction: work => storage.transactionSync(work) })
@@ -190,31 +189,4 @@ test("native oversized journal envelopes roll back partial chunks and reopen aft
   })
 })
 
-
-for (const promised of [false, true]) for (const inline of [false, true]) test(`native cold results survive recovery (promise: ${promised}, inline checkpoint: ${inline})`, async () => {
-  const namespace = (env as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
-  await runInDurableObject(namespace.getByName(`cold-result-${promised}-${inline}`), async (_instance, state) => {
-    await coldResultScenario(driverFor(state.storage), "native result".repeat(1024), promised, true, inline)
-  })
-})
-
-
-test("provisioning retries restore committed alarms under generated failures", async () => {
-  const namespace = (env as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
-  let sample = 0
-  await fc.assert(fc.asyncProperty(fc.record({ failures: fc.integer({ min: 1, max: 4 }), repeats: fc.integer({ min: 0, max: 4 }), now: fc.integer({ min: 1, max: 1_000_000_000 }) }), async options => {
-    await runInDurableObject(namespace.getByName(`acknowledgement-retry-${sample++}`), async (_instance, state) => {
-      await acknowledgementRetry(driverFor(state.storage), options)
-    })
-  }), { numRuns: 20, includeErrorInReport: true })
-})
-
-test("acknowledgement serializes competing generated recovery wakes", async () => {
-  const namespace = (env as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
-  let sample = 0
-  await fc.assert(fc.asyncProperty(fc.integer({ min: 1, max: 1_000_000 }), fc.integer({ min: 1, max: 1_000_000 }), async (early, gap) => {
-    await runInDurableObject(namespace.getByName(`acknowledgement-order-${sample++}`), async (_instance, state) => {
-      await acknowledgementOrdering(driverFor(state.storage), early, gap)
-    })
-  }), { numRuns: 20, includeErrorInReport: true })
-})
+for (const property of journalProperties) test(property.name, () => property.run(withSqlite, property.workerRuns), 30_000)

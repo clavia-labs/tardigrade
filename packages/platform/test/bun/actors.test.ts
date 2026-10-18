@@ -1,20 +1,10 @@
 import { expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import fc from "fast-check"
 import { Context, Effect, Schema } from "effect"
 import { act, defineActor, effectAtom, createActorStore } from "@clavia/tardigrade-core"
 import { synchronousJournal } from "../../src/shared/synchronous-journal"
-import { coldResultScenario } from "../properties/cold-results"
-
-for (const promised of [false, true]) test(`cold ${promised ? "promise" : "direct"} results remain readable across rollback and restart`, async () => {
-  await fc.assert(fc.asyncProperty(fc.string(), fc.integer({ min: 2048, max: 16384 }), fc.boolean(), fc.boolean(), async (suffix, size, fail, inline) => {
-    const db = new Database(":memory:")
-    try {
-      await coldResultScenario({ identity: db, execute: (sql, parameters) => db.query<Record<string, unknown>, (typeof parameters)[number][]>(sql).all(...parameters), transaction: work => db.transaction(work)() }, "x".repeat(size) + suffix, promised, fail, inline)
-    } finally { db.close() }
-  }), { numRuns: 30, includeErrorInReport: true })
-}, 30000)
-
+import { actorProperties } from "../properties/integration"
+import { withSqlite } from "../fixtures/bun/sqlite"
 
 for (const coldMinBytes of [0, Number.MAX_SAFE_INTEGER]) test(`actor result policy is independent of input digesting (${coldMinBytes})`, async () => {
   const db = new Database(":memory:")
@@ -37,7 +27,6 @@ for (const coldMinBytes of [0, Number.MAX_SAFE_INTEGER]) test(`actor result poli
     await expect(Effect.runPromise(store.checkpoint)).rejects.toThrow("Checkpoint exceeds maxBytes 1024")
   } finally { await Effect.runPromise(store.close); await Effect.runPromise(journal.close); db.close() }
 })
-
 
 test("actor results use the journal session across checkpoint and reopen", async () => {
   const db = new Database(":memory:")
@@ -77,3 +66,5 @@ test("actor results use the journal session across checkpoint and reopen", async
     expect(calls).toBe(1)
   } finally { await Effect.runPromise(store.close); await Effect.runPromise(journal.close); db.close() }
 })
+
+for (const property of actorProperties) test(property.name, () => property.run(withSqlite, property.bunRuns), 30_000)

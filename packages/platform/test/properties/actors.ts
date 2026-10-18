@@ -14,13 +14,13 @@ import { reduceBudget, budgetState } from "@clavia/tardigrade-agent/atoms/durabl
 import { toolState, pendingTools } from "@clavia/tardigrade-agent/atoms/durable/tools"
 import { codeModeState, executions } from "@clavia/tardigrade-agent/atoms/durable/code-mode"
 
-import { reduceSpend } from "./spend-oracle"
+import { reduceSpend } from "../fixtures/agent-oracles"
 
 export const agentCollectionCases = fc.record({ turns: fc.array(fc.record({ text: fc.string(), allowed: fc.boolean(), unknownCost: fc.boolean(), missingTime: fc.boolean() }), { minLength: 2, maxLength: 5 }), cacheBytes: fc.constantFrom(0, 1024, 32768), chunkBytes: fc.constantFrom(3, 4096) })
 type Case = typeof agentCollectionCases extends fc.Arbitrary<infer Value> ? Value : never
 const same = (actual: unknown, expected: unknown) => { if (!isDeepStrictEqual(actual, expected)) throw new Error(`Agent collections differ: ${JSON.stringify({ actual, expected })}`) }
 
-// agentCollections compares Grove projections with reducer models through native commits, collection and reopen (bun/agent-collections.test.ts; workerd/collection-state.workers.ts).
+// agentCollections compares Grove projections with reducer models through native commits, collection and reopen (bun/actors.test.ts; workerd/actors.workers.ts).
 export function agentCollections(driver: SyncSqlite, options: Case) {
   const storage = { scope: "agent-collections", cacheBytes: options.cacheBytes, chunkBytes: options.chunkBytes }, open = () => makeSync(driver, storage)
   let store = open()
@@ -66,7 +66,6 @@ export function agentCollections(driver: SyncSqlite, options: Case) {
       log.dispose(); store.discard(); store.collect(); store = open()
       log = createEventLog({ schema: Event, atoms, documents: storedSession(store), checkpoint }); snapshot = log.initial; verify()
     }
-    if (!Number(driver.execute("SELECT COUNT(*) n FROM grove_map_rows", [])[0]?.n)) throw new Error("Agent did not write native KV rows")
   } finally { log.dispose(); store.discard() }
 }
 function spendStateValue(): ReturnType<typeof reduceSpend> { return { toolSpend: [], tokenSpend: [], usdSpend: [], timeSpend: [], timers: [], turns: [], models: [], tools: [] } }

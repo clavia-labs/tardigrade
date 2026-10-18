@@ -10,7 +10,7 @@ export const recoveryLock = (identity: object) => {
   return lock
 }
 
-// synchronousRecoveryStorage serializes native recovery commits and physical alarm updates (test/bun/stored-journal-recovery.test.ts).
+// synchronousRecoveryStorage serializes native recovery commits and physical alarm updates (test/bun/journal.test.ts).
 export function synchronousRecoveryStorage(grove: ReturnType<typeof makeSync>, identity: object, actor: string, alarm: typeof Alarm.Service, flush: Effect.Effect<void, Error>, guard: () => void = () => {}) {
   const attempt = <Value>(work: () => Value) => Effect.try({ try: () => { guard(); return work() }, catch: RuntimeError.from })
   const sync = attempt(() => grove.transaction(tx => Effect.runSync(syncRecoveryTransaction(tx, actor, alarm).scheduler.list))).pipe(Effect.flatMap(entries => {
@@ -31,14 +31,14 @@ export function synchronousRecoveryStorage(grove: ReturnType<typeof makeSync>, i
   return { transaction, finish }
 }
 
-// initializeSyncRecovery creates actor-scoped wake and recovery tables (test/bun/stored-journal-recovery.test.ts).
+// initializeSyncRecovery creates actor-scoped wake and recovery tables (test/bun/journal.test.ts).
 export function initializeSyncRecovery(tx: Pick<Transaction, "execute">) {
   tx.execute("CREATE TABLE IF NOT EXISTS stored_scheduler_wakes(actor TEXT NOT NULL,id TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(actor,id)) WITHOUT ROWID", [])
   tx.execute("CREATE TABLE IF NOT EXISTS stored_scheduler_generation(actor TEXT PRIMARY KEY,value INTEGER NOT NULL) WITHOUT ROWID", [])
   tx.execute("CREATE TABLE IF NOT EXISTS stored_watchdog_entries(actor TEXT NOT NULL,id TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(actor,id)) WITHOUT ROWID", [])
 }
 
-// syncRecoveryTransaction expires with its Grove transaction (test/bun/stored-journal-recovery.test.ts).
+// syncRecoveryTransaction expires with its Grove transaction (test/bun/journal.test.ts).
 export function syncRecoveryTransaction(tx: Transaction, actor: string, alarm: typeof Alarm.Service): { scheduler: SchedulerTransaction; watchdog: WatchdogTransaction } {
   const io = <Value>(work: () => Value) => Effect.try({ try: work, catch: RuntimeError.from })
   const entries = <Value>(table: string, schema: Schema.Decoder<Value>) => {

@@ -7,7 +7,7 @@ import { checkpointFromJson } from "@clavia/tardigrade-core/services/checkpoint"
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
 
-// journalMigration converts retained 0.50 materials without rewriting event rows (test/workerd/migration.workers.ts).
+// journalMigration converts retained 0.50 materials without rewriting event rows (test/workerd/upgrade.workers.ts).
 export function journalMigration(driver: SyncSqlite, grove: SyncStore, actor: string, scope: string, chunkBytes: number, inputBytes: (key: string) => number, readerOptions: Omit<SyncOptions, "scope"> = {}) {
   const exists = (table: string) => driver.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [table]).length !== 0
   let oldStore: ReturnType<typeof legacyStore> | undefined

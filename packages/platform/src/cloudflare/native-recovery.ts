@@ -9,7 +9,7 @@ export const CLOUDFLARE_RECOVERY_ACTOR = "recovery"
 export const cloudflareNativeDriver = (storage: DurableObjectStorage): SyncSqlite => ({ identity: storage.sql, execute: (sql, parameters) => storage.sql.exec(sql, ...parameters).toArray(), transaction: work => storage.transactionSync(work) })
 const checks = new WeakMap<object, Effect.Effect<void, RuntimeError>>()
 
-// checkNativeRecovery converts KV recovery records before SQL recovery can acknowledge work (test/workerd/migration.workers.ts).
+// checkNativeRecovery converts KV recovery records before SQL recovery can acknowledge work (test/workerd/upgrade.workers.ts).
 export function checkNativeRecovery(storage: DurableObjectStorage) {
   let check = checks.get(storage.sql)
   if (!check) {

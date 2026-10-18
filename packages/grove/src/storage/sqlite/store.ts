@@ -296,7 +296,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     owners, replaceOwners, hold, release, held: ownership.held,
     bytes: base.bytes,
     capture: base.capture,
-    // readValue reads captured drafts or persisted values while local owners protect their dependencies (platform/test/bun/cold-results.test.ts).
+    // readValue reads captured drafts or persisted values while local owners protect their dependencies (platform/test/properties/accepted-work.ts).
     readValue: (ref: ValueReference<unknown>): Json => {
       const { root } = referenceLocator(ref, scope)
       return base.staging.prepare([ref]).nodes.has(root) ? base.view(ref, Schema.Json).materialize() : view(ref, Schema.Json).materialize()

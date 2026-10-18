@@ -20,7 +20,7 @@ export interface SynchronousRecoveryOptions {
   readonly flush?: Effect.Effect<void, Error> | undefined
 }
 
-// synchronousJournal shares Grove retention and journal writes in a native transaction (test/bun/stored-journal.test.ts).
+// synchronousJournal shares Grove retention and journal writes in a native transaction (test/bun/journal.test.ts).
 export function synchronousJournal<Event extends object>(options: Omit<SyncOptions, "scope"> & Pick<CheckpointChunkOptions, "checkpointChunkBytes"> & JournalRecordOptions & SynchronousRecoveryOptions & { readonly limits?: SqlJournalLimits; readonly scope?: string; readonly actor: string; readonly driver: SyncSqlite }) {
   if (!options.actor.trim()) throw new Error("Journal actor must be nonempty")
   if (options.watchdog && !options.scheduler) throw new Error("Watchdog requires a scheduler alarm and delivery handler")
@@ -168,7 +168,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
           const owner = statePrefix + document.name
           grove.commit(tx, { publish: [{ owner, expected: heads.get(owner) ?? null, document: decodeReference(document.reference) }] })
         }
-        // syncViews retains holders acquired during payload preparation (test/bun/stored-journal.test.ts).
+        // syncViews retains holders acquired during payload preparation (test/bun/journal.test.ts).
         syncViews(tx)
         for (const prepared of pending) {
           const { input, key } = prepared

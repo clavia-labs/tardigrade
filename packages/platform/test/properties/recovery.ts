@@ -10,7 +10,7 @@ export interface AcknowledgementCase {
   readonly now: number
 }
 
-// acknowledgementRetry preserves one creation and arms its committed recovery wake before a provisioning retry succeeds (bun/stored-journal-recovery.test.ts; workerd/stored-journal.workers.ts).
+// acknowledgementRetry preserves one creation and arms its committed recovery wake before a provisioning retry succeeds (bun/journal.test.ts; workerd/journal.workers.ts).
 export async function acknowledgementRetry(driver: SyncSqlite, options: AcknowledgementCase) {
   const base = Effect.runSync(Clock.clockWith(Effect.succeed))
   const clock: Clock.Clock = { ...base, currentTimeMillisUnsafe: () => options.now, currentTimeMillis: Effect.succeed(options.now) }
@@ -54,7 +54,7 @@ export async function acknowledgementRetry(driver: SyncSqlite, options: Acknowle
   } finally { await run(journal.close) }
 }
 
-// acknowledgementOrdering preserves the earliest wake when a competing schedule arrives during acknowledgement alarm I/O (bun/stored-journal-recovery.test.ts; workerd/stored-journal.workers.ts).
+// acknowledgementOrdering preserves the earliest wake when a competing schedule arrives during acknowledgement alarm I/O (bun/journal.test.ts; workerd/journal.workers.ts).
 export async function acknowledgementOrdering(driver: SyncSqlite, early: number, gap: number) {
   const entered = Deferred.makeUnsafe<void>(), release = Deferred.makeUnsafe<void>()
   let block = false, armed: number | null = null

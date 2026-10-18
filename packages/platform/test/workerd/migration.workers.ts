@@ -1,74 +1,51 @@
-import { evictDurableObject } from "cloudflare:test"
-import { env } from "cloudflare:workers"
-import { expect, test } from "vitest"
-import { waitFor, testStage } from "../fixtures/wait"
-import type { MigrationDO } from "../fixtures/workerd/migration.worker"
+import fc from "fast-check"
 import fixture from "../fixtures/migration/050-snapshot.json"
+import { env } from "cloudflare:workers"
+import { runInDurableObject, evictDurableObject } from "cloudflare:test"
+import { test, expect } from "vitest"
+import { type TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
+import { Effect } from "effect"
+import { cloudflareJournal } from "../../src/cloudflare"
+import { cloudflareNativeRecovery } from "../../src/cloudflare/native-recovery"
+import { migrationProperties } from "../properties/integration"
+import { withSqlite } from "../fixtures/workerd/sqlite"
 
-// reset discards the actor instance while retaining its native DO storage.
-async function reset(stub: DurableObjectStub<MigrationDO>) {
-  await expect(stub.abort()).rejects.toThrow("Migration fixture reset")
-}
+const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
 
-test("0.50 actor upgrades in place, rolls back failed cleanup, resumes its accepted effect and collects obsolete materials", async () => {
-  const namespace = (env as unknown as { MIGRATION: DurableObjectNamespace<MigrationDO> }).MIGRATION
-  let stub = namespace.getByName("050-full-migration")
-  const source = await testStage("seed actual 0.50 snapshot", () => stub.seed(), 20_000)
-  expect(fixture.source).toBe("d0191382c92c63d820a9e07c7e95b4d4ecbc0094")
-  expect(source.materials).toMatchObject({ checkpoint_trees: 1, effect_inputs: 1 })
-  expect(source.chunks.length).toBeGreaterThan(1)
-  expect(source.receipts).toEqual([{ actor: "events", id: "migration-message", seq: 0 }])
-  expect(source.nativeOwners).toEqual([])
-  expect(fixture.records.find(record => record.event.type === "EffectRequested")?.event.request?.input).toMatchObject({ _tag: "InputDigest", bytes: expect.any(Number) })
-  const recovery = await stub.inspectRecovery()
-  expect(recovery.legacy).toHaveLength(3)
-  expect(recovery.alarm).toBe(fixture.recovery.dueAt)
-  await testStage("inject cleanup transaction failure", () => stub.failCleanup())
+test("recovery transfer rolls back partial SQL writes before clearing KV and retries after eviction", () => fc.assert(fc.asyncProperty(fc.integer({ min: 1, max: 20 }), async generation => {
+  const stub = namespace.getByName(crypto.randomUUID())
+  const expected = await runInDurableObject(stub, async (_instance, state) => {
+    const wake = { ...fixture.recovery.wake, generation }
+    const entries = { ["tardie:scheduler:" + wake.id]: wake, ["tardie:watchdog:" + fixture.recovery.key]: fixture.recovery.watchdog, "tardie:scheduler-generation": generation }
+    await state.storage.put(entries)
+    await state.storage.setAlarm(fixture.recovery.dueAt)
+    state.storage.sql.exec("CREATE TABLE stored_watchdog_entries(actor TEXT NOT NULL,id TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(actor,id)) WITHOUT ROWID")
+    state.storage.sql.exec("CREATE TRIGGER recovery_migration_fault BEFORE INSERT ON stored_watchdog_entries BEGIN SELECT RAISE(ABORT,'recovery migration fault'); END")
+    const journal = cloudflareJournal(state.storage, "events")
+    try {
+      await expect(Effect.runPromise(journal.readVersion)).rejects.toThrow("requires migration")
+      expect(Object.fromEntries(await state.storage.list({ prefix: "tardie:" }))).toEqual(entries)
+      expect(await state.storage.getAlarm()).toBe(fixture.recovery.dueAt)
+      for (const table of ["stored_scheduler_wakes", "stored_watchdog_entries", "stored_scheduler_generation"]) {
+        if (state.storage.sql.exec("SELECT name FROM sqlite_master WHERE name=?", table).toArray().length) expect(state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) n FROM ${table}`).one().n).toBe(0)
+      }
+      state.storage.sql.exec("DROP TRIGGER recovery_migration_fault")
+      return entries
+    } finally { await Effect.runPromise(journal.close) }
+  })
   await evictDurableObject(stub)
-  stub = namespace.getByName("050-full-migration")
-  const failed = await testStage("upgrade with failed cleanup", () => stub.attemptUpgrade())
-  expect(await stub.inspectSource()).toEqual(source)
-  expect(await stub.inspectRecovery()).toEqual(recovery)
-  expect(failed.error).toContain("migration cleanup fault")
-  await testStage("release cleanup fault", () => stub.allowCleanup())
-  await reset(stub)
-  stub = namespace.getByName("050-full-migration")
-  const upgraded = await testStage("upgrade after cold restart", () => waitFor(() => stub.inspect(), value => value.calls.length === 1))
-  expect(upgraded.view).toEqual(fixture.view)
-  expect(upgraded.recovery.legacy).toEqual([])
-  expect(upgraded.recovery.alarm).toBe(recovery.alarm)
-  expect(upgraded.recovery.wakes).toEqual([{ actor: "recovery", id: fixture.recovery.wake.id, entry: JSON.stringify(fixture.recovery.wake) }])
-  expect(upgraded.recovery.watchdog).toEqual([{ actor: "recovery", id: fixture.recovery.key, entry: JSON.stringify(fixture.recovery.watchdog) }])
-  expect(upgraded.recovery.generation).toEqual([{ actor: "recovery", value: fixture.recovery.generation }])
-  expect(upgraded.inputs).toHaveLength(1)
-  expect(upgraded.inputs[0]!.ref).toEqual(fixture.ref)
-  expect(upgraded.calls[0]!.input).toEqual(fixture.acceptedInput)
-  expect(upgraded.job).toMatchObject({ executions: 1, submissions: 2 })
-  expect(upgraded.source.digest).toBe(source.digest)
-  expect(upgraded.source.schema).toEqual(source.schema)
-  expect(upgraded.source.materials).toEqual(Object.fromEntries(Object.keys(source.materials).map(table => [table, 0])))
-  expect(upgraded.source.nativeOwners.length).toBeGreaterThan(0)
-  await reset(stub)
-  stub = namespace.getByName("050-full-migration")
-  const resumed = await testStage("resume migrated pending input", () => waitFor(() => stub.inspect(), value => value.calls.length === 2))
-  expect(resumed.instance).not.toBe(upgraded.instance)
-  expect(resumed.calls.every(call => JSON.stringify(call.ref) === JSON.stringify(fixture.ref) && JSON.stringify(call.input) === JSON.stringify(fixture.acceptedInput))).toBe(true)
-  expect(resumed.job).toMatchObject({ executions: 1, submissions: 3 })
-  expect(resumed.source.digest).toBe(source.digest)
-  const completed = await testStage("settle accepted work and checkpoint", () => stub.finish())
-  expect(completed.view).toEqual({ ...fixture.view, done: true })
-  expect(completed.inputs).toEqual([])
-  expect(completed.job).toMatchObject({ executions: 1, status: "completed", outputs: [fixture.acceptedInput] })
-  expect(completed.source.events.slice(0, source.events.length)).toEqual(source.events)
-  expect(completed.source.chunks.slice(0, source.chunks.length)).toEqual(source.chunks)
-  expect(completed.source.receipts).toEqual(source.receipts)
-  expect(completed.source.nativeOwners.some(owner => String(owner.name).includes('"input"'))).toBe(false)
-  await reset(stub)
-  stub = namespace.getByName("050-full-migration")
-  const settled = await testStage("restart completed migration", () => stub.inspect())
-  expect(settled.instance).not.toBe(completed.instance)
-  expect(settled.view).toEqual(completed.view)
-  expect(settled.inputs).toEqual([])
-  expect(settled.calls).toEqual(completed.calls)
-  expect(settled.source).toEqual(completed.source)
-}, 60000)
+  await runInDurableObject(stub, async (_instance, state) => {
+    const journal = cloudflareJournal(state.storage, "events")
+    try {
+      await Effect.runPromise(journal.readVersion)
+      expect(await state.storage.list({ prefix: "tardie:" })).toEqual(new Map())
+      expect(await state.storage.getAlarm()).toBe(fixture.recovery.dueAt)
+      expect(JSON.parse(state.storage.sql.exec<{ entry: string }>("SELECT entry FROM stored_scheduler_wakes").one().entry)).toEqual(expected["tardie:scheduler:" + fixture.recovery.wake.id])
+      expect(JSON.parse(state.storage.sql.exec<{ entry: string }>("SELECT entry FROM stored_watchdog_entries").one().entry)).toEqual(fixture.recovery.watchdog)
+      const recovery = cloudflareNativeRecovery(state.storage)
+      expect(await Effect.runPromise(recovery.transaction(tx => tx.scheduler.allocateGeneration))).toBe(generation + 1)
+    } finally { await Effect.runPromise(journal.close) }
+  })
+}), { numRuns: 5, includeErrorInReport: true }), 30000)
+
+for (const property of migrationProperties) test(property.name, () => property.run(withSqlite, property.workerRuns), 30_000)

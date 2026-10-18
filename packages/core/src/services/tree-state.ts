@@ -29,7 +29,7 @@ export function documentSession(storage: Omit<Grove.Storage, "scope"> & { readon
   return { ...grove, ...encodedSession(grove, grove.read), held: () => grove.held().map(Grove.encodeReference) }
 }
 
-// encodedSession adapts Grove references to Core's recorded strings while preserving the caller's value-read lifetime (platform/test/bun/cold-results.test.ts).
+// encodedSession adapts Grove references to Core's recorded strings while preserving the caller's value-read lifetime (platform/test/properties/accepted-work.ts).
 export function encodedSession(grove: Pick<Grove.Instance, "bind" | "capture" | "stats" | "bytes" | "view" | "hold" | "release">, read: (reference: Grove.ValueReference<unknown>) => Json): DocumentSession {
   const bind: DocumentSession["bind"] = <State extends Json>(schema: Schema.Decoder<State>) => {
     const binding = grove.bind<State>(schema)
@@ -47,7 +47,7 @@ export function encodedSession(grove: Pick<Grove.Instance, "bind" | "capture" | 
   }
 }
 
-// DocumentSession provides synchronous document access and retention for projections (properties/durable-state.test.ts; platform/test/bun/stored-journal.test.ts).
+// DocumentSession provides synchronous document access and retention for projections (properties/durable-state.test.ts; platform/test/bun/journal.test.ts).
 export interface DocumentSession {
   readonly bind: <State extends Json>(schema: Schema.Decoder<State>) => {
     readonly initial: (value: unknown) => Grove.MerkleTree<State>

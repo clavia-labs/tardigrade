@@ -25,7 +25,7 @@ export interface Mutations<State, Result> {
   readonly remove: <const P extends Path>(path: P & RemovablePath<State, P> & EditPath<State, P>) => Result
 }
 export interface MerkleTree<State> extends Mutations<State, MerkleTree<State>> {
-  // reference identifies this immutable version within its storage scope (platform/test/bun/stored-journal.test.ts).
+  // reference identifies this immutable version within its storage scope (platform/test/bun/journal.test.ts).
   readonly reference: ValueReference<State>
   readonly has: <const P extends Path>(path: Valid<State, P>) => boolean
   readonly read: <const P extends Path>(path: Valid<State, P>) => At<State, P>
@@ -197,7 +197,7 @@ export function make(storage: Storage) {
       for (const [hash, node] of captured.nodes) if (pending.get(hash) === node) pending.delete(hash)
       prepared.delete(batch)
     },
-    // discard abandons unheld staging while preserving draft dependencies and cached committed values (test/transactions.test.ts; platform/test/bun/stored-journal.test.ts).
+    // discard abandons unheld staging while preserving draft dependencies and cached committed values (test/transactions.test.ts; platform/test/bun/journal.test.ts).
     discard: (references: Iterable<ValueReference<unknown>> = ownership.held()) => {
       const retained = staging.prepare(references).nodes
       logs.discard(retained.values())

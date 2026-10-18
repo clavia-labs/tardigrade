@@ -5,7 +5,7 @@ import type { spendState } from "@clavia/tardigrade-agent/atoms/durable/spend"
 
 type SpendState = Atom.Type<typeof spendState>
 
-// reduceSpend models array-based spend transitions for native collection comparison (agent-collections.ts).
+// reduceSpend models array-based spend transitions for native collection comparison (../properties/actors.ts).
 export function reduceSpend(state: SpendState, event: Event | ObservedCoreEvent, metadata: RecordMetadata): SpendState {
   if (metadata.recordedAt !== undefined) {
     let updated: Array<SpendState["timeSpend"][number]> | undefined
