@@ -62,7 +62,7 @@ test("stock agent reaches 10k events with bounded SQLite checkpoints and linear 
       const modelRequests = records.filter(record => record.event.type === "EffectRequested" && record.event.request.act === Generate.name)
       expect(modelRequests.length).toBeGreaterThan(500)
       expect(modelRequests.slice(9).every(record => record.event.type === "EffectRequested" && Schema.is(InputDigest)(record.event.request.input))).toBe(true)
-      const checkpoint = state.storage.sql.exec<{ bytes: number; chunks: number; max: number; blobs: number }>("SELECT SUM(length(payload)) AS bytes, COUNT(*) AS chunks, MAX(length(payload)) AS max, SUM(typeof(payload) = 'blob') AS blobs FROM checkpoint_chunks").one()
+      const checkpoint = state.storage.sql.exec<{ bytes: number; chunks: number; max: number; blobs: number }>("SELECT SUM(length(payload)) AS bytes, COUNT(*) AS chunks, MAX(length(payload)) AS max, SUM(typeof(payload) = 'blob') AS blobs FROM stored_journal_checkpoint_chunks").one()
       expect(checkpoint.chunks).toBeGreaterThan(1)
       expect(checkpoint.blobs).toBe(checkpoint.chunks)
       expect(checkpoint.max).toBeLessThanOrEqual(DEFAULT_CHECKPOINT_CHUNK_BYTES)

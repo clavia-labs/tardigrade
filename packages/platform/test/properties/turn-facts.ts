@@ -1,6 +1,7 @@
 import { Clock, Context, Effect, Layer } from "effect"
 import * as fc from "fast-check"
 import { defineActor, effectAtom, RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
+import { documentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { createTestStore } from "./runtime/store"
 import { trajectory, messages, timeSpend } from "@clavia/tardigrade-agent/atoms/durable"
 import { Event } from "@clavia/tardigrade-agent/contracts/events"
@@ -15,22 +16,28 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
   const base = yield* Clock.clockWith(Effect.succeed)
   const clock: Clock.Clock = { ...base, currentTimeMillisUnsafe: () => now, currentTimeMillis: Effect.sync(() => now) }
   const nodes = new Map<string, string>()
+  const session = documentSession({ load: hash => { const value = nodes.get(hash); if (value === undefined) throw new RuntimeError("Missing tree node"); return value } })
+  const persist = () => {
+    const batch = session.staging.prepare(), staged = batch.nodes
+    for (const [hash, node] of staged) nodes.set(hash, node.text)
+    session.staging.acknowledge(batch)
+  }
   const records: Recorded<Event>[] = []
   let checkpoint: StoredCheckpoint | undefined
   const journal: Journal<Event> = {
-    trees: { load: hash => { const value = nodes.get(hash); if (value === undefined) throw new RuntimeError("Missing tree node"); return value } },
+    storedValues: session,
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     readCheckpoint: Effect.sync(() => checkpoint),
-    append: (position, events, inputs) => Effect.sync(() => {
+    append: (position, events) => Effect.sync(() => {
       if (position !== records.length) throw new RuntimeError("Unexpected journal position")
-      for (const [hash, node] of inputs?.trees?.nodes ?? []) nodes.set(hash, node.text)
+      persist()
       records.push(...events)
     }),
-    appendWithCheckpoint: (position, events, value, inputs) => Effect.sync(() => {
+    appendWithCheckpoint: (position, events, value) => Effect.sync(() => {
       if (position !== records.length) throw new RuntimeError("Unexpected checkpoint position")
       if (value.position !== (checkpoint?.position ?? 0) + 2) throw new RuntimeError("Checkpoint threshold cadence changed across recovery")
-      for (const [hash, node] of inputs?.trees?.nodes ?? []) nodes.set(hash, node.text)
+      persist()
       records.push(...events)
       checkpoint = value
     }),

@@ -1,3 +1,5 @@
+import { RuntimeError } from "@clavia/tardigrade-core"
+import { documentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { expect, test } from "bun:test"
 import { Context, Deferred, Effect, Schema } from "effect"
 import { act, defineActor, durablePromise, effectAtom, EffectExecution, ExecutionResult, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
@@ -18,6 +20,7 @@ test("reopening retries the local effect and recreates its producer with the ori
   const refs: EffectRef[] = []
   const producers: Deferred.Deferred<string>[] = []
   const journal: Journal<Event> = {
+    storedValues: documentSession({ load: () => { throw new RuntimeError("Missing test document") } }),
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires an undefined checkpoint result.

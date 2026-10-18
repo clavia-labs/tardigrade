@@ -1,3 +1,4 @@
+import { documentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, ExecutionHandle, EffectRef as EffectRefSchema, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
@@ -33,6 +34,7 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
   let watches = 0
   let watchAttempts = 0
   const journal: Journal<Event> = {
+    storedValues: documentSession({ load: () => { throw new RuntimeError("Missing test document") } }),
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined; Effect.void has a void result type.

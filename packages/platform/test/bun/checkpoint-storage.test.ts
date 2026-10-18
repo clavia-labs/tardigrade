@@ -23,9 +23,9 @@ test("checkpointStorage", async () => {
   mkdirSync(dirname(filename), { recursive: true })
   const db = new Database(filename, { create: true })
   try {
-    await checkpointStorage({ open: (checkpointChunkBytes, checkpointTree) => bunJournal({ filename, actor: "events", checkpointChunkBytes, checkpointTree, eventInlineBytes: 1 }), execute: async query => db.query<Record<string, unknown>, []>(query).all() })
+    await checkpointStorage({ open: checkpointChunkBytes => bunJournal({ filename, actor: "events", checkpointChunkBytes, eventInlineBytes: 1 }), execute: async query => db.query<Record<string, unknown>, []>(query).all() })
     const observer = observeBunThread({ storage: directory, coordinate, schema: Schema.Struct({ type: Schema.Literal("Stored"), value: Schema.String }) })
-    try { await Effect.runPromise(observer.refresh); expect([...observer.records.get()].map(record => record.event)).toEqual(["first", "second", "pending", "settled", "tree"].map(value => ({ type: "Stored", value }))) }
+    try { await Effect.runPromise(observer.refresh); expect([...observer.records.get()].map(record => record.event)).toEqual(["first", "second", "pending", "settled"].map(value => ({ type: "Stored", value }))) }
     finally { await Effect.runPromise(observer.close) }
   }
   finally { db.close(); rmSync(directory, { recursive: true, force: true }) }

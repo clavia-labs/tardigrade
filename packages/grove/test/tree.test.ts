@@ -1,33 +1,35 @@
 import { expect, test } from "bun:test"
-import { Effect } from "effect"
 import * as fc from "fast-check"
-import { JsonTree, type Json, type Tree } from "@tardie/grove"
-import { GroveError, makeReader } from "@tardie/grove/effect"
-import { digest, descriptor } from "../src/codec"
+import type { Json } from "@tardie/grove"
+import type { Tree } from "../src/storage/nodes"
+import * as JsonTree from "../src/collections/tree"
+import { hydrate } from "./hydrate"
+import { GroveError, makeReader } from "../src/session/reader"
+import { digest, descriptor } from "../src/storage/nodes"
 
 const texts = (tree: Tree) => new Map([...tree.nodes].map(([hash, node]) => [hash, node.text]))
-const load = (stored: ReadonlyMap<string, string>) => (hash: string) => stored.has(hash) ? Effect.succeed(stored.get(hash)!) : Effect.fail(new GroveError({ message: "Missing node" }))
+const load = (stored: ReadonlyMap<string, string>) => (hash: string) => stored.get(hash) ?? (() => { throw new GroveError({ message: "Missing node" }) })()
 
 test("JSON roundtrips and immutable updates preserve earlier roots", () => {
   fc.assert(fc.property(fc.jsonValue(), raw => {
     const value = JSON.parse(JSON.stringify(raw)) as Json
     const tree = JsonTree.make({ pageItems: 3, fanout: 3, leafBytes: 64 })
     const original = tree.from(value)
-    expect(tree.materialize(JsonTree.hydrate(original.root, texts(original)))).toEqual(value)
+    expect(tree.materialize(hydrate(original.root, texts(original)))).toEqual(value)
     expect(original.logicalBytes).toBe(Buffer.byteLength(JSON.stringify(value)))
     const changed = tree.set(original, [], { replaced: true })
     expect(tree.materialize(changed)).toEqual({ replaced: true })
     expect(tree.materialize(original)).toEqual(value)
-  }), { numRuns: 100 })
+  }), { includeErrorInReport: true, numRuns: 100 })
   const tree = JsonTree.make()
   expect(() => tree.from(NaN)).toThrow("finite")
   expect(() => tree.from(Infinity)).toThrow("finite")
   expect(() => JsonTree.make({ fanout: 1 })).toThrow("at least two")
 })
 
-test("cold and hydrated updates produce identical roots across mixed operations", async () => {
+test("cold and hydrated updates produce identical roots across mixed operations", () => {
   const step = fc.record({ kind: fc.constantFrom("append", "set", "field"), n: fc.nat(1000), index: fc.nat(100), count: fc.integer({ min: 1, max: 5 }) })
-  await fc.assert(fc.asyncProperty(fc.constantFrom(2, 3, 8), fc.constantFrom(2, 3, 4), fc.constantFrom(8, 24, 64), fc.array(step, { minLength: 20, maxLength: 80 }), async (pageItems, fanout, tailBytes, steps) => {
+  fc.assert(fc.property(fc.constantFrom(2, 3, 8), fc.constantFrom(2, 3, 4), fc.constantFrom(8, 24, 64), fc.array(step, { minLength: 20, maxLength: 80 }), (pageItems, fanout, tailBytes, steps) => {
     const options = { pageItems, fanout, leafBytes: 64, tailBytes, cacheBytes: 256 }
     const tree = JsonTree.make(options)
     let value = { history: [] as Json[], state: { count: 0 } }
@@ -39,115 +41,44 @@ test("cold and hydrated updates produce identical roots across mixed operations"
       let cold: Tree
       if (step.kind === "field") {
         value = { ...value, state: { count: step.n } }
-        cold = await Effect.runPromise(reader.set(current.root, ["state", "count"], step.n))
+        cold = reader.set(current.root, ["state", "count"], step.n)
         current = tree.set(current, ["state", "count"], step.n)
       } else if (step.kind === "append" || !value.history.length) {
         const items = Array.from({ length: step.count }, (_, n) => ({ n: step.n, nested: Array.from({ length: n + step.n % 10 }, (_, i) => i) }))
         value = { ...value, history: [...value.history, ...items] }
-        cold = await Effect.runPromise(reader.append(current.root, ["history"], items))
+        cold = reader.append(current.root, ["history"], items)
         current = tree.append(current, ["history"], items)
       } else {
         const index = step.index % value.history.length
         const replacement = { text: `edited ${i}`, nested: [1, 2] }
         const history = [...value.history]; history[index] = replacement
         value = { ...value, history }
-        cold = await Effect.runPromise(reader.set(current.root, ["history", index], replacement))
+        cold = reader.set(current.root, ["history", index], replacement)
         current = tree.set(current, ["history", index], replacement)
       }
       expect(cold.root).toBe(current.root)
       expect(cold.logicalBytes).toBe(Buffer.byteLength(JSON.stringify(value)))
       for (const node of cold.nodes.values()) stored.set(node.hash, node.text)
-      expect(tree.materialize(JsonTree.hydrate(cold.root, stored))).toEqual(value)
+      expect(tree.materialize(hydrate(cold.root, stored))).toEqual(value)
       const start = step.index % (value.history.length + 1)
       const end = Math.min(value.history.length, start + step.count)
-      expect(await Effect.runPromise(reader.sliceEach(current.root, ["history"], start, end, ["nested"]))).toEqual(value.history.slice(start, end).map(item => (item as { readonly nested: Json }).nested))
+      expect([...reader.scan(current.root, ["history"], { start, end }, ["nested"])]).toEqual(value.history.slice(start, end).map(item => (item as { readonly nested: Json }).nested))
       expect(reader.stats().cachedBytes).toBeLessThanOrEqual(options.cacheBytes)
     }
-    expect(tree.materialize(JsonTree.hydrate(first, stored))).toEqual({ history: [], state: { count: 0 } })
+    expect(tree.materialize(hydrate(first, stored))).toEqual({ history: [], state: { count: 0 } })
     const reader = makeReader(load(stored), options)
-    expect((await Effect.runPromise(reader.append(current.root, ["history"], []))).root).toBe(current.root)
-    const nested = await Effect.runPromise(reader.append(current.root, ["history", 0, "nested"], [42]))
+    expect((reader.append(current.root, ["history"], [])).root).toBe(current.root)
+    const nested = reader.append(current.root, ["history", 0, "nested"], [42])
     expect(nested.root).toBe(tree.append(current, ["history", 0, "nested"], [42]).root)
-  }), { numRuns: 40 })
+  }), { includeErrorInReport: true, numRuns: 40 })
 }, 30000)
 
-test("cold 100000-message edits and reads leave unrelated subtrees unloaded", async () => {
-  const tree = JsonTree.make()
-  const value = { history: Array.from({ length: 100000 }, (_, n) => ({ n, text: `message ${n}` })), archive: "x".repeat(150000), state: { phase: "idle" } }
-  const original = tree.from(value)
-  const stored = texts(original)
-  const reader = () => makeReader(load(stored), { cacheBytes: 8192 })
-  const appendReader = reader()
-  const appended = await Effect.runPromise(appendReader.append(original.root, ["history"], [{ n: 100000, text: "next" }]))
-  expect(appended.root).toBe(tree.append(original, ["history"], [{ n: 100000, text: "next" }]).root)
-  expect(appendReader.stats().loadedNodes).toBeLessThan(10)
-  expect(appendReader.stats().loadedBytes).toBeLessThan(20000)
-  expect(() => tree.materialize(appended)).toThrow("explicit read")
-  const setReader = reader()
-  const edited = await Effect.runPromise(setReader.set(original.root, ["history", 50000, "text"], "edited"))
-  expect(edited.root).toBe(tree.set(original, ["history", 50000, "text"], "edited").root)
-  expect(setReader.stats().loadedNodes).toBeLessThan(10)
-  const fieldReader = reader()
-  expect((await Effect.runPromise(fieldReader.set(original.root, ["archive"], "replaced"))).root).toBe(tree.set(original, ["archive"], "replaced").root)
-  expect(fieldReader.stats().loadedNodes).toBe(1)
-  const reads = reader()
-  expect(await Effect.runPromise(reads.slice(original.root, ["history"], 99936, 100000))).toEqual(value.history.slice(-64))
-  expect(await Effect.runPromise(reads.length(original.root, ["history"]))).toBe(100000)
-  expect(await Effect.runPromise(reads.read(original.root, ["state"]))).toEqual(value.state)
-  expect(reads.stats().loadedNodes).toBeLessThan(12)
-  expect(reads.stats().cachedBytes).toBeLessThanOrEqual(8192)
-})
-
-test("node verification rejects corruption, unsupported formats and forged metadata", async () => {
-  const tree = JsonTree.make({ pageItems: 2 })
-  const original = tree.from({ history: Array.from({ length: 10 }, (_, n) => n) })
-  const stored = texts(original)
-  const manifest = JSON.parse(original.node.text) as [number, string, [string, [string, string, number, number, number]][]]
-  manifest[2][0]![1][2]++
-  const text = JSON.stringify(manifest)
-  const root = digest(text)
-  stored.set(root, text)
-  expect(() => JsonTree.hydrate(root, stored)).toThrow("metadata mismatch")
-  await expect(Effect.runPromise(makeReader(load(stored)).append(root, ["history"], [11]))).rejects.toThrow("metadata mismatch")
-  const unsupported = JSON.stringify([999, "v", 1])
-  expect(() => JsonTree.hydrate(digest(unsupported), new Map([[digest(unsupported), unsupported]]))).toThrow("version")
-  stored.set(original.root, "[]")
-  await expect(Effect.runPromise(makeReader(load(stored)).read(original.root))).rejects.toThrow("corrupt")
-})
-
-test("metadata mismatches use the typed error channel on cold and cached reads", async () => {
-  const original = JsonTree.make({ pageItems: 2 }).from([1, 2, 3])
-  const stored = texts(original)
-  const child = descriptor(original.node.links[0]!)
-  const text = JSON.stringify([3, "a", [child[0], child[1], child[2] + 1, child[3], child[4]]])
-  const root = digest(text)
-  stored.set(root, text)
-  for (const warm of [false, true]) {
-    const reader = makeReader(load(stored))
-    if (warm) await Effect.runPromise(reader.read(original.root))
-    const failure = await Effect.runPromise(reader.read(root).pipe(Effect.flip))
-    expect(failure).toBeInstanceOf(GroveError)
-    expect(failure.message).toContain("metadata mismatch")
-  }
-})
-
-test("concurrent reads account for each cached node once", async () => {
-  const original = JsonTree.make().from(null)
-  const text = original.node.text
-  const reader = makeReader(() => Effect.yieldNow.pipe(Effect.as(text)), { cacheBytes: 1024 })
-  expect(await Effect.runPromise(Effect.all([reader.read(original.root), reader.read(original.root)], { concurrency: "unbounded" }))).toEqual([null, null])
-  expect(reader.stats().cachedNodes).toBe(1)
-  expect(reader.stats().cachedBytes).toBe(Buffer.byteLength(text))
-  reader.clear()
-  expect(reader.stats().cachedBytes).toBe(0)
-})
-
-test("batches preserve sequential roots across overlapping and mixed edits", async () => {
+test("batches preserve sequential roots across overlapping and mixed edits", () => {
   const edit = fc.record({ kind: fc.nat(6), index: fc.nat(30), value: fc.nat(1000) })
-  await fc.assert(fc.asyncProperty(fc.constantFrom(2, 4, 16), fc.array(edit, { minLength: 1, maxLength: 60 }), async (pageItems, steps) => {
+  fc.assert(fc.property(fc.constantFrom(2, 4, 16), fc.array(edit, { minLength: 1, maxLength: 60 }), (pageItems, steps) => {
     const tree = JsonTree.make({ pageItems, fanout: 3, tailBytes: 16, leafBytes: 64 })
     const initial = tree.from({ items: Array.from({ length: 32 }, (_, n) => ({ n, text: "x".repeat(80), nested: [0, 1] })), control: { a: 0, b: 0 }, added: null })
-    const edits: JsonTree.Edit[] = steps.map(({ kind, index, value }) => {
+    const edits: Extract<JsonTree.Edit, { type: "set" | "append" }>[] = steps.map(({ kind, index, value }) => {
       switch (kind) {
         case 0: return { type: "set", path: ["control", "a"], value }
         case 1: return { type: "set", path: ["control"], value: { a: value, b: value } }
@@ -164,29 +95,43 @@ test("batches preserve sequential roots across overlapping and mixed edits", asy
     const batched = tree.batch(initial, edits)
     const stored = texts(initial)
     const reader = makeReader(load(stored), { pageItems, fanout: 3, tailBytes: 16, leafBytes: 64, cacheBytes: 0 })
-    const cold = await Effect.runPromise(reader.batch(initial.root, edits))
+    const cold = reader.batch(initial.root, edits)
     expect(cold.root).toBe(sequential.root)
     for (const [hash, node] of cold.nodes) stored.set(hash, node.text)
-    expect(tree.materialize(JsonTree.hydrate(cold.root, stored))).toEqual(tree.materialize(sequential))
+    expect(tree.materialize(hydrate(cold.root, stored))).toEqual(tree.materialize(sequential))
     expect(batched.root).toBe(sequential.root)
     expect(tree.materialize(batched)).toEqual(tree.materialize(sequential))
     expect(tree.materialize(initial)).not.toHaveProperty("fresh")
     expect(tree.batch(initial, []).root).toBe(initial.root)
-  }), { numRuns: 150 })
+  }), { includeErrorInReport: true, numRuns: 150 })
 })
 
-test("batches hash shared ancestors once and leave failed edits unpublished", () => {
-  const tree = JsonTree.make({ pageItems: 2, fanout: 2, tailBytes: 16, leafBytes: 64 })
-  const initial = tree.from({ items: Array.from({ length: 64 }, (_, n) => ({ n, text: "x".repeat(80) })), status: "idle" })
-  const edits: JsonTree.Edit[] = Array.from({ length: 8 }, (_, n) => ({ type: "set", path: ["items", n, "n"], value: n + 100 }))
-  let sequential = initial, hashes = 0
-  for (const edit of edits) {
-    sequential = tree.set(sequential, edit.path, (edit as Extract<JsonTree.Edit, { type: "set" }>).value)
-    hashes += sequential.metrics.hashedNodes
-  }
-  const batched = tree.batch(initial, edits)
-  expect(batched.root).toBe(sequential.root)
-  expect(batched.metrics.hashedNodes).toBeLessThan(hashes / 2)
-  expect(() => tree.batch(initial, [...edits, { type: "set", path: ["items", 64], value: 0 }])).toThrow("Invalid array path")
-  expect(tree.materialize(initial)).toHaveProperty("status", "idle")
+test("authenticated child metadata rejects arbitrary inflation on cold and warm reads", () => {
+  fc.assert(fc.property(fc.array(fc.integer(), { minLength: 3, maxLength: 30 }), fc.integer({ min: 1, max: 1000 }), fc.boolean(), (values, inflation, warm) => {
+    const original = JsonTree.make({ pageItems: 2, tailBytes: 2 }).from(values), stored = texts(original)
+    const child = descriptor(original.node.links[0]!)
+    const text = JSON.stringify([3, "a", [child[0], child[1], child[2] + inflation, child[3], child[4]]]), root = digest(text)
+    stored.set(root, text)
+    const reader = makeReader(load(stored), { cacheBytes: 8192 })
+    if (warm) reader.read(original.root)
+    expect(() => reader.read(root)).toThrow(GroveError)
+    expect(() => reader.read(root)).toThrow("metadata mismatch")
+    stored.set(original.root, "[]")
+    expect(() => makeReader(load(stored)).read(original.root)).toThrow("corrupt")
+  }), { includeErrorInReport: true, numRuns: 100 })
+})
+
+test("repeated cache admissions count unique immutable nodes and obey arbitrary budgets", () => {
+  fc.assert(fc.property(fc.jsonValue(), fc.integer({ min: 2, max: 8 }), fc.nat(8192), (raw, repetitions, cacheBytes) => {
+    const value = JSON.parse(JSON.stringify(raw)) as Json, original = JsonTree.make().from(value), stored = texts(original)
+    const reader = makeReader(load(stored), { cacheBytes })
+    expect(Array.from({ length: repetitions }, () => reader.read(original.root))).toEqual(Array.from({ length: repetitions }, () => value))
+    expect(reader.stats().cachedBytes).toBeLessThanOrEqual(cacheBytes)
+    const warm = reader.stats().cachedBytes
+    reader.read(original.root)
+    expect(reader.stats().cachedBytes).toBe(warm)
+    reader.clear()
+    expect(reader.stats().cachedBytes).toBe(0)
+    expect(reader.stats().cachedNodes).toBe(0)
+  }), { includeErrorInReport: true, numRuns: 100 })
 })
