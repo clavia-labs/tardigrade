@@ -4,7 +4,7 @@ import { commitLogs, type LogBatch } from "../../collections/append-only"
 import { makeRowStorage } from "./append-only"
 import { localOwners } from "../../session/ownership"
 import { Schema } from "effect"
-import { decodeNode, encodeNode, type Json } from "../nodes"
+import { digest, encodeNode, type Json } from "../nodes"
 import { make, documentReference, type Selection, type StagedNodes } from "../../document"
 import { decodeReference, encodeReference, isValueReference, referenceLocator, type ValueReference, type View, type ValueRange } from "../../value"
 import { NODE_QUERY, decodeNodeChunks, textChunks, packDigests, unpackDigests, DEFAULT_CHUNK_BYTES, DEFAULT_MAX_PARAMETERS, type NodeChunk } from "./chunks"
@@ -142,6 +142,11 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
   const groups = function* <Value>(values: readonly Value[]): IterableIterator<readonly Value[]> {
     for (let index = 0; index < values.length; index += maxParameters) yield values.slice(index, index + maxParameters)
   }
+  const existing = (hashes: readonly string[]) => {
+    const found = new Set<string>()
+    for (const batch of groups(hashes)) for (const row of query<{ hash: string }>(`SELECT hash FROM grove_value_nodes WHERE hash IN (${batch.map(() => "?").join(",")})`, batch)) found.add(row.hash)
+    return found
+  }
   const commit = (tx: Transaction, changes: Commit): CommitResult => mutate(tx, context => {
     const claimed = new Set<string>()
     const claim = (name: string) => { ownerName(name); if (claimed.has(name)) throw new Error(`Duplicate Grove owner: ${name}`); claimed.add(name) }
@@ -164,7 +169,8 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     for (const change of changes.release ?? []) {
       claim(change.owner)
       referenceLocator(change.expected, scope)
-      if (owner(change.owner)) expected(change.owner, change.expected)
+      const actual = owner(change.owner)
+      if (actual && encodeReference(actual) !== encodeReference(change.expected)) throw new Error(`Grove owner changed: ${change.owner}`)
     }
     const owners = [...publications, ...retained]
     const roots = owners.map(entry => referenceLocator(entry.ref, scope).root)
@@ -172,26 +178,24 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     const staged = batch.nodes
     const logWritten = commitLogs(rows, batch.logs), mapWritten = commitMaps(maps, batch.maps)
     const written = { rows: logWritten.rows + mapWritten.rows, bytes: logWritten.bytes + mapWritten.bytes }
+    const present = existing([...staged.keys()])
     let nodes = 0, bytes = written.bytes
     for (const [hash, node] of staged) {
       const text = encodeNode(node)
-      const decoded = decodeNode(hash, text)
-      if (exists(hash)) {
+      if (present.has(hash)) {
         if (load(hash) !== text) throw new Error("Conflicting immutable Grove node")
         continue
       }
-      const byteLength = Buffer.byteLength(text, "utf8"), children = packDigests([...new Set(decoded.children)])
+      if (digest(text) !== hash) throw new Error(`Shared JSON node missing or corrupt: ${hash}`)
+      const byteLength = Buffer.byteLength(text, "utf8"), children = packDigests([...new Set(node.children)])
       const pieces = textChunks(text, chunkBytes)
       query("INSERT INTO grove_value_nodes VALUES(?,?,?,?,NULL)", [hash, byteLength, pieces.length, children])
       pieces.forEach((piece, ordinal) => query("INSERT INTO grove_value_chunks VALUES(?,?,?)", [hash, ordinal, piece]))
       nodes++; bytes += byteLength
     }
-    for (const node of staged.values()) for (const batch of groups(node.children)) {
-      const found = query<{ hash: string }>(`SELECT hash FROM grove_value_nodes WHERE hash IN (${batch.map(() => "?").join(",")})`, batch)
-      const available = new Set(found.map(row => row.hash))
-      if (batch.some(hash => !available.has(hash))) throw new Error("Grove commit references a missing dependency")
-    }
-    for (const hash of roots) if (!exists(hash)) throw new Error("Grove commit references a missing root")
+    const dependencies = [...new Set([...staged.values()].flatMap(node => node.children))].filter(hash => !staged.has(hash))
+    if (existing(dependencies).size !== dependencies.length) throw new Error("Grove commit references a missing dependency")
+    for (const hash of roots) if (!staged.has(hash) && !exists(hash)) throw new Error("Grove commit references a missing root")
     for (const entry of owners) query("INSERT INTO grove_value_owners VALUES(?,?,?,?) ON CONFLICT(scope,name) DO UPDATE SET reference=excluded.reference,root=excluded.root", [scope, entry.owner, encodeReference(entry.ref), referenceLocator(entry.ref, scope).root])
     for (const change of changes.release ?? []) query("DELETE FROM grove_value_owners WHERE scope=? AND name=?", [scope, change.owner])
     context.committed.push(() => base.staging.acknowledge(batch))
@@ -210,6 +214,25 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
       commit(tx, { release: [{ owner: owned.name, expected: owned.reference }] })
     }
     for (const [owner, selection] of desired) commit(tx, { retain: [{ owner, selection }] })
+  })
+  // syncHeld keeps one owner per locally held reference under prefix, named by the reference's digest so a held value keeps its row while others change.
+  // It writes only identities held or unheld since the previous sync; the first sync and any sync after a rollback reconcile the whole group.
+  let heldPrefix: string | undefined
+  const syncHeld = (tx: Transaction, prefix: string) => mutate(tx, context => {
+    ownerName(prefix)
+    if (heldPrefix !== undefined && heldPrefix !== prefix) throw new Error("Local holders already sync to another owner prefix")
+    const changes = ownership.drain()
+    context.rollback.add(() => { heldPrefix = undefined })
+    const name = (encoded: string) => prefix + digest(encoded)
+    if (heldPrefix === undefined) {
+      const desired = new Map(ownership.held().map(ref => [name(encodeReference(ref)), ref] as const))
+      for (const owned of owners(prefix)) if (!desired.delete(owned.name)) commit(tx, { release: [{ owner: owned.name, expected: owned.reference }] })
+      for (const [owner, selection] of desired) commit(tx, { retain: [{ owner, selection }] })
+      heldPrefix = prefix
+      return
+    }
+    for (const encoded of changes.removed) commit(tx, { release: [{ owner: name(encoded), expected: decodeReference(encoded) }] })
+    for (const [encoded, selection] of changes.added) commit(tx, { retain: [{ owner: name(encoded), selection }] })
   })
   const owners = (prefix: string) => query<{ name: string; reference: string }>("SELECT name,reference FROM grove_value_owners WHERE scope=? AND substr(name,1,length(?))=? ORDER BY name", [scope, prefix, prefix]).map(row => ({ name: row.name, reference: decodeReference(row.reference) }))
   const acquire = (ref: ValueReference<unknown>) => {
@@ -293,7 +316,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
         return documents.open(ref)
       } }
     },
-    owners, replaceOwners, hold, release, held: ownership.held,
+    owners, replaceOwners, syncHeld, hold, release, held: ownership.held,
     bytes: base.bytes,
     capture: base.capture,
     // readValue reads captured drafts or persisted values while local owners protect their dependencies (platform/test/properties/accepted-work.ts).
