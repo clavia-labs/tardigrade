@@ -169,6 +169,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       },
       defect: () => snapshot?.defect,
       promise: ref => snapshot?.promise(ref),
+      reduced: node => snapshot?.get(node),
     }
     const store = createStore(Context.make(EventLog, projectionContext))
     const sync = () => {
