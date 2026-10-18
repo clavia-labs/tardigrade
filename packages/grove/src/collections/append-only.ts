@@ -80,14 +80,21 @@ export function makeLogs(backend: RowStorage | undefined, cache: ReadCache, batc
     }
     return entry.values.slice(start - pageStart, end - pageStart) as readonly Json[]
   }
+  // scan collects staged appends into a list before reading, so a read costs O(staged versions + values) at any number of uncommitted appends.
   const scan = function* (node: LogVersion, start: number, end: number): IterableIterator<Json> {
-    const write = pending.get(node.hash)
-    if (write) {
-      const prefix = write.parent?.count ?? 0
-      if (write.parent && start < prefix) yield* scan(write.parent, start, Math.min(end, prefix))
-      for (let index = Math.max(start, prefix); index < end; index++) yield freezeJson(JSON.parse(write.texts[index - prefix]!))
-      return
+    const writes: LogWrite[] = []
+    let base: LogVersion | undefined = node
+    for (let write = pending.get(node.hash); write; write = base && pending.get(base.hash)) {
+      writes.push(write)
+      base = write.parent && write.parent.count > start ? write.parent : undefined
     }
+    if (base) yield* committed(base, start, Math.min(end, base.count))
+    for (let index = writes.length - 1; index >= 0; index--) {
+      const write = writes[index]!, prefix = write.parent?.count ?? 0
+      for (let item = Math.max(start, prefix); item < Math.min(end, prefix + write.texts.length); item++) yield freezeJson(JSON.parse(write.texts[item - prefix]!))
+    }
+  }
+  const committed = function* (node: LogVersion, start: number, end: number): IterableIterator<Json> {
     let offset = 0
     for (const [log, count] of manifest(node)) {
       const first = Math.max(start - offset, 0), stop = Math.min(end - offset, count)
