@@ -74,7 +74,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
   const clearReaders = () => {
     for (const ref of shared.readers) { const clear = ref.deref(); if (clear) clear(); else shared.readers.delete(ref) }
   }
-  const ownership = localOwners<ValueReference<unknown>>(encodeReference)
+  const ownership = localOwners<ValueReference<unknown>>(encodeReference, ref => referenceLocator(ref, scope).root)
   const heldRoots = () => ownership.held().map(ref => referenceLocator(ref, scope).root)
   const hold = (holder: object, name: string, ref: ValueReference<unknown>) => {
     referenceLocator(ref, scope)
@@ -325,7 +325,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
       return base.staging.prepare([ref]).nodes.has(root) ? base.view(ref, Schema.Json).materialize() : view(ref, Schema.Json).materialize()
     },
     reference: base.reference, clear: base.clear, transactionActive: () => shared.active !== undefined, transaction, commit, owner, view, collect,
-    discard: () => { if (shared.active) throw new Error("Cannot discard staged changes during a transaction"); base.staging.discard(ownership.held()) },
+    discard: () => { if (shared.active) throw new Error("Cannot discard staged changes during a transaction"); base.staging.discard(base.staging.staged().flatMap(hash => ownership.heldAt(hash))) },
     stats: () => ({ ...base.stats(), chunkBytes, maxParameters, activeLeases: [...shared.leases.values()].reduce((sum, count) => sum + count, 0), leasedRoots: shared.leases.size, localHolders: ownership.size, heldReferences: ownership.held().length }),
   }
 }

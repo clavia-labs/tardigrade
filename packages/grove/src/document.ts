@@ -197,6 +197,7 @@ export function make(storage: Storage) {
       for (const [hash, node] of captured.nodes) if (pending.get(hash) === node) pending.delete(hash)
       prepared.delete(batch)
     },
+    staged: (): readonly string[] => [...pending.keys()],
     // discard abandons unheld staging while preserving draft dependencies and cached committed values (test/transactions.test.ts; platform/test/bun/journal.test.ts).
     discard: (references: Iterable<ValueReference<unknown>> = ownership.held()) => {
       const retained = staging.prepare(references).nodes
