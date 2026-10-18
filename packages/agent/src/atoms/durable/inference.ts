@@ -133,7 +133,7 @@ export const inferenceState = durableAtom({
     if (invocation && state.has(["invocations", invocation])) throw new RuntimeError(`Duplicate turn for invocation: ${invocation}`)
     const next = inferState(before, event, metadata, position)
     if (next === before) return state
-    return state.batch(edit => {
+    const result = state.batch(edit => {
       for (let index = 0; index < next.turns.length; index++) if (next.turns[index] !== before.turns[index]) edit.set(["turns", next.turns[index]!.turnId], next.turns[index]!)
       const pending = next.turns.filter(turn => turn.settlement === null).map(turn => turn.turnId)
       if (pending.length !== before.turns.length || pending.some((id, index) => id !== before.turns[index]!.turnId)) edit.set(["pending"], pending)
@@ -141,20 +141,35 @@ export const inferenceState = durableAtom({
       if (invocation && event.type === "TurnRequested") edit.set(["invocations", invocation], event.turnId)
       if (event.type === "TurnSettled" && event.outcome === "cancelled") for (const work of next.turns.find(turn => turn.turnId === event.turnId)!.effects) edit.set(["cancelled", effectKey(work.ref)], true)
     })
+    materialized.set(result, deepFreeze({ ...next, turns: next.turns.filter(turn => turn.settlement === null) }))
+    return result
   },
 })
 
 type InferenceTree = typeof inferenceState extends Atom<infer Value> ? Value : never
 
+// materialized holds the controls and pending turns of inference versions the reducer wrote, so reading a version back needs no document reads; versions are immutable.
+const materialized = new WeakMap<object, typeof InferenceState.Type>()
+const deepFreeze = <Value>(value: Value): Value => {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) { for (const item of Object.values(value)) deepFreeze(item); Object.freeze(value) }
+  return value
+}
+
 // readInference reads controls and pending records without loading settled turns (platform/test/bun/agent-compaction.test.ts).
 export function readInference(state: InferenceTree): typeof InferenceState.Type {
-  return { turns: state.read(["pending"]).map(id => state.read(["turns", id])),
+  const known = materialized.get(state)
+  if (known) return known
+  const value: typeof InferenceState.Type = { turns: state.read(["pending"]).map(id => state.read(["turns", id])),
     turnId: state.read(["turnId"]), callId: state.read(["callId"]), origin: state.read(["origin"]),
     needsReply: state.read(["needsReply"]), running: state.read(["running"]), waiting: state.read(["waiting"]),
   }
+  materialized.set(state, deepFreeze(value))
+  return value
 }
 
 // findTurn reads a retained turn by identifier (platform/test/bun/agent-compaction.test.ts).
 export function findTurn(state: InferenceTree, id: string) {
+  const pending = materialized.get(state)?.turns.find(turn => turn.turnId === id)
+  if (pending) return pending
   return state.has(["turns", id]) ? state.read(["turns", id]) : undefined
 }
