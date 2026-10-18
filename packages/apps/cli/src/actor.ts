@@ -12,7 +12,7 @@ export const actor = defineActor("tardie", Effect.gen(function* () {
     const approval = get(permission)
     const queue = get(pendingTools)
     const call = queue.pending
-    const decision = approval.view.decisions.findLast(value => value.action === "tool.execute" && value.requestId === call?.callId)?.decision
+    const decision = call ? approval.view.decision("tool.execute", call.callId) : undefined
     if (!call || decision?.allowed) return {
       ...inner, events: { ...inner.events, ...approval.events }, acts: { ...inner.acts, ...approval.acts },
     }
