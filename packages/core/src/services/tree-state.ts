@@ -29,6 +29,11 @@ export function documentSession(storage: Omit<Grove.Storage, "scope"> & { readon
   return { ...grove, ...encodedSession(grove, grove.read), held: () => grove.held().map(Grove.encodeReference) }
 }
 
+// memoryDocuments provides a document session backed by in-memory staging.
+export function memoryDocuments(options: Grove.ReaderOptions = {}) {
+  return documentSession({ options, load: hash => { throw new Error(`Document ${hash} is unavailable in memory; supply the document storage that owns this reference`) } })
+}
+
 // encodedSession adapts Grove references to Core's recorded strings while preserving the caller's value-read lifetime (platform/test/properties/accepted-work.ts).
 export function encodedSession(grove: Pick<Grove.Instance, "bind" | "capture" | "stats" | "bytes" | "view" | "hold" | "release">, read: (reference: Grove.ValueReference<unknown>) => Json): DocumentSession {
   const bind: DocumentSession["bind"] = <State extends Json>(schema: Schema.Decoder<State>) => {

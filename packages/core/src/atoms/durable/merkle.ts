@@ -30,7 +30,7 @@ export function documentAtom<State extends Json, Event>({ schema, initial, initi
   const makeBound = (session: DocumentSession) => session.bind(schema)
   const bindings = new WeakMap<DocumentSession, ReturnType<typeof makeBound>>()
   const binding = (session?: DocumentSession) => {
-    if (!session) throw new Error("Document atoms require synchronous document storage")
+    if (!session) throw new Error(`Durable atom "${options.name}" requires synchronous documents; use createStore or supply EventLog.documents with memoryDocuments() or storedSession(...)`)
     let bound = bindings.get(session)
     if (!bound) { bound = makeBound(session); bindings.set(session, bound) }
     return bound

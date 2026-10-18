@@ -1,4 +1,4 @@
-import { documentSession, type DocumentSession } from "../services/tree-state"
+import { memoryDocuments, type DocumentSession } from "../services/tree-state"
 import { IndexView, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
 import { historicalEventDecoder } from "../event/versioned"
 import { frozenPlainData } from "../atoms/incremental/frozen"
@@ -47,7 +47,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   readonly inputs?: readonly PendingEffectInput[]
   readonly documents?: DocumentSession
 }) {
-  const documents = options.documents ?? documentSession({ load: () => { throw new Error("Replay cannot load unstaged tree nodes without storage") } })
+  const documents = options.documents ?? memoryDocuments()
   const digestMinBytes = options.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
   if (!Number.isSafeInteger(digestMinBytes) || digestMinBytes < 0) throw new Error("Effect input digest minBytes must be a nonnegative safe integer")
   const resultMinBytes = options.resultMinBytes ?? DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES
