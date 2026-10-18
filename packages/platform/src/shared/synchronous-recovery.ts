@@ -62,7 +62,15 @@ export function synchronousRecoveryStorage(grove: ReturnType<typeof makeSync>, i
     yield* finish
     return result
   }).pipe(Effect.uninterruptible))
-  return { transaction, finish }
+  // read runs work under the recovery lock without the commit's alarm resync; work must not write.
+  const read = <Value>(work: (tx: ReturnType<typeof syncRecoveryTransaction>) => Effect.Effect<Value, Error>) => recoveryLock(identity).withPermit(Effect.gen(function* () {
+    const context = yield* Effect.context<never>()
+    return yield* attempt(() => {
+      if (grove.transactionActive()) throw new Error("Recovery must own the native transaction")
+      return grove.transaction(tx => Effect.runSyncWith(context)(work(syncRecoveryTransaction(tx, alarm, identity))))
+    })
+  }))
+  return { transaction, read, finish }
 }
 
 // initializeSyncRecovery creates wake and recovery tables for one database (test/bun/journal.test.ts).

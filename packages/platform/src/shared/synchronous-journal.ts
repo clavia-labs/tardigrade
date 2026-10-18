@@ -103,7 +103,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
   const recovery = scheduling ? synchronousRecoveryStorage(grove, driver.identity, scheduling.alarm, flush, guard) : undefined
   const finishCommit = recovery?.finish ?? flush
   const schedulerStorage: SchedulerStorage | undefined = recovery ? { transaction: work => recovery.transaction(tx => work(tx.scheduler)) } : undefined
-  const watchdogStorage: WatchdogStorage | undefined = recovery ? { transaction: work => recovery.transaction(tx => work(tx.watchdog)) } : undefined
+  const watchdogStorage: WatchdogStorage | undefined = recovery ? { transaction: work => recovery.transaction(tx => work(tx.watchdog)), read: work => recovery.read(tx => work(tx.watchdog)) } : undefined
   const scheduler = scheduling && schedulerStorage ? createScheduler({ storage: schedulerStorage, deliver: scheduling.deliver, policy: scheduling.policy }) : undefined
   const watchdog = options.watchdog && watchdogStorage ? "instance" in options.watchdog ? options.watchdog.instance : createWatchdog({ ...options.watchdog, storage: watchdogStorage }) : undefined
   const replace = (tx: Transaction, prefix: string, values: readonly string[]) => grove.replaceOwners(tx, prefix, values.map(decodeReference))
