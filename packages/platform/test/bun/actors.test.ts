@@ -1,10 +1,34 @@
 import { expect, test } from "bun:test"
+import fc from "fast-check"
 import { Database } from "bun:sqlite"
 import { Context, Effect, Schema } from "effect"
-import { act, defineActor, effectAtom, createActorStore } from "@clavia/tardigrade-core"
+import { act, atom, createStore, EventLog, defineActor, effectAtom, createActorStore } from "@clavia/tardigrade-core"
+import { usdSpend } from "@clavia/tardigrade-agent"
+import type { Event } from "@clavia/tardigrade-agent/contracts/events"
 import { synchronousJournal } from "../../src/shared/synchronous-journal"
 import { actorProperties } from "../properties/integration"
 import { withSqlite } from "../fixtures/bun/sqlite"
+
+test("standalone exported-event projections price finished agent turns without a host", () => {
+  const prices = fc.array(fc.array(fc.option(fc.integer({ min: 0, max: 1000 }), { nil: null }), { minLength: 1, maxLength: 4 }), { minLength: 1, maxLength: 5 })
+  fc.assert(fc.property(prices, turns => {
+    const events: Event[] = []
+    for (const [index, costs] of turns.entries()) {
+      const turnId = `turn-${index}`
+      events.push({ type: "TurnRequested", turnId, text: "Price this run" })
+      for (const [call, usd] of costs.entries()) {
+        const callId = `${turnId}/${call}`
+        events.push({ type: "ModelCalled", purpose: "inference", turnId, callId, model: { provider: "test", model_id: "test" }, contextWindowTokens: 4096 })
+        events.push({ type: "ModelReturned", purpose: "inference", callId, text: "Done", toolCalls: [], usage: { input: 1, output: 1, usd } })
+      }
+      events.push({ type: "TurnSettled", turnId, outcome: "completed", callId: `${turnId}/${costs.length - 1}` })
+    }
+    const projection = createStore(Context.make(EventLog, { events: atom(events) }))
+    try {
+      expect(projection.get(usdSpend)).toEqual(turns.map((costs, index) => ({ turnId: `turn-${index}`, usd: costs.includes(null) ? null : costs.reduce<number>((sum, cost) => sum + cost!, 0) })))
+    } finally { projection.dispose() }
+  }), { numRuns: 30, includeErrorInReport: true })
+})
 
 for (const coldMinBytes of [0, Number.MAX_SAFE_INTEGER]) test(`actor result policy is independent of input digesting (${coldMinBytes})`, async () => {
   const db = new Database(":memory:")

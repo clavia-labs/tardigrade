@@ -1,5 +1,5 @@
 import { DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES } from "./operation"
-import { documentSession } from "../services/tree-state"
+import { memoryDocuments } from "../services/tree-state"
 import type { ReadonlyIndex } from "./log-view"
 import { initialStateSeed, type StateSeed } from "../initialise"
 import { ActorCommitError, AttemptTimedOut, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, CancellationOutcome, effectKey, type EffectRef } from "./effects"
@@ -133,7 +133,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     let definition: ReturnType<typeof createEventLog<Event, RuntimeAtoms>>
     let snapshot: ReturnType<typeof definition.replay>
     const localRecovery = new Map<string, ReturnType<typeof snapshot.deferred>[number]>()
-    const documents = options.journal ? options.journal.storedValues : documentSession({ load: () => { throw new RuntimeError("In-memory execution cannot load unstaged document nodes") } })
+    const documents = options.journal ? options.journal.storedValues : memoryDocuments()
     if (!documents) return yield* Effect.fail(new RuntimeError("Journal requires colocated synchronous stored values"))
     const resolve = documents.resolve
     const source = createRecordSource<Event>()

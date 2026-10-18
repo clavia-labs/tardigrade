@@ -1,7 +1,8 @@
 import { expect, spyOn, test } from "bun:test"
-import { Schema } from "effect"
+import { Context, Schema } from "effect"
 import fc from "fast-check"
-import { durableAtom, durableMerkleAtom } from "../src/index"
+import { atom, createStore, durableAtom, durableMerkleAtom, EventLog, memoryDocuments } from "../src/index"
+import { eventLogContext } from "../src/services/event-log"
 import { createEventLog } from "../src/runtime/replay"
 import { documentSession } from "../src/services/tree-state"
 import { AtomState } from "../src/initialise"
@@ -11,6 +12,52 @@ const Changed = Schema.Struct({ type: Schema.Literal("Changed"), key: Schema.Str
 const Declared = Schema.Struct({ document: tree(Schema.Struct({ count: Schema.Int })), messages: appendOnly(Schema.Array(Schema.String)), jobs: keyValue(Schema.Struct({ text: Schema.String })) }).annotate({ title: "Collection state" })
 const State: Schema.Schema<typeof Declared.Type> = Declared
 const changes = fc.array(fc.record({ type: fc.constant("Changed" as const), key: fc.constantFrom("a", "b", "c"), text: fc.string(), remove: fc.boolean() }), { minLength: 2, maxLength: 20 })
+
+test("standalone stores own isolated document sessions through incremental replay and context replacement", () => {
+  fc.assert(fc.property(changes, events => {
+    const state = durableAtom({ name: "standalone", input: Changed, schema: State, initial: { document: { count: 0 }, messages: [], jobs: {} }, reduce: (state, event) => state.batch(edit => {
+      edit.set(["document", "count"], state.read(["document", "count"]) + 1)
+      edit.append(["messages"], [event.text])
+      if (event.remove) edit.remove(["jobs", event.key]); else edit.set(["jobs", event.key], { text: event.text })
+    }) })
+    const source = atom<readonly typeof Changed.Type[]>([]), service = { events: source }, context = Context.make(EventLog, service)
+    const first = createStore(context), second = createStore()
+    const session = (store: typeof first) => Context.get(store.get(eventLogContext)!, EventLog).documents!
+    second.set(eventLogContext, () => context)
+    const a = session(first), b = session(second)
+    try {
+      expect(a).not.toBe(b)
+      expect(Context.get(context, EventLog)).toBe(service)
+      expect("documents" in service).toBe(false)
+      let jobs: Record<string, { text: string }> = {}
+      for (const [index, event] of events.entries()) {
+        first.set(source, events.slice(0, index + 1))
+        if (event.remove) delete jobs[event.key]; else jobs[event.key] = { text: event.text }
+        expect(first.get(state).read([])).toEqual({ document: { count: index + 1 }, messages: events.slice(0, index + 1).map(event => event.text), jobs })
+      }
+      expect(second.get(state).read([])).toEqual({ document: { count: 0 }, messages: [], jobs: {} })
+      first.set(eventLogContext, Context.make(EventLog, { events: source }))
+      expect(session(first)).toBe(a)
+      expect(first.get(state).length(["messages"])).toBe(events.length)
+      first.dispose()
+      expect(a.stats().stagedNodes).toBe(0)
+      expect(second.get(state).read(["document", "count"])).toBe(0)
+    } finally { first.dispose(); second.dispose() }
+  }), { numRuns: 30, includeErrorInReport: true })
+})
+
+test("standalone stores preserve supplied storage and expose its failures", () => {
+  fc.assert(fc.property(fc.string(), message => {
+    const documents = memoryDocuments(), fail = new Error("Provided storage: " + message)
+    const supplied = { ...documents, bind: () => { throw fail } }
+    const store = createStore(Context.make(EventLog, { events: atom([]), documents: supplied }))
+    const state = durableAtom({ name: "provided", input: Changed, schema: tree(Schema.Int), initial: 0, reduce: value => value })
+    try {
+      expect(Context.get(store.get(eventLogContext)!, EventLog).documents).toBe(supplied)
+      expect(() => store.get(state)).toThrow(fail.message)
+    } finally { store.dispose() }
+  }), { numRuns: 20, includeErrorInReport: true })
+})
 
 test("durableAtom infers collection reducers and restores selected versions across checkpoint replay", () => {
   fc.assert(fc.property(changes, events => {
