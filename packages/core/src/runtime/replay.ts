@@ -11,7 +11,7 @@ import { EventLog, executionDefect } from "../services/event-log"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "../atoms/act"
-import { ExecutionResult, PromiseTimedOut, EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady, CancellationOutcome } from "./effects"
+import { ActorReplayError, ExecutionResult, PromiseTimedOut, EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady, CancellationOutcome } from "./effects"
 import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, EffectSettled, EffectDied, PromiseSettled, RetryScheduled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent, type PendingEffectInput } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
@@ -100,11 +100,11 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   const acceptedInput = (record: StoredEffectRequested, proposed: ReturnType<typeof prepareRequest>, concluded: boolean) => {
     const persisted = persistedInputs.get(effectKey(record.ref))
     if (persisted) {
-      if (!matchesPrepared(record.request, persisted)) throw new Error(`Pending input differs from accepted request: ${effectKey(record.ref)}`)
+      if (!matchesPrepared(record.request, persisted)) throw new ActorReplayError({ stage: "effect_request", reason: "input_mismatch", position: record.ref.seq, cause: new Error(`Pending input differs from accepted request: ${effectKey(record.ref)}`) })
       return persisted.request
     }
     if (record.request.input._tag === "InlineInput") return prepareRequest({ ...record.request, input: record.request.input.value }).request
-    if (!concluded && !matchesPrepared(record.request, proposed)) throw new Error(`Accepted input is unavailable; effect request differs from its proposal: ${effectKey(record.ref)}`)
+    if (!concluded && !matchesPrepared(record.request, proposed)) throw new ActorReplayError({ stage: "retained_input", reason: "unavailable", position: record.ref.seq, cause: new Error(`Accepted input is unavailable; effect request differs from its proposal: ${effectKey(record.ref)}`) })
     return proposed.request
   }
   const eventOf = (event: unknown, reply = false, historical = false): JournalEvent<Event> => {
@@ -122,10 +122,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     if ("type" in result && result.type === "EffectRequested") processedRequests.add(result)
     return result
   }
-  const recordOf = (record: Recorded<Event>, historical = false): Recorded<Event> => {
-    const metadata = validateMetadata(record)
-    if (isMessageReceived(record.event) !== (metadata.message !== undefined)) throw new Error("Inbox records require message metadata")
-    return freeze({ ...metadata, event: eventOf(record.event, metadata.message?.inReplyTo !== undefined, historical) })
+  const recordOf = (record: Recorded<Event>, historical = false, position = 0): Recorded<Event> => {
+    try {
+      const metadata = validateMetadata(record)
+      if (isMessageReceived(record.event) !== (metadata.message !== undefined)) throw new Error("Inbox records require message metadata")
+      return freeze({ ...metadata, event: eventOf(record.event, metadata.message?.inReplyTo !== undefined, historical) })
+    } catch (cause) {
+      throw historical ? ActorReplayError.wrap(cause, { stage: "event", reason: "decode_failed", position }) : cause
+    }
   }
   type Snapshot = {
     readonly events: ReadonlyLog<RuntimeEvent<Event>>
@@ -182,7 +186,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const loadedInputs = new Map<string, EffectRequest>()
     const inputOf = (key: string): EffectRequest => {
       const input = loadedInputs.get(key)
-      if (!input) throw new Error("Effect requires reconstructed input")
+      if (!input) throw new ActorReplayError({ stage: "effect_request", reason: "reconstruction_failed", position: offset + records.length, cause: new Error("Effect requires reconstructed input") })
       return input
     }
     const retire = new Set<string>()
@@ -439,7 +443,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         executionDeclarations.set(proposal.identity, prepared.stored)
         if (ref) {
           const recorded = requestOf(effectKey(ref))
-          if (!recorded || recorded.origin !== proposal.origin) throw new Error("Restored effect request differs from its proposal")
+          if (!recorded || recorded.origin !== proposal.origin) throw new ActorReplayError({ stage: "effect_request", reason: "reconstruction_failed", position: ref.seq, cause: new Error("Restored effect request differs from its proposal") })
           const key = effectKey(ref)
           const settlement = settlementOf(key)
           const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !hasPromise(key)
@@ -505,7 +509,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           if (candidates.length > 1) throw new Error("Calls to the same act require distinct origins")
           const offered = candidates[0]
           const offeredPrepared = offered ? preparedRequests.get(offered.request) : undefined
-          if (!offered) throw new Error("Effect request differs from its proposal")
+          if (!offered) throw new ActorReplayError({ stage: "effect_request", reason: "reconstruction_failed", position: event.ref.seq, cause: new Error("Effect request differs from its proposal") })
           const input = acceptedInput(event, offeredPrepared ?? prepareRequest(offered.request), concluded.has(key))
           const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
@@ -581,7 +585,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     try {
       effects()
-      for (const raw of history) append(recordOf(raw, true))
+      for (const raw of history) append(recordOf(raw, true, offset + records.length))
     } catch (error) {
       dispose()
       throw error
@@ -645,7 +649,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (result.type !== "promise") return []
         const proposal = acts.get(key)
         const request = requestOf(key)
-        if (!proposal || !request) throw new Error("Deferred work requires its reconstructed execution")
+        if (!proposal || !request) throw new ActorReplayError({ stage: "effect_request", reason: "reconstruction_failed", position: settlement.ref.seq, cause: new Error("Deferred work requires its reconstructed execution") })
         return [{ kind: "act" as const, atom: settlement.ref.atom, source: actOwners.get(proposal.identity)!, ref: settlement.ref,
           request: inputOf(key), execute: proposal.execute, handle: result.handle }]
       }),

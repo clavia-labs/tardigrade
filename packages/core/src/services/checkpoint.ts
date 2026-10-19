@@ -1,7 +1,7 @@
 import { DocumentState } from "./tree-state"
 import { createHash } from "node:crypto"
 import { Schema, Effect } from "effect"
-import { RuntimeError, ExecutionResult, effectKey } from "../runtime/effects"
+import { ActorReplayError, RuntimeError, ExecutionResult, effectKey } from "../runtime/effects"
 import { StoredOperation, operationSettlement, cleanupSucceeded } from "../runtime/operation"
 import type { EffectCheckpoint } from "../runtime/replay"
 import { migrateCheckpoint } from "./checkpoint/migrations"
@@ -28,7 +28,10 @@ export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
   return new TextEncoder().encode(encoded)
 }
 
-export const decodeCheckpoint = (payload: Uint8Array): EffectCheckpoint => checkpointFromJson(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload)))
+export const decodeCheckpoint = (payload: Uint8Array): EffectCheckpoint => {
+  try { return checkpointFromJson(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload))) }
+  catch (cause) { throw ActorReplayError.wrap(cause, { stage: "checkpoint", reason: "decode_failed" }) }
+}
 
 // checkpointFromJson validates decoded checkpoint data before encoding a converted version (platform/test/bun/migration.test.ts).
 export function checkpointFromJson(value: unknown): EffectCheckpoint {

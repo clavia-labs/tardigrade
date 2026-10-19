@@ -2,7 +2,7 @@ import { DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES } from "./operation"
 import { memoryDocuments } from "../services/tree-state"
 import type { ReadonlyIndex } from "./log-view"
 import { initialStateSeed, type StateSeed } from "../initialise"
-import { ActorCommitError, AttemptTimedOut, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, CancellationOutcome, effectKey, type EffectRef } from "./effects"
+import { ActorCommitError, ActorReplayError, AttemptTimedOut, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, CancellationOutcome, effectKey, type EffectRef } from "./effects"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import { atom, type Atom } from "../atoms/atom"
@@ -748,7 +748,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       services = yield* buildServices()
       const stored = options.journal ? yield* options.journal.readCheckpoint : undefined
       const checkpoint = stored ? yield* Effect.try({ try: () => retireCheckpoint(decodeCheckpoint(stored.payload), resultMinBytes, documents.capture), catch: RuntimeError.from }) : undefined
-      if (stored && checkpoint && checkpoint.position !== stored.position) return yield* Effect.fail(new RuntimeError("Checkpoint payload position differs from journal metadata"))
+      if (stored && checkpoint && checkpoint.position !== stored.position) return yield* Effect.fail(new ActorReplayError({ stage: "checkpoint", reason: "position_mismatch", position: stored.position, cause: new Error("Checkpoint payload position differs from journal metadata") }))
       checkpointSeed = checkpoint
       checkpointPosition = checkpoint?.position ?? 0
       // Atomic checkpoint commits make the prefix durable; recovery only needs its suffix.

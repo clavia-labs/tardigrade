@@ -4,13 +4,14 @@ import { HttpServerResponse } from "effect/unstable/http"
 import { executionStreamSse } from "./execution-stream-sse"
 import { InitialState, InvalidMessage, type ActorMethods, type MethodInput, type MethodResult, type MessageReceipt, type ThreadCoordinate, type ThreadRequest, type Recorded } from "@clavia/tardigrade-core"
 import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
-import { publicError } from "./http"
+import { logHttpError, publicError, type ErrorLogPolicy } from "./http"
 
 export const DEFAULT_METHOD_HTTP_INSTANCE = "main"
 
 export interface MethodHttpOptions {
   readonly instance?: string
   readonly token?: string
+  readonly errorLog?: Partial<ErrorLogPolicy>
 }
 
 interface MethodHttpThread<Contracts extends ActorMethods<object>> {
@@ -42,9 +43,7 @@ export function methodHttp<Contracts extends ActorMethods<object>>(
     return exit.value
   }
   const json = (value: unknown, status = 200) => Response.json(value, { status })
-  const logFailure = (error: unknown, response: ReturnType<typeof publicError>) => Effect.runPromise(
-    Effect.logError("HTTP request failed", error).pipe(Effect.annotateLogs({ code: response.body.code, status: response.status })),
-  )
+  const logFailure = (error: unknown, response: ReturnType<typeof publicError>) => Effect.runPromise(logHttpError(error, options.errorLog, response))
   const failure = async (status: number, code: string, message: string) => {
     const response = { status, body: { code, message } }
     await logFailure(response.body, response)

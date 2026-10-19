@@ -18,6 +18,32 @@ export class RuntimeError extends Error {
   }
 }
 
+export type ActorReplayFailure = (
+  | { readonly stage: "checkpoint"; readonly reason: "decode_failed" | "position_mismatch" }
+  | { readonly stage: "event"; readonly reason: "decode_failed" }
+  | { readonly stage: "effect_request"; readonly reason: "reconstruction_failed" | "input_mismatch" }
+  | { readonly stage: "retained_input"; readonly reason: "unavailable" }
+) & { readonly position?: number }
+
+export class ActorReplayError extends RuntimeError {
+  override readonly name = "ActorReplayError"
+  readonly code = "actor_replay_failed"
+  readonly stage: ActorReplayFailure["stage"]
+  readonly reason: ActorReplayFailure["reason"]
+  readonly position: number | undefined
+
+  constructor(failure: ActorReplayFailure & { readonly cause: unknown }) {
+    super(failure.cause instanceof Error ? failure.cause.message : "Actor history could not be replayed", { cause: failure.cause })
+    this.stage = failure.stage
+    this.reason = failure.reason
+    this.position = failure.position
+  }
+
+  static wrap(cause: unknown, failure: ActorReplayFailure): ActorReplayError {
+    return cause instanceof ActorReplayError ? cause : new ActorReplayError({ ...failure, cause })
+  }
+}
+
 // AttemptTimedOut reports an expired local attempt without acknowledging remote completion (quint/attemptDeadline.qnt, executionTimeoutRetryTest).
 export class AttemptTimedOut extends Schema.TaggedError<AttemptTimedOut>()("AttemptTimedOut", { timeoutMs: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)) }) {
   override get message() { return `Attempt timed out after ${this.timeoutMs}ms` }

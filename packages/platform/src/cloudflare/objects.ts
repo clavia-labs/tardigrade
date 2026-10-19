@@ -16,7 +16,7 @@ import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 import { HttpRouter } from "effect/unstable/http"
-import { hostRoutes, publicError } from "../shared/http"
+import { hostRoutes, logHttpError, publicError, type ErrorLogPolicy } from "../shared/http"
 
 export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const
 export const DEFAULT_CLOUDFLARE_CHILD_PLACEMENT = "independent" as const
@@ -78,12 +78,12 @@ export function objectJournal<Event extends object>(options: {
 }
 
 // objectResponse handles health checks and translates request failures to public HTTP errors.
-async function objectResponse(request: Request, handle: () => Promise<Response>): Promise<Response> {
+async function objectResponse(request: Request, handle: () => Promise<Response>, errorLog?: Partial<ErrorLogPolicy>): Promise<Response> {
   if (new URL(request.url).pathname === "/healthz") return Response.json({ status: "resting", dirty: 0 })
   try { return await handle() }
   catch (error) {
     const response = publicError(error)
-    await Effect.runPromise(Effect.logError("HTTP request failed", error))
+    await Effect.runPromise(logHttpError(error, errorLog))
     return Response.json(response.body, { status: response.status })
   }
 }
@@ -185,7 +185,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       ...(options.actorTransport ? { actorTransport: options.actorTransport } : {}), ...(options.transports ? { transports: options.transports } : {}),
     }).send(message)
     async fetch(request: Request): Promise<Response> {
-      return objectResponse(request, () => this.handleRequest(request))
+      return objectResponse(request, () => this.handleRequest(request), options.http?.(this.env).errorLog)
     }
     private async handleRequest(request: Request): Promise<Response> {
       const pathname = new URL(request.url).pathname
@@ -314,7 +314,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       return Effect.runPromise(this.registered().pipe(Effect.andThen(this.actors().receive(this.address(), packet.body, packet.message))))
     }
     async fetch(request: Request): Promise<Response> {
-      return objectResponse(request, () => this.handleRequest(request))
+      return objectResponse(request, () => this.handleRequest(request), options.http?.(this.env).errorLog)
     }
     private async handleRequest(request: Request): Promise<Response> {
       const http = options.http?.(this.env) ?? {}
@@ -331,7 +331,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       }
       const path = new URL(request.url).pathname
       if (path.includes("/messages")) {
-        const handler = HttpRouter.toWebHandler(hostRoutes(host), { disableLogger: true })
+        const handler = HttpRouter.toWebHandler(hostRoutes(host, http.errorLog), { disableLogger: true })
         try { return await handler.handler(request) } finally { await handler.dispose() }
       }
       return methodHttp(host, http)(request)
