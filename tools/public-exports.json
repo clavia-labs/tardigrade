@@ -6,7 +6,7 @@
   "./code": "./src/code/index.ts",
   "./platform/bun": "./src/platform/bun/index.ts",
   "./platform/cloudflare": "./src/platform/cloudflare/index.ts",
-  "./platform/cloudflare/retry": "./src/platform/cloudflare/retry.ts",
+  "./platform/cloudflare/retry": "./src/deprecated/cloudflare/retry.ts",
   "./package.json": "./package.json",
   "./deprecated": "./src/tardie/deprecated/index.ts",
   "./deprecated/agent": "./src/deprecated/agent/index.ts",
