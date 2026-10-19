@@ -1,3 +1,10 @@
+import { DEFAULT_CHUNK_BYTES as DEFAULT_REDUCER_CHUNK_BYTES } from "../../reducer/sqlite"
+import { openReference } from "../../migrations/merkle"
+import type { PlainOptions } from "../../reducer/adapter"
+import { plainStorage } from "../../reducer/adapter"
+import type { Sqlite } from "../../reducer/storage"
+import { transactions as coordinateTransactions, type Context, type Transaction } from "../transaction"
+export type { Transaction } from "../transaction"
 import { commitMaps, type MapBatch } from "../../collections/key-value"
 import { makeMapStorage } from "./key-value"
 import { commitLogs, type LogBatch } from "../../collections/append-only"
@@ -6,7 +13,7 @@ import { localOwners } from "../../session/ownership"
 import { Schema } from "effect"
 import { digest, encodeNode, type Json } from "../nodes"
 import { make, documentReference, type Selection, type StagedNodes } from "../../document"
-import { decodeReference, encodeReference, isValueReference, referenceLocator, type ValueReference, type View, type ValueRange } from "../../value"
+import { decodeReference, encodeReference, isValueReference, referenceLocator, selectionValueReference, type ValueReference, type View, type ValueRange } from "../../value"
 import { NODE_QUERY, decodeNodeChunks, textChunks, packDigests, unpackDigests, DEFAULT_CHUNK_BYTES, DEFAULT_MAX_PARAMETERS, type NodeChunk } from "./chunks"
 import type { ReaderOptions } from "../../session/reader"
 
@@ -17,29 +24,16 @@ export interface SyncSqlite {
   readonly execute: (statement: string, parameters: readonly SqliteParameter[]) => readonly Record<string, unknown>[]
   readonly transaction: <Value>(work: () => Value) => Value
 }
-export interface SyncOptions extends ReaderOptions { readonly scope: string; readonly chunkBytes?: number; readonly maxParameters?: number }
-const TransactionType = Symbol("GroveTransaction")
-export interface Transaction {
-  readonly [TransactionType]: true
-  readonly execute: SyncSqlite["execute"]
-}
+export interface SyncOptions extends ReaderOptions { readonly scope: string; readonly chunkBytes?: number; readonly maxParameters?: number; readonly packBytes?: number; readonly reducerChunkBytes?: number }
 export interface Commit {
   readonly publish?: readonly { readonly owner: string; readonly expected: ValueReference<unknown> | null; readonly document: { readonly reference: ValueReference<unknown> } | ValueReference<unknown> }[]
   readonly retain?: readonly { readonly owner: string; readonly selection: Selection<unknown> | ValueReference<unknown> }[]
   readonly release?: readonly { readonly owner: string; readonly expected: ValueReference<unknown> }[]
 }
 export interface CommitResult { readonly nodes: number; readonly bytes: number; readonly rows: number }
-interface Context {
-  readonly identity: object
-  readonly committed: (() => void)[]
-  readonly rollback: Set<() => void>
-  failed?: { readonly cause: unknown }
-}
 interface HeldSnapshot { readonly roots: readonly string[]; readonly nodes: StagedNodes; readonly logs: LogBatch; readonly maps: MapBatch }
-interface Connection { readonly readers: Set<WeakRef<() => void>>; readonly leases: Map<string, number>; readonly holders: Map<object, () => HeldSnapshot>; active?: Context }
+interface Connection { readonly readers: Set<WeakRef<() => void>>; readonly leases: Map<string, number>; readonly holders: Map<object, () => HeldSnapshot> }
 const connections = new WeakMap<object, Connection>()
-const transactions = new WeakMap<object, Context>()
-const thenable = (value: unknown) => value !== null && (typeof value === "object" || typeof value === "function") && "then" in value && typeof value.then === "function"
 const ownerName = (name: string) => { if (typeof name !== "string" || !name.trim()) throw new Error("Grove owner name must be nonempty"); return name }
 
 // makeSync commits references and application writes on a synchronous SQLite connection (test/transactions.test.ts; test/workerd/recovery.workers.ts).
@@ -52,7 +46,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
   if (!Number.isSafeInteger(maxParameters) || maxParameters < 5) throw new Error("maxParameters must be a safe integer of at least five")
   let connection = connections.get(driver.identity)
   if (!connection) { connection = { readers: new Set(), leases: new Map(), holders: new Map() }; connections.set(driver.identity, connection) }
-  const shared = connection
+  const shared = connection, coordinator = coordinateTransactions(driver)
   const query = <Row>(statement: string, parameters: readonly SqliteParameter[] = []): readonly Row[] => {
     const rows = driver.execute(statement, parameters)
     if (!Array.isArray(rows)) throw new Error("Grove SQLite statements must complete synchronously")
@@ -70,6 +64,10 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
   const rows = makeRowStorage(query, chunkBytes)
   const maps = makeMapStorage(query, chunkBytes)
   const base = make({ load, scope, options, rows, maps })
+  const reducerChunkBytes = options.reducerChunkBytes ?? DEFAULT_REDUCER_CHUNK_BYTES
+  const plain = plainStorage(driver as Sqlite, { scope, chunkBytes: reducerChunkBytes, ...(options.packBytes === undefined ? {} : { packBytes: options.packBytes }) })
+  const isPlain = (ref: ValueReference<unknown>) => referenceLocator(ref, scope).backend === "reducer"
+
   shared.readers.add(new WeakRef(base.clear))
   const clearReaders = () => {
     for (const ref of shared.readers) { const clear = ref.deref(); if (clear) clear(); else shared.readers.delete(ref) }
@@ -77,56 +75,25 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
   const ownership = localOwners<ValueReference<unknown>>(encodeReference, ref => referenceLocator(ref, scope).root)
   const heldRoots = () => ownership.held().map(ref => referenceLocator(ref, scope).root)
   const hold = (holder: object, name: string, ref: ValueReference<unknown>) => {
-    referenceLocator(ref, scope)
+    if (isPlain(ref)) { plain.hold(holder, name, ref); return }
     ownership.hold(holder, name, ref)
     if (!shared.holders.has(ownership)) shared.holders.set(ownership, () => { const roots = heldRoots(); const batch = base.staging.prepare(ownership.held()); return { roots, nodes: batch.nodes, logs: batch.logs, maps: batch.maps } })
   }
   const release = (holder: object) => {
+    plain.release(holder)
     ownership.release(holder)
     if (!ownership.size) shared.holders.delete(ownership)
   }
-  const guard = (tx: Transaction): Context => {
-    const context = transactions.get(tx)
-    if (!context || context !== shared.active || context.identity !== driver.identity) throw new Error("Grove transaction is expired or belongs to another connection")
-    if (context.failed) throw context.failed.cause
-    return context
-  }
+  const guard = coordinator.guard
   const mutate = <Value>(tx: Transaction, work: (context: Context) => Value): Value => {
     const context = guard(tx)
     context.rollback.add(base.clear)
     try { return work(context) } catch (cause) { context.failed = { cause }; throw cause }
   }
-  const invoke = <Value>(context: Context, work: (tx: Transaction) => Value): Value => {
-    const tx = Object.freeze({ execute: (statement: string, parameters: readonly SqliteParameter[]) => mutate(tx as Transaction, () => query<Record<string, unknown>>(statement, parameters)) }) as Transaction
-    transactions.set(tx, context)
-    try {
-      const result = work(tx)
-      if (thenable(result)) throw new Error("Grove transaction callbacks must be synchronous")
-      if (context.failed) throw context.failed.cause
-      return result
-    } catch (cause) { context.failed = { cause }; throw cause }
-    finally { transactions.delete(tx) }
-  }
-  const transaction = <Value>(work: (tx: Transaction) => Value): Value => {
-    if (shared.active) return invoke(shared.active, work)
-    const context: Context = { identity: driver.identity, committed: [], rollback: new Set([base.clear]) }
-    let result: Value
-    try {
-      result = driver.transaction(() => {
-        shared.active = context
-        try { return invoke(context, work) } finally { delete shared.active }
-      })
-      if (thenable(result)) throw new Error("Grove SQLite transactions must complete synchronously")
-    } catch (cause) {
-      clearReaders()
-      for (const clear of context.rollback) clear()
-      context.rollback.clear(); context.committed.length = 0
-      throw cause
-    }
-    try { for (const acknowledge of context.committed) acknowledge() }
-    finally { context.rollback.clear(); context.committed.length = 0 }
-    return result
-  }
+  const transaction = <Value>(work: (tx: Transaction) => Value): Value => coordinator.transaction(tx => {
+    guard(tx).rollback.add(clearReaders)
+    return work(tx)
+  })
   const owner = (name: string): ValueReference | null => {
     const row = query<{ reference: string }>("SELECT reference FROM grove_value_owners WHERE scope=? AND name=?", [scope, ownerName(name)])[0]
     if (!row) return null
@@ -148,6 +115,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     return found
   }
   const commit = (tx: Transaction, changes: Commit): CommitResult => mutate(tx, context => {
+    const before = plain.stats()
     const claimed = new Set<string>()
     const claim = (name: string) => { ownerName(name); if (claimed.has(name)) throw new Error(`Duplicate Grove owner: ${name}`); claimed.add(name) }
     const publications = (changes.publish ?? []).map(change => {
@@ -160,7 +128,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     })
     const retained = (changes.retain ?? []).map(change => {
       claim(change.owner)
-      const ref = isValueReference(change.selection) ? change.selection : base.reference(change.selection)
+      const ref = isValueReference(change.selection) ? change.selection : selectionValueReference(change.selection) ?? base.reference(change.selection)
       referenceLocator(ref, scope)
       const current = owner(change.owner)
       if (current && encodeReference(current) !== encodeReference(ref)) throw new Error(`Grove owner already retains another value: ${change.owner}`)
@@ -173,8 +141,18 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
       if (actual && encodeReference(actual) !== encodeReference(change.expected)) throw new Error(`Grove owner changed: ${change.owner}`)
     }
     const owners = [...publications, ...retained]
-    const roots = owners.map(entry => referenceLocator(entry.ref, scope).root)
-    const batch = base.staging.prepare(owners.map(entry => entry.ref))
+    const legacy = owners.filter(entry => !isPlain(entry.ref))
+    const roots = legacy.map(entry => referenceLocator(entry.ref, scope).root)
+    const batch = base.staging.prepare(legacy.map(entry => entry.ref))
+    for (const entry of owners) {
+      const previous = owner(entry.owner)
+      if (previous && isPlain(previous)) plain.releaseOwner(tx, entry.owner, previous)
+      if (isPlain(entry.ref)) plain.retain(tx, entry.owner, entry.ref)
+    }
+    for (const change of changes.release ?? []) {
+      const previous = owner(change.owner)
+      if (previous && isPlain(previous)) plain.releaseOwner(tx, change.owner, previous)
+    }
     const staged = batch.nodes
     const logWritten = commitLogs(rows, batch.logs), mapWritten = commitMaps(maps, batch.maps)
     const written = { rows: logWritten.rows + mapWritten.rows, bytes: logWritten.bytes + mapWritten.bytes }
@@ -199,7 +177,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     for (const entry of owners) query("INSERT INTO grove_value_owners VALUES(?,?,?,?) ON CONFLICT(scope,name) DO UPDATE SET reference=excluded.reference,root=excluded.root", [scope, entry.owner, encodeReference(entry.ref), referenceLocator(entry.ref, scope).root])
     for (const change of changes.release ?? []) query("DELETE FROM grove_value_owners WHERE scope=? AND name=?", [scope, change.owner])
     context.committed.push(() => base.staging.acknowledge(batch))
-    return { nodes, bytes, rows: written.rows }
+    return { nodes, bytes: bytes + plain.stats().encodedBytes - before.encodedBytes, rows: written.rows + plain.stats().cellWrites - before.cellWrites }
   })
   // replaceOwners reconciles a prefixed durable owner group atomically (test/transactions.test.ts).
   const replaceOwners = (tx: Transaction, prefix: string, references: readonly ValueReference<unknown>[]) => mutate(tx, () => {
@@ -218,7 +196,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
   // syncHeld keeps one owner per locally held reference under prefix, named by the reference's digest so a held value keeps its row while others change.
   // It writes only identities held or unheld since the previous sync; the first sync and any sync after a rollback reconcile the whole group.
   let heldPrefix: string | undefined
-  const syncHeld = (tx: Transaction, prefix: string) => mutate(tx, context => {
+  const syncLegacyHeld = (tx: Transaction, prefix: string) => mutate(tx, context => {
     ownerName(prefix)
     if (heldPrefix !== undefined && heldPrefix !== prefix) throw new Error("Local holders already sync to another owner prefix")
     const changes = ownership.drain()
@@ -226,7 +204,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     const name = (encoded: string) => prefix + digest(encoded)
     if (heldPrefix === undefined) {
       const desired = new Map(ownership.held().map(ref => [name(encodeReference(ref)), ref] as const))
-      for (const owned of owners(prefix)) if (!desired.delete(owned.name)) commit(tx, { release: [{ owner: owned.name, expected: owned.reference }] })
+      for (const owned of owners(prefix).filter(owned => !isPlain(owned.reference))) if (!desired.delete(owned.name)) commit(tx, { release: [{ owner: owned.name, expected: owned.reference }] })
       for (const [owner, selection] of desired) commit(tx, { retain: [{ owner, selection }] })
       heldPrefix = prefix
       return
@@ -235,10 +213,29 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     for (const [encoded, selection] of changes.added) commit(tx, { retain: [{ owner: name(encoded), selection }] })
   })
   const owners = (prefix: string) => query<{ name: string; reference: string }>("SELECT name,reference FROM grove_value_owners WHERE scope=? AND substr(name,1,length(?))=? ORDER BY name", [scope, prefix, prefix]).map(row => ({ name: row.name, reference: decodeReference(row.reference) }))
+  let plainHeldPrefix: string | undefined
+  const syncHeld = (tx: Transaction, prefix: string) => mutate(tx, context => {
+    syncLegacyHeld(tx, prefix)
+    if (plainHeldPrefix !== undefined && plainHeldPrefix !== prefix) throw new Error("Local holders already sync to another owner prefix")
+    const changes = plain.drainHeld()
+    if (plainHeldPrefix === undefined) {
+      const desired = new Map((plain.held() ?? []).map(ref => [prefix + digest(encodeReference(ref)), ref]))
+      for (const previous of owners(prefix).filter(entry => isPlain(entry.reference))) {
+        if (desired.delete(previous.name)) continue
+        commit(tx, { release: [{ owner: previous.name, expected: previous.reference }] })
+      }
+      for (const [owner, selection] of desired) commit(tx, { retain: [{ owner, selection }] })
+    } else if (changes) {
+      for (const encoded of changes.removed) commit(tx, { release: [{ owner: prefix + digest(encoded), expected: decodeReference(encoded) }] })
+      for (const [encoded, selection] of changes.added) commit(tx, { retain: [{ owner: prefix + digest(encoded), selection }] })
+    }
+    plainHeldPrefix = prefix
+    context.rollback.add(() => { plainHeldPrefix = undefined })
+  })
   const acquire = (ref: ValueReference<unknown>) => {
     const { root } = referenceLocator(ref, scope)
     if (!exists(root)) throw new Error("Grove view requires persisted backing storage")
-    const context = shared.active
+    const context = coordinator.active()
     context?.rollback.add(base.clear)
     shared.leases.set(root, (shared.leases.get(root) ?? 0) + 1)
     let active = true
@@ -253,6 +250,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     return { release, check: () => { if (!active) throw new Error("Grove read lease expired") } }
   }
   const view = <Value extends Json>(ref: ValueReference<unknown>, schema: Schema.Decoder<Value>): View<Value> => {
+    if (isPlain(ref)) return plain.view(ref, schema)
     const source = base.view(ref, schema)
     const read = <Result>(work: () => Result) => { const lease = acquire(ref); try { return work() } finally { lease.release() } }
     return Object.freeze({
@@ -278,7 +276,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
   const collect = () => transaction(tx => mutate(tx, () => {
     const before = query<{ nodes: number; bytes: number }>("SELECT COUNT(*) nodes,COALESCE(SUM(byte_length),0) bytes FROM grove_value_nodes")[0]!
     query("DELETE FROM grove_value_gc_live")
-    query("INSERT OR IGNORE INTO grove_value_gc_live SELECT root,0 FROM grove_value_owners")
+    query("INSERT OR IGNORE INTO grove_value_gc_live SELECT root,0 FROM grove_value_owners WHERE json_extract(reference,'$.selection.backend') IS NULL")
     const held = [...shared.holders.values()].map(snapshot => snapshot())
     const staged = new Map(held.flatMap(snapshot => [...snapshot.nodes]))
     for (const root of [...shared.leases.keys(), ...held.flatMap(snapshot => snapshot.roots)]) query("INSERT OR IGNORE INTO grove_value_gc_live VALUES(?,0)", [root])
@@ -303,6 +301,7 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     query("DELETE FROM grove_value_nodes WHERE hash NOT IN (SELECT hash FROM grove_value_gc_live)")
     query("DELETE FROM grove_value_gc_live")
     const after = query<{ nodes: number; bytes: number }>("SELECT COUNT(*) nodes,COALESCE(SUM(byte_length),0) bytes FROM grove_value_nodes")[0]!
+    plain.collect()
     clearReaders()
     return { nodes: before.nodes - after.nodes, bytes: before.bytes - after.bytes + rowResult.bytes + mapResult.bytes, rows: rowResult.rows + mapResult.rows }
   }))
@@ -316,17 +315,25 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
         return documents.open(ref)
       } }
     },
-    owners, replaceOwners, syncHeld, hold, release, held: ownership.held,
-    bytes: base.bytes,
-    capture: base.capture,
+    materialize: <State extends Json, Event, Metadata>(options: PlainOptions<State, Event, Metadata>) => {
+      const bound = plain.materialize(options)
+      return { ...bound, open: (ref: ValueReference<unknown>) => openReference(ref, {
+        scope, current: bound.open, initial: bound.initial, migrate: options.migrate,
+        read: reference => view(reference, Schema.Json).materialize(),
+      }) }
+    },
+    owners, replaceOwners, syncHeld, hold, release, held: () => [...ownership.held(), ...(plain.held() ?? [])],
+    bytes: (ref: ValueReference<unknown>) => isPlain(ref) ? Buffer.byteLength(JSON.stringify(plain.view(ref, Schema.Json).materialize())) : base.bytes(ref),
+    capture: (value: Json) => plain.capture(value),
     // readValue reads captured drafts or persisted values while local owners protect their dependencies (platform/test/properties/accepted-work.ts).
     readValue: (ref: ValueReference<unknown>): Json => {
+      if (isPlain(ref)) return plain.view(ref, Schema.Json).materialize()
       const { root } = referenceLocator(ref, scope)
       return base.staging.prepare([ref]).nodes.has(root) ? base.view(ref, Schema.Json).materialize() : view(ref, Schema.Json).materialize()
     },
-    reference: base.reference, clear: base.clear, transactionActive: () => shared.active !== undefined, transaction, commit, owner, view, collect,
-    discard: () => { if (shared.active) throw new Error("Cannot discard staged changes during a transaction"); base.staging.discard(base.staging.staged().flatMap(hash => ownership.heldAt(hash))) },
-    stats: () => ({ ...base.stats(), chunkBytes, maxParameters, activeLeases: [...shared.leases.values()].reduce((sum, count) => sum + count, 0), leasedRoots: shared.leases.size, localHolders: ownership.size, heldReferences: ownership.held().length }),
+    reference: <Value>(selection: Selection<Value>) => selectionValueReference(selection) as ValueReference<Value> | undefined ?? base.reference(selection), clear: base.clear, transactionActive: () => coordinator.active() !== undefined, transaction, commit, owner, view, collect,
+    discard: () => { if (coordinator.active()) throw new Error("Cannot discard staged changes during a transaction"); base.staging.discard(base.staging.staged().flatMap(hash => ownership.heldAt(hash))); plain.discard() },
+    stats: () => ({ ...base.stats(), stagedNodes: base.stats().stagedNodes + (plain.stats().stagedVersions ?? 0), reducer: plain.stats(), reducerChunkBytes, chunkBytes, maxParameters, activeLeases: [...shared.leases.values()].reduce((sum, count) => sum + count, 0), leasedRoots: shared.leases.size, localHolders: ownership.size + (plain.holderCount() ?? 0), heldReferences: ownership.held().length + (plain.held().length ?? 0) }),
   }
 }
 export type SyncStore = ReturnType<typeof makeSync>

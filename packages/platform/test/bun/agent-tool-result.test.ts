@@ -33,13 +33,13 @@ test("historical tool events upcast to content-only version one", () => {
 test("tool history reaches trajectory with literal text, media, and error semantics intact", () => {
   for (const payload of [{ output: "legacy" }, { content }, { output: "ignored", content }, { version: 1, content, error: "Capture failed" }]) {
     const log = createEventLog({ schema: ToolReturned, atoms: { trajectory: durableAtom({
-      name: "trajectory", input: ToolReturned, schema: TrajectoryState, initial: state, reduce: (document, event) => document.set([], reduceTrajectory(document.read([]), event)),
+      name: "trajectory", input: ToolReturned, schema: TrajectoryState, initial: state, reduce: reduceTrajectory,
     }) } })
     try {
       const records = JSON.parse(JSON.stringify([{ recordedAt: 10, event: { ...base, ...payload } }])) as readonly Recorded<ToolReturned>[]
       const snapshot = log.replay(records)
       const error = "error" in payload ? payload.error : null
-      expect(snapshot.view().trajectory.read(["entries"]).at(-1)?.message).toEqual({
+      expect(snapshot.view().trajectory.entries.at(-1)?.message).toEqual({
         role: "tool", callId: "call", providerId: "provider-call", name: "capture", error: error !== null,
         text: error ?? ("content" in payload ? "Image captured" : "legacy"),
         ...("content" in payload && error === null ? { content } : {}),

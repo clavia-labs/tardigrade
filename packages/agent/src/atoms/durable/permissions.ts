@@ -1,4 +1,4 @@
-import { durableAtom, atom, tree, keyValue, RuntimeError } from "@clavia/tardigrade-core"
+import { durableAtom, atom, RuntimeError } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
 import { PermissionConfigured, PermissionUpdated, PermissionResolved, Decision, PermissionPolicy, PermissionAction, type Event } from "../../contracts/events"
 
@@ -21,30 +21,19 @@ export function reducePermissions(state: typeof PermissionState.Type, event: Eve
 }
 
 const PermissionRecord = Schema.Struct({ action: PermissionAction, requestId: Schema.NonEmptyString, decision: Decision })
-const PermissionCollections = Schema.Struct({ policy: tree(Schema.NullOr(PermissionPolicy)), decisions: keyValue(PermissionRecord), latest: keyValue(Schema.String) })
+const PermissionCollections = Schema.Struct({ policy: Schema.NullOr(PermissionPolicy), decisions: Schema.Record(Schema.String, PermissionRecord), latest: Schema.Record(Schema.String, Schema.String) })
 export const permissionRecords = durableAtom({
   name: "agent.permissions.decisions", input: Schema.Union([PermissionConfigured, PermissionUpdated, PermissionResolved]),
-  schema: PermissionCollections, initial: { policy: null, decisions: {}, latest: {} },
-  migrate: value => {
-    if (Schema.is(PermissionCollections)(value)) return value
-    const state = Schema.decodeUnknownSync(PermissionState)(value)
-    return { policy: state.policy, decisions: Object.fromEntries(state.decisions.map((entry, index) => [`import:${index}`, entry])), latest: Object.fromEntries(state.decisions.map((entry, index) => [JSON.stringify([entry.action, entry.requestId]), `import:${index}`])) }
+  schema: PermissionState, initial: { policy: null, decisions: [] },
+  migrate: stored => {
+    if (Schema.is(PermissionState)(stored)) return stored
+    const state = Schema.decodeUnknownSync(PermissionCollections)(stored)
+    const latest = new Set(Object.values(state.latest)), entries = Object.entries(state.decisions)
+    return { policy: state.policy, decisions: [...entries.filter(([id]) => !latest.has(id)), ...entries.filter(([id]) => latest.has(id))].map(([, entry]) => entry) }
   },
-  reduce: (state, event, _metadata, position) => {
-    if (event.type !== "PermissionResolved") {
-      const before = { policy: state.read(["policy"]), decisions: [] }, next = reducePermissions(before, event)
-      return next === before ? state : state.set(["policy"], next.policy)
-    }
-    const key = JSON.stringify([event.action, event.requestId])
-    const previous = state.has(["latest", key]) ? state.read(["decisions", state.read(["latest", key])]).decision : undefined
-    if (previous?.allowed === event.decision.allowed && previous.reason === event.decision.reason) return state
-    const id = `event:${position}`
-    return state.batch(edit => {
-      edit.set(["decisions", id], { action: event.action, requestId: event.requestId, decision: event.decision })
-      edit.set(["latest", key], id)
-    })
-  },
+  reduce: reducePermissions,
 })
+
 export interface PermissionView {
   readonly policy: typeof PermissionPolicy.Type | null
   readonly decision: (action: typeof PermissionAction.Type, requestId: string) => typeof Decision.Type | undefined
@@ -52,10 +41,7 @@ export interface PermissionView {
 export const permissionState = atom((get): PermissionView => {
   const state = get(permissionRecords)
   return {
-    policy: state.read(["policy"]),
-    decision: (action, requestId) => {
-      const key = JSON.stringify([action, requestId])
-      return state.has(["latest", key]) ? state.read(["decisions", state.read(["latest", key])]).decision : undefined
-    },
+    policy: state.policy,
+    decision: (action, requestId) => state.decisions.findLast(entry => entry.action === action && entry.requestId === requestId)?.decision,
   }
 })

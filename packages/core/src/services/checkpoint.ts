@@ -1,5 +1,6 @@
 import { DocumentState } from "./tree-state"
-import { Schema, Crypto, Effect, Encoding, PlatformError } from "effect"
+import { createHash } from "node:crypto"
+import { Schema, Effect } from "effect"
 import { RuntimeError, ExecutionResult, effectKey } from "../runtime/effects"
 import { StoredOperation, operationSettlement, cleanupSucceeded } from "../runtime/operation"
 import type { EffectCheckpoint } from "../runtime/replay"
@@ -7,12 +8,7 @@ import { migrateCheckpoint } from "./checkpoint/migrations"
 
 export const DEFAULT_CHECKPOINT_MAX_BYTES = 256 * 1024 * 1024
 
-const crypto = Crypto.make({
-  randomBytes: size => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-  digest: (algorithm, data) => Effect.tryPromise({ try: () => globalThis.crypto.subtle.digest(algorithm, data.slice().buffer as ArrayBuffer).then(value => new Uint8Array(value)), catch: cause => PlatformError.systemError({ _tag: "Unknown", module: "Crypto", method: "digest", description: "Checkpoint digest failed", cause }) }),
-})
-
-export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => crypto.digest("SHA-256", payload).pipe(Effect.map(Encoding.encodeHex), Effect.mapError(RuntimeError.from))
+export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => Effect.try({ try: () => createHash("sha256").update(payload).digest("hex"), catch: RuntimeError.from })
 
 const checkpointValue = (checkpoint: EffectCheckpoint) => {
   if (!Number.isSafeInteger(checkpoint.position) || checkpoint.position < 0) throw new Error("Invalid checkpoint position")

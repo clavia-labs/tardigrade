@@ -55,3 +55,5 @@ export * from "./services/watchdog"
 export * from "./services/execution-stream"
 
 export { DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES, InputDigest } from "./runtime/input-digest"
+
+export { selectEach } from "./atoms/durable/plain"

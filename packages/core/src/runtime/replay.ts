@@ -353,7 +353,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const captured = new Set<unknown>()
       const durable = [...store.nodes().values()].flatMap(node => {
         const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
-        return codec && !captured.has(codec) && captured.add(codec) ? [{ name: codec.name, state: codec.encode(store.get(node.atom)), ...(codec.reference ? { reference: codec.reference(store.get(node.atom)) } : {}), position: offset + records.length }] : []
+        if (!codec || captured.has(codec)) return []
+        captured.add(codec)
+        const saved = codec.capture ? codec.capture(atom => store.get(atom)) : { state: codec.encode(store.get(node.atom)), ...(codec.reference ? { reference: codec.reference(store.get(node.atom)) } : {}) }
+        return [{ name: codec.name, ...saved, position: offset + records.length }]
       })
       const names = new Set<string>()
       for (const entry of durable) {
@@ -678,7 +681,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const values = Object.freeze(engine.view())
     const references = [...engine.storeNodes()].flatMap(node => {
       const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
-      return codec?.reference ? [{ name: codec.name, reference: codec.reference(engine.get(node.atom)) }] : []
+      if (!codec) return []
+      const reference = codec.capture ? codec.capture(atom => engine.get(atom)).reference : codec.reference?.(engine.get(node.atom))
+      return reference ? [{ name: codec.name, reference }] : []
     })
     const snapshot: Snapshot = Object.freeze({
       events: engine.events,

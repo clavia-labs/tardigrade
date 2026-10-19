@@ -3,7 +3,8 @@ import { freezeJson, isFrozenJson, type Json } from "../storage/nodes"
 import { isValue } from "../schema"
 import { incrementalValidator, invalid } from "../session/validation"
 
-export const ValueState = Schema.TaggedStruct("ValueState", { value: Schema.Json })
+import { ValueState } from "../migrations/inline"
+export { ValueState } from "../migrations/inline"
 
 // bindValue validates and freezes whole JSON versions without storage or hashing (test/collections/value.test.ts).
 export function bindValue<State extends Json>(schema: Schema.Decoder<State, unknown>) {

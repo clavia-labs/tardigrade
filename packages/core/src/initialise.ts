@@ -1,3 +1,4 @@
+import type { Getter } from "./atoms/atom"
 import type { ReadonlyLog } from "./runtime/log-view"
 import { Schema } from "effect"
 import type { Recorded } from "./services/journal"
@@ -7,6 +8,7 @@ export const AtomState = Symbol("AtomState")
 
 export interface StatefulAtom {
   readonly [AtomState]: {
+    readonly capture?: (get: Getter) => { readonly state: unknown; readonly reference?: string }
     readonly name: string
     readonly reference?: (value: unknown) => string
     readonly decode: (state: unknown) => unknown

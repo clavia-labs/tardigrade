@@ -1,10 +1,10 @@
-import type { Selection } from "../../document"
+import type { Selection } from "../document"
 import { Schema } from "effect"
-import { makeReader } from "../../session/reader"
-import { storedValues, referenceLocator, type ValueReference } from "../../value"
-import { decodeNode } from "../nodes"
-import { decodeNodeChunks, NODE_QUERY, packDigests, DEFAULT_MAX_PARAMETERS, type NodeChunk } from "./chunks"
-import type { SyncSqlite, SyncOptions, Transaction } from "./store"
+import { makeReader } from "../session/reader"
+import { storedValues, referenceLocator, type ValueReference } from "../value"
+import { decodeNode } from "../storage/nodes"
+import { decodeNodeChunks, NODE_QUERY, packDigests, DEFAULT_MAX_PARAMETERS, type NodeChunk } from "../storage/sqlite/chunks"
+import type { SyncSqlite, SyncOptions, Transaction } from "../storage/sqlite/store"
 
 const Path = Schema.Array(Schema.Union([Schema.String, Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))]))
 const Source = Schema.Struct({
@@ -66,5 +66,9 @@ export function legacyStore(driver: SyncSqlite, scope: string, options: Omit<Syn
     tx.execute("DELETE FROM grove_nodes WHERE hash NOT IN (SELECT hash FROM grove_value_gc_live)", [])
     tx.execute("DELETE FROM grove_value_gc_live", [])
   }
-  return { reference, copy, read: (root: string) => reader.read(root, []), collect }
+  const restoreState = (stored: unknown, root: unknown) => {
+    if (stored === null || typeof stored !== "object" || Array.isArray(stored) || !("_tag" in stored) || stored._tag !== "TreeState" || !("root" in stored) || stored.root !== root || typeof root !== "string") throw new Error("Invalid legacy durable tree")
+    return reader.read(root, [])
+  }
+  return { reference, copy, read: (root: string) => reader.read(root, []), restoreState, collect }
 }

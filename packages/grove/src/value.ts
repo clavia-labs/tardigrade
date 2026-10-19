@@ -13,8 +13,8 @@ export interface View<Value> {
   readonly materialize: () => Value
 }
 export interface ValueRange { readonly start: number; readonly end: number }
-interface Locator { readonly root: string; readonly path: Path; readonly each?: Path; readonly range?: ValueRange }
-interface Descriptor { readonly version: typeof REFERENCE_FORMAT_VERSION; readonly scope: string; readonly selection: Locator }
+interface Locator { readonly backend?: "reducer"; readonly root: string; readonly path: Path; readonly each?: Path; readonly range?: ValueRange }
+interface Descriptor { readonly version: 1 | 2; readonly scope: string; readonly selection: Locator }
 interface ValueReader {
   readonly read: (root: string, path: Path) => Json
   readonly length: (root: string, path: Path) => number
@@ -34,6 +34,7 @@ const pathValid = (value: unknown): value is Path => Array.isArray(value) && val
 const rangeValid = (value: unknown): value is ValueRange => record(value) && keys(value, ["start", "end"]) && natural(value.start) && natural(value.end) && value.start <= value.end
 const scopeValid = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0
 const copy = (selection: Locator): Locator => Object.freeze({
+  ...(selection.backend === undefined ? {} : { backend: selection.backend }),
   root: selection.root, path: Object.freeze([...selection.path]),
   ...(selection.each === undefined ? {} : { each: Object.freeze([...selection.each]) }),
   ...(selection.range === undefined ? {} : { range: Object.freeze({ ...selection.range }) }),
@@ -55,10 +56,11 @@ export const encodeReference = (value: ValueReference<unknown>): string => JSON.
 // decodeReference validates a scoped identity without proving its payload or schema (test/references.test.ts).
 export function decodeReference(encoded: string): ValueReference {
   const value: unknown = JSON.parse(encoded)
-  if (!record(value) || !keys(value, ["version", "scope", "selection"]) || value.version !== REFERENCE_FORMAT_VERSION || !scopeValid(value.scope)) throw new Error("Invalid Grove reference format or scope")
+  if (!record(value) || !keys(value, ["version", "scope", "selection"]) || (value.version !== REFERENCE_FORMAT_VERSION && value.version !== 2) || !scopeValid(value.scope)) throw new Error("Invalid Grove reference format or scope")
   const selection = value.selection
-  if (!record(selection) || !keys(selection, ["root", "path", "each", "range"]) || typeof selection.root !== "string" || !/^[a-f0-9]{64}$/.test(selection.root) || !pathValid(selection.path) || (selection.each !== undefined && !pathValid(selection.each)) || (selection.range !== undefined && !rangeValid(selection.range))) throw new Error("Invalid Grove reference selection")
-  return reference({ version: REFERENCE_FORMAT_VERSION, scope: value.scope, selection: selection as unknown as Locator })
+  if (!record(selection) || !keys(selection, ["root", "path", "each", "range", "backend"]) || (selection.backend !== undefined && selection.backend !== "reducer") || typeof selection.root !== "string" || !/^[a-f0-9]{64}$/.test(selection.root) || !pathValid(selection.path) || (selection.each !== undefined && !pathValid(selection.each)) || (selection.range !== undefined && !rangeValid(selection.range))) throw new Error("Invalid Grove reference selection")
+  if ((value.version === 2) !== (selection.backend === "reducer")) throw new Error("Invalid Grove reference backend")
+  return reference({ version: value.version, scope: value.scope, selection: selection as unknown as Locator })
 }
 
 // EncodedReference validates serialized references through Grove's versioned codec (test/references.test.ts).
@@ -80,7 +82,7 @@ export function storedValues(scope: string, reader: ValueReader) {
   const session = {}
   return {
     register: (token: object, locator: Locator) => {
-      selections.set(token, { session, reference: reference({ version: REFERENCE_FORMAT_VERSION, scope, selection: locator }) })
+      selections.set(token, { session, reference: reference({ version: locator.backend === "reducer" ? 2 : REFERENCE_FORMAT_VERSION, scope, selection: locator }) })
     },
     reference: <Value>(token: Selection<Value>): ValueReference<Value> => {
       const selected = selections.get(token)

@@ -1,11 +1,11 @@
 import { Trajectory, TurnRequested, ModelCalled, ModelReturned, ModelFailed, ToolReturned, TurnSettled, type Event } from "../../contracts/events"
 import { Schema } from "effect"
-import { atom, appendOnly, durableAtom, tree, type MerkleTree } from "@clavia/tardigrade-core"
+import { atom, durableAtom } from "@clavia/tardigrade-core"
 import { Atom } from "effect/unstable/reactivity"
 
 export const TrajectoryState = Schema.Struct({
-  entries: appendOnly(Trajectory),
-  models: tree(Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String }))),
+  entries: Trajectory,
+  models: Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String })),
 })
 export const TrajectoryEvent = Schema.Union([TurnRequested, ModelCalled, ModelReturned, ModelFailed, ToolReturned, TurnSettled])
 type Entry = typeof Trajectory.Type[number]
@@ -47,14 +47,10 @@ export function reduceTrajectory(state: typeof TrajectoryState.Type, event: Even
 }
 
 export const trajectoryState = durableAtom({ name: "agent.trajectory", input: TrajectoryEvent, schema: TrajectoryState, initial: { entries: [], models: [] },
-  reduce: (state: MerkleTree<typeof TrajectoryState.Type>, event) => {
-    const change = trajectoryChange(event, state.read(["models"]), callId => findTrajectoryTool(state.length(["entries"]), index => state.read(["entries", index]), callId))
-    if (change.entry) state = state.append(["entries"], [change.entry])
-    return change.models ? state.set(["models"], change.models) : state
-  },
+  reduce: reduceTrajectory,
 })
 
 // trajectory preserves message order and turn ownership, including pending model attribution across recovery.
-export const trajectory = atom(get => get(trajectoryState).read(["entries"])).pipe(Atom.withLabel("trajectory"))
+export const trajectory = atom(get => get(trajectoryState).entries).pipe(Atom.withLabel("trajectory"))
 // messages materializes archive messages for consumers that explicitly request the complete history.
 export const messages = atom(get => get(trajectory).map(entry => entry.message))

@@ -26,7 +26,8 @@ interface Declaration<Kind extends string, Value, Encoded, RD, RE> extends Schem
 type Declared<S> = S extends { readonly [DeclarationMark]: infer Kind } ? Kind extends "value" ? false : true : false
 type DeclaredFields<S> = S extends { readonly fields: infer Fields extends Record<string, Schema.Top> } ? { [Key in keyof Fields]: Declared<Fields[Key]> }[keyof Fields] : false
 type StateCollections<Value> = Collection<Value> extends true ? true : [Value] extends [readonly unknown[]] ? false : string extends keyof Value ? false : [Value] extends [object] ? true extends { [Key in keyof Value]-?: Collection<Value[Key]> }[keyof Value] ? true : false : false
-export type CollectionSchema<S extends Schema.Top> = S extends { readonly [DeclarationMark]: "value" } ? false : true extends Declared<S> | DeclaredFields<S> | StateCollections<S["Type"]> ? true : false
+export type ValueSchema<S extends Schema.Top> = S extends { readonly [DeclarationMark]: "value" } ? true : false
+export type CollectionSchema<S extends Schema.Top> = ValueSchema<S> extends true ? false : true extends Declared<S> | DeclaredFields<S> | StateCollections<S["Type"]> ? true : false
 
 type Editable<Value, P extends Path, Operation extends "set" | "append" | "splice"> = P extends readonly [infer Key extends string | number, ...infer Rest extends Path] ? Marked<Value> extends true ? false : Keyed<Value> extends true ? Operation extends "set" ? Rest extends readonly [] ? true : false : false : Editable<At<Value, [Key]>, Rest, Operation> : Operation extends "splice" ? Marked<Value> extends true ? false : true : true
 export type EditPath<Value, P extends Path> = Editable<Value, P, "set"> extends true ? Valid<Value, P> : never
