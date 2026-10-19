@@ -5,6 +5,7 @@ import { actor } from "tardie/deprecated"
 import { codeMode } from "tardie/deprecated/component/code"
 import * as legacyAgent from "tardie/deprecated/agent"
 import { defineLibrary } from "tardie/libraries"
+import { retryCloudflareOperation, makeRetryingRpc, classifyDurableObjectRpcError, DurableObjectRpcError, type CloudflareRetryOptions } from "tardie/platform/cloudflare/retry"
 
 test("public entrypoints expose actor and migration APIs", () => {
   for (const value of [createEventLog, defineActor, initialiseState, defineLibrary, actor]) {
@@ -19,4 +20,12 @@ test("public imports hide implementation modules", () => {
   for (const path of ["tardie", "tardie/experimental", "tardie/core/atoms/atom", "tardie/agent/atoms", "tardie/deprecated/core/component/runtime", "tardie/deprecated/core/component/composition/parent"]) {
     expect(() => import.meta.resolve(path)).toThrow()
   }
+})
+
+test("public Cloudflare retry entrypoint exposes binding helpers", () => {
+  for (const value of [retryCloudflareOperation, makeRetryingRpc, classifyDurableObjectRpcError, DurableObjectRpcError]) {
+    expect(typeof value).toBe("function")
+  }
+  const options: CloudflareRetryOptions = { retry: false }
+  expect(typeof makeRetryingRpc(options).call).toBe("function")
 })

@@ -8,6 +8,10 @@ const agent = await load("tardie/agent")
 const services = await load("tardie/agent/services")
 const libraries = await load("tardie/libraries")
 const legacy = await load("tardie/deprecated")
+const cloudflareRetry = await load("tardie/platform/cloudflare/retry")
+for (const name of ["retryCloudflareOperation", "makeRetryingRpc", "classifyDurableObjectRpcError", "DurableObjectRpcError"]) {
+  if (typeof cloudflareRetry[name] !== "function") throw new Error(`Missing public Cloudflare retry API ${name}`)
+}
 for (const [scope, name] of [[core, "defineActor"], [core, "createEventLog"], [core, "initialiseState"], [libraries, "defineLibrary"], [legacy, "actor"]] as const) {
   if (typeof scope[name] !== "function") throw new Error(`Missing public API ${name}`)
 }

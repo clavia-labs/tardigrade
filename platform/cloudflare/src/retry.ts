@@ -5,6 +5,8 @@ import { makeAlarmPersistence, makeDurableObjectAlarms, type AlarmStorage, type 
 import { makeDurableObjectRpc, type DurableObjectRpcOptions } from "./layers/rpc"
 import { structuredWorkerConfigOf } from "./config"
 
+export { classifyDurableObjectRpcError, DurableObjectRpcError } from "./layers/rpc-error"
+
 export type CloudflareRetryPolicy = false | Partial<IoRetryPolicy>
 export interface CloudflareRetryOptions { readonly retry?: CloudflareRetryPolicy }
 
