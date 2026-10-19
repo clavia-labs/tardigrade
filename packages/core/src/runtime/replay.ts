@@ -24,6 +24,10 @@ import { operationSettlement, settlementCompletesExecution, cleanupSubmission, c
 
 type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<infer Value> ? Value : never }
 
+const reconstructionError = (message: string, position: number) => new ActorReplayError({
+  stage: "effect_request", reason: "reconstruction_failed", position, cause: new Error(message),
+})
+
 export interface EffectCheckpoint {
   readonly position: number
   readonly durable: readonly { readonly name: string; readonly state: unknown; readonly position: number; readonly reference?: string }[]
@@ -186,7 +190,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const loadedInputs = new Map<string, EffectRequest>()
     const inputOf = (key: string): EffectRequest => {
       const input = loadedInputs.get(key)
-      if (!input) throw new ActorReplayError({ stage: "effect_request", reason: "reconstruction_failed", position: offset + records.length, cause: new Error("Effect requires reconstructed input") })
+      if (!input) throw reconstructionError("Effect requires reconstructed input", offset + records.length)
       return input
     }
     const retire = new Set<string>()
@@ -443,7 +447,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         executionDeclarations.set(proposal.identity, prepared.stored)
         if (ref) {
           const recorded = requestOf(effectKey(ref))
-          if (!recorded || recorded.origin !== proposal.origin) throw new ActorReplayError({ stage: "effect_request", reason: "reconstruction_failed", position: ref.seq, cause: new Error("Restored effect request differs from its proposal") })
+          if (!recorded || recorded.origin !== proposal.origin) throw reconstructionError("Restored effect request differs from its proposal", ref.seq)
           const key = effectKey(ref)
           const settlement = settlementOf(key)
           const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !hasPromise(key)
@@ -509,7 +513,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           if (candidates.length > 1) throw new Error("Calls to the same act require distinct origins")
           const offered = candidates[0]
           const offeredPrepared = offered ? preparedRequests.get(offered.request) : undefined
-          if (!offered) throw new ActorReplayError({ stage: "effect_request", reason: "reconstruction_failed", position: event.ref.seq, cause: new Error("Effect request differs from its proposal") })
+          if (!offered) throw reconstructionError("Effect request differs from its proposal", event.ref.seq)
           const input = acceptedInput(event, offeredPrepared ?? prepareRequest(offered.request), concluded.has(key))
           const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
@@ -649,7 +653,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (result.type !== "promise") return []
         const proposal = acts.get(key)
         const request = requestOf(key)
-        if (!proposal || !request) throw new ActorReplayError({ stage: "effect_request", reason: "reconstruction_failed", position: settlement.ref.seq, cause: new Error("Deferred work requires its reconstructed execution") })
+        if (!proposal || !request) throw reconstructionError("Deferred work requires its reconstructed execution", settlement.ref.seq)
         return [{ kind: "act" as const, atom: settlement.ref.atom, source: actOwners.get(proposal.identity)!, ref: settlement.ref,
           request: inputOf(key), execute: proposal.execute, handle: result.handle }]
       }),

@@ -16,7 +16,7 @@ import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 import { HttpRouter } from "effect/unstable/http"
-import { hostRoutes, logHttpError, publicError, type ErrorLogPolicy } from "../shared/http"
+import { hostRoutes, httpFailure, type ErrorLogPolicy } from "../shared/http"
 
 export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const
 export const DEFAULT_CLOUDFLARE_CHILD_PLACEMENT = "independent" as const
@@ -82,8 +82,7 @@ async function objectResponse(request: Request, handle: () => Promise<Response>,
   if (new URL(request.url).pathname === "/healthz") return Response.json({ status: "resting", dirty: 0 })
   try { return await handle() }
   catch (error) {
-    const response = publicError(error)
-    await Effect.runPromise(logHttpError(error, errorLog))
+    const response = await Effect.runPromise(httpFailure(error, errorLog))
     return Response.json(response.body, { status: response.status })
   }
 }

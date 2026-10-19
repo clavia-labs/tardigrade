@@ -4,7 +4,7 @@ import { HttpServerResponse } from "effect/unstable/http"
 import { executionStreamSse } from "./execution-stream-sse"
 import { InitialState, InvalidMessage, type ActorMethods, type MethodInput, type MethodResult, type MessageReceipt, type ThreadCoordinate, type ThreadRequest, type Recorded } from "@clavia/tardigrade-core"
 import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
-import { logHttpError, publicError, type ErrorLogPolicy } from "./http"
+import { HttpError, httpFailure, type ErrorLogPolicy } from "./http"
 
 export const DEFAULT_METHOD_HTTP_INSTANCE = "main"
 
@@ -43,12 +43,11 @@ export function methodHttp<Contracts extends ActorMethods<object>>(
     return exit.value
   }
   const json = (value: unknown, status = 200) => Response.json(value, { status })
-  const logFailure = (error: unknown, response: ReturnType<typeof publicError>) => Effect.runPromise(logHttpError(error, options.errorLog, response))
-  const failure = async (status: number, code: string, message: string) => {
-    const response = { status, body: { code, message } }
-    await logFailure(response.body, response)
-    return json(response.body, status)
+  const recover = async (error: unknown) => {
+    const response = await Effect.runPromise(httpFailure(error, options.errorLog))
+    return json(response.body, response.status)
   }
+  const failure = (status: number, code: string, message: string) => recover(new HttpError(status, code, message))
   const summaries = (methods: Contracts) => Object.entries(methods).map(([name, method]) => ({
     name, cancellable: method.onCancel !== undefined,
     inputSchema: jsonSchemaOf(method.inputSchema),
@@ -61,7 +60,7 @@ export function methodHttp<Contracts extends ActorMethods<object>>(
     if (request.method === "GET" && url.pathname === "/v1/metadata") return json({ name: host.actor, api: "atoms" })
     if (request.method === "GET" && url.pathname === "/v1/methods") {
       try { return json(summaries(await run(host.methodContracts({ instance: options.instance ?? DEFAULT_METHOD_HTTP_INSTANCE })))) }
-      catch (error) { const response = publicError(error); await logFailure(error, response); return json(response.body, response.status) }
+      catch (error) { return recover(error) }
     }
     const match = /^\/v1\/actors\/([^/]+)\/threads(?:\/([^/]+))?(?:\/(.*))?$/.exec(url.pathname)
     if (!match) return failure(404, "route_not_found", "Not found")
@@ -113,9 +112,7 @@ export function methodHttp<Contracts extends ActorMethods<object>>(
       }
       return failure(404, "route_not_found", "Not found")
     } catch (error) {
-      const response = publicError(Schema.isSchemaError(error) ? new InvalidMessage("Invalid request", { cause: error }) : error)
-      await logFailure(error, response)
-      return json(response.body, response.status)
+      return recover(Schema.isSchemaError(error) ? new InvalidMessage("Invalid request", { cause: error }) : error)
     }
   }
 }

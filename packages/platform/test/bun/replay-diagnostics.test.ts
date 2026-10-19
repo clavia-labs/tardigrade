@@ -18,7 +18,8 @@ test("replay diagnostics preserve private aggregate causes and keep HTTP respons
 
 test("diagnostic bounds are configurable, visible, and leave the original cause intact", () => {
   const fields = errorLogFields(error, { maxDepth: 0, maxErrors: 1, maxMessageLength: 8 })
-  expect(fields.errorCauses).toEqual([{ path: "error", name: "ActorRep", message: "Invalid ", code: "actor_re", stage: "event", reason: "decode_f", position: 7 }])
+  expect(fields).toMatchObject({ errorName: "ActorRep", errorMessage: "Invalid ", errorCode: "actor_re", errorStage: "event", errorReason: "decode_f", errorPosition: 7 })
+  expect(fields.errorCauses).toEqual([])
   expect(fields.errorDiagnosticsTruncated).toBe(true)
   expect(fields.errorLogPolicy).toEqual({ maxDepth: 0, maxErrors: 1, maxMessageLength: 8 })
   expect(JSON.stringify(errorLogFields(error, DEFAULT_ERROR_LOG_POLICY))).toContain(diagnostic)

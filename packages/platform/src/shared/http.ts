@@ -19,7 +19,7 @@ export interface HttpHost {
   readonly getThread: (input: { instance: string; thread: string }) => Effect.Effect<HttpThread | undefined, Error>
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message) }
 }
 
@@ -94,13 +94,15 @@ export function errorLogFields(error: unknown, options: Partial<ErrorLogPolicy> 
     errorName: root.name ?? "Unknown", errorMessage: root.message ?? "Unknown error", ...(root.code === undefined ? {} : { errorCode: root.code }),
     ...(root.stage === undefined ? {} : { errorStage: root.stage }), ...(root.reason === undefined ? {} : { errorReason: root.reason }),
     ...(root.position === undefined ? {} : { errorPosition: root.position }),
-    errorCauses: chain, errorDiagnosticsTruncated: truncated, errorLogPolicy: { ...policy }, ...(rejected.length ? { errorLogPolicyRejected: rejected } : {}),
+    errorCauses: chain.slice(1), errorDiagnosticsTruncated: truncated, errorLogPolicy: { ...policy }, ...(rejected.length ? { errorLogPolicyRejected: rejected } : {}),
   }
 }
 
-export const logHttpError = (error: unknown, policy: Partial<ErrorLogPolicy> = {}, response = publicError(error)) => Effect.sync(() => {
-  return { ...errorLogFields(error, policy), code: response.body.code, status: response.status }
-}).pipe(Effect.flatMap(fields => Effect.logError("HTTP request failed").pipe(Effect.annotateLogs(fields))))
+export const httpFailure = (error: unknown, policy: Partial<ErrorLogPolicy> = {}) => Effect.gen(function* () {
+  const response = publicError(error)
+  yield* Effect.logError("HTTP request failed").pipe(Effect.annotateLogs({ ...errorLogFields(error, policy), code: response.body.code, status: response.status }))
+  return response
+})
 
 // publicError converts internal failures into the stable error contract exposed by HTTP hosts.
 export const publicError = (error: unknown): Readonly<{ status: number; body: PublicHttpError }> => {
@@ -115,19 +117,17 @@ export const publicError = (error: unknown): Readonly<{ status: number; body: Pu
   return { status: 500, body: { code: "internal_error", message: "Internal server error" } }
 }
 
-const respondWithPolicy = <Error, Services>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Error, Services>, policy: Partial<ErrorLogPolicy>) => handler.pipe(
-  Effect.catch(error => Effect.gen(function* () {
-    const response = publicError(error)
-    yield* logHttpError(error, policy)
-    return HttpServerResponse.jsonUnsafe(response.body, { status: response.status })
-  })),
-)
 const AllocationInput = Schema.Struct({ name: Schema.optionalKey(Schema.NonEmptyString.check(Schema.isPattern(/^[^/]+$/))), parent: Schema.optionalKey(Schema.NonEmptyString), initialState: Schema.optionalKey(InitialState) })
 const base = "/v1/actors/:instance/threads"
 
 // hostRoutes exposes thread allocation, message submission, acceptance receipts, and live execution updates.
 export function hostRoutes(host: HttpHost, errorLog: Partial<ErrorLogPolicy> = {}) {
-  const respond = <Error, Services>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Error, Services>) => respondWithPolicy(handler, errorLog)
+  const respond = <Error, Services>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Error, Services>) => handler.pipe(
+    Effect.catch(error => Effect.gen(function* () {
+      const response = yield* httpFailure(error, errorLog)
+      return HttpServerResponse.jsonUnsafe(response.body, { status: response.status })
+    })),
+  )
   return Layer.mergeAll(
     HttpRouter.add("GET", `${base}/:thread/execution/stream`, respond(Effect.gen(function* () {
       const { instance, thread } = yield* HttpRouter.params
