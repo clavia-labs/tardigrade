@@ -6,6 +6,7 @@
   "exports": {
     "./bun": "./src/bun/index.ts",
     "./cloudflare": "./src/cloudflare/index.ts",
+    "./cloudflare/retry": "./src/cloudflare/retry.ts",
     "./journal": "./src/shared/sql-journal.ts"
   },
   "dependencies": {
