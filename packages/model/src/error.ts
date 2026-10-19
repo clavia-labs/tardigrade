@@ -5,7 +5,6 @@ import { Headers } from "effect/unstable/http"
 export const ModelError = Schema.toCodecJson(AiError.AiError)
 export type ModelError = typeof ModelError.Type
 
-// DEFAULT_MODEL_ERROR_REDACTED_HEADERS selects credential headers omitted from persisted model errors (error.test.ts).
 export const DEFAULT_MODEL_ERROR_REDACTED_HEADERS: ReadonlyArray<string | RegExp> = Object.freeze([
   "authorization", "proxy-authorization", "x-bf-vk", "x-api-key", "api-key", "cookie", "set-cookie", /token|secret/i,
 ])
@@ -15,7 +14,6 @@ const redactHeaders = (headers: typeof AiError.HttpRequestDetails.Type["headers"
     Headers.isRedactedName(name, names) || Redacted.isRedacted(value) ? "[REDACTED]" : value,
   ]))
 
-// encodeModelError replaces selected HTTP headers with literal markers before persistence and preserves duration encoding (error.test.ts).
 export const encodeModelError = (error: AiError.AiError, redactedHeaders: ReadonlyArray<string | RegExp> = DEFAULT_MODEL_ERROR_REDACTED_HEADERS): Schema.Json => {
   const object = Schema.Record(Schema.String, Schema.Json)
   const encoded = Schema.decodeUnknownSync(object)(Schema.encodeSync(ModelError)(error))
