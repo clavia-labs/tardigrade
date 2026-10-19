@@ -6,11 +6,26 @@ import { createEventLog } from "../src/runtime/replay"
 import { documentSession } from "../src/services/tree-state"
 import { AtomState } from "../src/initialise"
 import { tree, appendOnly, keyValue } from "@tardie/grove"
+import { durablePromise } from "../src/atoms/promise"
 
 const Changed = Schema.Struct({ type: Schema.Literal("Changed"), key: Schema.String, text: Schema.String, remove: Schema.Boolean })
 const Declared = Schema.Struct({ document: tree(Schema.Struct({ count: Schema.Int })), messages: appendOnly(Schema.Array(Schema.String)), jobs: keyValue(Schema.Struct({ text: Schema.String })) }).annotate({ title: "Collection state" })
 const State: Schema.Schema<typeof Declared.Type> = Declared
 const changes = fc.array(fc.record({ type: fc.constant("Changed" as const), key: fc.constantFrom("a", "b", "c"), text: fc.string(), remove: fc.boolean() }), { minLength: 2, maxLength: 20 })
+
+test("internal promises preserve result codecs without public migration warnings", () => {
+  fc.assert(fc.property(fc.jsonValue(), data => {
+    const warnings = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const promise = durablePromise({ seq: 0, atom: "test", act: "job" }, { success: Schema.Json })
+      const value = Schema.decodeUnknownSync(Schema.Json)(data)
+      const result = { status: "fulfilled" as const, value }
+      expect(promise.succeed(value).result).toEqual(result)
+      expect(promise.state[AtomState].decode(promise.state[AtomState].encode(result))).toEqual(result)
+      expect(warnings).not.toHaveBeenCalled()
+    } finally { warnings.mockRestore() }
+  }), { numRuns: 40, includeErrorInReport: true })
+})
 
 test("durableAtom infers collection reducers and restores selected versions across checkpoint replay", () => {
   fc.assert(fc.property(changes, events => {
@@ -56,7 +71,7 @@ test("durableAtom infers collection reducers and restores selected versions acro
   }), { numRuns: 40, includeErrorInReport: true })
 })
 
-test("legacy reducers retain values and codec behavior with a construction-time deprecation warning", () => {
+test("plain reducers retain values and codecs without collection declarations", () => {
   fc.assert(fc.property(fc.array(fc.integer({ min: -20, max: 20 }), { maxLength: 30 }), values => {
     const warnings = spyOn(console, "warn").mockImplementation(() => {})
     const Added = Schema.Struct({ type: Schema.Literal("Added"), amount: Schema.Int })
@@ -66,9 +81,7 @@ test("legacy reducers retain values and codec behavior with a construction-time 
     try {
       const final = log.replay(values.map(amount => ({ event: { type: "Added", amount } })))
       expect(final.get(total)).toBe(values.reduce((sum, value) => sum + value, 0))
-      expect(warnings).toHaveBeenCalledTimes(1)
-      expect(warnings.mock.calls[0]![0]).toContain("deprecated plain state")
-      expect(warnings.mock.calls[0]![0]).toContain("value(schema)")
+      expect(warnings).not.toHaveBeenCalled()
       expect(final.get(tagged)).toBe(final.get(total))
       expect(total[AtomState].decode(7)).toBe(7)
     } finally { log.dispose(); warnings.mockRestore() }
@@ -98,7 +111,7 @@ test("untagged array roots retain plain reducers when their element schema has m
     const log = createEventLog({ schema: Added, atoms: { state } })
     try {
       expect(log.replay(values.map(value => ({ event: { type: "Added", value } }))).get(state)).toEqual(values)
-      expect(warnings).toHaveBeenCalledTimes(1)
+      expect(warnings).not.toHaveBeenCalled()
     } finally { log.dispose(); warnings.mockRestore() }
   }))
 })
@@ -117,7 +130,7 @@ test("null states preserve plain and declared collection dispatch", () => {
       expect(final.get(plain)).toBeNull()
       expect(final.get(root).read([])).toBeNull()
       expect(final.get(fields).read(["value"])).toBeNull()
-      expect(warnings).toHaveBeenCalledTimes(1)
+      expect(warnings).not.toHaveBeenCalled()
     } finally { log.dispose(); warnings.mockRestore() }
   }))
 })
@@ -178,4 +191,24 @@ test("whole-value atoms migrate stored tree checkpoints and resume with inline s
       try { expect(derived.initial.get(reader).read([])).toBe(expected.count) } finally { derived.dispose() }
     } finally { restored?.dispose(); after.dispose(); before.dispose() }
   }), { numRuns: 30, includeErrorInReport: true })
+})
+
+test("plain checkpoint formats preserve encoded schemas and subsequent reduction", () => {
+  fc.assert(fc.property(fc.integer({ min: -10000, max: 10000 }), fc.array(fc.integer({ min: -100, max: 100 }), { maxLength: 10 }), (initial, changes) => {
+    const Changed = Schema.Struct({ type: Schema.Literal("Changed"), amount: Schema.Int })
+    const state = durableAtom({ name: "encoded-state", schema: Schema.FiniteFromString, input: Changed, initial: 0, reduce: (state, event) => state + event.amount })
+    const original = createEventLog({ schema: Changed, atoms: { state } })
+    try {
+      original.initial.get(state)
+      const checkpoint = original.initial.checkpoint()!
+      for (const saved of [String(initial), { _tag: "ValueState", value: initial }]) {
+        const reopened = createEventLog({ schema: Changed, atoms: { state }, checkpoint: { ...checkpoint, durable: checkpoint.durable.map(entry => ({ ...entry, state: saved })) } })
+        try {
+          const final = reopened.replay(changes.map(amount => ({ event: { type: "Changed", amount } })))
+          expect(final.get(state)).toBe(changes.reduce((sum, amount) => sum + amount, initial))
+          expect(state[AtomState].encode(final.get(state))).toBe(String(final.get(state)))
+        } finally { reopened.dispose() }
+      }
+    } finally { original.dispose() }
+  }), { numRuns: 100, includeErrorInReport: true })
 })

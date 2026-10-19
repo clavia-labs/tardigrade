@@ -8,7 +8,7 @@ import type { RecordMetadata } from "../../services/journal"
 import type { DurableAtom } from "./atom"
 
 // durableProjection shares journal folding between value and tree-backed atoms.
-export function durableProjection<State, Event>(options: {
+export function durableProjection<State, Event, Output = State>(options: {
   readonly name: string
   readonly input: Schema.Schema<Event>
   readonly reduce: (state: State, event: Event, metadata: RecordMetadata, position: number) => State
@@ -17,8 +17,10 @@ export function durableProjection<State, Event>(options: {
   readonly restore: (value: unknown, service: typeof EventLog.Service) => State
   readonly check: (value: State, service: typeof EventLog.Service) => State
   readonly hold?: (value: State, service: typeof EventLog.Service) => void
+  readonly view?: (state: State) => Output
+  readonly capture?: (state: State) => { readonly state: unknown; readonly reference?: string }
   readonly state: StatefulAtom[typeof AtomState]
-}): DurableAtom<State, Event> {
+}): DurableAtom<Output, Event> {
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
   const accepts = Schema.is(options.input)
   type Frame = { readonly source: Atom<ReadonlyLog<unknown>>; readonly position: number; readonly state: State }
@@ -56,6 +58,7 @@ export function durableProjection<State, Event>(options: {
     codec.hold?.(state, service)
     return { source, position: offset + events.length, state }
   }).pipe(NativeAtom.keepAlive)
-  const output = atom(get => get(reduced).state)
-  return Object.assign(output, { input: options.input, [AtomState]: codec.state })
+  const output = atom(get => codec.view ? codec.view(get(reduced).state) : get(reduced).state as unknown as Output)
+  const state = codec.capture ? { ...codec.state, capture: (get: import("../atom").Getter) => codec.capture!(get(reduced).state) } : codec.state
+  return Object.assign(output, { input: options.input, [AtomState]: state })
 }

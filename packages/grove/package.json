@@ -7,7 +7,9 @@
   "description": "Persistent JSON trees with selective reads and incremental writes.",
   "exports": {
     ".": "./src/index.ts",
-    "./sqlite": "./src/sqlite.ts"
+    "./sqlite": "./src/sqlite.ts",
+    "./reducer": "./src/reducer/index.ts",
+    "./migrations": "./src/migrations/index.ts"
   },
   "files": ["src"],
   "publishConfig": { "access": "public" },

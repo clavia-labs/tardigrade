@@ -105,6 +105,44 @@ test("Unicode actor owner prefixes reopen and release correctly", async () => {
   await Effect.runPromise(journal.close); db.close()
 })
 
+test("whole-value checkpoints release previous tree owners only after commit", async () => {
+  await fc.assert(fc.asyncProperty(fc.string(), async note => {
+    const db = new Database(":memory:"), base = driverFor(db)
+    let fail = false
+    const driver: SyncSqlite = { ...base, execute: (sql, parameters) => {
+      if (fail && sql.startsWith("INSERT INTO journal_checkpoint_chunks")) throw new Error("Injected checkpoint failure")
+      return base.execute(sql, parameters)
+    } }
+    let journal = synchronousJournal<{ type: string }>({ actor: "values", driver, cacheBytes: 0 })
+    const save = async (state: unknown, reference?: string) => {
+      const payload = encodeCheckpoint({ position: 0, durable: [{ name: "control", position: 0, state, ...(reference ? { reference } : {}) }], operations: [] })
+      return { position: 0, payload, digest: await Effect.runPromise(checkpointDigest(payload)) }
+    }
+    const owner = JSON.stringify(["values", "state"]) + "/control"
+    try {
+      const old = journal.storedValues.bind(State).initial({ messages: [{ text: note }] }), reference = encodeReference(old.reference!)
+      const original = await save({ _tag: "DocumentState", reference }, reference)
+      await Effect.runPromise(journal.appendWithCheckpoint(0, [], original, { documents: { references: [{ name: "control", reference }] } }))
+      await Effect.runPromise(journal.close)
+      journal = synchronousJournal({ actor: "values", driver, cacheBytes: 0 })
+      const replacement = await save({ _tag: "ValueState", value: { messages: [{ text: note }] } })
+      fail = true
+      await expect(Effect.runPromise(journal.appendWithCheckpoint(0, [], replacement))).rejects.toThrow("Injected checkpoint failure")
+      expect(journal.grove.owner(owner)).toEqual(decodeReference(reference))
+      expect(await Effect.runPromise(journal.readCheckpoint)).toEqual(original)
+      fail = false
+      await Effect.runPromise(journal.appendWithCheckpoint(0, [], replacement))
+      expect(journal.grove.owner(owner)).toBeNull()
+      await Effect.runPromise(journal.collect)
+      expect(() => journal.storedValues.read(reference)).toThrow()
+      expect(await Effect.runPromise(journal.readCheckpoint)).toEqual(replacement)
+      const next = journal.storedValues.bind(State).initial({ messages: [{ text: note + "next" }] }), nextReference = encodeReference(next.reference!)
+      await Effect.runPromise(journal.append(0, [], { documents: { references: [{ name: "control", reference: nextReference }] } }))
+      expect(journal.grove.owner(owner)).toEqual(next.reference!)
+    } finally { await Effect.runPromise(journal.close); db.close() }
+  }), { numRuns: 20, includeErrorInReport: true })
+})
+
 test("Core session bindings preserve document identity through journal publication", async () => {
   await fc.assert(fc.asyncProperty(fc.array(fc.string(), { maxLength: 20 }), fc.string(), async (texts, replacement) => {
     const db = new Database(":memory:"), driver = driverFor(db)

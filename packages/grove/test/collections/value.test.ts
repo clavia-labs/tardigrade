@@ -59,7 +59,7 @@ test("inline envelopes round-trip JSON values that resemble checkpoint descripto
   fc.assert(fc.property(fc.jsonValue(), data => {
     const binding = bindValue(value(Schema.Json))
     for (const input of [data, { _tag: "ValueState", value: data }, { _tag: "DocumentState", reference: "data" }]) {
-      expect(binding.restore(JSON.parse(JSON.stringify(binding.encode(binding.initial(input)))))).toEqual(Schema.decodeUnknownSync(Schema.Json)(input))
+      expect(binding.restore(JSON.parse(JSON.stringify(binding.encode(binding.initial(input)))))).toEqual(JSON.parse(JSON.stringify(Schema.decodeUnknownSync(Schema.Json)(input))))
     }
-  }), { numRuns: 40, includeErrorInReport: true })
+  }), { numRuns: 40, includeErrorInReport: true, examples: [[-0]] })
 })

@@ -1,8 +1,9 @@
 import { Schema } from "effect"
 import type { Json } from "@tardie/grove"
-import { encodeReference, treeSchema, ValueState } from "@tardie/grove"
+import { encodeReference, treeSchema } from "@tardie/grove"
+import * as migrations from "@tardie/grove/migrations"
 import { durableProjection } from "./projection"
-import { DocumentState, type MerkleTree, type DocumentSession } from "../../services/tree-state"
+import { type MerkleTree, type DocumentSession } from "../../services/tree-state"
 import { EventLog } from "../../services/event-log"
 import type { RecordMetadata } from "../../services/journal"
 
@@ -40,9 +41,7 @@ export function documentAtom<State extends Json, Event>({ schema, initial, initi
     const seed = typeof configured === "function" ? configured() : configured
     const read: CheckpointReader = (name, schema) => {
       const stored = seed?.state.get(name)
-      return stored === undefined ? undefined : Schema.is(DocumentState)(stored)
-        ? Schema.decodeSync(schema)(service.documents!.read(stored.reference))
-        : Schema.decodeSync(schema)(Schema.is(ValueState)(stored) ? stored.value : stored)
+      return stored === undefined ? undefined : Schema.decodeSync(schema)(migrations.read(stored, reference => service.documents!.read(reference)))
     }
     return read
   }
@@ -50,7 +49,7 @@ export function documentAtom<State extends Json, Event>({ schema, initial, initi
     initial: service => binding(service.documents).initial(initialize ? initialize(readCheckpoint(service)) : initial),
     restore: (value, service) => {
       const bound = binding(service.documents)
-      const view = Schema.is(DocumentState)(value) ? bound.open(value.reference) : bound.initial(prepare(value))
+      const view = migrations.open(value, { initial: bound.initial, reference: bound.open, decode: state => state, migrate })
       return restore ? bound.check(restore(view, readCheckpoint(service))) : view
     },
     check: (view, service) => binding(service.documents).check(view),

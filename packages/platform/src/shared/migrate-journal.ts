@@ -72,9 +72,8 @@ export function journalMigration(driver: SyncSqlite, grove: SyncStore, actor: st
       const durable = checkpoint.durable.map(value => {
         if (!object(value)) throw new Error("Invalid legacy durable entry")
         if (value.tree === undefined) return value
-        if (!object(value.state) || value.state._tag !== "TreeState" || value.state.root !== value.tree || typeof value.tree !== "string") throw new Error("Invalid legacy durable tree")
         const { tree: _tree, ...entry } = value
-        return { ...entry, state: legacy().read(value.tree) }
+        return { ...entry, state: legacy().restoreState(value.state, value.tree) }
       })
       const operations = (values: unknown) => Schema.decodeUnknownSync(Schema.Array(Schema.Unknown))(values).map(value => {
         if (!object(value) || !object(value.request)) throw new Error("Invalid legacy operation")

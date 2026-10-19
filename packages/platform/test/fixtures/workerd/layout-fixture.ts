@@ -74,6 +74,7 @@ export class LayoutActorDO extends worker.ActorObject {
   }
 }
 export class LayoutThreadDO extends worker.ThreadObject {
+  abort() { this.ctx.abort("injected checkpoint reset") }
   private provisionRelease: Deferred.Deferred<void> | undefined
   private provisionEntered = false
   private provisionAttempts = 0

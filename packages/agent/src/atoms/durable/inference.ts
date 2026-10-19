@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { durableAtom, tree, keyValue, ObservedCoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage, type Atom } from "@clavia/tardigrade-core"
+import { durableAtom, ObservedCoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage } from "@clavia/tardigrade-core"
 import { TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled, AbortRequested, type Event } from "../../contracts/events"
 
 const Turn = Schema.Struct({
@@ -103,12 +103,11 @@ export function turnOutput(events: readonly Event[], settlement: TurnSettled): s
   return reply.text
 }
 
-const controls = ["turnId", "callId", "origin", "needsReply", "running", "waiting"] as const
 export const InferenceCollections = Schema.Struct({
-  turns: keyValue(Turn), pending: tree(Schema.Array(Schema.String)),
-  invocations: keyValue(Schema.String), cancelled: keyValue(Schema.Boolean),
-  turnId: tree(Schema.String), callId: tree(Schema.String), origin: tree(Schema.NullOr(Schema.Finite)),
-  needsReply: tree(Schema.Boolean), running: tree(Schema.Boolean), waiting: tree(Schema.Boolean),
+  turns: Schema.Record(Schema.String, Turn), pending: Schema.Array(Schema.String),
+  invocations: Schema.Record(Schema.String, Schema.String), cancelled: Schema.Record(Schema.String, Schema.Boolean),
+  turnId: Schema.String, callId: Schema.String, origin: Schema.NullOr(Schema.Finite),
+  needsReply: Schema.Boolean, running: Schema.Boolean, waiting: Schema.Boolean,
 })
 
 // inferenceCollections indexes turn records and retains pending order (platform/test/bun/agent-compaction.test.ts).
@@ -120,56 +119,24 @@ export function inferenceCollections(value: typeof InferenceState.Type): typeof 
   }
 }
 
-// inferenceState updates keyed turn records and reads pending turns for inference (platform/test/bun/agent-compaction.test.ts).
 export const inferenceState = durableAtom({
-  name: "agent.inference.state", schema: InferenceCollections,
+  name: "agent.inference.state", schema: InferenceState,
   input: Schema.Union([TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled, AbortRequested, ObservedCoreEvent]),
-  initial: inferenceCollections(initialInference),
-  migrate: value => Schema.is(InferenceCollections)(value) ? value : inferenceCollections(Schema.decodeUnknownSync(InferenceState)(value)),
-  reduce: (state, event, metadata, position) => {
-    const before = readInference(state)
-    const invocation = event.type === "TurnRequested" && event.invocationRef ? JSON.stringify([event.invocationRef.method, event.invocationRef.id]) : undefined
-    if (event.type === "TurnRequested" && state.has(["turns", event.turnId])) throw new RuntimeError(`Duplicate turn: ${event.turnId}`)
-    if (invocation && state.has(["invocations", invocation])) throw new RuntimeError(`Duplicate turn for invocation: ${invocation}`)
-    const next = inferState(before, event, metadata, position)
-    if (next === before) return state
-    const result = state.batch(edit => {
-      for (let index = 0; index < next.turns.length; index++) if (next.turns[index] !== before.turns[index]) edit.set(["turns", next.turns[index]!.turnId], next.turns[index]!)
-      const pending = next.turns.filter(turn => turn.settlement === null).map(turn => turn.turnId)
-      if (pending.length !== before.turns.length || pending.some((id, index) => id !== before.turns[index]!.turnId)) edit.set(["pending"], pending)
-      for (const key of controls) if (next[key] !== before[key]) edit.set([key], next[key])
-      if (invocation && event.type === "TurnRequested") edit.set(["invocations", invocation], event.turnId)
-      if (event.type === "TurnSettled" && event.outcome === "cancelled") for (const work of next.turns.find(turn => turn.turnId === event.turnId)!.effects) edit.set(["cancelled", effectKey(work.ref)], true)
-    })
-    materialized.set(result, deepFreeze({ ...next, turns: next.turns.filter(turn => turn.settlement === null) }))
-    return result
+  initial: initialInference,
+  migrate: stored => {
+    if (Schema.is(InferenceState)(stored)) return stored
+    const { turns, pending, invocations: _invocations, cancelled: _cancelled, ...controls } = Schema.decodeUnknownSync(InferenceCollections)(stored)
+    return { ...controls, turns: [...Object.values(turns).filter(turn => turn.settlement !== null), ...pending.map(id => turns[id]!)] }
   },
+  reduce: inferState,
 })
 
-type InferenceTree = typeof inferenceState extends Atom<infer Value> ? Value : never
-
-// materialized holds the controls and pending turns of inference versions the reducer wrote, so reading a version back needs no document reads; versions are immutable.
-const materialized = new WeakMap<object, typeof InferenceState.Type>()
-const deepFreeze = <Value>(value: Value): Value => {
-  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) { for (const item of Object.values(value)) deepFreeze(item); Object.freeze(value) }
-  return value
+// readInference exposes controls and pending turns (platform/test/properties/actors.ts).
+export function readInference(state: typeof InferenceState.Type): typeof InferenceState.Type {
+  return { ...state, turns: state.turns.filter(turn => turn.settlement === null) }
 }
 
-// readInference reads controls and pending records without loading settled turns (platform/test/bun/agent-compaction.test.ts).
-export function readInference(state: InferenceTree): typeof InferenceState.Type {
-  const known = materialized.get(state)
-  if (known) return known
-  const value: typeof InferenceState.Type = { turns: state.read(["pending"]).map(id => state.read(["turns", id])),
-    turnId: state.read(["turnId"]), callId: state.read(["callId"]), origin: state.read(["origin"]),
-    needsReply: state.read(["needsReply"]), running: state.read(["running"]), waiting: state.read(["waiting"]),
-  }
-  materialized.set(state, deepFreeze(value))
-  return value
-}
-
-// findTurn reads a retained turn by identifier (platform/test/bun/agent-compaction.test.ts).
-export function findTurn(state: InferenceTree, id: string) {
-  const pending = materialized.get(state)?.turns.find(turn => turn.turnId === id)
-  if (pending) return pending
-  return state.has(["turns", id]) ? state.read(["turns", id]) : undefined
+// findTurn reads a turn by identifier (platform/test/bun/agent-compaction.test.ts).
+export function findTurn(state: typeof InferenceState.Type, id: string) {
+  return state.turns.find(turn => turn.turnId === id)
 }

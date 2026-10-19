@@ -1,10 +1,108 @@
 # Grove
 
-Grove is a highly performant TypeScript library to materialise versioned state from immutable logs, using persistent data structures and automatic reclamation of state you no longer retain.
+Grove materialises versioned JSON state from immutable logs, using ordinary reducers, incremental SQLite updates and reclamation of unretained state.
+
+```text
+immutable log -> reducer(state, event) -> JSON state
+                                             |
+                                  reconcile changed paths
+                                             |
+                                     grove_state_* rows
+                                             |
+                         retain referenced versions / reclaim the rest
+```
 
 ```sh
 bun add @tardie/grove effect
 ```
+
+## Ordinary reducers
+
+```ts
+import { Schema } from "effect"
+import { makeSync } from "@tardie/grove/reducer"
+
+const grove = makeSync(driver, { scope: "agent" })
+const messages = grove.materialize({
+  name: "messages",
+  schema: Schema.Struct({ messages: Schema.Array(Schema.String) }),
+  input: Schema.String,
+  initial: { messages: [] },
+  reduce: (state, text) => ({ messages: [...state.messages, text] }),
+})
+
+const head = messages.head()
+const next = messages.apply(head ?? messages.initial(), {
+  sequence: 42, event: "Hello", metadata: null,
+})
+
+grove.transaction(tx => {
+  tx.execute("INSERT INTO events(seq, event) VALUES (?, ?)", [42, JSON.stringify("Hello")])
+  messages.publish(tx, next, { expected: head?.reference ?? null })
+})
+grove.discard()
+```
+
+The application creates its event table. `driver` provides a stable connection `identity`, synchronous `execute(sql, parameters)` returning rows, and `transaction(work)` committing or rolling back the callback. The event and materialisation use the same connection and transaction.
+
+```ts
+next.value.messages // ["Hello"] when starting empty
+next.sequence       // 42
+next.reference      // opaque snapshot identifier
+```
+
+`apply` validates the event and state. Sequence numbers advance, with gaps allowed. Shared subtree identity skips reconciliation; fresh arrays require a linear scan. Small array-free objects can occupy a packed row. Current state is eager JSON; cold opens reconstruct complete snapshots. No content hashing is performed by the reducer backend.
+
+## Retain what durable work needs
+
+```ts
+grove.transaction(tx => grove.retain(tx, "effect/7", next.reference))
+const input = messages.open(next.reference).value
+
+// Commit effect completion together with release.
+grove.transaction(tx => {
+  tx.execute("DELETE FROM pending_effects WHERE id = ?", ["7"])
+  grove.release(tx, "effect/7", { expected: next.reference })
+})
+grove.collect()
+```
+
+Create the pending-work record in the transaction that retains its input. Published heads, retained owners and staged dependencies protect versions. Copying a reference does not retain it. Collection can expire unretained references; already materialised JSON follows ordinary JavaScript lifetimes.
+
+```text
+grove_state_
+  current / history / chunks      state payloads
+  documents / versions / heads    revisions and publication
+  owners / gc_pins                retention and collection
+```
+
+`DEFAULT_PACK_BYTES` is 4096; `packBytes: 0` disables packing. `DEFAULT_CHUNK_BYTES` is 64 KiB; `chunkBytes` must be at least `MIN_CHUNK_BYTES` (5). Both options are accepted by `makeSync`. Changing the packing budget starts a new document on publication while retained versions remain readable.
+
+`stats()` reports cumulative attempted reconciliation, encoding and internal SQL work, including rollbacks. `stagedVersions` reports current staging. Application statements submitted through `tx.execute` are outside the internal SQL counter. [Reducer properties](test/reducer/) compare independent plain folds, retention lifecycles, rollback and work budgets across growing collections.
+
+## Tardigrade
+
+```ts
+durableAtom({
+  name: "messages",
+  schema: State,
+  input: Event,
+  initial,
+  reduce: (state, event) => nextState(state, event),
+})
+```
+
+```text
+application    ordinary schemas and reducers
+Tardigrade     event log / effects / checkpoints
+Grove          reconciliation / materialisation / retention
+```
+
+SQLite-backed untagged atoms use the reducer backend. Existing inline checkpoints and schema-authored collection references restore through their readers; subsequent checkpoints publish reducer references. Accepted work keeps its original references until release. Event-log rows retain their format. Memory-only sessions checkpoint inline JSON.
+
+## Schema-authored collections
+
+The root package and `@tardie/grove/sqlite` also expose explicit tree, append-only and key-value authoring. Their reference reader remains available for existing materialisations. In that store, `reducerChunkBytes` configures reducer payload chunks independently of legacy `chunkBytes`; its default is the 64 KiB `DEFAULT_CHUNK_BYTES` exported by `@tardie/grove/reducer`.
 
 ## Start with JSON
 

@@ -1,3 +1,5 @@
+import type { PlainOptions, PlainVersion } from "@tardie/grove/reducer"
+import type { RecordMetadata } from "./journal"
 import { Schema } from "effect"
 import type { Json, Path } from "@tardie/grove"
 import * as Grove from "@tardie/grove"
@@ -6,7 +8,7 @@ export const StateReference = Grove.EncodedReference
 const InputPath = Schema.Array(Schema.Union([Schema.String, Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))]))
 export const InputSelection = Schema.Struct({ reference: StateReference, target: InputPath })
 export type InputSelection = typeof InputSelection.Type
-export const DocumentState = Schema.TaggedStruct("DocumentState", { reference: StateReference })
+export { DocumentState } from "@tardie/grove/migrations"
 export type { Selection as ValueSelection, MerkleTree } from "@tardie/grove"
 export interface DocumentChanges { readonly references: readonly { readonly name: string; readonly reference: string }[] }
 export type SelectedInput<Value> = Value | Grove.Selection<Value> | (Value extends readonly (infer A)[] ? readonly SelectedInput<A>[] : Value extends object ? { readonly [K in keyof Value]: SelectedInput<Value[K]> } : never)
@@ -54,6 +56,11 @@ export function encodedSession(grove: Pick<Grove.Instance, "bind" | "capture" | 
 
 // DocumentSession provides synchronous document access and retention for projections (properties/durable-state.test.ts; platform/test/bun/journal.test.ts).
 export interface DocumentSession {
+  readonly materialize?: <State extends Json, Event>(options: PlainOptions<State, Event, RecordMetadata>) => {
+    readonly initial: (value: unknown) => PlainVersion<State, Event, RecordMetadata>
+    readonly open: (reference: string) => PlainVersion<State, Event, RecordMetadata>
+    readonly check: (version: PlainVersion<State, Event, RecordMetadata>) => PlainVersion<State, Event, RecordMetadata>
+  }
   readonly bind: <State extends Json>(schema: Schema.Decoder<State>) => {
     readonly initial: (value: unknown) => Grove.MerkleTree<State>
     readonly check: (document: Grove.MerkleTree<State>) => Grove.MerkleTree<State>

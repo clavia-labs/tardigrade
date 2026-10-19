@@ -7,7 +7,7 @@ import { modelState } from "../atoms/durable/model"
 // prepareModel indexes old calls when the loading boundary lacks durable model configuration.
 const prepareModel = (replay: typeof ReplayContext.Service) => Effect.gen(function* () {
   const configured = replay.checkpoint?.durable.find(entry => entry.name === modelState[AtomState].name)
-  if (configured && (configured.reference !== undefined || Schema.is(ModelConfiguration)(configured.state))) return undefined
+  if (configured && (configured.reference !== undefined || Schema.is(ModelConfiguration)(configured.state) || Schema.is(Schema.TaggedStruct("ValueState", { value: ModelConfiguration }))(configured.state))) return undefined
   const records = replay.checkpoint ? yield* replay.readFull : replay.records
   const configuredAt = records.findIndex(({ event }) => Schema.is(ModelConfigured)(event))
   const end = configuredAt < 0 ? records.length : configuredAt
@@ -20,7 +20,7 @@ export const modelSelection = Effect.gen(function* () {
   const replay = yield* Effect.serviceOption(ReplayContext)
   const plan = Option.isSome(replay) ? yield* prepareModel(replay.value) : undefined
   return atom(get => {
-    const configuredModel = get(modelState).read([])
+    const configuredModel = get(modelState)
     if (configuredModel || !plan) return configuredModel ?? undefined
     const context = get(eventLogContext)
     if (!context) throw new RuntimeError("Missing EventLog service")

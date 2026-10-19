@@ -23,7 +23,7 @@ export const journalProperties = [
   property("recovery: provisioning retries restore committed alarms", fc.record({ failures: fc.integer({ min: 1, max: 4 }), repeats: fc.integer({ min: 0, max: 4 }), now: fc.integer({ min: 1, max: 1_000_000_000 }) }), acknowledgementRetry, 50, 20),
   property("recovery: acknowledgement preserves competing earlier wakes", fc.record({ early: fc.integer({ min: 1, max: 1_000_000 }), gap: fc.integer({ min: 1, max: 1_000_000 }) }), (driver, value) => acknowledgementOrdering(driver, value.early, value.gap), 50, 20),
 ]
-export const actorProperties = [property("actors: Grove-backed agent projections match plain reducers through recovery", agentCollectionCases, agentCollections, 30, 15)]
+export const actorProperties = [property("actors: agent values and collections match reducers through migration and recovery", agentCollectionCases, agentCollections, 30, 15)]
 export const migrationProperties = [
   property("migration: native materials consolidate atomically and reject ambiguous journals", fc.record({ text: fc.string(), rollback: fc.boolean(), multiple: fc.boolean(), chunked: fc.boolean() }), nativeMaterialMigration, 30, 15, [
     { text: "界", rollback: true, multiple: false, chunked: true },

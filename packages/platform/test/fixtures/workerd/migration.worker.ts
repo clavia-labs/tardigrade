@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers"
 import { Context, Deferred, Effect, Schema } from "effect"
 import { createHash } from "node:crypto"
-import { act, appendOnly, createActorStore, defineActor, durableAtom, effectAtom, effectKey, keyValue, RuntimeError, type EffectRef } from "@clavia/tardigrade-core"
+import { act, selectEach, createActorStore, defineActor, durableAtom, effectAtom, effectKey, RuntimeError, type EffectRef } from "@clavia/tardigrade-core"
 import { cloudflareJournal } from "../../../src/cloudflare"
 import { effectServiceClient } from "../effect-service"
 import { waitFor } from "../wait"
@@ -47,14 +47,14 @@ export class MigrationDO extends DurableObject<{ EFFECT_SERVICE: { getByName(nam
   private open() {
     const journal = this.journal = cloudflareJournal<typeof Event.Type>(this.ctx.storage, "events", { checkpointChunkBytes: 127, checkpointTree: { collectEvery: 1, cacheBytes: 0 } })
     const actor = defineActor("migration", Effect.sync(() => {
-      const history = durableAtom({ name: "migration.history", schema: appendOnly(Schema.Array(Schema.String)), input: Event, initial: [], reduce: (state, event) => event.type === "Added" ? state.append([], [event.text]) : state })
-      const control = durableAtom({ name: "migration.control", schema: keyValue(Schema.Boolean), input: Event, initial: { started: false, done: false }, reduce: (state, event) => event.type === "Started" ? state.set(["started"], true) : event.type === "Finished" ? state.set(["done"], true) : state })
+      const history = durableAtom({ name: "migration.history", schema: Schema.Array(Schema.String), input: Event, initial: [], reduce: (state, event) => event.type === "Added" ? [...state, event.text] : state })
+      const control = durableAtom({ name: "migration.control", schema: Schema.Struct({ started: Schema.Boolean, done: Schema.Boolean }), input: Event, initial: { started: false, done: false }, reduce: (state, event) => event.type === "Started" ? { ...state, started: true } : event.type === "Finished" ? { ...state, done: true } : state })
       let request: ReturnType<typeof Job.requestTree> | undefined
       return { schema: Event, atom: effectAtom(get => {
         const messages = get(history), state = get(control)
-        const started = state.read(["started"]), done = state.read(["done"])
-        if (started && !request) request = Job.requestTree({ origin: 1, input: { messages: messages.selectEach([], [], { start: 0, end: messages.length([]) }), token: "new proposal must not replace accepted input" }, onSettled: () => [{ type: "Finished" }] })
-        return { view: { messages: messages.read([]), started, done }, events: {}, acts: started && !done ? { job: request! } : {} }
+        const started = state.started, done = state.done
+        if (started && !request) request = Job.requestTree({ origin: 1, input: { messages: selectEach(messages, [], [], { start: 0, end: messages.length }), token: "new proposal must not replace accepted input" }, onSettled: () => [{ type: "Finished" }] })
+        return { view: { messages, started, done }, events: {}, acts: started && !done ? { job: request! } : {} }
       }) }
     }))
     return Effect.runPromise(createActorStore({ actor, journal, checkpoint: { mode: "manual" }, attemptTimeoutMs: null, actorContext: Context.pick(), services: () => Job.layer((input, { ref }) => Effect.gen({ self: this }, function* () {

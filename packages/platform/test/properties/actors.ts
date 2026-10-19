@@ -3,20 +3,20 @@ import { Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { atom, createEventLog, type RecordMetadata } from "@clavia/tardigrade-core"
 import { storedSession } from "@clavia/tardigrade-core/services/stored-session"
-import { decodeReference } from "@tardie/grove"
+import { decodeReference, encodeReference, tree, type Json } from "@tardie/grove"
 import { makeSync, type SyncSqlite } from "@tardie/grove/sqlite"
 import { Event } from "@clavia/tardigrade-agent/contracts/events"
 import { agentDurableAtoms } from "@clavia/tardigrade-agent/atoms/durable/atoms"
-import { inferState, initialInference, inferenceState, findTurn, readInference } from "@clavia/tardigrade-agent/atoms/durable/inference"
-import { spendState } from "@clavia/tardigrade-agent/atoms/durable/spend"
-import { reducePermissions, permissionState } from "@clavia/tardigrade-agent/atoms/durable/permissions"
+import { inferState, initialInference, inferenceState, findTurn, readInference, InferenceState, inferenceCollections } from "@clavia/tardigrade-agent/atoms/durable/inference"
+import { spendState, SpendState } from "@clavia/tardigrade-agent/atoms/durable/spend"
+import { reducePermissions, permissionState, PermissionState } from "@clavia/tardigrade-agent/atoms/durable/permissions"
 import { reduceBudget, budgetState } from "@clavia/tardigrade-agent/atoms/durable/budget"
-import { toolState, pendingTools } from "@clavia/tardigrade-agent/atoms/durable/tools"
-import { codeModeState, executions } from "@clavia/tardigrade-agent/atoms/durable/code-mode"
+import { toolState, pendingTools, ToolState } from "@clavia/tardigrade-agent/atoms/durable/tools"
+import { codeModeState, executions, CodeModeState } from "@clavia/tardigrade-agent/atoms/durable/code-mode"
 
 import { reduceSpend } from "../fixtures/agent-oracles"
 
-export const agentCollectionCases = fc.record({ turns: fc.array(fc.record({ text: fc.string(), allowed: fc.boolean(), unknownCost: fc.boolean(), missingTime: fc.boolean() }), { minLength: 2, maxLength: 5 }), cacheBytes: fc.constantFrom(0, 1024, 32768), chunkBytes: fc.constantFrom(3, 4096) })
+export const agentCollectionCases = fc.record({ turns: fc.array(fc.record({ text: fc.string(), allowed: fc.boolean(), unknownCost: fc.boolean(), missingTime: fc.boolean() }), { minLength: 2, maxLength: 5 }), cacheBytes: fc.constantFrom(0, 1024, 32768), chunkBytes: fc.constantFrom(3, 4096), restore: fc.constantFrom("value", "plain", "legacy", "document") })
 type Case = typeof agentCollectionCases extends fc.Arbitrary<infer Value> ? Value : never
 const same = (actual: unknown, expected: unknown) => { if (!isDeepStrictEqual(actual, expected)) throw new Error(`Agent collections differ: ${JSON.stringify({ actual, expected })}`) }
 
@@ -40,6 +40,34 @@ export function agentCollections(driver: SyncSqlite, options: Case) {
     inference = inferState(inference, event, metadata, position); spend = reduceSpend(spend, event, metadata); permissions = reducePermissions(permissions, event); budget = reduceBudget(budget, event); tools = toolState(tools, event, metadata, position); code = codeModeState(code, event, metadata, position)
     snapshot = log.append(snapshot, event, metadata); verify()
   }
+  const legacyValue = (name: string, value: Json): Json => {
+    if (name === "agent.inference.state") return inference
+    if (name === "agent.spend") return spend
+    if (name === "agent.permissions.decisions") return permissions
+    if (name === "agent.budget") return budget
+    if (name === "agent.tools.pending") return tools
+    if (name === "agent.code-mode.executions") return code
+    return value
+  }
+  const reopen = () => {
+    let checkpoint = snapshot.checkpoint()!
+    same(checkpoint.durable.length, agentDurableAtoms.length)
+    for (const entry of checkpoint.durable) {
+      if (!entry.reference || !Schema.is(Schema.TaggedStruct("DocumentState", { reference: Schema.String }))(entry.state)) throw new Error(`Unexpected agent checkpoint: ${entry.name}`)
+    }
+    store.transaction(tx => store.commit(tx, { publish: checkpoint.durable.flatMap(entry => entry.reference ? [{ owner: entry.name, expected: store.owner(entry.name), document: decodeReference(entry.reference) }] : []) }))
+    checkpoint = { ...checkpoint, durable: checkpoint.durable.map(entry => {
+      const current = store.readValue(decodeReference(entry.reference!))
+      if (options.restore === "value") return { name: entry.name, position: entry.position, state: { _tag: "ValueState", value: current } }
+      const state = options.restore === "legacy" ? legacyValue(entry.name, current) : previousValue(entry.name, current)
+      if (options.restore === "plain" || options.restore === "legacy") return { name: entry.name, position: entry.position, state }
+      const reference = store.bind(tree(Schema.suspend(() => Schema.Json))).initial(state).reference
+      store.transaction(tx => store.commit(tx, { publish: [{ owner: entry.name, expected: store.owner(entry.name), document: reference }] }))
+      return { ...entry, state: { _tag: "DocumentState", reference: encodeReference(reference) }, reference: encodeReference(reference) }
+    }) }
+    log.dispose(); store.discard(); store.collect(); store = open()
+    log = createEventLog({ schema: Event, atoms, documents: storedSession(store), checkpoint }); snapshot = log.initial; verify()
+  }
   const model = { model: { provider: "test", model_id: "test" }, contextWindowTokens: 4096 }
   try {
     apply({ type: "ModelConfigured", ...model })
@@ -51,23 +79,44 @@ export function agentCollections(driver: SyncSqlite, options: Case) {
       apply({ type: "ModelCalled", purpose: "inference", ...model, turnId, callId: inference.callId }, metadata)
       const calls = ["2", "1"].map(id => ({ callId: `${index}:${id}`, providerId: id, name: "lookup", input: { id } }))
       apply({ type: "ModelReturned", purpose: "inference", callId: inference.callId, text: "", toolCalls: calls, usage: { input: 3, output: 2, usd: item.unknownCost ? null : 0.1 } }, metadata)
+      reopen()
       for (const call of calls) {
         apply({ type: "PermissionResolved", action: "tool.execute", requestId: call.callId, decision: { allowed: item.allowed, reason: item.text } }, metadata)
         apply({ type: "PermissionResolved", action: "tool.execute", requestId: call.callId, decision: { allowed: !item.allowed, reason: "changed" } }, metadata)
         apply({ type: "ToolCalled", callId: call.callId, counted: item.allowed }, metadata)
+        reopen()
         apply({ type: "ToolReturned", callId: call.callId, version: 1, content: [{ type: "text", text: item.text }], error: null }, metadata)
       }
       apply({ type: "ModelCalled", purpose: "inference", ...model, turnId, callId: inference.callId }, metadata)
       const callId = inference.callId
       apply({ type: "ModelReturned", purpose: "inference", callId, text: item.text, toolCalls: [] }, metadata)
       apply({ type: "TurnSettled", turnId, outcome: "completed", callId }, { recordedAt: index * 100 + 80 })
-      const checkpoint = snapshot.checkpoint()!
-      same(checkpoint.durable.length, agentDurableAtoms.length)
-      if (checkpoint.durable.some(entry => !entry.reference || !Schema.is(Schema.TaggedStruct("DocumentState", { reference: Schema.String }))(entry.state))) throw new Error("Agent checkpoint contains plain state")
-      store.transaction(tx => store.commit(tx, { publish: checkpoint.durable.map(entry => ({ owner: entry.name, expected: store.owner(entry.name), document: decodeReference(entry.reference!) })) }))
-      log.dispose(); store.discard(); store.collect(); store = open()
-      log = createEventLog({ schema: Event, atoms, documents: storedSession(store), checkpoint }); snapshot = log.initial; verify()
+      reopen()
     }
   } finally { log.dispose(); store.discard() }
 }
 function spendStateValue(): ReturnType<typeof reduceSpend> { return { toolSpend: [], tokenSpend: [], usdSpend: [], timeSpend: [], timers: [], turns: [], models: [], tools: [] } }
+
+// previousValue recreates checkpoint payloads emitted before whole-value agent state (bun/actors.test.ts; workerd/actors.workers.ts).
+function previousValue(name: string, state: Json): Json {
+  const keyed = (field: string) => Object.fromEntries(Schema.decodeUnknownSync(Schema.Array(Schema.Record(Schema.String, Schema.Json)))(state).map(entry => [String(entry[field]), entry]))
+  if (name === "agent.inference.state") {
+    return inferenceCollections(Schema.decodeUnknownSync(InferenceState)(state))
+  }
+  if (name === "agent.spend") {
+    const spend = Schema.decodeUnknownSync(SpendState)(state)
+    return { totals: Object.fromEntries(spend.toolSpend.map(tool => [JSON.stringify(tool.turnId), { ...tool, input: spend.tokenSpend.find(turn => turn.turnId === tool.turnId)!.input, output: spend.tokenSpend.find(turn => turn.turnId === tool.turnId)!.output, usd: spend.usdSpend.find(turn => turn.turnId === tool.turnId)!.usd, ms: spend.timeSpend.find(turn => turn.turnId === tool.turnId)!.ms, startedAt: spend.timers.find(turn => turn.turnId === tool.turnId)?.startedAt ?? null }])), pending: spend.turns, models: Object.fromEntries(spend.models.map(call => [call.callId, call.turnId])), tools: Object.fromEntries(spend.tools.map(call => [call.callId, call.turnId])) }
+  }
+  if (name === "agent.permissions.decisions") {
+    const value = Schema.decodeUnknownSync(PermissionState)(state)
+    return { policy: value.policy, decisions: Object.fromEntries(value.decisions.map((entry, index) => [`import:${index}`, entry]).reverse()), latest: Object.fromEntries(value.decisions.map((entry, index) => [JSON.stringify([entry.action, entry.requestId]), `import:${index}`])) }
+  }
+  if (name === "agent.budget") return keyed("metric")
+  if (name === "agent.promises.submissions") return keyed("callId")
+  if (name === "agent.code-mode.executions") return Object.fromEntries(Schema.decodeUnknownSync(CodeModeState)(state).map(entry => [entry.call.callId, entry]))
+  if (name === "agent.tools.pending") {
+    const value = Schema.decodeUnknownSync(ToolState)(state)
+    return { ...value, queue: Object.fromEntries(value.queue.map(entry => [entry.call.callId, entry])), order: value.queue.map(entry => entry.call.callId) }
+  }
+  return state
+}

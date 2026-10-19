@@ -184,6 +184,11 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
           tx.execute("DELETE FROM journal_accepted_inputs WHERE ref=?", [key])
         }
         if (checkpoint) {
+          for (const entry of saved!.durable) {
+            if (entry.reference !== undefined) continue
+            const owner = statePrefix + entry.name, expected = heads.get(owner)
+            if (expected) grove.commit(tx, { release: [{ owner, expected }] })
+          }
           replace(tx, JSON.stringify([actor, "checkpoint"]) + "/", [...saved!.durable.flatMap(entry => entry.reference ? [entry.reference] : []), ...saved!.operations.flatMap(operation => Object.values(operation.execution.results ?? {}))])
           tx.execute("DELETE FROM journal_checkpoint_chunks", [])
           tx.execute("INSERT INTO journal_checkpoints(id,position,payload,digest,byte_length,chunk_count) VALUES(1,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET position=excluded.position,payload=excluded.payload,digest=excluded.digest,byte_length=excluded.byte_length,chunk_count=excluded.chunk_count", [checkpoint.position, new Uint8Array(), checkpoint.digest, checkpoint.payload.byteLength, checkpointPayload!.chunks.length])
@@ -213,6 +218,7 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
       })
       commitWakes(driver.identity, wakes)
       for (const document of batch.documents?.references ?? []) heads.set(statePrefix + document.name, decodeReference(document.reference))
+      for (const entry of saved?.durable ?? []) if (entry.reference === undefined) heads.delete(statePrefix + entry.name)
       grove.discard()
     }).pipe(Effect.andThen(finishCommit), Effect.uninterruptible))
   })
