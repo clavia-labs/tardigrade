@@ -43,18 +43,11 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
       }
     }
 
-    let cancelled: Set<string> | undefined
+    const cancelled = new Set(inference.turns.filter(turn => turn.cancellation !== null).flatMap(turn => turn.effects.map(work => effectKey(work.ref))))
     const proposals = {
       events: Object.fromEntries(Object.entries({ ...input.context.events, ...input.tools.events }).filter(([, proposal]) => {
         const event = proposal.event
-        if (!Schema.is(TurnRequested)(event) || !event.promiseRef) return true
-        if (!cancelled) {
-          cancelled = new Set<string>()
-          for (let index = 0; index < inference.length(["turns"]); index++) if (inference.read(["turns", index, "cancellation"]) !== null) {
-            for (const work of inference.read(["turns", index, "effects"])) cancelled.add(effectKey(work.ref))
-          }
-        }
-        return !cancelled.has(effectKey(event.promiseRef))
+        return !Schema.is(TurnRequested)(event) || !event.promiseRef || !cancelled.has(effectKey(event.promiseRef))
       })),
       acts: state.turnId ? { ...input.context.acts, ...input.tools.acts } : {},
     }

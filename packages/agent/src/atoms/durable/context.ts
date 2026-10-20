@@ -108,24 +108,22 @@ export function createContextState(options: CompactionOptions = {}) {
   return durableAtom({
     name: "agent.context", schema: ContextState, input: Schema.Union([TrajectoryEvent, CompactionFailed]), initial: initial(undefined),
     initialize: read => initial(read("agent.trajectory", TrajectoryState), read("agent.compaction.state", CompactionState)),
-    restore: (state, read) => state.read(["policy"]) === policy ? state : state.set([], initial(read("agent.trajectory", TrajectoryState), state.read(["compaction"]))),
-    edit: (state, event, metadata, position) => {
-      const before = state.read(["compaction"]), after = compactState(before, event, metadata, position)
+    restore: (state, read) => state.policy === policy ? state : initial(read("agent.trajectory", TrajectoryState), state.compaction),
+    reduce: (state, event, metadata, position) => {
+      const before = state.compaction, after = compactState(before, event, metadata, position)
       if (event.type === "ModelReturned" && event.purpose === "compaction") {
         const removed = after.through - before.through + Number(before.summary !== "")
-        const summary = summarized(after.summary)
-        state.splice(["entries"], 0, removed, summary)
-        state.set(["totals"], totalsOf(state.read(["entries"])))
+        const entries = [...summarized(after.summary), ...state.entries.slice(removed)]
+        state = { ...state, entries, totals: totalsOf(entries) }
       }
-      const change = trajectoryChange(event, state.read(["models"]), callId => findTrajectoryTool(state.length(["entries"]), index => state.read(["entries", index]), callId))
+      const change = trajectoryChange(event, state.models, callId => findTrajectoryTool(state.entries.length, index => state.entries[index]!, callId))
       if (change.entry) {
         const entry = { ...change.entry, message: render(change.entry.message) }
-        const total = state.read(["totals", state.length(["totals"]) - 1])
-        state.append(["entries"], [entry])
-        state.append(["totals"], [total + sizeOf(entry.message)])
+        state = { ...state, entries: [...state.entries, entry], totals: [...state.totals, state.totals.at(-1)! + sizeOf(entry.message)] }
       }
-      if (change.models) state.set(["models"], change.models)
-      if (after !== before) state.set(["compaction"], after)
+      if (change.models) state = { ...state, models: change.models }
+      return after === before ? state : { ...state, compaction: after }
+
     },
   })
 }

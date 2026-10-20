@@ -15,7 +15,7 @@ export interface DocumentOptions<State extends Json, Event> {
   readonly input: Schema.Schema<Event>
   readonly initialize?: (read: CheckpointReader) => State
   readonly restore?: (state: MerkleTree<State>, read: CheckpointReader) => MerkleTree<State>
-  // migrate prepares checkpoint state that fails the current schema (platform/test/bun/agent-compaction.test.ts).
+  // migrate prepares inline checkpoint state before validation; stored references reopen directly (platform/test/bun/agent-compaction.test.ts).
   readonly migrate?: (stored: unknown) => unknown
   readonly initial: State
   readonly reduce: (state: MerkleTree<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => MerkleTree<State>
@@ -49,13 +49,7 @@ export function documentAtom<State extends Json, Event>({ schema, initial, initi
     initial: service => binding(service.documents).initial(initialize ? initialize(readCheckpoint(service)) : initial),
     restore: (value, service) => {
       const bound = binding(service.documents)
-      const view = migrations.open(value, { initial: bound.initial, reference: reference => {
-        if (migrate) {
-          const stored = service.documents!.read(reference)
-          if (!Schema.is(schema)(stored)) return bound.initial(migrate(stored))
-        }
-        return bound.open(reference)
-      }, decode: state => state, migrate })
+      const view = migrations.open(value, { initial: bound.initial, reference: bound.open, decode: state => state, migrate })
       return restore ? bound.check(restore(view, readCheckpoint(service))) : view
     },
     check: (view, service) => binding(service.documents).check(view),

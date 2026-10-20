@@ -1,4 +1,3 @@
-import { editAtom, type Editor } from "./edit"
 import { Schema } from "effect"
 import { isValue, collectionSchema, type ValueSchema, type CollectionSchema, type Json, type MerkleTree } from "@tardie/grove"
 import { documentAtom, type CheckpointReader, type DocumentOptions } from "./merkle"
@@ -25,17 +24,6 @@ type Hooks<S extends Schema.Top> = CollectionSchema<S> extends true ? {
 }
 
 // durableAtom binds plain JSON reducers or explicit collection declarations to durable materialisation (properties/collections.test.ts).
-export function durableAtom<State extends Json, Event>(options: {
-  readonly name: string
-  readonly schema: Schema.Schema<State>
-  readonly input: Schema.Schema<Event>
-  readonly initial: NoInfer<State>
-  readonly edit: (state: NoInfer<Editor<State>>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => void
-  readonly reduce?: never
-  readonly initialize?: (read: CheckpointReader) => State
-  readonly restore?: (state: MerkleTree<State>, read: CheckpointReader) => MerkleTree<State>
-  readonly migrate?: (stored: unknown) => unknown
-}): DurableAtom<MerkleTree<State>, Event, Schema.Schema<State>>
 export function durableAtom<S extends Schema.Schema<unknown>, Event>(options: {
   readonly name: string
   readonly schema: S
@@ -55,20 +43,11 @@ export function durableAtom<S extends Schema.Schema<unknown>, Event>(options: {
   readonly schema: S
   readonly input: Schema.Schema<Event>
   readonly initial: NoInfer<S["Type"]>
-  readonly reduce?: (state: NoInfer<DurableState<S>>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<DurableState<S>>
-  readonly edit?: (state: Editor<S["Type"] & Json>, event: Event, metadata: RecordMetadata, position: number) => void
-} & Hooks<S>): DurableAtom<unknown, Event, S> {
-  if (options.edit) {
-    if (options.reduce) throw new Error("Durable atoms accept either reduce or edit")
-    return editAtom(options as unknown as Parameters<typeof editAtom<S["Type"] & Json, Event>>[0]) as unknown as DurableAtom<unknown, Event, S>
-  }
-  if (!options.reduce) throw new Error("Durable atoms require reduce or edit")
-
+  readonly reduce: (state: NoInfer<DurableState<S>>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<DurableState<S>>
+} & Hooks<S>): DurableAtom<DurableState<S>, Event, S> {
   if (isValue(options.schema.ast)) return wholeValueAtom(options as unknown as Parameters<typeof wholeValueAtom<S["Type"] & Json, Event>>[0]) as unknown as DurableAtom<DurableState<S>, Event, S>
   if (collectionSchema(options.schema.ast)) {
     return documentAtom(options as unknown as DocumentOptions<S["Type"] & Json, Event>) as unknown as DurableAtom<DurableState<S>, Event, S>
   }
   return plainAtom(options as unknown as Parameters<typeof plainAtom<S["Type"] & Json, Event>>[0]) as unknown as DurableAtom<DurableState<S>, Event, S>
 }
-
-export type { Editor } from "./edit"

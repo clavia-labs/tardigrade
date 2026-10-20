@@ -3,9 +3,8 @@
 Grove is a versioned JSON document store backed by SQLite. Objects use keyed B+ tree pages; arrays use balanced sequence pages with subtree counts. Memory and disk references share the same editing algorithms. An edit copies affected pages and shares unchanged pages with earlier roots.
 
 ```text
-pure reducer -> reconcile --+
-                           +-> shared pages -> working root
-explicit edits ------------+                      |
+pure reducer -> reconcile -> shared pages -> working root
+                                                  |
                                     checkpoint or retained input
                                                   |
                                      SQLite pages + root reference
@@ -55,16 +54,9 @@ durableAtom({
   name: "messages", schema: State, input: Added, initial,
   reduce: (state, event) => ({ messages: [...state.messages, event.text] }),
 })
-
-durableAtom({
-  name: "messages", schema: State, input: Added, initial,
-  edit: (state, event) => {
-    state.append(["messages"], [event.text])
-  },
-})
 ```
 
-A durable atom accepts either `reduce` or `edit`. An edit callback receives typed reads and mutations and expires after returning. Ordinary reducers expose JSON state; explicit atoms expose selective document reads. Both use Grove's shared page engine. Core keeps ordinary transitions virtual, commits their events and publishes roots at its configured checkpoint cadence. Pending work persists and retains its selected input immediately. A dirty allocation budget can spill working pages without advancing the recovery checkpoint. Recovery loads the checkpoint and replays the journal suffix.
+Durable atoms use pure reducers over ordinary JSON. Grove reconciles the returned state into shared pages. Core keeps ordinary transitions virtual, commits their events and publishes roots at its configured checkpoint cadence. Pending work persists and retains its selected input immediately. A dirty allocation budget can spill working pages without advancing the recovery checkpoint. Recovery loads the checkpoint and replays the journal suffix.
 
 Memory sessions use the same tree and preserve inline checkpoints for ordinary reducers. SQLite checkpoints keep the `DocumentState` envelope and encode opaque scoped references. Event records retain their domain format.
 
