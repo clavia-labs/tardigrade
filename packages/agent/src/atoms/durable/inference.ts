@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { durableAtom, ObservedCoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage } from "@clavia/tardigrade-core"
+import { durableAtom, type Editor, type MerkleTree, ObservedCoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage } from "@clavia/tardigrade-core"
 import { TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled, AbortRequested, type Event } from "../../contracts/events"
 
 const Turn = Schema.Struct({
@@ -90,6 +90,92 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Obs
   return { turns, turnId, callId, origin: callId === state.callId ? state.origin : position ?? null, needsReply: turn !== undefined && turn.answer === null, running: running !== undefined, waiting: (turn?.outstanding.length ?? 0) > 0 }
 }
 
+function editInference(state: Editor<typeof InferenceState.Type>, event: Event | ObservedCoreEvent, _metadata: unknown, position: number) {
+  const length = () => state.length(["turns"])
+  const find = (matches: (index: number) => boolean) => {
+    for (let index = length() - 1; index >= 0; index--) if (matches(index)) return index
+    return -1
+  }
+  let changed = false
+  const update = (matches: (index: number) => boolean, transform: (turn: Turn) => Turn) => {
+    const index = find(matches)
+    if (index < 0) return
+    const before = state.read(["turns", index]), after = transform(before)
+    for (const key of Object.keys(after) as (keyof Turn)[]) if (after[key] !== before[key]) {
+      const value = after[key]
+      if (value !== undefined) state.set(["turns", index, key], value)
+    }
+    changed = true
+  }
+  const turnId = state.read(["turnId"]), callId = state.read(["callId"])
+  const running = state.read(["running"]), waiting = state.read(["waiting"])
+  if (event.type === "TurnRequested") {
+    for (let index = 0; index < length(); index++) {
+      if (state.read(["turns", index, "turnId"]) === event.turnId) throw new RuntimeError(`Duplicate turn: ${event.turnId}`)
+      const ref = event.invocationRef, prior = ref ? state.read(["turns", index, "invocationRef"]) : null
+      if (ref && prior?.method === ref.method && prior.id === ref.id) throw new RuntimeError(`Duplicate turn for invocation: ${ref.method}:${ref.id}`)
+    }
+    state.append(["turns"], [{ turnId: event.turnId, invocationRef: event.invocationRef ?? null, settlement: null, answer: null, answerCallId: null, rejection: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }])
+    changed = true
+  }
+  if (event.type === "AbortRequested") update(index => {
+    const ref = state.read(["turns", index, "invocationRef"])
+    return ref?.method === event.ref.method && ref.id === event.ref.id && state.read(["turns", index, "settlement"]) === null && state.read(["turns", index, "cancellation"]) === null
+  }, turn => ({ ...turn, cancellation: event.reason }))
+  if (event.type === "EffectRequested" && event.act !== DeliverMessage.name) update(index => state.read(["turns", index, "turnId"]) === turnId, turn => ({ ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] }))
+  if (event.type === "EffectCancelled" || event.type === "PromiseSettled" || (event.type === "EffectSettled" && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value"))) {
+    const key = effectKey(event.ref)
+    const settles = (work: Turn["effects"][number]) => work.ref.seq === event.ref.seq && effectKey(work.ref) === key
+    update(index => state.read(["turns", index, "effects"]).some(work => work.pending && settles(work)), turn => ({ ...turn, effects: turn.effects.map(work => settles(work) ? { ...work, pending: false } : work) }))
+  }
+  if (event.type === "ModelCalled" && event.purpose === "inference") {
+    if (!state.read(["needsReply"]) || running || waiting || event.turnId !== turnId || event.callId !== callId) throw new RuntimeError(`Model call is unavailable: ${event.callId}`)
+    update(index => state.read(["turns", index, "turnId"]) === event.turnId, turn => ({ ...turn, calls: [...turn.calls, { callId: event.callId, returned: false }] }))
+  }
+  if (event.type === "ModelReturned" && event.purpose === "inference") {
+    if (!running || event.callId !== callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
+    if (new Set(event.toolCalls.map(call => call.callId)).size !== event.toolCalls.length) throw new RuntimeError("Duplicate tool call IDs in model reply")
+    update(index => state.read(["turns", index, "calls"]).some(call => call.callId === event.callId), turn => ({ ...turn, answer: event.toolCalls.length === 0 ? event.text : null, rejection: null,
+      answerCallId: event.toolCalls.length === 0 ? event.callId : null,
+      calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call), outstanding: event.toolCalls.map(call => call.callId),
+    }))
+  }
+  if (event.type === "ModelFailed") {
+    if (!running || event.callId !== callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
+    update(index => state.read(["turns", index, "calls"]).some(call => call.callId === event.callId), turn => ({ ...turn, failure: event.reason, calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call) }))
+  }
+  if (event.type === "OutputRejected") {
+    if (!running || event.callId !== callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
+    update(index => state.read(["turns", index, "turnId"]) === event.turnId, turn => ({ ...turn, rejection: { contract: event.contract, errors: event.errors, attempt: event.attempt, maxCorrections: event.maxCorrections },
+      ...(event.attempt >= event.maxCorrections ? { failure: `The response did not satisfy output contract "${event.contract}" after ${event.maxCorrections} correction${event.maxCorrections === 1 ? "" : "s"}` } : {}),
+      calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call),
+    }))
+  }
+  if (event.type === "TurnSettled") {
+    const index = find(index => state.read(["turns", index, "turnId"]) === event.turnId), turn = index < 0 ? undefined : state.read(["turns", index])
+    if (!turn || turn.settlement !== null || event.turnId !== turnId) throw new RuntimeError(`No matching active turn: ${event.turnId}`)
+    if (event.outcome === "completed" && (turn.answer === null || ("callId" in event ? turn.answerCallId !== event.callId : turn.answer !== event.output) || running || waiting)) throw new RuntimeError(`Turn has no final answer: ${event.turnId}`)
+    if (event.outcome !== "completed" && turn.outstanding.length) throw new RuntimeError("Outstanding tools must settle before ending a turn")
+    if (event.outcome === "cancelled" && (turn.cancellation === null || turn.effects.some(work => work.pending))) throw new RuntimeError("Turn cancellation must drain accepted work before settlement")
+    state.set(["turns", index, "settlement"], event.outcome)
+    if (event.outcome === "failed") state.set(["turns", index, "failure"], event.reason)
+    if (event.outcome === "cancelled") state.set(["turns", index, "cancellation"], event.reason)
+    changed = true
+  }
+  if (event.type === "ToolReturned") update(index => state.read(["turns", index, "outstanding"]).includes(event.callId), turn => ({ ...turn, outstanding: turn.outstanding.filter(id => id !== event.callId) }))
+  if (!changed) return
+  let pending: Turn | undefined
+  for (let index = 0; index < length(); index++) if (state.read(["turns", index, "settlement"]) === null) { pending = state.read(["turns", index]); break }
+  const call = pending?.calls.find(call => !call.returned)
+  const nextTurnId = pending?.turnId ?? "", nextCallId = call?.callId ?? `model:${nextTurnId}:${pending?.calls.length ?? 0}`
+  state.set(["turnId"], nextTurnId)
+  state.set(["callId"], nextCallId)
+  if (nextCallId !== callId) state.set(["origin"], position)
+  state.set(["needsReply"], pending !== undefined && pending.answer === null)
+  state.set(["running"], call !== undefined)
+  state.set(["waiting"], (pending?.outstanding.length ?? 0) > 0)
+}
+
 // turnOutput reads the answer of a completed turn.
 export function turnOutput(events: readonly Event[], settlement: TurnSettled): string {
   if (settlement.outcome !== "completed") throw new RuntimeError(settlement.reason)
@@ -128,15 +214,20 @@ export const inferenceState = durableAtom({
     const { turns, pending, invocations: _invocations, cancelled: _cancelled, ...controls } = Schema.decodeUnknownSync(InferenceCollections)(stored)
     return { ...controls, turns: [...Object.values(turns).filter(turn => turn.settlement !== null), ...pending.map(id => turns[id]!)] }
   },
-  reduce: inferState,
+  edit: editInference,
 })
 
 // readInference exposes controls and pending turns (platform/test/properties/actors.ts).
-export function readInference(state: typeof InferenceState.Type): typeof InferenceState.Type {
-  return { ...state, turns: state.turns.filter(turn => turn.settlement === null) }
+export function readInference(state: typeof InferenceState.Type | MerkleTree<typeof InferenceState.Type>): typeof InferenceState.Type {
+  if (!("read" in state)) return { ...state, turns: state.turns.filter(turn => turn.settlement === null) }
+  const turns: Turn[] = []
+  for (let index = 0; index < state.length(["turns"]); index++) if (state.read(["turns", index, "settlement"]) === null) turns.push(state.read(["turns", index]))
+  return { turns, turnId: state.read(["turnId"]), callId: state.read(["callId"]), origin: state.read(["origin"]), needsReply: state.read(["needsReply"]), running: state.read(["running"]), waiting: state.read(["waiting"]) }
 }
 
 // findTurn reads a turn by identifier (platform/test/bun/agent-compaction.test.ts).
-export function findTurn(state: typeof InferenceState.Type, id: string) {
-  return state.turns.find(turn => turn.turnId === id)
+export function findTurn(state: typeof InferenceState.Type | MerkleTree<typeof InferenceState.Type>, id: string) {
+  if (!("read" in state)) return state.turns.find(turn => turn.turnId === id)
+  for (let index = state.length(["turns"]) - 1; index >= 0; index--) if (state.read(["turns", index, "turnId"]) === id) return state.read(["turns", index])
+  return undefined
 }

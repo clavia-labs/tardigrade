@@ -47,10 +47,14 @@ export function reduceTrajectory(state: typeof TrajectoryState.Type, event: Even
 }
 
 export const trajectoryState = durableAtom({ name: "agent.trajectory", input: TrajectoryEvent, schema: TrajectoryState, initial: { entries: [], models: [] },
-  reduce: reduceTrajectory,
+  edit: (state, event) => {
+    const change = trajectoryChange(event, state.read(["models"]), callId => findTrajectoryTool(state.length(["entries"]), index => state.read(["entries", index]), callId))
+    if (change.entry) state.append(["entries"], [change.entry])
+    if (change.models) state.set(["models"], change.models)
+  },
 })
 
 // trajectory preserves message order and turn ownership, including pending model attribution across recovery.
-export const trajectory = atom(get => get(trajectoryState).entries).pipe(Atom.withLabel("trajectory"))
+export const trajectory = atom(get => get(trajectoryState).read(["entries"])).pipe(Atom.withLabel("trajectory"))
 // messages materializes archive messages for consumers that explicitly request the complete history.
 export const messages = atom(get => get(trajectory).map(entry => entry.message))

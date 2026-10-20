@@ -1,4 +1,4 @@
-import { atom, durableAtom, ObservedCoreEvent, type RecordMetadata } from "@clavia/tardigrade-core"
+import { atom, durableAtom, ObservedCoreEvent, type Editor, type RecordMetadata } from "@clavia/tardigrade-core"
 import { Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { Event } from "../../contracts/events"
@@ -17,81 +17,73 @@ const SpendEvent = Schema.Union([Event, ObservedCoreEvent])
 
 const Spend = Schema.Struct({ turnId: Schema.String, count: Count, input: Count, output: Count, usd: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))), ms: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))), startedAt: Schema.NullOr(Count) })
 export const SpendCollections = Schema.Struct({ totals: Schema.Record(Schema.String, Spend), pending: Schema.Array(Schema.String), models: Schema.Record(Schema.String, Schema.String), tools: Schema.Record(Schema.String, Schema.String) })
-// reduceSpend updates ordered turn totals and pending call attribution (platform/test/properties/actors.ts).
-function reduceSpend(state: typeof SpendState.Type, event: typeof SpendEvent.Type, metadata: RecordMetadata): typeof SpendState.Type {
-  if (metadata.recordedAt !== undefined) {
-    let updated: Array<typeof TimeSpend.Type[number]> | undefined
-    for (const timer of state.timers) {
-      if (timer.startedAt === null) continue
-      const turn = state.timeSpend[timer.index]!
-      const ms = Math.max(0, metadata.recordedAt - timer.startedAt)
-      if (turn.ms === ms) continue
-      updated ??= state.timeSpend.slice()
-      updated[timer.index] = { ...turn, ms }
-    }
-    if (updated) state = { ...state, timeSpend: updated }
+function editSpend(state: Editor<typeof SpendState.Type>, event: typeof SpendEvent.Type, metadata: RecordMetadata) {
+  const findTotal = (turnId: string) => {
+    for (let index = state.length(["timeSpend"]) - 1; index >= 0; index--) if (state.read(["timeSpend", index, "turnId"]) === turnId) return index
+    return -1
+  }
+  const timers = state.read(["timers"])
+  if (metadata.recordedAt !== undefined) for (const timer of timers) {
+    if (timer.startedAt === null) continue
+    const ms = Math.max(0, metadata.recordedAt - timer.startedAt)
+    if (state.read(["timeSpend", timer.index, "ms"]) !== ms) state.set(["timeSpend", timer.index, "ms"], ms)
   }
   if (event.type === "TurnRequested") {
-    if (state.toolSpend.some(turn => turn.turnId === event.turnId)) return state
+    if (findTotal(event.turnId) >= 0) return
     const turnId = event.turnId
-    return {
-      ...state, turns: [...state.turns, turnId],
-      timers: [...state.timers, { turnId, index: state.timeSpend.length, startedAt: metadata.recordedAt ?? null }],
-      timeSpend: [...state.timeSpend, { turnId, ms: metadata.recordedAt === undefined ? null : 0 }],
-      toolSpend: [...state.toolSpend, { turnId, count: 0 }],
-      tokenSpend: [...state.tokenSpend, { turnId, input: 0, output: 0 }],
-      usdSpend: [...state.usdSpend, { turnId, usd: 0 }],
-    }
+    state.append(["turns"], [turnId])
+    state.append(["timers"], [{ turnId, index: state.length(["timeSpend"]), startedAt: metadata.recordedAt ?? null }])
+    state.append(["timeSpend"], [{ turnId, ms: metadata.recordedAt === undefined ? null : 0 }])
+    state.append(["toolSpend"], [{ turnId, count: 0 }])
+    state.append(["tokenSpend"], [{ turnId, input: 0, output: 0 }])
+    state.append(["usdSpend"], [{ turnId, usd: 0 }])
+    return
   }
+  const models = state.read(["models"])
   if (event.type === "ModelCalled") {
-    const turnId = event.purpose === "inference" ? event.turnId : state.turns[0]
-    if (turnId === undefined || state.models.some(call => call.callId === event.callId)) return state
-    return { ...state, models: [...state.models, { callId: event.callId, turnId }] }
+    const turnId = event.purpose === "inference" ? event.turnId : state.read(["turns"])[0]
+    if (turnId !== undefined && !models.some(call => call.callId === event.callId)) state.append(["models"], [{ callId: event.callId, turnId }])
+    return
   }
-  if (event.type === "ModelReturned") {
-    const call = state.models.find(call => call.callId === event.callId)
-    if (!call) return state
-    const usage = event.usage
-    return {
-      ...state, models: state.models.filter(value => value !== call),
-      tools: event.purpose === "inference" ? [...state.tools, ...event.toolCalls.map(tool => ({ callId: tool.callId, turnId: call.turnId }))] : state.tools,
-      tokenSpend: usage ? state.tokenSpend.map(turn => turn.turnId === call.turnId
-        ? { ...turn, input: turn.input + (usage.input ?? 0), output: turn.output + (usage.output ?? 0) } : turn) : state.tokenSpend,
-      usdSpend: state.usdSpend.map(turn => turn.turnId === call.turnId
-        ? { ...turn, usd: turn.usd === null || usage?.usd == null ? null : turn.usd + usage.usd } : turn),
+  if (event.type === "ModelReturned" || event.type === "CompactionFailed" || event.type === "ModelFailed") {
+    const call = models.find(call => call.callId === event.callId)
+    if (!call) return
+    state.set(["models"], models.filter(value => value !== call))
+    const index = findTotal(call.turnId)
+    if (event.type !== "ModelReturned") {
+      if (index >= 0) state.set(["usdSpend", index, "usd"], null)
+      return
     }
+    if (event.purpose === "inference") state.append(["tools"], event.toolCalls.map(tool => ({ callId: tool.callId, turnId: call.turnId })))
+    if (index < 0) return
+    const usage = event.usage
+    if (usage) {
+      const turn = state.read(["tokenSpend", index])
+      state.set(["tokenSpend", index, "input"], turn.input + (usage.input ?? 0))
+      state.set(["tokenSpend", index, "output"], turn.output + (usage.output ?? 0))
+    }
+    const usd = state.read(["usdSpend", index, "usd"])
+    state.set(["usdSpend", index, "usd"], usd === null || usage?.usd == null ? null : usd + usage.usd)
+    return
   }
   if (event.type === "ToolCalled" || event.type === "ToolReturned") {
-    const call = state.tools.find(call => call.callId === event.callId)
-    if (!call) return state
-    return {
-      ...state, tools: state.tools.filter(value => value !== call),
-      toolSpend: event.type === "ToolCalled" && event.counted
-        ? state.toolSpend.map(turn => turn.turnId === call.turnId ? { ...turn, count: turn.count + 1 } : turn) : state.toolSpend,
-    }
+    const tools = state.read(["tools"]), call = tools.find(call => call.callId === event.callId)
+    if (!call) return
+    state.set(["tools"], tools.filter(value => value !== call))
+    const index = findTotal(call.turnId)
+    if (event.type === "ToolCalled" && event.counted && index >= 0) state.set(["toolSpend", index, "count"], state.read(["toolSpend", index, "count"]) + 1)
+    return
   }
-  if (event.type === "CompactionFailed" || event.type === "ModelFailed") {
-    const call = state.models.find(call => call.callId === event.callId)
-    if (!call) return state
-    return {
-      ...state, models: state.models.filter(value => value !== call),
-      usdSpend: state.usdSpend.map(turn => turn.turnId === call.turnId ? { ...turn, usd: null } : turn),
-    }
-  }
-  if (event.type !== "TurnSettled") return state
-  const timer = state.timers.find(timer => timer.turnId === event.turnId)
-  if (timer && (metadata.recordedAt === undefined || timer.startedAt === null) && state.timeSpend[timer.index]!.ms !== null) {
-    const timeSpend = state.timeSpend.slice()
-    timeSpend[timer.index] = { turnId: event.turnId, ms: null }
-    state = { ...state, timeSpend }
-  }
-  return {
-    ...state, turns: state.turns.filter(turnId => turnId !== event.turnId),
-    timers: state.timers.filter(timer => timer.turnId !== event.turnId),
-    models: state.models.filter(call => call.turnId !== event.turnId),
-    tools: state.tools.filter(call => call.turnId !== event.turnId),
-    usdSpend: state.models.some(call => call.turnId === event.turnId)
-      ? state.usdSpend.map(turn => turn.turnId === event.turnId ? { ...turn, usd: null } : turn) : state.usdSpend,
+  if (event.type !== "TurnSettled") return
+  const timer = timers.find(timer => timer.turnId === event.turnId)
+  if (timer && (metadata.recordedAt === undefined || timer.startedAt === null) && state.read(["timeSpend", timer.index, "ms"]) !== null) state.set(["timeSpend", timer.index, "ms"], null)
+  state.set(["turns"], state.read(["turns"]).filter(turnId => turnId !== event.turnId))
+  state.set(["timers"], timers.filter(timer => timer.turnId !== event.turnId))
+  state.set(["models"], models.filter(call => call.turnId !== event.turnId))
+  state.set(["tools"], state.read(["tools"]).filter(call => call.turnId !== event.turnId))
+  if (models.some(call => call.turnId === event.turnId)) {
+    const index = findTotal(event.turnId)
+    if (index >= 0) state.set(["usdSpend", index, "usd"], null)
   }
 }
 
@@ -108,19 +100,19 @@ export const spendRecords = durableAtom({
       models: Object.entries(state.models).map(([callId, turnId]) => ({ callId, turnId })), tools: Object.entries(state.tools).map(([callId, turnId]) => ({ callId, turnId })),
     }
   },
-  reduce: reduceSpend,
+  edit: editSpend,
 })
 
-export const spendState = atom(get => get(spendRecords))
+export const spendState = atom(get => get(spendRecords).read([]))
 
 // toolSpend records budget-counted tool calls per turn, including execution failures.
-export const toolSpend = atom(get => get(spendState).toolSpend)
+export const toolSpend = atom(get => get(spendRecords).read(["toolSpend"]))
 // tokenSpend sums recorded provider input and output tokens per turn, including compaction.
-export const tokenSpend = atom(get => get(spendState).tokenSpend)
+export const tokenSpend = atom(get => get(spendRecords).read(["tokenSpend"]))
 // usdSpend sums reported provider costs per turn; a missing cost makes that turn's total unknown.
-export const usdSpend = atom(get => get(spendState).usdSpend)
+export const usdSpend = atom(get => get(spendRecords).read(["usdSpend"]))
 // timeSpend records wall milliseconds from turn request to turn settlement at journal boundaries, including queueing and downtime; missing timestamps produce unknown totals.
 export const timeSpend = NativeAtom.readable(get => {
-  const next = get(spendState).timeSpend, previous = Option.getOrUndefined(get.self<typeof next>())
+  const next = get(spendRecords).read(["timeSpend"]), previous = Option.getOrUndefined(get.self<typeof next>())
   return next.map((value, index) => { const before = previous?.[index]; return before?.turnId === value.turnId && before.ms === value.ms ? before : value })
 }).pipe(NativeAtom.keepAlive)

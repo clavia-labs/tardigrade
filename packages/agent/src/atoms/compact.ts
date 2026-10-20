@@ -1,4 +1,3 @@
-import { selectEach } from "@clavia/tardigrade-core"
 import { trajectoryState } from "./durable/trajectory"
 import { createContextState, contextState, compactionRendering, DEFAULT_COMPACTION_POLICY, type CompactionOptions } from "./durable/context"
 import { createCompactionState, type CompactionState } from "./durable/compaction"
@@ -51,15 +50,15 @@ export function compactHistory(options: CompactionOptions = {}) {
   return planCompaction(atom(get => {
     get(trajectoryState)
     const view = get(context)
-    const state = view.compaction
-    const size = view.totals.at(-1)!
+    const state = view.read(["compaction"])
+    const size = view.read(["totals", view.length(["totals"]) - 1])
     const start = Number(state.summary !== "")
-    const length = view.entries.length
+    const length = view.length(["entries"])
     return {
-      state, messages: selectEach(view, ["entries"], ["message"], { start: 0, end: length }), length: length - start, size,
-      tailSize: (index: number) => size - view.totals[start + index]!,
-      read: (index: number) => view.entries[start + index]!.message,
-      prefix: (end: number) => view.entries.slice(0, start + end).map(entry => entry.message),
+      state, messages: view.selectEach(["entries"], ["message"], { start: 0, end: length }), length: length - start, size,
+      tailSize: (index: number) => size - view.read(["totals", start + index]),
+      read: (index: number) => view.read(["entries", start + index, "message"]),
+      prefix: (end: number) => view.slice(["entries"], 0, start + end).map(entry => entry.message),
     }
   }), policy)
 }

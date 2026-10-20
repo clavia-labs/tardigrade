@@ -168,7 +168,7 @@ function historyProjection(seed?: ReadonlyMap<string, unknown>, stored = storedF
       documents.staging.acknowledge(batch)
       return seed
     },
-    archive: () => store.get(trajectoryState).entries,
+    archive: () => store.get(trajectoryState).read(["entries"]),
   }
 }
 
@@ -263,9 +263,9 @@ for (const legacy of [false, true]) test(`whole-value inference retains turns an
   try {
     const initial = log.initial
     expect(readInference(initial.get(inferenceState)).turns.map(turn => turn.turnId)).toEqual(["active"])
-    expect(initial.get(inferenceState).turns.map(turn => turn.turnId)).toEqual(["done", "cancelled", "active"])
-    expect(inferenceState[AtomState].decode(state)).toEqual(initial.get(inferenceState))
-    expect(initial.get(inferenceState).turns.length).toBe(3)
+    expect(initial.get(inferenceState).read(["turns"]).map(turn => turn.turnId)).toEqual(["done", "cancelled", "active"])
+    expect(inferenceState[AtomState].decode(state)).toEqual(initial.get(inferenceState).read([]))
+    expect(initial.get(inferenceState).read(["turns"]).length).toBe(3)
     expect(agentReply("done", initial.get)).toEqual({ status: "completed", output: { text: "saved reply" } })
     expect(findTurn(initial.get(inferenceState), "cancelled")?.cancellation).toBe("stop")
     const checkpoint = initial.checkpoint()!
@@ -282,10 +282,10 @@ for (const legacy of [false, true]) test(`whole-value inference retains turns an
     const first = reopened.append(restored, { type: "TurnRequested", turnId: "colon-first", text: "First", invocationRef: { method: "a:b", id: "c" } })
     const queued = reopened.append(first, { type: "TurnRequested", turnId: "colon-second", text: "Second", invocationRef: { method: "a", id: "b:c" } })
     let finished = reopened.append(queued, { type: "TurnSettled", turnId: "active", outcome: "failed", reason: "fixture" })
-    expect(finished.get(inferenceState).turns.map(turn => turn.turnId)).toEqual(["done", "cancelled", "active", "colon-first", "colon-second"])
+    expect(finished.get(inferenceState).read(["turns"]).map(turn => turn.turnId)).toEqual(["done", "cancelled", "active", "colon-first", "colon-second"])
     expect(readInference(finished.get(inferenceState)).turns.map(turn => turn.turnId)).toEqual(["colon-first", "colon-second"])
     for (const turnId of ["colon-first", "colon-second"]) finished = reopened.append(finished, { type: "TurnSettled", turnId, outcome: "failed", reason: "fixture" })
-    expect(finished.get(inferenceState).turns).toHaveLength(5)
+    expect(finished.get(inferenceState).read(["turns"])).toHaveLength(5)
     expect(readInference(finished.get(inferenceState)).turns).toEqual([])
     expect(agentReply("done", finished.get)).toEqual({ status: "completed", output: { text: "saved reply" } })
   } finally { log.dispose(); reopened?.dispose() }

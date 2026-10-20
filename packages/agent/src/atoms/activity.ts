@@ -4,8 +4,8 @@ import { Event, ModelReply, Decision, turnSource } from "../contracts/events"
 
 const StoredEvent = Schema.make<Schema.Schema<Event>>(Schema.Json.check(Schema.makeFilter(Schema.is(Event))).ast)
 
-export const historyRecords = durableAtom({ name: "agent.activity.history", input: Event, schema: Schema.Array(StoredEvent), initial: [], reduce: (events, event) => [...events, event] })
-export const history = atom(get => get(historyRecords))
+export const historyRecords = durableAtom({ name: "agent.activity.history", input: Event, schema: Schema.Array(StoredEvent), initial: [], edit: (events, event) => { events.append([], [event]) } })
+export const history = atom(get => get(historyRecords).read([]))
 
 export interface ActivityEntry {
   readonly seq: number

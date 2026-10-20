@@ -10,6 +10,7 @@ export function editAtom<State extends Json, Event>(options: {
   readonly edit: (editor: Editor<State>, event: Event, metadata: RecordMetadata, position: number) => void
   readonly initialize?: (read: CheckpointReader) => State
   readonly restore?: (state: MerkleTree<State>, read: CheckpointReader) => MerkleTree<State>
+  readonly migrate?: (stored: unknown) => unknown
 }) {
   return documentAtom({ ...options, reduce: (root, event, metadata, position) => {
     let current = root, active = true
