@@ -1,7 +1,9 @@
 import fc from "fast-check"
 import { expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { Effect, Schema, Deferred } from "effect"
+import { TestClock } from "effect/testing"
+import { RUNTIME_PROPERTY_OPTIONS } from "../properties/runtime/config"
+import { Clock, Effect, Schema, Deferred } from "effect"
 import { decodeReference, encodeReference } from "@tardie/grove"
 import { type SyncSqlite } from "@tardie/grove/sqlite"
 import { synchronousJournal } from "../../src/shared/synchronous-journal"
@@ -613,3 +615,58 @@ test("exhausted recovery stays blocked until version adoption renews its budget"
 })
 
 for (const property of journalProperties) test(property.name, () => property.run(withSqlite, property.bunRuns), 30_000)
+
+
+test("unsettled local promise retains its deadline wake after recovery blocks and storage reopens", async () => {
+  await fc.assert(fc.asyncProperty(fc.record({ budget: fc.integer({ min: 1, max: 5 }), slackMs: fc.integer({ min: 10, max: 1_000 }) }), async ({ budget, slackMs }) => {
+    const db = new Database(":memory:"), driver = driverFor(db)
+    try {
+      await Effect.runPromise(Effect.gen(function* () {
+        const clock = yield* TestClock.make()
+        yield* Effect.gen(function* () {
+          const deadlineAt = (yield* Clock.currentTimeMillis) + budget + slackMs
+          const target = { actor: "deadline", instance: "main", thread: "one" }
+          const ref = { seq: 0, atom: "deadline", act: "job" }
+          let alarmAt: number | null = null
+          let attempts = 0
+          let journal!: ReturnType<typeof synchronousJournal<{ type: string }>>
+          const open = () => synchronousJournal<{ type: string }>({ actor: "deadline", driver,
+            scheduler: {
+              alarm: { set: at => Effect.sync(() => { alarmAt = at }), clear: Effect.sync(() => { alarmAt = null }) },
+              deliver: () => journal.watchdog!.alarm,
+            },
+            watchdog: { target, policy: { maxAttempts: budget, maxNoProgressAttempts: budget, retryIntervalMs: 1, maxRetryIntervalMs: 1 },
+              recover: () => Effect.suspend(() => { attempts++; return Effect.fail(new RuntimeError("Producer isolate reset")) }),
+              invalidate: () => Effect.void,
+            },
+          })
+          journal = open()
+          yield* Effect.gen(function* () {
+            yield* journal.append(0, [
+              { event: { type: "EffectRequested", ref, request: { act: "job", input: { _tag: "InlineInput", value: null } } } },
+              { event: { type: "EffectSettled", ref, outcome: { status: "fulfilled", value: { type: "promise", handle: { executor: "local", id: "producer" }, deadlineAt } } } },
+            ])
+            for (let index = 0; index < budget; index++) {
+              if (alarmAt === null) return yield* Effect.fail(new RuntimeError("Recovery wake disappeared before budget exhaustion"))
+              yield* clock.setTime(alarmAt)
+              alarmAt = null
+              yield* journal.scheduler!.alarm
+            }
+            expect(attempts).toBe(budget)
+            expect((yield* journal.watchdog!.status).get(watchdogKey(target))?.status).toBe("blocked")
+            expect(yield* Clock.currentTimeMillis).toBeLessThan(deadlineAt)
+            const records = yield* journal.read
+            yield* journal.close
+            journal = open()
+            yield* journal.scheduler!.restore
+            yield* journal.watchdog!.restore
+            expect(yield* journal.read).toEqual(records)
+            expect(records.some(record => record.event.type === "PromiseSettled")).toBe(false)
+            expect(alarmAt, "Unsettled promise lost its deadline wake when recovery blocked").not.toBeNull()
+            expect(alarmAt!).toBeLessThanOrEqual(deadlineAt)
+          }).pipe(Effect.ensuring(Effect.suspend(() => journal.close).pipe(Effect.orDie)))
+        }).pipe(Effect.provideService(Clock.Clock, clock))
+      }).pipe(Effect.scoped))
+    } finally { db.close() }
+  }), RUNTIME_PROPERTY_OPTIONS)
+})
