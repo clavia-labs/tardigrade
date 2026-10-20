@@ -9,5 +9,5 @@ test("old snapshots migrate atomically while accepted inputs survive until relea
     try {
       migrationHistory({ identity: db, execute: (sql, parameters) => db.query(sql).all(...parameters) as Record<string, unknown>[], transaction: work => db.transaction(work)() }, ["\ufeff\u{1f422}".repeat(2048), ...texts], fail)
     } finally { db.close() }
-  }), { seed: 20261020, numRuns: 80 })
+  }), { seed: 20261020, numRuns: 80, includeErrorInReport: true })
 })

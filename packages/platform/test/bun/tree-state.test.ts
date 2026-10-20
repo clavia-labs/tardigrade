@@ -35,7 +35,7 @@ for (const cancellation of [false, true]) test(`tree atom checkpoint and ${cance
       await waitFor(() => Promise.resolve(calls), calls => calls.some(call => call.phase === "cleanup"))
       await Effect.runPromise(live.store.checkpoint)
     }
-    expect((db.query("SELECT * FROM grove_value_owners WHERE name LIKE '%input%'").all()).length).toBe(1)
+    expect((db.query("SELECT * FROM grove_page_owners WHERE name LIKE '%input%'").all()).length).toBe(1)
     await Effect.runPromise(live.store.close)
     await Effect.runPromise(journal.close)
     journal = bunJournal<typeof TreeEvent.Type>({ filename, actor: "tree", checkpointTree: { collectEvery: 1, cacheBytes: 0 } })
@@ -48,7 +48,7 @@ for (const cancellation of [false, true]) test(`tree atom checkpoint and ${cance
     await Effect.runPromise(live.store.wait)
     await Effect.runPromise(live.store.checkpoint)
     expect((await Effect.runPromise(journal.readInputs)).length).toBe(0)
-    expect(db.query("SELECT * FROM grove_value_owners WHERE name LIKE '%input%'").all().length).toBe(0)
+    expect(db.query("SELECT * FROM grove_page_owners WHERE name LIKE '%input%'").all().length).toBe(0)
     expect(() => journal.grove.view(decodeReference(root), Schema.Array(Schema.Json)).materialize()).toThrow()
     const saved = await Effect.runPromise(journal.readCheckpoint)
     expect(saved!.payload.length).toBeLessThan(4096)

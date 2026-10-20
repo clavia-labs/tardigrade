@@ -24,7 +24,8 @@ for (const coldMinBytes of [0, Number.MAX_SAFE_INTEGER]) test(`actor result poli
     if (result.status !== "fulfilled") throw new Error("Result did not settle")
     expect(Boolean(Object.getOwnPropertyDescriptor(result, "value")?.get)).toBe(coldMinBytes === 0)
     expect(result.value).toBe("x".repeat(4096))
-    await expect(Effect.runPromise(store.checkpoint)).rejects.toThrow("Checkpoint exceeds maxBytes 1024")
+    if (coldMinBytes === 0) await Effect.runPromise(store.checkpoint)
+    else await expect(Effect.runPromise(store.checkpoint)).rejects.toThrow("Checkpoint exceeds maxBytes 1024")
   } finally { await Effect.runPromise(store.close); await Effect.runPromise(journal.close); db.close() }
 })
 

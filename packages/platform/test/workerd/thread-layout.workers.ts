@@ -200,7 +200,7 @@ test("large materialisations survive native abort", async () => {
   await flow.call("parent", "read", null, "initial", 32)
   const parent = threadStub(instance, "parent")
   await runInDurableObject(parent, async (_object, state) => {
-    expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) count FROM grove_state_chunks").one().count).toBeGreaterThan(1)
+    expect(state.storage.sql.exec<{ bytes: number }>("SELECT SUM(byte_length) bytes FROM grove_pages").one().bytes).toBeGreaterThan(4_000_000)
   })
   try { await parent.abort() }
   catch (error) { expect(String(error)).toContain("injected checkpoint reset") }

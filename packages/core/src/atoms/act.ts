@@ -1,5 +1,5 @@
 import { prepareDocumentInput, type SelectedInput } from "../services/tree-state"
-import { operationSettlement } from "../runtime/operation"
+import { operationSettlement, readRetiredResult } from "../runtime/operation"
 import { incrementalDecoder } from "./incremental/decode"
 import { Context, Effect, Layer, Schema, Option } from "effect"
 import { atom, type Atom } from "./atom"
@@ -143,8 +143,8 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
         const cold = operation?.execution.results?.[kind]
         if (!cold && !operation?.execution.retired?.[kind]) return { status: "fulfilled", value: decodeSuccess(value) }
         return Object.freeze({ status: "fulfilled" as const, get value(): Value {
-          if (!cold || !service.documents) throw new Error(`Act result payload is unavailable: ${key}`)
-          return decodeSuccess(service.documents.read(cold))
+          if (!operation || !service.documents) throw new Error(`Act result payload is unavailable: ${key}`)
+          return decodeSuccess(readRetiredResult(operation, kind, service.documents))
         } })
       }
       if (outcome.type === "value") return fulfilled(outcome.value, "value")

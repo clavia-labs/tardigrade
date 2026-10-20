@@ -12,6 +12,8 @@ import { initializeSyncRecovery, syncRecoveryTransaction, synchronousRecoverySto
 import { initializeJournal } from "./journal-schema"
 import { journalMigration } from "./migrate-journal"
 import { recordRetryWakes } from "./retry-wakes"
+import { settlementResult } from "@clavia/tardigrade-core/runtime/operation"
+import type { EffectRef } from "@clavia/tardigrade-core"
 
 export interface SynchronousRecoveryOptions {
   readonly scheduler?: { readonly alarm: typeof Alarm.Service; readonly deliver: (wake: ScheduledWake) => Effect.Effect<void, Error>; readonly policy?: Partial<SchedulerPolicy> | undefined } | undefined
@@ -89,7 +91,17 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
     }
     migration.migrate(tx)
   })
-  const session = storedSession(grove)
+  const session = { ...storedSession(grove), readResult: (ref: EffectRef, kind: "value" | "promise"): Schema.Json | undefined => {
+    guard()
+    let position = ref.seq
+    while (true) {
+      const row = query<{ seq: number; event: string }>("SELECT seq,event FROM experimental_events WHERE actor=? AND seq>? AND json_extract(event,'$.event.type')=? ORDER BY seq LIMIT 1", [actor, position, kind === "value" ? "EffectSettled" : "PromiseSettled"])[0]
+      if (!row) return undefined
+      const value = settlementResult(captureRecord(row).record.event, ref, kind)
+      if (value !== undefined) return value
+      position = row.seq
+    }
+  } }
   const statePrefix = JSON.stringify([actor, "state"]) + "/"
   const viewPrefix = JSON.stringify([actor, "view"]) + "/"
   const inputPrefix = (key: string) => JSON.stringify([actor, "input", key]) + "/"

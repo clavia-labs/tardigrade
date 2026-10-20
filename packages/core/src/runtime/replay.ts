@@ -3,7 +3,7 @@ import { IndexView, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
 import { historicalEventDecoder } from "../event/versioned"
 import { frozenPlainData } from "../atoms/incremental/frozen"
 import { actInputs } from "../atoms/act"
-import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
+import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, digestInput, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
 import { Context, Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { atom, type Atom } from "../atoms/atom"
@@ -20,7 +20,7 @@ import { ThreadCreated } from "../actor/thread"
 import { AtomState, initialStateSeed, StateInitialised, type StatefulAtom, type StateSeed } from "../initialise"
 
 
-import { operationSettlement, settlementCompletesExecution, cleanupSubmission, cleanupSucceeded, operationComplete, DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES, retireOutcome, sameRetired, type StoredOperation } from "./operation"
+import { operationSettlement, settlementCompletesExecution, cleanupSubmission, cleanupSucceeded, operationComplete, DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES, retireOutcome, sameRetired, readRetiredResult, settlementResult, type StoredOperation } from "./operation"
 
 type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<infer Value> ? Value : never }
 
@@ -34,9 +34,23 @@ export interface EffectCheckpoint {
   readonly operations: readonly StoredOperation[]
 }
 
-// retireCheckpoint gives complete large results readable cold references when storage is available (platform/test/properties/accepted-work.ts).
-export function retireCheckpoint(checkpoint: EffectCheckpoint, minBytes: number, capture?: (value: Schema.Json) => string): EffectCheckpoint {
-  const operations = checkpoint.operations.map(operation => operationComplete(operation) ? retireOutcome(operation, minBytes, capture) : operation)
+// retireCheckpoint retires complete results and releases cold references recoverable from the journal (platform/test/properties/accepted-work.ts).
+export function retireCheckpoint(checkpoint: EffectCheckpoint, minBytes: number, capture?: (value: Schema.Json) => string, archive?: DocumentSession["readResult"]): EffectCheckpoint {
+  const operations = checkpoint.operations.map(operation => {
+    const retired = operationComplete(operation) ? retireOutcome(operation, minBytes, archive ? () => undefined : capture) : operation
+    if (!archive || !retired.execution.results) return retired
+    const results = { ...retired.execution.results }
+    for (const kind of ["value", "promise"] as const) {
+      if (!results[kind] || !retired.execution.retired?.[kind]) continue
+      const value = archive(retired.ref, kind)
+      if (value === undefined) continue
+      if (!isDeepStrictEqual(digestInput(value), retired.execution.retired[kind])) throw new Error("Retired result digest mismatch")
+      delete results[kind]
+    }
+    if (Object.keys(results).length === Object.keys(retired.execution.results).length) return retired
+    const { results: _results, ...execution } = retired.execution
+    return { ...retired, execution: { ...execution, ...(Object.keys(results).length ? { results } : {}) } }
+  })
   return operations.every((operation, index) => operation === checkpoint.operations[index]) ? checkpoint : Object.freeze({ ...checkpoint, operations: Object.freeze(operations) })
 }
 
@@ -56,7 +70,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   if (!Number.isSafeInteger(digestMinBytes) || digestMinBytes < 0) throw new Error("Effect input digest minBytes must be a nonnegative safe integer")
   const resultMinBytes = options.resultMinBytes ?? DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES
   if (!Number.isSafeInteger(resultMinBytes) || resultMinBytes < 0) throw new Error("Effect result cold minBytes must be a nonnegative safe integer")
-  const restored = options.checkpoint && retireCheckpoint(options.checkpoint, resultMinBytes, documents.capture)
+  const captureResult = documents.readResult ? () => undefined : documents.capture
+  const restored = options.checkpoint && retireCheckpoint(options.checkpoint, resultMinBytes, documents.capture, documents.readResult)
   type EffectValues = Proposed<Values<Atoms>[keyof Atoms]>
   type Work = EffectWork<ServicesOf<EffectValues>>
   type DeferredWork = IdentifiedEffectValue<ServicesOf<EffectValues>> & { readonly handle: ExecutionHandle; readonly deadlineAt: number | undefined }
@@ -175,11 +190,11 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     // retiredRequests preserves the request form visible before retirement (packages/platform/test/properties/runtime/snapshot-lookups.ts).
     const retiredRequests = new Map<string, { readonly position: number; readonly before: StoredEffectRequested }>()
     // retiredOutcomes preserves the execution visible before retireOutcome removed its values (packages/platform/test/properties/runtime/snapshot-lookups.ts).
-    const retiredOutcomes = new Map<string, { readonly position: number; readonly before: StoredOperation["execution"]; readonly restore: NonNullable<StoredOperation["execution"]["results"]> }>()
-    const executionBefore = (entry: NonNullable<ReturnType<typeof retiredOutcomes.get>>): StoredOperation["execution"] => {
+    const retiredOutcomes = new Map<string, { readonly position: number; readonly before: StoredOperation["execution"]; readonly restore: { readonly value?: true; readonly promise?: true } }>()
+    const executionBefore = (key: string, entry: NonNullable<ReturnType<typeof retiredOutcomes.get>>): StoredOperation["execution"] => {
       let execution = entry.before
-      if (entry.restore.value && execution.outcome?.type === "EffectSettled") execution = { ...execution, outcome: { ...execution.outcome, outcome: { status: "fulfilled", value: { type: "value", value: documents.read(entry.restore.value) } } } }
-      if (entry.restore.promise && execution.promise) execution = { ...execution, promise: { ...execution.promise, result: { status: "fulfilled", value: documents.read(entry.restore.promise) } } }
+      if (entry.restore.value && execution.outcome?.type === "EffectSettled") execution = { ...execution, outcome: { ...execution.outcome, outcome: { status: "fulfilled", value: { type: "value", value: readRetiredResult(operations.get(key)!, "value", resultDocuments) } } } }
+      if (entry.restore.promise && execution.promise) execution = { ...execution, promise: { ...execution.promise, result: { status: "fulfilled", value: readRetiredResult(operations.get(key)!, "promise", resultDocuments) } } }
       return execution
     }
     const visible = (kind: string, key: string, position: number) => (addedAt.get(`${kind}\0${key}`) ?? Infinity) < position
@@ -245,7 +260,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const latest = operations.get(key)
       if (!latest || !visible("request", key, position)) return undefined
       const retiredOutcome = retiredOutcomes.get(key)
-      const current = retiredOutcome && position <= retiredOutcome.position ? { ...latest, execution: executionBefore(retiredOutcome) } : latest
+      const current = retiredOutcome && position <= retiredOutcome.position ? { ...latest, execution: executionBefore(key, retiredOutcome) } : latest
       const retired = retiredRequests.get(key)
       const request = retired && position <= retired.position ? retired.before : current.request
       const settlement = visible("settlement", key, position) ? operationSettlement(current) : undefined
@@ -263,10 +278,18 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const promiseAt = (ref: EffectRef, position: number) => {
       const key = effectKey(ref)
       const retiredOutcome = retiredOutcomes.get(key)
-      return visible("promise", key, position) ? (retiredOutcome && position <= retiredOutcome.position ? executionBefore(retiredOutcome).promise : promiseOf(key)) : undefined
+      return visible("promise", key, position) ? (retiredOutcome && position <= retiredOutcome.position ? executionBefore(key, retiredOutcome).promise : promiseOf(key)) : undefined
     }
+    const resultDocuments = documents.readResult ? { ...documents, readResult: (ref: EffectRef, kind: "value" | "promise") => {
+      const history = store.get(source.records)
+      for (let index = history.length - 1; index >= 0 && offset + index > ref.seq; index--) {
+        const value = settlementResult(history.at(index)!.event, ref, kind)
+        if (value !== undefined) return value
+      }
+      return documents.readResult!(ref, kind)
+    } } : documents
     const projectionContext: typeof EventLog.Service = {
-      documents,
+      documents: resultDocuments,
       events: source.observedEvents,
       records: source.observedRecords,
       bindings,
@@ -475,14 +498,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const stored = request.request.input._tag === "InlineInput" ? storeRequest({ ...request.request, input: request.request.input.value }, digestMinBytes) : request.request
         if (stored.input._tag !== request.request.input._tag) retiredRequests.set(key, { position: offset + records.length, before: request })
         const operation = operations.get(key)!
-        const retiredOperation = retireOutcome({ ...operation, request: { ...request, request: stored } }, resultMinBytes, documents.capture)
+        const retiredOperation = retireOutcome({ ...operation, request: { ...request, request: stored } }, resultMinBytes, captureResult)
         if (retiredOperation.execution !== operation.execution) {
           const before = { ...retiredOperation.execution }
           if (operation.execution.retired) before.retired = operation.execution.retired; else delete before.retired
           if (operation.execution.results) before.results = operation.execution.results; else delete before.results
           const restore = {
-            ...(!operation.execution.retired?.value && retiredOperation.execution.results?.value ? { value: retiredOperation.execution.results.value } : {}),
-            ...(!operation.execution.retired?.promise && retiredOperation.execution.results?.promise ? { promise: retiredOperation.execution.results.promise } : {}),
+            ...(!operation.execution.retired?.value && retiredOperation.execution.retired?.value ? { value: true as const } : {}),
+            ...(!operation.execution.retired?.promise && retiredOperation.execution.retired?.promise ? { promise: true as const } : {}),
           }
           retiredOutcomes.set(key, { position: offset + records.length, before, restore })
         }

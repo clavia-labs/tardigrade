@@ -3,6 +3,7 @@ import type { RecordMetadata } from "./journal"
 import { Schema } from "effect"
 import type { Json, Path } from "@tardie/grove"
 import * as Grove from "@tardie/grove"
+import type { EffectRef } from "../runtime/effects"
 
 export const StateReference = Grove.EncodedReference
 const InputPath = Schema.Array(Schema.Union([Schema.String, Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))]))
@@ -33,7 +34,8 @@ export function documentSession(storage: Omit<Grove.Storage, "scope"> & { readon
 
 // memoryDocuments provides a document session backed by in-memory staging.
 export function memoryDocuments(options: Grove.ReaderOptions = {}) {
-  return documentSession({ options, load: hash => { throw new Error(`Document ${hash} is unavailable in memory; supply the document storage that owns this reference`) } })
+  const grove = Grove.memory(options)
+  return { ...encodedSession(grove, grove.read), discard: grove.discard, clear: grove.clear }
 }
 
 // encodedSession adapts Grove references to Core's recorded strings while preserving the caller's value-read lifetime (platform/test/properties/accepted-work.ts).
@@ -70,6 +72,8 @@ export interface DocumentSession {
   readonly bytes: (reference: string) => number
   readonly read: (reference: string) => Json
   readonly readReference: (reference: string) => Json
+  // readResult reads original fulfilled settlements; undefined means no matching value is archived (platform/test/properties/accepted-work.ts).
+  readonly readResult?: (ref: EffectRef, kind: "value" | "promise") => Json | undefined
   readonly hold: (holder: object, name: string, reference: string) => void
   readonly release: (holder: object) => void
   readonly resolve: (request: { readonly input: Json; readonly selections?: readonly InputSelection[] }) => Json

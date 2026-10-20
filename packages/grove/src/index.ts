@@ -21,3 +21,5 @@ export type { MapStorage, MapEntry, MapSpan, MapChange, MapWrite, MapBatch } fro
 
 export { bindValue, ValueState } from "./collections/value"
 export { incrementalValidator, invalid } from "./session/validation"
+
+export { memory, DEFAULT_MEMORY_SCOPE } from "./pages/memory"

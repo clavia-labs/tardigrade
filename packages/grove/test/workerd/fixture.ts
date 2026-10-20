@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers"
 import { Schema } from "effect"
 import { decodeReference, encodeReference, type Path } from "@tardie/grove"
-import { makeSync } from "@tardie/grove/sqlite"
+import { makeLegacySync as makeSync } from "../../src/storage/sqlite/store"
 import { commitStore, commitProbe, type CommitAction, type CommitProbe } from "./commits"
 
 const State = Schema.Struct({ history: Schema.Array(Schema.Struct({ n: Schema.Int, text: Schema.String })), archive: Schema.String })

@@ -10,7 +10,7 @@ export class TreeStateDO extends DurableObject {
   private readonly journal = platformJournal<typeof TreeEvent.Type>({ actor: "tree", limits: CLOUDFLARE_SQL_LIMITS,
     driver: { ...cloudflareNativeDriver(this.ctx.storage), execute: (sql, parameters) => {
       const rows = cloudflareNativeDriver(this.ctx.storage).execute(sql, parameters)
-      if (sql.startsWith("SELECT n.payload AS inline")) { this.loadedNodes++; this.loadedBytes += Number(rows[0]?.byte_length ?? 0) }
+      if (sql.startsWith("SELECT n.payload AS inline") || sql.startsWith("SELECT kind,payload")) { this.loadedNodes++; this.loadedBytes += Number(rows[0]?.byte_length ?? 0) }
       return rows
     } }, flush: Effect.tryPromise(() => this.ctx.storage.sync()),
   }, { collectEvery: 1, cacheBytes: 8192 })
@@ -51,8 +51,8 @@ export class TreeStateDO extends DurableObject {
       state: live.store.getState().view, loadedNodes: this.loadedNodes, loadedBytes: this.loadedBytes,
       calls: this.ctx.storage.sql.exec<{ phase: string; digest: string; count: number; ref: string }>("SELECT * FROM tree_calls").toArray(),
       inputs: await Effect.runPromise(this.journal.readInputs),
-      owners: this.ctx.storage.sql.exec<{ name: string; root: string }>("SELECT * FROM grove_value_owners").toArray(),
-      nodes: this.ctx.storage.sql.exec<{ hash: string }>("SELECT hash FROM grove_value_nodes").toArray().map(row => row.hash),
+      owners: this.ctx.storage.sql.exec<{ name: string; root: string }>("SELECT * FROM grove_page_owners").toArray(),
+      nodes: this.ctx.storage.sql.exec<{ root: string }>("SELECT root FROM grove_page_versions").toArray().map(row => row.root),
     }
   }
   abort() { this.ctx.abort("Native tree reset fixture") }

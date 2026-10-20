@@ -34,7 +34,7 @@ test("default Bun host observes and restores native documents and message receip
     const db = new Database(bunThreadPath(storage, thread.coordinate), { readonly: true })
     try {
       expect(db.query("SELECT name FROM sqlite_master WHERE name='experimental_events'").get()).not.toBeNull()
-      expect(db.query<{ n: number }, []>("SELECT COUNT(*) n FROM grove_value_owners").get()!.n).toBeGreaterThan(0)
+      expect(db.query<{ n: number }, []>("SELECT COUNT(*) n FROM grove_page_owners").get()!.n).toBeGreaterThan(0)
     } finally { db.close() }
     const saved = await Effect.runPromise(host.backup)
     await Effect.runPromise(host.close)

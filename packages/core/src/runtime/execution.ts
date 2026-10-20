@@ -240,10 +240,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         const journal = options.journal
         const put = records.flatMap(({ event }) => Schema.is(EffectRequested)(event)
           ? next.pending().filter(work => effectKey(work.ref) === effectKey(event.ref)).map(({ ref, request }) => ({ ref, request })) : [])
-        const references = next.documentReferences()
-        const documentChanges = { references }
         const inputChanges = {
-          documents: documentChanges,
           put,
           remove: records.flatMap(({ event }) => {
             if (Schema.is(EffectDied)(event)) return next.cancelled().length ? [] : [...persistedInputRefs.values()].filter(ref => ref.atom !== "host.message.replies")
@@ -761,7 +758,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       services = yield* buildServices()
       yield* Effect.gen(function* () {
         const stored = options.journal ? yield* options.journal.readCheckpoint : undefined
-        const checkpoint = stored ? yield* Effect.try({ try: () => retireCheckpoint(decodeCheckpoint(stored.payload), resultMinBytes, documents.capture), catch: RuntimeError.from }) : undefined
+        const checkpoint = stored ? yield* Effect.try({ try: () => retireCheckpoint(decodeCheckpoint(stored.payload), resultMinBytes, documents.capture, documents.readResult), catch: RuntimeError.from }) : undefined
         if (stored && checkpoint && checkpoint.position !== stored.position) return yield* Effect.fail(new ActorReplayError({ stage: "checkpoint", reason: "position_mismatch", position: stored.position, cause: new Error("Checkpoint payload position differs from journal metadata") }))
         checkpointSeed = checkpoint
         checkpointPosition = checkpoint?.position ?? 0

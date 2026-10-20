@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { decodeReference, encodeReference } from "@tardie/grove"
-import { makeSync, type SyncStore } from "@tardie/grove/sqlite"
+import { makeLegacySync as makeSync, type SyncStore } from "../../src/storage/sqlite/store"
 
 const Message = Schema.Struct({ text: Schema.String })
 const State = Schema.Struct({ messages: Schema.Array(Message), archive: Schema.String, jobs: Schema.Record(Schema.String, Schema.Struct({ status: Schema.String })), audit: Schema.Array(Schema.String), note: Schema.optionalKey(Schema.String) })

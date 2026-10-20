@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import fc from "fast-check"
 import { Schema } from "effect"
 import { tree, appendOnly, keyValue, encodeReference, type MerkleTree, type ValueReference } from "@tardie/grove"
-import { makeSync, type SyncSqlite } from "@tardie/grove/sqlite"
+import { type SyncSqlite } from "@tardie/grove/sqlite"
+import { makeLegacySync as makeSync } from "../../src/storage/sqlite/store"
 import { initialState, reduceJson, type Event, type State } from "../model"
 
 export const collectionShapes = ["tree", "append-only", "key-value", "mixed"] as const

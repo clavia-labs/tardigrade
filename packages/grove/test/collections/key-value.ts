@@ -2,7 +2,8 @@ import fc from "fast-check"
 import { Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { keyValue, encodeReference, type ValueReference } from "@tardie/grove"
-import { makeSync, type SyncSqlite } from "@tardie/grove/sqlite"
+import { type SyncSqlite } from "@tardie/grove/sqlite"
+import { makeLegacySync as makeSync } from "../../src/storage/sqlite/store"
 
 const Value = Schema.Struct({ text: Schema.String, items: Schema.Array(Schema.String) })
 const State = keyValue(Value)

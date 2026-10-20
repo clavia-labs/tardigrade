@@ -3,11 +3,11 @@ import { Database } from "bun:sqlite"
 import { Schema } from "effect"
 import fc from "fast-check"
 import { keyValue } from "@tardie/grove"
-import { makeSync } from "@tardie/grove/sqlite"
+import { makeLegacySync as makeSync } from "../../src/storage/sqlite/store"
 
 const Job = Schema.Struct({ text: Schema.String, items: Schema.Array(Schema.String), note: Schema.optionalKey(Schema.String) })
 
-test("key-value replacement writes one SQL revision without loading previous payloads or a Merkle key index", () => {
+test("legacy key-value replacement writes one SQL revision without loading previous payloads or a Merkle key index", () => {
   fc.assert(fc.property(fc.integer({ min: 20, max: 1000 }), fc.string(), (count, text) => {
     const db = new Database(":memory:"), reads: string[] = []
     const driver = { identity: db, execute: (sql: string, parameters: readonly (string | number | null | Uint8Array)[]) => {

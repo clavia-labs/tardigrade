@@ -1,307 +1,114 @@
 # Grove
 
-Grove materialises versioned JSON state from immutable logs, using ordinary reducers, incremental SQLite updates and reclamation of unretained state.
+Grove is a versioned JSON document store backed by SQLite. Objects use keyed B+ tree pages; arrays use balanced sequence pages with subtree counts. Memory and disk references share the same editing algorithms. An edit copies affected pages and shares unchanged pages with earlier roots.
 
 ```text
-immutable log -> reducer(state, event) -> JSON state
-                                             |
-                                  reconcile changed paths
-                                             |
-                                     grove_state_* rows
-                                             |
-                         retain referenced versions / reclaim the rest
-```
-
-```sh
-bun add @tardie/grove effect
+pure reducer -> reconcile --+
+                           +-> shared pages -> working root
+explicit edits ------------+                      |
+                                    checkpoint or retained input
+                                                  |
+                                     SQLite pages + root reference
 ```
 
 ## Ordinary reducers
 
 ```ts
 import { Schema } from "effect"
-import { makeSync } from "@tardie/grove/reducer"
+import { makeSync } from "@tardie/grove/sqlite"
 
 const grove = makeSync(driver, { scope: "agent" })
 const messages = grove.materialize({
-  name: "messages",
   schema: Schema.Struct({ messages: Schema.Array(Schema.String) }),
-  input: Schema.String,
-  initial: { messages: [] },
-  reduce: (state, text) => ({ messages: [...state.messages, text] }),
+  reduce: (state, text: string) => ({ messages: [...state.messages, text] }),
 })
-
-const head = messages.head()
-const next = messages.apply(head ?? messages.initial(), {
-  sequence: 42, event: "Hello", metadata: null,
-})
+const initial = messages.initial({ messages: [] })
+const next = initial.apply("Hello", null, 1)
 
 grove.transaction(tx => {
-  tx.execute("INSERT INTO events(seq, event) VALUES (?, ?)", [42, JSON.stringify("Hello")])
-  messages.publish(tx, next, { expected: head?.reference ?? null })
+  tx.execute("INSERT INTO events(seq,event) VALUES(?,?)", [1, JSON.stringify("Hello")])
+  grove.commit(tx, { publish: [{ owner: "head", expected: null, document: next.reference }] })
 })
-grove.discard()
 ```
 
-The application creates its event table. `driver` provides a stable connection `identity`, synchronous `execute(sql, parameters)` returning rows, and `transaction(work)` committing or rolling back the callback. The event and materialisation use the same connection and transaction.
+The application creates its event table. `driver` supplies a stable connection `identity`, synchronous `execute(sql, parameters)` returning rows and `transaction(work)`. Journal writes and root publication share that transaction. A failed transaction restores tentative page identities and owners; transaction handles expire when their callback returns.
+
+Pure reducers receive immutable ordinary JSON. Reconciliation reuses shared immutable subtrees. Fresh arrays require inspection; full reads and fresh replacements can require linear work. Object pages navigate keys by UTF-16 comparison and retain field ordinals to preserve JavaScript property order when materialising JSON. Whole-object reads sort fields by ordinal; indexed path reads use the keyed tree.
+
+## Explicit edits
 
 ```ts
-next.value.messages // ["Hello"] when starting empty
-next.sequence       // 42
-next.reference      // opaque snapshot identifier
+const State = Schema.Struct({ messages: Schema.Array(Schema.String) })
+const before = grove.bind(State).initial({ messages: [] })
+const after = before.append(["messages"], ["Hello"])
+const changed = after.set(["messages", 0], "Welcome")
+changed.read(["messages", 0])
+changed.slice(["messages"], 0, 16)
 ```
 
-`apply` validates the event and state. Sequence numbers advance, with gaps allowed. Shared subtree identity skips reconciliation; fresh arrays require a linear scan. Small array-free objects can occupy a packed row. Current state is eager JSON; cold opens reconstruct complete snapshots. No content hashing is performed by the reducer backend.
+Documents support `set`, `remove`, `append`, `splice` and `batch`. A batch applies edits sequentially and publishes its result after the callback succeeds. `remove` deletes optional object properties; `splice` edits arrays. `tree`, `appendOnly` and `keyValue` schema declarations preserve their edit restrictions. Schema checks validate changed values; constraints spanning a container require whole-value replacement.
 
-## Retain what durable work needs
-
-```ts
-grove.transaction(tx => grove.retain(tx, "effect/7", next.reference))
-const input = messages.open(next.reference).value
-
-// Commit effect completion together with release.
-grove.transaction(tx => {
-  tx.execute("DELETE FROM pending_effects WHERE id = ?", ["7"])
-  grove.release(tx, "effect/7", { expected: next.reference })
-})
-grove.collect()
-```
-
-Create the pending-work record in the transaction that retains its input. Published heads, retained owners and staged dependencies protect versions. Copying a reference does not retain it. Collection can expire unretained references; already materialised JSON follows ordinary JavaScript lifetimes.
-
-```text
-grove_state_
-  current / history / chunks      state payloads
-  documents / versions / heads    revisions and publication
-  owners / gc_pins                retention and collection
-```
-
-`DEFAULT_PACK_BYTES` is 4096; `packBytes: 0` disables packing. `DEFAULT_CHUNK_BYTES` is 64 KiB; `chunkBytes` must be at least `MIN_CHUNK_BYTES` (5). Both options are accepted by `makeSync`. Changing the packing budget starts a new document on publication while retained versions remain readable.
-
-`stats()` reports cumulative attempted reconciliation, encoding and internal SQL work, including rollbacks. `stagedVersions` reports current staging. Application statements submitted through `tx.execute` are outside the internal SQL counter. [Reducer properties](test/reducer/) compare independent plain folds, retention lifecycles, rollback and work budgets across growing collections.
-
-## Tardigrade
+## Tardigrade atoms
 
 ```ts
 durableAtom({
-  name: "messages",
-  schema: State,
-  input: Event,
-  initial,
-  reduce: (state, event) => nextState(state, event),
+  name: "messages", schema: State, input: Added, initial,
+  reduce: (state, event) => ({ messages: [...state.messages, event.text] }),
+})
+
+durableAtom({
+  name: "messages", schema: State, input: Added, initial,
+  edit: (state, event) => {
+    state.append(["messages"], [event.text])
+  },
 })
 ```
 
-```text
-application    ordinary schemas and reducers
-Tardigrade     event log / effects / checkpoints
-Grove          reconciliation / materialisation / retention
-```
+A durable atom accepts either `reduce` or `edit`. An edit callback receives typed reads and mutations and expires after returning. Ordinary reducers expose JSON state; explicit atoms expose selective document reads. Both use Grove's shared page engine. Core keeps ordinary transitions virtual, commits their events and publishes roots at its configured checkpoint cadence. Pending work persists and retains its selected input immediately. A dirty allocation budget can spill working pages without advancing the recovery checkpoint. Recovery loads the checkpoint and replays the journal suffix.
 
-SQLite-backed untagged atoms use the reducer backend. Existing inline checkpoints and schema-authored collection references restore through their readers; subsequent checkpoints publish reducer references. Accepted work keeps its original references until release. Event-log rows retain their format. Memory-only sessions checkpoint inline JSON.
+Memory sessions use the same tree and preserve inline checkpoints for ordinary reducers. SQLite checkpoints keep the `DocumentState` envelope and encode opaque scoped references. Event records retain their domain format.
 
-## Schema-authored collections
-
-The root package and `@tardie/grove/sqlite` also expose explicit tree, append-only and key-value authoring. Their reference reader remains available for existing materialisations. In that store, `reducerChunkBytes` configures reducer payload chunks independently of legacy `chunkBytes`; its default is the 64 KiB `DEFAULT_CHUNK_BYTES` exported by `@tardie/grove/reducer`.
-
-## Start with JSON
+## Retention and collection
 
 ```ts
-const initial = {
-  document: { title: "Untitled" },
-  messages: [],
-  jobs: {},
-}
-```
-
-## Give each collection an edit vocabulary
-
-```ts
-import { Schema } from "effect"
-import * as Grove from "@tardie/grove"
-
-const Message = Schema.Struct({ text: Schema.String })
-const Job = Schema.Struct({ status: Schema.String })
-const State = Schema.Struct({
-  document: Grove.tree(Schema.Struct({ title: Schema.String })),
-  messages: Grove.appendOnly(Schema.Array(Message)),
-  jobs: Grove.keyValue(Job),
-})
-```
-
-```text
-tree        set paths / remove fields / splice arrays
-appendOnly  append entries / replace the collection
-keyValue    set or remove whole entries by key
-```
-
-## Connect synchronous storage
-
-```ts
-import { Database } from "bun:sqlite"
-import { makeSync, type SyncSqlite } from "@tardie/grove/sqlite"
-
-const db = new Database(":memory:")
-const driver: SyncSqlite = {
-  identity: db,
-  execute: (sql, parameters) =>
-    db.query<Record<string, unknown>, (typeof parameters)[number][]>(sql)
-      .all(...parameters),
-  transaction: work => db.transaction(work)(),
-}
-const options = {
-  scope: "workspace",
-  cacheBytes: Grove.DEFAULT_READ_CACHE_BYTES,
-}
-const store = makeSync(driver, options)
-const documents = store.bind(State)
-```
-
-Use a file-backed database for durability. A Durable Object supplies the same driver through `storage.sql.exec` and `storage.transactionSync`.
-
-## Edits produce versions
-
-```ts
-const a = documents.initial(initial)
-const b = a.set(["document", "title"], "Research")
-const c = b.append(["messages"], [{ text: "Hello" }])
-const d = c.set(["jobs", "summarize"], { status: "pending" })
-const e = d.remove(["jobs", "summarize"])
-
-a.read(["document", "title"])  // "Untitled"
-b.read(["document", "title"])  // "Research"
-a.length(["messages"])         // 0
-c.length(["messages"])         // 1
-d.has(["jobs", "summarize"])  // true
-e.has(["jobs", "summarize"])  // false
-```
-
-```text
-version a -> document A + messages A + jobs A
-version b -> document B + messages A + jobs A
-version c -> document B + messages C + jobs A
-version d -> document B + messages C + jobs D
-```
-
-Batch related edits into a version:
-
-```ts
-const completed = d.batch(edit => {
-  edit.append(["messages"], [{ text: "Summary ready" }])
-  edit.remove(["jobs", "summarize"])
-})
-```
-
-Paths and values follow the schema. Append-only entries cannot be edited in place; key-value entries are replaced as a whole.
-
-## Read what you need
-
-```ts
-d.read(["document", "title"])
-d.read(["jobs", "summarize"])
-d.length(["messages"])
-d.slice(["messages"], 0, 10)
-d.read([])
-```
-
-`read([])` materializes the entire document. Selections describe a version and a subset without loading its values:
-
-```ts
-const selected = d.selectEach(["messages"], ["text"], { start: 0, end: 1 })
-const reference = store.reference(selected)
-const encoded = Grove.encodeReference(reference)
-```
-
-References belong to a storage scope. Persist them with `encodeReference`; restore them with `decodeReference`.
-
-## Publish atomically
-
-```ts
-db.exec("CREATE TABLE app_events(seq INTEGER PRIMARY KEY, event TEXT NOT NULL)")
-
-store.transaction(tx => {
-  store.commit(tx, {
-    publish: [{ owner: "head", expected: null, document: d }],
-  })
-  tx.execute("INSERT INTO app_events VALUES(?,?)", [
-    0, JSON.stringify({ type: "Received", text: "Hello" }),
-  ])
-})
-store.discard()
-
-const view = store.view(reference, Schema.Array(Schema.String))
-view.read([0])      // "Hello"
-view.materialize()  // ["Hello"]
-```
-
-```text
-one SQLite transaction
-  + application event
-  + changed tree nodes / appended rows / keyed revisions
-  + head ownership
-```
-
-`expected` checks the owner's previous reference. A failed transaction preserves its published version; staged edits remain available for retry. `discard()` drops staged edits after publication or abandonment.
-
-## Reopen a version
-
-```ts
-const reopened = makeSync(driver, options)
-const head = reopened.owner("head")!
-const restored = reopened.bind(State).open(head)
-const selectedAgain = reopened.view(
-  Grove.decodeReference(encoded),
-  Schema.Array(Schema.String),
-)
-
-restored.read(["document", "title"])  // "Research"
-selectedAgain.read([0])               // "Hello"
-```
-
-## Retain what future reads need
-
-```ts
-reopened.transaction(tx => reopened.commit(tx, {
-  retain: [{ owner: "input/1", selection: Grove.decodeReference(encoded) }],
+const input = after.select(["messages"])
+grove.transaction(tx => grove.commit(tx, {
+  retain: [{ owner: "effect/7", selection: input }],
 }))
 
-const next = restored.append(["messages"], [{ text: "Another message" }])
-reopened.transaction(tx => reopened.commit(tx, {
-  publish: [{ owner: "head", expected: head, document: next }],
+const reference = grove.owner("effect/7")!
+grove.view(reference, Schema.Array(Schema.String)).materialize()
+grove.transaction(tx => grove.commit(tx, {
+  release: [{ owner: "effect/7", expected: reference }],
 }))
-reopened.discard()
-reopened.collect()
-
-selectedAgain.materialize()  // ["Hello"]
+grove.collect()
 ```
 
-Release an obsolete owner, then collect:
+Retain the input in the transaction that accepts its work. Release it in the transaction that settles the work. Published roots, pending inputs, active read leases and locally held projections protect their pages. Collection reclaims unreferenced versions and pages. A reference string alone does not retain data. Full materialisation costs proportional to the returned JSON.
 
-```ts
-reopened.transaction(tx => reopened.commit(tx, {
-  release: [{ owner: "input/1", expected: Grove.decodeReference(encoded) }],
-}))
-reopened.collect()
-```
+## Storage boundary
 
 ```text
-head --------> current version
-input/1 -----> selected version
-                    |
-               shared storage
-
-release input/1 -> collect unreachable material
+grove_pages / grove_page_chunks     immutable encoded pages and large text
+grove_page_versions                 logical version -> root
+grove_page_owners                   publication and retention
+grove_page_settings                 stored tree capacity
 ```
 
-## Size the read cache
+The page codec chunks large records, verifies their byte lengths and checksums on load and uses ordinary SQLite page identifiers. Checksums authenticate stored payloads; page identity does not require content hashing.
 
-```ts
-const tuned = makeSync(driver, {
-  scope: "workspace",
-  cacheBytes: 4 * 1024 * 1024,
-})
+| Policy | Exported default | Value |
+| --- | --- | --- |
+| Page capacity | `DEFAULT_CAPACITY` | 32 |
+| Inline text bytes | `DEFAULT_INLINE_BYTES` | 64 |
+| Encoded cache bytes | `DEFAULT_CACHE_BYTES` | 1,048,576 |
+| Dirty allocation bytes | `DEFAULT_DIRTY_BYTES` | 1,048,576 |
+| SQLite chunk bytes | `DEFAULT_CHUNK_BYTES` | 131,072 |
 
-tuned.stats()
-```
+These defaults are exported by `@tardie/grove/sqlite`; `makeSync` accepts `capacity`, `inlineBytes`, `cacheBytes`, `dirtyBytes` and `chunkBytes` overrides. A stored scope fixes page capacity. Cache accounting measures encoded bytes. Dirty accounting measures estimated cumulative allocations, including superseded pages; it is not a bound on JavaScript heap. Diagnostics expose configured policies, reads, writes, allocations, cache occupancy and budget spills. Counters include attempted work from failed transactions.
 
-The cache budget counts encoded bytes for nodes, log rows and keyed entries. Decoded objects, application views and staged edits use additional memory. `cacheBytes: 0` disables the committed read cache. Tree layout and SQLite chunking defaults are exported from `@tardie/grove` and `@tardie/grove/sqlite`.
+## Checkpoint compatibility
+
+Existing tree and reducer references use their storage readers. Opening an old atom state builds a working page root; publication writes the new representation. Pending inputs keep their original references and storage until released. An upgrade does not rewrite the event log or require a bulk database conversion. Old tables can coexist with page tables while old roots remain retained.
+
+`@tardie/grove/reducer` and `make(storage)` support the row codec and encoded-node staging integrations. The default Tardigrade memory and SQLite sessions use the shared page engine. [Page properties](test/pages.ts) run on Bun and Cloudflare SQLite; [migration properties](test/reducer/integration.ts) exercise old checkpoint inputs, rollback and reclamation. [Tree properties](test/page-tree.test.ts) check balancing, retained roots and path work bounds against independent arrays and maps.

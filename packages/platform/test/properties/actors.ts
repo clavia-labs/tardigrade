@@ -1,3 +1,4 @@
+import { makeLegacySync } from "../../../grove/src/storage/sqlite/store"
 import fc from "fast-check"
 import { Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
@@ -61,8 +62,8 @@ export function agentCollections(driver: SyncSqlite, options: Case) {
       if (options.restore === "value") return { name: entry.name, position: entry.position, state: { _tag: "ValueState", value: current } }
       const state = options.restore === "legacy" ? legacyValue(entry.name, current) : previousValue(entry.name, current)
       if (options.restore === "plain" || options.restore === "legacy") return { name: entry.name, position: entry.position, state }
-      const reference = store.bind(tree(Schema.suspend(() => Schema.Json))).initial(state).reference
-      store.transaction(tx => store.commit(tx, { publish: [{ owner: entry.name, expected: store.owner(entry.name), document: reference }] }))
+      const legacy = makeLegacySync(driver, storage), reference = legacy.bind(tree(Schema.suspend(() => Schema.Json))).initial(state).reference
+      legacy.transaction(tx => legacy.commit(tx, { publish: [{ owner: `fixture/${entry.name}`, expected: legacy.owner(`fixture/${entry.name}`), document: reference }] }))
       return { ...entry, state: { _tag: "DocumentState", reference: encodeReference(reference) }, reference: encodeReference(reference) }
     }) }
     log.dispose(); store.discard(); store.collect(); store = open()

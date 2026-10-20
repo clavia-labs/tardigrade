@@ -21,7 +21,7 @@ export async function coldResultScenario(driver: SyncSqlite, payload: string, pr
   let reads = 0
   const open = (checkpoint?: EffectCheckpoint) => {
     const request = Job.request({ input: null })
-    const documents = { ...journal.storedValues, read: (encoded: string) => { reads++; return journal.storedValues.read(encoded) } }
+    const documents = { ...journal.storedValues, readResult: (...args: Parameters<NonNullable<typeof journal.storedValues.readResult>>) => { reads++; return journal.storedValues.readResult!(...args) }, read: (encoded: string) => { reads++; return journal.storedValues.read(encoded) } }
     return createEventLog({ schema: Tick, documents, digestMinBytes: 0, resultMinBytes: 2048, ...(checkpoint ? { checkpoint } : {}), atoms: {
       root: effectAtom(get => ({ view: get(request.result), events: {}, acts: { job: request } })),
     } })
@@ -48,10 +48,10 @@ export async function coldResultScenario(driver: SyncSqlite, payload: string, pr
     const settledSnapshot = snapshot
     await append({ type: "Tick" }, failCommit)
     if (snapshot.view().root.view.status !== "fulfilled" || reads) throw new Error("Reading status loaded a cold result")
-    const cold = snapshot.effect(ref)?.execution.results
-    if (!(promised ? cold?.promise : cold?.value)) throw new Error("Large result was not stored cold")
+    const cold = snapshot.effect(ref)?.execution.retired
+    if (!(promised ? cold?.promise : cold?.value)) throw new Error("Large result was not retired to journal")
     const result = snapshot.view().root.view
-    if (result.status !== "fulfilled" || result.value !== payload || reads !== 1) throw new Error("Cold result changed its value")
+    if (result.status !== "fulfilled" || result.value !== payload || reads !== 0) throw new Error("Cold result changed its value")
     const historical = settledSnapshot.effect(ref)
     const historicalValue = promised ? historical?.execution.promise?.result : historical?.execution.outcome?.type === "EffectSettled" ? historical.execution.outcome.outcome : undefined
     if (historicalValue?.status !== "fulfilled") throw new Error("Historical result lost its status")

@@ -283,5 +283,5 @@ for (const cleanup of [false, true]) test(`native tree state recovers ${cleanup 
   state = await stub.inspect()
   expect(state.inputs).toHaveLength(0)
   expect(state.owners.filter(owner => owner.name.includes('"input"'))).toHaveLength(0)
-  expect(state.nodes).not.toContain(root)
+  expect(state.nodes).not.toContain((JSON.parse(root) as { selection: { root: string } }).selection.root)
 }, 30000)

@@ -6,7 +6,8 @@ import { decodeNodeChunks } from "../src/storage/sqlite/chunks"
 import { referenceLocator } from "../src/value"
 import fc from "fast-check"
 import { decodeReference, encodeReference, type ValueReference } from "@tardie/grove"
-import { makeSync, type SyncSqlite, type Transaction } from "@tardie/grove/sqlite"
+import { type SyncSqlite, type Transaction } from "@tardie/grove/sqlite"
+import { makeLegacySync as makeSync } from "../src/storage/sqlite/store"
 
 const Message = Schema.Struct({ text: Schema.String })
 const State = Schema.Struct({ messages: Schema.Array(Message), status: Schema.String })

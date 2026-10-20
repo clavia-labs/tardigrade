@@ -36,8 +36,8 @@ interface Connection { readonly readers: Set<WeakRef<() => void>>; readonly leas
 const connections = new WeakMap<object, Connection>()
 const ownerName = (name: string) => { if (typeof name !== "string" || !name.trim()) throw new Error("Grove owner name must be nonempty"); return name }
 
-// makeSync commits references and application writes on a synchronous SQLite connection (test/transactions.test.ts; test/workerd/recovery.workers.ts).
-export function makeSync(driver: SyncSqlite, options: SyncOptions) {
+// makeLegacySync commits references and application writes on a synchronous SQLite connection (test/transactions.test.ts; test/workerd/recovery.workers.ts).
+export function makeLegacySync(driver: SyncSqlite, options: SyncOptions) {
   if (typeof options.scope !== "string" || !options.scope.trim()) throw new Error("Grove storage scope must be nonempty")
   const scope = options.scope
   const chunkBytes = options.chunkBytes ?? DEFAULT_CHUNK_BYTES
@@ -336,4 +336,4 @@ export function makeSync(driver: SyncSqlite, options: SyncOptions) {
     stats: () => ({ ...base.stats(), stagedNodes: base.stats().stagedNodes + (plain.stats().stagedVersions ?? 0), reducer: plain.stats(), reducerChunkBytes, chunkBytes, maxParameters, activeLeases: [...shared.leases.values()].reduce((sum, count) => sum + count, 0), leasedRoots: shared.leases.size, localHolders: ownership.size + (plain.holderCount() ?? 0), heldReferences: ownership.held().length + (plain.held().length ?? 0) }),
   }
 }
-export type SyncStore = ReturnType<typeof makeSync>
+export type SyncStore = ReturnType<typeof makeLegacySync>

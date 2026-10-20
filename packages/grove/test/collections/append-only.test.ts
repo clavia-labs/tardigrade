@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite"
 import { Schema } from "effect"
 import fc from "fast-check"
 import { appendOnly, make } from "@tardie/grove"
-import { makeSync } from "@tardie/grove/sqlite"
+import { makeLegacySync as makeSync } from "../../src/storage/sqlite/store"
 import { AppendState } from "./append-only"
 
 test("append-only schemas reject generated indexed edits without staging partial batches", () => {
