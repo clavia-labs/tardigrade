@@ -62,9 +62,13 @@ export function createWatchdog(options: {
     })
     yield* times.length ? tx.alarm.set(Math.min(...times)) : tx.alarm.clear
   })
-  const admit = (tx: WatchdogTransaction, target: WatchdogTarget, progressCursor = 0, admission = true) => Effect.gen(function* () {
+  const admit = (tx: WatchdogTransaction, target: WatchdogTarget, progressCursor = 0, admission = true, expired = false) => Effect.gen(function* () {
     const key = watchdogKey(target)
-    const previous = yield* tx.get(key)
+    let previous = yield* tx.get(key)
+    if (expired && previous?.status === "blocked") {
+      yield* resetBudget(tx, target)
+      previous = yield* tx.get(key)
+    }
     const now = yield* Clock.currentTimeMillis
     yield* tx.put(key, previous
       ? { ...previous, generation: previous.generation + (admission ? 1 : 0), progressCursor: Math.max(previous.progressCursor, progressCursor), consecutiveNoProgress: progressCursor > previous.progressCursor ? 0 : previous.consecutiveNoProgress, ...(previous.status === "blocked" ? {} : { nextWakeAt: admission ? Math.min(previous.nextWakeAt ?? now, now) : previous.nextWakeAt ?? now }) }

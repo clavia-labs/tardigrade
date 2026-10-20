@@ -7,7 +7,7 @@ import { storedSession, JournalConflict, RuntimeError, PendingEffectInput, effec
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES, validateCheckpointChunkBytes, encodeCheckpointChunks, type CheckpointChunkOptions } from "./checkpoint-chunks"
 import { DEFAULT_EVENT_INLINE_BYTES, decodeSqlJournalRecord, type JournalRecordOptions, type SqlJournalLimits } from "./journal-records"
 import { storedPayloadBytes, storedPayloadDigest, type StoredPayloadRow, type StoredPayloadChunk } from "./stored-journal-payloads"
-import { createScheduler, createWatchdog, ThreadUpdated, type Alarm, type SchedulerStorage, type SchedulerPolicy, type ScheduledWake, type WatchdogStorage, type WatchdogTarget } from "@clavia/tardigrade-core"
+import { createScheduler, createWatchdog, PromiseSettled, PromiseTimedOut, ThreadUpdated, type Alarm, type SchedulerStorage, type SchedulerPolicy, type ScheduledWake, type WatchdogStorage, type WatchdogTarget } from "@clavia/tardigrade-core"
 import { initializeSyncRecovery, syncRecoveryTransaction, synchronousRecoveryStorage, recoveryLock, stageWakes, commitWakes } from "./synchronous-recovery"
 import { initializeJournal } from "./journal-schema"
 import { journalMigration } from "./migrate-journal"
@@ -200,13 +200,14 @@ export function synchronousJournal<Event extends object>(options: Omit<SyncOptio
           Effect.runSyncWith(context)(Effect.gen(function* () {
             yield* recordRetryWakes(recovery.scheduler, records)
             if (watchdog && options.watchdog && records.length) {
-              let progressCursor = 0, admission = false
+              let progressCursor = 0, admission = false, expired = false
               for (const [index, { event }] of records.entries()) {
+                if (Schema.is(PromiseSettled)(event) && event.result.status === "rejected" && Schema.is(PromiseTimedOut)(event.result.reason)) expired = true
                 if (Schema.is(ThreadUpdated)(event)) yield* watchdog.adoptVersion(recovery.watchdog, options.watchdog.target, event.version)
                 if ("type" in event && (event.type === "EffectSettled" || event.type === "PromiseSettled")) progressCursor = position + index + 1
                 if ("type" in event && ["MessageReceived", "ThreadCreated", "ThreadRequested", "EffectCancelled"].includes(String(event.type))) admission = true
               }
-              yield* watchdog.admit(recovery.watchdog, options.watchdog.target, progressCursor, admission)
+              yield* watchdog.admit(recovery.watchdog, options.watchdog.target, progressCursor, admission, expired)
             }
           }))
         }

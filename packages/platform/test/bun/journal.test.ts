@@ -2,15 +2,17 @@ import fc from "fast-check"
 import { expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { TestClock } from "effect/testing"
+import { slowActor, slowServices } from "../fixtures/slow-act"
+import { createTestStore } from "../properties/runtime/store"
 import { RUNTIME_PROPERTY_OPTIONS } from "../properties/runtime/config"
-import { Clock, Effect, Schema, Deferred } from "effect"
+import { Clock, Context, Effect, Layer, Schema, Deferred } from "effect"
 import { decodeReference, encodeReference } from "@tardie/grove"
 import { type SyncSqlite } from "@tardie/grove/sqlite"
 import { synchronousJournal } from "../../src/shared/synchronous-journal"
 import { prepareDocumentInput } from "@clavia/tardigrade-core/services/tree-state"
 import { treeActorFixture, TreeEvent } from "../properties/runtime/tree-state"
 import { waitFor } from "../fixtures/wait"
-import { checkpointDigest, encodeCheckpoint, effectKey, type EffectRef, type Recorded, watchdogKey, RuntimeError, type Alarm } from "@clavia/tardigrade-core"
+import { checkpointDigest, encodeCheckpoint, effectKey, type EffectRef, type Recorded, watchdogKey, RuntimeError, ExecutionResult, PromiseSettled, Scheduler, type RecoveryState, type Alarm } from "@clavia/tardigrade-core"
 import { initializeThread, updateThreadVersion } from "@clavia/tardigrade-core/services/journal/thread"
 import { schedulerProperties, schedulerAcknowledgments } from "../properties/scheduler/wakes"
 import { journalProperties } from "../properties/integration"
@@ -617,35 +619,55 @@ test("exhausted recovery stays blocked until version adoption renews its budget"
 for (const property of journalProperties) test(property.name, () => property.run(withSqlite, property.bunRuns), 30_000)
 
 
-test("unsettled local promise retains its deadline wake after recovery blocks and storage reopens", async () => {
-  await fc.assert(fc.asyncProperty(fc.record({ budget: fc.integer({ min: 1, max: 5 }), slackMs: fc.integer({ min: 10, max: 1_000 }) }), async ({ budget, slackMs }) => {
+test("unsettled local promise expires once after recovery blocks and storage reopens", async () => {
+  await fc.assert(fc.asyncProperty(fc.record({ budget: fc.integer({ min: 1, max: 5 }), slackMs: fc.integer({ min: 10, max: 1_000 }), legacy: fc.boolean() }), async ({ budget, slackMs, legacy }) => {
     const db = new Database(":memory:"), driver = driverFor(db)
     try {
       await Effect.runPromise(Effect.gen(function* () {
         const clock = yield* TestClock.make()
         yield* Effect.gen(function* () {
-          const deadlineAt = (yield* Clock.currentTimeMillis) + budget + slackMs
+          const timeoutMs = budget + slackMs
+          const fixture = slowServices({ workMs: timeoutMs, value: 42, hold: true, fork: { timeoutMs } })
           const target = { actor: "deadline", instance: "main", thread: "one" }
-          const ref = { seq: 0, atom: "deadline", act: "job" }
+          const closes: Array<Effect.Effect<void>> = []
+          let probe: (() => RecoveryState) | undefined
           let alarmAt: number | null = null
           let attempts = 0
-          let journal!: ReturnType<typeof synchronousJournal<{ type: string }>>
-          const open = () => synchronousJournal<{ type: string }>({ actor: "deadline", driver,
+          let journal!: ReturnType<typeof synchronousJournal<{ type: "RunRequested" }>>
+          const runtime = () => createTestStore({ actor: slowActor, journal, checkpoint: { mode: "manual" },
+            canDrive: journal.watchdog!.blocked(target).pipe(Effect.map(blocked => !blocked)),
+            actorContext: Context.pick(), services: () => Layer.merge(fixture.services, Layer.succeed(Scheduler, journal.scheduler!)),
+          })
+          const open = () => synchronousJournal<{ type: "RunRequested" }>({ actor: "deadline", driver,
             scheduler: {
               alarm: { set: at => Effect.sync(() => { alarmAt = at }), clear: Effect.sync(() => { alarmAt = null }) },
-              deliver: () => journal.watchdog!.alarm,
+              deliver: wake => Effect.gen(function* () {
+                if (typeof wake.target === "object" && wake.target !== null && "owner" in wake.target && wake.target.owner === "effect") {
+                  const restored = yield* runtime()
+                  closes.push(restored.close.pipe(Effect.orDie))
+                  probe = restored.recoveryState
+                  yield* restored.recover
+                } else yield* journal.watchdog!.alarm
+              }),
             },
             watchdog: { target, policy: { maxAttempts: budget, maxNoProgressAttempts: budget, retryIntervalMs: 1, maxRetryIntervalMs: 1 },
               recover: () => Effect.suspend(() => { attempts++; return Effect.fail(new RuntimeError("Producer isolate reset")) }),
-              invalidate: () => Effect.void,
+              invalidate: () => Effect.void, probe: () => Effect.sync(() => probe?.()),
             },
           })
           journal = open()
           yield* Effect.gen(function* () {
-            yield* journal.append(0, [
-              { event: { type: "EffectRequested", ref, request: { act: "job", input: { _tag: "InlineInput", value: null } } } },
-              { event: { type: "EffectSettled", ref, outcome: { status: "fulfilled", value: { type: "promise", handle: { executor: "local", id: "producer" }, deadlineAt } } } },
-            ])
+            const initial = yield* runtime()
+            closes.push(initial.close.pipe(Effect.orDie))
+            yield* initial.send([{ type: "RunRequested" }])
+            yield* fixture.started(1)
+            while (!initial.snapshot().deferred().length) yield* Effect.yieldNow
+            const settled = initial.snapshot().events.find(event => event.type === "EffectSettled")
+            if (!settled || settled.type !== "EffectSettled" || settled.outcome.status !== "fulfilled") return yield* Effect.fail(new RuntimeError("Missing promise envelope"))
+            const envelope = yield* Schema.decodeUnknownEffect(ExecutionResult)(settled.outcome.value)
+            if (envelope.type !== "promise" || envelope.deadlineAt === undefined) return yield* Effect.fail(new RuntimeError("Missing promise deadline"))
+            const deadlineAt = envelope.deadlineAt
+            yield* initial.close
             for (let index = 0; index < budget; index++) {
               if (alarmAt === null) return yield* Effect.fail(new RuntimeError("Recovery wake disappeared before budget exhaustion"))
               yield* clock.setTime(alarmAt)
@@ -656,6 +678,13 @@ test("unsettled local promise retains its deadline wake after recovery blocks an
             expect((yield* journal.watchdog!.status).get(watchdogKey(target))?.status).toBe("blocked")
             expect(yield* Clock.currentTimeMillis).toBeLessThan(deadlineAt)
             const records = yield* journal.read
+            if (legacy) {
+              yield* journal.scheduler!.cancel(`promise:${effectKey(settled.ref)}`)
+              const upgraded = yield* runtime()
+              closes.push(upgraded.close.pipe(Effect.orDie))
+              yield* upgraded.recover
+              yield* upgraded.close
+            }
             yield* journal.close
             journal = open()
             yield* journal.scheduler!.restore
@@ -664,7 +693,24 @@ test("unsettled local promise retains its deadline wake after recovery blocks an
             expect(records.some(record => record.event.type === "PromiseSettled")).toBe(false)
             expect(alarmAt, "Unsettled promise lost its deadline wake when recovery blocked").not.toBeNull()
             expect(alarmAt!).toBeLessThanOrEqual(deadlineAt)
-          }).pipe(Effect.ensuring(Effect.suspend(() => journal.close).pipe(Effect.orDie)))
+            yield* clock.setTime(deadlineAt)
+            yield* journal.scheduler!.alarm
+            yield* journal.scheduler!.alarm
+            const final = yield* journal.read
+            const timeouts = final.map(record => record.event).filter(Schema.is(PromiseSettled))
+            expect(timeouts).toHaveLength(1)
+            expect(timeouts[0]!.result).toEqual({ status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt } })
+            expect(fixture.log().filter(entry => entry.kind === "start")).toHaveLength(1)
+            expect((yield* journal.watchdog!.status).size).toBe(0)
+            expect(alarmAt).toBeNull()
+            yield* Effect.forEach(closes, close => close)
+            probe = undefined
+            const completed = yield* runtime()
+            closes.push(completed.close.pipe(Effect.orDie))
+            yield* completed.recover
+            expect((yield* journal.read).filter(record => Schema.is(PromiseSettled)(record.event))).toHaveLength(1)
+            expect(fixture.log().filter(entry => entry.kind === "start")).toHaveLength(1)
+          }).pipe(Effect.ensuring(Effect.suspend(() => Effect.forEach(closes, close => close).pipe(Effect.andThen(journal.close), Effect.orDie))))
         }).pipe(Effect.provideService(Clock.Clock, clock))
       }).pipe(Effect.scoped))
     } finally { db.close() }

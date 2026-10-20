@@ -398,6 +398,12 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         if (watched.has(key)) continue
         const deadlineAt = promiseDeadline(result.handle, (yield* Clock.currentTimeMillis), resolutionPolicy, result.deadlineAt)
         if (result.handle.executor === "local") {
+          const scheduler = Context.getOption(services, Scheduler)
+          if (Option.isSome(scheduler)) {
+            yield* scheduler.value.schedule({ id: `promise:${key}`, dueAt: deadlineAt, target: { owner: "effect", ref: record.ref } })
+            watched.add(key)
+            continue
+          }
           if (!deadlineTimers.has(key)) {
             const timer = yield* Effect.gen(function* () {
               let remaining = deadlineAt - (yield* Clock.currentTimeMillis)
@@ -507,6 +513,17 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     }
     const drain = () => Effect.gen(function* () {
       while (true) {
+        yield* observePromises.pipe(Effect.catchCause(reportCause))
+        yield* enqueue(Effect.gen(function* () {
+          for (const work of snapshot.deferred()) {
+            if (work.handle.executor !== "local" || snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
+            const prior = operationSettlement(snapshot.effect(work.ref))?.outcome
+            const value = prior?.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(prior.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
+            if (value?.type === "promise" && value.deadlineAt !== undefined && value.deadlineAt <= (yield* Clock.currentTimeMillis)) {
+              yield* appendNow({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: value.deadlineAt } } })
+            }
+          }
+        }))
         if (!store.get(executionDefect) && options.canDrive && !(yield* options.canDrive)) return
         yield* afterCommit()
         const next = yield* enqueue(Effect.gen(function* () {
