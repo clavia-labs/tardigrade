@@ -45,7 +45,7 @@ export function documentAtom<State extends Json, Event>({ schema, initial, initi
     }
     return read
   }
-  return durableProjection(options, {
+  return durableProjection({ ...options, schema }, {
     initial: service => binding(service.documents).initial(initialize ? initialize(readCheckpoint(service)) : initial),
     restore: (value, service) => {
       const bound = binding(service.documents)
