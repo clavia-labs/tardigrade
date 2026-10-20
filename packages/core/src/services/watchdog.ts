@@ -1,6 +1,6 @@
 import { Cause, Clock, Effect, Exit, Schema, Semaphore } from "effect"
 import { RuntimeError } from "../runtime/effects"
-import type { Alarm } from "./alarm"
+import { scheduleWake, cancelWake, type SchedulerTransaction } from "./scheduler"
 
 export const DEFAULT_WATCHDOG_POLICY = { attemptTimeoutMs: 30_000, keepAliveIntervalMs: 30_000, retryIntervalMs: 1_000, maxRetryIntervalMs: 30_000, maxAttempts: 20, maxNoProgressAttempts: 5 } as const
 export interface WatchdogPolicy { readonly attemptTimeoutMs: number; readonly keepAliveIntervalMs: number; readonly retryIntervalMs: number; readonly maxRetryIntervalMs: number; readonly maxAttempts: number; readonly maxNoProgressAttempts: number }
@@ -19,7 +19,7 @@ export const WatchdogEntry = Schema.Struct({ target: WatchdogTarget, generation:
 export type WatchdogEntry = typeof WatchdogEntry.Type
 export interface RecoveryState { readonly progressCursor: number; readonly status: "settled" | "pending" | "parked" | "running"; readonly wakeAt?: number }
 export interface WatchdogTransaction {
-  readonly alarm: typeof Alarm.Service
+  readonly scheduler: SchedulerTransaction
   readonly get: (key: string) => Effect.Effect<WatchdogEntry | undefined, Error>
   readonly put: (key: string, entry: WatchdogEntry) => Effect.Effect<void, Error>
   readonly delete: (key: string) => Effect.Effect<void, Error>
@@ -60,7 +60,7 @@ export function createWatchdog(options: {
       const expires = active.get(key)?.expires
       return [expires === undefined ? entry.nextWakeAt : Math.min(expires > now ? expires : now + policy.keepAliveIntervalMs, now + policy.keepAliveIntervalMs)]
     })
-    yield* times.length ? tx.alarm.set(Math.min(...times)) : tx.alarm.clear
+    yield* times.length ? scheduleWake(tx.scheduler, { id: "watchdog", target: { owner: "watchdog" }, dueAt: Math.min(...times) }) : cancelWake(tx.scheduler, "watchdog")
   })
   const admit = (tx: WatchdogTransaction, target: WatchdogTarget, progressCursor = 0, admission = true, expired = false) => Effect.gen(function* () {
     const key = watchdogKey(target)
