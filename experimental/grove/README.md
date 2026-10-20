@@ -49,4 +49,38 @@ Measured with capacity 32, ascending insertion, and 256 probes per operation:
 
 Descending and shuffled builds were also measured through 100,000 entries. Costs include deletion rebalancing; peak page counts are sampled rather than exhaustive worst cases.
 
-Persistence, page encoding, byte capacity, cache budgets, durable retention, JSON authoring, and ranked array operations remain separate work.
+## JSON documents
+
+`document({ capacity })` connects keyed object pages and ranked array pages. `from` encodes JSON, `get(root, path)` returns a subtree handle, and `materialize(node)` reconstructs that subtree. `fields` and `elements` iterate child handles without reconstructing their values. Object fields iterate in key order; object insertion order is outside this representation's contract.
+
+```text
+JSON root
+  object: field name -> child node      (keyed B+ tree)
+  array:  position  -> child node       (ranked B+ tree)
+  scalar: null / boolean / number / string
+
+nested edit -> copy container paths -> new root
+                                  +-> share untouched pages
+```
+
+```ts
+import { document } from "./json"
+
+const doc = document({ capacity: 32 })
+const before = doc.from({ users: [{ name: "Ada" }, { name: "Lin" }] })
+const renamed = doc.set(before, ["users", 0, "name"], "Grace")
+const after = doc.splice(renamed, ["users"], 1, 0, [{ name: "Edsger" }])
+doc.materialize(doc.get(after, ["users"])!)
+```
+
+`set` replaces the root, sets an object field, or updates an existing array element. Parent containers must exist. `remove` deletes an object field. `splice` edits an array, and `append` inserts at its end. Array positions and deletion counts are strict nonnegative safe integers within bounds; splice does not apply JavaScript's negative-index or clamping rules. Empty edits and identical scalar replacements preserve root identity. JSON inputs require finite numbers, dense arrays, acyclic values, and plain objects. Encoding owns immutable nodes, so subsequent input mutation cannot change a snapshot.
+
+## Ranked sequences
+
+`sequence({ capacity })` provides `empty`, `from`, `get`, `set`, `splice`, and half-open `scan(start, end)`. Branches store cumulative child element counts. Binary search locates the child containing an index. Split and join copy boundary paths and rebalance adjacent pages; whole removed subtrees and untouched suffixes require no traversal. Non-root occupancy and equal leaf depth follow the same rules as the keyed tree. The sequence tests check these invariants after generated edits, growth, contraction, and bulk replacement.
+
+For B slots per page, L root-to-leaf levels, K inserted elements, and R returned elements, the structural work targets are O(L) page visits for indexed access, O(BL) copied slots for replacement, O(BL + K) copied slots for splice, and O(L + R/B) visits for range scans. Splice constructs the inserted subtree in O(K) work. These bounds concern fixed-count pages and exclude JSON encoding, materialization, garbage collection, and reclamation of unreachable versions. Nested JSON paths add the navigation costs of their containers.
+
+The measurement runner also reports splice peaks across the selected probes, replacing up to one third of the array with one element. Tests bound structural work by height and inserted size across capacities 3, 4, 8, 32, and 64; counters cover logical visits, constructed pages, and page-array/edit-buffer slot writes. Counts exclude cumulative-count arithmetic, transport tuples, and generator frames.
+
+Persistence, page encoding, byte capacity, cache budgets, durable retention, reducer reconciliation, and atomic event-log publication remain separate work.

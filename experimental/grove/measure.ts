@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks"
 import { btree, DEFAULT_CAPACITY, type Metrics } from "./btree"
+import { sequence } from "./sequence"
 
 const option = (name: string, fallback: number) => {
   const input = process.argv.find(argument => argument.startsWith(`--${name}=`))
@@ -14,6 +15,7 @@ if (!["ascending", "descending", "shuffled"].includes(order)) throw new Error("I
 const seed = option("seed", 20261020)
 let root = tree.empty(), random = seed
 const rows: Array<Record<string, number | string>> = []
+const sequenceRows: Array<Record<string, number>> = []
 const peaks = (work: (index: number) => void): Metrics => {
   const peak: Metrics = { visits: 0, comparisons: 0, pages: 0, slots: 0, splits: 0, merges: 0, redistributions: 0 }
   for (let index = 0; index < samples; index++) {
@@ -49,6 +51,17 @@ for (let length = Math.min(1000, maximum); ; length = Math.min(length * 10, maxi
   let idealVisits = 1, filled = capacity
   while (filled < length) { idealVisits++; filled *= capacity }
   rows.push({ idealVisits, entries: length, height: root.height, lookupVisits: lookup.visits, lookupComparisons: lookup.comparisons, updatePages: update.pages, updateSlots: update.slots, insertPages: insert.pages, deleteVisits: remove.visits, deletePages: remove.pages, deleteSlots: remove.slots, range100Visits: range.visits, buildMs })
+  const ranked = sequence<number>({ capacity }), array = ranked.from(keys)
+  const splicePeak = { visits: 0, pages: 0, slots: 0 }
+  for (let index = 0; index < samples; index++) {
+    const start = (index * 2654435761) % length
+    ranked.resetStats()
+    const next = ranked.splice(array, start, Math.min(Math.floor(length / 3), length - start), [-1])
+    const work = ranked.stats()
+    for (const field of Object.keys(splicePeak) as (keyof typeof splicePeak)[]) splicePeak[field] = Math.max(splicePeak[field], work[field])
+    if (ranked.get(next, start) !== -1) throw new Error("Incorrect splice output")
+  }
+  sequenceRows.push({ entries: length, levels: array.height + 1, spliceVisits: splicePeak.visits, splicePages: splicePeak.pages, spliceSlots: splicePeak.slots })
   if (length === maximum) break
 }
-console.log(JSON.stringify({ capacity, samples, order, seed, rows }, null, 2))
+console.log(JSON.stringify({ capacity, samples, order, seed, rows, sequenceRows }, null, 2))
