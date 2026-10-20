@@ -34,6 +34,7 @@ const tsconfigsIn = (directory: string): ReadonlyArray<string> =>
 const effectProjects = [
   ...tsconfigsIn(root),
   ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
+  ...tsconfigsIn(`${root}experimental/grove`),
   ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
   ...typecheckedApps.flatMap((name) => tsconfigsIn(appPkg(name))),
   ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name))),
@@ -76,6 +77,8 @@ const tasks: ReadonlyArray<Task> = [
   { id: "lint:effect:policy", cmd: ["bun", "run", "tools/effect-lint-policy.ts"] },
   ...effectProjects.map((project) => ({ id: effectTaskId(project), cmd: effectLint(project) })),
   // Root tsconfig covers tools/*.ts; each package typechecks itself against the shared base.
+  { id: "typecheck:experimental-grove", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit", "-p", "experimental/grove/tsconfig.json"] },
+  { id: "test:experimental-grove", cmd: ["bun", "test", "experimental/grove"] },
   { id: "typecheck:tools", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit"] },
   ...packages.map((name) => ({ id: `typecheck:${packageId(name)}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...platforms.map((name) => ({ id: `typecheck:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "run", "typecheck"] })),
