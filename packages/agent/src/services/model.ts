@@ -236,31 +236,26 @@ export function liveModelServices(options: Omit<ModelBindingOptions, "observer">
   return modelServices({ ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs }) }).pipe(Layer.provideMerge(modelLayer(binding)))
 }
 
-export const generate = Generate.layer(input => Effect.gen(function* () {
+const durableModelCall = (input: ModelInput, purpose: ModelCallContext["purpose"]) => Effect.gen(function* () {
   const model = yield* Model
   const execution = yield* EffectExecution
   const retry = yield* inferenceRetry(model, input)
   const timeoutMs = (typeof model.promiseTimeoutMs === "function" ? yield* model.promiseTimeoutMs(input) : model.promiseTimeoutMs) ?? retry.attemptTimeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS
-  if (model.submit) return Generate.defer(yield* execution.submit(execution.retry(model.submit(input, execution), retry), { timeoutMs }))
-  const call = model.call(input, { publish: execution.publish, purpose: "inference" })
+  if (purpose === "inference" && model.submit) return yield* execution.submit(execution.retry(model.submit(input, execution), retry), { timeoutMs })
+  const call = model.call(input, { publish: execution.publish, purpose })
   const reply = durablePromise(execution.ref, { success: ModelReplySchema, error: Schema.String })
-  const handle = yield* execution.fork(execution.retry(call, retry).pipe(
+  return yield* execution.fork(execution.retry(call, retry).pipe(
+    Effect.flatMap(reply => purpose === "compaction" && !reply.text.trim() ? Effect.fail("Compaction returned an empty summary") : Effect.succeed(reply)),
     Effect.exit,
     Effect.map(exit => Exit.isSuccess(exit) ? reply.succeed(exit.value) : reply.fail(Cause.pretty(exit.cause))),
   ), { timeoutMs })
-  return Generate.defer(handle)
-}).pipe(Effect.mapError(String)), { cancel: (input, context) => Model.use(model => model.cancel?.(input, context) ?? Effect.void) })
+}).pipe(Effect.mapError(String))
 
-export const summarize = Summarize.layer(input => Effect.gen(function* () {
-  const execution = yield* EffectExecution
-  const model = yield* Model
-  const retry = yield* inferenceRetry(model, input)
-  const call = model.call(input, { publish: execution.publish, purpose: "compaction" })
-  return yield* execution.retry(call, retry)
-}).pipe(
-  Effect.flatMap(reply => reply.text.trim() ? Effect.succeed(reply) : Effect.fail("Compaction returned an empty summary")),
-  Effect.mapError(String),
-))
+export const generate = Generate.layer(input => durableModelCall(input, "inference").pipe(Effect.map(Generate.defer)), {
+  cancel: (input, context) => Model.use(model => model.cancel?.(input, context) ?? Effect.void),
+})
+
+export const summarize = Summarize.layer(input => durableModelCall(input, "compaction").pipe(Effect.map(Summarize.defer)))
 
 export const modelActs = Layer.merge(generate, summarize)
 
