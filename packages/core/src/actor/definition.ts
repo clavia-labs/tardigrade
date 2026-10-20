@@ -3,7 +3,7 @@ import { eventCatalog } from "./event"
 import { historicalEventDecoder } from "../event/versioned"
 import type { ActorMethods, ActorMethod } from "./method"
 import { RuntimeError } from "../runtime/effects"
-import { Context, Effect, Schema } from "effect"
+import { Context, Effect, Schema, type Scope } from "effect"
 import { AsyncResult } from "effect/unstable/reactivity"
 import { atom, type Atom } from "../atoms/atom"
 import type { EventValue } from "../atoms/effect"
@@ -25,8 +25,14 @@ function resolveOutput<Value>(value: Value): Resolved<Value> {
   return value as Resolved<Value>
 }
 
+export interface ActorInspection<Contracts extends ActorMethods<object> = ActorMethods<object>> {
+  readonly durableAtoms: readonly { readonly name: string; readonly schema: Schema.Top; readonly input: Schema.Top }[]
+  readonly methods: { readonly [Name in keyof Contracts]: Pick<Contracts[Name], "inputSchema" | "outputSchema"> }
+}
+
 export interface ActorDefinition<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
   readonly actorName: string
+  readonly inspect: Effect.Effect<ActorInspection<Contracts>, Error, Exclude<Services, Scope.Scope>>
   readonly setup: Effect.Effect<ActorSetup<Event, Readonly<Record<string, Atom<State>>>, Contracts> & { readonly root: Atom<State> }, Error, Services>
 }
 
@@ -49,12 +55,18 @@ export function defineActor<Value, const Name extends string, Services, const Co
     const catalog = eventCatalog<DomainEvents>()
     for (const method of Object.values(definition.methods ?? {})) for (const schema of method.events) catalog.add(schema)
     const discovery = createStore(Context.make(EventLog, { events: createEventSource().events, documents: documentSession({ load: () => { throw new RuntimeError("Discovery cannot read persisted tree nodes") } }) }))
+    let durableAtoms: ActorInspection<Contracts>["durableAtoms"]
     try {
       // TODO: Discover subscriptions first read after a branch change; setup currently registers the graph observed from initial state.
       for (const schema of discovery.eventSchemas({ [name]: root })) catalog.add(schema)
+      durableAtoms = discovery.durableAtoms({ [name]: root })
     } finally { discovery.dispose() }
     return {
       root,
+      inspection: {
+        durableAtoms,
+        methods: Object.fromEntries(Object.entries(definition.methods ?? {}).map(([name, method]) => [name, { inputSchema: method.inputSchema, outputSchema: method.outputSchema }])) as ActorInspection<Contracts>["methods"],
+      } satisfies ActorInspection<Contracts>,
       schema: (definition.schema ?? catalog.schema) as Schema.Schema<DomainEvents>,
       decodeEvent: definition.schema ? historicalEventDecoder(definition.schema) : catalog.decode,
       contracts: definition.methods ?? {} as Contracts,
@@ -73,5 +85,7 @@ export function defineActor<Value, const Name extends string, Services, const Co
       store => Effect.sync(() => store.dispose()),
     )
   }))
-  return { actorName: name, setup, graph }
+  // inspect reports initial graph declarations; conditional branches may be absent.
+  const inspect = Effect.scoped(setup.pipe(Effect.map(setup => setup.inspection)))
+  return { actorName: name, setup, graph, inspect }
 }

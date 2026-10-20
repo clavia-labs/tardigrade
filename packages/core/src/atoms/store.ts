@@ -4,6 +4,7 @@ import type { Atom, PrimitiveAtom, SetStateAction } from "./atom"
 import { EventLog, eventLogContext } from "../services/event-log"
 import { actorGraph } from "./graph"
 import { atomInput, atomValidator } from "./effect"
+import { AtomState } from "../initialise"
 import { memoryDocuments } from "../services/tree-state"
 
 // createStore owns an Effect registry and provides documents to durable projections.
@@ -52,6 +53,15 @@ export function createStore(services?: Context.Context<EventLog>) {
         if (input) schemas.add(input)
       }
       return schemas
+    },
+    durableAtoms: (roots: Readonly<Record<string, Atom<unknown>>>) => {
+      const declarations: Array<{ readonly name: string; readonly schema: Schema.Top; readonly input: Schema.Top }> = []
+      for (const { atom } of reachable(roots)) {
+        if (AtomState in atom && "name" in atom && typeof atom.name === "string" && "schema" in atom && Schema.isSchema(atom.schema) && "input" in atom && Schema.isSchema(atom.input)) {
+          declarations.push({ name: atom.name, schema: atom.schema, input: atom.input })
+        }
+      }
+      return declarations
     },
     validate: (roots: Readonly<Record<string, Atom<unknown>>>, event: object) => {
       const validators = new Set<NonNullable<ReturnType<typeof atomValidator>>>()
