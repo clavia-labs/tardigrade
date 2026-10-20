@@ -6,6 +6,9 @@ import { AtomState } from "../src/initialise"
 import type { ActorRuntime } from "../src/runtime/contracts"
 import { createEventLog } from "../src/runtime/replay"
 import { createActorStore } from "../src/runtime/execution"
+import { actorMethod } from "../src/actor/method"
+import { event } from "../src/actor/event"
+import { atom } from "../src/atoms/atom"
 import { defineActor } from "../src/actor/definition"
 import { durableAtom } from "../src/atoms/durable/atom"
 import { act } from "../src/atoms/act"
@@ -153,4 +156,34 @@ test("Grove immutable values retain input validation while reusing valid subtree
     else expect(result?.value).toBe(input)
     expect(Object.isFrozen(input)).toBe(true)
   }), { numRuns: 100, includeErrorInReport: true })
+})
+
+
+test("actor inspection reports initial durable declarations and method schemas without invoking handlers", async () => {
+  class Label extends Context.Service<Label, string>()("inspection/Label") {}
+  const Added = event({ type: "Added", amount: Schema.Int })
+  const State = Schema.FiniteFromString
+  const total = durableAtom({ name: "total", schema: State, input: Added, initial: 0, reduce: (state, event) => state + event.amount })
+  const hidden = durableAtom({ name: "hidden", schema: Schema.Int, input: Added, initial: 0, reduce: state => state })
+  const enabled = atom(false)
+  const Work = act({ name: "inspection.work", input: Schema.Null, success: Schema.Null, failure: Schema.String })
+  let released = false
+  const actor = defineActor("inspection", Effect.gen(function* () {
+    const label = yield* Label
+    yield* Effect.acquireRelease(Effect.succeed(label), () => Effect.sync(() => { released = true }))
+    return {
+      atom: effectAtom(get => ({ view: [get(total), get(total), ...(get(enabled) ? [get(hidden)] : [])], events: {}, acts: { work: Work.request({ input: null }) } })),
+      methods: { add: actorMethod({ inputSchema: Schema.Int, outputSchema: Schema.String,
+        onReceive: Added.from(() => { throw new Error("Inspection must not invoke methods") }),
+        result: () => { throw new Error("Inspection must not evaluate results") },
+      }) },
+    }
+  }))
+  const inspection = await Effect.runPromise(actor.inspect.pipe(Effect.provideService(Label, "fixture")))
+  expect(released).toBe(true)
+  expect(inspection.durableAtoms).toEqual([{ name: "total", schema: State, input: Added }])
+  expect(inspection.durableAtoms[0]!.schema).toBe(State)
+  expect(inspection.methods.add.inputSchema).toBe(Schema.Int)
+  expect(inspection.methods.add.outputSchema).toBe(Schema.String)
+  expect(Object.keys(inspection.methods.add).sort()).toEqual(["inputSchema", "outputSchema"])
 })
