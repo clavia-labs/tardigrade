@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Cause, Context, Effect, Exit, Layer, Schema } from "effect"
+import { Cause, Context, Effect, Exit, Layer, Schema, Tracer } from "effect"
 import { ActorReplayError, RuntimeError, actorMethod, createActorStore, defineActor, durableAtom, effectAtom, encodeCheckpoint, event, memoryDocuments, type Journal, type Recorded } from "../src/index"
 
 const Received = event({ type: "Received", value: Schema.String })
@@ -64,4 +64,16 @@ test("setup and service acquisition failures are not replay failures", async () 
   const service = new RuntimeError("service unavailable")
   const serviceResult = await Effect.runPromise(createActorStore({ actor, inspect: true, actorContext: Context.pick(), services: () => Layer.effectDiscard(Effect.fail(service)) }).pipe(Effect.exit))
   expect(Exit.isFailure(serviceResult) && Cause.squash(serviceResult.cause)).toBe(service)
+})
+
+
+test("replay spans end with the original failure before HTTP recovery", async () => {
+  const spans: Tracer.Span[] = []
+  const tracer = Tracer.make({ span: options => { const span = new Tracer.NativeSpan(options); spans.push(span); return span } })
+  const result = await Effect.runPromise(inspect(journal({ read: Effect.succeed([{ event: { type: "Received", value: 42 } as unknown as Event }]) })).pipe(Effect.withTracer(tracer), Effect.exit))
+  expect(Exit.isFailure(result)).toBe(true)
+  const replay = spans.find(span => span.name === "actor.replay")
+  expect(replay?.status._tag).toBe("Ended")
+  if (replay?.status._tag !== "Ended" || !Exit.isFailure(replay.status.exit)) throw new Error("Expected failed replay span")
+  expect(Cause.squash(replay.status.exit.cause)).toBeInstanceOf(ActorReplayError)
 })

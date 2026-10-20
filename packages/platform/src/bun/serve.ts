@@ -15,7 +15,9 @@ export interface ServeOptions {
 // serve binds the host to Effect HTTP; closing the server leaves host ownership with the caller.
 export function serve(host: HttpHost, options: ServeOptions = {}) {
   return Effect.gen(function* () {
+    const context = yield* Effect.context<never>()
     const runtime = ManagedRuntime.make(HttpRouter.serve(hostRoutes(host, options.errorLog), { disableLogger: true, disableListenLog: true }).pipe(
+      Layer.provideMerge(Layer.succeedContext(context)),
       Layer.provideMerge(BunHttpServer.layer({
         hostname: options.hostname ?? DEFAULT_SERVE_OPTIONS.hostname,
         port: options.port ?? DEFAULT_SERVE_OPTIONS.port,
@@ -23,8 +25,8 @@ export function serve(host: HttpHost, options: ServeOptions = {}) {
       })),
     ))
     return yield* Effect.gen(function* () {
-      const context = yield* runtime.contextEffect
-      const { address } = Context.get(context, HttpServer.HttpServer)
+      const serverContext = yield* runtime.contextEffect
+      const { address } = Context.get(serverContext, HttpServer.HttpServer)
       if (NetAddress.isUnixPathAddress(address)) return yield* Effect.fail(new RuntimeError("Expected a TCP server"))
       const url = yield* Effect.try({ try: () => Result.getOrThrow(NetAddress.toUrl(address)), catch: RuntimeError.from })
       return { port: address.port, url, close: runtime.disposeEffect }

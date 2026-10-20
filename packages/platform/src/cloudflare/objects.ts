@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers"
-import { Context, Effect, Exit, Fiber, Layer, Schema, Scope } from "effect"
+import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Scope } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { createActorExecution, createActorStore, createSupervisor, createWatchdog, DEFAULT_EXTERNAL_SENDER, Invocation, RuntimeError, Scheduler, Supervisor, ThreadCoordinate, ThreadCreated, type ScheduledWake, type ActorMethods, type IncomingMessage, type InitialState, type MessageReceipt, type MessageDelivery, type ThreadRequest, type RecoveryState, type WatchdogTarget, type WatchdogPolicy, type SchedulerPolicy, type Recorded, type StoredCheckpoint, type ActorExecutionOptions } from "@clavia/tardigrade-core"
 import { createInvocation } from "@clavia/tardigrade-core/services/invocation"
@@ -78,13 +78,14 @@ export function objectJournal<Event extends object>(options: {
 }
 
 // objectResponse handles health checks and translates request failures to public HTTP errors.
-async function objectResponse(request: Request, handle: () => Promise<Response>, errorLog?: Partial<ErrorLogPolicy>): Promise<Response> {
+async function objectResponse(request: Request, handle: (context: Context.Context<never>) => Promise<Response>, errorLog: Partial<ErrorLogPolicy> | undefined, run: <Value>(work: Effect.Effect<Value, Error>) => Effect.Effect<Value, Error>): Promise<Response> {
   if (new URL(request.url).pathname === "/healthz") return Response.json({ status: "resting", dirty: 0 })
-  try { return await handle() }
-  catch (error) {
-    const response = await Effect.runPromise(httpFailure(error, errorLog))
-    return Response.json(response.body, { status: response.status })
-  }
+  return Effect.runPromise(run(Effect.gen(function* () {
+    const context = yield* Effect.context<never>()
+    return yield* Effect.tryPromise({ try: () => handle(context), catch: error => Cause.isCause(error) ? error : Cause.fail(error) }).pipe(
+      Effect.catch(cause => httpFailure(cause, errorLog).pipe(Effect.map(response => Response.json(response.body, { status: response.status })))),
+    )
+  })))
 }
 
 // createActorObjects separates the instance directory from per-thread storage, execution, and alarms (test/workerd/thread-layout.workers.ts).
@@ -184,9 +185,9 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       ...(options.actorTransport ? { actorTransport: options.actorTransport } : {}), ...(options.transports ? { transports: options.transports } : {}),
     }).send(message)
     async fetch(request: Request): Promise<Response> {
-      return objectResponse(request, () => this.handleRequest(request), options.http?.(this.env).errorLog)
+      return objectResponse(request, context => this.handleRequest(request, context), options.http?.(this.env).errorLog, this.run)
     }
-    private async handleRequest(request: Request): Promise<Response> {
+    private async handleRequest(request: Request, context: Context.Context<never>): Promise<Response> {
       const pathname = new URL(request.url).pathname
       const match = /^\/v1\/actors\/([^/]+)\/threads(?:\/([^/]+))?/.exec(pathname)
       const http = options.http?.(this.env) ?? {}
@@ -208,7 +209,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
         allocateChildThread: (input: Omit<ThreadRequest, "instance" | "parent"> & { readonly parent: ThreadCoordinate }) => io(() => this.allocate({ ...input, instance: input.parent.instance })).pipe(Effect.map(coordinate => ({ coordinate }))),
         getThread: () => Effect.fail(new RuntimeError("Thread requests must be forwarded to their owner")),
       }
-      return methodHttp(host, http)(request)
+      return methodHttp(host, http, context)(request)
     }
     async alarm() { await this.identityReady; if (this.instance !== undefined) { this.supervisor(this.instance); await Effect.runPromise(this.watchdog.restore.pipe(Effect.andThen(this.scheduler.alarm))) } }
     async dispose() { return this.ctx.blockConcurrencyWhile(async () => {
@@ -313,9 +314,9 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       return Effect.runPromise(this.registered().pipe(Effect.andThen(this.actors().receive(this.address(), packet.body, packet.message))))
     }
     async fetch(request: Request): Promise<Response> {
-      return objectResponse(request, () => this.handleRequest(request), options.http?.(this.env).errorLog)
+      return objectResponse(request, context => this.handleRequest(request, context), options.http?.(this.env).errorLog, this.run)
     }
-    private async handleRequest(request: Request): Promise<Response> {
+    private async handleRequest(request: Request, context: Context.Context<never>): Promise<Response> {
       const http = options.http?.(this.env) ?? {}
       if (http.token !== undefined && request.headers.get("authorization") !== `Bearer ${http.token}`) return Response.json({ code: "unauthorized", message: "Unauthorized" }, { status: 401 })
       await this.identityReady
@@ -331,9 +332,9 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       const path = new URL(request.url).pathname
       if (path.includes("/messages")) {
         const handler = HttpRouter.toWebHandler(hostRoutes(host, http.errorLog), { disableLogger: true })
-        try { return await handler.handler(request) } finally { await handler.dispose() }
+        try { return await handler.handler(request, context) } finally { await handler.dispose() }
       }
-      return methodHttp(host, http)(request)
+      return methodHttp(host, http, context)(request)
     }
     async alarm() { await this.identityReady; if (this.coordinate) { this.storage(); await Effect.runPromise(this.watchdog.restore.pipe(Effect.andThen(this.scheduler.alarm))) } }
     async records(): Promise<readonly Recorded<Event>[]> { await this.identityReady; return Effect.runPromise(this.storage().read) }

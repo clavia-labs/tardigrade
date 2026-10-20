@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
-import { Cause } from "effect"
+import { Cause, Context, Effect, Logger, Option, References, Tracer } from "effect"
 import { ActorReplayError } from "@clavia/tardigrade-core"
-import { DEFAULT_ERROR_LOG_POLICY, errorLogFields, publicError } from "../../src/shared/http"
+import { methodHttp } from "../../src/shared/method-http"
+import { DEFAULT_ERROR_LOG_POLICY, errorLogFields, httpFailure } from "../../src/shared/http"
 
 const diagnostic = "Expected no excess property at BuilderRevisionRequested.model: synthetic-private-payload"
 const error = new ActorReplayError({ stage: "event", reason: "decode_failed", position: 7, cause: new AggregateError([new Error(diagnostic)], "Invalid historical actor event") })
@@ -10,7 +11,7 @@ test("replay diagnostics preserve private aggregate causes and keep HTTP respons
   const fields = errorLogFields(new Error("outer", { cause: Cause.fail(error) }))
   expect(JSON.stringify(fields)).toContain(diagnostic)
   expect(JSON.stringify(fields)).toContain("decode_failed")
-  const response = publicError(error)
+  const response = Effect.runSync(httpFailure(error).pipe(Effect.provide(Logger.layer([]))))
   expect(response).toEqual({ status: 500, body: { code: "actor_replay_failed", message: "Actor history could not be replayed" } })
   expect(JSON.stringify(response)).not.toContain("synthetic-private")
   expect(JSON.stringify(response)).not.toContain("BuilderRevisionRequested")
@@ -35,4 +36,30 @@ test("diagnostic extraction tolerates cycles and inaccessible error properties",
   expect(errorLogFields(circular).errorDiagnosticsTruncated).toBe(true)
   const hostile = Object.defineProperties({}, { message: { get() { throw new Error("unreadable") } }, cause: { get() { throw new Error("unreadable") } } })
   expect(errorLogFields(hostile)).toMatchObject({ errorMessage: "Unknown error", errorDiagnosticsTruncated: true })
+})
+
+
+test("method HTTP logs every failure branch with the request logger and span", async () => {
+  const fields: Array<Readonly<Record<string, unknown>>> = []
+  const spanIds: Array<string | undefined> = []
+  const logger = Logger.make(options => {
+    fields.push(options.fiber.getRef(References.CurrentLogAnnotations))
+    spanIds.push(Option.getOrUndefined(Context.getOption(options.fiber.context, Tracer.ParentSpan))?.spanId)
+  })
+  const host = { actor: "replay",
+    methodContracts: () => Effect.failCause(Cause.combine(Cause.fail(error), Cause.die(new Error("second-private-branch")))),
+    allocateRootThread: () => Effect.die("Unused"), allocateChildThread: () => Effect.die("Unused"), getThread: () => Effect.die("Unused"),
+  }
+  const parent = Tracer.externalSpan({ traceId: "12345678901234567890123456789012", spanId: "1234567890123456" })
+  const response = await Effect.runPromise(Effect.gen(function* () {
+    const context = yield* Effect.context<never>()
+    return yield* Effect.promise(() => methodHttp(host, {}, context)(new Request("https://test/v1/methods")))
+  }).pipe(Effect.annotateLogs({ requestId: "request-7" }), Effect.withParentSpan(parent), Effect.provide(Logger.layer([logger]))))
+  expect(response.status).toBe(500)
+  expect(await response.text()).not.toContain("private")
+  expect(fields).toHaveLength(1)
+  expect(fields[0]?.requestId).toBe("request-7")
+  expect(spanIds).toEqual([parent.spanId])
+  expect(JSON.stringify(fields)).toContain(diagnostic)
+  expect(JSON.stringify(fields)).toContain("second-private-branch")
 })

@@ -89,23 +89,25 @@ export function errorLogFields(error: unknown, options: Partial<ErrorLogPolicy> 
       }
     } catch { truncated = true }
   }
-  const root = chain[0] ?? {}
+  const rootIndex = Cause.isCause(error) ? 1 : 0
+  const root = chain[rootIndex] ?? {}
   return {
     errorName: root.name ?? "Unknown", errorMessage: root.message ?? "Unknown error", ...(root.code === undefined ? {} : { errorCode: root.code }),
     ...(root.stage === undefined ? {} : { errorStage: root.stage }), ...(root.reason === undefined ? {} : { errorReason: root.reason }),
     ...(root.position === undefined ? {} : { errorPosition: root.position }),
-    errorCauses: chain.slice(1), errorDiagnosticsTruncated: truncated, errorLogPolicy: { ...policy }, ...(rejected.length ? { errorLogPolicyRejected: rejected } : {}),
+    errorCauses: chain.slice(rootIndex + 1), errorDiagnosticsTruncated: truncated, errorLogPolicy: { ...policy }, ...(rejected.length ? { errorLogPolicyRejected: rejected } : {}),
   }
 }
 
 export const httpFailure = (error: unknown, policy: Partial<ErrorLogPolicy> = {}) => Effect.gen(function* () {
-  const response = publicError(error)
+  if (Cause.isCause(error) && Cause.hasInterruptsOnly(error)) return yield* Effect.interrupt
+  const response = publicError(Cause.isCause(error) ? Cause.squash(error) : error)
   yield* Effect.logError("HTTP request failed").pipe(Effect.annotateLogs({ ...errorLogFields(error, policy), code: response.body.code, status: response.status }))
   return response
 })
 
 // publicError converts internal failures into the stable error contract exposed by HTTP hosts.
-export const publicError = (error: unknown): Readonly<{ status: number; body: PublicHttpError }> => {
+const publicError = (error: unknown): Readonly<{ status: number; body: PublicHttpError }> => {
   if (error instanceof ActorReplayError) return { status: 500, body: { code: "actor_replay_failed", message: "Actor history could not be replayed" } }
   if (error instanceof HttpError) return { status: error.status, body: { code: error.code, message: error.message } }
   if (error instanceof WatchdogTerminalError) return { status: 500, body: { code: "actor_boot_failed", message: error.message || "Actor failed during startup" } }
@@ -123,7 +125,7 @@ const base = "/v1/actors/:instance/threads"
 // hostRoutes exposes thread allocation, message submission, acceptance receipts, and live execution updates.
 export function hostRoutes(host: HttpHost, errorLog: Partial<ErrorLogPolicy> = {}) {
   const respond = <Error, Services>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Error, Services>) => handler.pipe(
-    Effect.catch(error => Effect.gen(function* () {
+    Effect.catchCause(error => Effect.gen(function* () {
       const response = yield* httpFailure(error, errorLog)
       return HttpServerResponse.jsonUnsafe(response.body, { status: response.status })
     })),

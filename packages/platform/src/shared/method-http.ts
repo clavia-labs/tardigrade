@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Schema, type Stream } from "effect"
+import { Context, Effect, Schema, type Stream } from "effect"
 import type { ExecutionStreamPolicy, ExecutionUpdate } from "@clavia/tardigrade-core"
 import { HttpServerResponse } from "effect/unstable/http"
 import { executionStreamSse } from "./execution-stream-sse"
@@ -36,17 +36,14 @@ interface MethodHttpHost<Contracts extends ActorMethods<object>> {
 export function methodHttp<Contracts extends ActorMethods<object>>(
   host: MethodHttpHost<Contracts>,
   options: MethodHttpOptions = {},
+  context: Context.Context<never> = Context.empty(),
 ) {
-  const run = async <Value>(effect: Effect.Effect<Value, Error>) => {
-    const exit = await Effect.runPromiseExit(effect)
-    if (Exit.isFailure(exit)) throw Cause.squash(exit.cause)
-    return exit.value
-  }
   const json = (value: unknown, status = 200) => Response.json(value, { status })
-  const recover = async (error: unknown) => {
-    const response = await Effect.runPromise(httpFailure(error, options.errorLog))
-    return json(response.body, response.status)
-  }
+  const respond = (error: unknown) => httpFailure(error, options.errorLog).pipe(Effect.map(response => json(response.body, response.status)))
+  const recover = (error: unknown) => error instanceof Response ? Promise.resolve(error) : Effect.runPromiseWith(context)(respond(error))
+  const run = <Value>(effect: Effect.Effect<Value, Error>) => Effect.runPromiseWith(context)(effect.pipe(
+    Effect.catchCause(cause => respond(cause).pipe(Effect.flatMap(response => Effect.fail(response)))),
+  ))
   const failure = (status: number, code: string, message: string) => recover(new HttpError(status, code, message))
   const summaries = (methods: Contracts) => Object.entries(methods).map(([name, method]) => ({
     name, cancellable: method.onCancel !== undefined,
