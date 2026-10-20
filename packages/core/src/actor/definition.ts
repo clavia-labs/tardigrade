@@ -85,7 +85,7 @@ export function defineActor<Value, const Name extends string, Services, const Co
       store => Effect.sync(() => store.dispose()),
     )
   }))
-  // inspect reports initial graph declarations; conditional branches may be absent (properties/durable-state.test.ts).
+  // inspect reports initial graph declarations; conditional branches may be absent.
   const inspect = Effect.scoped(setup.pipe(Effect.map(setup => setup.inspection)))
   return { actorName: name, setup, graph, inspect }
 }
