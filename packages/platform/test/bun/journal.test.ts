@@ -637,14 +637,13 @@ test("unsettled local promise expires once after recovery blocks and storage reo
           const runtime = () => createTestStore({ actor: slowActor, journal, checkpoint: { mode: "manual" },
             canDrive: journal.watchdog!.blocked(target).pipe(Effect.map(blocked => !blocked)),
             actorContext: Context.pick(), services: () => Layer.merge(fixture.services, Layer.succeed(Scheduler, journal.scheduler!)),
-          })
+          }).pipe(Effect.tap(store => Effect.sync(() => { closes.push(store.close.pipe(Effect.orDie)) })))
           const open = () => synchronousJournal<{ type: "RunRequested" }>({ actor: "deadline", driver,
             scheduler: {
               alarm: { set: at => Effect.sync(() => { alarmAt = at }), clear: Effect.sync(() => { alarmAt = null }) },
               deliver: wake => Effect.gen(function* () {
                 if (typeof wake.target === "object" && wake.target !== null && "owner" in wake.target && wake.target.owner === "effect") {
                   const restored = yield* runtime()
-                  closes.push(restored.close.pipe(Effect.orDie))
                   probe = restored.recoveryState
                   yield* restored.recover
                 } else yield* journal.watchdog!.alarm
@@ -658,7 +657,6 @@ test("unsettled local promise expires once after recovery blocks and storage reo
           journal = open()
           yield* Effect.gen(function* () {
             const initial = yield* runtime()
-            closes.push(initial.close.pipe(Effect.orDie))
             yield* initial.send([{ type: "RunRequested" }])
             yield* fixture.started(1)
             while (!initial.snapshot().deferred().length) yield* Effect.yieldNow
@@ -681,7 +679,6 @@ test("unsettled local promise expires once after recovery blocks and storage reo
             if (legacy) {
               yield* journal.scheduler!.cancel(`promise:${effectKey(settled.ref)}`)
               const upgraded = yield* runtime()
-              closes.push(upgraded.close.pipe(Effect.orDie))
               yield* upgraded.recover
               yield* upgraded.close
             }
@@ -706,7 +703,6 @@ test("unsettled local promise expires once after recovery blocks and storage reo
             yield* Effect.forEach(closes, close => close)
             probe = undefined
             const completed = yield* runtime()
-            closes.push(completed.close.pipe(Effect.orDie))
             yield* completed.recover
             expect((yield* journal.read).filter(record => Schema.is(PromiseSettled)(record.event))).toHaveLength(1)
             expect(fixture.log().filter(entry => entry.kind === "start")).toHaveLength(1)
