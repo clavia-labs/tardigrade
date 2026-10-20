@@ -11,9 +11,9 @@ import { platformJournal } from "../shared/platform-journal"
 import { cloudflareNativeDriver, checkNativeRecovery } from "./native-recovery"
 import type { SynchronousRecoveryOptions } from "../shared/synchronous-journal"
 export { synchronousJournal, DEFAULT_CHECKPOINT_COLLECT_EVERY, DEFAULT_CHECKPOINT_SCHEDULER, type CheckpointTreeOptions, DEFAULT_EVENT_INLINE_BYTES, type JournalRecordOptions, decodeSqlJournalRecord, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
-export { hostRoutes, type HttpHost } from "../shared/http"
+export { hostRoutes, errorLogFields, DEFAULT_ERROR_LOG_POLICY, type ErrorLogPolicy, type HttpHost } from "../shared/http"
 export { workerLoaderIsolate, DEFAULT_WORKER_LOADER_ISOLATE_POLICY, type WorkerLoaderIsolatePolicy } from "./isolate"
-import { hostRoutes, type HttpHost } from "../shared/http"
+import { hostRoutes, type ErrorLogPolicy, type HttpHost } from "../shared/http"
 import { HttpRouter } from "effect/unstable/http"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
@@ -29,7 +29,7 @@ export function cloudflareJournal<Event extends object>(storage: DurableObjectSt
 }
 
 // cloudflareHandler exposes host routes as a Worker fetch handler; dispose releases HTTP resources.
-export const cloudflareHandler = (host: HttpHost) => HttpRouter.toWebHandler(hostRoutes(host), { disableLogger: true })
+export const cloudflareHandler = (host: HttpHost, errorLog?: Partial<ErrorLogPolicy>) => HttpRouter.toWebHandler(hostRoutes(host, errorLog), { disableLogger: true })
 
 export { createActorObjects, cloudflareThreadName, CLOUDFLARE_CHILD_PLACEMENTS, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT } from "./objects"
 export type { ActorObjectOptions, CloudflareObjectBindings, ActorDirectoryStub, ThreadRuntimeStub } from "./objects"

@@ -1,16 +1,17 @@
-import { Cause, Effect, Exit, Schema, type Stream } from "effect"
+import { Context, Effect, Schema, type Stream } from "effect"
 import type { ExecutionStreamPolicy, ExecutionUpdate } from "@clavia/tardigrade-core"
 import { HttpServerResponse } from "effect/unstable/http"
 import { executionStreamSse } from "./execution-stream-sse"
 import { InitialState, InvalidMessage, type ActorMethods, type MethodInput, type MethodResult, type MessageReceipt, type ThreadCoordinate, type ThreadRequest, type Recorded } from "@clavia/tardigrade-core"
 import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
-import { publicError } from "./http"
+import { HttpError, httpFailure, type ErrorLogPolicy } from "./http"
 
 export const DEFAULT_METHOD_HTTP_INSTANCE = "main"
 
 export interface MethodHttpOptions {
   readonly instance?: string
   readonly token?: string
+  readonly errorLog?: Partial<ErrorLogPolicy>
 }
 
 interface MethodHttpThread<Contracts extends ActorMethods<object>> {
@@ -35,21 +36,15 @@ interface MethodHttpHost<Contracts extends ActorMethods<object>> {
 export function methodHttp<Contracts extends ActorMethods<object>>(
   host: MethodHttpHost<Contracts>,
   options: MethodHttpOptions = {},
+  context: Context.Context<never> = Context.empty(),
 ) {
-  const run = async <Value>(effect: Effect.Effect<Value, Error>) => {
-    const exit = await Effect.runPromiseExit(effect)
-    if (Exit.isFailure(exit)) throw Cause.squash(exit.cause)
-    return exit.value
-  }
   const json = (value: unknown, status = 200) => Response.json(value, { status })
-  const logFailure = (error: unknown, response: ReturnType<typeof publicError>) => Effect.runPromise(
-    Effect.logError("HTTP request failed", error).pipe(Effect.annotateLogs({ code: response.body.code, status: response.status })),
-  )
-  const failure = async (status: number, code: string, message: string) => {
-    const response = { status, body: { code, message } }
-    await logFailure(response.body, response)
-    return json(response.body, status)
-  }
+  const respond = (error: unknown) => httpFailure(error, options.errorLog).pipe(Effect.map(response => json(response.body, response.status)))
+  const recover = (error: unknown) => error instanceof Response ? Promise.resolve(error) : Effect.runPromiseWith(context)(respond(error))
+  const run = <Value>(effect: Effect.Effect<Value, Error>) => Effect.runPromiseWith(context)(effect.pipe(
+    Effect.catchCause(cause => respond(cause).pipe(Effect.flatMap(response => Effect.fail(response)))),
+  ))
+  const failure = (status: number, code: string, message: string) => recover(new HttpError(status, code, message))
   const summaries = (methods: Contracts) => Object.entries(methods).map(([name, method]) => ({
     name, cancellable: method.onCancel !== undefined,
     inputSchema: jsonSchemaOf(method.inputSchema),
@@ -62,7 +57,7 @@ export function methodHttp<Contracts extends ActorMethods<object>>(
     if (request.method === "GET" && url.pathname === "/v1/metadata") return json({ name: host.actor, api: "atoms" })
     if (request.method === "GET" && url.pathname === "/v1/methods") {
       try { return json(summaries(await run(host.methodContracts({ instance: options.instance ?? DEFAULT_METHOD_HTTP_INSTANCE })))) }
-      catch (error) { const response = publicError(error); await logFailure(error, response); return json(response.body, response.status) }
+      catch (error) { return recover(error) }
     }
     const match = /^\/v1\/actors\/([^/]+)\/threads(?:\/([^/]+))?(?:\/(.*))?$/.exec(url.pathname)
     if (!match) return failure(404, "route_not_found", "Not found")
@@ -114,9 +109,7 @@ export function methodHttp<Contracts extends ActorMethods<object>>(
       }
       return failure(404, "route_not_found", "Not found")
     } catch (error) {
-      const response = publicError(Schema.isSchemaError(error) ? new InvalidMessage("Invalid request", { cause: error }) : error)
-      await logFailure(error, response)
-      return json(response.body, response.status)
+      return recover(Schema.isSchemaError(error) ? new InvalidMessage("Invalid request", { cause: error }) : error)
     }
   }
 }

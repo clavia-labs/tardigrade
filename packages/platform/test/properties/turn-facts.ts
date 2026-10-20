@@ -14,7 +14,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
 }), options => Effect.runPromise(Effect.gen(function* () {
   let now = options.start
   const base = yield* Clock.clockWith(Effect.succeed)
-  const clock: Clock.Clock = { ...base, currentTimeMillisUnsafe: () => now, currentTimeMillis: Effect.sync(() => now) }
+  const clock: Clock.Clock = { ...base, currentTimeMillisUnsafe: () => now, currentTimeMillis: Effect.sync(() => now), currentTimeNanosUnsafe: () => BigInt(now) * 1_000_000n, currentTimeNanos: Effect.sync(() => BigInt(now) * 1_000_000n) }
   const nodes = new Map<string, string>()
   const session = documentSession({ load: hash => { const value = nodes.get(hash); if (value === undefined) throw new RuntimeError("Missing tree node"); return value } })
   const persist = () => {

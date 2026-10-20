@@ -2,7 +2,7 @@ import { DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES } from "./operation"
 import { memoryDocuments } from "../services/tree-state"
 import type { ReadonlyIndex } from "./log-view"
 import { initialStateSeed, type StateSeed } from "../initialise"
-import { ActorCommitError, AttemptTimedOut, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, CancellationOutcome, effectKey, type EffectRef } from "./effects"
+import { ActorCommitError, ActorReplayError, AttemptTimedOut, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, CancellationOutcome, effectKey, type EffectRef } from "./effects"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
 import { atom, type Atom } from "../atoms/atom"
@@ -746,42 +746,44 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         while (true) yield* (yield* Queue.take(admissions))
       }).pipe(Effect.forkIn(scope))
       services = yield* buildServices()
-      const stored = options.journal ? yield* options.journal.readCheckpoint : undefined
-      const checkpoint = stored ? yield* Effect.try({ try: () => retireCheckpoint(decodeCheckpoint(stored.payload), resultMinBytes, documents.capture), catch: RuntimeError.from }) : undefined
-      if (stored && checkpoint && checkpoint.position !== stored.position) return yield* Effect.fail(new RuntimeError("Checkpoint payload position differs from journal metadata"))
-      checkpointSeed = checkpoint
-      checkpointPosition = checkpoint?.position ?? 0
-      // Atomic checkpoint commits make the prefix durable; recovery only needs its suffix.
-      let history: readonly Recorded<Event>[] | undefined = options.journal
-        ? checkpoint ? yield* options.journal.readAfter(checkpoint.position) : yield* options.journal.read
-        : (options.events ?? []).map(event => ({ event }))
-      let readFull: typeof ReplayContext.Service["readFull"] | undefined = yield* Effect.cached(checkpoint && options.journal ? options.journal.read : Effect.succeed(history))
-      setup = yield* options.setup.pipe(
-        Effect.provideService(ReplayContext, { records: history, readFull, ...(checkpoint ? { checkpoint } : {}) }),
-        Effect.provideService(Scope.Scope, scope), Effect.provide(options.actorContext(services)),
-      )
-      const inputs = options.journal ? yield* options.journal.readInputs : []
-      for (const input of inputs) persistedInputRefs.set(effectKey(input.ref), input.ref)
-      definition = createEventLog({ documents, inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, resultMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
-        methods: setup.contracts, ...(options.delivery ? { address: options.delivery.address } : {}),
-      }) }, ...(checkpoint ? { checkpoint } : {}) })
-      // takeHistory releases startup records and their cached reader before the actor's generator suspends for its lifetime.
-      const takeHistory = () => { const records = history!; history = undefined; readFull = undefined; return records }
-      snapshot = yield* Effect.try({ try: () => definition.replay(takeHistory()), catch: RuntimeError.from })
-      if (options.journal && !options.inspect) {
-        const retained = [...snapshot.pending(), ...snapshot.deferred(), ...snapshot.cancelled()].map(({ ref, request }) => ({ ref, request }))
-        const known = new Set(inputs.map(input => effectKey(input.ref)))
-        const missing = retained.filter(input => !known.has(effectKey(input.ref)) && snapshot.effect(input.ref)?.request.request.input._tag === "InputDigest")
-        if (missing.length) {
-          yield* options.journal.append(snapshot.position, [], { put: missing })
-          for (const input of missing) persistedInputRefs.set(effectKey(input.ref), input.ref)
+      yield* Effect.gen(function* () {
+        const stored = options.journal ? yield* options.journal.readCheckpoint : undefined
+        const checkpoint = stored ? yield* Effect.try({ try: () => retireCheckpoint(decodeCheckpoint(stored.payload), resultMinBytes, documents.capture), catch: RuntimeError.from }) : undefined
+        if (stored && checkpoint && checkpoint.position !== stored.position) return yield* Effect.fail(new ActorReplayError({ stage: "checkpoint", reason: "position_mismatch", position: stored.position, cause: new Error("Checkpoint payload position differs from journal metadata") }))
+        checkpointSeed = checkpoint
+        checkpointPosition = checkpoint?.position ?? 0
+        // Atomic checkpoint commits make the prefix durable; recovery only needs its suffix.
+        let history: readonly Recorded<Event>[] | undefined = options.journal
+          ? checkpoint ? yield* options.journal.readAfter(checkpoint.position) : yield* options.journal.read
+          : (options.events ?? []).map(event => ({ event }))
+        let readFull: typeof ReplayContext.Service["readFull"] | undefined = yield* Effect.cached(checkpoint && options.journal ? options.journal.read : Effect.succeed(history))
+        setup = yield* options.setup.pipe(
+          Effect.provideService(ReplayContext, { records: history, readFull, ...(checkpoint ? { checkpoint } : {}) }),
+          Effect.provideService(Scope.Scope, scope), Effect.provide(options.actorContext(services)),
+        )
+        const inputs = options.journal ? yield* options.journal.readInputs : []
+        for (const input of inputs) persistedInputRefs.set(effectKey(input.ref), input.ref)
+        definition = createEventLog({ documents, inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, resultMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
+          methods: setup.contracts, ...(options.delivery ? { address: options.delivery.address } : {}),
+        }) }, ...(checkpoint ? { checkpoint } : {}) })
+        // takeHistory releases startup records and their cached reader before the actor's generator suspends for its lifetime.
+        const takeHistory = () => { const records = history!; history = undefined; readFull = undefined; return records }
+        snapshot = yield* Effect.try({ try: () => definition.replay(takeHistory()), catch: RuntimeError.from })
+        if (options.journal && !options.inspect) {
+          const retained = [...snapshot.pending(), ...snapshot.deferred(), ...snapshot.cancelled()].map(({ ref, request }) => ({ ref, request }))
+          const known = new Set(inputs.map(input => effectKey(input.ref)))
+          const missing = retained.filter(input => !known.has(effectKey(input.ref)) && snapshot.effect(input.ref)?.request.request.input._tag === "InputDigest")
+          if (missing.length) {
+            yield* options.journal.append(snapshot.position, [], { put: missing })
+            for (const input of missing) persistedInputRefs.set(effectKey(input.ref), input.ref)
+          }
         }
-      }
-      for (const cancellation of snapshot.cancelled()) queueCleanup(cancellation)
-      const deferred = yield* Effect.try({ try: () => snapshot.deferred(), catch: RuntimeError.from })
-      // localRecovery reruns the originating act with its recorded reference and deadline; implementations must recreate local producers (packages/platform/test/properties/runtime/deferred-recovery.ts, ownedProducerRecovery).
-      for (const work of deferred) if (work.handle.executor === "local") localRecovery.set(effectKey(work.ref), work)
-      yield* Effect.try({ try: sync, catch: RuntimeError.from })
+        for (const cancellation of snapshot.cancelled()) queueCleanup(cancellation)
+        const deferred = yield* Effect.try({ try: () => snapshot.deferred(), catch: RuntimeError.from })
+        // localRecovery reruns the originating act with its recorded reference and deadline; implementations must recreate local producers (packages/platform/test/properties/runtime/deferred-recovery.ts, ownedProducerRecovery).
+        for (const work of deferred) if (work.handle.executor === "local") localRecovery.set(effectKey(work.ref), work)
+        yield* Effect.try({ try: sync, catch: RuntimeError.from })
+      }).pipe(Effect.withSpan("actor.replay"))
       if (!options.inspect) {
         yield* Deferred.succeed(ready, undefined)
         for (const recover of recovery) yield* recover

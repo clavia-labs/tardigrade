@@ -1,8 +1,8 @@
-import { Effect, Layer, Schema, type Stream } from "effect"
+import { Cause, Effect, Layer, Schema, type Stream } from "effect"
 import type { ExecutionStreamPolicy, ExecutionUpdate } from "@clavia/tardigrade-core"
 import { executionStreamSse } from "./execution-stream-sse"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { ActorCommitError, InitialState, StateInitialisationError, InvalidMessage, InvocationNotFound, MessageConflict, WatchdogTerminalError, type MessageReceipt } from "@clavia/tardigrade-core"
+import { ActorCommitError, ActorReplayError, InitialState, StateInitialisationError, InvalidMessage, InvocationNotFound, MessageConflict, WatchdogTerminalError, type MessageReceipt } from "@clavia/tardigrade-core"
 import type { MessageDelivery } from "@clavia/tardigrade-core"
 import type { ThreadRequest, ThreadCoordinate } from "@clavia/tardigrade-core"
 
@@ -19,14 +19,96 @@ export interface HttpHost {
   readonly getThread: (input: { instance: string; thread: string }) => Effect.Effect<HttpThread | undefined, Error>
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message) }
 }
 
 type PublicHttpError = Readonly<{ code: string; message: string }>
 
+export interface ErrorLogPolicy {
+  readonly maxDepth: number
+  readonly maxErrors: number
+  readonly maxMessageLength: number
+}
+
+export const DEFAULT_ERROR_LOG_POLICY: ErrorLogPolicy = Object.freeze({ maxDepth: 4, maxErrors: 32, maxMessageLength: 4096 })
+
+export function errorLogFields(error: unknown, options: Partial<ErrorLogPolicy> = {}): Record<string, Schema.Json> {
+  const requested = { ...DEFAULT_ERROR_LOG_POLICY, ...options }
+  const rejected = Object.entries(requested).filter(([name, value]) => !Number.isSafeInteger(value) || value < (name === "maxDepth" ? 0 : 1)).map(([name]) => name)
+  const policy = rejected.length ? DEFAULT_ERROR_LOG_POLICY : requested
+  let truncated = rejected.length > 0
+  const text = (value: string) => {
+    if (value.length <= policy.maxMessageLength) return value
+    truncated = true
+    return value.slice(0, policy.maxMessageLength)
+  }
+  const read = (value: unknown, key: string): unknown => {
+    try { return typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined }
+    catch { truncated = true; return undefined }
+  }
+  const chain: Array<Record<string, Schema.Json>> = []
+  const queue = [{ value: error, depth: 0, path: "error" }]
+  const seen = new Set<unknown>()
+  const enqueue = (value: unknown, depth: number, path: string) => {
+    if (depth > policy.maxDepth || queue.length >= policy.maxErrors) { truncated = true; return }
+    queue.push({ value, depth, path })
+  }
+  for (let index = 0; index < queue.length; index++) {
+    const { value, depth, path } = queue[index]!
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) { truncated = true; continue }
+      seen.add(value)
+    }
+    const entry: Record<string, Schema.Json> = { path }
+    for (const key of ["name", "message", "code", "stage", "reason"]) {
+      const field = read(value, key)
+      if (typeof field === "string") entry[key] = text(field)
+    }
+    if (typeof value === "string") entry.message = text(value)
+    const position = read(value, "position")
+    if (typeof position === "number" && Number.isSafeInteger(position)) entry.position = position
+    chain.push(entry)
+    const cause = read(value, "cause")
+    if (cause !== undefined) enqueue(cause, depth + 1, `${path}.cause`)
+    try {
+      const children = read(value, "errors")
+      if (Array.isArray(children)) {
+        const remaining = policy.maxErrors - queue.length
+        const length = children.length
+        if (length > remaining) truncated = true
+        for (let child = 0; child < Math.min(length, remaining); child++) enqueue(read(children, String(child)), depth + 1, `${path}.errors[${child}]`)
+      }
+      if (Cause.isCause(value)) {
+        const remaining = policy.maxErrors - queue.length
+        if (value.reasons.length > remaining) truncated = true
+        for (let child = 0; child < Math.min(value.reasons.length, remaining); child++) {
+          const reason = value.reasons[child]!
+          enqueue(Cause.isFailReason(reason) ? reason.error : Cause.isDieReason(reason) ? reason.defect : "Interrupted", depth + 1, `${path}.reasons[${child}]`)
+        }
+      }
+    } catch { truncated = true }
+  }
+  const rootIndex = Cause.isCause(error) ? 1 : 0
+  const root = chain[rootIndex] ?? {}
+  return {
+    errorName: root.name ?? "Unknown", errorMessage: root.message ?? "Unknown error", ...(root.code === undefined ? {} : { errorCode: root.code }),
+    ...(root.stage === undefined ? {} : { errorStage: root.stage }), ...(root.reason === undefined ? {} : { errorReason: root.reason }),
+    ...(root.position === undefined ? {} : { errorPosition: root.position }),
+    errorCauses: chain.slice(rootIndex + 1), errorDiagnosticsTruncated: truncated, errorLogPolicy: { ...policy }, ...(rejected.length ? { errorLogPolicyRejected: rejected } : {}),
+  }
+}
+
+export const httpFailure = (error: unknown, policy: Partial<ErrorLogPolicy> = {}) => Effect.gen(function* () {
+  if (Cause.isCause(error) && Cause.hasInterruptsOnly(error)) return yield* Effect.interrupt
+  const response = publicError(Cause.isCause(error) ? Cause.squash(error) : error)
+  yield* Effect.logError("HTTP request failed").pipe(Effect.annotateLogs({ ...errorLogFields(error, policy), code: response.body.code, status: response.status }))
+  return response
+})
+
 // publicError converts internal failures into the stable error contract exposed by HTTP hosts.
-export const publicError = (error: unknown): Readonly<{ status: number; body: PublicHttpError }> => {
+const publicError = (error: unknown): Readonly<{ status: number; body: PublicHttpError }> => {
+  if (error instanceof ActorReplayError) return { status: 500, body: { code: "actor_replay_failed", message: "Actor history could not be replayed" } }
   if (error instanceof HttpError) return { status: error.status, body: { code: error.code, message: error.message } }
   if (error instanceof WatchdogTerminalError) return { status: 500, body: { code: "actor_boot_failed", message: error.message || "Actor failed during startup" } }
   if (error instanceof ActorCommitError) return { status: 500, body: { code: "actor_commit_failed", message: error.message } }
@@ -37,21 +119,17 @@ export const publicError = (error: unknown): Readonly<{ status: number; body: Pu
   return { status: 500, body: { code: "internal_error", message: "Internal server error" } }
 }
 
-const respond = <Error, Services>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Error, Services>) => handler.pipe(
-  Effect.catch(error => Effect.gen(function* () {
-    const response = publicError(error)
-    yield* Effect.logError("HTTP request failed", error).pipe(Effect.annotateLogs({
-      code: response.body.code,
-      status: response.status,
-    }))
-    return HttpServerResponse.jsonUnsafe(response.body, { status: response.status })
-  })),
-)
 const AllocationInput = Schema.Struct({ name: Schema.optionalKey(Schema.NonEmptyString.check(Schema.isPattern(/^[^/]+$/))), parent: Schema.optionalKey(Schema.NonEmptyString), initialState: Schema.optionalKey(InitialState) })
 const base = "/v1/actors/:instance/threads"
 
 // hostRoutes exposes thread allocation, message submission, acceptance receipts, and live execution updates.
-export function hostRoutes(host: HttpHost) {
+export function hostRoutes(host: HttpHost, errorLog: Partial<ErrorLogPolicy> = {}) {
+  const respond = <Error, Services>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Error, Services>) => handler.pipe(
+    Effect.catchCause(error => Effect.gen(function* () {
+      const response = yield* httpFailure(error, errorLog)
+      return HttpServerResponse.jsonUnsafe(response.body, { status: response.status })
+    })),
+  )
   return Layer.mergeAll(
     HttpRouter.add("GET", `${base}/:thread/execution/stream`, respond(Effect.gen(function* () {
       const { instance, thread } = yield* HttpRouter.params

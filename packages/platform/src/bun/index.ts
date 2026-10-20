@@ -13,7 +13,7 @@ import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "..
 import { type CheckpointChunkOptions, type JournalRecordOptions } from "../shared/sql-journal"
 import { platformJournal } from "../shared/platform-journal"
 export { synchronousJournal, decodeSqlJournalRecord, DEFAULT_CHECKPOINT_COLLECT_EVERY, DEFAULT_CHECKPOINT_SCHEDULER, type CheckpointTreeOptions, DEFAULT_EVENT_INLINE_BYTES, type JournalRecordOptions, DEFAULT_CHECKPOINT_CHUNK_BYTES, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
-export { hostRoutes, type HttpHost } from "../shared/http"
+export { hostRoutes, errorLogFields, DEFAULT_ERROR_LOG_POLICY, type ErrorLogPolicy, type HttpHost } from "../shared/http"
 import { captureHostCheckpoint, type CheckpointPolicy } from "./backup"
 export { serve, DEFAULT_SERVE_OPTIONS, type ServeOptions } from "./serve"
 export { bunBackup, restoreHostCheckpoint, DEFAULT_CHECKPOINT_POLICY, type CheckpointPolicy } from "./backup"

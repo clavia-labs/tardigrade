@@ -3,7 +3,7 @@ import { TestClock } from "effect/testing"
 import { Promises } from "../../../../core/src/services/promises"
 import { waitFor } from "../../fixtures/wait"
 import { isDeepStrictEqual } from "node:util"
-import { act, createActorStore, defineActor, durableAtom, effectAtom, EffectExecution, Scheduler, checkpointDigest, decodeCheckpoint, type EffectCheckpoint, effectKey, RuntimeError, ActorCommitError, type EffectRef, type Journal } from "@clavia/tardigrade-core"
+import { act, createActorStore, defineActor, durableAtom, effectAtom, EffectExecution, Scheduler, checkpointDigest, decodeCheckpoint, type EffectCheckpoint, effectKey, RuntimeError, ActorCommitError, ActorReplayError, type EffectRef, type Journal } from "@clavia/tardigrade-core"
 
 const Finished = Schema.Struct({ type: Schema.Literal("Finished") })
 type Event = typeof Finished.Type
@@ -55,7 +55,9 @@ export async function pendingInputRecovery(fixture: { readonly open: (name: stri
     if (legacy) {
       await Effect.runPromise(journal.append(store.snapshot().position, [], { remove: [ref] }))
       const incompatible = await Effect.runPromise(Effect.exit(Effect.tryPromise({ try: () => open("changed", 2), catch: RuntimeError.from })))
-      if (Exit.isSuccess(incompatible) || !Cause.pretty(incompatible.cause).includes("Accepted input is unavailable")) throw new Error("Legacy divergence was silently accepted")
+      if (Exit.isSuccess(incompatible)) throw new Error("Legacy divergence was silently accepted")
+      const error = Cause.squash(incompatible.cause)
+      if (!(error instanceof ActorReplayError) || error.stage !== "retained_input" || error.reason !== "unavailable") throw new Error("Missing retained input has no structured classification")
     }
     await Effect.runPromise(journal.close)
     journal = fixture.open(legacy ? "legacy-input" : "accepted-input")

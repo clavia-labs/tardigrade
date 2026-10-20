@@ -3,18 +3,21 @@ import { Context, Effect, Layer, ManagedRuntime, Result } from "effect"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import * as NetAddress from "effect/unstable/net/NetAddress"
 import { BunHttpServer } from "@effect/platform-bun"
-import { hostRoutes, type HttpHost } from "../shared/http"
+import { hostRoutes, type ErrorLogPolicy, type HttpHost } from "../shared/http"
 
 export const DEFAULT_SERVE_OPTIONS = { hostname: "127.0.0.1", port: 4242, idleTimeoutSeconds: 0 } as const
 export interface ServeOptions {
   readonly hostname?: string
   readonly port?: number
   readonly idleTimeoutSeconds?: number
+  readonly errorLog?: Partial<ErrorLogPolicy>
 }
 // serve binds the host to Effect HTTP; closing the server leaves host ownership with the caller.
 export function serve(host: HttpHost, options: ServeOptions = {}) {
   return Effect.gen(function* () {
-    const runtime = ManagedRuntime.make(HttpRouter.serve(hostRoutes(host), { disableLogger: true, disableListenLog: true }).pipe(
+    const context = yield* Effect.context<never>()
+    const runtime = ManagedRuntime.make(HttpRouter.serve(hostRoutes(host, options.errorLog), { disableLogger: true, disableListenLog: true }).pipe(
+      Layer.provideMerge(Layer.succeedContext(context)),
       Layer.provideMerge(BunHttpServer.layer({
         hostname: options.hostname ?? DEFAULT_SERVE_OPTIONS.hostname,
         port: options.port ?? DEFAULT_SERVE_OPTIONS.port,
@@ -22,8 +25,8 @@ export function serve(host: HttpHost, options: ServeOptions = {}) {
       })),
     ))
     return yield* Effect.gen(function* () {
-      const context = yield* runtime.contextEffect
-      const { address } = Context.get(context, HttpServer.HttpServer)
+      const serverContext = yield* runtime.contextEffect
+      const { address } = Context.get(serverContext, HttpServer.HttpServer)
       if (NetAddress.isUnixPathAddress(address)) return yield* Effect.fail(new RuntimeError("Expected a TCP server"))
       const url = yield* Effect.try({ try: () => Result.getOrThrow(NetAddress.toUrl(address)), catch: RuntimeError.from })
       return { port: address.port, url, close: runtime.disposeEffect }
