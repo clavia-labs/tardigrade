@@ -6,13 +6,13 @@ The models describe a watchdog and promise protocol for an actor host. They chec
                    shared alarm primitive
                     /                 \
              watchdog             promise service
-         local work recovery     remote result + deadline
+         local work recovery     local + remote deadlines
                     \                 /
                      durable actor journal
 
 EffectRequested
   -> EffectSettled { promise handle }
-       -> local: supervise fibre, retain recovery wake
+       -> local: commit deadline wake, supervise fibre, retain recovery wake
        -> remote: register durable owner + deadline, park recovery
   -> PromiseSettled { fulfilled | rejected }
        -> wake actor, derive subsequent work
@@ -26,13 +26,13 @@ EffectRequested
 | [recoveryBudget.qnt](recoveryBudget.qnt) | `init` | 128 | Bounded attempts, terminal failures stop, settled and blocked work have no recovery alarm, eventual stop |
 | [interpreterVersion.qnt](interpreterVersion.qnt) | `init`, `initLegacy` | 146, 207 | Version adoption, per-budget attempt bounds, durable wake, stale-attempt fencing, eventual stop after deployment changes cease |
 | [invocationReplay.qnt](invocationReplay.qnt) | `init`, `initUnsafe` | 53, 37 | Stable invocation identity, one logical child execution, durable reply acceptance, eventual parent outcome |
-| [promiseLifecycle.qnt](promiseLifecycle.qnt) | `init` | 170 | Durable completion, supervised fibre exit, safe handoff, unchanged deadlines, one terminal winner, eventual settlement |
+| [promiseLifecycle.qnt](promiseLifecycle.qnt) | `init` | 331 | Durable completion, supervised fibre exit, safe handoff, blocked deadline coverage, expiry admission, unchanged deadlines, one terminal winner, eventual settlement and timeout processing |
 
 `recoveryBudget` includes terminating work, retryable failures forever, progress forever, terminal errors, and hung fibres. It checks three total attempts, two consecutive attempts without progress, and a two-tick attempt deadline. These are finite model parameters, rather than proposed runtime defaults. Progress resets the consecutive count while preserving the total budget. A watchdog probe of a live fibre does not start another attempt or extend its deadline.
 
 `invocationReplay` includes two possible child invocation IDs and counts duplicate executions up to two. A restarted parent reruns its operation with the recorded invocation identity. The receiver deduplicates acceptance and retains its result. Unsafe work is rejected as interrupted after a crash, without automatic resubmission. A waiter subscribes and reads recorded state, covering completion both before and after subscription. The volatile-dependency mutation replaces durable child execution with a local producer that disappears on parent crash; stable identity alone cannot recover that missing producer.
 
-`promiseLifecycle` models local and remote execution, completion before handle submission, fibre failure, restart, timeout, and late results. A remote wait transfers recovery responsibility to durable completion and deadline ownership. Local fibre exit produces a buffered failure even when the handle has not yet been submitted. A timeout durably rejects the promise without claiming that the executor stopped. Clearing a recovery wake preserves the logical deadline wake. Completion, failure, and timeout share a serialized terminal decision.
+`promiseLifecycle` models local and remote execution, completion before handle submission, fibre failure, restart, timeout, and late results. A remote wait transfers recovery responsibility to durable completion and deadline ownership. Local fibre exit produces a buffered failure even when the handle has not yet been submitted. A timeout durably rejects the promise without claiming that the executor stopped. Local handle submission commits an independent deadline wake. Two failed recovery attempts block the watchdog while preserving that wake through crashes. Committing timeout clears the promise wake and renews a blocked recovery budget once, admitting failure processing without restarting an expired producer. Clearing a recovery wake preserves the logical deadline wake. Completion, failure, and timeout share a serialized terminal decision.
 
 ## Counterexamples
 
@@ -62,6 +62,9 @@ The verification runner checks the following mutations. Safety checks report a f
 | Clear deadline while parking | Pending coverage, settlement | Remote result never arrives and no expiry wake remains |
 | Keep remote recovery armed | Remote parking | A registered remote promise retains an actor recovery wake |
 | Reset deadline on restart | Deadline stability | An expired deadline becomes unexpired during recovery |
+| Omit local deadline wake | Blocked deadline coverage, settlement | Exhaust recovery before expiry, crash, leave the promise without an alarm |
+| Omit expiry admission | Timeout admission, processing | Commit timeout while the watchdog remains blocked |
+| Replay expired producer | Expired replay exclusion | Reopen after deadline arrival and restart the producer |
 | Overwrite terminal result | One winner, terminal stability | Timeout commits, then late completion changes the outcome |
 
 ```text
@@ -82,15 +85,15 @@ terminal race:
 
 ## Assumptions and scope
 
-These are separate models of the protocol interfaces. Their composition is not checked as a single product state space. They have 38 deterministic scenario tests in total. The verification runner requires five positive safety and temporal checks and 35 expected counterexamples. Successful completion of that runner means every expected checker result matched; a parser error or checker failure does not count as a counterexample.
+These models describe protocol interfaces. The promise model combines bounded recovery with deadline ownership and timeout processing; the complete product of all models is outside its scope. The verification runner checks positive safety and temporal properties and requires each named negative variant to produce a counterexample. Successful completion of that runner means every expected checker result matched; a parser error or checker failure does not count as a counterexample.
 
 `recoveryBudget` assumes atomic alarm consumption, attempt accounting, and replacement persistence. With weakly fair delivery and attempt timers, its pending work eventually settles or blocks without an eventual crash-free assumption. It permits failure and crash loops and bounds attempts rather than requiring successful execution. It does not bound duplicate platform alarm invocations or establish a wall-clock backoff duration. `watchdog` exposes the pre-rearm gap and shows why finite platform retries invalidate arbitrary-crash recovery in that gap.
 
 Parent outcomes and promise settlements assume weakly fair service actions and an eventual crash-free, online suffix. Deadline arrival is a logical clock event; no numeric latency or Cloudflare delivery SLA is proved. Promise liveness assumes a deadline is present. A deliberately unbounded promise can remain parked indefinitely.
 
-The child model abstracts payload consistency, result storage, and acceptance transactions. The promise model requires durable completion acceptance and serialized terminal commits; a volatile callback or fibre stack does not satisfy those assumptions. Local recovery reruns the originating act with its recorded reference and deadline. The act must recreate its producer when replayed; retaining a `Deferred` from the previous process violates that contract, as illustrated by `initVolatileDependency`. [local-producer-retry.test.ts](../test/bun/local-producer-retry.test.ts) checks fresh producer creation across runtime reopening.
+The child model abstracts payload consistency, result storage, and acceptance transactions. The promise model requires durable completion acceptance and serialized terminal commits; a volatile callback or fibre stack does not satisfy those assumptions. Before expiry, admitted local recovery reruns the originating act with its recorded reference and deadline. An expired promise settles without recreating its producer. The act must recreate its producer when replayed; retaining a `Deferred` from the previous process violates that contract, as illustrated by `initVolatileDependency`. [local-producer-retry.test.ts](../test/bun/local-producer-retry.test.ts) checks fresh producer creation across runtime reopening.
 
-Polling retry budgets, terminal-result delivery budgets, backend abort, cleanup resources, multiple promises sharing one alarm, and the TypeScript implementation require separate refinement. The logical wake separation in the promise model ensures parking retains its deadline; the existing watchdog model checks preservation of another actor's later wake. Neither verifies a complete shared-alarm implementation.
+The promise model derives physical alarm presence from its set of watchdog and promise wake owners. Deadline arrival is a Boolean clock event; minimum timestamp selection, platform delivery retries, and multiple promises require separate scheduler refinement. Timeout processing is a fair successful action, with failures during that processing and stale budget fencing outside this abstraction. Polling retry budgets, terminal-result delivery budgets, backend abort, cleanup resources, and TypeScript conformance also require separate refinement. The native journal property in [journal.test.ts](../test/bun/journal.test.ts) exercises budget exhaustion, durable deadline recovery, one timeout, and absence of producer restart across storage reopening.
 
 ## Reproduce
 

@@ -75,7 +75,7 @@ check("interpreterVersion", "initUnfenced", "freshBudgetPending", expected=12)
 check("interpreterVersion", "initWithoutWake", "wakeCoverage", expected=12)
 check("invocationReplay", "init", "invariant", "eventualOutcome")
 check("invocationReplay", "initUnsafe", "invariant", "eventualOutcome")
-check("promiseLifecycle", "init", "invariant", "eventualSettlement,terminalStable")
+check("promiseLifecycle", "init", "invariant", "eventualSettlement,eventualProcessing,terminalStable")
 
 for initializer in ["initWithoutAdmissionWake", "initWithoutRenewal", "initWithoutRetry", "initStaleClear", "initFiniteRetry"]:
     check("watchdog", initializer, "wakeCoverage", expected=12)
@@ -101,4 +101,10 @@ for initializer, invariant in [
     check("promiseLifecycle", initializer, invariant, expected=12)
 check("promiseLifecycle", "initSharedClear", temporal="eventualSettlement", expected=13)
 check("promiseLifecycle", "initOverwriteTerminal", temporal="terminalStable", expected=12)
+
+check("promiseLifecycle", "initMissingLocalDeadline", "blockedDeadlineCoverage", expected=12)
+check("promiseLifecycle", "initMissingLocalDeadline", temporal="eventualSettlement", expected=13)
+check("promiseLifecycle", "initWithoutExpiryAdmission", "timeoutAdmission", expected=12)
+check("promiseLifecycle", "initWithoutExpiryAdmission", temporal="eventualProcessing", expected=13)
+check("promiseLifecycle", "initExpiredReplay", "noExpiredReplay", expected=12)
 print("All positive checks and expected counterexamples passed.", flush=True)
