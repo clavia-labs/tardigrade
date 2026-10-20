@@ -10,6 +10,7 @@ import type { DurableAtom } from "./atom"
 // durableProjection shares journal folding between value and tree-backed atoms.
 export function durableProjection<State, Event, Output = State>(options: {
   readonly name: string
+  readonly schema: Schema.Top
   readonly input: Schema.Schema<Event>
   readonly reduce: (state: State, event: Event, metadata: RecordMetadata, position: number) => State
 }, codec: {
@@ -60,5 +61,5 @@ export function durableProjection<State, Event, Output = State>(options: {
   }).pipe(NativeAtom.keepAlive)
   const output = atom(get => codec.view ? codec.view(get(reduced).state) : get(reduced).state as unknown as Output)
   const state = codec.capture ? { ...codec.state, capture: (get: import("../atom").Getter) => codec.capture!(get(reduced).state) } : codec.state
-  return Object.assign(output, { input: options.input, [AtomState]: state })
+  return Object.assign(output, { name: options.name, schema: options.schema, input: options.input, [AtomState]: state })
 }

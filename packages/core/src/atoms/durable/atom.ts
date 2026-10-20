@@ -7,7 +7,9 @@ import type { Atom } from "../atom"
 import type { StatefulAtom } from "../../initialise"
 import type { RecordMetadata } from "../../services/journal"
 
-export interface DurableAtom<State, Event> extends Atom<State>, StatefulAtom {
+export interface DurableAtom<State, Event, S extends Schema.Top = Schema.Top> extends Atom<State>, StatefulAtom {
+  readonly name: string
+  readonly schema: S
   readonly input: Schema.Schema<Event>
 }
 export type DurableState<S extends Schema.Top> = CollectionSchema<S> extends true ? S["Type"] extends Json ? MerkleTree<S["Type"]> : never : S["Type"]
@@ -28,24 +30,24 @@ export function durableAtom<S extends Schema.Schema<unknown>, Event>(options: {
   readonly input: Schema.Schema<Event>
   readonly initial: NoInfer<S["Type"]>
   readonly reduce: (state: NoInfer<DurableState<S>>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<DurableState<S>>
-} & Hooks<S>): DurableAtom<DurableState<S>, Event>
+} & Hooks<S>): DurableAtom<DurableState<S>, Event, S>
 export function durableAtom<State, Event>(options: {
   readonly name: string
   readonly schema: Schema.Schema<State>
   readonly input: Schema.Schema<Event>
   readonly initial: NoInfer<State>
   readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<State>
-}): DurableAtom<State, Event>
+}): DurableAtom<State, Event, Schema.Schema<State>>
 export function durableAtom<S extends Schema.Schema<unknown>, Event>(options: {
   readonly name: string
   readonly schema: S
   readonly input: Schema.Schema<Event>
   readonly initial: NoInfer<S["Type"]>
   readonly reduce: (state: NoInfer<DurableState<S>>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<DurableState<S>>
-} & Hooks<S>): DurableAtom<DurableState<S>, Event> {
-  if (isValue(options.schema.ast)) return wholeValueAtom(options as unknown as Parameters<typeof wholeValueAtom<S["Type"] & Json, Event>>[0]) as unknown as DurableAtom<DurableState<S>, Event>
+} & Hooks<S>): DurableAtom<DurableState<S>, Event, S> {
+  if (isValue(options.schema.ast)) return wholeValueAtom(options as unknown as Parameters<typeof wholeValueAtom<S["Type"] & Json, Event>>[0]) as unknown as DurableAtom<DurableState<S>, Event, S>
   if (collectionSchema(options.schema.ast)) {
-    return documentAtom(options as unknown as DocumentOptions<S["Type"] & Json, Event>) as unknown as DurableAtom<DurableState<S>, Event>
+    return documentAtom(options as unknown as DocumentOptions<S["Type"] & Json, Event>) as unknown as DurableAtom<DurableState<S>, Event, S>
   }
-  return plainAtom(options as unknown as Parameters<typeof plainAtom<S["Type"] & Json, Event>>[0]) as unknown as DurableAtom<DurableState<S>, Event>
+  return plainAtom(options as unknown as Parameters<typeof plainAtom<S["Type"] & Json, Event>>[0]) as unknown as DurableAtom<DurableState<S>, Event, S>
 }
