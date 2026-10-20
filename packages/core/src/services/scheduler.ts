@@ -53,12 +53,6 @@ export const scheduleWake = (tx: SchedulerTransaction, request: WakeRequest) => 
 // cancelWake removes a wake; its transaction boundary preserves other owners' alarms.
 export const cancelWake = (tx: SchedulerTransaction, id: string) => tx.delete(id)
 
-// schedulerOwner adapts an owner's alarm to a named entry in a shared scheduler.
-export const schedulerOwner = (tx: SchedulerTransaction, id: string, target: Schema.Json): typeof Alarm.Service => ({
-  set: dueAt => scheduleWake(tx, { id, target, dueAt }),
-  clear: cancelWake(tx, id),
-})
-
 // createScheduler retains unacknowledged wakes and protects replacements from stale acknowledgments (packages/platform/test/properties/scheduler/wakes.ts).
 export function createScheduler(options: {
   readonly storage: SchedulerStorage

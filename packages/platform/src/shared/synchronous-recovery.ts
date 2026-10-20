@@ -1,5 +1,5 @@
 import { Effect, Schema, Semaphore } from "effect"
-import { RuntimeError, ScheduledWake, WatchdogEntry, schedulerOwner, type Alarm, type SchedulerTransaction, type WatchdogTransaction } from "@clavia/tardigrade-core"
+import { RuntimeError, ScheduledWake, WatchdogEntry, type Alarm, type SchedulerTransaction, type WatchdogTransaction } from "@clavia/tardigrade-core"
 import type { Transaction } from "@tardie/grove/sqlite"
 import type { makeSync } from "@tardie/grove/sqlite"
 
@@ -114,5 +114,5 @@ export function syncRecoveryTransaction(tx: Transaction, alarm: typeof Alarm.Ser
       return Number(row.value)
     }),
   }
-  return { scheduler, watchdog: { ...entries("watchdogs", WatchdogEntry), alarm: schedulerOwner(scheduler, "watchdog", { owner: "watchdog" }) } }
+  return { scheduler, watchdog: { ...entries("watchdogs", WatchdogEntry), scheduler } }
 }

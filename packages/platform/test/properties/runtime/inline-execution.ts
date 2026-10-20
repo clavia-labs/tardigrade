@@ -1,7 +1,8 @@
 import { strict as assert } from "node:assert"
 import { Clock, Context, Deferred, Effect, Schema } from "effect"
 import * as fc from "fast-check"
-import { act, createWatchdog, defineActor, durableAtom, effectAtom, EffectExecution, RetryScheduled, watchdogKey, type WatchdogEntry, type WatchdogStorage, type WatchdogTransaction } from "@clavia/tardigrade-core"
+import { act, createWatchdog, defineActor, durableAtom, effectAtom, EffectExecution, RetryScheduled, watchdogKey } from "@clavia/tardigrade-core"
+import { memoryWatchdog } from "../../fixtures/watchdog"
 import { waitFor } from "../../fixtures/wait"
 import { createTestStore } from "./store"
 
@@ -35,18 +36,7 @@ export const inlineExecutionSupervision = fc.asyncProperty(cases, options => Eff
   yield* Effect.gen(function* () {
     const target = { actor: "inline-supervision", instance: "main", thread: "one" }
     const key = watchdogKey(target)
-    let records = new Map<string, WatchdogEntry>()
-    let alarm: number | null = null
-    const storage: WatchdogStorage = { transaction: work => Effect.suspend(() => {
-      const staged = new Map(records)
-      let nextAlarm = alarm
-      const tx: WatchdogTransaction = {
-        alarm: { set: at => Effect.sync(() => { nextAlarm = at }), clear: Effect.sync(() => { nextAlarm = null }) },
-        get: key => Effect.sync(() => staged.get(key)), put: (key, entry) => Effect.sync(() => { staged.set(key, entry) }),
-        delete: key => Effect.sync(() => { staged.delete(key) }), list: Effect.succeed(staged),
-      }
-      return work(tx).pipe(Effect.tap(() => Effect.sync(() => { records = staged; alarm = nextAlarm })))
-    }) }
+    const db = memoryWatchdog(), storage = db.storage
     let recoveries = 0
     let invalidations = 0
     const watchdog = createWatchdog({ storage, policy: { maxAttempts: options.maxAttempts, maxNoProgressAttempts: options.maxAttempts, keepAliveIntervalMs: options.keepAliveIntervalMs },
@@ -64,10 +54,11 @@ export const inlineExecutionSupervision = fc.asyncProperty(cases, options => Eff
       const before = yield* Clock.currentTimeMillis
       yield* wake
       const after = yield* Clock.currentTimeMillis
+      const alarm = db.alarm()
       assert.ok(alarm !== null && alarm >= before + options.keepAliveIntervalMs && alarm <= after + options.keepAliveIntervalMs)
-      assert.equal(records.get(key)?.attempts, 0)
-      assert.equal(records.get(key)?.consecutiveNoProgress, 0)
-      assert.equal(records.get(key)?.status, "pending")
+      assert.equal(db.records().get(key)?.attempts, 0)
+      assert.equal(db.records().get(key)?.consecutiveNoProgress, 0)
+      assert.equal(db.records().get(key)?.status, "pending")
     }
     assert.equal(starts, 1)
     assert.equal(interruptions, 0)
@@ -80,7 +71,7 @@ export const inlineExecutionSupervision = fc.asyncProperty(cases, options => Eff
       assert.ok(retry)
       assert.equal(store.recoveryState().wakeAt, retry.dueAt)
       yield* wake
-      assert.equal(alarm, retry.dueAt)
+      assert.equal(db.alarm(), retry.dueAt)
       yield* store.cancel(retry.ref, "stop")
     }
     yield* store.wait
@@ -88,8 +79,8 @@ export const inlineExecutionSupervision = fc.asyncProperty(cases, options => Eff
     assert.deepEqual(store.getState().view, options.retryWait ? { status: "rejected", reason: { _tag: "Cancelled", reason: "stop" } }
       : options.rejected ? { status: "rejected", reason: "failed" } : { status: "fulfilled", value: options.value })
     yield* wake
-    assert.equal(records.size, 0)
-    assert.equal(alarm, null)
+    assert.equal(db.records().size, 0)
+    assert.equal(db.alarm(), null)
     assert.equal(starts, 1)
     assert.equal(recoveries, 0)
     assert.equal(invalidations, 0)

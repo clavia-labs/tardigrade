@@ -3,7 +3,7 @@ import type { SyncSqlite } from "@tardie/grove/sqlite"
 import { journalPublication } from "./publication"
 import { acceptedInputLifetime, coldResultScenario } from "./accepted-work"
 import { journalDelivery } from "./delivery"
-import { acknowledgementRetry, acknowledgementOrdering } from "./recovery"
+import { acknowledgementRetry, acknowledgementOrdering, promiseDeadlineRecovery } from "./recovery"
 import { agentCollectionCases, agentCollections } from "./actors"
 import { migrationCases, journalMigrationProperty, eventLogCases, eventLogCompatibility } from "./migration"
 import { databaseIdentity, nativeMaterialMigration } from "./database"
@@ -20,6 +20,7 @@ export const journalProperties = [
   property("accepted work: inputs retain their captured version until completion commits", fc.string(), acceptedInputLifetime, 30, 15),
   property("delivery: receipts prevent repeated actor transitions through checkpoint and reopen", fc.integer({ min: -100, max: 100 }), journalDelivery, 30, 15),
   ...[false, true].flatMap(promised => [false, true].map(inline => property(`accepted work: cold results survive rollback and reopen (promise: ${promised}, inline: ${inline})`, fc.record({ suffix: fc.string(), size: fc.integer({ min: 2048, max: 16384 }), fail: fc.boolean() }), (driver, value) => coldResultScenario(driver, "x".repeat(value.size) + value.suffix, promised, value.fail, inline), 15, 10, [{ suffix: "\uFEFF界🙂", size: 4096, fail: true }, { suffix: "", size: 4096, fail: false }]))),
+  property("recovery: promise deadlines survive watchdog exhaustion", fc.record({ budget: fc.integer({ min: 1, max: 5 }), slackMs: fc.integer({ min: 10, max: 1_000 }), legacy: fc.boolean() }), promiseDeadlineRecovery, 100, 20),
   property("recovery: provisioning retries restore committed alarms", fc.record({ failures: fc.integer({ min: 1, max: 4 }), repeats: fc.integer({ min: 0, max: 4 }), now: fc.integer({ min: 1, max: 1_000_000_000 }) }), acknowledgementRetry, 50, 20),
   property("recovery: acknowledgement preserves competing earlier wakes", fc.record({ early: fc.integer({ min: 1, max: 1_000_000 }), gap: fc.integer({ min: 1, max: 1_000_000 }) }), (driver, value) => acknowledgementOrdering(driver, value.early, value.gap), 50, 20),
 ]

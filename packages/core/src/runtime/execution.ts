@@ -398,6 +398,12 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         if (watched.has(key)) continue
         const deadlineAt = promiseDeadline(result.handle, (yield* Clock.currentTimeMillis), resolutionPolicy, result.deadlineAt)
         if (result.handle.executor === "local") {
+          const scheduler = Context.getOption(services, Scheduler)
+          if (Option.isSome(scheduler)) {
+            yield* scheduler.value.schedule({ id: `promise:${key}`, dueAt: deadlineAt, target: { owner: "effect", ref: record.ref } })
+            watched.add(key)
+            continue
+          }
           if (!deadlineTimers.has(key)) {
             const timer = yield* Effect.gen(function* () {
               let remaining = deadlineAt - (yield* Clock.currentTimeMillis)
@@ -507,6 +513,15 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     }
     const drain = () => Effect.gen(function* () {
       while (true) {
+        yield* observePromises.pipe(Effect.catchCause(reportCause))
+        yield* enqueue(Effect.gen(function* () {
+          for (const work of snapshot.deferred()) {
+            if (work.handle.executor !== "local" || snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
+            if (work.deadlineAt !== undefined && work.deadlineAt <= (yield* Clock.currentTimeMillis)) {
+              yield* appendNow({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: work.deadlineAt } } })
+            }
+          }
+        }))
         if (!store.get(executionDefect) && options.canDrive && !(yield* options.canDrive)) return
         yield* afterCommit()
         const next = yield* enqueue(Effect.gen(function* () {
@@ -526,10 +541,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             if (store.get(executionDefect)) { localRecovery.clear(); break }
             localRecovery.delete(key)
             if (snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
-            const prior = operationSettlement(snapshot.effect(work.ref))?.outcome
-            const value = prior?.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(prior.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
-            if (value?.type === "promise" && value.deadlineAt !== undefined && value.deadlineAt <= (yield* Clock.currentTimeMillis)) {
-              yield* appendNow({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: value.deadlineAt } } })
+            if (work.deadlineAt !== undefined && work.deadlineAt <= (yield* Clock.currentTimeMillis)) {
+              yield* appendNow({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: work.deadlineAt } } })
               continue
             }
             dispatched.add(key)
@@ -878,11 +891,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           const pendingKeys = [...pendingRefs.map(effectKey), ...cleanup.map(work => `cancellation:${effectKey(work.ref)}`)]
           if (pendingKeys.length && pendingKeys.every(key => retryWaits.has(key)) && !snapshot.cancellations().length && !snapshot.deliveries().length) {
             const times = pendingKeys.map(key => retryWaits.get(key)!.dueAt)
-            for (const work of deferred) {
-              const outcome = operationSettlement(snapshot.effect(work.ref))?.outcome
-              const value = outcome?.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(outcome.value) : undefined
-              if (value?.type === "promise" && value.deadlineAt !== undefined) times.push(value.deadlineAt)
-            }
+            for (const work of deferred) if (work.deadlineAt !== undefined) times.push(work.deadlineAt)
             return { progressCursor, status: "parked", wakeAt: Math.min(...times) }
           }
           if (cleanup.length) return { progressCursor, status: "running" }
@@ -890,20 +899,14 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           if (executions.size && snapshot.effects().length) return { progressCursor, status: "running" }
           const live = deferred.filter(work => work.handle.executor === "local" && background.has(work.handle.id))
           if (live.length && !snapshot.effects().length && !snapshot.pending().length && !snapshot.cancellations().length && !snapshot.deliveries().length) {
-            const deadlines = deferred.map(work => {
-              const outcome = operationSettlement(snapshot.effect(work.ref))?.outcome
-              const value = outcome?.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(outcome.value) : undefined
-              return value?.type === "promise" ? value.deadlineAt : undefined
-            })
+            const deadlines = deferred.map(work => work.deadlineAt)
             if (deadlines.every((at): at is number => at !== undefined)) return { progressCursor, status: "running", wakeAt: Math.min(...deadlines) }
           }
           if (snapshot.effects().length || snapshot.pending().length || snapshot.cancellations().length || snapshot.deliveries().length || deferred.some(work => work.handle.executor === "local")) return { progressCursor, status: "pending" }
           if (!deferred.length) return { progressCursor, status: "settled" }
           const deadlines = deferred.map(work => {
-            const outcome = operationSettlement(snapshot.effect(work.ref))?.outcome
-            const value = outcome?.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(outcome.value) : undefined
             const recordedAt = snapshot.records.find(record => Schema.is(EffectRequested)(record.event) && effectKey(record.event.ref) === effectKey(work.ref))?.recordedAt ?? 0
-            return promiseDeadline(work.handle, recordedAt, resolutionPolicy, value?.type === "promise" ? value.deadlineAt : undefined)
+            return promiseDeadline(work.handle, recordedAt, resolutionPolicy, work.deadlineAt)
           })
           return { progressCursor, status: "parked", wakeAt: Math.min(...deadlines) }
         },
