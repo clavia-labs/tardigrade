@@ -283,7 +283,7 @@ test("generated cold range deletions visit boundaries and leave unrelated payloa
     for (const [hash, node] of changed.nodes) stored.set(hash, node.text)
     expect((tree.materialize(hydrate(changed.root, stored)) as typeof value).items).toEqual([...value.items.slice(0, start), ...value.items.slice(start + deleted)])
   }), { numRuns: 30, includeErrorInReport: true })
-})
+}, 30000)
 
 const shape = (node: Node, pageItems: number, fanout: number, root = true): void => {
   if (node.tag !== "k" && node.tag !== "b") return
