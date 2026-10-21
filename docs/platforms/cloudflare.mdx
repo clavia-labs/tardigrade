@@ -103,6 +103,8 @@ createActorWorker({
 
 `DEFAULT_WATCHDOG_POLICY` and `DEFAULT_PROMISE_POLICY` are exported from `tardie/core`. The watchdog retries typed failures by default; defects and `WatchdogTerminalError` block recovery. Supply `watchdog.retryable(error)` to classify application failures. Promise expiry records `PromiseTimedOut` without requesting backend cancellation. A scheduled clock receives its timeout budget after its scheduled time. Configure a dedicated promise resolver's observation cadence with `createCloudflarePromiseResolver({ policy: { pollIntervalMs }, ... })`; the host supplies each recorded absolute deadline.
 
+`releaseSettledAfter: ["outcome"]` closes an idle thread runtime after an HTTP receipt read for a listed method. The native recovery probe keeps runtimes with pending work open. Durable journals and checkpoints retain method results, so later reads reopen the thread and reuse its settled work. The default keeps runtimes open for the object lifetime.
+
 ### Interpreter versions
 
 Supply `version(env)` to identify the interpreter running an actor. Cloudflare exposes its Worker version ID through a version metadata binding:
