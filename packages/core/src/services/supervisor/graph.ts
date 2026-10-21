@@ -7,7 +7,7 @@ import { InitialState } from "../../initialise"
 import { durableAtom } from "../../atoms/durable"
 
 
-const Allocation = Schema.Struct({
+export const Allocation = Schema.Struct({
   coordinate: ThreadCoordinate,
   name: Schema.NonEmptyString,
   parent: Schema.NullOr(Schema.NonEmptyString),

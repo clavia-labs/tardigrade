@@ -58,3 +58,5 @@ export { cloudflarePromises, createCloudflarePromiseResolver, PromiseResolverCom
 
 export { httpMessageTransport } from "../shared/http-message"
 export { rpcMessageTransport, type ActorReceiver } from "../shared/rpc-message"
+
+export { DEFAULT_DIRECTORY_PAGE_SIZE, registrationObjectName } from "./directory"
