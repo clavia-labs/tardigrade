@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.48.0](https://github.com/clavia-labs/tardigrade/compare/v0.47.2...v0.48.0) (2026-10-15)
+
+
+### Features
+
+* **agent:** journal model configuration ([#757](https://github.com/clavia-labs/tardigrade/issues/757)) ([1b9f1e5](https://github.com/clavia-labs/tardigrade/commit/1b9f1e5760d1d4d4a63eb1f87af9e5a2341de7e8))
+* **core:** version interpreter recovery ([#756](https://github.com/clavia-labs/tardigrade/issues/756)) ([36643ab](https://github.com/clavia-labs/tardigrade/commit/36643ab259cf1bb2ec958850e91564c131d2d692))
+
+
+### Bug Fixes
+
+* **agent:** preserve tool continuations ([#759](https://github.com/clavia-labs/tardigrade/issues/759)) ([f805e5b](https://github.com/clavia-labs/tardigrade/commit/f805e5bedc80ca1204693a28ea33a05186d5dc45))
+* **agent:** replay legacy model configuration ([#760](https://github.com/clavia-labs/tardigrade/issues/760)) ([fdeffd7](https://github.com/clavia-labs/tardigrade/commit/fdeffd72d69c10646688fc2e5c94da5d2c724cd0))
+* **core:** distinguish missing invocations ([#755](https://github.com/clavia-labs/tardigrade/issues/755)) ([39faf50](https://github.com/clavia-labs/tardigrade/commit/39faf50cb1cae86944347dd58f0b8ecae88025ba))
+* **core:** trust result indexes ([#758](https://github.com/clavia-labs/tardigrade/issues/758)) ([b55de81](https://github.com/clavia-labs/tardigrade/commit/b55de816adc0a7ff3cd7d1d5d54f8ce6e3a66cfb))
+* **model:** stabilize stream block index ([#695](https://github.com/clavia-labs/tardigrade/issues/695)) ([eab6b0e](https://github.com/clavia-labs/tardigrade/commit/eab6b0e2c4a570468c51cd89a1bb5d2ec43dc82a))
+
 ## [0.47.2](https://github.com/clavia-labs/tardigrade/compare/v0.47.1...v0.47.2) (2026-10-14)
 
 
