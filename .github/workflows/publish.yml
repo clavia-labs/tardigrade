@@ -15,6 +15,10 @@ on:
         description: Pack without publishing
         type: boolean
         default: true
+      candidate-only:
+        description: Publish only a release candidate
+        type: boolean
+        default: false
       release_ref:
         description: Git ref to publish. Defaults to the workflow revision
         type: string
@@ -125,7 +129,7 @@ jobs:
 
   publish-stable:
     needs: [release-please, publish-candidate]
-    if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') && (needs.publish-candidate.result == 'success' || needs.publish-candidate.result == 'skipped') }}
+    if: ${{ always() && !inputs.candidate-only && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') && (needs.publish-candidate.result == 'success' || needs.publish-candidate.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm

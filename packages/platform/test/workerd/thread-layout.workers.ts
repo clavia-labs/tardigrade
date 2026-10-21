@@ -6,6 +6,7 @@ import { createWatchdog, watchdogKey, DEFAULT_PROVISION_RETRY_LIMIT } from "@cla
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { threadFlow } from "../fixtures/thread-flow"
 import { cloudflareThreadName } from "../../src/cloudflare"
+import { registrationObjectName } from "../../src/cloudflare/directory"
 import type { LayoutActorDO, LayoutThreadDO } from "../fixtures/workerd/layout-fixture"
 
 const bindings = env as unknown as { ACTORS: DurableObjectNamespace<InstanceType<typeof LayoutActorDO>>; THREADS: DurableObjectNamespace<LayoutThreadDO> }
@@ -23,9 +24,8 @@ test("a fresh instance creates, queries, and messages flat independent threads w
   })
   expect((await threadStub(instance, "child").records()).find(record => record.message?.id === "child:child")).toMatchObject({ message: { from: coordinate(instance, "parent") } })
   await runInDurableObject(actor, async (_object, state) => {
-    const types = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events").toArray().map(row => JSON.parse(row.event).event.type)
-    expect(types).toContain("ThreadRequested")
-    expect(types).not.toContain("ThreadCreated")
+    expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) count FROM actor_directory WHERE status='registered'").one().count).toBe(2)
+    expect(state.storage.sql.exec("SELECT name FROM sqlite_master WHERE name='experimental_events'").toArray()).toHaveLength(0)
   })
   for (const name of ["parent", "child"]) {
     await runInDurableObject(threadStub(instance, name), async (_object, state) => {
@@ -99,7 +99,7 @@ test("directory admission and a turn survive retryable provisioning and lookup r
   const records = await threadStub(instance, "parent").records()
   expect(records.filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
   expect(records.filter(record => record.message?.id === "same-call")).toHaveLength(1)
-  await runInDurableObject(actor, async (_object, state) => {
+  await runInDurableObject(bindings.ACTORS.getByName(registrationObjectName(coordinate(instance, "parent"))), async (_object, state) => {
     const events = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events").toArray().map(row => JSON.parse(row.event).event.type)
     expect(events.filter(type => type === "ThreadRegistered")).toHaveLength(1)
     expect(events).not.toContain("ThreadFailed")
@@ -135,11 +135,7 @@ test("provisioning retries survive reopening and concurrent named requests share
       expect(await failed.provisionCalls()).toBe(round * (DEFAULT_PROVISION_RETRY_LIMIT + 1))
     }
     expect((await flow.request("", { name: "failed", initialState: { "layout.value": 99 } })).status).toBeGreaterThanOrEqual(400)
-    await runInDurableObject(actor, async (object, state) => {
-      await object.dispose()
-      state.storage.sql.exec("DELETE FROM checkpoint_chunks")
-      state.storage.sql.exec("DELETE FROM checkpoint")
-    })
+    await runInDurableObject(bindings.ACTORS.getByName(registrationObjectName(coordinate(instance, "failed"))), async object => { await object.dispose() })
     await failed.failNextProvisions(1)
     const retried = await Promise.all(Array.from({ length: 5 }, () => flow.request("", { name: "failed" })))
     for (const response of retried) {
@@ -150,11 +146,11 @@ test("provisioning retries survive reopening and concurrent named requests share
     await flow.call("failed", "read", null, "read-retried", 44)
     expect((await flow.request("", { name: "failed" })).status).toBe(200)
     expect(await failed.provisionCalls()).toBe(2 * (DEFAULT_PROVISION_RETRY_LIMIT + 1) + 2)
-    await runInDurableObject(actor, async (_object, state) => {
+    await runInDurableObject(bindings.ACTORS.getByName(registrationObjectName(coordinate(instance, "failed"))), async (_object, state) => {
       const events = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray().map(row => JSON.parse(row.event).event)
       const requests = events.filter(event => event.type === "ThreadRequested" && event.allocation.coordinate.thread === "failed")
-      expect(events.filter(event => event.type === "RetryScheduled")).toHaveLength(2 * DEFAULT_PROVISION_RETRY_LIMIT + 2)
-      expect(events.filter(event => event.type === "EffectRequested")).toHaveLength(5)
+      expect(events.filter(event => event.type === "RetryScheduled")).toHaveLength(2 * DEFAULT_PROVISION_RETRY_LIMIT + 1)
+      expect(events.filter(event => event.type === "EffectRequested")).toHaveLength(6)
       expect(events.filter(event => event.type === "ThreadFailed")).toHaveLength(2)
       expect(requests).toHaveLength(3)
       for (const request of requests) expect(request.allocation).toEqual(requests[0].allocation)
