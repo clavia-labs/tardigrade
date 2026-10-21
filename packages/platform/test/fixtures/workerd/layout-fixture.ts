@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Schema } from "effect"
+import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import { act, actorMethod, defineActor, durableAtom, effectAtom, event, Invocation, Supervisor, ThreadCoordinate, EffectExecution, durablePromise, DEFAULT_PROVISION_RETRY, type ThreadCreated, type InitialState } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
 import { createActorWorker, cloudflareThreadName } from "../../../src/cloudflare"
@@ -29,6 +29,7 @@ const actor = defineActor("layout", Effect.sync(() => {
     })) }
   }), methods: {
     read: actorMethod({ inputSchema: Schema.Null, outputSchema: Schema.Finite, onReceive: ReadRequested.from(() => ({})), result: (_, get) => ({ status: "completed", output: get(value) }) }),
+    outcome: actorMethod({ inputSchema: Schema.Null, outputSchema: Schema.Finite, onReceive: ReadRequested.from(() => ({})), result: (_, get) => ({ status: "completed", output: get(value) }) }),
     set: actorMethod({ inputSchema: Schema.Finite, outputSchema: Schema.Finite, onReceive: Changed.from(value => ({ value })), result: (_, get) => ({ status: "completed", output: get(value) }) }),
     spawn: actorMethod({ inputSchema: Schema.Finite, outputSchema: ThreadCoordinate,
       onReceive: SpawnRequested.from((value, context) => ({ id: context.id, value })), result: (_, get, context) => {
@@ -45,7 +46,15 @@ const paused = new Set<string>()
 const failed = new Set<string>()
 const held = new Map<string, Deferred.Deferred<void>>()
 const attempts = new Map<string, number>()
-const worker = createActorWorker({ actor, provisionRetry: { ...DEFAULT_PROVISION_RETRY, decide: (failure, attempt) => DEFAULT_PROVISION_RETRY.decide(failure, attempt).pipe(Effect.map(decision => decision && { ...decision, delayMs: 50 })) }, checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } }, actorContext: Context.pick(), initialStateAtoms: [value, spawns], http: env => typeof env.FIXTURE_TOKEN === "string" ? { token: env.FIXTURE_TOKEN } : {}, effectInput: { digestMinBytes: 0 }, services: (_env, coordinate) => Spawn.layer(input => Effect.gen(function* () {
+const runtimeLifetimes = new Map<string, { opened: number; closed: number }>()
+const lifecycle = (coordinate: ThreadCoordinate) => Layer.effectDiscard(Effect.acquireRelease(Effect.sync(() => {
+  const name = cloudflareThreadName(coordinate)
+  const counts = runtimeLifetimes.get(name) ?? {opened: 0, closed: 0}
+  counts.opened++
+  runtimeLifetimes.set(name, counts)
+  return counts
+}), counts => Effect.sync(() => { counts.closed++ })))
+const worker = createActorWorker({ actor, releaseSettledAfter: ["outcome"], provisionRetry: { ...DEFAULT_PROVISION_RETRY, decide: (failure, attempt) => DEFAULT_PROVISION_RETRY.decide(failure, attempt).pipe(Effect.map(decision => decision && { ...decision, delayMs: 50 })) }, checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } }, actorContext: Context.pick(), initialStateAtoms: [value, spawns], http: env => typeof env.FIXTURE_TOKEN === "string" ? { token: env.FIXTURE_TOKEN } : {}, effectInput: { digestMinBytes: 0 }, services: (_env, coordinate) => Spawn.layer(input => Effect.gen(function* () {
   const name = cloudflareThreadName(coordinate)
   attempts.set(name, (attempts.get(name) ?? 0) + 1)
   const execution = yield* EffectExecution
@@ -64,7 +73,7 @@ const worker = createActorWorker({ actor, provisionRetry: { ...DEFAULT_PROVISION
   const promise = durablePromise(execution.ref, { success: ThreadCoordinate, error: Schema.String })
   const handle = yield* execution.fork(Deferred.await(release).pipe(Effect.andThen(spawn), Effect.match({ onFailure: promise.fail, onSuccess: promise.succeed })), { timeoutMs: 60_000 })
   return Spawn.defer(handle)
-}).pipe(Effect.mapError(String))) })
+}).pipe(Effect.mapError(String))).pipe(Layer.provideMerge(lifecycle(coordinate))) })
 export class LayoutActorDO extends worker.ActorObject {
   resetNextProvision(thread: string) { provisionResets.add(cloudflareThreadName({ actor: "layout", instance: this.ctx.id.name!, thread })) }
   resetNextLookup() { lookupResets.add(this.ctx.id.name!) }
@@ -101,6 +110,7 @@ export class LayoutThreadDO extends worker.ThreadObject {
     })))
     await this.alarm()
   }
+  lifetimes() { return runtimeLifetimes.get(this.ctx.id.name!) ?? {opened: 0, closed: 0} }
   executions() { return attempts.get(this.ctx.id.name!) ?? 0 }
   failSpawns(fail: boolean) {
     if (fail) failed.add(this.ctx.id.name!)

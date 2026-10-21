@@ -53,6 +53,8 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
   readonly watchdog?: { readonly policy?: Partial<WatchdogPolicy>; readonly retryable?: (error: Error) => boolean }
   readonly http?: (env: Env) => MethodHttpOptions
   readonly checkpointChunkBytes?: number
+  /** releaseSettledAfter closes idle runtimes after receipt reads for these methods; journals retain their results. */
+  readonly releaseSettledAfter?: readonly string[]
   readonly eventInlineBytes?: number
   readonly directoryPageSize?: number
   readonly generateName?: () => string
@@ -391,7 +393,15 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
         const handler = HttpRouter.toWebHandler(hostRoutes(host), { disableLogger: true })
         try { return await handler.handler(request) } finally { await handler.dispose() }
       }
-      return methodHttp(host, http)(request)
+      const response = await methodHttp(host, http)(request)
+      const method = /\/methods\/([^/]+)\/calls\//.exec(path)?.[1]
+      if (request.method === "GET" && method && options.releaseSettledAfter?.includes(decodeURIComponent(method))) {
+        await this.ctx.blockConcurrencyWhile(async () => {
+          if ((await Effect.runPromise(this.execution!.probe(coordinate)))?.status === "settled")
+            await Effect.runPromise(this.execution!.invalidate(coordinate))
+        })
+      }
+      return response
     }
     async alarm() { await this.identityReady; if (this.coordinate) { this.storage(); await Effect.runPromise(this.watchdog.restore.pipe(Effect.andThen(this.scheduler.alarm))) } }
     async records(): Promise<readonly Recorded<Event>[]> { await this.identityReady; return Effect.runPromise(this.storage().read) }
