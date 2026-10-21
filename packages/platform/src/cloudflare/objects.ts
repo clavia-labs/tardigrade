@@ -1,17 +1,19 @@
 import { DurableObject } from "cloudflare:workers"
-import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Scope } from "effect"
+import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Scope, Semaphore } from "effect"
 import { isDeepStrictEqual } from "node:util"
-import { createActorExecution, createActorStore, createSupervisor, createWatchdog, DEFAULT_EXTERNAL_SENDER, Invocation, RuntimeError, Scheduler, Supervisor, ThreadCoordinate, ThreadCreated, type ScheduledWake, type ActorMethods, type IncomingMessage, type InitialState, type MessageReceipt, type MessageDelivery, type ThreadRequest, type RecoveryState, type WatchdogTarget, type WatchdogPolicy, type SchedulerPolicy, type Recorded, type StoredCheckpoint, type ActorExecutionOptions } from "@clavia/tardigrade-core"
+import { createActorExecution, createActorStore, createScheduler, createWatchdog, DEFAULT_EXTERNAL_SENDER, Invocation, RuntimeError, Scheduler, Supervisor, ThreadCoordinate, ThreadCreated, watchdogKey, type ScheduledWake, type ActorMethods, type IncomingMessage, type InitialState, type MessageReceipt, type MessageDelivery, type ThreadRequest, type RecoveryState, type WatchdogTarget, type WatchdogPolicy, type SchedulerPolicy, type Recorded, type StoredCheckpoint, type ActorExecutionOptions } from "@clavia/tardigrade-core"
 import { createInvocation } from "@clavia/tardigrade-core/services/invocation"
 import type { createThreadHost } from "@clavia/tardigrade-core/runtime/layers"
 import { initializeThread, updateThreadVersion } from "@clavia/tardigrade-core/services/journal/thread"
 import { prepareInitialState } from "@clavia/tardigrade-core/runtime/initialisation"
-import type { SupervisorEvent } from "@clavia/tardigrade-core/services/supervisor/graph"
+import { Allocation, type ThreadAllocation } from "@clavia/tardigrade-core/services/supervisor/graph"
+import { createRegistration, RegistrationResult, type RegistrationEvent } from "@clavia/tardigrade-core/services/supervisor/registration"
+import { indexedDirectory, registrationObjectName } from "./directory"
 import { makeRetryingAlarms, makeRetryingRpc, type CloudflareAlarmOptions, type CloudflareRetryOptions } from "@clavia/tardigrade-cloudflare/retry"
 import { cloudflareWatchdogStorage } from "./watchdog"
 import { type CheckpointChunkOptions } from "../shared/sql-journal"
 import { platformJournal } from "../shared/platform-journal"
-import { cloudflareNativeDriver, checkNativeRecovery } from "./native-recovery"
+import { cloudflareNativeDriver, cloudflareNativeRecovery, checkNativeRecovery } from "./native-recovery"
 import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
@@ -22,6 +24,8 @@ export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const
 export const DEFAULT_CLOUDFLARE_CHILD_PLACEMENT = "independent" as const
 
 export interface ActorDirectoryStub {
+  readonly provisionAllocation: (allocation: ThreadAllocation, generation: number) => Promise<void>
+  readonly completeRegistration: (result: RegistrationResult, generation: number) => Promise<void>
   readonly allocate: (request: ThreadRequest) => Promise<ThreadCoordinate>
   readonly lookup: (coordinate: ThreadCoordinate) => Promise<ThreadCoordinate | undefined>
   readonly fetch: (request: Request) => Promise<Response>
@@ -51,6 +55,7 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
   readonly checkpointChunkBytes?: number
   readonly eventInlineBytes?: number
   readonly generateName?: () => string
+  readonly directoryPageSize?: number
 }
 
 // cloudflareThreadName identifies a thread DO by its complete coordinate (test/workerd/thread-layout.workers.ts).
@@ -102,16 +107,29 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     private readonly version = options.version?.(this.env)
     private readonly identityReady = this.ctx.blockConcurrencyWhile(async () => {
       this.instance = await this.ctx.storage.get<string>("tardie:actor:instance")
+      this.registration = await this.ctx.storage.get<ThreadAllocation>("tardie:actor:registration")
       await Effect.runPromise(this.watchdog.restore)
     })
-    private journal: ReturnType<typeof objectJournal<SupervisorEvent>> | undefined
-    private directory: ReturnType<typeof createSupervisor> | undefined
+    private registration: ThreadAllocation | undefined
+    private readonly registrationLock = Semaphore.makeUnsafe(1)
+    private registrationStore: ReturnType<typeof createRegistration> | undefined
+    private journal: ReturnType<typeof objectJournal<RegistrationEvent>> | undefined
+    private directory: ReturnType<typeof indexedDirectory> | undefined
+    private readonly recovery = cloudflareNativeRecovery(this.ctx.storage, options.alarms)
+    private readonly directoryScheduler = createScheduler({ storage: { transaction: work => this.recovery.transaction(tx => work(tx.scheduler)) }, policy: options.scheduler, deliver: () => Effect.suspend(() => this.watchdog.alarm) })
     private scope = Scope.makeUnsafe()
     private readonly recovering = new Set<Fiber.Fiber<void, Error>>()
-    private get scheduler(): NonNullable<ReturnType<typeof objectJournal>["scheduler"]> { return this.journal!.scheduler! }
+    private get scheduler(): NonNullable<ReturnType<typeof objectJournal>["scheduler"]> { return this.journal?.scheduler ?? this.directoryScheduler }
     private readonly watchdog = createWatchdog({ storage: cloudflareWatchdogStorage(this.ctx.storage, options.alarms), ...options.watchdog, ...(this.version === undefined ? {} : { version: this.version }),
-      recover: target => Effect.suspend(() => this.supervisor(target.instance).recover(target.instance)),
-      invalidate: target => Effect.suspend(() => this.supervisor(target.instance).invalidate(target.instance)),
+      recover: target => Effect.suspend(() => this.registration
+        ? this.openRegistration().pipe(Effect.flatMap(store => store.resume.pipe(Effect.andThen(store.wait), Effect.asVoid, Effect.map(() => store.recoveryState()))))
+        : this.supervisor(target.instance).recover),
+      invalidate: () => Effect.suspend(() => {
+        const opened = this.registrationStore
+        this.registrationStore = undefined
+        this.directory = undefined
+        return opened ? opened.pipe(Effect.flatMap(store => store.close), Effect.ignore) : Effect.void
+      }),
       launch: work => Effect.sync(() => {
         const fiber = Effect.runFork(work)
         this.recovering.add(fiber)
@@ -137,41 +155,64 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     }
     private supervisor(instance: string) {
       if (this.instance !== instance) throw new RuntimeError("Actor DO instance is not initialized")
-      if (!this.directory) {
-        this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, checkpointTree: options.checkpointTree, eventInlineBytes: options.eventInlineBytes, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, scheduler: options.scheduler, ...(options.alarms ? { alarms: options.alarms } : {}) })
-        this.directory = createSupervisor({ actor: options.actor.actorName, journal: () => this.journal!, run: this.run,
-          ...(options.provisionRetry ? { provisionRetry: options.provisionRetry } : {}),
-          ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
-        ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
-          canDrive: () => this.watchdog.blocked({ actor: options.actor.actorName, instance }).pipe(Effect.flatMap(blocked => blocked ? Effect.succeed(false) : options.canDrive ? options.canDrive({ actor: options.actor.actorName, instance }) : Effect.succeed(true))),
-          defaultChildPlacement: DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, supportedChildPlacements: CLOUDFLARE_CHILD_PLACEMENTS,
-          ...(options.promises ? { promises: options.promises } : {}), ...(options.generateName ? { generateName: options.generateName } : {}),
-          validateInitialState: state => prepareInitialState(options.initialStateAtoms ?? [], state).pipe(Effect.asVoid),
-          provision: allocation => rpc.call(this.env.THREADS, cloudflareThreadName(allocation.coordinate), "provision", stub => stub.provision({ type: "ThreadCreated", address: allocation.coordinate,
-            parent: allocation.parent === null ? null : { ...allocation.coordinate, thread: allocation.parent }, depth: allocation.depth, placement: allocation.placement,
-          }, allocation.initialState), true).pipe(Effect.asVoid),
-        })
-      }
+      if (!this.directory) this.directory = indexedDirectory({ storage: this.ctx.storage, actor: options.actor.actorName, instance,
+        ...(options.directoryPageSize === undefined ? {} : { pageSize: options.directoryPageSize }),
+        ...(options.generateName ? { generateName: options.generateName } : {}),
+        validateInitialState: state => prepareInitialState(options.initialStateAtoms ?? [], state).pipe(Effect.asVoid),
+        provision: (allocation, generation) => rpc.call(this.env.ACTORS, registrationObjectName(allocation.coordinate), "provisionAllocation", stub => stub.provisionAllocation(allocation, generation), true),
+        commit: (work, admission) => this.recovery.transaction(tx => Effect.gen({ self: this }, function* () {
+          const value = yield* Effect.try({ try: work, catch: RuntimeError.from })
+          const revision = this.ctx.storage.sql.exec<{ revision: number }>("SELECT revision FROM actor_directory_projection WHERE id=1").one().revision
+          yield* this.watchdog.admit(tx.watchdog, { actor: options.actor.actorName, instance }, revision, admission)
+          return value
+        })),
+      })
       return this.directory
+    }
+    private openRegistration(): ReturnType<typeof createRegistration> {
+      if (!this.registration) return Effect.fail(new RuntimeError("Registration identity is not initialized"))
+      const allocation = this.registration
+      if (!this.registrationStore) {
+        this.journal ??= objectJournal<RegistrationEvent>({ storage: this.ctx.storage, key: "registration", target: allocation.coordinate, watchdog: this.watchdog, scheduler: options.scheduler, checkpointChunkBytes: options.checkpointChunkBytes, checkpointTree: options.checkpointTree, eventInlineBytes: options.eventInlineBytes, ...(options.alarms ? { alarms: options.alarms } : {}) })
+        this.registrationStore = Effect.runSync(Effect.cached(createRegistration({ journal: this.journal,
+          canDrive: () => this.watchdog.status.pipe(Effect.flatMap(entries => entries.get(watchdogKey(allocation.coordinate))?.status === "blocked" ? Effect.succeed(false) : options.canDrive ? options.canDrive(allocation.coordinate) : Effect.succeed(true))),
+          ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
+          ...(options.provisionRetry ? { retry: options.provisionRetry } : {}),
+          provision: input => rpc.call(this.env.THREADS, cloudflareThreadName(input.coordinate), "provision", stub => stub.provision({ type: "ThreadCreated", address: input.coordinate, parent: input.parent === null ? null : { ...input.coordinate, thread: input.parent }, depth: input.depth, placement: input.placement }, input.initialState), true),
+          report: (result, generation) => rpc.call(this.env.ACTORS, result.allocation.coordinate.instance, "completeRegistration", stub => stub.completeRegistration(result, generation), true),
+        })))
+      }
+      return this.registrationStore
+    }
+    async provisionAllocation(input: ThreadAllocation, generation: number): Promise<void> {
+      await this.identityReady
+      const allocation = Schema.decodeSync(Allocation)(input)
+      if (allocation.coordinate.actor !== options.actor.actorName || (this.ctx.id.name !== undefined && this.ctx.id.name !== registrationObjectName(allocation.coordinate)) || !Number.isSafeInteger(generation) || generation < 0) throw new RuntimeError("Registration address mismatch")
+      if (this.instance !== undefined) throw new RuntimeError("Directory cannot become a registration object")
+      if (this.registration && !isDeepStrictEqual(this.registration, allocation)) throw new RuntimeError("Registration allocation cannot change")
+      if (!this.registration) { await this.ctx.storage.put("tardie:actor:registration", allocation); await this.ctx.storage.sync(); this.registration = allocation }
+      const store = await Effect.runPromise(this.openRegistration())
+      await Effect.runPromise(this.registrationLock.withPermit(Effect.gen(function* () {
+        const current = store.getState().view
+        if (current && generation < current.generation) return yield* Effect.fail(new RuntimeError("Registration generation cannot decrease"))
+        if (!current || generation > current.generation) yield* store.send([{ type: "ThreadRequested", allocation, generation }])
+      })))
+      await Effect.runPromise(store.resume.pipe(Effect.andThen(store.wait)))
+    }
+    async completeRegistration(input: RegistrationResult, generation: number): Promise<void> {
+      const result = Schema.decodeSync(RegistrationResult)(input)
+      await this.init(result.allocation.coordinate.instance)
+      await Effect.runPromise(this.supervisor(result.allocation.coordinate.instance).complete(result, generation))
     }
     async allocate(request: ThreadRequest): Promise<ThreadCoordinate> {
       await this.init(request.instance)
-      const coordinate = await Effect.runPromise(this.supervisor(request.instance).allocate(request))
-      await this.lookup(coordinate)
-      return coordinate
+      return Effect.runPromise(this.run(this.supervisor(request.instance).allocate(request)))
     }
     async lookup(input: ThreadCoordinate): Promise<ThreadCoordinate | undefined> {
       const coordinate = validateCoordinate(input)
       if (coordinate.actor !== options.actor.actorName) throw new RuntimeError("Actor definition differs from thread coordinate")
       await this.init(coordinate.instance)
-      const directory = this.supervisor(coordinate.instance)
-      const found = await Effect.runPromise(directory.lookup(coordinate))
-      if (found) {
-        const store = await Effect.runPromise(directory.store(coordinate.instance))
-        const entry = store.threads.get().find(entry => entry.coordinate.thread === coordinate.thread)
-        if (entry?.placement !== "independent") throw new RuntimeError("Stored colocated threads require migration before independent routing")
-      }
-      return found
+      return Effect.runPromise(this.run(this.supervisor(coordinate.instance).lookup(coordinate)))
     }
     private deliver = (message: MessageDelivery) => createInvocation({
       supervisor: {
@@ -211,10 +252,12 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       }
       return methodHttp(host, http, context)(request)
     }
-    async alarm() { await this.identityReady; if (this.instance !== undefined) { this.supervisor(this.instance); await Effect.runPromise(this.watchdog.restore.pipe(Effect.andThen(this.scheduler.alarm))) } }
+    async alarm() { await this.identityReady; if (this.registration || this.instance !== undefined) { if (!this.registration) this.supervisor(this.instance!); else await Effect.runPromise(this.openRegistration()); await Effect.runPromise(this.watchdog.restore.pipe(Effect.andThen(this.scheduler.alarm))) } }
     async dispose() { return this.ctx.blockConcurrencyWhile(async () => {
       for (const fiber of this.recovering) await Effect.runPromise(Fiber.interrupt(fiber))
       await Effect.runPromise(Scope.close(this.scope, Exit.succeed(undefined)))
+      if (this.registrationStore) await Effect.runPromise(this.registrationStore.pipe(Effect.flatMap(store => store.close)))
+      this.registrationStore = undefined
       if (this.directory) await Effect.runPromise(this.directory.close)
       this.directory = undefined
       if (this.journal) await Effect.runPromise(this.journal.close)
