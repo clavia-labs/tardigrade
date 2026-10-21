@@ -50,7 +50,9 @@ export function indexedDirectory(options: {
       sql("INSERT INTO actor_directory(thread,name,parent,allocation,status,generation,origin) VALUES(?,?,?,?,'requested',0,?) ON CONFLICT(thread) DO UPDATE SET status='requested',reason=NULL,origin=excluded.origin", next.coordinate.thread, next.name, next.parent ?? "", JSON.stringify(next), origin)
     } else {
       const previous = row(event.coordinate.thread)
-      if (!previous || previous.status !== "requested" || event.coordinate.actor !== actor || event.coordinate.instance !== instance) throw new RuntimeError("Unknown thread registration")
+      if (!previous || previous.status !== "requested" || event.coordinate.actor !== actor || event.coordinate.instance !== instance) {
+        throw new RuntimeError(`Unknown thread registration at journal position ${origin}: ${event.type}; projected status=${previous?.status ?? "missing"}; actor matches=${event.coordinate.actor === actor}; instance matches=${event.coordinate.instance === instance}`)
+      }
       sql("UPDATE actor_directory SET status=?,reason=? WHERE thread=?", event.type === "ThreadRegistered" ? "registered" : "failed", event.type === "ThreadFailed" ? event.reason : null, event.coordinate.thread)
     }
   }

@@ -12,6 +12,27 @@ import type { LayoutActorDO, LayoutThreadDO } from "../fixtures/workerd/layout-f
 const bindings = env as unknown as { ACTORS: DurableObjectNamespace<InstanceType<typeof LayoutActorDO>>; THREADS: DurableObjectNamespace<LayoutThreadDO> }
 const coordinate = (instance: string, thread: string) => ({ actor: "layout", instance, thread })
 const threadStub = (instance: string, thread: string) => bindings.THREADS.getByName(cloudflareThreadName(coordinate(instance, thread)))
+test("a rejected legacy registration identifies its journal position without changing the journal", async () => {
+  const instance = "invalid-legacy-registration"
+  const actor = bindings.ACTORS.getByName(instance)
+  const key = JSON.stringify(["layout", instance, "supervisor"])
+  const record = JSON.stringify({ event: { type: "ThreadRegistered", coordinate: coordinate(instance, "orphan") }, recordedAt: 1 })
+  await runInDurableObject(actor, async (_object, state) => {
+    state.storage.sql.exec("CREATE TABLE experimental_events(actor TEXT NOT NULL,seq INTEGER NOT NULL,event TEXT NOT NULL,PRIMARY KEY(actor,seq)) WITHOUT ROWID")
+    state.storage.sql.exec("INSERT INTO experimental_events VALUES(?,?,?)", key, 0, record)
+  })
+  const failure = await runInDurableObject(actor, async object => {
+    try { await object.lookup(coordinate(instance, "orphan")) }
+    catch (error) { return error instanceof Error ? error.message : String(error) }
+    return undefined
+  })
+  expect(failure).toBe("Unknown thread registration at journal position 0: ThreadRegistered; projected status=missing; actor matches=true; instance matches=true")
+  await runInDurableObject(actor, async (_object, state) => {
+    expect(state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events WHERE actor=?", key).one().event).toBe(record)
+    expect(state.storage.sql.exec("SELECT * FROM actor_directory").toArray()).toHaveLength(0)
+    expect(state.storage.sql.exec<{ cursor: number }>("SELECT cursor FROM actor_directory_projection").one().cursor).toBe(-1)
+  })
+})
 test("configured receipt reads release settled runtimes and preserve pending work and durable results", async () => {
   const instance = "settled-release"
   const flow = threadFlow(request => SELF.fetch(request), instance)
