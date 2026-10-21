@@ -101,8 +101,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       : matchesRequest(stored, prepared.request)
   const persistedInputs = new Map((options.inputs ?? []).map(input => [effectKey(input.ref), prepareRequest(input.request)]))
   // acceptedInput hydrates durable payloads before using verified reconstruction for legacy digest-only requests (quint/checkpoint/inputLifecycle.qnt, verifiedExecution).
-  const acceptedInput = (record: StoredEffectRequested, proposed: ReturnType<typeof prepareRequest>, concluded: boolean) => {
-    const persisted = persistedInputs.get(effectKey(record.ref))
+  const acceptedInput = (record: StoredEffectRequested, proposed: ReturnType<typeof prepareRequest>, concluded: boolean, retained?: EffectRequest) => {
+    const persisted = persistedInputs.get(effectKey(record.ref)) ?? (retained && prepareRequest(retained))
     if (persisted) {
       if (!matchesPrepared(record.request, persisted)) throw new ActorReplayError({ stage: "effect_request", reason: "input_mismatch", position: record.ref.seq, cause: new Error(`Pending input differs from accepted request: ${effectKey(record.ref)}`) })
       return persisted.request
@@ -157,7 +157,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly documentReferences: () => readonly { readonly name: string; readonly reference: string }[]
     readonly checkpoint: () => EffectCheckpoint | undefined
   }
-  const createEngine = (history: ReadonlyLog<Recorded<Event>>, seed?: EffectCheckpoint) => {
+  const createEngine = (history: ReadonlyLog<Recorded<Event>>, seed?: EffectCheckpoint, inputs: readonly PendingEffectInput[] = []) => {
+    const retainedInputs = new Map(inputs.map(input => [effectKey(input.ref), input.request]))
     const offset = seed?.position ?? 0
     const source = createRecordSource<Event>()
     const bindings = atom(IndexView.empty<object, EffectRef>())
@@ -451,7 +452,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const key = effectKey(ref)
           const settlement = settlementOf(key)
           const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !hasPromise(key)
-          if (!cleanupSucceeded(cleanupOutcomeOf(key)) && (!settlement || deferred || hasCancellation(key))) loadedInputs.set(key, acceptedInput(recorded, prepared, concluded.has(key)))
+          if (!cleanupSucceeded(cleanupOutcomeOf(key)) && (!settlement || deferred || hasCancellation(key))) loadedInputs.set(key, acceptedInput(recorded, prepared, concluded.has(key), retainedInputs.get(key)))
           if (!assigned) bind(proposal, ref)
           return []
         }
@@ -514,7 +515,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const offered = candidates[0]
           const offeredPrepared = offered ? preparedRequests.get(offered.request) : undefined
           if (!offered) throw reconstructionError("Effect request differs from its proposal", event.ref.seq)
-          const input = acceptedInput(event, offeredPrepared ?? prepareRequest(offered.request), concluded.has(key))
+          const input = acceptedInput(event, offeredPrepared ?? prepareRequest(offered.request), concluded.has(key), retainedInputs.get(key))
           const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
           rememberOrigin(event)
@@ -658,6 +659,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           request: inputOf(key), execute: proposal.execute, handle: result.handle, deadlineAt: result.deadlineAt }]
       }),
       pending: () => requestEntries().filter(([key]) => !hasSettlement(key) && !hasCancellation(key) && (!defect || requestOf(key)!.ref.atom === "host.message.replies")).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
+      inputs: () => [...loadedInputs].map(([key, request]) => ({ ref: operations.get(key)!.ref, request })),
       effect,
       effectAt,
       retry,
@@ -670,12 +672,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   }
   type Engine = ReturnType<typeof createEngine>
   const engines = new WeakMap<Snapshot, Engine>()
+  // snapshotInputs keeps accepted pending inputs available when historical projections reopen their engine (platform/test/workerd/agent-content.workers.ts).
+  const snapshotInputs = new WeakMap<Snapshot, readonly PendingEffectInput[]>()
   // engineOf reconstructs historical or discarded preparation state; current snapshots reuse their registry.
   const engineOf = (snapshot: Snapshot): Engine => {
     const current = engines.get(snapshot)
     if (!current) throw new Error("Snapshot belongs to another event log")
     if (!current.disposed && current.events.length === snapshot.events.length) return current
-    const restored = createEngine(snapshot.records, snapshot.seed)
+    const restored = createEngine(snapshot.records, snapshot.seed, snapshotInputs.get(snapshot))
     restored.restoreBindings(snapshot.bindings)
     engines.set(snapshot, restored)
     return restored
@@ -716,6 +720,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       checkpoint: () => engineOf(snapshot).checkpoint(),
     })
     engines.set(snapshot, engine)
+    snapshotInputs.set(snapshot, engine.inputs())
     return snapshot
   }
   const replay = (history: ReadonlyLog<Recorded<Event>>): Snapshot => {
