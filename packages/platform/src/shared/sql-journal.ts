@@ -1,4 +1,4 @@
-import { ThreadCreated, ThreadUpdated, CoreEvent, EffectRequested, InvocationIdentity, createInvocationLookup, hasCoreEventType } from "@clavia/tardigrade-core"
+import { ThreadCreated, ThreadUpdated, CoreEvent, EffectRequested, EffectRef, InvocationIdentity, createInvocationLookup, hasCoreEventType } from "@clavia/tardigrade-core"
 import { Effect, ManagedRuntime, Schema, Semaphore, Exit, Cause, Fiber, type Layer } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage, PendingEffectInput, effectKey, type EffectInputChanges } from "@clavia/tardigrade-core"
@@ -173,7 +173,50 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     })
     yield* options.commit ? journalCall(() => options.commit!(() => { runSynchronous(work); return undefined }, events, expectedLength + events.length)) : transaction(sql, work)
   })
+  const readPosition = Effect.gen(function* () {
+    const sql = yield* client
+    const rows = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
+    const position = rows.length === 0 ? 0 : rows[0]!.seq + 1
+    if (!Number.isSafeInteger(position) || position < 0) return yield* Effect.fail(new RuntimeError("Invalid journal position"))
+    return position
+  })
+  const readRange = (from: number, to: number) => Effect.gen(function* () {
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from) return yield* Effect.fail(new RuntimeError("Invalid journal range"))
+    const sql = yield* client
+    const position = yield* readPosition
+    if (to > position) return yield* Effect.fail(new RuntimeError("Journal range is unavailable"))
+    const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND seq >= ${from} AND seq < ${to} ORDER BY seq`
+    if (rows.length !== to - from) return yield* Effect.fail(new RuntimeError("Journal range is unavailable"))
+    return yield* Effect.forEach(rows, (row, index) => {
+      if (row.seq !== from + index || typeof row.event !== "string") return Effect.fail(new RuntimeError("Invalid journal sequence"))
+      return readSqlJournalRecord<Event>(sql, options.actor, row)
+    })
+  })
   const access = {
+    readPosition, readRange,
+    readOperation: (ref: EffectRef, position: number) => Effect.gen(function* () {
+      const reference = yield* Schema.decodeEffect(EffectRef, { onExcessProperty: "error" })(ref).pipe(Effect.mapError(RuntimeError.from))
+      if (!Number.isSafeInteger(position) || position < 0) return yield* Effect.fail(new RuntimeError("Invalid journal position"))
+      const sql = yield* client
+      const length = yield* readPosition
+      if (position > length) return yield* Effect.fail(new RuntimeError("Operation position exceeds journal length"))
+      const rows = yield* sql<{ seq: number; event: string | null }>`SELECT i.seq, e.event FROM experimental_invocation_events i LEFT JOIN experimental_events e ON e.actor = i.actor AND e.seq = i.seq WHERE i.actor = ${options.actor} AND i.atom = ${reference.atom} AND i.act = ${reference.act} AND i.ref_seq = ${reference.seq} AND i.seq < ${position} ORDER BY i.seq`
+      if (rows.length === 0) {
+        const accepted = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND seq = ${reference.seq} AND seq < ${position}`
+        if (accepted[0]) {
+          const record = yield* readSqlJournalRecord<Event>(sql, options.actor, accepted[0])
+          if (Schema.is(EffectRequested)(record.event) && effectKey(record.event.ref) === effectKey(reference)) return yield* Effect.fail(new RuntimeError("Operation index is missing journal records"))
+        }
+        return []
+      }
+      return yield* Effect.forEach(rows, (row, index) => Effect.gen(function* () {
+        if (row.event === null) return yield* Effect.fail(new RuntimeError("Operation index is missing journal records"))
+        const record = yield* readSqlJournalRecord<Event>(sql, options.actor, { seq: row.seq, event: row.event })
+        const event = yield* Schema.decodeUnknownEffect(Schema.toType(CoreEvent))(record.event).pipe(Effect.mapError(RuntimeError.from))
+        if (!("ref" in event) || effectKey(event.ref) !== effectKey(reference) || (index === 0 && (row.seq !== reference.seq || event.type !== "EffectRequested")) || (index > 0 && event.type === "EffectRequested")) return yield* Effect.fail(new RuntimeError("Operation index differs from its acceptance"))
+        return record
+      }))
+    }),
     lookupInvocation: (identity: InvocationIdentity) => Effect.gen(function* () {
       const sql = yield* client
       const rows = yield* sql<{ seq: number | null; event: string | null }>`SELECT e.seq, e.event FROM experimental_invocation_requests r LEFT JOIN experimental_invocation_events i ON i.actor = r.actor AND i.atom = r.atom AND i.act = r.act AND i.ref_seq = r.seq LEFT JOIN experimental_events e ON e.actor = i.actor AND e.seq = i.seq WHERE r.actor = ${options.actor} AND r.atom = ${identity.atom} AND r.act = ${identity.act} AND r.origin = ${identity.origin ?? -1} ORDER BY e.seq`
@@ -213,36 +256,9 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
         return { position, pendingEffects, ...(lifecycle.version === undefined ? {} : { version: lifecycle.version }) }
       }))
     }),
-    read: Effect.gen(function* () {
-      const sql = yield* client
-      const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq`
-      return yield* Effect.forEach(rows, (row, index) => {
-        if (row.seq !== index || typeof row.event !== "string") return Effect.fail(new RuntimeError("Invalid journal sequence"))
-        return readSqlJournalRecord<Event>(sql, options.actor, row)
-      })
-    }),
-    readBefore: (position: number) => Effect.gen(function* () {
-      if (!Number.isSafeInteger(position) || position < 0) return yield* Effect.fail(new RuntimeError("Invalid journal position"))
-      const sql = yield* client
-      const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND seq < ${position} ORDER BY seq`
-      if (rows.length !== position) return yield* Effect.fail(new RuntimeError("Checkpoint prefix is unavailable"))
-      return yield* Effect.forEach(rows, (row, index) => {
-        if (row.seq !== index || typeof row.event !== "string") return Effect.fail(new RuntimeError("Invalid journal sequence"))
-        return readSqlJournalRecord<Event>(sql, options.actor, row)
-      })
-    }),
-    readAfter: (position: number) => Effect.gen(function* () {
-      if (!Number.isSafeInteger(position) || position < 0) return yield* Effect.fail(new RuntimeError("Invalid journal position"))
-      const sql = yield* client
-      const last = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
-      const length = last.length === 0 ? 0 : last[0]!.seq + 1
-      if (!Number.isSafeInteger(length) || length < 0 || position > length) return yield* Effect.fail(new RuntimeError("Checkpoint position exceeds journal length"))
-      const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND seq >= ${position} ORDER BY seq`
-      return yield* Effect.forEach(rows, (row, index) => {
-        if (row.seq !== position + index || typeof row.event !== "string") return Effect.fail(new RuntimeError("Invalid journal sequence"))
-        return readSqlJournalRecord<Event>(sql, options.actor, row)
-      })
-    }),
+    read: readPosition.pipe(Effect.flatMap(position => readRange(0, position))),
+    readBefore: (position: number) => readRange(0, position),
+    readAfter: (position: number) => readPosition.pipe(Effect.flatMap(head => readRange(position, head))),
     readInputs: Effect.gen(function* () {
       const sql = yield* client
       return yield* transaction(sql, Effect.gen(function* () {
@@ -277,6 +293,9 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
   return {
     scheduler,
     lookupInvocation: createInvocationLookup(identity => runSynchronous(access.lookupInvocation(identity))),
+    readPosition: () => runSynchronous(access.readPosition),
+    readRange: (from: number, to: number) => runSynchronous(access.readRange(from, to)),
+    readOperation: (ref: EffectRef, position: number) => runSynchronous(access.readOperation(ref, position)),
     read: () => runSynchronous(access.read),
     readAfter: (position: number) => runSynchronous(access.readAfter(position)),
     readBefore: (position: number) => runSynchronous(access.readBefore(position)),

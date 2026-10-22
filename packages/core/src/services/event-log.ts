@@ -4,29 +4,35 @@ import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom } from "../atoms/atom"
 import type { ObservedRecord, Recorded } from "./journal"
 import { EffectDied, type EffectRef } from "../runtime/effects"
-import type { StateSeed } from "../initialise"
+import type { AtomState, StatefulAtom, StateSeed } from "../initialise"
 import type { AcceptedOperation } from "../runtime/operation"
 import type { PromiseSettled } from "../runtime/events"
 import type { EffectCheckpoint } from "../runtime/replay"
 
+// AtomReplay supplies missing observations up to a fixed consumed position (platform/test/properties/runtime/atom-checkpoint.ts).
+export interface AtomReplay {
+  readonly position: number
+  readonly seed: StateSeed | undefined
+  // states carries atom values and cursors by codec identity across registry forks (platform/test/properties/runtime/snapshot-lookups.ts).
+  readonly states?: ReadonlyMap<StatefulAtom[typeof AtomState], { readonly position: number; readonly value: unknown }>
+  readonly read: (from: number) => ReadonlyLog<ObservedRecord<unknown>>
+}
+
 export class EventLog extends Context.Service<EventLog, {
+  readonly replay: Atom<AtomReplay>
   // events extends an immutable prefix; another history requires another source atom.
   readonly events: Atom<ReadonlyLog<unknown>>
   readonly records?: Atom<ReadonlyLog<ObservedRecord<unknown>>>
-  // readPrefix supplies the journal before position for durable atoms omitted from the seed (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent).
-  readonly readPrefix?: () => ReadonlyLog<ObservedRecord<unknown>>
-  // position is the absolute log position immediately before events[0].
-  readonly position?: number | (() => number)
-  readonly initialState?: StateSeed | (() => StateSeed | undefined)
   readonly bindings?: Atom<ReadonlyIndex<object, EffectRef>>
   readonly effect?: (ref: EffectRef) => AcceptedOperation | undefined
+  readonly operations?: () => Iterable<AcceptedOperation>
   readonly defect?: () => EffectDied | undefined
   readonly promise?: (ref: EffectRef) => PromiseSettled | undefined
 }>()("experimental/EventLog") {}
 
 // ReplayContext supplies committed history during actor setup; runtime/execution.ts caches readFull for the loading attempt.
 export class ReplayContext extends Context.Service<ReplayContext, {
-  readonly records: readonly Recorded<unknown>[]
+  readonly records: ReadonlyLog<Recorded<unknown>>
   readonly checkpoint?: EffectCheckpoint
   readonly readFull: Effect.Effect<readonly Recorded<unknown>[], Error>
 }>()("experimental/ReplayContext") {}

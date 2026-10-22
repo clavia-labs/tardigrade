@@ -84,6 +84,13 @@ export async function checkpointStorage(fixture: {
     await verify(second, [record("first"), record("second")])
     for (let position = 0; position <= 2; position++) {
       if (!isDeepStrictEqual(journal.readBefore(position), [record("first"), record("second")].slice(0, position))) throw new Error("Journal prefix read differed from chunked history")
+      for (let to = position; to <= 2; to++) if (!isDeepStrictEqual(journal.readRange(position, to), [record("first"), record("second")].slice(position, to))) throw new Error("Journal range read differed from chunked history")
+    }
+    if (journal.readPosition() !== 2) throw new Error("Journal head differs from its stored prefix")
+    for (const [from, to] of [[-1, 0], [0, -1], [1, 0], [0, 3], [3, 3], [0.5, 1], [0, 0.5], [Number.NaN, 1], [0, Number.POSITIVE_INFINITY]]) {
+      let rejected = false
+      try { journal.readRange(from!, to!) } catch { rejected = true }
+      if (!rejected) throw new Error("Journal range accepted an unavailable boundary")
     }
     for (const position of [-1, 0.5, 3, Number.NaN, Number.POSITIVE_INFINITY]) {
       let rejected = false
@@ -132,6 +139,10 @@ export async function checkpointStorage(fixture: {
     const requests: Recorded<Event>[] = invocations.map(({ identity, ref }) => ({ event: {
       type: "EffectRequested", ref, ...(identity.origin === undefined ? {} : { origin: identity.origin }), request: { act: identity.act, input: { _tag: "InlineInput", value: "same input" } },
     } }))
+    const operationRecords = (ref: EffectRef, position: number) => journal.read().slice(0, position).filter(({ event }) => "ref" in event && isDeepStrictEqual(event.ref, ref))
+    const verifyOperation = (ref: EffectRef, position: number) => {
+      if (!isDeepStrictEqual(journal.readOperation(ref, position), operationRecords(ref, position))) throw new Error("Indexed operation read differs from its journal prefix")
+    }
     await Effect.runPromise(journalCommit(journal, journal.appendWithCheckpoint.bind(journal, 4, requests, await checkpoint(8, "accepted"))))
     for (let index = 0; index < invocations.length; index++) lookup(index, "pending")
     const unknown = journal.lookupInvocation({ atom: "model", act: "lookup", origin: 1 })
@@ -159,13 +170,31 @@ export async function checkpointStorage(fixture: {
     await Effect.runPromise(journal.close)
     journal = fixture.open(31)
     for (let index = 0; index < invocations.length; index++) lookup(index, "settled")
+    for (const { ref } of invocations) for (const position of [0, ref.seq, ref.seq + 1, 8, 12, 14]) verifyOperation(ref, position)
+    verifyOperation({ ...invocations[0]!.ref, act: "missing" }, 14)
+    for (const position of [-1, 0.5, 15, Number.NaN, Number.POSITIVE_INFINITY]) {
+      let rejected = false
+      try { journal.readOperation(invocations[0]!.ref, position) } catch { rejected = true }
+      if (!rejected) throw new Error("Operation read accepted an unavailable boundary")
+    }
     await fixture.execute("DELETE FROM experimental_invocation_events WHERE ref_seq = 4")
     await rejects(journalCall(() => journal.lookupInvocation(invocations[0]!.identity)), "missing journal records")
+    await rejects(journalCall(() => journal.readOperation(invocations[0]!.ref, 14)), "missing journal records")
     await Effect.runPromise(journal.close)
     for (const table of ["experimental_invocation_events", "experimental_invocation_requests", "experimental_invocation_index"]) await fixture.execute(`DROP TABLE ${table}`)
     journal = fixture.open(31)
     for (let index = 0; index < invocations.length; index++) lookup(index, "settled")
+    for (const { ref } of invocations) verifyOperation(ref, 14)
     if (journal.read().length !== 14) throw new Error("Invocation backfill changed journal history")
+    const [chunk] = await fixture.execute("SELECT hex(payload) AS payload FROM experimental_event_chunks WHERE seq = 0 AND ordinal = 0")
+    if (typeof chunk?.payload !== "string" || !/^[0-9A-F]+$/.test(chunk.payload)) throw new Error("Missing unrelated journal chunk")
+    const expectedOperation = journal.readOperation(invocations[0]!.ref, 14)
+    const expectedRange = journal.readRange(4, 5)
+    try {
+      await fixture.execute("UPDATE experimental_event_chunks SET payload = zeroblob(length(payload)) WHERE seq = 0 AND ordinal = 0")
+      if (!isDeepStrictEqual(journal.readOperation(invocations[0]!.ref, 14), expectedOperation)) throw new Error("Operation lookup read unrelated journal history")
+      if (!isDeepStrictEqual(journal.readRange(4, 5), expectedRange)) throw new Error("Journal range read unrelated chunked history")
+    } finally { await fixture.execute(`UPDATE experimental_event_chunks SET payload = X'${chunk.payload}' WHERE seq = 0 AND ordinal = 0`) }
     const failedIdentity = { atom: "model", act: "lookup", origin: 2 }
     const failedRef = { seq: 14, atom: "model", act: "lookup" }
     await Effect.runPromise(journalCommit(journal, () => journal.append(14, [
@@ -175,6 +204,9 @@ export async function checkpointStorage(fixture: {
     if (!isDeepStrictEqual(journal.lookupInvocation(failedIdentity), { status: "settled", ref: failedRef })) throw new Error("Rejected invocation remained pending")
     await Effect.runPromise(journal.close)
     await rejects(journalCall(() => journal.lookupInvocation(invocations[0]!.identity)), "Journal is closed")
+    await rejects(journalCall(() => journal.readOperation(invocations[0]!.ref, 16)), "Journal is closed")
+    await rejects(journalCall(() => journal.readPosition()), "Journal is closed")
+    await rejects(journalCall(() => journal.readRange(0, 1)), "Journal is closed")
   } finally { await Effect.runPromise(journal.close) }
 }
 

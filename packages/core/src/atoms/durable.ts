@@ -1,4 +1,3 @@
-import type { ReadonlyLog } from "../runtime/log-view"
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom } from "./atom"
@@ -52,51 +51,51 @@ export function durableAtom<State, Event>(options: {
   const initial = structuredClone(options.initial)
   validate(initial)
   check(initial)
-  type Frame = { readonly source: Atom<ReadonlyLog<unknown>>; readonly position: number; readonly state: State }
+  const codec = { name: options.name, decode: restore, encode: (value: unknown) => encode(value as State) }
+  type Frame = { readonly source: Atom<unknown>; readonly position: number; readonly state: State }
   const reduced = NativeAtom.readable((get): Frame => {
     const context = get(eventLogContext)
     if (!context) throw new Error("Missing EventLog service")
     const service = Context.get(context, EventLog)
-    const source = service.events
-    const configuredPosition = service.position
-    const offset = (typeof configuredPosition === "function" ? configuredPosition() : configuredPosition) ?? 0
-    const configuredSeed = service.initialState
-    const seed = typeof configuredSeed === "function" ? configuredSeed() : configuredSeed
-    const events = get(source)
-    const records = service.records ? get(service.records) : undefined
+    const source = service.replay
+    const replay = get(source)
+    const { position, seed } = replay
     const previous = Option.getOrUndefined(get.self<Frame>())
     const sameSource = previous !== undefined && previous.source === source
-    if (sameSource && previous.position > offset + events.length) throw new Error("EventLog source must be append-only")
-    if (seed && (seed.position < offset || seed.position > offset + events.length)) throw new Error(`Atom seed position is outside the event source: ${options.name}`)
-    const continued = sameSource && previous.position >= (seed?.position ?? offset)
+    if (sameSource && previous.position > position) throw new Error("EventLog source must be append-only")
+    if (seed && (seed.position < 0 || seed.position > position)) throw new Error(`Atom seed position is outside the event source: ${options.name}`)
+    const continued = sameSource && previous.position >= (seed?.position ?? 0)
+    const inherited = replay.states?.get(codec)
+    const retained = inherited && inherited.position >= (seed?.position ?? 0) ? inherited : undefined
     const fold = (state: State, event: unknown, metadata: RecordMetadata, position: number): State => {
       if (!accepts(event)) return state
       const next = options.reduce(state, event, metadata, position)
       return Object.is(next, state) ? next : check(next)
     }
-    let state = continued ? previous.state : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : check(structuredClone(initial))
-    if (!continued && !seed?.state.has(options.name) && offset > 0) {
-      const prefix = service.readPrefix?.()
-      if (!prefix || prefix.length !== offset) throw new Error(`Durable atom requires its checkpoint prefix: ${options.name}`)
-      const initialSeed = initialStateSeed(prefix)
-      if (initialSeed?.state.has(options.name)) state = restore(initialSeed.state.get(options.name))
-      for (let index = initialSeed?.position ?? 0; index < offset; index++) {
-        const record = prefix.at(index)!
-        state = fold(state, recordEvent(record), recordMetadata(record), index)
+    let state = continued ? previous.state : retained ? check(retained.value as State) : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : check(structuredClone(initial))
+    let start = continued ? previous.position : retained ? retained.position : seed?.state.has(options.name) ? seed.position : 0
+    if (start < position) {
+      const records = replay.read(start)
+      if (records.length !== position - start) throw new Error(`Durable atom replay range is unavailable: ${options.name}`)
+      if (!continued && !retained && start === 0) {
+        const initialSeed = initialStateSeed(records)
+        if (initialSeed?.state.has(options.name)) state = restore(initialSeed.state.get(options.name))
+        start = initialSeed?.position ?? 0
+      }
+      const from = position - records.length
+      let cursor = from
+      for (const record of records) {
+        if (cursor >= start) state = fold(state, recordEvent(record), recordMetadata(record), cursor)
+        cursor++
       }
     }
-    const start = (continued ? previous.position : seed?.position ?? offset) - offset
-    for (let index = Math.max(0, start); index < events.length; index++) {
-      const record = records?.at(index)
-      state = fold(state, events.at(index), recordMetadata(record), offset + index)
-    }
-    return { source, position: offset + events.length, state }
+    return { source, position, state }
   }).pipe(NativeAtom.keepAlive)
   const output = atom(get => get(reduced).state)
   return Object.assign(output, {
     name: options.name,
     schema: options.schema,
     input: options.input,
-    [AtomState]: { name: options.name, decode: restore, encode: (value: unknown) => encode(value as State) },
+    [AtomState]: codec,
   })
 }

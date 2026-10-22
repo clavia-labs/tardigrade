@@ -31,6 +31,12 @@ export class LogView<T> implements ReadonlyLog<T> {
     return new LogView(items, items.length)
   }
 
+  // take shares the first length items without changing this view (properties/log-view.test.ts).
+  take(length: number): LogView<T> {
+    if (!Number.isSafeInteger(length) || length < 0 || length > this.length) throw new Error("Invalid log prefix length")
+    return length === this.length ? this : new LogView(this.#items, length)
+  }
+
   // position resolves a relative index against the view's length, clamped to [0, length].
   private position(index: number): number {
     return index < 0 ? Math.max(0, this.length + index) : Math.min(index, this.length)
@@ -140,5 +146,70 @@ export class IndexView<K, V> implements ReadonlyIndex<K, V> {
 
   [Symbol.for("nodejs.util.inspect.custom")](): Map<K, V> {
     return new Map(this)
+  }
+}
+
+export const DEFAULT_JOURNAL_READ_BATCH_SIZE = 128
+
+// RangeLog reads a fixed journal interval on demand without caching its records (platform/test/properties/runtime/snapshot-lookups.ts).
+export class RangeLog<T> implements ReadonlyLog<T> {
+  constructor(readonly length: number, private readonly read: (from: number, to: number) => readonly T[], readonly batchSize = DEFAULT_JOURNAL_READ_BATCH_SIZE) {
+    if (!Number.isSafeInteger(length) || length < 0) throw new Error("Invalid journal view length")
+    if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw new Error("Journal read batchSize must be a positive safe integer")
+  }
+
+  at(index: number): T | undefined {
+    const position = index < 0 ? this.length + index : index
+    return Number.isSafeInteger(position) && position >= 0 && position < this.length ? this.range(position, position + 1)[0] : undefined
+  }
+
+  slice(start = 0, end = this.length): T[] {
+    const bound = (index: number) => {
+      const position = Math.trunc(index) || 0
+      return position < 0 ? Math.max(0, this.length + position) : Math.min(position, this.length)
+    }
+    const from = bound(start)
+    const to = Math.max(from, bound(end))
+    return from === to ? [] : [...this.range(from, to)]
+  }
+
+  private range(from: number, to: number): readonly T[] {
+    const records = this.read(from, to)
+    if (records.length !== to - from) throw new Error("Journal view range is unavailable")
+    return records
+  }
+
+  findIndex(predicate: (value: T, index: number) => unknown): number {
+    let index = 0
+    for (const value of this) { if (predicate(value, index)) return index; index++ }
+    return -1
+  }
+
+  find<S extends T>(predicate: (value: T, index: number) => value is S): S | undefined
+  find(predicate: (value: T, index: number) => unknown): T | undefined
+  find(predicate: (value: T, index: number) => unknown): T | undefined {
+    let index = 0
+    for (const value of this) { if (predicate(value, index++)) return value }
+    return undefined
+  }
+
+  some(predicate: (value: T, index: number) => unknown): boolean { return this.findIndex(predicate) !== -1 }
+
+  filter<S extends T>(predicate: (value: T, index: number) => value is S): S[]
+  filter(predicate: (value: T, index: number) => unknown): T[]
+  filter(predicate: (value: T, index: number) => unknown): T[] {
+    const values: T[] = []
+    let index = 0
+    for (const value of this) if (predicate(value, index++)) values.push(value)
+    return values
+  }
+
+  toJSON(): T[] { return this.slice() }
+
+  *[Symbol.iterator](): Iterator<T> {
+    for (let from = 0; from < this.length; from += this.batchSize) {
+      const to = Math.min(this.length, from + this.batchSize)
+      yield* this.range(from, to)
+    }
   }
 }

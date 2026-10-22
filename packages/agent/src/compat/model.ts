@@ -25,8 +25,7 @@ export const modelSelection = Effect.gen(function* () {
     const context = get(eventLogContext)
     if (!context) throw new RuntimeError("Missing EventLog service")
     const service = Context.get(context, EventLog)
-    const configured = service.position
-    const position = ((typeof configured === "function" ? configured() : configured) ?? 0) + get(service.events).length
+    const position = get(service.replay).position
     if (position >= plan.end) return undefined
     let low = 0
     let high = plan.calls.length

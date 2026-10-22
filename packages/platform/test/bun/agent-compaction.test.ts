@@ -1,3 +1,4 @@
+import { atomReplay } from "../../../core/src/runtime/atom-replay"
 import { expect, test } from "bun:test"
 import { Context, Effect } from "effect"
 import * as fc from "fast-check"
@@ -12,7 +13,8 @@ const file = (mediaType: string) => ({ type: "file" as const, mediaType, object:
 
 
 function project(messages: typeof Conversation.Type, options: CompactionOptions = {}) {
-  const store = createStore(Context.make(EventLog, { events: atom<readonly unknown[]>([{ type: "ModelConfigured", ...selection }]) }))
+  const events = [{ type: "ModelConfigured", ...selection }]
+  const store = createStore(Context.make(EventLog, { events: atom<readonly unknown[]>(events), replay: atom(atomReplay(events.map(event => ({ event })))) }))
   try {
     const node = Effect.runSync(compact(atom(messages), options).pipe(Effect.provideService(ModelInfo, selection)))
     const output = store.get(node)

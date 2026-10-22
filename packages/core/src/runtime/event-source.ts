@@ -25,9 +25,11 @@ export function createEventSource<Event = unknown>() {
 export const observeRecord = <Event>(record: Recorded<Event>): ObservedRecord<Event> => Object.freeze({ ...record, event: Schema.is(EffectRequested)(record.event) ? Object.freeze(observeRequest(record.event)) : record.event })
 
 // createRecordSource appends stored records and payload-free atom observations atomically (inputRepresentation).
-export function createRecordSource<Event>() {
-  const source = atom<{ readonly events: LogView<RuntimeEvent<Event>>; readonly records: LogView<Recorded<Event>>; readonly observed: LogView<ObservedRecord<Event>>; readonly observedEvents: LogView<Event | ObservedRecord<Event>["event"]> }>({ events: LogView.empty, records: LogView.empty, observed: LogView.empty, observedEvents: LogView.empty })
+export function createRecordSource<Event>(initial?: RecordSourceFrame<Event>) {
+  const source = atom<RecordSourceFrame<Event>>(initial ?? emptyRecordFrame<Event>())
   return {
+    clear: (store: Pick<ReturnType<typeof createStore>, "set">) => store.set(source, emptyRecordFrame<Event>()),
+    snapshot: (store: Pick<ReturnType<typeof createStore>, "get">) => store.get(source),
     events: atom(get => get(source).events).pipe(NativeAtom.withLabel("events")),
     records: atom(get => get(source).records).pipe(NativeAtom.withLabel("records")),
     observedRecords: atom(get => get(source).observed).pipe(NativeAtom.withLabel("observedRecords")),
@@ -44,4 +46,13 @@ export function createRecordSource<Event>() {
       })
     },
   }
+}
+
+export const emptyRecordFrame = <Event>(): RecordSourceFrame<Event> => ({ events: LogView.empty, records: LogView.empty, observed: LogView.empty, observedEvents: LogView.empty })
+
+export interface RecordSourceFrame<Event> {
+  readonly events: LogView<RuntimeEvent<Event>>
+  readonly records: LogView<Recorded<Event>>
+  readonly observed: LogView<ObservedRecord<Event>>
+  readonly observedEvents: LogView<Event | ObservedRecord<Event>["event"]>
 }

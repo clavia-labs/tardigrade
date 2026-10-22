@@ -1,10 +1,12 @@
 import { Schema } from "effect"
 import { EffectRef, EffectDied, EffectCancelled, CancellationOutcome, ExecutionResult, effectKey } from "./effects"
 import { CoreEvent, StoredEffectRequested, EffectSettled, PromiseSettled, RetryScheduled, type EffectAcceptance } from "./events"
+import { RecordMetadata } from "../services/journal"
 
 export const StoredOperation = Schema.Struct({
   ref: EffectRef,
   request: StoredEffectRequested,
+  recordedAt: RecordMetadata.fields.recordedAt,
   execution: Schema.Struct({
     outcome: Schema.optionalKey(Schema.Union([Schema.toType(EffectSettled), EffectDied])),
     deferred: Schema.optionalKey(Schema.toType(EffectSettled)),
@@ -25,6 +27,7 @@ export type StoredOperation = typeof StoredOperation.Type
 export interface AcceptedOperation<Request = EffectAcceptance> {
   readonly ref: EffectRef
   readonly request: Request
+  readonly recordedAt?: number
   readonly execution: StoredOperation["execution"]
   readonly cleanup?: StoredOperation["cleanup"]
 }
@@ -53,12 +56,12 @@ export function cleanupSubmission(operation: AcceptedOperation<unknown> | undefi
 }
 
 // recordedOperation reconstructs a reference from durable journal facts for late-delivery validation.
-export function recordedOperation(records: Iterable<{ readonly event: unknown }>, ref: EffectRef): StoredOperation | undefined {
+export function recordedOperation(records: Iterable<{ readonly event: unknown; readonly recordedAt?: number }>, ref: EffectRef): StoredOperation | undefined {
   let operation: StoredOperation | undefined
   const key = effectKey(ref)
-  for (const { event } of records) {
+  for (const { event, recordedAt } of records) {
     if (!Schema.is(CoreEvent)(event) || !("ref" in event) || effectKey(event.ref) !== key) continue
-    if (event.type === "EffectRequested") operation = { ref: event.ref, request: event, execution: {} }
+    if (event.type === "EffectRequested") operation = { ref: event.ref, request: event, ...(recordedAt === undefined ? {} : { recordedAt }), execution: {} }
     else if (operation) {
       if (event.type === "EffectSettled") operation = { ...operation, execution: { ...operation.execution, outcome: event } }
       else if (event.type === "EffectDied") {

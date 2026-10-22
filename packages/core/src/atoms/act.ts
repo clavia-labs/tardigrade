@@ -142,6 +142,13 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       if (!context) return []
       const service = Context.get(context, EventLog)
       const events = get(service.events)
+      if (service.operations) return [...service.operations()].flatMap(operation => {
+        if (operation.ref.act !== options.name || operation.cleanup || operation.execution.promise) return []
+        const settlement = operationSettlement(operation)
+        if (settlement?.outcome.status !== "fulfilled") return []
+        const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
+        return result.type === "promise" ? [{ ref: operation.ref, handle: result.handle }] : []
+      })
       return events.filter(Schema.is(EffectAcceptance)).filter(event => event.act === options.name).flatMap(event => {
         const key = effectKey(event.ref)
         const operation = service.effect?.(event.ref)

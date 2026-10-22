@@ -94,5 +94,10 @@ export function stateValidation() {
     const invalid = { items: [...value.items, { count: -1, label: "ok" }] }
     const expected = errorOf(() => Schema.decodeSync(stateSchema, STRICT)(invalid))
     if (errorOf(() => log.append(current, { type: "Added", count: -1 }).get(state)) !== expected || errorOf(() => state[AtomState].decode(invalid)) !== expected) throw new Error("Invalid state lost Effect's error")
+    if (current.get(state) !== value || current.position !== 1) throw new Error("Failed preparation replaced committed durable state")
+    const prepared = log.prepare(current, { type: "Added", count: 2 })
+    if (current.get(state) !== value || prepared.next.get(state).items.length !== 2) throw new Error("Preparation exposed candidate atom state through its base")
+    log.discard(prepared.next)
+    if (current.get(state) !== value) throw new Error("Discarding candidate state invalidated the committed atom")
   } finally { log.dispose() }
 }
