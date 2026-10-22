@@ -1,8 +1,6 @@
 import { Schema } from "effect"
-import { atom, ResolutionResult } from "@clavia/tardigrade-core"
-import { history } from "./activity"
-import { turnSource } from "../contracts/events"
-import { turnOutput } from "./durable/inference"
+import { ResolutionResult, isMessageReceived } from "@clavia/tardigrade-core"
+import { Event, turnSource, type TurnSettled } from "../contracts/events"
 
 export interface ChatMessage {
   readonly seq: number
@@ -11,28 +9,31 @@ export interface ChatMessage {
 }
 const ToolResult = Schema.Struct({ handle: Schema.Struct({ executor: Schema.String }), result: ResolutionResult })
 const Answer = Schema.Struct({ answer: Schema.String })
+const isEvent = Schema.is(Event)
 
-// messages projects assistant replies and non-user inbox messages for chat interfaces.
-export const messages = atom(get => {
-  const events = get(history)
-  return events.flatMap((event, seq): ChatMessage[] => {
-    if (event.type === "TurnSettled") return [{ seq, kind: event.outcome === "completed" ? "assistant" : "error", text: event.outcome === "completed" ? turnOutput(events, event) : event.reason }]
-    if (event.type === "ActorRequestReceived") return [{ seq, kind: "agent", text: `Request ${event.request.requestId} (${event.request.method}): ${JSON.stringify(event.request.input)}` }]
-    if (event.type === "ActorReplyReceived") return [{ seq, kind: "agent", text: `Request ${event.requestId}: ${JSON.stringify(event.result)}` }]
-    if (event.type !== "TurnRequested" || turnSource(event) === "user") return []
-    const source = turnSource(event)
-    const kind = source === "agent" ? "agent" : "tool"
-    const prefix = "Tool promise result (data): "
-    if (!event.text.startsWith(prefix)) return [{ seq, kind, text: event.text }]
-    try {
-      const value: unknown = JSON.parse(event.text.slice(prefix.length))
-      if (!Schema.is(ToolResult)(value)) return [{ seq, kind, text: event.text }]
-      const result = value.result
-      return [{
-        seq,
-        kind: value.handle.executor === "actor" ? "agent" : "tool",
-        text: result.status === "rejected" ? `Failed: ${result.reason}` : Schema.is(Answer)(result.value) ? result.value.answer : typeof result.value === "string" ? result.value : JSON.stringify(result.value),
-      }]
-    } catch { return [{ seq, kind, text: event.text }] }
-  })
-})
+// agentEvent returns the agent event a journal record carries, unwrapping inbound message bodies as durable atoms do; core records and replies return undefined.
+export function agentEvent(record: { readonly event: unknown; readonly message?: { readonly inReplyTo?: unknown } }): Event | undefined {
+  const event = isMessageReceived(record.event) && !record.message?.inReplyTo ? record.event.body : record.event
+  return isEvent(event) ? event : undefined
+}
+
+// chatMessage projects an assistant reply or non-user inbox message at a journal position; output resolves a completed turn's text.
+export function chatMessage(seq: number, event: Event, output: (settlement: TurnSettled) => string): ChatMessage | undefined {
+  if (event.type === "TurnSettled") return { seq, kind: event.outcome === "completed" ? "assistant" : "error", text: event.outcome === "completed" ? output(event) : event.reason }
+  if (event.type === "ActorRequestReceived") return { seq, kind: "agent", text: `Request ${event.request.requestId} (${event.request.method}): ${JSON.stringify(event.request.input)}` }
+  if (event.type === "ActorReplyReceived") return { seq, kind: "agent", text: `Request ${event.requestId}: ${JSON.stringify(event.result)}` }
+  if (event.type !== "TurnRequested" || turnSource(event) === "user") return undefined
+  const kind = turnSource(event) === "agent" ? "agent" : "tool"
+  const prefix = "Tool promise result (data): "
+  if (!event.text.startsWith(prefix)) return { seq, kind, text: event.text }
+  try {
+    const value: unknown = JSON.parse(event.text.slice(prefix.length))
+    if (!Schema.is(ToolResult)(value)) return { seq, kind, text: event.text }
+    const result = value.result
+    return {
+      seq,
+      kind: value.handle.executor === "actor" ? "agent" : "tool",
+      text: result.status === "rejected" ? `Failed: ${result.reason}` : Schema.is(Answer)(result.value) ? result.value.answer : typeof result.value === "string" ? result.value : JSON.stringify(result.value),
+    }
+  } catch { return { seq, kind, text: event.text } }
+}
