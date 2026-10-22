@@ -6,7 +6,7 @@ import { infer } from "@clavia/tardigrade-agent/atoms/infer"
 import { messages } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
 import { ModelInfo } from "@clavia/tardigrade-agent/actor/context"
 import { Event } from "@clavia/tardigrade-agent/contracts/events"
-import { modelActs, modelInfo, modelServices } from "@clavia/tardigrade-agent/services/model"
+import { modelActs, modelInfo, modelServices, type ModelServiceOptions } from "@clavia/tardigrade-agent/services/model"
 import { toolActs } from "@clavia/tardigrade-agent/services/tools"
 import { AskPermission } from "@clavia/tardigrade-agent/contracts/acts"
 import { ModelLock, modelLockOf, modelLockService } from "@clavia/tardigrade-model/lock"
@@ -57,6 +57,8 @@ const lock = modelLockService(modelLockOf({
   models: [{ provider: "fixture", model_id: "test", contextWindowTokens: 4096 }],
 }), { allow: "*", default: model })
 export const contentServices = (observe: (prompt: Prompt.Prompt) => void, options: {
+  readonly model?: ModelServiceOptions
+  readonly stream?: Stream.Stream<Response.StreamPartEncoded, AiError.AiError>
   readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined
   readonly request?: RequestOptions
   readonly libraries?: readonly LibraryImplementation<EffectExecution>[]
@@ -69,6 +71,7 @@ export const contentServices = (observe: (prompt: Prompt.Prompt) => void, option
       observe(input.prompt)
       const failure = options.failure?.(input.prompt)
       if (failure) return Stream.fail(failure)
+      if (options.stream) return options.stream
       if (options.toolCalls && !input.prompt.content.some(message => message.role === "tool")) return Stream.fromIterable([
         ...options.toolCalls.map(call => Response.makePart("tool-call", { ...call, providerExecuted: false })),
         Response.makePart("finish", { reason: "tool-calls", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) }),
@@ -81,7 +84,7 @@ export const contentServices = (observe: (prompt: Prompt.Prompt) => void, option
       )
     }),
   }))
-  const modelLayer = modelServices().pipe(Layer.provide(Layer.mergeAll(
+  const modelLayer = modelServices(options.model).pipe(Layer.provide(Layer.mergeAll(
     Layer.succeed(ModelLock, lock), provider,
     Layer.succeed(ModelSelection, { settings: () => Effect.succeed(settings) }),
     Layer.succeed(BindingSettings, settings),

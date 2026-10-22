@@ -12,6 +12,7 @@ import { referenceAcceptanceAtomicity } from "./runtime/reference-acceptance-ato
 import { ownedProducerRecovery, externalProducerObservation, orphanedProducerHealth } from "./runtime/deferred-recovery"
 import { settledEffect, settledEffectExamples } from "./runtime/settled-effect"
 import { inlineExecutionSupervision } from "./runtime/inline-execution"
+import { unboundedPromiseRecovery } from "./runtime/unbounded-promise"
 
 import { cancellationTerminality, cancellationForwarding, cancellationBatchIsolation } from "./runtime/cancellation"
 
@@ -29,6 +30,7 @@ export const propertyCases = {
   inputCanonicalization,
   inputRepresentation: () => fc.assert(inputRepresentation, RUNTIME_PROPERTY_OPTIONS),
   promiseDeadline,
+  unboundedPromiseRecovery: () => fc.assert(unboundedPromiseRecovery, RUNTIME_PROPERTY_OPTIONS),
   turnFactRecovery: () => fc.assert(turnFactRecovery, RUNTIME_PROPERTY_OPTIONS),
   compactionCancellationRecovery: () => fc.assert(compactionCancellationRecovery, RUNTIME_PROPERTY_OPTIONS),
   agentTurnCancellation: () => fc.assert(agentTurnCancellation, RUNTIME_PROPERTY_OPTIONS),

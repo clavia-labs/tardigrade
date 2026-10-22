@@ -3,7 +3,10 @@ import type { Getter, Atom } from "../atoms/atom"
 import type { AttemptTimedOut, FiberHandle, ExecutionHandle, EffectRef } from "../runtime/effects"
 import type { ExecutionUpdatePayload } from "./execution-stream"
 
-export interface PromiseOptions { readonly timeoutMs?: number | undefined }
+export interface PromiseOptions {
+  // timeoutMs bounds durable waiting; null disables expiry for a forked local producer (platform/test/properties/runtime/unbounded-promise.ts).
+  readonly timeoutMs?: number | null | undefined
+}
 export const DEFAULT_ATTEMPT_TIMEOUT_MS = 60_000
 export interface AttemptOptions {
   // attemptTimeoutMs requests interruption of each invocation; null disables the deadline.
