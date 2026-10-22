@@ -2,11 +2,11 @@ import { env } from "cloudflare:workers"
 import { SELF, runInDurableObject } from "cloudflare:test"
 import { expect, inject, test } from "vitest"
 import { Effect } from "effect"
-import { createWatchdog, watchdogKey, DEFAULT_PROVISION_RETRY_LIMIT } from "@clavia/tardigrade-core"
+import { createWatchdog, watchdogKey, DEFAULT_PROVISION_RETRY_LIMIT, journalCommit, type SupervisorEvent } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { RUNTIME_PROPERTY_TEST_TIMEOUT_MS } from "../properties/runtime/config"
 import { threadFlow } from "../fixtures/thread-flow"
-import { cloudflareThreadName } from "../../src/cloudflare"
+import { cloudflareThreadName, cloudflareJournal } from "../../src/cloudflare"
 import type { LayoutActorDO, LayoutThreadDO } from "../fixtures/workerd/layout-fixture"
 
 const bindings = env as unknown as { ACTORS: DurableObjectNamespace<InstanceType<typeof LayoutActorDO>>; THREADS: DurableObjectNamespace<LayoutThreadDO> }
@@ -163,6 +163,51 @@ test("provisioning retries survive reopening and concurrent named requests share
     expect((await flow.request("", { name: "after-failure" })).status).toBe(200)
   } finally { await held.releaseProvision(); await original }
 }, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+
+for (const status of ["failed", "registered"] as const) for (const outcome of ["ThreadRegistered", "ThreadFailed"] as const) {
+  test(`replay ignores ${outcome} for a ${status} thread until explicit retry`, async () => {
+    const instance = `legacy-${status}-${outcome}`
+    const actor = bindings.ACTORS.getByName(instance)
+    const flow = threadFlow(request => SELF.fetch(request), instance)
+    expect((await flow.request("", { name: "bootstrap" })).status).toBe(200)
+    const address = coordinate(instance, "late")
+    const child = threadStub(instance, "late")
+    await child.provision({ type: "ThreadCreated", address, parent: null, depth: 0, placement: "independent" }, { "layout.value": 32 })
+    const prefix = await runInDurableObject(actor, async (object, state) => {
+      await object.dispose()
+      const journal = cloudflareJournal<SupervisorEvent>(state.storage, JSON.stringify(["layout", instance, "supervisor"]))
+      try {
+        await Effect.runPromise(journalCommit(journal, () => journal.append(journal.readPosition(), [
+          { event: { type: "ThreadRequested", allocation: { coordinate: address, name: "late", parent: null, depth: 0, placement: "independent", initialState: { "layout.value": 32 } } } },
+          { event: status === "failed" ? { type: "ThreadFailed", coordinate: address, reason: "legacy timeout" } : { type: "ThreadRegistered", coordinate: address } },
+          { event: outcome === "ThreadFailed" ? { type: outcome, coordinate: address, reason: "late failure" } : { type: outcome, coordinate: address } },
+        ])))
+        return state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray().map(row => row.event)
+      } finally { await Effect.runPromise(journal.close) }
+    })
+    expect(await actor.lookup(address)).toEqual(status === "failed" ? undefined : address)
+    expect(await child.provisionCalls()).toBe(1)
+    await runInDurableObject(actor, async (object, state) => {
+      expect(state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray().map(row => row.event)).toEqual(prefix)
+      await object.dispose()
+    })
+    expect(await actor.lookup(address)).toEqual(status === "failed" ? undefined : address)
+    expect(await child.provisionCalls()).toBe(1)
+    expect((await flow.request("", { name: "late" })).status).toBe(200)
+    expect(await actor.lookup(address)).toEqual(address)
+    expect(await child.provisionCalls()).toBe(status === "failed" ? 2 : 1)
+    expect((await child.records()).filter(record => record.event.type === "ThreadCreated")).toHaveLength(1)
+    await flow.call("late", "read", null, "legacy-seed", 32)
+    await runInDurableObject(actor, async (object, state) => {
+      const rows = state.storage.sql.exec<{ event: string }>("SELECT event FROM experimental_events ORDER BY seq").toArray().map(row => row.event)
+      expect(rows.slice(0, prefix.length)).toEqual(prefix)
+      expect(rows.slice(prefix.length).map(row => JSON.parse(row).event).filter(event => event.type === "ThreadRequested")).toHaveLength(status === "failed" ? 1 : 0)
+      await object.dispose()
+    })
+    expect(await actor.lookup(address)).toEqual(address)
+    expect(await child.provisionCalls()).toBe(status === "failed" ? 2 : 1)
+  })
+}
 
 test.skipIf(!inject("longTests"))("200 concurrent creates finish while another thread is still provisioning", async () => {
   const instance = "parallel-creates"

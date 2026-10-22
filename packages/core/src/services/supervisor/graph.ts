@@ -36,6 +36,17 @@ export const SUPERVISOR_CHECKPOINT_TAG = "host.supervisor.families/1"
 
 export const threadNameKey = (parent: string | null, name: string): string => JSON.stringify([parent, name])
 
+// replayRegistration ignores recorded outcomes for matching settled threads (platform/test/workerd/thread-layout.workers.ts).
+const replayRegistration = (state: typeof Thread.Type | undefined, event: Exclude<SupervisorEvent, typeof Requested.Type>): typeof Thread.Type => {
+  if (!state || state.coordinate.actor !== event.coordinate.actor || state.coordinate.instance !== event.coordinate.instance || state.coordinate.thread !== event.coordinate.thread) throw new Error("Unknown thread registration")
+  if (state.status !== "requested") return state
+  return event.type === "ThreadRegistered" ? { ...state, status: "registered" } : { ...state, status: "failed", reason: event.reason }
+}
+
+function validateRegistration(state: typeof Thread.Type | undefined, event: Exclude<SupervisorEvent, typeof Requested.Type>): void {
+  if (!state || state.status !== "requested" || state.coordinate.actor !== event.coordinate.actor || state.coordinate.instance !== event.coordinate.instance || state.coordinate.thread !== event.coordinate.thread) throw new Error("Unknown thread registration")
+}
+
 // thread preserves allocation identity and validates per-thread lifecycle transitions (packages/platform/test/workerd/thread-layout.workers.ts).
 export const thread = durableAtomFamily({
   name: "host.supervisor.thread", input: SupervisorEvent, schema: Schema.UndefinedOr(Thread), initial: undefined,
@@ -45,8 +56,7 @@ export const thread = durableAtomFamily({
       if (state && (state.status !== "failed" || !sameAllocation(state, event.allocation))) throw new Error("Duplicate thread allocation")
       return { ...event.allocation, origin: position, status: "requested" as const }
     }
-    if (!state || state.status !== "requested" || state.coordinate.actor !== event.coordinate.actor || state.coordinate.instance !== event.coordinate.instance) throw new Error("Unknown thread registration")
-    return event.type === "ThreadRegistered" ? { ...state, status: "registered" as const } : { ...state, status: "failed" as const, reason: event.reason }
+    return replayRegistration(state, event)
   },
 })
 
@@ -128,8 +138,8 @@ export const threads = durableAtom({ name: "host.supervisor.threads",
       return existing ? state.map(entry => entry === existing ? requested : entry) : [...state, requested]
     }
     const current = state.find(entry => entry.coordinate.thread === event.coordinate.thread)
-    if (!current || current.status !== "requested" || current.coordinate.actor !== event.coordinate.actor || current.coordinate.instance !== event.coordinate.instance) throw new Error("Unknown thread registration")
-    return state.map(entry => entry === current ? event.type === "ThreadFailed" ? { ...entry, status: "failed" as const, reason: event.reason } : { ...entry, status: "registered" as const } : entry)
+    const next = replayRegistration(current, event)
+    return next === current ? state : state.map(entry => entry === current ? next : entry)
   },
 })
 
@@ -166,7 +176,10 @@ export const familySupervisorActor = defineActor("supervisor", Effect.sync(() =>
     }))
     return { view: { pending }, events: {}, acts }
   }, { input: SupervisorEvent, validate: (event, get) => {
-    if (event.type !== "ThreadRequested") return
+    if (event.type !== "ThreadRequested") {
+      validateRegistration(get(thread(event.coordinate.thread)), event)
+      return
+    }
     const allocation = event.allocation
     validateParent(allocation, get)
     const current = get(thread(allocation.coordinate.thread))
@@ -197,6 +210,8 @@ export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
       return [key, request]
     }))
     return { view: { threads: directory }, events: {}, acts }
-  })
+  }, { input: SupervisorEvent, validate: (event, get) => {
+    if (event.type !== "ThreadRequested") validateRegistration(get(threads).find(entry => entry.coordinate.thread === event.coordinate.thread), event)
+  } })
   return { atom: supervisor, schema: SupervisorEvent }
 }))
