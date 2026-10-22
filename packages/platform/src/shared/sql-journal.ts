@@ -59,6 +59,8 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     yield* sql`CREATE TABLE IF NOT EXISTS checkpoint_chunks (ordinal INTEGER PRIMARY KEY CHECK (ordinal >= 0), payload BLOB NOT NULL CHECK (typeof(payload) = 'blob' AND length(payload) > 0))`
     yield* sql`CREATE TABLE IF NOT EXISTS effect_inputs (actor TEXT NOT NULL, ref TEXT NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL, PRIMARY KEY (actor, ref)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS effect_input_chunks (actor TEXT NOT NULL, ref TEXT NOT NULL, ordinal INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY (actor, ref, ordinal)) WITHOUT ROWID`
+    // TODO: drop these statements once no database holds tables written by 0.49.0 to 0.50.0 checkpoint trees.
+    for (const table of ["grove_nodes", "grove_chunks", "grove_owners", "checkpoint_trees"]) yield* sql.unsafe(`DROP TABLE IF EXISTS ${table}`)
     if (options.scheduler) yield* initializeSqlScheduler(sql)
     return sql
   })
