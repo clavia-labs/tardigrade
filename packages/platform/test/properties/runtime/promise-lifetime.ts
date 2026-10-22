@@ -7,8 +7,8 @@ import { slowActor, slowServices, type SlowEvent } from "../../fixtures/slow-act
 import { memoryJournalReads } from "../../fixtures/memory-journal"
 import { createTestStore } from "./store"
 
-// unboundedPromiseRecovery checks recorded timeout choices survive changed configuration and local producer recreation.
-export const unboundedPromiseRecovery = fc.asyncProperty(fc.boolean(), fc.boolean(), fc.integer(), (unbounded, oldEnvelope, value) => Effect.runPromise(Effect.gen(function* () {
+// promiseLifetimeRecovery checks recorded timeout choices survive changed configuration and local producer recreation.
+export const promiseLifetimeRecovery = fc.asyncProperty(fc.boolean(), fc.boolean(), fc.integer(), (unbounded, oldEnvelope, value) => Effect.runPromise(Effect.gen(function* () {
   const clock = yield* TestClock.make()
   yield* Effect.gen(function* () {
     const records: Recorded<SlowEvent>[] = []
