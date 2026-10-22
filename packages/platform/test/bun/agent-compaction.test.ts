@@ -3,13 +3,28 @@ import { expect, test } from "bun:test"
 import { Context, Effect } from "effect"
 import * as fc from "fast-check"
 import { RUNTIME_PROPERTY_OPTIONS, RUNTIME_PROPERTY_TEST_TIMEOUT_MS } from "../properties/runtime/config"
-import { atom, createStore, EventLog, type EffectCheckpoint } from "@clavia/tardigrade-core"
+import { atom, AtomState, createStore, EventLog, RuntimeError, type EffectCheckpoint, type StatefulAtom } from "@clavia/tardigrade-core"
+import { createActor } from "@clavia/tardigrade-agent"
 import { compact, DEFAULT_COMPACTION_POLICY, type CompactionOptions } from "@clavia/tardigrade-agent/atoms/compact"
-import { agentLog, selection, turn } from "../fixtures/agent"
+import { agentLog, contentServices, selection, turn } from "../fixtures/agent"
 import { ModelInfo } from "@clavia/tardigrade-agent/actor/context"
 import { type Conversation } from "@clavia/tardigrade-agent/contracts/events"
 
 const file = (mediaType: string) => ({ type: "file" as const, mediaType, object: { algorithm: "sha256" as const, digest: "a".repeat(64) } })
+
+test("unconfigured agent setup retains conversation and compaction codecs", async () => {
+  const setup = await Effect.runPromise(createActor.setup.pipe(Effect.provide(contentServices(() => { throw new RuntimeError("Schema discovery cannot call the model") }))))
+  const store = createStore(Context.make(EventLog, { events: atom<readonly unknown[]>([]) }))
+  try {
+    store.get(setup.root)
+    const atoms = new Set([...store.nodes().values()].flatMap(({ atom }) => {
+      const state = (atom as Partial<StatefulAtom>)[AtomState]
+      return state ? [state.name] : []
+    }))
+    expect(atoms.has("agent.trajectory")).toBe(true)
+    expect(atoms.has("agent.compaction.state")).toBe(true)
+  } finally { store.dispose() }
+})
 
 
 function project(messages: typeof Conversation.Type, options: CompactionOptions = {}) {
