@@ -37,13 +37,12 @@ export const SUPERVISOR_CHECKPOINT_TAG = "host.supervisor.families/2"
 
 export const threadNameKey = (parent: string | null, name: string): string => JSON.stringify([parent, name])
 
-// replayLegacyLateRegistration requeues historical failed-then-registered allocations with a fresh provisioning origin (#804; platform/test/bun/supervisor-compatibility.test.ts).
+// replayLegacyLateRegistration requeues historical failed-then-registered allocations with a fresh provisioning origin (#804; platform/test/workerd/thread-layout.workers.ts).
 const replayLegacyLateRegistration = (state: typeof Thread.Type | undefined, event: SupervisorEvent, position: number): typeof Thread.Type | undefined => {
   if (state?.status !== "failed" || event.type !== "ThreadRegistered" || state.coordinate.actor !== event.coordinate.actor || state.coordinate.instance !== event.coordinate.instance || state.coordinate.thread !== event.coordinate.thread) return undefined
   return { ...state, origin: position, status: "requested" }
 }
 
-// validateRegistration admits live outcomes only for matching requested allocations (platform/test/bun/supervisor-compatibility.test.ts).
 function validateRegistration(state: typeof Thread.Type | undefined, event: Exclude<SupervisorEvent, typeof Requested.Type>): asserts state is typeof Thread.Type {
   if (!state || state.status !== "requested" || state.coordinate.actor !== event.coordinate.actor || state.coordinate.instance !== event.coordinate.instance || state.coordinate.thread !== event.coordinate.thread) throw new Error("Unknown thread registration")
 }
