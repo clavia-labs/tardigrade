@@ -174,7 +174,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly source: RecordSourceFrame<Event>
     readonly progressCursor: number
     readonly initialState: { readonly seed: StateSeed | undefined } | undefined
-    readonly initialisedNames: ReadonlySet<string>
     readonly defect: EffectDied | undefined
     readonly operations: ReadonlyMap<string, StoredOperation>
     readonly inputs: ReadonlyMap<string, EffectRequest>
@@ -197,7 +196,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const bindings = atom<ReadonlyIndex<object, EffectRef>>(frame?.bindings ?? new Map())
     // initialState holds the seed once records[0..1], the only records initialStateSeed reads, exist or it found one; an append-only source cannot change it afterwards.
     let initialState: { readonly seed: StateSeed | undefined } | undefined = frame?.initialState
-    const initialisedNames = new Set(frame?.initialisedNames ?? seed?.durable.map(entry => entry.name))
     let defect: EffectDied | undefined = frame?.defect
     // activeOperations retains execution and cleanup until their completion batch is folded (platform/test/properties/runtime/snapshot-lookups.ts).
     const activeOperations = new Map(frame?.operations)
@@ -340,7 +338,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (names.has(entry.name)) throw new Error(`Duplicate durable atom checkpoint name: ${entry.name}`)
         names.add(entry.name)
       }
-      if ([...initialisedNames].some(name => !names.has(name))) return undefined
       return Object.freeze({
         position: offset + records.length,
         durable: Object.freeze(durable),
@@ -468,7 +465,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (Schema.is(ThreadCreated)(event) && offset + records.length !== 0) throw new Error("Thread creation must be the first journal record")
       if (Schema.is(StateInitialised)(event)) {
         if (offset + records.length > 1 || ranges(offset + records.length).some(record => !Schema.is(ThreadCreated)(record.event))) throw new Error("State initialisation requires a fresh journal")
-        for (const name of Object.keys(event.initialState)) initialisedNames.add(name)
       }
       if (Schema.is(CoreEvent)(event) && event.type !== "ThreadCreated" && event.type !== "ThreadUpdated" && event.type !== "StateInitialised" && event.type !== "MessageDelivered" && !isMessageReceived(event)) {
         const key = effectKey(event.ref)
@@ -582,7 +578,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         }
         return Object.freeze({
           position: offset + records.length, journal: journal.append(offset, records.slice()), source: source.snapshot(store), progressCursor, initialState,
-          initialisedNames: new Set(initialisedNames), defect,
+          defect,
           operations: new Map(activeOperations), inputs: new Map(loadedInputs), availableInputs: new Map(availableInputs),
           references: new Map(actReferences), bindings: store.get(bindings), acts: new Map(acts),
           accepted: new Map(accepted), origins: new Map(originRefs), states,
