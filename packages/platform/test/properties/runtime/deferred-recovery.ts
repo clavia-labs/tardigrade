@@ -4,6 +4,7 @@ import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, ExecutionHandle, EffectRef as EffectRefSchema, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
 import { createTestStore } from "./store"
 import { Promises } from "../../../../core/src/services/promises"
+import { strict as assert } from "node:assert"
 
 const Queued = Schema.Struct({ type: Schema.Literal("Queued") })
 const Running = Schema.Struct({ type: Schema.Literal("Running") })
@@ -124,3 +125,31 @@ const recoveryCases = fc.record({ value: fc.integer({ min: -100, max: 100 }), co
 export const ownedProducerRecovery = fc.asyncProperty(recoveryCases, options => runRecoveryScenario("local", options))
 // externalProducerObservation checks external handles resume observation without repeating their accepted execution.
 export const externalProducerObservation = fc.asyncProperty(recoveryCases, options => runRecoveryScenario("remote", options))
+
+// orphanedProducerHealth checks a live sibling cannot hide an interrupted local producer (platform/quint/localProducerHealth.qnt, runningMeansCovered).
+export const orphanedProducerHealth = fc.asyncProperty(fc.integer({ min: 0, max: 1 }), lost => Effect.runPromise(Effect.gen(function* () {
+  let runtime!: ActorRuntime<Event>
+  const requests = [0, 1].map(value => Job.request({ origin: value, input: { value } }))
+  const actor = defineActor("orphaned-producer", Effect.succeed({ schema: Event,
+    atom: effectAtom(() => ({ view: null, events: {}, acts: { left: requests[0]!, right: requests[1]! } })),
+  }))
+  const store = yield* createTestStore({ actor, events: [{ type: "Queued" }, { type: "Updated" }], actorContext: () => Context.empty(), services: current => {
+    runtime = current
+    return Job.layer(() => Effect.gen(function* () {
+      const execution = yield* EffectExecution
+      return Job.defer(yield* execution.fork(Effect.never))
+    }).pipe(Effect.mapError(String)))
+  } })
+  yield* Effect.gen(function* () {
+    while (store.snapshot().deferred().length < 2) yield* Effect.yieldNow
+    yield* store.recover
+    assert.equal(store.snapshot().deferred().length, 2)
+    assert.equal(store.recoveryState().status, "running")
+    const key = effectKey(store.snapshot().deferred()[lost]!.ref)
+    yield* runtime.interrupt(key)
+    while (store.active().includes(key)) yield* Effect.yieldNow
+    assert.equal(store.active().length, 1)
+    assert.equal(store.snapshot().deferred().length, 2)
+    assert.throws(() => store.recoveryState(), { message: `Local promise producer is unavailable: ${key}` })
+  }).pipe(Effect.ensuring(store.close))
+}).pipe(Effect.scoped, Effect.timeout(5_000))))

@@ -27,12 +27,22 @@ EffectRequested
 | [interpreterVersion.qnt](interpreterVersion.qnt) | `init`, `initLegacy` | 146, 207 | Version adoption, per-budget attempt bounds, durable wake, stale-attempt fencing, eventual stop after deployment changes cease |
 | [invocationReplay.qnt](invocationReplay.qnt) | `init`, `initUnsafe` | 53, 37 | Stable invocation identity, one logical child execution, durable reply acceptance, eventual parent outcome |
 | [promiseLifecycle.qnt](promiseLifecycle.qnt) | `init` | 331 | Durable completion, supervised fibre exit, safe handoff, blocked deadline coverage, expiry admission, unchanged deadlines, one terminal winner, eventual settlement and timeout processing |
+| [localProducerHealth.qnt](localProducerHealth.qnt) | `initWithOrphanGuard` | 45 | A running thread has no unaccounted local orphan; queued recovery, admission, and retry waits remain accounted for |
 
 `recoveryBudget` includes terminating work, retryable failures forever, progress forever, terminal errors, and hung fibres. It checks three total attempts, two consecutive attempts without progress, and a two-tick attempt deadline. These are finite model parameters, rather than proposed runtime defaults. Progress resets the consecutive count while preserving the total budget. A watchdog probe of a live fibre does not start another attempt or extend its deadline.
 
 `invocationReplay` includes two possible child invocation IDs and counts duplicate executions up to two. A restarted parent reruns its operation with the recorded invocation identity. The receiver deduplicates acceptance and retains its result. Unsafe work is rejected as interrupted after a crash, without automatic resubmission. A waiter subscribes and reads recorded state, covering completion both before and after subscription. The volatile-dependency mutation replaces durable child execution with a local producer that disappears on parent crash; stable identity alone cannot recover that missing producer.
 
 `promiseLifecycle` models local and remote execution, completion before handle submission, fibre failure, restart, timeout, and late results. A remote wait transfers recovery responsibility to durable completion and deadline ownership. Local fibre exit produces a buffered failure even when the handle has not yet been submitted. A timeout durably rejects the promise without claiming that the executor stopped. Local handle submission commits an independent deadline wake. Two failed recovery attempts block the watchdog while preserving that wake through crashes. Committing timeout clears the promise wake and renews a blocked recovery budget once, admitting failure processing without restarting an expired producer. Clearing a recovery wake preserves the logical deadline wake. Completion, failure, and timeout share a serialized terminal decision.
+
+`localProducerHealth` checks two pending local promises with independent producer availability and recorded finite deadlines. `init` models the any-live-producer shortcut and violates `runningMeansCovered` after either producer disappears while its sibling remains live. `initWithOrphanGuard` models the orphan-aware classifier; its `pending` classification includes the runtime's retryable probe error. Startup recovery, handle admission, and recorded retry waits account for intentional producer absence. Producer loss without a terminal result is an environment transition in this model. The `orphanedProducerHealth` runtime property reaches that state by interrupting either of two real producers while its sibling remains alive. Recovery latency and the complete deploy/reopen sequence require separate implementation checks.
+
+```text
+pending {A, B}, live {A, B} -> running
+                lose A
+pending {A, B}, live {B}    -> running    any-live classifier: counterexample
+                           -> pending    orphan guard
+```
 
 ## Counterexamples
 
@@ -65,6 +75,7 @@ The verification runner checks the following mutations. Safety checks report a f
 | Omit local deadline wake | Blocked deadline coverage, settlement | Exhaust recovery before expiry, crash, leave the promise without an alarm |
 | Omit expiry admission | Timeout admission, processing | Commit timeout while the watchdog remains blocked |
 | Replay expired producer | Expired replay exclusion | Reopen after deadline arrival and restart the producer |
+| Live sibling masks orphan | Running implies accounted producers | Two promises remain pending, one producer disappears, and the other makes the thread report running |
 | Overwrite terminal result | One winner, terminal stability | Timeout commits, then late completion changes the outcome |
 
 ```text

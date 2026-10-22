@@ -894,6 +894,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             for (const work of deferred) if (work.deadlineAt !== undefined) times.push(work.deadlineAt)
             return { progressCursor, status: "parked", wakeAt: Math.min(...times) }
           }
+          // orphaned prevents a live sibling from masking a lost local producer (platform/test/properties/runtime/deferred-recovery.ts, orphanedProducerHealth).
+          const orphaned = deferred.find(work => work.handle.executor === "local" && !background.has(work.handle.id)
+            && !localRecovery.has(effectKey(work.ref)) && !completing.has(effectKey(work.ref)) && !retryWaits.has(effectKey(work.ref)))
+          if (orphaned) throw new RuntimeError(`Local promise producer is unavailable: ${effectKey(orphaned.ref)}`)
           if (cleanup.length) return { progressCursor, status: "running" }
           // recoveryState preserves live inline execution without a deadline (packages/platform/test/properties/runtime/inline-execution.ts, inlineExecutionSupervision).
           if (executions.size && executableEffects().length) return { progressCursor, status: "running" }

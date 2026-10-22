@@ -9,7 +9,7 @@ import * as fc from "fast-check"
 import { RUNTIME_PROPERTY_OPTIONS } from "./runtime/config"
 import { promiseSettlementOrder } from "./runtime/promise-settlement-order"
 import { referenceAcceptanceAtomicity } from "./runtime/reference-acceptance-atomicity"
-import { ownedProducerRecovery, externalProducerObservation } from "./runtime/deferred-recovery"
+import { ownedProducerRecovery, externalProducerObservation, orphanedProducerHealth } from "./runtime/deferred-recovery"
 import { settledEffect, settledEffectExamples } from "./runtime/settled-effect"
 import { inlineExecutionSupervision } from "./runtime/inline-execution"
 
@@ -40,6 +40,7 @@ export const propertyCases = {
   promiseSettlementOrder: () => fc.assert(promiseSettlementOrder, RUNTIME_PROPERTY_OPTIONS),
   referenceAcceptanceAtomicity: () => fc.assert(referenceAcceptanceAtomicity, RUNTIME_PROPERTY_OPTIONS),
   ownedProducerRecovery: () => fc.assert(ownedProducerRecovery, RUNTIME_PROPERTY_OPTIONS),
+  orphanedProducerHealth: () => fc.assert(orphanedProducerHealth, RUNTIME_PROPERTY_OPTIONS),
   externalProducerObservation: () => fc.assert(externalProducerObservation, RUNTIME_PROPERTY_OPTIONS),
   settledEffect: () => fc.assert(settledEffect, { ...RUNTIME_PROPERTY_OPTIONS, examples: settledEffectExamples }),
   inlineExecutionSupervision: () => fc.assert(inlineExecutionSupervision, RUNTIME_PROPERTY_OPTIONS),
