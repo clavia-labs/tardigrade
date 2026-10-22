@@ -686,7 +686,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         }
         while (cursor < events.length) {
           const event = events[cursor]!
-          if (!hasCoreEventType(event)) yield* Effect.try({ try: () => store.validate(setup.effects, event), catch: RuntimeError.from })
+          if (!hasCoreEventType(event)) yield* Effect.try({ try: () => snapshot.validate(setup.effects, event), catch: RuntimeError.from })
           yield* appendNow(event)
           cursor++
         }
@@ -861,7 +861,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           }
           const defect = store.get(executionDefect)
           if (defect) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
-          if (!context.inReplyTo) yield* Effect.try({ try: () => store.validate(setup.effects, event as Event), catch: InvalidMessage.from })
+          if (!context.inReplyTo) yield* Effect.try({ try: () => snapshot.validate(setup.effects, event as Event), catch: InvalidMessage.from })
           const position = snapshot.position + 1
           const json = yield* Schema.decodeUnknownEffect(Schema.Json)(event).pipe(Effect.mapError(RuntimeError.from))
           yield* appendNow({ type: "MessageReceived", body: json }, { message })

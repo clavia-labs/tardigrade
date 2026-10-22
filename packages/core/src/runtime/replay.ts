@@ -165,6 +165,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly retry: (ref: EffectRef, phase?: "execution" | "cancellation") => RetryScheduled | undefined
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
     readonly checkpoint: () => EffectCheckpoint | undefined
+    readonly validate: (roots: Readonly<Record<string, Atom<unknown>>>, event: object) => void
   }
   type Proposal = ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>
   type RuntimeFrame = {
@@ -587,6 +588,12 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           accepted: new Map(accepted), origins: new Map(originRefs), states,
         })
       },
+      release: () => {
+        journal = journal.append(offset, records.slice())
+        offset += records.length
+        source.clear(store)
+        records = store.get(source.records)
+      },
       seed,
       observations,
       get disposed() { return disposed },
@@ -641,6 +648,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       pending: () => activeRequests().filter(([key]) => !hasSettlement(key) && !hasCancellation(key) && (!defect || requestOf(key)!.ref.atom === "host.message.replies")).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
       effect,
       checkpoint,
+      validate: store.validate,
     }
   }
   type Engine = ReturnType<typeof createEngine>
@@ -715,6 +723,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       retry: (ref: EffectRef, phase?: "execution" | "cancellation") => phase === "cancellation" ? operations.get(effectKey(ref))?.cleanup?.retry : operations.get(effectKey(ref))?.execution.retry,
       promise: (ref: EffectRef) => operations.get(effectKey(ref))?.execution.promise,
       checkpoint: () => engineOf(snapshot).checkpoint(),
+      validate: (roots: Readonly<Record<string, Atom<unknown>>>, event: object) => engineOf(snapshot).validate(roots, event),
     })
     frames.set(snapshot, frame)
     engines.set(snapshot, engine)
@@ -772,8 +781,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       }
       if (record.type === "PromiseSettled") previous.validatePromise(record)
     }
-    const frame = frameOf(snapshot)
-    const engine = createEngine([], frame.journal, snapshot.seed, frame)
+    const engine = previous
+    engines.delete(snapshot)
     try {
       engine.append(recordOf({ event: record, ...metadata }))
       for (const domain of engine.followups(record)) {
@@ -807,8 +816,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const frame = frameOf(prepared.next)
       if (prepared.previous !== prepared.next) discard(prepared.previous)
       frames.set(prepared.next, Object.freeze({ ...frame, source: emptyRecordFrame<Event>() }))
-      engines.get(prepared.next)?.dispose()
-      engines.delete(prepared.next)
+      engines.get(prepared.next)?.release()
       for (const [key] of persistedInputs) if (!frame.operations.has(key)) persistedInputs.delete(key)
       return prepared.next
     },
