@@ -5,7 +5,7 @@ export { contextPolicyOf, resolvedContextPolicyOf, checkpointOf, keepFromIndex, 
 import { MessageContent, type MessageContentPart } from "../../log/message"
 import { resolveMessageObjects } from "../../model/execution/objects"
 import { historyOf } from "../../model/execution/prompt"
-import { estimateTokens, renderedWeights, conversationModelOf } from "../../projection/tokens"
+import { renderedWeights, conversationModelOf } from "../../projection/tokens"
 export { estimateTokens } from "../../projection/tokens"
 import { upcastError } from "../../log/upcast"
 import { hasUnansweredToolCall, responsesOf } from "../../log/response"
@@ -32,10 +32,8 @@ import { messages } from "../messages"
 // atRoundBoundary gates the guard: a pass may land whenever the open turn awaits no tool call,
 // between turns included. A checkpoint landing mid-round would cut a call from the return the
 // world still owes it.
-const atRoundBoundary = (log: ReadonlyArray<Event>): boolean => {
-  const open = turnView(log)
-  return open.length === 0 || !hasUnansweredToolCall(open)
-}
+const atRoundBoundary = (open: ReadonlyArray<Event>): boolean =>
+  open.length === 0 || !hasUnansweredToolCall(open)
 
 // boundaryIdOf returns the identity a cut at this event would record: a ToolCalled keeps its
 // return beside it, and a served head opens its turn whole. Any other position splits a pair or
@@ -55,15 +53,16 @@ const cutOf = (
   log: ReadonlyArray<Event>,
   policy: ContextPolicy,
   knownServed?: ReadonlySet<string>,
-  model = conversationModelOf(log)
+  model = conversationModelOf(log),
+  weights = renderedWeights(log, policy, model),
+  open = turnView(log)
 ): { readonly keepFrom: string; readonly index: number; readonly priorIndex: number } | undefined => {
   const responses = responsesOf(log)
   const firstCalls = responses.firstCalls
   const priorIndex = keepFromIndex(log, checkpointOf(log).keepFrom, responses)
   const served = new Set(knownServed ?? log.map(turnOf).filter((t): t is string => t !== undefined))
-  const current = turnView(log)[0]
+  const current = open[0]
   if (current?.type === "MessageReceived") served.add(String(current.id))
-  const weights = renderedWeights(log, policy, model)
   let chars = 0
   let raw = priorIndex
   for (let i = log.length - 1; i >= priorIndex; i--) {
@@ -214,11 +213,15 @@ const retainRatioOf = (options: CompactOptions): number => {
 export const compactionReactor = (options: CompactOptions, lock: Context.Service.Shape<typeof ModelLock>): CompleteTransitionDerivation<LanguageModel.LanguageModel | Self> => (history) => {
   const log = history.map((event, index) => eventPositionOf(event) === undefined ? eventAt(event, index + 1) : event)
   const view = projectedOutput(log)
-  if (!atRoundBoundary(view)) return []
-  const active = conversationModelOf(view)
+  const open = turnView(view)
+  if (!atRoundBoundary(open)) return []
+  const active = conversationModelOf(view, open)
   const resolved = resolvedContextPolicyOf({ ...options, keepRatio: retainRatioOf(options) })
-  const policy = { ...resolved, keepTokens: Math.floor(estimateTokens(view, resolved, active) * resolved.keepRatio) }
-  const cut = cutOf(view, policy, undefined, active)
+  // The keep line and the cut measure the same render; keepTokens does not change a weight.
+  const weights = renderedWeights(view, resolved, active)
+  const estimate = Math.ceil([...weights.values()].reduce((sum, weight) => sum + weight, 0) / 4)
+  const policy = { ...resolved, keepTokens: Math.floor(estimate * resolved.keepRatio) }
+  const cut = cutOf(view, policy, undefined, active, weights, open)
   if (cut === undefined) return []
   const prior = checkpointOf(view)
   return compactionTransition(policy, lock.resolve(options.model).model, prior.summary, cut.keepFrom,
