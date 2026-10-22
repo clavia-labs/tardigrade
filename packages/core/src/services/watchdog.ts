@@ -119,6 +119,7 @@ export function createWatchdog(options: {
       versionAdopted = true
     })),
     status: options.storage.transaction(tx => tx.list),
+    blocked: (target: WatchdogTarget) => options.storage.transaction(tx => tx.get(watchdogKey(target))).pipe(Effect.map(entry => entry?.status === "blocked")),
     resume: (target: WatchdogTarget) => cleanupLock.withPermit(options.storage.transaction(tx => resetBudget(tx, target))),
     alarm: lock.withPermit(Effect.gen(function* () {
       const entries = yield* options.storage.transaction(tx => tx.list)

@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers"
 import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Scope } from "effect"
 import { isDeepStrictEqual } from "node:util"
-import { createActorExecution, createActorStore, createSupervisor, createScheduler, createWatchdog, DEFAULT_EXTERNAL_SENDER, Invocation, PromiseSettled, PromiseTimedOut, RuntimeError, Scheduler, schedulerAlarm, Supervisor, ThreadCoordinate, ThreadCreated, ThreadUpdated, watchdogKey, type ActorMethods, type IncomingMessage, type InitialState, type MessageReceipt, type MessageDelivery, type ThreadRequest, type RecoveryState, type WatchdogTarget, type WatchdogPolicy, type SchedulerPolicy, type Recorded, type StoredCheckpoint, type ActorExecutionOptions } from "@clavia/tardigrade-core"
+import { createActorExecution, createActorStore, createSupervisor, createScheduler, createWatchdog, DEFAULT_EXTERNAL_SENDER, Invocation, PromiseSettled, PromiseTimedOut, RuntimeError, Scheduler, schedulerAlarm, Supervisor, ThreadCoordinate, ThreadCreated, ThreadUpdated, type ActorMethods, type IncomingMessage, type InitialState, type MessageReceipt, type MessageDelivery, type ThreadRequest, type RecoveryState, type WatchdogTarget, type WatchdogPolicy, type SchedulerPolicy, type Recorded, type StoredCheckpoint, type ActorExecutionOptions } from "@clavia/tardigrade-core"
 import { createInvocation } from "@clavia/tardigrade-core/services/invocation"
 import type { createThreadHost } from "@clavia/tardigrade-core/runtime/layers"
 import { initializeThread, updateThreadVersion } from "@clavia/tardigrade-core/services/journal/thread"
@@ -157,7 +157,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
           ...(options.provisionRetry ? { provisionRetry: options.provisionRetry } : {}),
           ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
         ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
-          canDrive: () => this.watchdog.status.pipe(Effect.flatMap(entries => entries.get(watchdogKey({ actor: options.actor.actorName, instance }))?.status === "blocked" ? Effect.succeed(false) : options.canDrive ? options.canDrive({ actor: options.actor.actorName, instance }) : Effect.succeed(true))),
+          canDrive: () => this.watchdog.blocked({ actor: options.actor.actorName, instance }).pipe(Effect.flatMap(blocked => blocked ? Effect.succeed(false) : options.canDrive ? options.canDrive({ actor: options.actor.actorName, instance }) : Effect.succeed(true))),
           defaultChildPlacement: DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, supportedChildPlacements: CLOUDFLARE_CHILD_PLACEMENTS,
           ...(options.promises ? { promises: options.promises } : {}), ...(options.generateName ? { generateName: options.generateName } : {}),
           validateInitialState: state => prepareInitialState(options.initialStateAtoms ?? [], state).pipe(Effect.asVoid),
@@ -309,7 +309,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
         ...(options.cancellation ? { cancellation: options.cancellation } : {}),
         ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
         ...(options.effectInput ? { effectInput: options.effectInput } : {}), ...(options.promises ? { promises: options.promises } : {}), ...(options.executionStream ? { executionStream: options.executionStream } : {}),
-        canDrive: () => this.watchdog.status.pipe(Effect.flatMap(entries => entries.get(watchdogKey(this.address()))?.status === "blocked" ? Effect.succeed(false) : options.canDrive ? options.canDrive(this.address()) : Effect.succeed(true))),
+        canDrive: () => this.watchdog.blocked(this.address()).pipe(Effect.flatMap(blocked => blocked ? Effect.succeed(false) : options.canDrive ? options.canDrive(this.address()) : Effect.succeed(true))),
       })
       return this.execution
     }
