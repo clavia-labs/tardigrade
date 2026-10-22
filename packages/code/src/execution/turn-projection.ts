@@ -70,6 +70,15 @@ const reduceHead = (state: TurnProjectionState, event: Event): TurnProjectionSta
   }
 }
 
+// appendFlat appends a and flattens once the unflattened tail reaches 1/8 of the head (turn-projection.test.ts, "keeps log-sized chunks flat after a replay").
+const appendFlat = <A>(self: Chunk.Chunk<A>, a: A): Chunk.NonEmptyChunk<A> => {
+  const next = Chunk.append(self, a)
+  let head: Chunk.Chunk<A> = next
+  while (head.backing._tag === "IConcat") head = head.left
+  if (next.length - head.length >= Math.max(16, head.length >> 3)) Chunk.toReadonlyArray(next)
+  return next
+}
+
 const reduceTurn = (state: TurnProjectionState, event: Event): TurnProjectionState => {
   const id = turnOf(event)
   if (id === undefined) return state
@@ -84,7 +93,7 @@ const reduceTurn = (state: TurnProjectionState, event: Event): TurnProjectionSta
     : HashSet.add(previous.resumed, failedEpoch)
   const terminals = terminal(event) ? HashMap.set(previous.terminals, eventEpoch, event) : previous.terminals
   const record = {
-    events: Chunk.append(previous.events, event),
+    events: appendFlat(previous.events, event),
     failed,
     resumed,
     terminals,
@@ -105,15 +114,15 @@ const reduceTrajectory = (state: TurnProjectionState, event: Event): TurnProject
   if (event.type === "MessageReceived") return state
   const id = turnOf(event)
   if (id === undefined || HashSet.has(state.served, id)) {
-    return { ...state, trajectory: Chunk.append(state.trajectory, event) }
+    return { ...state, trajectory: appendFlat(state.trajectory, event) }
   }
   const head = Option.getOrUndefined(HashMap.get(state.heads, id))
   return {
     ...state,
     served: HashSet.add(state.served, id),
     trajectory: head === undefined
-      ? Chunk.append(state.trajectory, event)
-      : Chunk.append(Chunk.append(state.trajectory, head.event), event)
+      ? appendFlat(state.trajectory, event)
+      : appendFlat(appendFlat(state.trajectory, head.event), event)
   }
 }
 
