@@ -98,10 +98,12 @@ export function compact(trajectory: Atom<typeof Conversation.Type>, options: Com
 
   const request = requests(Summarize.request, { latestOnly: true })
   return Effect.map(modelSelection, model => effectAtom(get => {
+    // TODO: Declare durable state independently of branch evaluation so setup discovery does not require these reads (PR #761).
+    const source = get(trajectory)
+    const state = get(compactionState)
     const selection = get(model)
     if (!selection) return { view: { position: "configuring" as const, policy }, events: {}, acts: {} }
-    const { messages, totals } = renderTrajectory(get(trajectory))
-    const state = get(compactionState)
+    const { messages, totals } = renderTrajectory(source)
     const triggerTokens = Math.floor(selection.contextWindowTokens * policy.triggerRatio)
     const retainTokens = Math.floor(selection.contextWindowTokens * policy.retainRatio)
     if (retainTokens < 1 || triggerTokens <= retainTokens) throw new RuntimeError("Compaction thresholds require triggerTokens > retainTokens >= 1")
