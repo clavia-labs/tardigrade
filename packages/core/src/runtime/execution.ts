@@ -494,7 +494,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const drain = () => Effect.gen(function* () {
       while (true) {
         yield* observePromises.pipe(Effect.catchCause(reportCause))
-        yield* enqueue(Effect.gen(function* () {
+        if (yield* Effect.try({ try: () => snapshot.deferred().some(work => work.handle.executor === "local" && work.deadlineAt !== undefined), catch: RuntimeError.from })) yield* enqueue(Effect.gen(function* () {
           for (const work of snapshot.deferred()) {
             if (work.handle.executor !== "local" || snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
             if (work.deadlineAt !== undefined && work.deadlineAt <= (yield* Clock.currentTimeMillis)) {
