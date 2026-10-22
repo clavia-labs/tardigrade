@@ -48,7 +48,8 @@ invoke: stable key -> receiver deduplication -> durable reply
 | Durable atom recovery | Checkpoint plus suffix equals full replay, [atomCheckpoint](checkpoint/atomCheckpoint.qnt), `recoveryEquivalent` | Codec preserves state, reducer and configuration agree, journal prefix stays immutable |
 | Graph recovery | Equal roots yield equal derived graphs, [graphCheckpoint](checkpoint/graphCheckpoint.qnt), `graphEquivalent` | Recovered roots are equal, projections are deterministic, dependencies are topologically ordered, configuration agrees |
 | Lazy discovery | An unread atom obtains a seed or replays the missing prefix, [lazyAtomCheckpoint](checkpoint/lazyAtomCheckpoint.qnt), `readyEquivalent` | Capture includes the atom, or its original prefix remains readable; suffix-only recovery cannot supply absent roots |
-| Commit and publication | Prepared state remains invisible until commit, [runtimeCheckpoint](checkpoint/runtimeCheckpoint.qnt), `visibleEquivalent`; acceptance survives reopening, [proposalCheckpoint](checkpoint/proposalCheckpoint.qnt), `recoveryMatchesRequest` | Atomic journal/checkpoint writes, persistence failure forces reopening, reconstructed proposals agree |
+| Commit and publication | Committed state survives failed preparation; publication follows complete storage, [runtimeCheckpoint](checkpoint/runtimeCheckpoint.qnt), `visibleEquivalent`, `rollbackStable`, `committedCandidate`; acceptance survives reopening, [proposalCheckpoint](checkpoint/proposalCheckpoint.qnt), `recoveryMatchesRequest` | Atomic journal/checkpoint writes, persistence failure forces reopening, reconstructed proposals agree |
+| Runtime record retention | Volatile records are limited to the current batch, [runtimeCheckpoint](checkpoint/runtimeCheckpoint.qnt), `retentionBound`; fair release proceeds with active work and without a checkpoint, `publicationReleased` | Fixed-size runtime frames in this abstraction, active work retained separately, release independent of checkpoint eligibility; TypeScript reachability and byte growth require implementation checks |
 | Effect recovery | Retry identity and deferred ownership survive replay, [effectRecovery](checkpoint/effectRecovery.qnt), `retryIdentity`, `localRestartOnly` | Durable lifecycle records, preserved refs and handles, local ownership distinguishes restart from remote observation |
 | Execution defects | Defects remain distinct from declared failures and stop domain execution; unresolved callers fail, [effectRecovery](checkpoint/effectRecovery.qnt), `blockedIsDurable`, `terminalNotExecuted`, `terminalReachesCaller` | Durable defect commit before publication, complete replay, eventual availability and fair caller observation; terminal threads retain the journal suffix |
 | Promise admission | Result follows successful effect settlement; correlated callbacks share its batch, [promiseDelivery](checkpoint/promiseDelivery.qnt), `settlementFirst`, `batchExactlyOnce` | Serialized admission, atomic callback batch, retry early delivery, suppress already terminal groups independently |
@@ -158,6 +159,35 @@ Preparation while a live request is nonterminal requires its input to be loaded.
 
 The remaining rows are standalone models with corresponding contracts. Their state variables and transitions are not mechanically linked into this composition. Cancellation cleanup and host scheduling require explicit adapters before their combined behavior can be claimed as checked.
 
+## Runtime frames and publication
+
+[runtimeCheckpoint](checkpoint/runtimeCheckpoint.qnt) distinguishes the committed runtime frame, a candidate frame, and persisted storage. Runtime frames contain actor state, a consumed position, and an active work reference. Checkpoints contain actor state and position and require quiescence. Preparing a batch leaves committed state visible. A successful commit persists settlement and callback events atomically before publication. Releasing the batch and previous frame requires no checkpoint and preserves active work.
+
+```text
+committed frame + batch -> candidate frame
+                               |
+                          journal commit
+                               |
+          success -> publish -> release batch and previous frame
+          failure -> retain previous frame -> recover from journal
+
+checkpoint capture: requires quiescence
+record release:     allowed while work remains pending
+```
+
+A failure before storage preserves both committed state and storage. A lost acknowledgement after storage retains the previous visible frame while recovery obtains the durable result. Recovery folds records directly into state from the checkpoint position and retains no replay buffer. The journal remains available for every recovery path.
+
+The finite instance contains four journal records, two Boolean actor roots, batches of at most two records, and one active work reference. TLC checks safety and conditional publication/recovery progress over 3,725 reachable states, including recovery from 280 initial journal/checkpoint combinations. Seven scenarios cover rollback, pending work during release, atomic callbacks, acknowledgement loss, preparation and publication crashes, and checkpoint suffix replay. Progress assumes no further crashes, fair release, and successful, fairly scheduled recovery. The memory bound describes modeled record ownership; arbitrary actor-state size, lazy atom hydration, external execution, cleanup payloads, and TypeScript heap reachability remain outside this instance.
+
+| Unsafe initializer | Expected counterexample |
+| --- | --- |
+| `initEarlyPublication` | `visibleEquivalent`: candidate state appears before durable commit |
+| `initFailedRollback` | `rollbackStable`: a failed write changes the committed frame |
+| `initRetainedHistory` | `retentionBound`: released batches accumulate in runtime memory |
+| `initPartialCommit` | `committedCandidate`: settlement persists without its callback event |
+| `initLostWork` | `visibleEquivalent`: releasing a batch drops active work |
+| `initCheckpointRelease` | `publicationReleased`: pending work blocks record release indefinitely |
+
 ## Open joins and implementation checks
 
 | Obligation | Evidence required |
@@ -188,6 +218,21 @@ A seeded simulation also checks 2,000 traces of 60 transitions with `invariant`.
 ## Reproduce
 
 Use Quint 0.32.0 and run backend checks from a temporary directory so generated artifacts remain outside the repository. Java must be on `PATH`; the compiler requires localhost access for its Apalache server. The platform [verification runner](../../platform/quint/verify.py) checks its scheduling models and requires their named negative cases to fail.
+
+```sh
+quint typecheck packages/core/quint/checkpoint/runtimeCheckpoint.qnt
+quint test packages/core/quint/checkpoint/runtimeCheckpoint.qnt
+runtime_model="$PWD/packages/core/quint/checkpoint/runtimeCheckpoint.qnt"
+runtime_checks=$(mktemp -d /tmp/tardigrade-runtime.XXXXXX)
+(
+cd "$runtime_checks"
+export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"
+quint verify "$runtime_model" --backend tlc --invariant invariant
+quint verify "$runtime_model" --backend tlc --init initRecovery --step stableStep --invariant invariant --temporal publicationReleased,recoveryProgress
+)
+```
+
+Check each unsafe initializer with its named invariant from the table. `initCheckpointRelease` uses `--step stableStep --invariant invariant --temporal publicationReleased`; it must report a temporal counterexample. The other five must report invariant counterexamples, rather than checker errors.
 
 ```sh
 quint typecheck packages/core/quint/checkpoint/inputLifecycle.qnt

@@ -99,8 +99,14 @@ export async function cancellationInputRecovery(fixture: CleanupFixture, legacyV
   const blockCleanup = Deferred.makeUnsafe<void>()
   let executions = 0
   let cleanups = 0
+  let forbidHistory = false
+  let operationReads = 0
   const open = (version: number) => Effect.runPromise(createActorStore({
-    actor: actor(version === 1 ? original : `changed-${version}`), journal, effectInput: { digestMinBytes: 0 }, checkpoint: { mode: "manual" },
+    actor: actor(version === 1 ? original : `changed-${version}`), journal: {
+      ...journal,
+      read: () => { if (forbidHistory) throw new RuntimeError("Late delivery read the entire journal"); return journal.read() },
+      readOperation: (ref, position) => { operationReads++; return journal.readOperation(ref, position) },
+    }, effectInput: { digestMinBytes: 0 }, checkpoint: { mode: "manual" },
     cancellation: { retryIntervalMs: 1 }, actorContext: Context.pick(),
     services: () => Job.layer(() => Effect.gen(function* () {
       executions++
@@ -155,9 +161,11 @@ export async function cancellationInputRecovery(fixture: CleanupFixture, legacyV
     await Effect.runPromise(journal.close)
     journal = fixture.open(name)
     store = await open(4)
+    forbidHistory = true
+    operationReads = 0
     await Effect.runPromise(store.cancel(pending.ref, "duplicate"))
     await Effect.runPromise(store.wait)
-    if (Number(cleanups) !== 4 || executions !== 1 || !isDeepStrictEqual(journal.read(), records)) throw new Error("Acknowledged cleanup repeated after checkpoint recovery")
+    if (operationReads !== 1 || Number(cleanups) !== 4 || executions !== 1 || !isDeepStrictEqual(journal.read(), records)) throw new Error("Acknowledged cleanup repeated or scanned history after checkpoint recovery")
   } finally {
     await Effect.runPromise(Deferred.succeed(releaseSubmission, undefined))
     await Effect.runPromise(store.close)

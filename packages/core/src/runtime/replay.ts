@@ -1,4 +1,4 @@
-import { type ReadonlyIndex, type ReadonlyLog } from "./log-view"
+import { RangeLog, DEFAULT_JOURNAL_READ_BATCH_SIZE, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
 import { historicalEventDecoder } from "../event/versioned"
 import { frozenPlainData } from "../atoms/incremental/frozen"
 import { actInputs } from "../atoms/act"
@@ -6,9 +6,11 @@ import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAUL
 import { Context, Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { atom, type Atom } from "../atoms/atom"
-import { EventLog, executionDefect } from "../services/event-log"
+import { EventLog, executionDefect, type AtomReplay } from "../services/event-log"
 import { createStore } from "../atoms/store"
-import { createRecordSource, observeRecord } from "./event-source"
+import { createRecordSource, emptyRecordFrame, observeRecord, type RecordSourceFrame } from "./event-source"
+import { journalHistory, memoryHistory, type ReplayHistory } from "./history"
+import { recordEvent } from "./record"
 import type { ActRequest, ActCancellation } from "../atoms/act"
 import { ActorReplayError, ExecutionResult, PromiseTimedOut, EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady, CancellationOutcome } from "./effects"
 import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, EffectSettled, EffectDied, PromiseSettled, RetryScheduled } from "./events"
@@ -38,12 +40,18 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   readonly decodeEvent?: (input: unknown) => Event
   readonly atoms: Atoms
   readonly digestMinBytes?: number
+  readonly journalReadBatchSize?: number
+  readonly readRange?: (from: number, to: number) => ReadonlyLog<Recorded<Event>>
   readonly checkpoint?: EffectCheckpoint
   readonly readBefore?: (position: number) => ReadonlyLog<Recorded<Event>>
+  readonly readOperation?: (ref: EffectRef, position: number) => ReadonlyLog<Recorded<Event>>
   readonly inputs?: readonly PendingEffectInput[]
 }) {
   const digestMinBytes = options.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
   if (!Number.isSafeInteger(digestMinBytes) || digestMinBytes < 0) throw new Error("Effect input digest minBytes must be a nonnegative safe integer")
+  const batchSize = options.journalReadBatchSize ?? DEFAULT_JOURNAL_READ_BATCH_SIZE
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw new Error("Journal read batchSize must be a positive safe integer")
+  if (options.readRange && !options.readOperation) throw new Error("Journal replay requires operation lookup")
   const restored = initialCheckpoint
   type EffectValues = Proposed<Values<Atoms>[keyof Atoms]>
   type Work = EffectWork<ServicesOf<EffectValues>>
@@ -127,18 +135,19 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       throw historical ? ActorReplayError.wrap(cause, { stage: "event", reason: "decode_failed", position }) : cause
     }
   }
-  const readPrefix = () => {
-    const position = restored?.position ?? 0
-    if (position === 0) return []
-    if (!options.readBefore) throw new Error("Checkpoint recovery requires a journal prefix reader for omitted durable atoms")
-    const prefix = options.readBefore(position)
-    if (prefix.length !== position) throw new Error("Checkpoint prefix is unavailable")
-    return [...prefix].map((record, index) => observeRecord(recordOf(record, true, index)))
-  }
+  const recordRange = (journal: ReplayHistory<Event>, position: number, start: number, tailOffset: number, tail: ReadonlyLog<Recorded<Event>>) => new RangeLog<Recorded<Event>>(position - start, (from, to) => {
+    const begin = start + from
+    const end = start + to
+    const prefix = begin < tailOffset ? journal.readRange(begin, Math.min(end, tailOffset)).slice().map((record, index) => recordOf(record, true, begin + index)) : []
+    return [...prefix, ...tail.slice(Math.max(0, begin - tailOffset), Math.max(0, end - tailOffset))]
+  }, batchSize)
   type Snapshot = {
     readonly events: ReadonlyLog<RuntimeEvent<Event>>
     readonly records: ReadonlyLog<Recorded<Event>>
     readonly position: number
+    readonly retainedRecords: number
+    readonly observations: () => AtomReplay
+    readonly progressCursor: number
     readonly seed: EffectCheckpoint | undefined
     readonly inputs: readonly PendingEffectInput[]
     readonly bindings: ReadonlyIndex<object, EffectRef>
@@ -152,23 +161,47 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly deliveries: () => readonly Event[]
     readonly pending: () => readonly { readonly type: "EffectRequested"; readonly ref: EffectRef; readonly request: EffectRequest }[]
     readonly effect: (ref: EffectRef) => StoredOperation | undefined
+    readonly operations: () => Iterable<StoredOperation>
     readonly retry: (ref: EffectRef, phase?: "execution" | "cancellation") => RetryScheduled | undefined
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
     readonly checkpoint: () => EffectCheckpoint | undefined
   }
-  const createEngine = (history: ReadonlyLog<Recorded<Event>>, seed?: EffectCheckpoint, inputs?: readonly PendingEffectInput[]) => {
-    const availableInputs = inputs ? new Map(inputs.map(input => [effectKey(input.ref), prepareRequest(input.request)])) : persistedInputs
-    const offset = seed?.position ?? 0
+  type Proposal = ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>
+  type RuntimeFrame = {
+    readonly position: number
+    readonly journal: ReplayHistory<Event>
+    readonly source: RecordSourceFrame<Event>
+    readonly progressCursor: number
+    readonly initialState: { readonly seed: StateSeed | undefined } | undefined
+    readonly initialisedNames: ReadonlySet<string>
+    readonly defect: EffectDied | undefined
+    readonly operations: ReadonlyMap<string, StoredOperation>
+    readonly inputs: ReadonlyMap<string, EffectRequest>
+    readonly availableInputs: ReadonlyMap<string, ReturnType<typeof prepareRequest>>
+    readonly references: ReadonlyMap<object, EffectRef>
+    readonly bindings: ReadonlyIndex<object, EffectRef>
+    readonly acts: ReadonlyMap<string, Proposal>
+    readonly accepted: ReadonlyMap<string, IdentifiedEffectValue<ServicesOf<EffectValues>>>
+    readonly origins: ReadonlyMap<string, EffectRef>
+    readonly states: NonNullable<AtomReplay["states"]>
+  }
+  const actOwners = new WeakMap<object, string>()
+  const executionDeclarations = new WeakMap<object, StoredEffectRequested["request"]>()
+  const createEngine = (history: ReadonlyLog<Recorded<Event>>, journal: ReplayHistory<Event>, seed?: EffectCheckpoint, frame?: RuntimeFrame) => {
+    const inheritedStates = frame?.states
+    const availableInputs = new Map(frame?.availableInputs ?? persistedInputs)
+    let offset = frame?.position ?? seed?.position ?? 0
+    let progressCursor = frame?.progressCursor ?? offset
     const source = createRecordSource<Event>()
-    const bindings = atom<ReadonlyIndex<object, EffectRef>>(new Map())
+    const bindings = atom<ReadonlyIndex<object, EffectRef>>(frame?.bindings ?? new Map())
     // initialState holds the seed once records[0..1], the only records initialStateSeed reads, exist or it found one; an append-only source cannot change it afterwards.
-    let initialState: { readonly seed: StateSeed | undefined } | undefined
-    const initialisedNames = new Set(seed?.durable.map(entry => entry.name))
-    let defect: EffectDied | undefined
+    let initialState: { readonly seed: StateSeed | undefined } | undefined = frame?.initialState
+    const initialisedNames = new Set(frame?.initialisedNames ?? seed?.durable.map(entry => entry.name))
+    let defect: EffectDied | undefined = frame?.defect
     // activeOperations retains execution and cleanup until their completion batch is folded (platform/test/properties/runtime/snapshot-lookups.ts).
-    const activeOperations = new Map<string, StoredOperation>()
+    const activeOperations = new Map(frame?.operations)
     const storeOperation = (key: string, operation: StoredOperation) => activeOperations.set(key, freeze(operation))
-    const loadedInputs = new Map<string, EffectRequest>()
+    const loadedInputs = new Map(frame?.inputs)
     const inputOf = (key: string): EffectRequest => {
       const input = loadedInputs.get(key)
       if (!input) throw reconstructionError("Effect requires reconstructed input", offset + records.length)
@@ -200,36 +233,59 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (!request) throw new Error("Cleanup requires cancellation")
       storeOperation(key, { ...operation, cleanup: { ...operation.cleanup, ...patch, request } })
     }
-    const concluded = new Set([...history].flatMap(({ event }) =>
-      (Schema.is(CancellationOutcome)(event) && cleanupSucceeded(event)) || Schema.is(PromiseSettled)(event) || (Schema.is(EffectSettled)(event) && settlementCompletesExecution(event)) ? [effectKey(event.ref)] : []))
-    if ([...history].some(record => Schema.is(EffectDied)(record.event))) {
-      const cleanupPending = new Set([...history].flatMap(({ event }) => Schema.is(EffectCancelled)(event) && !concluded.has(effectKey(event.ref)) ? [effectKey(event.ref)] : []))
-      for (const { event } of history) if (Schema.is(EffectRequested)(event) && event.ref.atom !== "host.message.replies" && !cleanupPending.has(effectKey(event.ref))) concluded.add(effectKey(event.ref))
+    let recovering = history.length > 0
+    const recoveryEnd = offset + history.length
+    const stopped = history.some(record => Schema.is(EffectDied)(record.event))
+    const isConcluded = (ref: EffectRef) => {
+      if (!recovering) return false
+      const lifecycle = recordedOperation(journal.readOperation(ref, recoveryEnd), ref)
+      return lifecycle !== undefined && (cleanupSucceeded(lifecycle.cleanup?.outcome) || lifecycle.execution.promise !== undefined || settlementCompletesExecution(operationSettlement(lifecycle)) || (stopped && ref.atom !== "host.message.replies" && !lifecycle.cleanup))
+    }
+    const ranges = (position: number, start = 0) => recordRange(journal, position, start, offset, records)
+    const observations = (): AtomReplay => {
+      const position = offset + records.length
+      const tailOffset = offset
+      const tail = records
+      return {
+        position, seed: stateSeed(), ...(inheritedStates ? { states: inheritedStates } : {}),
+        read: from => {
+          if (!Number.isSafeInteger(from) || from < 0 || from > position) throw new Error("Atom replay cursor is outside its snapshot")
+          const history = recordRange(journal, position, from, tailOffset, tail)
+          return new RangeLog(history.length, (from, to) => history.slice(from, to).map(observeRecord), batchSize)
+        },
+      }
     }
     const retry = (ref: EffectRef, phase = "execution") => phase === "execution" ? activeOperations.get(effectKey(ref))?.execution.retry : activeOperations.get(effectKey(ref))?.cleanup?.retry
     const effect = (ref: EffectRef) => activeOperations.get(effectKey(ref))
     const store = createStore(Context.make(EventLog, {
-      events: source.observedEvents,
-      records: source.observedRecords,
-      readPrefix,
+      replay: atom(get => { get(source.records); return observations() }),
+      events: atom(get => {
+        get(source.records)
+        const history = ranges(offset + records.length, seed?.position ?? 0)
+        return new RangeLog(history.length, (from, to) => history.slice(from, to).map(record => recordEvent(observeRecord(record))), batchSize)
+      }),
+      records: atom(get => {
+        get(source.records)
+        const history = ranges(offset + records.length, seed?.position ?? 0)
+        return new RangeLog(history.length, (from, to) => history.slice(from, to).map(observeRecord), batchSize)
+      }),
       bindings,
-      position: seed?.position ?? 0,
-      initialState: () => {
-        if (initialState) return initialState.seed
-        const records = store.get(source.records)
-        const found = initialStateSeed(records, seed)
-        if (found || seed || records.length >= 2) initialState = { seed: found }
-        return found
-      },
       effect: ref => {
         const state = effect(ref)
         return state ? { ...state, request: Object.freeze(observeRequest(state.request)) } : undefined
       },
+      operations: () => [...activeOperations.values()].map(operation => ({ ...operation, request: Object.freeze(observeRequest(operation.request)) })),
       defect: () => defect,
       promise: ref => promiseOf(effectKey(ref)),
     }))
-    const actReferences = new Map<object, EffectRef>()
-    const actOwners = new WeakMap<object, string>()
+    function stateSeed() {
+      if (initialState) return initialState.seed
+      const prefix = seed ? [] : ranges(offset + records.length).slice(0, 2)
+      const found = initialStateSeed(prefix, seed)
+      if (found || seed || offset + records.length >= 2) initialState = { seed: found }
+      return found
+    }
+    const actReferences = new Map(frame?.references)
     let records: ReadonlyLog<Recorded<Event>> = store.get(source.records)
     let disposed = false
     const dispose = () => {
@@ -239,14 +295,13 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       store.dispose()
     }
     disposers.add(dispose)
-    const acts = new Map<string, ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>>()
+    const acts = new Map(frame?.acts)
     let deliveries: Event[] = []
     let cancellations: EffectCancelled[] = []
-    const executionDeclarations = new WeakMap<object, StoredEffectRequested["request"]>()
     const proposals = new Map<string, ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>>()
-    const accepted = new Map<string, IdentifiedEffectValue<ServicesOf<EffectValues>>>()
+    const accepted = new Map(frame?.accepted)
     // originRefs binds unfinished proposals to accepted references (quint/checkpoint/acceptanceBinding.qnt, recoveryEquivalent).
-    const originRefs = new Map<string, EffectRef>()
+    const originRefs = new Map(frame?.origins)
     const originKey = (atom: string, act: string, origin: number | undefined) => JSON.stringify([atom, act, origin ?? null])
     const rememberOrigin = (record: StoredEffectRequested) => {
       if (record.ref.act !== record.request.act) throw new Error("Effect reference differs from its act")
@@ -258,10 +313,17 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     const bind = (proposal: ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>, ref: EffectRef) => {
       const prior = acts.get(effectKey(ref))
-      if (prior && prior.identity !== proposal.identity) throw new Error("Duplicate effect binding")
+      if (prior && prior.identity !== proposal.identity && actOwners.get(prior.identity) !== actOwners.get(proposal.identity)) throw new Error("Duplicate effect binding")
+      const next = new Map(store.get(bindings))
+      for (const [identity, bound] of actReferences) {
+        if (effectKey(bound) !== effectKey(ref) || identity === prior?.identity) continue
+        actReferences.delete(identity)
+        next.delete(identity)
+      }
       actReferences.set(proposal.identity, ref)
-      acts.set(effectKey(ref), proposal)
-      store.set(bindings, new Map([...store.get(bindings), [proposal.identity, ref]]))
+      acts.set(effectKey(ref), prior ?? proposal)
+      next.set(proposal.identity, ref)
+      store.set(bindings, next)
     }
     const checkpoint = (): EffectCheckpoint | undefined => {
       // checkpoint captures durable actor state after execution and cleanup settle (platform/test/properties/runtime/snapshot-lookups.ts).
@@ -356,7 +418,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const key = effectKey(ref)
           const settlement = settlementOf(key)
           const deferred = settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !hasPromise(key)
-          if (!loadedInputs.has(key) && !cleanupSucceeded(cleanupOutcomeOf(key)) && (!settlement || deferred || hasCancellation(key))) loadedInputs.set(key, acceptedInput(recorded, prepared, concluded.has(key), availableInputs))
+          if (!loadedInputs.has(key) && !cleanupSucceeded(cleanupOutcomeOf(key)) && (!settlement || deferred || hasCancellation(key))) loadedInputs.set(key, acceptedInput(recorded, prepared, isConcluded(recorded.ref), availableInputs))
           if (!assigned) bind(proposal, ref)
           return []
         }
@@ -389,7 +451,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         activeOperations.delete(key)
         loadedInputs.delete(key)
         availableInputs.delete(key)
-        persistedInputs.delete(key)
         acts.delete(key)
         accepted.delete(key)
         retire.delete(key)
@@ -405,7 +466,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       release(event)
       if (Schema.is(ThreadCreated)(event) && offset + records.length !== 0) throw new Error("Thread creation must be the first journal record")
       if (Schema.is(StateInitialised)(event)) {
-        if (offset !== 0 || records.length > 1 || records.some(record => !Schema.is(ThreadCreated)(record.event))) throw new Error("State initialisation requires a fresh journal")
+        if (offset + records.length > 1 || ranges(offset + records.length).some(record => !Schema.is(ThreadCreated)(record.event))) throw new Error("State initialisation requires a fresh journal")
         for (const name of Object.keys(event.initialState)) initialisedNames.add(name)
       }
       if (Schema.is(CoreEvent)(event) && event.type !== "ThreadCreated" && event.type !== "ThreadUpdated" && event.type !== "StateInitialised" && event.type !== "MessageDelivered" && !isMessageReceived(event)) {
@@ -425,14 +486,13 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           const offered = candidates[0]
           const offeredPrepared = offered ? preparedRequests.get(offered.request) : undefined
           if (!offered) throw reconstructionError("Effect request differs from its proposal", event.ref.seq)
-          const input = acceptedInput(event, offeredPrepared ?? prepareRequest(offered.request), concluded.has(key), availableInputs)
+          const input = acceptedInput(event, offeredPrepared ?? prepareRequest(offered.request), isConcluded(event.ref), availableInputs)
           const proposal = proposals.get(offered.source)
           if (!proposal) throw new Error("Effect proposal is missing")
           rememberOrigin(event)
-          storeOperation(key, { ref: event.ref, request: event, execution: {} })
+          storeOperation(key, { ref: event.ref, request: event, ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), execution: {} })
 
           loadedInputs.set(key, input)
-          concluded.delete(key)
           bind(proposal, event.ref)
           accepted.set(key, { ...offered, ref: event.ref, request: input })
         } else if (event.type === "EffectDied") {
@@ -493,26 +553,43 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
         if (result.type !== "value" || !isDeepStrictEqual(result.value, event.receipt)) throw new Error("Delivery receipt differs from effect settlement")
       }
+      if (Schema.is(EffectSettled)(event) || Schema.is(PromiseSettled)(event) || Schema.is(CancellationOutcome)(event)) progressCursor = offset + records.length + 1
       source.append(store, [record])
       records = store.get(source.records)
       effects()
     }
     try {
       effects()
-      for (const raw of history) append(recordOf(raw, true, offset + records.length))
+      for (const raw of history) {
+        append(recordOf(raw, true, offset + records.length))
+        offset += records.length
+        source.clear(store)
+        records = store.get(source.records)
+      }
+      recovering = false
       finish()
-      concluded.clear()
     } catch (error) {
       dispose()
       throw error
     }
     return {
+      frame: (): RuntimeFrame => {
+        const states = new Map(inheritedStates)
+        for (const node of store.nodes().values()) {
+          const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
+          if (codec) states.set(codec, Object.freeze({ position: offset + records.length, value: store.get(node.atom) }))
+        }
+        return Object.freeze({
+          position: offset + records.length, journal: journal.append(offset, records.slice()), source: source.snapshot(store), progressCursor, initialState,
+          initialisedNames: new Set(initialisedNames), defect,
+          operations: new Map(activeOperations), inputs: new Map(loadedInputs), availableInputs: new Map(availableInputs),
+          references: new Map(actReferences), bindings: store.get(bindings), acts: new Map(acts),
+          accepted: new Map(accepted), origins: new Map(originRefs), states,
+        })
+      },
       seed,
-      get events() { return store.get(source.events) },
-      get records() { return records },
-      get position() { return offset + records.length },
+      observations,
       get disposed() { return disposed },
-      get defect() { return defect },
       append,
       validatePromise,
       finish,
@@ -548,16 +625,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const result = Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value)
         return result.type === "value" ? request.onSettled?.({ status: "fulfilled", value: result.value }, event.ref) ?? [] : request.onDeferred?.(result.handle, event.ref) ?? []
       },
-      bindings: () => store.get(bindings),
-      restoreBindings: (previous: ReadonlyIndex<object, EffectRef>) => {
-        let next = new Map(store.get(bindings))
-        for (const [identity, ref] of previous) {
-          if (!activeOperations.has(effectKey(ref))) continue
-          actReferences.set(identity, ref)
-          next.set(identity, ref)
-        }
-        store.set(bindings, next)
-      },
       get: store.get,
       view,
       effects,
@@ -572,62 +639,148 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           request: inputOf(key), execute: proposal.execute, handle: result.handle, deadlineAt: result.deadlineAt }]
       }),
       pending: () => activeRequests().filter(([key]) => !hasSettlement(key) && !hasCancellation(key) && (!defect || requestOf(key)!.ref.atom === "host.message.replies")).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
-      operations: () => new Map(activeOperations),
-      inputs: () => [...loadedInputs].flatMap(([key, request]) => {
-        const operation = activeOperations.get(key)
-        return operation ? [{ ref: operation.ref, request }] : []
-      }),
       effect,
-      retry,
-      promise: (ref: EffectRef) => promiseOf(effectKey(ref)),
       checkpoint,
     }
   }
   type Engine = ReturnType<typeof createEngine>
   const engines = new WeakMap<Snapshot, Engine>()
-  // engineOf reconstructs historical or discarded preparation state; current snapshots reuse their registry.
+  const frames = new WeakMap<Snapshot, RuntimeFrame>()
+  // engineOf restores a registry from captured runtime state without replaying records (platform/test/properties/runtime/snapshot-lookups.ts).
   const engineOf = (snapshot: Snapshot): Engine => {
     const current = engines.get(snapshot)
-    if (!current) throw new Error("Snapshot belongs to another event log")
-    if (!current.disposed && current.events.length === snapshot.events.length) return current
-    const restored = createEngine(snapshot.records, snapshot.seed, snapshot.inputs)
-    restored.restoreBindings(snapshot.bindings)
+    if (!frames.has(snapshot)) throw new Error("Snapshot belongs to another event log")
+    if (current && !current.disposed) return current
+    const restored = createEngine([], frames.get(snapshot)!.journal, snapshot.seed, frames.get(snapshot))
     engines.set(snapshot, restored)
     return restored
+  }
+  const frameOf = (snapshot: Snapshot): RuntimeFrame => {
+    const engine = engines.get(snapshot)
+    if (!frames.has(snapshot)) throw new Error("Snapshot belongs to another event log")
+    if (engine && !engine.disposed) frames.set(snapshot, engine.frame())
+    return frames.get(snapshot)!
+  }
+  const discard = (snapshot: Snapshot) => {
+    frameOf(snapshot)
+    engines.get(snapshot)?.dispose()
+    engines.delete(snapshot)
   }
   const snapshotOf = (engine: Engine): Snapshot => {
     const work = Object.freeze([...engine.effects()])
     const cancellations = Object.freeze([...engine.cancellations()])
     const deliveries = Object.freeze([...engine.deliveries()])
     const values = Object.freeze(engine.view())
-    const operations = engine.operations()
+    const pending = Object.freeze(engine.pending())
+    const deferred = Object.freeze(engine.deferred())
+    const cancelled = Object.freeze(engine.cancelled())
+    const frame = engine.frame()
+    const operations = frame.operations
+    const inputs = frame.inputs
     const snapshot: Snapshot = Object.freeze({
-      events: engine.events,
-      records: engine.records,
-      position: engine.position,
+      get events() {
+        const records = snapshot.records
+        return new RangeLog(records.length, (from, to) => records.slice(from, to).map(record => recordEvent(record)), batchSize)
+      },
+      get records() {
+        const frame = frames.get(snapshot)!
+        const start = snapshot.seed?.position ?? 0
+        const tailOffset = frame.position - frame.source.records.length
+        const tail = frame.source.records
+        return recordRange(frame.journal, snapshot.position, start, tailOffset, tail)
+      },
+      get retainedRecords() { return frames.get(snapshot)!.source.records.length },
+      observations: () => ({ ...engineOf(snapshot).observations(), states: frameOf(snapshot).states }),
+      position: frame.position,
+      progressCursor: frame.progressCursor,
       seed: engine.seed,
-      inputs: engine.inputs(),
-      bindings: engine.bindings(),
-      defect: engine.defect,
+      get inputs() {
+        return [...inputs].flatMap(([key, request]) => {
+          const operation = operations.get(key)
+          return operation ? [{ ref: operation.ref, request }] : []
+        })
+      },
+      bindings: frame.bindings,
+      defect: frame.defect,
       get: <Value>(node: Atom<Value>): Value => engineOf(snapshot).get(node),
       view: () => values,
       effects: () => work,
-      deferred: () => engineOf(snapshot).deferred(),
+      deferred: () => deferred,
       cancellations: () => cancellations,
-      cancelled: () => engineOf(snapshot).cancelled(),
+      cancelled: () => cancelled,
       deliveries: () => deliveries,
-      pending: () => engineOf(snapshot).pending(),
+      pending: () => pending,
       effect: (ref: EffectRef) => operations.get(effectKey(ref)),
+      operations: () => operations.values(),
       retry: (ref: EffectRef, phase?: "execution" | "cancellation") => phase === "cancellation" ? operations.get(effectKey(ref))?.cleanup?.retry : operations.get(effectKey(ref))?.execution.retry,
       promise: (ref: EffectRef) => operations.get(effectKey(ref))?.execution.promise,
       checkpoint: () => engineOf(snapshot).checkpoint(),
     })
+    frames.set(snapshot, frame)
     engines.set(snapshot, engine)
     return snapshot
   }
   const replay = (history: ReadonlyLog<Recorded<Event>>): Snapshot => {
-    const engine = createEngine(history, restored)
+    const journal = options.readRange ? journalHistory(options.readRange, options.readOperation!) : memoryHistory(history, restored?.position ?? 0, options.readBefore, options.readOperation)
+    const engine = createEngine(history, journal, restored)
     try {
+      const snapshot = snapshotOf(engine)
+      discard(snapshot)
+      return snapshot
+    } catch (error) {
+      engine.dispose()
+      throw error
+    }
+  }
+  const append = (snapshot: Snapshot, event: JournalEvent<Event>, metadata: RecordMetadata = {}): Snapshot => {
+    const record = eventOf(event, metadata.message?.inReplyTo !== undefined)
+    const previous = engineOf(snapshot)
+    const defect = snapshot.get(executionDefect)
+    if (defect && !(Schema.is(CoreEvent)(record) && "ref" in record && (record.type === "EffectDied" || record.type === "EffectCancelled" || (record.type === "EffectSettled" && cleanupSubmission(previous.effect(record.ref), record)) || Schema.is(CancellationOutcome)(record) || (record.type === "RetryScheduled" && record.phase === "cancellation") || record.ref.atom === "host.message.replies"))) return snapshot
+    if (Schema.is(CoreEvent)(record) && record.type !== "ThreadCreated" && record.type !== "ThreadUpdated" && record.type !== "StateInitialised" && record.type !== "MessageDelivered" && !isMessageReceived(record)) {
+      const lifecycle = previous.effect(record.ref) ?? (record.ref.seq < snapshot.position ? recordedOperation(frameOf(snapshot).journal.readOperation(record.ref, snapshot.position), record.ref) : undefined)
+      if (record.type === "EffectCancelled") {
+        if (!lifecycle) throw new Error("Cancellation requires an accepted effect")
+        if (lifecycle.cleanup?.request || lifecycle?.execution.promise) return snapshot
+        const settlement = operationSettlement(lifecycle)
+        if (settlementCompletesExecution(settlement)) return snapshot
+      } else if (Schema.is(CancellationOutcome)(record)) {
+        if (!lifecycle?.cleanup?.request) throw new Error("Cleanup acknowledgement requires cancellation")
+      } else if (lifecycle?.cleanup?.request) {
+        if (record.type === "EffectSettled" && cleanupSucceeded(lifecycle.cleanup?.outcome) && !operationSettlement(lifecycle)) throw new Error("Acknowledged cleanup cannot accept a new submission")
+        if (record.type === "PromiseSettled" || (record.type === "RetryScheduled" && record.phase !== "cancellation")) return snapshot
+        if (record.type === "EffectSettled" && (record.outcome.status !== "fulfilled" || Schema.decodeUnknownSync(ExecutionResult)(record.outcome.value).type !== "promise")) return snapshot
+      }
+      if (record.type === "EffectDied") {
+        const prior = snapshot.get(executionDefect)
+        if (prior) {
+          if (!isDeepStrictEqual(prior, record)) throw new Error("Conflicting terminal defect")
+          return snapshot
+        }
+      }
+      const prior = record.type === "RetryScheduled" ? ((record.phase === "cancellation" ? lifecycle?.cleanup?.retry : lifecycle?.execution.retry)?.attempt === record.attempt ? (record.phase === "cancellation" ? lifecycle?.cleanup?.retry : lifecycle?.execution.retry) : undefined) : record.type === "EffectRequested" ? lifecycle?.request
+        : record.type === "EffectSettled" ? operationSettlement(lifecycle) : record.type === "EffectCancelled" ? lifecycle?.cleanup?.request : Schema.is(CancellationOutcome)(record) ? lifecycle?.cleanup?.outcome : lifecycle?.execution.promise
+      if (prior) {
+        if (record.type === "PromiseSettled" && Schema.is(PromiseSettled)(prior) &&
+          ((record.result.status === "rejected" && Schema.is(PromiseTimedOut)(record.result.reason)) ||
+            (prior.result.status === "rejected" && Schema.is(PromiseTimedOut)(prior.result.reason)))) return snapshot
+        const equal = record.type === "EffectRequested" && Schema.is(EffectRequested)(prior)
+          ? isDeepStrictEqual(prior.ref, record.ref) && prior.origin === record.origin && sameStoredRequest(prior.request, record.request)
+          : isDeepStrictEqual(prior, record)
+        if (!equal) throw new Error("Conflicting core event delivery")
+        return snapshot
+      }
+      if (record.type === "PromiseSettled") previous.validatePromise(record)
+    }
+    const frame = frameOf(snapshot)
+    const engine = createEngine([], frame.journal, snapshot.seed, frame)
+    try {
+      engine.append(recordOf({ event: record, ...metadata }))
+      for (const domain of engine.followups(record)) {
+        if (hasCoreEventType(domain) && !Schema.is(MessageDelivered)(domain)) throw new Error("Act callbacks must return domain events")
+        engine.append(recordOf({ event: eventOf(domain), ...metadata }))
+      }
+      engine.finish()
       return snapshotOf(engine)
     } catch (error) {
       engine.dispose()
@@ -636,7 +789,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   }
   return {
     get initial() { return replay([]) },
-    readPrefix,
     replay,
     // requestEvent validates acceptance coordinates and reuses this log's immutable request representation (snapshotLookups).
     requestEvent: (ref: EffectRef, request: EffectRequest, origin?: number): StoredEffectRequested => {
@@ -646,61 +798,22 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       processedRequests.add(event)
       return event
     },
-    append: (snapshot: Snapshot, event: JournalEvent<Event>, metadata: RecordMetadata = {}, historical?: StoredOperation): Snapshot => {
-      const record = eventOf(event, metadata.message?.inReplyTo !== undefined)
-      const engine = engineOf(snapshot)
-      const defect = snapshot.get(executionDefect)
-      if (defect && !(Schema.is(CoreEvent)(record) && "ref" in record && (record.type === "EffectDied" || record.type === "EffectCancelled" || (record.type === "EffectSettled" && cleanupSubmission(engine.effect(record.ref), record)) || Schema.is(CancellationOutcome)(record) || (record.type === "RetryScheduled" && record.phase === "cancellation") || record.ref.atom === "host.message.replies"))) return snapshot
-      if (Schema.is(CoreEvent)(record) && record.type !== "ThreadCreated" && record.type !== "ThreadUpdated" && record.type !== "StateInitialised" && record.type !== "MessageDelivered" && !isMessageReceived(record)) {
-        const lifecycle = engine.effect(record.ref) ?? historical ?? (record.ref.seq < snapshot.position ? recordedOperation(snapshot.records, record.ref) : undefined)
-        if (record.type === "EffectCancelled") {
-          if (!lifecycle) throw new Error("Cancellation requires an accepted effect")
-          if (lifecycle.cleanup?.request || lifecycle?.execution.promise) return snapshot
-          const settlement = operationSettlement(lifecycle)
-          if (settlementCompletesExecution(settlement)) return snapshot
-        } else if (Schema.is(CancellationOutcome)(record)) {
-          if (!lifecycle?.cleanup?.request) throw new Error("Cleanup acknowledgement requires cancellation")
-        } else if (lifecycle?.cleanup?.request) {
-          if (record.type === "EffectSettled" && cleanupSucceeded(lifecycle.cleanup?.outcome) && !operationSettlement(lifecycle)) throw new Error("Acknowledged cleanup cannot accept a new submission")
-          if (record.type === "PromiseSettled" || (record.type === "RetryScheduled" && record.phase !== "cancellation")) return snapshot
-          if (record.type === "EffectSettled" && (record.outcome.status !== "fulfilled" || Schema.decodeUnknownSync(ExecutionResult)(record.outcome.value).type !== "promise")) return snapshot
-        }
-        if (record.type === "EffectDied") {
-          const prior = snapshot.get(executionDefect)
-          if (prior) {
-            if (!isDeepStrictEqual(prior, record)) throw new Error("Conflicting terminal defect")
-            return snapshot
-          }
-        }
-        const prior = record.type === "RetryScheduled" ? ((record.phase === "cancellation" ? lifecycle?.cleanup?.retry : lifecycle?.execution.retry)?.attempt === record.attempt ? (record.phase === "cancellation" ? lifecycle?.cleanup?.retry : lifecycle?.execution.retry) : undefined) : record.type === "EffectRequested" ? lifecycle?.request
-          : record.type === "EffectSettled" ? operationSettlement(lifecycle) : record.type === "EffectCancelled" ? lifecycle?.cleanup?.request : Schema.is(CancellationOutcome)(record) ? lifecycle?.cleanup?.outcome : lifecycle?.execution.promise
-        if (prior) {
-          if (record.type === "PromiseSettled" && Schema.is(PromiseSettled)(prior) &&
-            ((record.result.status === "rejected" && Schema.is(PromiseTimedOut)(record.result.reason)) ||
-              (prior.result.status === "rejected" && Schema.is(PromiseTimedOut)(prior.result.reason)))) return snapshot
-          const equal = record.type === "EffectRequested" && Schema.is(EffectRequested)(prior)
-            ? isDeepStrictEqual(prior.ref, record.ref) && prior.origin === record.origin && sameStoredRequest(prior.request, record.request)
-            : isDeepStrictEqual(prior, record)
-          if (!equal) throw new Error("Conflicting core event delivery")
-          return snapshot
-        }
-        if (record.type === "PromiseSettled") engine.validatePromise(record)
-      }
-      try {
-        engine.append(recordOf({ event: record, ...metadata }))
-        for (const domain of engine.followups(record)) {
-          if (hasCoreEventType(domain) && !Schema.is(MessageDelivered)(domain)) throw new Error("Act callbacks must return domain events")
-          engine.append(recordOf({ event: eventOf(domain), ...metadata }))
-        }
-        engine.finish()
-        return snapshotOf(engine)
-      } catch (error) {
-        engine.dispose()
-        throw error
-      }
+    append,
+    prepare: (previous: Snapshot, event: JournalEvent<Event>, metadata: RecordMetadata = {}) => {
+      const next = append(previous, event, metadata)
+      return Object.freeze({ previous, next, records: Object.freeze(next.records.slice(previous.records.length)) })
     },
-    // discard releases a preparation registry; the snapshot's committed history remains available for reconstruction.
-    discard: (snapshot: Snapshot) => engines.get(snapshot)?.dispose(),
+    publish: (prepared: { readonly previous: Snapshot; readonly next: Snapshot }) => {
+      const frame = frameOf(prepared.next)
+      if (prepared.previous !== prepared.next) discard(prepared.previous)
+      frames.set(prepared.next, Object.freeze({ ...frame, source: emptyRecordFrame<Event>() }))
+      engines.get(prepared.next)?.dispose()
+      engines.delete(prepared.next)
+      for (const [key] of persistedInputs) if (!frame.operations.has(key)) persistedInputs.delete(key)
+      return prepared.next
+    },
+    // discard releases a registry while retaining its runtime frame (platform/test/properties/runtime/snapshot-lookups.ts).
+    discard,
     dispose: () => { for (const dispose of disposers) dispose() },
     get: <Value>(snapshot: Snapshot, node: Atom<Value>): Value => snapshot.get(node),
     view: (snapshot: Snapshot) => snapshot.view(),

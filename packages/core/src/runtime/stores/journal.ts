@@ -1,6 +1,8 @@
 import { Context, Effect, Semaphore, Schema } from "effect"
 import { createRecordSource } from "../event-source"
 import { createStore } from "../../atoms/store"
+import { atom } from "../../atoms/atom"
+import { atomReplay } from "../atom-replay"
 import { EventLog } from "../../services/event-log"
 import { RuntimeError } from "../effects"
 import { CoreEvent, hasCoreEventType } from "../events"
@@ -14,7 +16,7 @@ export function createJournalStore<Event extends object>(options: {
   readonly read: (after: number) => Effect.Effect<readonly Recorded<Event>[], Error>
 }) {
   const records = createRecordSource<Event>()
-  const source = createStore(Context.make(EventLog, { events: records.observedEvents, records: records.observedRecords }))
+  const source = createStore(Context.make(EventLog, { events: records.observedEvents, records: records.observedRecords, replay: atom(get => atomReplay(get(records.observedRecords))) }))
   const decode = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
   const decodeMetadata = Schema.decodeUnknownSync(RecordMetadata)
   const decodeMessage = Schema.decodeUnknownSync(InboxMessageReceived, { onExcessProperty: "error" })

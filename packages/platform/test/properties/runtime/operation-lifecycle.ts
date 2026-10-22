@@ -527,11 +527,13 @@ export async function operationRace(journal: Journal<typeof Event.Type>, service
       let handedOffAt: number | undefined
       let before: readonly Recorded<typeof Event.Type>[] = []
       let stagedBatch: readonly Recorded<typeof Event.Type>[] = []
+      let publishedFrame: object | undefined
       const calls: { input: string; ref: EffectRef; kind: "execution" | "cleanup"; handle?: string }[] = []
       let awaitingCommit: Exit.Exit<void, Error> | undefined
       const barrier = (batch: readonly Recorded<typeof Event.Type>[], write: () => undefined): undefined => {
         if (!armed || !batch.some(({ event }) => event.type === gateType)) return write()
         armed = false
+        publishedFrame = store.snapshot()
         before = journal.read()
         stagedBatch = batch
         const result = Effect.runSyncExit(journalCall(write))
@@ -625,6 +627,7 @@ export async function operationRace(journal: Journal<typeof Event.Type>, service
         assert.equal(yield* Clock.currentTimeMillis, timeoutMs)
         assert.equal(handedOffAt, scenario.order.includes("deadline") ? undefined : scenario.order === "cleanup-cancel" ? 0 : timeoutMs)
         assert.deepEqual(yield* journalCall(() => journal.read()), scenario.fault === "rollback" ? before : [...before, ...stagedBatch], "synchronous transaction exposed a partial batch")
+        assert.equal(store.snapshot(), publishedFrame, "preparation replaced the frame before acknowledgement")
         const heldInputs = yield* journalCall(() => journal.readInputs())
         if (gateType === "CancellationSettled" && scenario.fault !== "rollback") assert.equal(heldInputs.length, 0)
         else assert.equal(heldInputs[0]!.request.input, original, "unfinished work lost its accepted input")
@@ -642,6 +645,7 @@ export async function operationRace(journal: Journal<typeof Event.Type>, service
             assert.equal(durable[before.length]!.event.type, gateType)
           }
           assert.deepEqual([...store.snapshot().records], before, "failed acknowledgement published volatile state")
+          assert.equal(store.snapshot(), publishedFrame, "failed acknowledgement replaced the committed runtime frame")
           if (scenario.fault === "ack-lost" && gateType === "CancellationSettled") assert.equal(inputs.length, 0)
           else assert.equal(inputs[0]!.request.input, original, "failed transaction corrupted input chunks")
           assert.throws(() => store.recoveryState(), ActorCommitError)

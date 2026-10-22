@@ -44,6 +44,11 @@ export interface Journal<Event extends object> {
   readonly acknowledge?: (write?: () => undefined) => Effect.Effect<void, Error>
   // lookupInvocation includes history before checkpoints; read failures remain errors. Callers serialize lookup and acceptance against the same journal prefix (quint/checkpoint/acceptanceBinding.qnt, uniqueInvocations).
   readonly lookupInvocation: (identity: InvocationIdentity) => InvocationLookup
+  // readOperation returns a reference's lifecycle records before the consumed position, including records before checkpoints (platform/test/properties/checkpoint-storage.ts).
+  readonly readOperation: (ref: EffectRef, position: number) => readonly Recorded<Event>[]
+  readonly readPosition: () => number
+  // readRange returns exactly [from, to); unavailable or reversed boundaries fail (platform/test/properties/checkpoint-storage.ts).
+  readonly readRange: (from: number, to: number) => readonly Recorded<Event>[]
   readonly read: () => readonly Recorded<Event>[]
   // readAfter returns the suffix starting at the consumed event count; positions beyond the journal length fail.
   readonly readAfter: (position: number) => readonly Recorded<Event>[]
