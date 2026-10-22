@@ -12,6 +12,51 @@ import type { LayoutActorDO, LayoutThreadDO } from "../fixtures/workerd/layout-f
 const bindings = env as unknown as { ACTORS: DurableObjectNamespace<InstanceType<typeof LayoutActorDO>>; THREADS: DurableObjectNamespace<LayoutThreadDO> }
 const coordinate = (instance: string, thread: string) => ({ actor: "layout", instance, thread })
 const threadStub = (instance: string, thread: string) => bindings.THREADS.getByName(cloudflareThreadName(coordinate(instance, thread)))
+test("a legacy late completion verifies the retained thread before registration without reopening its runtime", async () => {
+  for (const seed of [32, 99]) {
+    const instance = `legacy-late-completion-${seed}`
+    const actor = bindings.ACTORS.getByName(instance)
+    const flow = threadFlow(request => SELF.fetch(request), instance)
+    expect((await flow.request("", {name: "retained", initialState: {"layout.value": 32}})).ok).toBe(true)
+    await flow.call("retained", "set", 73, "settled", 73)
+    const thread = threadStub(instance, "retained")
+    await runInDurableObject(thread, async object => { await object.dispose() })
+    const before = await thread.records()
+    const lifetimes = await thread.lifetimes()
+    const allocation = {coordinate: coordinate(instance, "retained"), name: "retained", parent: null, depth: 0, placement: "independent", initialState: {"layout.value": seed}}
+    const key = JSON.stringify(["layout", instance, "supervisor"])
+    const terminal = [
+      {type: "ThreadRequested", allocation},
+      {type: "ThreadFailed", coordinate: allocation.coordinate, reason: "interrupted provisioning"},
+      {type: "ThreadRegistered", coordinate: allocation.coordinate},
+    ]
+    const legacy = Array.from({length: 3506}, (_, seq) => JSON.stringify({event: terminal[seq - 3503] ?? {type: "FixturePadding"}, recordedAt: seq}))
+    await runInDurableObject(actor, async (object, state) => {
+      await object.dispose()
+      for (const table of ["actor_directory", "actor_directory_projection"]) state.storage.sql.exec(`DROP TABLE ${table}`)
+      state.storage.sql.exec("CREATE TABLE experimental_events(actor TEXT NOT NULL,seq INTEGER NOT NULL,event TEXT NOT NULL,PRIMARY KEY(actor,seq)) WITHOUT ROWID")
+      for (const [seq, event] of legacy.entries()) state.storage.sql.exec("INSERT INTO experimental_events VALUES(?,?,?)", key, seq, event)
+    })
+    expect(await actor.lookup(allocation.coordinate)).toBeUndefined()
+    await runInDurableObject(actor, async (_object, state) => {
+      expect(state.storage.sql.exec<{status: string}>("SELECT status FROM actor_directory WHERE thread='retained'").one().status).toBe("requested")
+    })
+    const response = await flow.request("", {name: "retained", initialState: allocation.initialState})
+    expect(response.ok).toBe(seed === 32)
+    expect(await actor.lookup(allocation.coordinate)).toEqual(seed === 32 ? allocation.coordinate : undefined)
+    expect(await thread.records()).toEqual(before)
+    expect(await thread.lifetimes()).toEqual(lifetimes)
+    await runInDurableObject(actor, async (_object, state) => {
+      expect(state.storage.sql.exec<{event: string}>("SELECT event FROM experimental_events WHERE actor=? ORDER BY seq", key).toArray().map(row => row.event)).toEqual(legacy)
+      expect(state.storage.sql.exec<{cursor: number}>("SELECT cursor FROM actor_directory_projection").one().cursor).toBe(3505)
+    })
+    await runInDurableObject(actor, async object => { await object.dispose() })
+    expect(await actor.lookup(allocation.coordinate)).toEqual(seed === 32 ? allocation.coordinate : undefined)
+    expect(await thread.records()).toEqual(before)
+    expect(await thread.lifetimes()).toEqual(lifetimes)
+    if (seed === 32) await flow.completed("retained", "set", "settled", 73)
+  }
+})
 test("a fresh instance creates, queries, and messages flat independent threads with separate databases", async () => {
   const instance = "layout"
   const actor = bindings.ACTORS.getByName(instance)

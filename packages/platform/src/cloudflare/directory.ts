@@ -38,7 +38,7 @@ export function indexedDirectory(options: {
   const allocation = (entry: DirectoryRow) => Schema.decodeUnknownSync(Allocation)(JSON.parse(entry.allocation))
   const revision = () => sql<{ revision: number }>("SELECT revision FROM actor_directory_projection WHERE id=1")[0]!.revision
   const advance = () => sql("UPDATE actor_directory_projection SET revision=revision+1 WHERE id=1")
-  const project = (event: SupervisorEvent, origin: number) => {
+  const project = (event: SupervisorEvent, origin: number, legacy = false) => {
     if (event.type === "ThreadRequested") {
       const next = event.allocation
       if (next.coordinate.actor !== actor || next.coordinate.instance !== instance) throw new RuntimeError("Supervisor instance mismatch")
@@ -50,6 +50,11 @@ export function indexedDirectory(options: {
       sql("INSERT INTO actor_directory(thread,name,parent,allocation,status,generation,origin) VALUES(?,?,?,?,'requested',0,?) ON CONFLICT(thread) DO UPDATE SET status='requested',reason=NULL,origin=excluded.origin", next.coordinate.thread, next.name, next.parent ?? "", JSON.stringify(next), origin)
     } else {
       const previous = row(event.coordinate.thread)
+      // Legacy late completions require native provisioning to verify the original allocation (thread-layout.workers.ts).
+      if (legacy && event.type === "ThreadRegistered" && previous?.status === "failed" && event.coordinate.actor === actor && event.coordinate.instance === instance) {
+        sql("UPDATE actor_directory SET status='requested',reason=NULL,generation=generation+1 WHERE thread=?", previous.thread)
+        return
+      }
       if (!previous || previous.status !== "requested" || event.coordinate.actor !== actor || event.coordinate.instance !== instance) throw new RuntimeError("Unknown thread registration")
       sql("UPDATE actor_directory SET status=?,reason=? WHERE thread=?", event.type === "ThreadRegistered" ? "registered" : "failed", event.type === "ThreadFailed" ? event.reason : null, event.coordinate.thread)
     }
@@ -67,7 +72,7 @@ export function indexedDirectory(options: {
           if (record.chunks !== null || ["ThreadRequested", "ThreadRegistered", "ThreadFailed"].includes(record.type ?? "")) {
             const text = sql<{ event: string }>("SELECT event FROM experimental_events WHERE actor=? AND seq=?", key, record.seq)[0]!.event
             const decoded = decodeSqlJournalRecord<SupervisorEvent>(text, () => sql<{ ordinal: number; payload: ArrayBuffer }>("SELECT ordinal,payload FROM experimental_event_chunks WHERE actor=? AND seq=? ORDER BY ordinal", key, record.seq))
-            if ("type" in decoded.event && ["ThreadRequested", "ThreadRegistered", "ThreadFailed"].includes(String(decoded.event.type))) project(Schema.decodeUnknownSync(SupervisorEvent)(decoded.event), record.seq)
+            if ("type" in decoded.event && ["ThreadRequested", "ThreadRegistered", "ThreadFailed"].includes(String(decoded.event.type))) project(Schema.decodeUnknownSync(SupervisorEvent)(decoded.event), record.seq, true)
           }
         }
         sql("UPDATE actor_directory_projection SET cursor=?,revision=MAX(revision,?) WHERE id=1", records.at(-1)!.seq, records.at(-1)!.seq + 1)
