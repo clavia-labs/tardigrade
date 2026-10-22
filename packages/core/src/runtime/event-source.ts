@@ -1,7 +1,7 @@
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { isMessageReceived } from "../actor/message"
 import { atom } from "../atoms/atom"
 import type { Recorded, RuntimeEvent, ObservedRecord } from "../services/journal"
+import { recordEvent } from "./record"
 import { EffectRequested } from "./events"
 import { observeRequest } from "./input-digest"
 import { Schema } from "effect"
@@ -27,7 +27,6 @@ export const observeRecord = <Event>(record: Recorded<Event>): ObservedRecord<Ev
 // createRecordSource appends stored records and payload-free atom observations atomically (inputRepresentation).
 export function createRecordSource<Event>() {
   const source = atom<{ readonly events: LogView<RuntimeEvent<Event>>; readonly records: LogView<Recorded<Event>>; readonly observed: LogView<ObservedRecord<Event>>; readonly observedEvents: LogView<Event | ObservedRecord<Event>["event"]> }>({ events: LogView.empty, records: LogView.empty, observed: LogView.empty, observedEvents: LogView.empty })
-  const eventOf = <Entry extends { readonly event: unknown; readonly message?: { readonly inReplyTo?: unknown } }>(record: Entry) => isMessageReceived(record.event) && !record.message?.inReplyTo ? record.event.body as Event : record.event as Entry["event"]
   return {
     events: atom(get => get(source).events).pipe(NativeAtom.withLabel("events")),
     records: atom(get => get(source).records).pipe(NativeAtom.withLabel("records")),
@@ -38,10 +37,10 @@ export function createRecordSource<Event>() {
       const previous = store.get(source)
       const observed = batch.map(observeRecord)
       store.set(source, {
-        events: previous.events.append(batch.map(eventOf)),
+        events: previous.events.append(batch.map(record => recordEvent(record))),
         records: previous.records.append(batch),
         observed: previous.observed.append(observed),
-        observedEvents: previous.observedEvents.append(observed.map(eventOf)),
+        observedEvents: previous.observedEvents.append(observed.map(record => recordEvent(record))),
       })
     },
   }

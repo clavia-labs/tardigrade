@@ -41,6 +41,13 @@ export const inputRepresentation = fc.property(fc.record({
       if (!isDeepStrictEqual(observed, { event: expected, recordedAt: ref.seq }) || !isDeepStrictEqual(store.get(source.observedEvents).at(-1), expected)) throw new Error("Atom source exposed payload or lost metadata")
       if (!Object.isFrozen(observed.event) || store.get(source.records).at(-1)!.event !== request || previous.length !== store.get(source.observedRecords).length - 1) throw new Error("Observation mutated the stored prefix")
     }
+    const inbox = { type: "MessageReceived" as const, body: { type: "Probe", input } }
+    for (const reply of [false, true]) {
+      const message = { id: "probe", from: { kind: "external" as const, id: "sender" }, ...(reply ? { inReplyTo: "request" } : {}) }
+      source.append(store, [{ event: inbox, recordedAt: ref.seq, message }])
+      const expectedEvent = reply ? inbox : inbox.body
+      if (!isDeepStrictEqual(store.get(source.events).at(-1), expectedEvent) || !isDeepStrictEqual(store.get(source.observedEvents).at(-1), expectedEvent)) throw new Error("Record projection changed inbound or reply semantics")
+    }
   } finally { store.dispose() }
   const changedInput = observeRequest({ type: "EffectRequested", ref, ...origin, request: storeRequest({ act: act, input: [input] }, 0) })
   if (!isDeepStrictEqual(changedInput, expected)) throw new Error("Input changed acceptance observation")

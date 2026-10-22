@@ -1,4 +1,4 @@
-import { memoryInvocationLookup } from "../../fixtures/invocation-lookup"
+import { memoryJournalReads } from "../../fixtures/memory-journal"
 import { completionState } from "../../fixtures/completion-state"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
@@ -51,9 +51,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
     if (events.some(({ event }) => event.type === "EffectSettled")) Deferred.doneUnsafe(settled, Effect.void)
   }
   const journal: Journal<Event> = {
-    lookupInvocation: memoryInvocationLookup(() => records),
-    readInputs: () => [],
-    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    ...memoryJournalReads(() => records),
     readCheckpoint: () => saved, append: (position, events) => append(position, events), appendWithCheckpoint: append,
   }
   const result = () => {

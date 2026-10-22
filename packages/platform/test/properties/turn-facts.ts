@@ -1,4 +1,4 @@
-import { memoryInvocationLookup } from "../fixtures/invocation-lookup"
+import { memoryJournalReads } from "../fixtures/memory-journal"
 import { Clock, Context, Effect, Layer } from "effect"
 import * as fc from "fast-check"
 import { defineActor, effectAtom, RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
@@ -18,9 +18,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
   const records: Recorded<Event>[] = []
   let checkpoint: StoredCheckpoint | undefined
   const journal: Journal<Event> = {
-    lookupInvocation: memoryInvocationLookup(() => records),
-    readInputs: () => [],
-    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    ...memoryJournalReads(() => records),
     readCheckpoint: () => checkpoint,
     append: (position, events) => {
       if (position !== records.length) throw new RuntimeError("Unexpected journal position")

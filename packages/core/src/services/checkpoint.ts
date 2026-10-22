@@ -12,14 +12,29 @@ export const checkpointDigestSync = (payload: Uint8Array): string => createHash(
 
 export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => Effect.try({ try: () => checkpointDigestSync(payload), catch: RuntimeError.from })
 
-export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
-  if (Object.keys(checkpoint).some(key => key !== "position" && key !== "durable")) throw new Error("Invalid checkpoint fields")
-  if (!Number.isSafeInteger(checkpoint.position) || checkpoint.position < 0) throw new Error("Invalid checkpoint position")
+const Position = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
+const CheckpointState = Schema.Struct({
+  position: Position,
+  durable: Schema.Array(Schema.Struct({
+    name: Schema.String.check(Schema.makeFilter(name => name.trim().length > 0, { title: "Durable atom name is nonempty" })),
+    state: Schema.Json,
+    position: Position,
+  })),
+})
+const decodeState = Schema.decodeUnknownSync(CheckpointState, { onExcessProperty: "error" })
+
+// validateCheckpoint applies the actor-state contract to both codec directions (platform/test/properties/checkpoint-storage.ts).
+function validateCheckpoint(value: unknown): EffectCheckpoint {
+  const checkpoint = decodeState(value)
   if (checkpoint.durable.some(entry => entry.position !== checkpoint.position)) throw new Error("Durable entry position differs from checkpoint position")
-  if (checkpoint.durable.some(entry => !Schema.is(Schema.Json)(entry.state))) throw new Error("Checkpoint state must be JSON")
+  return checkpoint
+}
+
+export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
+  const state = validateCheckpoint(checkpoint)
   let encoded: string
   try {
-    encoded = JSON.stringify({ version: 4, position: checkpoint.position, durable: checkpoint.durable })
+    encoded = JSON.stringify({ version: 4, ...state })
   } catch (cause) {
     throw new Error("Checkpoint state is not serializable", { cause })
   }
@@ -36,16 +51,6 @@ export const decodeCheckpoint = (payload: Uint8Array): EffectCheckpoint => {
 
 function checkpointFromJson(value: unknown): EffectCheckpoint {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid checkpoint payload")
-  const record = migrateCheckpoint(value as Record<string, unknown>)
-  if (!Number.isSafeInteger(record.position) || (record.position as number) < 0 ||
-    !Array.isArray(record.durable)) throw new Error("Invalid checkpoint payload")
-  const durable = record.durable.map(entry => {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error("Invalid durable checkpoint entry")
-    const item = entry as Record<string, unknown>
-    if (typeof item.name !== "string" || !item.name || !Number.isSafeInteger(item.position) || (item.position as number) < 0 || item.state === undefined) throw new Error("Invalid durable checkpoint entry")
-    if (item.position !== record.position) throw new Error("Durable entry position differs from checkpoint position")
-    return { name: item.name, state: item.state, position: item.position as number }
-  })
-  if (Object.keys(record).some(key => key !== "version" && key !== "position" && key !== "durable")) throw new Error("Invalid checkpoint fields")
-  return { position: record.position as number, durable }
+  const { version: _version, ...state } = migrateCheckpoint(value as Record<string, unknown>)
+  return validateCheckpoint(state)
 }

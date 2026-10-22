@@ -1,4 +1,4 @@
-import { memoryInvocationLookup } from "../fixtures/invocation-lookup"
+import { memoryJournalReads } from "../fixtures/memory-journal"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -117,9 +117,7 @@ test("pure interruption remains pending and reuses the accepted reference on reo
 test("failed defect persistence leaves the committed invocation pending", async () => {
   const records: Recorded<Event>[] = [{ event: Started.make({ id: "uncommitted", mode: "defect" }) }]
   const journal: Journal<Event> = {
-    lookupInvocation: memoryInvocationLookup(() => records),
-    readInputs: () => [],
-    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    ...memoryJournalReads(() => records),
     readCheckpoint: () => undefined,
     append: (_, batch) => {
       if (batch.some(record => record.event.type === "EffectDied")) throw new RuntimeError("storage unavailable")

@@ -1,5 +1,6 @@
 import { journalCall } from "@clavia/tardigrade-core"
-import { memoryInvocationLookup } from "../../fixtures/invocation-lookup"
+import { memoryJournalReads } from "../../fixtures/memory-journal"
+import { strict as assert } from "node:assert"
 import { Context, Deferred, Effect, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, effectAtom, effectKey, RuntimeError, EffectRef, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
@@ -93,7 +94,15 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
     records.push(...events)
     if (checkpoint) stored = checkpoint
   }
+  const reads = memoryJournalReads(() => records)
+  for (const read of [reads.readBefore, reads.readAfter]) {
+    for (const cursor of [-1, 0.5, position + 1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assert.throws(() => read(cursor), RuntimeError, "Memory journal accepted an unavailable boundary")
+    }
+  }
+  if (reads.readBefore(0).length !== 0 || reads.readAfter(position).length !== 0 || reads.readBefore(position).length !== position || reads.readAfter(0).length !== position) throw new RuntimeError("Memory journal changed endpoint semantics")
   const journal: Journal<Event> = {
+    ...reads,
     acknowledge: write => journalCall(() => { write?.() }).pipe(Effect.andThen(Effect.suspend(() => {
       if (!awaitingAcceptance) return Effect.void
       awaitingAcceptance = false
@@ -101,16 +110,9 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
     }))),
     lookupInvocation: identity => {
       if (failLookup) throw new RuntimeError("Injected invocation lookup failure")
-      const result = memoryInvocationLookup(() => records)(identity)
+      const result = reads.lookupInvocation(identity)
       lookups.push(result.status)
       return result
-    },
-    readInputs: () => [],
-    read: () => [...records],
-    readBefore: position => records.slice(0, position),
-    readAfter: cursor => {
-      if (cursor < 0 || cursor > records.length) throw new RuntimeError("Invalid suffix position")
-      return records.slice(cursor)
     },
     readCheckpoint: () => stored,
     append: (position, events) => append(position, events), appendWithCheckpoint: append,

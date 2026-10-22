@@ -1,4 +1,3 @@
-import { journalCall } from "@clavia/tardigrade-core"
 import { completionState } from "../fixtures/completion-state"
 import { env } from "cloudflare:workers"
 import { runInDurableObject } from "cloudflare:test"
@@ -43,7 +42,7 @@ test("a fixed interpreter recovers a blocked inline effect", async () => {
       await Effect.runPromise(first.receive({ method: "run", input: 42 }, { id: "run", from: { kind: "external", id: "test" } }))
       await Effect.runPromise(Deferred.await(entered))
     } finally { await Effect.runPromise(first.close) }
-    const prefix = await Effect.runPromise(journalCall(() => journal.read()))
+    const prefix = journal.read()
     expect(prefix.some(record => "type" in record.event && record.event.type === "EffectRequested")).toBe(true)
     await Effect.runPromise(watchdog.alarm)
     const blocked = (await Effect.runPromise(watchdog.status)).get(watchdogKey(address))!
@@ -57,7 +56,7 @@ test("a fixed interpreter recovers a blocked inline effect", async () => {
     })
     try {
       await expect(Effect.runPromise(updateThreadVersion(rejected, address, "v2"))).rejects.toThrow("Reject version transaction")
-      expect(await Effect.runPromise(journalCall(() => journal.read()))).toEqual(prefix)
+      expect(journal.read()).toEqual(prefix)
       expect((await Effect.runPromise(watchdog.status)).get(watchdogKey(address))).toEqual(blocked)
       expect(await state.storage.getAlarm()).toBeNull()
     } finally { await Effect.runPromise(rejected.close) }
@@ -65,7 +64,7 @@ test("a fixed interpreter recovers a blocked inline effect", async () => {
     const renewed = (await Effect.runPromise(watchdog.status)).get(watchdogKey(address))!
     expect(renewed).toMatchObject({ status: "pending", recoveryVersion: "v2", attempts: 0, consecutiveNoProgress: 0, budgetGeneration: 1 })
     expect(await state.storage.getAlarm()).not.toBeNull()
-    expect((await Effect.runPromise(journalCall(() => journal.read()))).slice(0, prefix.length)).toEqual(prefix)
+    expect(journal.read().slice(0, prefix.length)).toEqual(prefix)
     const brokenVersion = createWatchdog({ storage, version: "v2", policy: { maxNoProgressAttempts: 1 }, invalidate: () => Effect.void,
       recover: () => Effect.acquireUseRelease(createActorStore({ actor: brokenActor, journal, actorContext: Context.pick(), services: () => Layer.empty }), store => store.recover.pipe(Effect.as({ status: "settled" as const, progressCursor: 0 })), store => store.close),
     })
@@ -96,7 +95,7 @@ test("a fixed interpreter recovers a blocked inline effect", async () => {
     expect(executions).toBe(1)
     expect(order).toEqual(["warning", "effect"])
     expect((await Effect.runPromise(fixed.status)).size).toBe(0)
-    expect((await Effect.runPromise(journalCall(() => journal.read()))).filter(record => "type" in record.event && record.event.type === "EffectRequested")).toHaveLength(1)
+    expect(journal.read().filter(record => "type" in record.event && record.event.type === "EffectRequested")).toHaveLength(1)
     await Effect.runPromise(journal.close)
   })
 })

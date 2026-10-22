@@ -1,4 +1,4 @@
-import { journalCall, journalCommit } from "@clavia/tardigrade-core"
+import { journalCommit } from "@clavia/tardigrade-core"
 import { env } from "cloudflare:workers"
 import { runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
@@ -92,7 +92,7 @@ test("journal admission rolls back when alarm staging fails", async () => {
     const journal = objectJournal({ storage, key: "events", target: address, watchdog })
     try {
       await expect(Effect.runPromise(journalCommit(journal, () => journal.append(0, [{ event: ThreadCreated.make({ type: "ThreadCreated", address, parent: null, depth: 0, placement: "independent" }) }])))).rejects.toThrow()
-      expect(await Effect.runPromise(journalCall(() => journal.read()))).toEqual([])
+      expect(journal.read()).toEqual([])
       expect((await Effect.runPromise(watchdog.status)).size).toBe(0)
       expect(await state.storage.getAlarm()).toBeNull()
     } finally { await Effect.runPromise(journal.close) }

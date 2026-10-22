@@ -1,5 +1,5 @@
 import { journalCall } from "@clavia/tardigrade-core"
-import { memoryInvocationLookup } from "../../fixtures/invocation-lookup"
+import { memoryJournalReads } from "../../fixtures/memory-journal"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, PromiseNotReady, RuntimeError, type ActorRuntime, type Journal, type PromiseSettled, type Recorded } from "@clavia/tardigrade-core"
@@ -37,10 +37,7 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
   let externalAcknowledged = false
   let awaitingSettlement = false
   const journal: Journal<Event> = {
-    lookupInvocation: memoryInvocationLookup(() => records),
-    readInputs: () => [],
-    read: () => [...records],
-    readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    ...memoryJournalReads(() => records),
     readCheckpoint: () => undefined,
     append: (expected, events) => {
       if (expected !== records.length) throw new RuntimeError("Unexpected journal length")

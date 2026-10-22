@@ -1,7 +1,7 @@
 import { journalCall, journalCommit } from "@clavia/tardigrade-core"
 import { Cause, Effect, Exit } from "effect"
 import { isDeepStrictEqual } from "node:util"
-import { checkpointDigest, encodeCheckpoint, decodeCheckpoint, JournalConflict, type Recorded, type PendingEffectInput, type InvocationIdentity, type EffectRef } from "@clavia/tardigrade-core"
+import { checkpointDigest, encodeCheckpoint, decodeCheckpoint, JournalConflict, type EffectCheckpoint, type Recorded, type PendingEffectInput, type InvocationIdentity, type EffectRef } from "@clavia/tardigrade-core"
 import type { sqlJournal } from "../../src/shared/sql-journal"
 
 type Event = { readonly type: "Stored"; readonly value: string }
@@ -34,18 +34,39 @@ export async function checkpointStorage(fixture: {
     try { decodeCheckpoint(new TextEncoder().encode(JSON.stringify(invalid))) } catch { rejected = true }
     if (!rejected) throw new Error("Checkpoint decoder accepted an incompatible format")
   }
+  const state = { position: 1, durable: [{ name: "state", state: null, position: 1 }] }
+  for (const invalid of [
+    { ...state, position: -1 }, { ...state, position: 0.5 }, { ...state, position: Number.MAX_SAFE_INTEGER + 1 },
+    { ...state, durable: null }, { ...state, operations: [] },
+    ...[
+      { ...state.durable[0], name: "" }, { ...state.durable[0], name: " " },
+      { ...state.durable[0], name: 1 }, { ...state.durable[0], position: 0 },
+      { ...state.durable[0], state: undefined }, { ...state.durable[0], extra: true },
+    ].map(entry => ({ ...state, durable: [entry] })),
+  ]) {
+    for (const read of [() => encodeCheckpoint(invalid as EffectCheckpoint), () => decodeCheckpoint(new TextEncoder().encode(JSON.stringify({ version: 4, ...invalid })))]) {
+      let rejected = false
+      try { read() } catch { rejected = true }
+      if (!rejected) throw new Error("Checkpoint codec accepted invalid actor state")
+    }
+  }
+  for (const value of [Number.NaN, Number.POSITIVE_INFINITY, () => null]) {
+    let rejected = false
+    try { encodeCheckpoint({ ...state, durable: [{ ...state.durable[0]!, state: value }] }) } catch { rejected = true }
+    if (!rejected) throw new Error("Checkpoint encoder accepted non-JSON state")
+  }
   const second = await checkpoint(2, "small")
   let journal = fixture.open(7)
   const verify = async (expected: typeof first, records: readonly Recorded<Event>[]) => {
-    const actual = await Effect.runPromise(journalCall(() => journal.readCheckpoint()))
-    if (!isDeepStrictEqual(actual, expected) || !isDeepStrictEqual(await Effect.runPromise(journalCall(() => journal.read())), records)) throw new Error("Checkpoint or journal changed unexpectedly")
+    const actual = journal.readCheckpoint()
+    if (!isDeepStrictEqual(actual, expected) || !isDeepStrictEqual(journal.read(), records)) throw new Error("Checkpoint or journal changed unexpectedly")
     const rows = await fixture.execute("SELECT ordinal, length(payload) AS bytes, typeof(payload) AS kind FROM checkpoint_chunks ORDER BY ordinal")
     const [header] = await fixture.execute("SELECT byte_length, chunk_count FROM checkpoint WHERE id = 1")
     if (header?.byte_length !== expected.payload.length || header?.chunk_count !== rows.length || rows.some((row, ordinal) => row.ordinal !== ordinal || row.kind !== "blob")) throw new Error("Checkpoint layout differs from its header")
     return rows.length
   }
   try {
-    if (await Effect.runPromise(journalCall(() => journal.readCheckpoint())) !== undefined) throw new Error("Fresh database has a checkpoint")
+    if (journal.readCheckpoint() !== undefined) throw new Error("Fresh database has a checkpoint")
     await Effect.runPromise(journalCommit(journal, () => journal.appendWithCheckpoint(0, [record("first")], first)))
     const largeCount = await verify(first, [record("first")])
     await fixture.execute("CREATE TRIGGER fail_checkpoint_chunk BEFORE INSERT ON checkpoint_chunks WHEN NEW.ordinal = 1 BEGIN SELECT RAISE(ABORT, 'Injected chunk failure'); END")
@@ -84,17 +105,17 @@ export async function checkpointStorage(fixture: {
     const pending: PendingEffectInput = { ref: { seq: 2, atom: "model", act: "test.input" }, request: { act: "test.input", input: "é😀".repeat(chunkBytes) } }
     await fixture.execute("CREATE TRIGGER fail_input_chunk BEFORE INSERT ON effect_input_chunks WHEN NEW.ordinal = 1 BEGIN SELECT RAISE(ABORT, 'Injected input failure'); END")
     await rejects(journalCommit(journal, () => journal.append(2, [record("pending")], { put: [pending] })), "Injected input failure")
-    if ((await Effect.runPromise(journalCall(() => journal.read()))).length !== 2 || (await Effect.runPromise(journalCall(() => journal.readInputs()))).length !== 0) throw new Error("Input failure committed a partial acceptance")
+    if (journal.read().length !== 2 || journal.readInputs().length !== 0) throw new Error("Input failure committed a partial acceptance")
     await fixture.execute("DROP TRIGGER fail_input_chunk")
     await Effect.runPromise(journalCommit(journal, () => journal.append(2, [record("pending")], { put: [pending] })))
     await Effect.runPromise(journal.close)
     journal = fixture.open(chunkBytes)
-    if (!isDeepStrictEqual(await Effect.runPromise(journalCall(() => journal.readInputs())), [pending])) throw new Error("Pending input did not survive reopening")
+    if (!isDeepStrictEqual(journal.readInputs(), [pending])) throw new Error("Pending input did not survive reopening")
     await rejects(journalCommit(journal, () => journal.append(3, [], { put: [{ ...pending, request: { ...pending.request, input: "changed" } }] })), "cannot change")
     await fixture.execute("UPDATE effect_input_chunks SET payload = zeroblob(length(payload)) WHERE ordinal = 0")
     await rejects(journalCall(() => journal.readInputs()), "digest mismatch")
     await Effect.runPromise(journalCommit(journal, () => journal.append(3, [record("settled")], { remove: [pending.ref] })))
-    if ((await Effect.runPromise(journalCall(() => journal.readInputs()))).length || (await fixture.execute("SELECT * FROM effect_input_chunks")).length) throw new Error("Terminal input release retained payloads")
+    if (journal.readInputs().length || (await fixture.execute("SELECT * FROM effect_input_chunks")).length) throw new Error("Terminal input release retained payloads")
 
     const invocations: readonly { readonly identity: InvocationIdentity; readonly ref: EffectRef }[] = [
       { identity: { atom: "model", act: "lookup" }, ref: { seq: 4, atom: "model", act: "lookup" } },
@@ -102,18 +123,18 @@ export async function checkpointStorage(fixture: {
       { identity: { atom: "other", act: "lookup", origin: 0 }, ref: { seq: 6, atom: "other", act: "lookup" } },
       { identity: { atom: "model", act: "other", origin: 0 }, ref: { seq: 7, atom: "model", act: "other" } },
     ]
-    const lookup = async (index: number, status: "absent" | "pending" | "settled") => {
+    const lookup = (index: number, status: "absent" | "pending" | "settled") => {
       const { identity, ref } = invocations[index]!
       const expected = status === "absent" ? { status } : { status, ref }
-      if (!isDeepStrictEqual(await Effect.runPromise(journalCall(() => journal.lookupInvocation(identity))), expected)) throw new Error(`Invocation lookup differs from journal: ${index} ${status}`)
+      if (!isDeepStrictEqual(journal.lookupInvocation(identity), expected)) throw new Error(`Invocation lookup differs from journal: ${index} ${status}`)
     }
-    for (let index = 0; index < invocations.length; index++) await lookup(index, "absent")
+    for (let index = 0; index < invocations.length; index++) lookup(index, "absent")
     const requests: Recorded<Event>[] = invocations.map(({ identity, ref }) => ({ event: {
       type: "EffectRequested", ref, ...(identity.origin === undefined ? {} : { origin: identity.origin }), request: { act: identity.act, input: { _tag: "InlineInput", value: "same input" } },
     } }))
     await Effect.runPromise(journalCommit(journal, journal.appendWithCheckpoint.bind(journal, 4, requests, await checkpoint(8, "accepted"))))
-    for (let index = 0; index < invocations.length; index++) await lookup(index, "pending")
-    const unknown = await Effect.runPromise(journalCall(() => journal.lookupInvocation({ atom: "model", act: "lookup", origin: 1 })))
+    for (let index = 0; index < invocations.length; index++) lookup(index, "pending")
+    const unknown = journal.lookupInvocation({ atom: "model", act: "lookup", origin: 1 })
     if (unknown.status !== "absent") throw new Error("Distinct origin reused an invocation")
     const decisions: Recorded<Event>[] = [
       { event: { type: "EffectSettled", ref: invocations[0]!.ref, outcome: { status: "fulfilled", value: { type: "promise", handle: { executor: "external", id: "lookup" } } } } },
@@ -123,35 +144,35 @@ export async function checkpointStorage(fixture: {
     ]
     await fixture.execute("CREATE TRIGGER fail_invocation_index BEFORE INSERT ON experimental_invocation_events WHEN NEW.seq = 9 BEGIN SELECT RAISE(ABORT, 'Injected invocation index failure'); END")
     await rejects(journalCommit(journal, () => journal.append(8, decisions)), "Injected invocation index failure")
-    for (let index = 0; index < invocations.length; index++) await lookup(index, "pending")
-    if ((await Effect.runPromise(journalCall(() => journal.read()))).length !== 8) throw new Error("Invocation index failure committed journal records")
+    for (let index = 0; index < invocations.length; index++) lookup(index, "pending")
+    if (journal.read().length !== 8) throw new Error("Invocation index failure committed journal records")
     await fixture.execute("DROP TRIGGER fail_invocation_index")
     await Effect.runPromise(journalCommit(journal, journal.appendWithCheckpoint.bind(journal, 8, decisions, await checkpoint(12, "decided"))))
-    await lookup(0, "pending")
-    await lookup(1, "settled")
-    await lookup(2, "pending")
-    await lookup(3, "settled")
+    lookup(0, "pending")
+    lookup(1, "settled")
+    lookup(2, "pending")
+    lookup(3, "settled")
     await Effect.runPromise(journalCommit(journal, () => journal.append(12, [
       { event: { type: "PromiseSettled", ref: invocations[0]!.ref, result: { status: "rejected", reason: "fixture failure" } } },
       { event: { type: "CancellationSettled", ref: invocations[2]!.ref, outcome: { status: "fulfilled" } } },
     ])))
     await Effect.runPromise(journal.close)
     journal = fixture.open(31)
-    for (let index = 0; index < invocations.length; index++) await lookup(index, "settled")
+    for (let index = 0; index < invocations.length; index++) lookup(index, "settled")
     await fixture.execute("DELETE FROM experimental_invocation_events WHERE ref_seq = 4")
     await rejects(journalCall(() => journal.lookupInvocation(invocations[0]!.identity)), "missing journal records")
     await Effect.runPromise(journal.close)
     for (const table of ["experimental_invocation_events", "experimental_invocation_requests", "experimental_invocation_index"]) await fixture.execute(`DROP TABLE ${table}`)
     journal = fixture.open(31)
-    for (let index = 0; index < invocations.length; index++) await lookup(index, "settled")
-    if ((await Effect.runPromise(journalCall(() => journal.read()))).length !== 14) throw new Error("Invocation backfill changed journal history")
+    for (let index = 0; index < invocations.length; index++) lookup(index, "settled")
+    if (journal.read().length !== 14) throw new Error("Invocation backfill changed journal history")
     const failedIdentity = { atom: "model", act: "lookup", origin: 2 }
     const failedRef = { seq: 14, atom: "model", act: "lookup" }
     await Effect.runPromise(journalCommit(journal, () => journal.append(14, [
       { event: { type: "EffectRequested", ref: failedRef, origin: 2, request: { act: "lookup", input: { _tag: "InlineInput", value: "same input" } } } },
       { event: { type: "EffectSettled", ref: failedRef, outcome: { status: "rejected", reason: "fixture failure" } } },
     ])))
-    if (!isDeepStrictEqual(await Effect.runPromise(journalCall(() => journal.lookupInvocation(failedIdentity))), { status: "settled", ref: failedRef })) throw new Error("Rejected invocation remained pending")
+    if (!isDeepStrictEqual(journal.lookupInvocation(failedIdentity), { status: "settled", ref: failedRef })) throw new Error("Rejected invocation remained pending")
     await Effect.runPromise(journal.close)
     await rejects(journalCall(() => journal.lookupInvocation(invocations[0]!.identity)), "Journal is closed")
   } finally { await Effect.runPromise(journal.close) }

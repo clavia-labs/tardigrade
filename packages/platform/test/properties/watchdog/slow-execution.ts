@@ -1,4 +1,4 @@
-import { memoryInvocationLookup } from "../../fixtures/invocation-lookup"
+import { memoryJournalReads } from "../../fixtures/memory-journal"
 import { strict as assert } from "node:assert"
 import * as fc from "fast-check"
 import { Clock, Context, Effect } from "effect"
@@ -18,9 +18,7 @@ export const slowExecutionRecovery = fc.asyncProperty(cases, options => Effect.r
   type Input = SlowEvent
   const records: Recorded<Input>[] = []
   const journal: Journal<Input> = {
-    lookupInvocation: memoryInvocationLookup(() => records),
-    readInputs: () => [],
-    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    ...memoryJournalReads(() => records),
     readCheckpoint: () => undefined,
     append: (position, events) => { assert.equal(position, records.length); records.push(...events) },
     appendWithCheckpoint: () => { throw new RuntimeError("Unexpected checkpoint") },

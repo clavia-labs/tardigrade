@@ -28,7 +28,6 @@ export async function operationLifecycle(journal: Journal<typeof Event.Type>, sc
   await Effect.runPromise(Effect.gen(function* () {
     const clock = yield* TestClock.make()
     yield* Effect.gen(function* () {
-      const run = Effect.runPromiseWith(yield* Effect.context<never>())
       let version = 1
       let entered = Deferred.makeUnsafe<void>()
       let releaseSubmission = Deferred.makeUnsafe<void>()
@@ -137,7 +136,7 @@ export async function operationLifecycle(journal: Journal<typeof Event.Type>, sc
         if (scenario.crash === "accepted") { yield* crash; yield* Deferred.await(entered) }
         if (scenario.finish !== "cancel") {
           yield* Deferred.succeed(releaseSubmission, undefined)
-          yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.read())).then(records => recordedOperation(records, accepted.ref)?.execution.outcome), Boolean))
+          yield* Effect.promise(() => waitFor(async () => recordedOperation(journal.read(), accepted.ref)?.execution.outcome, Boolean))
           const id = effectKey(accepted.ref)
           yield* Effect.promise(() => waitFor(() => service.job(id), job => job?.status === "running"))
           yield* crash
@@ -187,8 +186,8 @@ export async function operationLifecycle(journal: Journal<typeof Event.Type>, sc
         yield* observe(accepted.ref)
         if (scenario.crash !== "accepted" && scenario.crash !== "forwarding") { if (!scenario.death) assert.ok(Exit.isFailure(yield* Effect.exit(store.checkpoint)), "unfinished cleanup allowed checkpoint capture"); yield* crash; yield* Deferred.await(cleanupEntered); yield* observe(accepted.ref) }
         yield* Effect.promise(() => service.configure({ holdCancellationResponse: false }))
-        yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.read())).then(records => recordedOperation(records, accepted.ref)?.cleanup?.outcome), Boolean))
-        if (childRef) yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.read())).then(records => recordedOperation(records, childRef!)?.cleanup?.outcome), Boolean))
+        yield* Effect.promise(() => waitFor(async () => recordedOperation(journal.read(), accepted.ref)?.cleanup?.outcome, Boolean))
+        if (childRef) yield* Effect.promise(() => waitFor(async () => recordedOperation(journal.read(), childRef!)?.cleanup?.outcome, Boolean))
         const outcome = recordedOperation(yield* journalCall(() => journal.read()), accepted.ref)?.cleanup?.outcome
         assert.equal(outcome?.type, "CancellationSettled")
         if (outcome?.type === "CancellationSettled") assert.equal(outcome.outcome.status, "fulfilled")
@@ -250,14 +249,12 @@ export async function defaultAttemptDeadline(journal: Journal<typeof Event.Type>
         }).pipe(Effect.mapError(String)), { cancel: (_input, { ref }) => Effect.tryPromise({ try: signal => service.cancel(effectKey(ref), signal), catch: RuntimeError.from }) })),
       })
       return yield* Effect.gen(function* () {
-        const context = yield* Effect.context<never>()
-        const run = Effect.runPromiseWith(context)
-        const inputs = yield* Effect.promise(() => waitFor(() => Effect.runPromiseWith(context)(journalCall(() => journal.readInputs())), inputs => inputs.length === 1))
+        const inputs = yield* Effect.promise(() => waitFor(async () => journal.readInputs(), inputs => inputs.length === 1))
         const ref = inputs[0]!.ref
         const id = effectKey(ref)
         yield* Effect.promise(() => waitFor(() => service.job(id), job => job?.status === (phase === "execution" ? "completed" : "running")))
         if (phase === "cleanup") {
-          yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.read())).then(records => recordedOperation(records, ref)?.execution.outcome), Boolean))
+          yield* Effect.promise(() => waitFor(async () => recordedOperation(journal.read(), ref)?.execution.outcome, Boolean))
           yield* store.cancel(ref, "stop")
           yield* Effect.promise(() => waitFor(() => service.job(id), job => job?.status === "cancelled"))
         }
@@ -295,7 +292,10 @@ export async function defaultAttemptDeadline(journal: Journal<typeof Event.Type>
         assert.equal(decideCalls, 0)
         yield* clock.adjust(1)
         yield* Effect.promise(() => waitFor(() => Promise.resolve(decideCalls), count => count === 1))
-        const outcome = () => run(journalCall(() => journal.read())).then(records => phase === "execution" ? recordedOperation(records, ref)?.execution.outcome : recordedOperation(records, ref)?.cleanup?.outcome)
+        const outcome = async () => {
+          const operation = recordedOperation(journal.read(), ref)
+          return phase === "execution" ? operation?.execution.outcome : operation?.cleanup?.outcome
+        }
         yield* Effect.promise(() => waitFor(outcome, Boolean))
         const final = (yield* Effect.promise(outcome))!
         assert.ok(final.type === "EffectSettled" || final.type === "CancellationSettled")
@@ -321,8 +321,6 @@ export async function attemptDeadlineLifecycle(journal: Journal<typeof Event.Typ
   await Effect.runPromise(Effect.gen(function* () {
     const clock = yield* TestClock.make()
     yield* Effect.gen(function* () {
-      const context = yield* Effect.context<never>()
-      const run = Effect.runPromiseWith(context)
       let version = 0
       const decisions: { timeoutMs: number; attempt: number }[] = []
       const calls: { input: string; ref: EffectRef }[] = []
@@ -352,12 +350,12 @@ export async function attemptDeadlineLifecycle(journal: Journal<typeof Event.Typ
       })
       let store = yield* open()
       yield* Effect.gen(function* () {
-        const inputs = yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.readInputs())), inputs => inputs.length === 1))
+        const inputs = yield* Effect.promise(() => waitFor(async () => journal.readInputs(), inputs => inputs.length === 1))
         const ref = inputs[0]!.ref
         const id = effectKey(ref)
         yield* Effect.promise(() => waitFor(() => service.job(id), job => job?.status === (scenario.phase === "execution" ? "completed" : "running")))
         if (scenario.phase === "cleanup") {
-          if (!scenario.producerPending) yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.read())).then(records => recordedOperation(records, ref)?.execution.outcome), Boolean))
+          if (!scenario.producerPending) yield* Effect.promise(() => waitFor(async () => recordedOperation(journal.read(), ref)?.execution.outcome, Boolean))
           yield* store.cancel(ref, "stop")
           if (!scenario.producerPending) yield* Effect.promise(() => waitFor(() => service.job(id), job => job?.status === "cancelled"))
         }
@@ -373,7 +371,7 @@ export async function attemptDeadlineLifecycle(journal: Journal<typeof Event.Typ
           if (scenario.producerPending) {
             assert.equal((yield* Effect.promise(() => service.job(id)))?.cancellationRequests, 0, "cleanup ran before producer handoff")
             yield* Effect.promise(() => service.configure({ holdSubmissionResponse: false }))
-            yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.read())).then(records => recordedOperation(records, ref)?.execution.outcome), Boolean))
+            yield* Effect.promise(() => waitFor(async () => recordedOperation(journal.read(), ref)?.execution.outcome, Boolean))
           }
           const remote = yield* Effect.promise(() => service.job(id))
           if (scenario.phase === "cleanup") assert.ok(Exit.isFailure(yield* Effect.exit(store.checkpoint)), "cleanup retry allowed checkpoint capture")
@@ -391,7 +389,10 @@ export async function attemptDeadlineLifecycle(journal: Journal<typeof Event.Typ
             assert.deepEqual(decisions, [{ timeoutMs: scenario.timeoutMs, attempt: 0 }, { timeoutMs: scenario.timeoutMs, attempt: 1 }])
           }
         }
-        const outcome = () => run(journalCall(() => journal.read())).then(records => scenario.phase === "execution" ? recordedOperation(records, ref)?.execution.outcome : recordedOperation(records, ref)?.cleanup?.outcome)
+        const outcome = async () => {
+          const operation = recordedOperation(journal.read(), ref)
+          return scenario.phase === "execution" ? operation?.execution.outcome : operation?.cleanup?.outcome
+        }
         yield* Effect.promise(() => waitFor(outcome, Boolean))
         const final = (yield* Effect.promise(outcome))!
         assert.ok(final.type === "EffectSettled" || final.type === "CancellationSettled", "timeout was recorded as a defect")
@@ -399,11 +400,11 @@ export async function attemptDeadlineLifecycle(journal: Journal<typeof Event.Typ
         if (final.outcome.status === "rejected") assert.ok(String(final.outcome.reason).includes(`Attempt timed out after ${scenario.timeoutMs}ms`))
         if (scenario.producerPending && scenario.finish === "stop") {
           yield* Effect.promise(() => service.configure({ holdSubmissionResponse: false }))
-          yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.read())).then(records => recordedOperation(records, ref)?.execution.outcome), Boolean))
+          yield* Effect.promise(() => waitFor(async () => recordedOperation(journal.read(), ref)?.execution.outcome, Boolean))
           assert.equal((yield* Effect.promise(() => service.job(id)))?.cancellationRequests, 0)
         }
         const retained = scenario.phase === "cleanup" && scenario.finish !== "retry"
-        yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.readInputs())), inputs => inputs.length === (retained ? 1 : 0)))
+        yield* Effect.promise(() => waitFor(async () => journal.readInputs(), inputs => inputs.length === (retained ? 1 : 0)))
         if (retained) assert.equal((yield* journalCall(() => journal.readInputs()))[0]!.request.input, scenario.input)
         const remote = yield* Effect.promise(() => service.job(id))
         assert.equal(remote?.executions, 1)
@@ -439,8 +440,6 @@ export async function streamDeadlineLifecycle(journal: Journal<typeof Event.Type
   await Effect.runPromise(Effect.gen(function* () {
     const clock = yield* TestClock.make()
     yield* Effect.gen(function* () {
-      const context = yield* Effect.context<never>()
-      const run = Effect.runPromiseWith(context)
       let version = 0
       const received: { index: number; input: string }[][] = []
       const open = () => createActorStore({ actor: defineActor("stream-deadline", Effect.sync(() => {
@@ -466,7 +465,7 @@ export async function streamDeadlineLifecycle(journal: Journal<typeof Event.Type
       }).pipe(Effect.mapError(String))) })
       let store = yield* open()
       yield* Effect.gen(function* () {
-        const inputs = yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.readInputs())), inputs => inputs.length === 1))
+        const inputs = yield* Effect.promise(() => waitFor(async () => journal.readInputs(), inputs => inputs.length === 1))
         const ref = inputs[0]!.ref
         const id = effectKey(ref)
         yield* Effect.promise(() => waitFor(() => service.job(id), job => job?.history.includes("stream_opened") === true))
@@ -515,8 +514,6 @@ export async function operationRace(journal: Journal<typeof Event.Type>, service
   await Effect.runPromise(Effect.gen(function* () {
     const clock = yield* TestClock.make()
     yield* Effect.gen(function* () {
-      const context = yield* Effect.context<never>()
-      const run = Effect.runPromiseWith(context)
       const timeoutMs = 10
       const original = `accepted-${scenario.order}`.repeat(128)
       const gateType = scenario.order.startsWith("cancel-") ? "EffectCancelled" : scenario.order === "handle-cancel" ? "EffectSettled" : scenario.order === "deadline-cancel" ? "RetryScheduled" : "CancellationSettled"
@@ -585,7 +582,7 @@ export async function operationRace(journal: Journal<typeof Event.Type>, service
       if (scenario.order === "cleanup-cancel") yield* Deferred.succeed(handoff, undefined)
       let store = yield* open()
       yield* Effect.gen(function* () {
-        const inputs = yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.readInputs())), inputs => inputs.length === 1))
+        const inputs = yield* Effect.promise(() => waitFor(async () => journal.readInputs(), inputs => inputs.length === 1))
         const ref = inputs[0]!.ref
         const id = effectKey(ref)
         yield* Effect.promise(() => waitFor(() => service.job(id), job => job?.status === "running"))
@@ -601,7 +598,7 @@ export async function operationRace(journal: Journal<typeof Event.Type>, service
         if (scenario.order === "handle-cancel" || scenario.order === "cleanup-cancel") {
           yield* releaseResponse
           if (scenario.order === "cleanup-cancel") {
-            yield* Effect.promise(() => waitFor(() => run(journalCall(() => journal.read())).then(records => recordedOperation(records, ref)?.execution.outcome), Boolean))
+            yield* Effect.promise(() => waitFor(async () => recordedOperation(journal.read(), ref)?.execution.outcome, Boolean))
             yield* store.cancel(ref, "stop")
           } else {
             yield* Deferred.await(returned)

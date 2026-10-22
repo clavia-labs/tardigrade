@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { CoreEvent, EffectRequested, InvocationIdentity } from "../../runtime/events"
-import { EffectRef, ExecutionResult, RuntimeError, effectKey } from "../../runtime/effects"
+import { EffectRef, RuntimeError, effectKey } from "../../runtime/effects"
+import { cleanupSucceeded, settlementCompletesExecution } from "../../runtime/operation"
 import type { Journal, InvocationLookup, Recorded } from "../journal"
 
 // selectInvocationRecords binds in-memory journals to invocation lookup through accepted references (quint/checkpoint/acceptanceBinding.qnt, admissionSound).
@@ -27,15 +28,9 @@ export function createInvocationLookup(read: (identity: InvocationIdentity) => r
       } else {
         if (!ref || !("ref" in event) || effectKey(event.ref) !== effectKey(ref)) throw new RuntimeError("Invocation lifecycle differs from its acceptance")
         if (event.type === "EffectCancelled") cancelled = true
-        else if (event.type === "CancellationSettled" && event.outcome.status === "fulfilled") cleaned = true
+        else if (event.type === "CancellationSettled" && cleanupSucceeded(event)) cleaned = true
         else if (event.type === "PromiseSettled" || event.type === "EffectDied") settled = true
-        else if (event.type === "EffectSettled") {
-          if (event.outcome.status === "rejected") settled = true
-          else {
-            const result = Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value)
-            if (result.type === "value") settled = true
-          }
-        }
+        else if (event.type === "EffectSettled" && settlementCompletesExecution(event)) settled = true
       }
     }
     return ref ? { status: (cancelled ? cleaned : settled) ? "settled" : "pending", ref } satisfies InvocationLookup : { status: "absent" }

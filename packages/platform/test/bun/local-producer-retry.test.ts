@@ -1,4 +1,4 @@
-import { memoryInvocationLookup } from "../fixtures/invocation-lookup"
+import { memoryJournalReads } from "../fixtures/memory-journal"
 import { completionState } from "../fixtures/completion-state"
 import { expect, test } from "bun:test"
 import { Context, Deferred, Effect, Schema } from "effect"
@@ -21,9 +21,7 @@ test("reopening retries the local effect and recreates its producer with the ori
   const refs: EffectRef[] = []
   const producers: Deferred.Deferred<string>[] = []
   const journal: Journal<Event> = {
-    lookupInvocation: memoryInvocationLookup(() => records),
-    readInputs: () => [],
-    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    ...memoryJournalReads(() => records),
     readCheckpoint: () => undefined,
     append: (expected, entries) => { expect(expected).toBe(records.length); records.push(...entries) },
     appendWithCheckpoint: () => { throw new Error("Unexpected checkpoint") },

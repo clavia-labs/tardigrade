@@ -127,11 +127,11 @@ test("version adoption reads lifecycle metadata without hydrating unrelated chun
     const loggers = new Set([logger])
     const metadataOnly = { ...journal, read: () => { throw new Error("Version adoption must not read actor history") } }
     await Effect.runPromise(updateThreadVersion(metadataOnly, address, "v1").pipe(Effect.provideService(Logger.CurrentLoggers, loggers)))
-    expect(await Effect.runPromise(journalCall(() => journal.readVersion()))).toEqual({ version: "v1", position: 2, pendingEffects: 0 })
+    expect(journal.readVersion()).toEqual({ version: "v1", position: 2, pendingEffects: 0 })
     await Effect.runPromise(updateThreadVersion(metadataOnly, address, "v2").pipe(Effect.provideService(Logger.CurrentLoggers, loggers)))
-    expect(await Effect.runPromise(journalCall(() => journal.readVersion()))).toEqual({ version: "v2", position: 3, pendingEffects: 0 })
+    expect(journal.readVersion()).toEqual({ version: "v2", position: 3, pendingEffects: 0 })
     await Effect.runPromise(updateThreadVersion(metadataOnly, address, "v2").pipe(Effect.provideService(Logger.CurrentLoggers, loggers)))
-    expect(await Effect.runPromise(journalCall(() => journal.readVersion()))).toEqual({ version: "v2", position: 3, pendingEffects: 0 })
+    expect(journal.readVersion()).toEqual({ version: "v2", position: 3, pendingEffects: 0 })
     expect(messages).toEqual([])
   } finally { await Effect.runPromise(journal.close); await rm(storage, { recursive: true, force: true }) }
 })

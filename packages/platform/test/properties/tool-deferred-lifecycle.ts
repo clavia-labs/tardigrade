@@ -1,4 +1,4 @@
-import { memoryInvocationLookup } from "../fixtures/invocation-lookup"
+import { memoryJournalReads } from "../fixtures/memory-journal"
 import { createTestStore } from "./runtime/store"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/unstable/rpc"
@@ -23,9 +23,7 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
   let reopening = false
   let watches = 0
   const journal: Journal<Event> = {
-    lookupInvocation: memoryInvocationLookup(() => records),
-    readInputs: () => [],
-    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    ...memoryJournalReads(() => records),
     readCheckpoint: () => undefined,
     append: (expected, events) => {
       if (expected !== records.length) throw new RuntimeError("Unexpected journal length")

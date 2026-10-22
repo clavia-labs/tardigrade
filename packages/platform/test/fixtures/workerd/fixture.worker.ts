@@ -1,4 +1,3 @@
-import { journalCall } from "@clavia/tardigrade-core"
 import { completionState } from "../completion-state"
 import { effectServiceClient, type EffectServicePolicy } from "../effect-service"
 import { waitFor } from "../wait"
@@ -101,7 +100,7 @@ export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByNam
     return this.instance
   }
   async state() {
-    return { instance: this.instance, service: this.ctx.id.toString(), externalJobs: await this.external.jobs(), records: await Effect.runPromise(journalCall(() => this.journal.read())), inputs: await Effect.runPromise(journalCall(() => this.journal.readInputs())), calls: await this.ctx.storage.get<readonly NativeCall[]>("calls") ?? [], watchdog: [...(await this.ctx.storage.list<WatchdogEntry>({ prefix: "tardie:watchdog:" })).values()], alarmAt: await this.ctx.storage.getAlarm() }
+    return { instance: this.instance, service: this.ctx.id.toString(), externalJobs: await this.external.jobs(), records: this.journal.read(), inputs: this.journal.readInputs(), calls: await this.ctx.storage.get<readonly NativeCall[]>("calls") ?? [], watchdog: [...(await this.ctx.storage.list<WatchdogEntry>({ prefix: "tardie:watchdog:" })).values()], alarmAt: await this.ctx.storage.getAlarm() }
   }
   async cancel(ref: EffectRef) { await Effect.runPromise(this.store!.cancel(ref, "stop")) }
   async resume() { await Effect.runPromise(this.store!.resume) }

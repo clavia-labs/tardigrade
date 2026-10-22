@@ -3,7 +3,7 @@ import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom } from "./atom"
 import { incrementalValidator, invalid } from "./incremental/validate"
-import { isMessageReceived } from "../actor/message"
+import { recordEvent, recordMetadata } from "../runtime/record"
 import type { RecordMetadata } from "../services/journal"
 import { EventLog, eventLogContext } from "../services/event-log"
 import { AtomState, initialStateSeed, type StatefulAtom } from "../initialise"
@@ -82,16 +82,13 @@ export function durableAtom<State, Event>(options: {
       if (initialSeed?.state.has(options.name)) state = restore(initialSeed.state.get(options.name))
       for (let index = initialSeed?.position ?? 0; index < offset; index++) {
         const record = prefix.at(index)!
-        const event = isMessageReceived(record.event) && !record.message?.inReplyTo ? record.event.body : record.event
-        const metadata: RecordMetadata = { ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), ...(record.message ? { message: record.message } : {}) }
-        state = fold(state, event, metadata, index)
+        state = fold(state, recordEvent(record), recordMetadata(record), index)
       }
     }
     const start = (continued ? previous.position : seed?.position ?? offset) - offset
     for (let index = Math.max(0, start); index < events.length; index++) {
       const record = records?.at(index)
-      const metadata: RecordMetadata = record ? { ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), ...(record.message ? { message: record.message } : {}) } : {}
-      state = fold(state, events.at(index), metadata, offset + index)
+      state = fold(state, events.at(index), recordMetadata(record), offset + index)
     }
     return { source, position: offset + events.length, state }
   }).pipe(NativeAtom.keepAlive)
