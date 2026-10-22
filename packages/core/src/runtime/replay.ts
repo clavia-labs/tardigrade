@@ -60,7 +60,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   const indexedFamilies = new Map<JournalFamily, JournalFamily>()
   type EffectValues = Proposed<Values<Atoms>[keyof Atoms]>
   type Work = EffectWork<ServicesOf<EffectValues>>
-  type DeferredWork = IdentifiedEffectValue<ServicesOf<EffectValues>> & { readonly handle: ExecutionHandle; readonly deadlineAt: number | undefined }
+  type DeferredWork = IdentifiedEffectValue<ServicesOf<EffectValues>> & { readonly handle: ExecutionHandle; readonly deadlineAt: number | undefined; readonly unbounded?: true }
   const disposers = new Set<() => void>()
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
   const read = options.decodeEvent ?? historicalEventDecoder(options.schema)
@@ -692,7 +692,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const request = requestOf(key)
         if (!proposal || !request) throw reconstructionError("Deferred work requires its reconstructed execution", settlement.ref.seq)
         return [{ kind: "act" as const, atom: settlement.ref.atom, source: actOwners.get(proposal.identity)!, ref: settlement.ref,
-          request: inputOf(key), execute: proposal.execute, handle: result.handle, deadlineAt: result.deadlineAt }]
+          request: inputOf(key), execute: proposal.execute, handle: result.handle, deadlineAt: result.deadlineAt, ...(result.unbounded ? { unbounded: true as const } : {}) }]
       }),
       pending: () => activeRequests().filter(([key]) => !hasSettlement(key) && !hasCancellation(key) && (!defect || requestOf(key)!.ref.atom === "host.message.replies")).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
       effect,

@@ -349,16 +349,22 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       snapshot.defect || !snapshot.effect(ref) || snapshot.effect(ref)?.cleanup?.request ? Effect.void
         : appendNow({ type: "EffectDied", ref, diagnostic: Cause.pretty(cause) }),
     ))
-    const promiseTimeouts = new Map<string, number>()
+    const promiseTimeouts = new Map<string, number | null>()
     const normalizePromise = (ref: EffectRef, value: ExecutionResult) => Effect.gen(function* () {
       if (value.type !== "promise") return value
       const prior = operationSettlement(snapshot.effect(ref))?.outcome
       const recorded = prior?.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(prior.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
-      const startedAt = yield* Clock.currentTimeMillis
-      const timeoutMs = promiseTimeouts.get(effectKey(ref)) ?? resolutionPolicy.timeoutMs
-      const deadlineAt = promiseDeadline(value.handle, startedAt, { ...resolutionPolicy, timeoutMs }, recorded?.type === "promise" ? recorded.deadlineAt : undefined)
+      const configured = promiseTimeouts.get(effectKey(ref))
       promiseTimeouts.delete(effectKey(ref))
-      return { ...value, deadlineAt }
+      const previous = recorded?.type === "promise" ? recorded : undefined
+      if (previous?.unbounded || (!previous && (configured === null || value.unbounded))) {
+        if (value.handle.executor !== "local") return yield* Effect.fail(new RuntimeError("Unbounded promises require a local producer"))
+        return { type: "promise" as const, handle: value.handle, unbounded: true as const }
+      }
+      const startedAt = yield* Clock.currentTimeMillis
+      const timeoutMs = configured ?? resolutionPolicy.timeoutMs
+      const deadlineAt = promiseDeadline(value.handle, startedAt, { ...resolutionPolicy, timeoutMs }, previous?.deadlineAt)
+      return { type: "promise" as const, handle: value.handle, deadlineAt }
     })
     let services: Effect.Success<ReturnType<typeof buildServices>>
     const messageRetryIntervalMs = options.delivery?.retryIntervalMs ?? DEFAULT_MESSAGE_RETRY_INTERVAL_MS
@@ -378,6 +384,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         const result = record
         const key = effectKey(record.ref)
         if (watched.has(key)) continue
+        if (result.unbounded) { watched.add(key); continue }
         const deadlineAt = promiseDeadline(result.handle, (yield* Clock.currentTimeMillis), resolutionPolicy, result.deadlineAt)
         if (result.handle.executor === "local") {
           const scheduler = Context.getOption(services, Scheduler)
@@ -574,9 +581,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           let attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
           let executionSequence = 0
           let retryStarted = false
-          const registerPromiseTimeout = (timeoutMs: number | undefined) => Effect.try({ try: () => {
+          const registerPromiseTimeout = (timeoutMs: number | null | undefined) => Effect.try({ try: () => {
             if (timeoutMs === undefined) return
-            if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new RuntimeError("Promise timeoutMs must be a positive safe integer")
+            if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)) throw new RuntimeError("Promise timeoutMs must be a positive safe integer or null")
             promiseTimeouts.set(key, timeoutMs)
           }, catch: RuntimeError.from })
           const execution: typeof EffectExecution.Service = {
@@ -601,6 +608,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             cancel: runtime.cancel,
             submit: (operation, options) => Effect.gen(function* () {
               if (signal.aborted) return yield* Effect.interrupt
+              if (options?.timeoutMs === null) return yield* Effect.fail(new RuntimeError("Unbounded promises require a local producer"))
               yield* registerPromiseTimeout(options?.timeoutMs)
               const handle = yield* runAttempt(operation, executionAttemptTimeoutMs, () => retryStarted)
               const value = yield* normalizePromise(work.ref, { type: "promise", handle })
@@ -903,8 +911,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           if (executions.size && executableEffects().length) return { progressCursor, status: "running" }
           const live = deferred.filter(work => work.handle.executor === "local" && background.has(work.handle.id))
           if (live.length && !executableEffects().length && !snapshot.pending().length && !snapshot.cancellations().length && !snapshot.deliveries().length) {
-            const deadlines = deferred.map(work => work.deadlineAt)
-            if (deadlines.every((at): at is number => at !== undefined)) return { progressCursor, status: "running", wakeAt: Math.min(...deadlines) }
+            if (deferred.every(work => work.deadlineAt !== undefined || (work.unbounded && background.has(work.handle.id)))) {
+              const bounded = deferred.map(work => work.deadlineAt).filter((at): at is number => at !== undefined)
+              return { progressCursor, status: "running", ...(bounded.length ? { wakeAt: Math.min(...bounded) } : {}) }
+            }
           }
           if (executableEffects().length || snapshot.pending().length || snapshot.cancellations().length || snapshot.deliveries().length || deferred.some(work => work.handle.executor === "local")) return { progressCursor, status: "pending" }
           if (!deferred.length) return { progressCursor, status: "settled" }

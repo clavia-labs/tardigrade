@@ -19,7 +19,7 @@ export const slowActor = defineActor("slow", Effect.sync(() => {
   } }
 }))
 
-export interface SlowActOptions { readonly workMs: number; readonly value: number; readonly hold?: boolean; readonly fork?: { readonly timeoutMs: number } }
+export interface SlowActOptions { readonly workMs: number; readonly value: number; readonly hold?: boolean; readonly fork?: { readonly timeoutMs: number | null } }
 export interface SlowActLog { readonly kind: "start" | "interrupted" | "done"; readonly at: number }
 
 // slowServices exposes execution barriers and lifecycle observations for watchdog tests.

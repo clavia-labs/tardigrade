@@ -78,7 +78,7 @@ export type FiberHandle = typeof FiberHandle.Type
 // ExecutionResult distinguishes an immediate value from a handle to an eventual result.
 export const ExecutionResult = Schema.Union([
   Schema.Struct({ type: Schema.Literal("value"), value: Schema.Json }),
-  Schema.Struct({ type: Schema.Literal("promise"), handle: ExecutionHandle, deadlineAt: Schema.optionalKey(Deadline) }),
+  Schema.Struct({ type: Schema.Literal("promise"), handle: ExecutionHandle, deadlineAt: Schema.optionalKey(Deadline), unbounded: Schema.optionalKey(Schema.Literal(true)) }).check(Schema.makeFilter(result => !result.unbounded || (result.handle.executor === "local" && result.deadlineAt === undefined), { title: "Unbounded promises require a local producer and no deadline" })),
 ])
 export type ExecutionResult = typeof ExecutionResult.Type
 

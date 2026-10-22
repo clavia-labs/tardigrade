@@ -45,7 +45,7 @@ export interface ModelInput { readonly model: ModelRef; readonly system: string;
 export class Model extends Context.Service<Model, {
   readonly call: (input: ModelInput, context?: ModelCallContext) => Effect.Effect<ModelReply, Error>
   readonly retry?: (input: ModelInput) => Effect.Effect<RetryOptions<Error>, Error>
-  readonly promiseTimeoutMs?: number | ((input: ModelInput) => Effect.Effect<number, Error>)
+  readonly promiseTimeoutMs?: number | null | ((input: ModelInput) => Effect.Effect<number | null, Error>)
   readonly submit?: (input: ModelInput, context: Pick<typeof EffectExecution.Service, "ref" | "signal" | "publish">) => Effect.Effect<ExecutionHandle, Error>
   readonly cancel?: (input: ModelInput, context: Omit<ActCancellation, "request">) => Effect.Effect<void, Error>
 }>()("example/Model") {}
@@ -61,8 +61,8 @@ export const DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS = {
 } satisfies SchemaRepresentation.FromJsonSchemaOptions
 
 export interface ModelServiceOptions {
-  readonly timeoutMs?: number
-  readonly promiseTimeoutMs?: number
+  readonly timeoutMs?: number | null
+  readonly promiseTimeoutMs?: number | null
 }
 
 const ProviderError = Schema.Struct({ error: Schema.Struct({
@@ -123,7 +123,7 @@ const carriesProviderMetadata = (metadata: Response.ProviderMetadata) =>
 
 // modelServices adapts native AI providers to the agent's model service without executing tools.
 export function modelServices(options: ModelServiceOptions = {}) {
-  for (const [name, value] of Object.entries(options)) if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) throw new RuntimeError(`${name} must be a positive safe integer`)
+  for (const [name, value] of Object.entries(options)) if (value !== undefined && value !== null && (!Number.isSafeInteger(value) || value < 1)) throw new RuntimeError(`${name} must be a positive safe integer or null`)
   return Layer.effect(Model, Effect.gen(function* () {
     const lock = yield* ModelLock
     const languageModel = yield* LanguageModel.LanguageModel
@@ -136,9 +136,9 @@ export function modelServices(options: ModelServiceOptions = {}) {
     })
     const promiseTimeoutMs = (input: ModelInput) => Effect.gen(function* () {
       const { settings } = yield* settingsOf(input)
-      return options.promiseTimeoutMs ?? options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
+      return options.promiseTimeoutMs !== undefined ? options.promiseTimeoutMs : options.timeoutMs !== undefined ? options.timeoutMs : settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
     })
-    const retry = (input: ModelInput) => settingsOf(input).pipe(Effect.map(({ settings }) => ({ ...modelRetry(settings.policy.retry), attemptTimeoutMs: options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS })))
+    const retry = (input: ModelInput) => settingsOf(input).pipe(Effect.map(({ settings }) => ({ ...modelRetry(settings.policy.retry), attemptTimeoutMs: options.timeoutMs !== undefined ? options.timeoutMs : settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS })))
     return { promiseTimeoutMs, retry, call: (input, context) => Effect.gen(function* () {
       const { resolved, settings } = yield* settingsOf(input)
       const objects = yield* resolveContentObjects(input.context)
@@ -240,7 +240,8 @@ const durableModelCall = (input: ModelInput, purpose: ModelCallContext["purpose"
   const model = yield* Model
   const execution = yield* EffectExecution
   const retry = yield* inferenceRetry(model, input)
-  const timeoutMs = (typeof model.promiseTimeoutMs === "function" ? yield* model.promiseTimeoutMs(input) : model.promiseTimeoutMs) ?? retry.attemptTimeoutMs ?? DEFAULT_MODEL_TIMEOUT_MS
+  const configured = typeof model.promiseTimeoutMs === "function" ? yield* model.promiseTimeoutMs(input) : model.promiseTimeoutMs
+  const timeoutMs = configured !== undefined ? configured : retry.attemptTimeoutMs === undefined ? DEFAULT_MODEL_TIMEOUT_MS : retry.attemptTimeoutMs
   if (purpose === "inference" && model.submit) return yield* execution.submit(execution.retry(model.submit(input, execution), retry), { timeoutMs })
   const call = model.call(input, { publish: execution.publish, purpose })
   const reply = durablePromise(execution.ref, { success: ModelReplySchema, error: Schema.String })
