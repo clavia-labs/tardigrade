@@ -22,6 +22,7 @@ export function cloudflareJournal<Event extends object>(storage: DurableObjectSt
     limits: CLOUDFLARE_SQL_LIMITS,
     checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes,
     layer: SqliteClient.layer({ storage }),
+    transaction: work => storage.transactionSync(work),
     flush: alarms.sync,
   })
 }

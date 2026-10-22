@@ -13,6 +13,8 @@ export class EventLog extends Context.Service<EventLog, {
   // events extends an immutable prefix; another history requires another source atom.
   readonly events: Atom<ReadonlyLog<unknown>>
   readonly records?: Atom<ReadonlyLog<ObservedRecord<unknown>>>
+  // readPrefix supplies the journal before position for durable atoms omitted from the seed (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent).
+  readonly readPrefix?: () => ReadonlyLog<ObservedRecord<unknown>>
   // position is the absolute log position immediately before events[0].
   readonly position?: number | (() => number)
   readonly initialState?: StateSeed | (() => StateSeed | undefined)

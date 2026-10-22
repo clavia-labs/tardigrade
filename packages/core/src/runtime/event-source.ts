@@ -21,6 +21,9 @@ export function createEventSource<Event = unknown>() {
   }
 }
 
+// observeRecord removes accepted payloads from atom observations (platform/test/properties/runtime/input-representation.ts).
+export const observeRecord = <Event>(record: Recorded<Event>): ObservedRecord<Event> => Object.freeze({ ...record, event: Schema.is(EffectRequested)(record.event) ? Object.freeze(observeRequest(record.event)) : record.event })
+
 // createRecordSource appends stored records and payload-free atom observations atomically (inputRepresentation).
 export function createRecordSource<Event>() {
   const source = atom<{ readonly events: LogView<RuntimeEvent<Event>>; readonly records: LogView<Recorded<Event>>; readonly observed: LogView<ObservedRecord<Event>>; readonly observedEvents: LogView<Event | ObservedRecord<Event>["event"]> }>({ events: LogView.empty, records: LogView.empty, observed: LogView.empty, observedEvents: LogView.empty })
@@ -33,7 +36,7 @@ export function createRecordSource<Event>() {
     append: (store: Pick<ReturnType<typeof createStore>, "get" | "set">, batch: readonly Recorded<Event>[]) => {
       if (!batch.length) return
       const previous = store.get(source)
-      const observed = batch.map(record => Object.freeze({ ...record, event: Schema.is(EffectRequested)(record.event) ? Object.freeze(observeRequest(record.event)) : record.event }))
+      const observed = batch.map(observeRecord)
       store.set(source, {
         events: previous.events.append(batch.map(eventOf)),
         records: previous.records.append(batch),

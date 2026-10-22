@@ -15,7 +15,7 @@
 // crash discards volatile state; a persistence error requires reopening even when storage may already have committed.
 // restore and replayNext correspond to journal.readCheckpoint, journal.readAfter, and definition.replay; expose corresponds to sync and ready completion.
 // restart corresponds to snapshot.deferred and localRecovery consumption; observe corresponds to observePromises for nonlocal handles.
-// Summary retains the active reference; TypeScript retains lifecycle records for every reference and admits successful immediate effects followed by domain promise settlement.
+// Summary retains the active reference; acceptanceBinding.qnt separates live bindings from journal admission history.
 // Domain follow-ups in TypeScript share their triggering core event transaction; this model omits their payloads and treats the batch as an abstract committed transition.
 // Run backend checks from a temporary directory so generated artifacts stay outside the repository.
 // quint verify /absolute/path/to/lifecycleCheckpoint.qnt --backend tlc --invariant invariant

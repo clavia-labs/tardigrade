@@ -1,3 +1,4 @@
+import { journalCall } from "@clavia/tardigrade-core"
 import { env } from "cloudflare:workers"
 import { runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
@@ -45,7 +46,7 @@ test("stock agent reaches 10k events with bounded SQLite checkpoints and linear 
     }
     try {
       while (position < 2_500) await next()
-      const prefix = JSON.stringify(await Effect.runPromise(journal.read))
+      const prefix = JSON.stringify(await Effect.runPromise(journalCall(() => journal.read())))
       const sample = () => {
         const row = state.storage.sql.exec<{ bytes: number }>("SELECT SUM(length(event)) AS bytes FROM experimental_events WHERE actor = ?", "digest-long-thread").one()
         samples.push({ position, bytes: row.bytes })
@@ -53,12 +54,12 @@ test("stock agent reaches 10k events with bounded SQLite checkpoints and linear 
       sample()
       await Effect.runPromise(store.close)
       store = await open()
-      expect(JSON.stringify(await Effect.runPromise(journal.read))).toBe(prefix)
+      expect(JSON.stringify(await Effect.runPromise(journalCall(() => journal.read())))).toBe(prefix)
       while (position < 5_000) await next()
       sample()
       while (position < 10_000) await next()
       sample()
-      const records = await Effect.runPromise(journal.read)
+      const records = await Effect.runPromise(journalCall(() => journal.read()))
       const modelRequests = records.filter(record => record.event.type === "EffectRequested" && record.event.request.act === Generate.name)
       expect(modelRequests.length).toBeGreaterThan(500)
       expect(modelRequests.slice(9).every(record => record.event.type === "EffectRequested" && Schema.is(InputDigest)(record.event.request.input))).toBe(true)
@@ -74,7 +75,7 @@ test("stock agent reaches 10k events with bounded SQLite checkpoints and linear 
       await Effect.runPromise(store.wait)
       expect(store.snapshot().position).toBe(position)
       expect(store.getState().view).toEqual(view)
-      expect(await Effect.runPromise(journal.read)).toEqual(records)
+      expect(await Effect.runPromise(journalCall(() => journal.read()))).toEqual(records)
       console.log(JSON.stringify({ samples, checkpointBytes: checkpoint.bytes, checkpointChunks: checkpoint.chunks, maxChunkBytes: checkpoint.max, eventsPerTurn }))
     } finally { await Effect.runPromise(store.close); await Effect.runPromise(journal.close) }
   })

@@ -38,3 +38,27 @@ export const cloudflareSchedulerStorage = (storage: DurableObjectStorage, alarms
     return result
   }).pipe(Effect.uninterruptible),
 })
+
+// cloudflareSchedulerTransactionSync stores wake mutations in a synchronous SQLite transaction; physical alarms synchronize at acknowledgement (test/workerd/watchdog.workers.ts).
+export function cloudflareSchedulerTransactionSync(storage: DurableObjectStorage, alarms?: DurableObjectAlarmsOptions): SchedulerTransaction {
+  const io = <Value>(read: () => Value) => Effect.try({ try: read, catch: RuntimeError.from })
+  const scheduling = makeAlarmScheduling(storage, alarms)
+  return {
+    alarm: { set: at => scheduling.set(Math.max(1, at)), clear: scheduling.delete },
+    allocateGeneration: io(() => {
+      const previous = Schema.decodeUnknownSync(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThan(Number.MAX_SAFE_INTEGER)))(storage.kv.get("tardie:scheduler-generation") ?? 0)
+      storage.kv.put("tardie:scheduler-generation", previous + 1)
+      return previous + 1
+    }),
+    get: id => io(() => {
+      const value = storage.kv.get(prefix + id)
+      return value === undefined ? undefined : Schema.decodeUnknownSync(ScheduledWake)(value)
+    }),
+    put: entry => io(() => storage.kv.put(prefix + entry.id, entry)),
+    delete: id => io(() => { storage.kv.delete(prefix + id) }),
+    list: io(() => new Map([...storage.kv.list({ prefix })].map(([, value]) => {
+      const entry = Schema.decodeUnknownSync(ScheduledWake)(value)
+      return [entry.id, entry] as const
+    }))),
+  }
+}

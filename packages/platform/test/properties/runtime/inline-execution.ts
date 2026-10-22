@@ -1,3 +1,4 @@
+import { completionState } from "../../fixtures/completion-state"
 import { strict as assert } from "node:assert"
 import { Clock, Context, Deferred, Effect, Schema } from "effect"
 import * as fc from "fast-check"
@@ -15,10 +16,12 @@ const cases = fc.record({
 export const inlineExecutionSupervision = fc.asyncProperty(cases, options => Effect.runPromise(Effect.gen(function* () {
   const Start = Schema.Struct({ type: Schema.Literal("Start") })
   const Job = act({ name: "test.inline-supervision", input: Schema.Null, success: Schema.Finite, failure: Schema.String })
+  const completion = completionState("inline.completion", Schema.Finite)
+  const Event = Schema.Union([Start, completion.event])
   const actor = defineActor("inline-supervision", Effect.sync(() => {
     const started = durableAtom({ name: "inline.started", input: Start, schema: Schema.Boolean, initial: false, reduce: () => true })
-    const job = Job.request({ input: null })
-    return { schema: Start, atom: effectAtom(get => ({ view: get(job.result), events: {}, acts: get(started) && get(job.result).status === "pending" ? { job } : {} })) }
+    const job = Job.request({ input: null, onSettled: completion.onSettled })
+    return { schema: Event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(started) && get(completion.state).status === "pending" ? { job } : {} })) }
   }))
   const entered = yield* Deferred.make<void>()
   const release = yield* Deferred.make<void>()
@@ -76,6 +79,7 @@ export const inlineExecutionSupervision = fc.asyncProperty(cases, options => Eff
     }
     yield* store.wait
     assert.equal(store.recoveryState().status, "settled")
+    assert.deepEqual(Object.keys(store.getState().acts), [], "completed invocation remained proposed")
     assert.deepEqual(store.getState().view, options.retryWait ? { status: "rejected", reason: { _tag: "Cancelled", reason: "stop" } }
       : options.rejected ? { status: "rejected", reason: "failed" } : { status: "fulfilled", value: options.value })
     yield* wake

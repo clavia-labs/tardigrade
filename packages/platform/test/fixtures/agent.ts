@@ -37,10 +37,8 @@ export function turn(log: AgentLog, snapshot: Snapshot, turnId: string, text: st
       const ref = { seq: snapshot.position, atom: work.atom, act: work.request.act }
       const request = log.requestEvent(ref, work.request, work.origin)
       snapshot = log.append(snapshot, request)
-      for (const event of snapshot.followups(request)) snapshot = log.append(snapshot, event as Event)
       const settled = { type: "EffectSettled" as const, ref, outcome: { status: "fulfilled" as const, value: { type: "value", value: { text: work.request.act === "agent.model.summarize" ? "Summary" : "Answer", toolCalls: [] } } } }
       snapshot = log.append(snapshot, settled)
-      for (const event of snapshot.followups(settled)) snapshot = log.append(snapshot, event as Event)
       continue
     }
     const proposal = Object.values(snapshot.view().agent.events)[0]

@@ -1,3 +1,4 @@
+import { journalCall } from "@clavia/tardigrade-core"
 import assert from "node:assert/strict"
 import { env } from "cloudflare:workers"
 import { runInDurableObject } from "cloudflare:test"
@@ -9,7 +10,7 @@ import { RuntimeError, ExecutionResult, PromiseSettled, Scheduler, createSchedul
 import { objectJournal } from "../../src/cloudflare/objects"
 import { cloudflareSchedulerStorage } from "../../src/cloudflare/scheduler"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
-import { slowActor, slowServices } from "../fixtures/slow-act"
+import { slowActor, slowServices, type SlowEvent } from "../fixtures/slow-act"
 import { createTestStore } from "../properties/runtime/store"
 import type { TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
 
@@ -38,7 +39,7 @@ const promiseDeadlineRecovery = (storage: DurableObjectStorage, { budget, slackM
           yield* restored.recover
         } else yield* watchdog.alarm
       }) })
-      const journal = objectJournal<{ type: "RunRequested" }>({ storage, key: "events", target, watchdog })
+      const journal = objectJournal<SlowEvent>({ storage, key: "events", target, watchdog })
       return { watchdog, scheduler, journal }
     }
     let host = open()
@@ -66,7 +67,7 @@ const promiseDeadlineRecovery = (storage: DurableObjectStorage, { budget, slackM
       assert.equal(attempts, budget)
       assert.equal((yield* host.watchdog.status).get(watchdogKey(target))?.status, "blocked")
       assert((yield* Clock.currentTimeMillis) < deadlineAt)
-      const records = yield* host.journal.read
+      const records = yield* journalCall(() => host.journal.read())
       if (legacy) {
         yield* host.scheduler.cancel(`promise:${effectKey(settled.ref)}`)
         const upgraded = yield* runtime()
@@ -77,7 +78,7 @@ const promiseDeadlineRecovery = (storage: DurableObjectStorage, { budget, slackM
       host = open()
       yield* host.scheduler.restore
       yield* host.watchdog.restore
-      assert.deepEqual(yield* host.journal.read, records)
+      assert.deepEqual(yield* journalCall(() => host.journal.read()), records)
       assert.equal(records.some(record => record.event.type === "PromiseSettled"), false)
       const armed = yield* alarmAt()
       assert.notEqual(armed, null, "Unsettled promise lost its deadline wake when recovery blocked")
@@ -85,7 +86,7 @@ const promiseDeadlineRecovery = (storage: DurableObjectStorage, { budget, slackM
       yield* clock.setTime(deadlineAt)
       yield* host.scheduler.alarm
       yield* host.scheduler.alarm
-      const final = yield* host.journal.read
+      const final = yield* journalCall(() => host.journal.read())
       const timeouts = final.map(record => record.event).filter(Schema.is(PromiseSettled))
       assert.equal(timeouts.length, 1)
       assert.deepEqual(timeouts[0]!.result, { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt } })
@@ -96,7 +97,7 @@ const promiseDeadlineRecovery = (storage: DurableObjectStorage, { budget, slackM
       probe = undefined
       const completed = yield* runtime()
       yield* completed.recover
-      assert.equal((yield* host.journal.read).filter(record => Schema.is(PromiseSettled)(record.event)).length, 1)
+      assert.equal((yield* journalCall(() => host.journal.read())).filter(record => Schema.is(PromiseSettled)(record.event)).length, 1)
       assert.equal(fixture.log().filter(entry => entry.kind === "start").length, 1)
     }).pipe(Effect.ensuring(Effect.suspend(() => Effect.forEach(closes, close => close).pipe(Effect.andThen(host.journal.close), Effect.orDie))))
   }).pipe(Effect.provideService(Clock.Clock, clock))

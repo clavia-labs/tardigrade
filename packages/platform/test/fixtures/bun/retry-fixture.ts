@@ -1,3 +1,4 @@
+import { journalCall } from "@clavia/tardigrade-core"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -21,7 +22,7 @@ export async function bunRetryFixture(options: RetryServiceOptions): Promise<Ret
       const result = await Effect.runPromise(thread.methodState("run", "run"))
       return result.status === "pending" ? undefined : Schema.decodeUnknownSync(methodResult(Schema.Finite))(result)
     },
-    records: () => Effect.runPromise(journal.read),
+    records: () => Effect.runPromise(journalCall(() => journal.read())),
     restart: async () => {
       await Effect.runPromise(host.close)
       host = await Effect.runPromise(createBunHost(hostOptions))

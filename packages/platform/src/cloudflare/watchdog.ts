@@ -2,12 +2,12 @@ import type { DurableObjectStorage, DurableObjectTransaction } from "@cloudflare
 import { Effect, Schema } from "effect"
 import { RuntimeError, WatchdogEntry, schedulerAlarm, type WatchdogTransaction, type WatchdogStorage } from "@clavia/tardigrade-core"
 import { type DurableObjectAlarmsOptions } from "@clavia/tardigrade-cloudflare/layers/alarms"
-import { cloudflareSchedulerTransaction } from "./scheduler"
+import { cloudflareSchedulerTransaction, cloudflareSchedulerTransactionSync } from "./scheduler"
 
 const prefix = "tardie:watchdog:"
 
 // cloudflareWatchdogTransaction binds recovery records and alarm changes to a DO transaction.
-export function cloudflareWatchdogTransaction(tx: DurableObjectTransaction, alarms?: DurableObjectAlarmsOptions): WatchdogTransaction {
+function cloudflareWatchdogTransaction(tx: DurableObjectTransaction, alarms?: DurableObjectAlarmsOptions): WatchdogTransaction {
   const io = <Value>(run: () => Promise<Value>) => Effect.tryPromise({ try: run, catch: RuntimeError.from })
   return {
     scheduler: cloudflareSchedulerTransaction(tx, alarms),
@@ -31,4 +31,19 @@ export function cloudflareWatchdogStorage(storage: DurableObjectStorage, alarms?
     const context = yield* Effect.context<never>()
     return yield* Effect.tryPromise({ try: () => storage.transaction(tx => Effect.runPromiseWith(context)(work(cloudflareWatchdogTransaction(tx, alarms)))), catch: RuntimeError.from })
   }) }
+}
+
+// cloudflareWatchdogTransactionSync commits recovery records alongside synchronous journal writes (test/workerd/watchdog.workers.ts).
+export function cloudflareWatchdogTransactionSync(storage: DurableObjectStorage, alarms?: DurableObjectAlarmsOptions): WatchdogTransaction {
+  const io = <Value>(read: () => Value) => Effect.try({ try: read, catch: RuntimeError.from })
+  return {
+    scheduler: cloudflareSchedulerTransactionSync(storage, alarms),
+    get: key => io(() => {
+      const value = storage.kv.get(prefix + key)
+      return value === undefined ? undefined : Schema.decodeUnknownSync(WatchdogEntry)(value)
+    }),
+    put: (key, entry) => io(() => storage.kv.put(prefix + key, Schema.decodeSync(WatchdogEntry)(entry))),
+    delete: key => io(() => { storage.kv.delete(prefix + key) }),
+    list: io(() => new Map([...storage.kv.list({ prefix })].map(([key, value]) => [key.slice(prefix.length), Schema.decodeUnknownSync(WatchdogEntry)(value)]))),
+  }
 }

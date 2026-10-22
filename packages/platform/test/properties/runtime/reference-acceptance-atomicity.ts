@@ -1,3 +1,5 @@
+import { journalCall } from "@clavia/tardigrade-core"
+import { memoryInvocationLookup } from "../../fixtures/invocation-lookup"
 import { Context, Deferred, Effect, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, effectAtom, effectKey, RuntimeError, EffectRef, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
@@ -18,6 +20,9 @@ interface AcceptanceCase {
   readonly updates: readonly number[]
   readonly checkpoint: boolean
   readonly failCommit: boolean
+  readonly failLookup: boolean
+  readonly crashPending: boolean
+  readonly forgetSettled: boolean
 }
 
 // runAcceptanceScenario checks publication, failed acceptance, and recovery against the real host.
@@ -27,9 +32,13 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
   const position = records.length
   const entered = yield* Deferred.make<void>()
   const release = yield* Deferred.make<void>()
+  const executionEntered = yield* Deferred.make<void>()
   let stored: StoredCheckpoint | undefined
   let blockAcceptance = true
   let failCommit = options.failCommit
+  let failLookup = options.failLookup
+  let holdExecution = options.crashPending && !options.failCommit
+  const lookups: string[] = []
   let attempted: EffectRef | undefined
   let request!: ReturnType<typeof Job.request>
   const executions: EffectRef[] = []
@@ -70,51 +79,85 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
       log.dispose()
     }
   }
-  const append = (expected: number, events: readonly Recorded<Event>[], checkpoint?: StoredCheckpoint) => Effect.gen(function* () {
+  let awaitingAcceptance = false
+  const append = (expected: number, events: readonly Recorded<Event>[], checkpoint?: StoredCheckpoint): undefined => {
     const accepted = events.map(record => record.event).find(event => event.type === "EffectRequested")
     if (accepted?.type === "EffectRequested" && blockAcceptance) {
       blockAcceptance = false
       attempted = accepted.ref
-      yield* Deferred.succeed(entered, undefined)
-      yield* Deferred.await(release)
-      if (failCommit) return yield* Effect.fail(new RuntimeError("Injected request commit failure"))
+      if (failCommit) { Deferred.doneUnsafe(entered, Effect.void); throw new RuntimeError("Injected request commit failure") }
+      awaitingAcceptance = true
     }
-    if (expected !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal length"))
-    if (accepted?.type === "EffectRequested" && accepted.origin !== 0) return yield* Effect.fail(new RuntimeError("Acceptance lost its originating request"))
+    if (expected !== records.length) throw new RuntimeError("Unexpected journal length")
+    if (accepted?.type === "EffectRequested" && accepted.origin !== 0) throw new RuntimeError("Acceptance lost its originating request")
     records.push(...events)
     if (checkpoint) stored = checkpoint
-  })
+  }
   const journal: Journal<Event> = {
-    readInputs: Effect.succeed([]),
-    read: Effect.sync(() => [...records]),
-    readAfter: cursor => Effect.sync(() => {
+    acknowledge: write => journalCall(() => { write?.() }).pipe(Effect.andThen(Effect.suspend(() => {
+      if (!awaitingAcceptance) return Effect.void
+      awaitingAcceptance = false
+      return Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+    }))),
+    lookupInvocation: identity => {
+      if (failLookup) throw new RuntimeError("Injected invocation lookup failure")
+      const result = memoryInvocationLookup(() => records)(identity)
+      lookups.push(result.status)
+      return result
+    },
+    readInputs: () => [],
+    read: () => [...records],
+    readBefore: position => records.slice(0, position),
+    readAfter: cursor => {
       if (cursor < 0 || cursor > records.length) throw new RuntimeError("Invalid suffix position")
       return records.slice(cursor)
-    }),
-    readCheckpoint: Effect.sync(() => stored),
+    },
+    readCheckpoint: () => stored,
     append: (position, events) => append(position, events), appendWithCheckpoint: append,
   }
   const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(),
-    services: () => Job.layer((input, { ref }) => Effect.sync(() => { executions.push(ref); return input.invocation })),
+    services: runtime => Job.layer((input, { ref }) => Effect.gen(function* () {
+      const published = runtime.get(request.ref)
+      if (!published || effectKey(published) !== effectKey(ref)) return yield* Effect.die(new RuntimeError("Execution began without its published acceptance binding"))
+      executions.push(ref)
+      yield* Deferred.succeed(executionEntered, undefined)
+      if (holdExecution) return yield* Effect.never
+      return input.invocation
+    })),
   })
+  if (failLookup) {
+    const failed = yield* open()
+    yield* Effect.gen(function* () {
+      const result = yield* failed.wait.pipe(Effect.result)
+      if (result._tag !== "Failure" || !String(result.failure).includes("Injected invocation lookup failure") || records.length !== position || executionCount() !== 0 || failed.snapshot().bindings.size !== 0) return yield* Effect.fail(new RuntimeError("Lookup failure admitted or executed work"))
+    }).pipe(Effect.ensuring(failed.close))
+    failLookup = false
+  }
   const first = yield* open()
   yield* Effect.gen(function* () {
     yield* Deferred.await(entered)
-    if (!attempted || attempted.seq !== position || first.get(request.ref) !== undefined || first.snapshot().bindings.size !== 0 || executionCount() !== 0 || payloads().some(event => event.type === "EffectRequested")) return yield* Effect.fail(new RuntimeError("Reference or execution published before request commit"))
+    if (!attempted || attempted.seq !== position || first.get(request.ref) !== undefined || first.snapshot().bindings.size !== 0 || executionCount() !== 0 || payloads().filter(event => event.type === "EffectRequested").length !== (options.failCommit ? 0 : 1)) return yield* Effect.fail(new RuntimeError("Reference or execution published before request acknowledgement"))
     yield* Deferred.succeed(release, undefined)
+    if (holdExecution) {
+      yield* Deferred.await(executionEntered)
+      if (executionCount() !== 1 || payloads().filter(event => event.type === "EffectRequested").length !== 1 || payloads().some(event => event.type === "EffectSettled")) return yield* Effect.fail(new RuntimeError("Pending execution did not preserve committed acceptance"))
+      return
+    }
     const completion = yield* first.wait.pipe(Effect.result)
     if (options.failCommit) {
       if (completion._tag !== "Failure" || first.get(request.ref) !== undefined || executionCount() !== 0 || records.length !== position) return yield* Effect.fail(new RuntimeError("Failed commit published acceptance"))
     } else {
       const published = first.get(request.ref)
-      if (completion._tag !== "Success" || !published || effectKey(published) !== effectKey(attempted) || executionCount() !== 1) return yield* Effect.fail(new RuntimeError("Committed request failed to publish acceptance"))
+      if (completion._tag !== "Success" || published !== undefined || first.snapshot().bindings.size !== 0 || executionCount() !== 1) return yield* Effect.fail(new RuntimeError("Committed request failed to publish acceptance"))
     }
   }).pipe(Effect.ensuring(Effect.gen(function* () {
     failCommit = false
     yield* Deferred.succeed(release, undefined)
     yield* first.close
   })))
-  if (!options.failCommit) {
+  holdExecution = false
+  const forgotten = options.forgetSettled && !options.failCommit && !options.crashPending
+  if (!options.failCommit && !options.crashPending) {
     const setup = yield* actor.setup
     const log = createEventLog({ schema: Event, atoms: setup.effects })
     try {
@@ -129,14 +172,23 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
   return yield* Effect.gen(function* () {
     yield* reopened.wait
     const receipt = reopened.get(request.ref)
-    if (!receipt || reopened.getState().view.origin !== 0 || !attempted || effectKey(receipt) !== effectKey(attempted)) return yield* Effect.fail(new RuntimeError("Reconstructed request lost its durable receipt"))
+    if (receipt !== undefined || reopened.snapshot().bindings.size !== 0 || reopened.getState().view.origin !== 0) return yield* Effect.fail(new RuntimeError("Reconstructed request lost its durable receipt"))
     const accepted = payloads().filter(event => event.type === "EffectRequested")
-    if (accepted.length !== 1 || accepted[0]!.type !== "EffectRequested" || accepted[0]!.ref.seq !== position || executions.length !== 1 || effectKey(executions[0]!) !== effectKey(accepted[0]!.ref) || reopened.getState().view.completed.join(",") !== String(options.invocation)) return yield* Effect.fail(new RuntimeError("Recovery changed identity or repeated execution"))
+    const expectedExecutions = options.crashPending && !options.failCommit ? 2 : 1
+    if (accepted.length !== 1 || accepted[0]!.type !== "EffectRequested" || accepted[0]!.ref.seq !== position || executions.length !== expectedExecutions || executions.some(ref => effectKey(ref) !== effectKey(accepted[0]!.ref)) || reopened.getState().view.completed.join(",") !== String(options.invocation)) return yield* Effect.fail(new RuntimeError("Recovery changed identity or repeated settled execution"))
+    if (!lookups.includes("absent") || (expectedExecutions === 2 && !lookups.includes("pending")) || (forgotten && !lookups.includes("settled"))) return yield* Effect.fail(new RuntimeError("Admission bypassed journal lookup"))
+    if (forgotten && reopened.recoveryState().status !== "settled") return yield* Effect.fail(new RuntimeError("Skipped settled proposal remained recovery work"))
+    if (forgotten) {
+      const checked = lookups.filter(status => status === "settled").length
+      yield* reopened.send([{ type: "Updated", amount: 0 }])
+      yield* reopened.wait
+      if (lookups.filter(status => status === "settled").length <= checked || executions.length !== expectedExecutions || payloads().filter(event => event.type === "EffectRequested").length !== 1 || reopened.recoveryState().status !== "settled") return yield* Effect.fail(new RuntimeError("Changed snapshot bypassed journal admission or repeated settled work"))
+    }
   }).pipe(Effect.ensuring(reopened.close))
 }).pipe(Effect.scoped, Effect.timeout(5_000)))
 
 // referenceAcceptanceAtomicity checks references publish with request commits and survive suffix recovery.
 export const referenceAcceptanceAtomicity = fc.asyncProperty(fc.record({
   invocation: fc.integer({ min: 1, max: 100 }), updates: fc.array(fc.integer({ min: -10, max: 10 }), { maxLength: 4 }),
-  checkpoint: fc.boolean(), failCommit: fc.boolean(),
+  checkpoint: fc.boolean(), failCommit: fc.boolean(), failLookup: fc.boolean(), crashPending: fc.boolean(), forgetSettled: fc.boolean(),
 }), runAcceptanceScenario)

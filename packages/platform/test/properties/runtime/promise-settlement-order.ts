@@ -1,3 +1,5 @@
+import { journalCall } from "@clavia/tardigrade-core"
+import { memoryInvocationLookup } from "../../fixtures/invocation-lookup"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, PromiseNotReady, RuntimeError, type ActorRuntime, type Journal, type PromiseSettled, type Recorded } from "@clavia/tardigrade-core"
@@ -33,22 +35,28 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
   let runtime!: ActorRuntime<Event>
   let earlyResult!: PromiseSettled
   let externalAcknowledged = false
+  let awaitingSettlement = false
   const journal: Journal<Event> = {
-    readInputs: Effect.succeed([]),
-    read: Effect.sync(() => [...records]),
-    readAfter: position => Effect.sync(() => records.slice(position)),
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined; Effect.void has a void result type.
-    readCheckpoint: Effect.succeed(undefined),
-    append: (expected, events) => Effect.gen(function* () {
-      if (events.some(({ event }) => event.type === "EffectSettled")) {
-        yield* Deferred.succeed(commitEntered, undefined)
-        yield* Deferred.await(allowCommit)
-      }
-      if (expected !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal length"))
+    lookupInvocation: memoryInvocationLookup(() => records),
+    readInputs: () => [],
+    read: () => [...records],
+    readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    readCheckpoint: () => undefined,
+    append: (expected, events) => {
+      if (expected !== records.length) throw new RuntimeError("Unexpected journal length")
       records.push(...events)
-      if (events.some(({ event }) => event.type === "Marker" && event.name === "before")) yield* Deferred.succeed(markerCommitted, undefined)
-    }),
-    appendWithCheckpoint: () => Effect.fail(new RuntimeError("Unexpected checkpoint")),
+      if (events.some(({ event }) => event.type === "EffectSettled")) {
+        awaitingSettlement = true
+        Deferred.doneUnsafe(commitEntered, Effect.void)
+      }
+      if (events.some(({ event }) => event.type === "Marker" && event.name === "before")) Deferred.doneUnsafe(markerCommitted, Effect.void)
+    },
+    acknowledge: write => journalCall(() => { write?.() }).pipe(Effect.andThen(Effect.suspend(() => {
+      if (!awaitingSettlement) return Effect.void
+      awaitingSettlement = false
+      return Deferred.await(allowCommit)
+    }))),
+    appendWithCheckpoint: () => { throw new RuntimeError("Unexpected checkpoint") },
   }
   const actor = defineActor("delivery", Effect.sync(() => {
     const state = durableAtom({ name: "test.delivery", input: Event, schema: State,

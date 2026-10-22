@@ -1,16 +1,19 @@
+import { memoryInvocationLookup } from "../fixtures/invocation-lookup"
+import { completionState } from "../fixtures/completion-state"
 import { expect, test } from "bun:test"
 import { Context, Deferred, Effect, Schema } from "effect"
 import { act, defineActor, durablePromise, effectAtom, EffectExecution, ExecutionResult, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
 import { createTestStore } from "../properties/runtime/store"
 
 test("reopening retries the local effect and recreates its producer with the original deadline", async () => {
-  const Event = Schema.Struct({ type: Schema.Literal("Unused") })
+  const completion = completionState("producer.completion", Schema.String)
+  const Event = completion.event
   type Event = typeof Event.Type
   const Job = act({ name: "producer.retry", input: Schema.Null, success: Schema.String, failure: Schema.String })
   const actor = defineActor("producer-retry", Effect.sync(() => {
-    const request = Job.request({ input: null })
+    const request = Job.request({ input: null, onSettled: completion.onSettled })
     return { schema: Event, atom: effectAtom(get => {
-      const view = get(request.result)
+      const view = get(completion.state)
       return { view, events: {}, acts: view.status === "pending" ? { job: request } : {} }
     }) }
   }))
@@ -18,12 +21,12 @@ test("reopening retries the local effect and recreates its producer with the ori
   const refs: EffectRef[] = []
   const producers: Deferred.Deferred<string>[] = []
   const journal: Journal<Event> = {
-    readInputs: Effect.succeed([]),
-    read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires an undefined checkpoint result.
-    readCheckpoint: Effect.succeed(undefined),
-    append: (expected, entries) => Effect.sync(() => { expect(expected).toBe(records.length); records.push(...entries) }),
-    appendWithCheckpoint: () => Effect.die("Unexpected checkpoint"),
+    lookupInvocation: memoryInvocationLookup(() => records),
+    readInputs: () => [],
+    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    readCheckpoint: () => undefined,
+    append: (expected, entries) => { expect(expected).toBe(records.length); records.push(...entries) },
+    appendWithCheckpoint: () => { throw new Error("Unexpected checkpoint") },
   }
   const open = () => createTestStore({ actor, journal, checkpoint: { mode: "manual" }, promises: { timeoutMs: refs.length ? 5_000 : 1_000 }, actorContext: Context.pick(), services: () => Job.layer(() => Effect.gen(function* () {
     const execution = yield* EffectExecution

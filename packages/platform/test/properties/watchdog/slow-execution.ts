@@ -1,9 +1,10 @@
+import { memoryInvocationLookup } from "../../fixtures/invocation-lookup"
 import { strict as assert } from "node:assert"
 import * as fc from "fast-check"
 import { Clock, Context, Effect } from "effect"
 import { TestClock } from "effect/testing"
 import { createWatchdog, RuntimeError, watchdogKey, type Journal, type Recorded } from "@clavia/tardigrade-core"
-import { slowActor, slowServices } from "../../fixtures/slow-act"
+import { slowActor, slowServices, type SlowEvent } from "../../fixtures/slow-act"
 import { memoryWatchdog } from "../../fixtures/watchdog"
 import { createTestStore } from "../runtime/store"
 
@@ -14,15 +15,15 @@ const cases = fc.record({ workMs: fc.integer({ min: 200, max: 600 }), value: fc.
 export const slowExecutionRecovery = fc.asyncProperty(cases, options => Effect.runPromise(Effect.gen(function* () {
   const clock = yield* TestClock.make()
   const fixture = slowServices({ workMs: options.workMs, value: options.value, ...(options.forked ? { fork: { timeoutMs: options.workMs + 5_000 } } : {}) })
-  type Input = { readonly type: "RunRequested" }
+  type Input = SlowEvent
   const records: Recorded<Input>[] = []
   const journal: Journal<Input> = {
-    readInputs: Effect.succeed([]),
-    read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires an undefined checkpoint.
-    readCheckpoint: Effect.succeed(undefined),
-    append: (position, events) => Effect.sync(() => { assert.equal(position, records.length); records.push(...events) }),
-    appendWithCheckpoint: () => Effect.fail(new RuntimeError("Unexpected checkpoint")),
+    lookupInvocation: memoryInvocationLookup(() => records),
+    readInputs: () => [],
+    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    readCheckpoint: () => undefined,
+    append: (position, events) => { assert.equal(position, records.length); records.push(...events) },
+    appendWithCheckpoint: () => { throw new RuntimeError("Unexpected checkpoint") },
   }
   const open = () => createTestStore({ actor: slowActor, journal, checkpoint: { mode: "manual" }, actorContext: () => Context.empty(), services: () => fixture.services })
   yield* Effect.gen(function* () {

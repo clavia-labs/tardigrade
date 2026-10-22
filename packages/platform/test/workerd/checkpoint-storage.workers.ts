@@ -1,3 +1,4 @@
+import { journalCommit } from "@clavia/tardigrade-core"
 import { effectServiceClient, type EffectServiceClient } from "../fixtures/effect-service"
 import type { EffectServiceDO } from "../fixtures/workerd/effect-service.worker"
 import { createWatchdog, effectKey, type CancellationOutcome, type Journal } from "@clavia/tardigrade-core"
@@ -6,7 +7,7 @@ import { cloudflareSchedulerStorage } from "../../src/cloudflare/scheduler"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { Effect } from "effect"
 import * as fc from "fast-check"
-import { operationLifecycle, operationLifecycleCases, defaultAttemptDeadline, attemptDeadlineCases, attemptDeadlineLifecycle, streamDeadlineCases, streamDeadlineLifecycle, operationRaceCases, operationRace } from "../properties/runtime/operation-lifecycle"
+import { operationLifecycle, operationLifecycleCases, type LifecycleEvent, defaultAttemptDeadline, attemptDeadlineCases, attemptDeadlineLifecycle, streamDeadlineCases, streamDeadlineLifecycle, operationRaceCases, operationRace } from "../properties/runtime/operation-lifecycle"
 import { RUNTIME_PROPERTY_OPTIONS, RUNTIME_PROPERTY_TEST_TIMEOUT_MS } from "../properties/runtime/config"
 import { expect, test } from "vitest"
 import { env } from "cloudflare:workers"
@@ -15,15 +16,16 @@ import { cloudflareJournal, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "../../
 import { pendingInputRecovery, cancellationInputRecovery, stoppedInputRecovery, cancellationStall, cancellationRetryRecovery } from "../properties/runtime/pending-input-recovery"
 import { DEFAULT_WAIT_POLICY, testStage, waitFor } from "../fixtures/wait"
 import { checkpointStorage } from "../properties/checkpoint-storage"
+import { lazyAtomRecovery } from "../properties/runtime/atom-checkpoint"
 import type { TestPromiseResolver, InputLifecycleDO } from "../fixtures/workerd/fixture.worker"
 
 
 test("checkpointStorage", async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
   await runInDurableObject(namespace.getByName("checkpoint-storage"), async (_instance, state) => {
-    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES, open: checkpointChunkBytes => cloudflareJournal(state.storage, "events", { checkpointChunkBytes }), execute: async query => state.storage.sql.exec(query).toArray() })
+    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES, open: checkpointChunkBytes => cloudflareJournal(state.storage, "events", { checkpointChunkBytes, eventInlineBytes: 1 }), execute: async query => state.storage.sql.exec(query).toArray() })
   })
-})
+}, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
 
 test("accepted input recovery", async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
@@ -36,7 +38,19 @@ test("accepted input recovery", async () => {
     const fixture: Parameters<typeof cancellationInputRecovery>[0] = { open: (actor: string) => cloudflareJournal(state.storage, actor, { checkpointChunkBytes: 127 }), execute: async (_name: string, query: string) => state.storage.sql.exec(query).toArray() }
     await stoppedInputRecovery(fixture)
     await stoppedInputRecovery(fixture, true)
-    await cancellationInputRecovery(fixture)
+  })
+  for (const version of [2, 3] as const) {
+    await runInDurableObject(namespace.getByName(`legacy-cleanup-${version}`), async (_instance, state) => {
+      const fixture: Parameters<typeof cancellationInputRecovery>[0] = { open: (actor: string) => cloudflareJournal(state.storage, actor, { checkpointChunkBytes: 127 }), execute: async (_name: string, query: string) => state.storage.sql.exec(query).toArray() }
+      await cancellationInputRecovery(fixture, version)
+    })
+  }
+})
+
+test("lazy atom checkpoint recovery", async () => {
+  const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
+  await runInDurableObject(namespace.getByName("lazy-atom-checkpoint"), async (_instance, state) => {
+    await lazyAtomRecovery({ open: () => cloudflareJournal(state.storage, "lazy-checkpoint") })
   })
 })
 
@@ -79,7 +93,7 @@ for (const reset of ["evict", "abort"] as const) {
         if (cleanup) {
           await stub.cancel(ref)
           await waitFor(() => stub.state(), value => value.records.some(record => record.event.type === "RetryScheduled" && record.event.phase === "cancellation"))
-          await stub.checkpoint()
+          expect(await stub.checkpoint()).toContain("Cannot checkpoint")
         }
         await stub.configure({ input: "replacement proposal", mode: cleanup ? "deferred" : "complete", cleanup: cleanup ? "retry" : "success" })
         if (cleanup) await stub.allowCleanup()
@@ -111,14 +125,14 @@ for (const reset of ["evict", "abort"] as const) {
   }
 }
 
-async function withEffectService(work: (journal: Journal<{ readonly type: "Unused" }>, service: EffectServiceClient, execute: (query: string) => Promise<unknown>) => Promise<unknown>) {
+async function withEffectService(work: (journal: Journal<LifecycleEvent>, service: EffectServiceClient, execute: (query: string) => Promise<unknown>) => Promise<unknown>) {
   const actors = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
   const services = (env as unknown as { EFFECT_SERVICE: DurableObjectNamespace<EffectServiceDO> }).EFFECT_SERVICE
   const name = crypto.randomUUID()
   await runInDurableObject(actors.getByName(name), async (_instance, state) => {
     const stub = services.getByName(name)
     const external = effectServiceClient(request => stub.fetch(request))
-    const journal = cloudflareJournal<{ readonly type: "Unused" }>(state.storage, "operation", { checkpointChunkBytes: 127 })
+    const journal = cloudflareJournal<LifecycleEvent>(state.storage, "operation", { checkpointChunkBytes: 127 })
     try { await work(journal, external, async query => state.storage.sql.exec(query).toArray()) }
     finally {
       try { await external.configure({ holdSubmissionResponse: false, holdCancellationResponse: false }) }
@@ -140,15 +154,15 @@ for (const result of ["success", "failure", "died"] as const) {
       const scheduler = cloudflareSchedulerStorage(state.storage)
       const ref = { seq: 0, atom: "job", act: "cleanup-wake" }
       try {
-        await Effect.runPromise(journal.append(0, [
+        await Effect.runPromise(journalCommit(journal, () => journal.append(0, [
           { event: { type: "EffectRequested", ref, request: { act: ref.act, input: { _tag: "InlineInput", value: null } } } },
           { event: { type: "EffectCancelled", ref, reason: "stop" } },
           { event: { type: "RetryScheduled", ref, phase: "cancellation", attempt: 1, dueAt: Date.now() + 60_000, reason: "retry" } },
-        ]))
+        ])))
         expect((await Effect.runPromise(scheduler.transaction(tx => tx.list))).has(`effect:${effectKey(ref)}`)).toBe(true)
         const event: CancellationOutcome = result === "died" ? { type: "CancellationDied", ref, diagnostic: "cleanup defect" }
           : { type: "CancellationSettled", ref, outcome: result === "success" ? { status: "fulfilled" } : { status: "rejected", reason: "cleanup failed" } }
-        await Effect.runPromise(journal.append(3, [{ event }]))
+        await Effect.runPromise(journalCommit(journal, () => journal.append(3, [{ event }])))
         const wakes = await Effect.runPromise(scheduler.transaction(tx => tx.list))
         expect(wakes.has(`effect:${effectKey(ref)}`)).toBe(false)
         expect(wakes.has("watchdog")).toBe(true)

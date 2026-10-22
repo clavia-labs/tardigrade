@@ -11,6 +11,14 @@ export { InlineInput, StoredEffectRequest, StoredEffectRequested, EffectAcceptan
 export const EffectRequest = Schema.Struct({ act: Schema.NonEmptyString, input: Schema.Json })
 export type EffectRequest = typeof EffectRequest.Type
 
+// InvocationIdentity identifies work within a journal by its atom, act, and originating event (quint/checkpoint/acceptanceBinding.qnt, uniqueInvocations). Omitted origin identifies a startup invocation scoped to its atom and act.
+export const InvocationIdentity = Schema.Struct({
+  atom: EffectRef.fields.atom,
+  act: EffectRef.fields.act,
+  origin: Schema.optionalKey(EffectRef.fields.seq),
+})
+export type InvocationIdentity = typeof InvocationIdentity.Type
+
 // EffectRequested records a request durably accepted for execution.
 export const EffectRequested = StoredEffectRequested
 export type EffectRequested = typeof EffectRequested.Type

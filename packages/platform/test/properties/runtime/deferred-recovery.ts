@@ -1,3 +1,4 @@
+import { memoryInvocationLookup } from "../../fixtures/invocation-lookup"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, ExecutionHandle, EffectRef as EffectRefSchema, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
@@ -33,18 +34,18 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
   let watches = 0
   let watchAttempts = 0
   const journal: Journal<Event> = {
-    readInputs: Effect.succeed([]),
-    read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined; Effect.void has a void result type.
-    readCheckpoint: Effect.succeed(undefined),
-    append: (expected, events) => Effect.gen(function* () {
-      if (expected !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal length"))
+    lookupInvocation: memoryInvocationLookup(() => records),
+    readInputs: () => [],
+    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    readCheckpoint: () => undefined,
+    append: (expected, events) => {
+      if (expected !== records.length) throw new RuntimeError("Unexpected journal length")
       const settling = events.some(({ event }) => event.type === "EffectSettled")
-      if (settling && !events.some(({ event }) => event.type === "Submitted")) return yield* Effect.fail(new RuntimeError("Deferred notification was not committed with settlement"))
+      if (settling && !events.some(({ event }) => event.type === "Submitted")) throw new RuntimeError("Deferred notification was not committed with settlement")
       records.push(...events)
-      if (settling) yield* Deferred.succeed(recorded, undefined)
-    }),
-    appendWithCheckpoint: () => Effect.fail(new RuntimeError("Unexpected checkpoint")),
+      if (settling) Deferred.doneUnsafe(recorded, Effect.void)
+    },
+    appendWithCheckpoint: () => { throw new RuntimeError("Unexpected checkpoint") },
   }
   const actor = defineActor("recovery", Effect.sync(() => {
     const state = durableAtom({ name: "test.deferred-recovery", input: Event, schema: State,
@@ -96,7 +97,7 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
     if (submissions.length !== 1 || first.getState().view.results.length !== 0 || payloads().some(event => event.type === "PromiseSettled")) return yield* Effect.fail(new RuntimeError("Deferred handle was not delivered before completion"))
     if (submissions[0]!.handle.executor !== executor || effectKey(submissions[0]!.ref) !== effectKey(executions[0]!)) return yield* Effect.fail(new RuntimeError("Deferred notification changed its handle or reference"))
     const settledIndex = payloads().findIndex(event => event.type === "EffectSettled")
-    if (records[settledIndex + 1]?.event.type !== "Submitted") return yield* Effect.fail(new RuntimeError("Deferred notification was not committed with settlement"))
+    if (records[settledIndex + 1]?.event.type !== "Submitted") throw new RuntimeError("Deferred notification was not committed with settlement")
     for (let index = 0; index < options.updates; index++) yield* first.send([{ type: "Updated" }])
     yield* first.recover.pipe(Effect.result)
     if (executor === "remote" && (watches !== 1 || watchAttempts !== 1 + Number(options.retryWatch))) return yield* Effect.fail(new RuntimeError("Promise observation duplicated or failed registration was skipped"))

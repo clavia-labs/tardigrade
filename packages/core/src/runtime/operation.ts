@@ -1,8 +1,6 @@
 import { Schema } from "effect"
-import { isDeepStrictEqual } from "node:util"
-import { EffectRef, EffectDied, EffectCancelled, CancellationOutcome, ExecutionResult } from "./effects"
-import { StoredEffectRequested, EffectSettled, PromiseSettled, RetryScheduled, type EffectAcceptance } from "./events"
-import { InputDigest, digestInput } from "./input-digest"
+import { EffectRef, EffectDied, EffectCancelled, CancellationOutcome, ExecutionResult, effectKey } from "./effects"
+import { CoreEvent, StoredEffectRequested, EffectSettled, PromiseSettled, RetryScheduled, type EffectAcceptance } from "./events"
 
 export const StoredOperation = Schema.Struct({
   ref: EffectRef,
@@ -12,8 +10,6 @@ export const StoredOperation = Schema.Struct({
     deferred: Schema.optionalKey(Schema.toType(EffectSettled)),
     promise: Schema.optionalKey(Schema.toType(PromiseSettled)),
     retry: Schema.optionalKey(RetryScheduled),
-    // retired holds digests of the fulfilled values retireOutcome removed from outcome and promise.
-    retired: Schema.optionalKey(Schema.Struct({ value: Schema.optionalKey(InputDigest), promise: Schema.optionalKey(InputDigest) })),
   }),
   cleanup: Schema.optionalKey(Schema.Struct({
     request: EffectCancelled,
@@ -56,33 +52,31 @@ export function cleanupSubmission(operation: AcceptedOperation<unknown> | undefi
   return cleanupOwed(operation) && event.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "promise"
 }
 
-// retireOutcome replaces fulfilled values of at least minBytes canonical bytes with null and records their digests, so a completed operation keeps its identity and outcome kind without its payload.
-export function retireOutcome<Operation extends AcceptedOperation<unknown>>(operation: Operation, minBytes: number): Operation {
-  const settlement = operation.execution.outcome
-  const promise = operation.execution.promise
-  let execution = operation.execution
-  if (settlement?.type === "EffectSettled" && settlement.outcome.status === "fulfilled" && !execution.retired?.value) {
-    const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
-    const digest = result.type === "value" ? digestInput(result.value) : undefined
-    if (digest && digest.bytes >= minBytes) execution = { ...execution, outcome: { ...settlement, outcome: { status: "fulfilled", value: { type: "value", value: null } } }, retired: { ...execution.retired, value: digest } }
+// recordedOperation reconstructs a reference from durable journal facts for late-delivery validation.
+export function recordedOperation(records: Iterable<{ readonly event: unknown }>, ref: EffectRef): StoredOperation | undefined {
+  let operation: StoredOperation | undefined
+  const key = effectKey(ref)
+  for (const { event } of records) {
+    if (!Schema.is(CoreEvent)(event) || !("ref" in event) || effectKey(event.ref) !== key) continue
+    if (event.type === "EffectRequested") operation = { ref: event.ref, request: event, execution: {} }
+    else if (operation) {
+      if (event.type === "EffectSettled") operation = { ...operation, execution: { ...operation.execution, outcome: event } }
+      else if (event.type === "EffectDied") {
+        const settlement = operationSettlement(operation)
+        operation = { ...operation, execution: { ...operation.execution, outcome: event, ...(settlement ? { deferred: settlement } : {}) } }
+      } else if (event.type === "PromiseSettled") operation = { ...operation, execution: { ...operation.execution, promise: event } }
+      else if (event.type === "EffectCancelled") operation = { ...operation, cleanup: { request: event } }
+      else if (event.type === "CancellationSettled" || event.type === "CancellationDied") {
+        if (operation.cleanup) operation = { ...operation, cleanup: { ...operation.cleanup, outcome: event } }
+      } else if (event.type === "RetryScheduled") {
+        if (event.phase === "cancellation") {
+          if (operation.cleanup) operation = { ...operation, cleanup: { ...operation.cleanup, retry: event } }
+        } else operation = { ...operation, execution: { ...operation.execution, retry: event } }
+      }
+    }
   }
-  if (promise?.result.status === "fulfilled" && !execution.retired?.promise) {
-    const digest = digestInput(promise.result.value)
-    if (digest.bytes >= minBytes) execution = { ...execution, promise: { ...promise, result: { status: "fulfilled", value: null } }, retired: { ...execution.retired, promise: digest } }
-  }
-  return execution === operation.execution ? operation : { ...operation, execution }
+  return operation
 }
 
-// sameRetired compares a redelivered settlement with the retired form of the recorded one by the digest of its value.
-export function sameRetired(operation: AcceptedOperation<unknown>, event: EffectSettled | PromiseSettled): EffectSettled | PromiseSettled {
-  const retired = operation.execution.retired
-  if (event.type === "EffectSettled" && retired?.value && event.outcome.status === "fulfilled") {
-    const result = Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value)
-    if (result.type === "value" && isDeepStrictEqual(digestInput(result.value), retired.value)) return { ...event, outcome: { status: "fulfilled", value: { type: "value", value: null } } }
-  }
-  if (event.type === "PromiseSettled" && retired?.promise && event.result.status === "fulfilled" && isDeepStrictEqual(digestInput(event.result.value), retired.promise)) return { ...event, result: { status: "fulfilled", value: null } }
-  return event
-}
-
-// operationComplete matches the lifecycles replay retires: settled values, settled promises without cleanup, and acknowledged cleanup.
-export const operationComplete = (operation: AcceptedOperation<unknown>): boolean => operation.cleanup ? cleanupSucceeded(operation.cleanup.outcome) : operation.execution.promise !== undefined || settlementCompletesExecution(operationSettlement(operation))
+// operationComplete identifies terminal execution or acknowledged cleanup (platform/test/properties/runtime/snapshot-lookups.ts).
+export const operationComplete = (operation: AcceptedOperation<unknown>): boolean => operation.cleanup ? cleanupSucceeded(operation.cleanup.outcome) : operation.execution.outcome?.type === "EffectDied" || operation.execution.promise !== undefined || settlementCompletesExecution(operationSettlement(operation))

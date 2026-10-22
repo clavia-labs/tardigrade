@@ -1,3 +1,4 @@
+import { memoryInvocationLookup } from "../fixtures/invocation-lookup"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -8,35 +9,33 @@ import { bunJournal, createBunHost, methodHttp } from "../../src/bun"
 
 const Mode = Schema.Literals(["success", "failure", "defect", "interrupt"])
 const Started = event({ type: "Started", id: Schema.String, mode: Mode })
-const Finished = event({ type: "Finished", id: Schema.String })
+const Finished = event({ type: "Finished", id: Schema.String, result: Schema.Union([Schema.Struct({ status: Schema.Literal("completed"), output: Schema.String }), Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String })]) })
+const finished = durableAtom({ name: "defect.finished", input: Finished, schema: Schema.Array(Finished), initial: [], reduce: (state, entry) => [...state, entry] })
 type Event = typeof Started.Type | typeof Finished.Type
 const Job = act({ name: "test.defect", input: Mode, success: Schema.String, failure: Schema.Struct({ code: Schema.String }) })
-const starts = durableAtom({ name: "defect.starts", input: Started,
+const starts = durableAtom({ name: "defect.starts", input: Schema.Union([Started, Finished]),
   schema: Schema.Array(Schema.Struct({ id: Schema.String, mode: Mode, origin: Schema.Finite })), initial: [],
-  reduce: (state, entry, _, origin) => [...state, { id: entry.id, mode: entry.mode, origin }],
+  reduce: (state, entry, _, origin) => entry.type === "Started" ? [...state, { id: entry.id, mode: entry.mode, origin }] : state.filter(active => active.id !== entry.id),
 })
 const actor = defineActor("execution-defect", Effect.sync(() => {
-  const requests = new Map<string, ReturnType<typeof Job.request>>()
+  const requests = new WeakMap<object, ReturnType<typeof Job.request>>()
   const requestFor = (entry: { readonly id: string; readonly mode: typeof Mode.Type; readonly origin: number }) => {
-    let request = requests.get(entry.id)
+    let request = requests.get(entry)
     if (!request) {
-      request = Job.request({ input: entry.mode, origin: entry.origin, onSettled: () => [Finished.make({ id: entry.id })] })
-      requests.set(entry.id, request)
+      request = Job.request({ input: entry.mode, origin: entry.origin,
+        onSettled: outcome => [Finished.make({ id: entry.id, result: outcome.status === "fulfilled" ? { status: "completed", output: outcome.value } : { status: "failed", error: "code" in outcome.reason ? outcome.reason.code : outcome.reason._tag } })],
+      })
+      requests.set(entry, request)
     }
     return request
   }
   return {
     schema: Schema.Union([Started, Finished]),
-    atom: effectAtom(get => ({ view: null, events: {}, acts: Object.fromEntries(get(starts).map(entry => [entry.id, requestFor(entry)])) })),
+    atom: effectAtom(get => ({ view: null, events: {}, acts: Object.fromEntries(get(starts).filter(entry => !get(finished).some(done => done.id === entry.id)).map(entry => [entry.id, requestFor(entry)])) })),
     methods: { run: actorMethod({ inputSchema: Mode, outputSchema: Schema.String,
       onReceive: Started.from((mode, context) => ({ id: context.id, mode })),
       result: (_, get, context) => {
-        const entry = get(starts).find(entry => entry.id === context.id)
-        if (!entry) return undefined
-        const result = get(requestFor(entry).result)
-        return result.status === "fulfilled" ? { status: "completed", output: result.value }
-          : result.status === "rejected" ? { status: "failed", error: "code" in result.reason ? result.reason.code : result.reason._tag }
-          : undefined
+        return get(finished).find(entry => entry.id === context.id)?.result
       },
     }) },
   }
@@ -118,14 +117,15 @@ test("pure interruption remains pending and reuses the accepted reference on reo
 test("failed defect persistence leaves the committed invocation pending", async () => {
   const records: Recorded<Event>[] = [{ event: Started.make({ id: "uncommitted", mode: "defect" }) }]
   const journal: Journal<Event> = {
-    readInputs: Effect.succeed([]),
-    read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined.
-    readCheckpoint: Effect.succeed(undefined),
-    append: (_, batch) => batch.some(record => record.event.type === "EffectDied")
-      ? Effect.fail(new RuntimeError("storage unavailable"))
-      : Effect.sync(() => { records.push(...batch) }),
-    appendWithCheckpoint: () => Effect.fail(new RuntimeError("Unexpected checkpoint")),
+    lookupInvocation: memoryInvocationLookup(() => records),
+    readInputs: () => [],
+    read: () => [...records], readAfter: position => records.slice(position), readBefore: position => records.slice(0, position),
+    readCheckpoint: () => undefined,
+    append: (_, batch) => {
+      if (batch.some(record => record.event.type === "EffectDied")) throw new RuntimeError("storage unavailable")
+      records.push(...batch)
+    },
+    appendWithCheckpoint: () => { throw new RuntimeError("Unexpected checkpoint") },
   }
   const store = await Effect.runPromise(createActorStore({ actor, journal, actorContext: Context.pick(),
     services: () => Job.layer(() => Effect.die(new Error("explicit defect"))),
@@ -183,7 +183,7 @@ test("a deferred producer death interrupts inline work and durably fails its cal
   const running = defineActor("producer-death", Effect.sync(() => {
     const producer = Job.request({ input: "defect" })
     const inline = Inline.request({ input: null })
-    return { schema: Started, atom: effectAtom(get => ({ view: get(producer.result), events: {}, acts: { producer, inline } })),
+    return { schema: Started, atom: effectAtom(() => ({ view: null, events: {}, acts: { producer, inline } })),
       methods: { run: actorMethod({ inputSchema: Mode, outputSchema: Schema.String,
         onReceive: Started.from((mode, context) => ({ id: context.id, mode })), result: () => undefined,
       }) },

@@ -1,25 +1,25 @@
-import { Schema, Crypto, Effect, Encoding, PlatformError } from "effect"
-import { ActorReplayError, RuntimeError, ExecutionResult, effectKey } from "../runtime/effects"
-import { StoredOperation, operationSettlement, cleanupSucceeded } from "../runtime/operation"
+import { Schema, Effect } from "effect"
+import { createHash } from "node:crypto"
+import { ActorReplayError, RuntimeError } from "../runtime/effects"
 import type { EffectCheckpoint } from "../runtime/replay"
-import { migrateCheckpoint } from "./checkpoint/migrations"
+import { migrateCheckpoint, CheckpointReplayRequired } from "./checkpoint/migrations"
+export { CheckpointReplayRequired } from "./checkpoint/migrations"
 
 export const DEFAULT_CHECKPOINT_MAX_BYTES = 256 * 1024 * 1024
 
-const crypto = Crypto.make({
-  randomBytes: size => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-  digest: (algorithm, data) => Effect.tryPromise({ try: () => globalThis.crypto.subtle.digest(algorithm, data.slice().buffer as ArrayBuffer).then(value => new Uint8Array(value)), catch: cause => PlatformError.systemError({ _tag: "Unknown", module: "Crypto", method: "digest", description: "Checkpoint digest failed", cause }) }),
-})
+// checkpointDigestSync hashes the serialized bytes for synchronous journal validation (platform/test/properties/checkpoint-storage.ts).
+export const checkpointDigestSync = (payload: Uint8Array): string => createHash("sha256").update(payload).digest("hex")
 
-export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => crypto.digest("SHA-256", payload).pipe(Effect.map(Encoding.encodeHex), Effect.mapError(RuntimeError.from))
+export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => Effect.try({ try: () => checkpointDigestSync(payload), catch: RuntimeError.from })
 
 export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
+  if (Object.keys(checkpoint).some(key => key !== "position" && key !== "durable")) throw new Error("Invalid checkpoint fields")
   if (!Number.isSafeInteger(checkpoint.position) || checkpoint.position < 0) throw new Error("Invalid checkpoint position")
   if (checkpoint.durable.some(entry => entry.position !== checkpoint.position)) throw new Error("Durable entry position differs from checkpoint position")
   if (checkpoint.durable.some(entry => !Schema.is(Schema.Json)(entry.state))) throw new Error("Checkpoint state must be JSON")
   let encoded: string
   try {
-    encoded = JSON.stringify({ version: 3, ...checkpoint })
+    encoded = JSON.stringify({ version: 4, position: checkpoint.position, durable: checkpoint.durable })
   } catch (cause) {
     throw new Error("Checkpoint state is not serializable", { cause })
   }
@@ -28,7 +28,10 @@ export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
 
 export const decodeCheckpoint = (payload: Uint8Array): EffectCheckpoint => {
   try { return checkpointFromJson(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload))) }
-  catch (cause) { throw ActorReplayError.wrap(cause, { stage: "checkpoint", reason: "decode_failed" }) }
+  catch (cause) {
+    if (cause instanceof CheckpointReplayRequired) throw cause
+    throw ActorReplayError.wrap(cause, { stage: "checkpoint", reason: "decode_failed" })
+  }
 }
 
 function checkpointFromJson(value: unknown): EffectCheckpoint {
@@ -43,22 +46,6 @@ function checkpointFromJson(value: unknown): EffectCheckpoint {
     if (item.position !== record.position) throw new Error("Durable entry position differs from checkpoint position")
     return { name: item.name, state: item.state, position: item.position as number }
   })
-  if (!Array.isArray(record.operations)) throw new Error("Invalid checkpoint operations")
-  const operations = record.operations.map(entry => Schema.decodeUnknownSync(StoredOperation)(entry))
-  const references = new Set<string>()
-  for (const operation of operations) {
-    const { ref, request, execution, cleanup } = operation
-    const key = effectKey(ref)
-    if (references.has(key)) throw new Error("Duplicate checkpoint operation")
-    references.add(key)
-    if ([request, execution.outcome, execution.deferred, execution.promise, execution.retry, cleanup?.request, cleanup?.outcome, cleanup?.retry].some(event => event && effectKey(event.ref) !== key)) throw new Error("Effect checkpoint references disagree")
-    if (execution.retry?.phase === "cancellation" || (cleanup?.retry && cleanup.retry.phase !== "cancellation")) throw new Error("Checkpoint retry phase disagrees with lifecycle")
-    const settlement = operationSettlement(operation)
-    if (execution.outcome?.type === "EffectDied") throw new Error("Checkpoint cannot contain a terminal thread defect")
-    if (!settlement && !cleanup) throw new Error("Effect checkpoint contains pending work")
-    if (execution.promise && settlement?.outcome.status !== "fulfilled") throw new Error("Promise checkpoint requires successful execution")
-    if (!cleanup && settlement?.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !execution.promise) throw new Error("Effect checkpoint contains a pending promise")
-    if (cleanup && !cleanupSucceeded(cleanup.outcome) && request.request.input._tag !== "InlineInput") throw new Error("Cancellation checkpoint requires inline input")
-  }
-  return { position: record.position as number, durable, operations }
+  if (Object.keys(record).some(key => key !== "version" && key !== "position" && key !== "durable")) throw new Error("Invalid checkpoint fields")
+  return { position: record.position as number, durable }
 }

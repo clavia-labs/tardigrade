@@ -3,9 +3,10 @@ import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom } from "./atom"
 import { incrementalValidator, invalid } from "./incremental/validate"
+import { isMessageReceived } from "../actor/message"
 import type { RecordMetadata } from "../services/journal"
 import { EventLog, eventLogContext } from "../services/event-log"
-import { AtomState, type StatefulAtom } from "../initialise"
+import { AtomState, initialStateSeed, type StatefulAtom } from "../initialise"
 
 export interface DurableAtom<State, Event> extends Atom<State>, StatefulAtom {
   readonly name: string
@@ -68,15 +69,29 @@ export function durableAtom<State, Event>(options: {
     if (sameSource && previous.position > offset + events.length) throw new Error("EventLog source must be append-only")
     if (seed && (seed.position < offset || seed.position > offset + events.length)) throw new Error(`Atom seed position is outside the event source: ${options.name}`)
     const continued = sameSource && previous.position >= (seed?.position ?? offset)
+    const fold = (state: State, event: unknown, metadata: RecordMetadata, position: number): State => {
+      if (!accepts(event)) return state
+      const next = options.reduce(state, event, metadata, position)
+      return Object.is(next, state) ? next : check(next)
+    }
     let state = continued ? previous.state : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : check(structuredClone(initial))
+    if (!continued && !seed?.state.has(options.name) && offset > 0) {
+      const prefix = service.readPrefix?.()
+      if (!prefix || prefix.length !== offset) throw new Error(`Durable atom requires its checkpoint prefix: ${options.name}`)
+      const initialSeed = initialStateSeed(prefix)
+      if (initialSeed?.state.has(options.name)) state = restore(initialSeed.state.get(options.name))
+      for (let index = initialSeed?.position ?? 0; index < offset; index++) {
+        const record = prefix.at(index)!
+        const event = isMessageReceived(record.event) && !record.message?.inReplyTo ? record.event.body : record.event
+        const metadata: RecordMetadata = { ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), ...(record.message ? { message: record.message } : {}) }
+        state = fold(state, event, metadata, index)
+      }
+    }
     const start = (continued ? previous.position : seed?.position ?? offset) - offset
     for (let index = Math.max(0, start); index < events.length; index++) {
-      const event = events.at(index)
-      if (!accepts(event)) continue
       const record = records?.at(index)
       const metadata: RecordMetadata = record ? { ...(record.recordedAt === undefined ? {} : { recordedAt: record.recordedAt }), ...(record.message ? { message: record.message } : {}) } : {}
-      const next = options.reduce(state, event, metadata, offset + index)
-      state = Object.is(next, state) ? next : check(next)
+      state = fold(state, events.at(index), metadata, offset + index)
     }
     return { source, position: offset + events.length, state }
   }).pipe(NativeAtom.keepAlive)
