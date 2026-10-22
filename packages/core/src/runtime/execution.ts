@@ -1,3 +1,4 @@
+import { journalCommit, journalCall } from "../services/journal"
 import type { ReadonlyIndex } from "./log-view"
 import { initialStateSeed, type StateSeed } from "../initialise"
 import { ActorCommitError, ActorReplayError, AttemptTimedOut, RuntimeError, PromiseNotReady, PromiseTimedOut, ExecutionResult, EffectCancelled, CancellationOutcome, effectKey, type EffectRef } from "./effects"
@@ -6,23 +7,24 @@ import { createRecordSource } from "./event-source"
 import { atom, type Atom } from "../atoms/atom"
 import { EventLog, ReplayContext, executionDefect } from "../services/event-log"
 import { Scheduler } from "../services/scheduler"
-import { operationSettlement, cleanupRunnable, cleanupSucceeded } from "./operation"
+import { createInvocationLookup, selectInvocationRecords } from "../services/journal/invocation"
+import { operationSettlement, recordedOperation, cleanupRunnable, cleanupSucceeded } from "./operation"
 import { EffectExecution, DEFAULT_ATTEMPT_TIMEOUT_MS, type AttemptOptions, type RetryOptions } from "../services/effect-execution"
 import { createExecutionStream, type ExecutionStream, type ExecutionStreamPolicy } from "../services/execution-stream"
-import { EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType, type RetryScheduled } from "./events"
+import { CoreEvent, EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType, type RetryScheduled, type InvocationIdentity } from "./events"
 import { cancelAct, type ActCancellation } from "../atoms/act"
 import type { RuntimeEvent, JournalEvent, Journal, MessageJournal, RecordMetadata, Recorded } from "../services/journal"
 import type { ActorRuntime, ActorSetup, Requirements } from "./contracts"
 import type { ActorDefinition } from "../actor/definition"
-import { type MessageMetadata as DeliveryMetadata, type MessageReceipt, MessageAddress, MessageDelivered, MessageMetadata, MessageConflict, InvalidMessage, isMessageReceived } from "../actor/message"
+import { type MessageMetadata as DeliveryMetadata, type MessageReceipt, MessageAddress, MessageMetadata, MessageConflict, InvalidMessage, isMessageReceived } from "../actor/message"
 import type { ThreadCoordinate } from "../actor/thread"
 import { MethodInvocation, MethodCancellation, type ActorMethods } from "../actor/method"
-import { createEventLog, retireCheckpoint, type EffectCheckpoint } from "./replay"
+import { createEventLog, type EffectCheckpoint } from "./replay"
 import { isDeepStrictEqual } from "node:util"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue, Schedule, Clock, Random } from "effect"
 import { WatchdogTerminalError, type RecoveryState } from "../services/watchdog"
 import { Promises, DEFAULT_PROMISE_POLICY, promiseDeadline, promisePolicy, type PromisePolicy } from "../services/promises"
-import { DEFAULT_CHECKPOINT_MAX_BYTES, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "../services/checkpoint"
+import { DEFAULT_CHECKPOINT_MAX_BYTES, CheckpointReplayRequired, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "../services/checkpoint"
 import { observeRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
 import { messageReplies } from "./messages"
 import { DeliverMessage, type MessageDelivery } from "../services/invocation"
@@ -115,6 +117,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
 }) {
   return Effect.gen(function* () {
     if (options.journal && options.events !== undefined) return yield* Effect.fail(new RuntimeError("Supply either a journal or initial events"))
+    if (options.journal && typeof options.journal.lookupInvocation !== "function") return yield* Effect.fail(new RuntimeError("Journal admission requires invocation lookup"))
     const digestMinBytes = options.effectInput?.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
     if (!Number.isSafeInteger(digestMinBytes) || digestMinBytes < 0) return yield* Effect.fail(new RuntimeError("Effect input digest minBytes must be a nonnegative safe integer"))
     const resolutionPolicy = yield* Effect.try({ try: () => promisePolicy(options.promises), catch: RuntimeError.from })
@@ -126,6 +129,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     type RuntimeAtoms = Atoms & { readonly "host.message.replies": ReturnType<typeof messageReplies<Event>> }
     let definition: ReturnType<typeof createEventLog<Event, RuntimeAtoms>>
     let snapshot: ReturnType<typeof definition.replay>
+    const lookupInvocation = options.journal ? (identity: InvocationIdentity) => journalCall(() => options.journal!.lookupInvocation(identity)) : (identity: InvocationIdentity) => journalCall(() => createInvocationLookup(identity => selectInvocationRecords(snapshot.records, identity))(identity))
+    // settledProposals classifies exposed sources at the current committed snapshot (platform/test/properties/runtime/reference-acceptance-atomicity.ts).
+    const settledProposals = new Set<string>()
+    const executableEffects = () => snapshot.effects().filter(work => !settledProposals.has(work.source))
     const localRecovery = new Map<string, ReturnType<typeof snapshot.deferred>[number]>()
     const source = createRecordSource<Event>()
     const bindings = atom<ReadonlyIndex<object, EffectRef>>(new Map())
@@ -145,6 +152,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const store = createStore(Context.make(EventLog, {
       events: source.observedEvents,
       records: source.observedRecords,
+      readPrefix: () => definition.readPrefix(),
       bindings,
       position: () => checkpointSeed?.position ?? 0,
       initialState: () => initialState ??= initialStateSeed(store.get(source.records), checkpointSeed),
@@ -236,9 +244,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         }
         const persistence = checkpoint
           ? Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from }).pipe(
-            Effect.flatMap(payload => checkpointDigest(payload).pipe(Effect.flatMap(digest => journal.appendWithCheckpoint(snapshot.position, records, { position: next.position, payload, digest }, inputChanges)))),
+            Effect.flatMap(payload => checkpointDigest(payload).pipe(Effect.flatMap(digest => journalCommit(journal, () => journal.appendWithCheckpoint(snapshot.position, records, { position: next.position, payload, digest }, inputChanges))))),
           )
-          : journal.append(snapshot.position, records, inputChanges)
+          : journalCommit(journal, () => journal.append(snapshot.position, records, inputChanges))
         yield* persistence.pipe(Effect.catchCause(cause => Effect.gen(function* () {
           const operation = checkpoint ? "checkpoint" as const : "append" as const
           yield* Effect.logError("Actor journal commit failed").pipe(Effect.annotateLogs({
@@ -260,6 +268,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }
       if (options.journal && checkpoint) checkpointPosition = next.position
       snapshot = next
+      settledProposals.clear()
       for (const { event: record } of records) {
         if (Schema.is(EffectDied)(record)) {
           yield* Fiber.interruptAll([...executions.values(), ...[...background].filter(([id]) => !id.startsWith("cancellation:")).map(([, fiber]) => fiber), ...deadlineTimers.values()]).pipe(Effect.forkIn(scope))
@@ -301,6 +310,14 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         if (executing) yield* Fiber.interrupt(executing).pipe(Effect.forkIn(scope))
         if (deferred) yield* Fiber.interrupt(deferred).pipe(Effect.forkIn(scope))
       }
+      for (const { event } of records) {
+        if (!Schema.is(CoreEvent)(event) || !("ref" in event) || next.effect(event.ref)) continue
+        const key = effectKey(event.ref)
+        watched.delete(key)
+        promiseTimeouts.delete(key)
+        deadlineTimers.delete(key)
+        localRecovery.delete(key)
+      }
       yield* Effect.try({ try: sync, catch: RuntimeError.from }).pipe(Effect.catch(error => Effect.sync(() => report(error))))
       yield* Queue.offer(notifications, next.events.slice(next.events.length - records.length))
       yield* cleanCancellations.pipe(Effect.catchCause(reportCause))
@@ -318,26 +335,15 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     })
     const appendNow = (event: JournalEvent<Event>, metadata: Omit<RecordMetadata, "recordedAt"> = {}): Effect.Effect<void, Error> => Effect.gen(function* () {
       const recordedAt = yield* Clock.currentTimeMillis
-      const updated = yield* Effect.try({ try: () => {
-        let next = definition.append(snapshot, event, { ...metadata, recordedAt })
-        if (next === snapshot) return next
-        try {
-          for (const domain of next.followups(event)) {
-            if (hasCoreEventType(domain) && !Schema.is(MessageDelivered)(domain)) throw new RuntimeError("Act callbacks must return domain events")
-            next = definition.append(next, domain as Event, { recordedAt })
-          }
-          return next
-        } catch (error) {
-          definition.discard(next)
-          throw error
-        }
-      }, catch: RuntimeError.from })
+      const historical = options.journal && Schema.is(CoreEvent)(event) && "ref" in event && !snapshot.effect(event.ref) && event.ref.seq < (snapshot.seed?.position ?? 0)
+        ? recordedOperation(yield* journalCall(() => options.journal!.read()), event.ref) : undefined
+      const updated = yield* Effect.try({ try: () => definition.append(snapshot, event, { ...metadata, recordedAt }, historical), catch: RuntimeError.from })
       yield* commit(updated)
       for (const cancellation of snapshot.cancellations()) yield* appendNow(cancellation)
     })
     const append = (event: RuntimeEvent<Event>) => enqueue(appendNow(event))
     const recordDeath = (ref: EffectRef, cause: Cause.Cause<unknown>) => enqueue(Effect.suspend(() =>
-      snapshot.defect || snapshot.promise(ref) || snapshot.effect(ref)?.cleanup?.request ? Effect.void
+      snapshot.defect || !snapshot.effect(ref) || snapshot.effect(ref)?.cleanup?.request ? Effect.void
         : appendNow({ type: "EffectDied", ref, diagnostic: Cause.pretty(cause) }),
     ))
     const promiseTimeouts = new Map<string, number>()
@@ -374,7 +380,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         const record = events.at(observedThrough)!
         if (!Schema.is(EffectSettled)(record) || record.outcome.status !== "fulfilled") continue
         const result = yield* Schema.decodeUnknownEffect(ExecutionResult)(record.outcome.value).pipe(Effect.mapError(RuntimeError.from))
-        if (result.type !== "promise" || snapshot.promise(record.ref) || snapshot.effect(record.ref)?.cleanup?.request) continue
+        if (result.type !== "promise" || !snapshot.effect(record.ref) || snapshot.effect(record.ref)?.cleanup?.request) continue
         const key = effectKey(record.ref)
         if (watched.has(key)) continue
         const deadlineAt = promiseDeadline(result.handle, (yield* Clock.currentTimeMillis), resolutionPolicy, result.deadlineAt)
@@ -496,7 +502,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         yield* observePromises.pipe(Effect.catchCause(reportCause))
         if (yield* Effect.try({ try: () => snapshot.deferred().some(work => work.handle.executor === "local" && work.deadlineAt !== undefined), catch: RuntimeError.from })) yield* enqueue(Effect.gen(function* () {
           for (const work of snapshot.deferred()) {
-            if (work.handle.executor !== "local" || snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
+            if (work.handle.executor !== "local" || !snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
             if (work.deadlineAt !== undefined && work.deadlineAt <= (yield* Clock.currentTimeMillis)) {
               yield* appendNow({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: work.deadlineAt } } })
             }
@@ -520,7 +526,12 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           for (const [key, work] of localRecovery) {
             if (store.get(executionDefect)) { localRecovery.clear(); break }
             localRecovery.delete(key)
-            if (snapshot.promise(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
+            if (!snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
+            const accepted = snapshot.effect(work.ref)?.request
+            if (!accepted) return yield* Effect.fail(new RuntimeError("Recovery requires a committed request"))
+            const invocation = yield* lookupInvocation({ atom: work.atom, act: work.request.act, ...(accepted.origin === undefined ? {} : { origin: accepted.origin }) })
+            if (invocation.status === "settled") { settledProposals.add(work.source); continue }
+            if (invocation.status === "absent" || effectKey(invocation.ref) !== key) return yield* Effect.fail(new RuntimeError("Recovery reference differs from journal admission"))
             if (work.deadlineAt !== undefined && work.deadlineAt <= (yield* Clock.currentTimeMillis)) {
               yield* appendNow({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: work.deadlineAt } } })
               continue
@@ -528,17 +539,24 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             dispatched.add(key)
             return { kind: "work" as const, ...claimWork(work), recovering: true as const }
           }
-          const work = yield* Effect.try({ try: () => snapshot.effects().find(work => !work.ref || !dispatched.has(effectKey(work.ref))), catch: RuntimeError.from })
-          if (!work) return
-          const ref = work.ref ?? { seq: snapshot.position, atom: work.atom, act: work.request.act }
-          if (!work.ref) {
-            const request = yield* Effect.try({ try: () => definition.requestEvent(ref, work.request, work.origin), catch: RuntimeError.from })
-            yield* appendNow(request)
+          const proposals = yield* Effect.try({ try: () => snapshot.effects(), catch: RuntimeError.from })
+          for (const work of proposals) {
+            if (work.ref && dispatched.has(effectKey(work.ref))) continue
+            const invocation = yield* lookupInvocation({ atom: work.atom, act: work.request.act, ...(work.origin === undefined ? {} : { origin: work.origin }) })
+            if (invocation.status === "settled") { settledProposals.add(work.source); continue }
+            if (invocation.status === "absent" && work.ref) return yield* Effect.fail(new RuntimeError("Accepted work is absent from the journal"))
+            const ref = invocation.status === "pending" ? invocation.ref : { seq: snapshot.position, atom: work.atom, act: work.request.act }
+            if (work.ref && effectKey(work.ref) !== effectKey(ref)) return yield* Effect.fail(new RuntimeError("Execution reference differs from journal admission"))
+            if (dispatched.has(effectKey(ref))) continue
+            if (invocation.status === "absent") {
+              const request = yield* Effect.try({ try: () => definition.requestEvent(ref, work.request, work.origin), catch: RuntimeError.from })
+              yield* appendNow(request)
+            }
+            const recorded = snapshot.effect(ref)?.request
+            if (!recorded) return yield* Effect.fail(new RuntimeError("Effect execution requires a committed request"))
+            dispatched.add(effectKey(recorded.ref))
+            return { kind: "work" as const, ...claimWork({ ...work, ref: recorded.ref }), recovering: false as const }
           }
-          const recorded = snapshot.effect(ref)?.request
-          if (!recorded) return yield* Effect.fail(new RuntimeError("Effect execution requires a committed request"))
-          dispatched.add(effectKey(recorded.ref))
-          return { kind: "work" as const, ...claimWork({ ...work, ref: recorded.ref }), recovering: false as const }
         }))
         if (!next) return
         if (next.kind === "delivery") continue
@@ -554,7 +572,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             lifetimes.set(key, lifetime)
           }
           const signal = lifetime.signal
-          if (snapshot.effect(work.ref)?.cleanup?.request) {
+          if (!snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) {
             dispatched.delete(key)
             return
           }
@@ -572,7 +590,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             retry: (operation, retryOptions) => Effect.gen(function* () {
               if (retryStarted) return yield* Effect.fail(new RuntimeError("An effect execution supports one retry boundary"))
               retryStarted = true
-              const beforeAttempt = Effect.suspend(() => closed || signal.aborted || snapshot.effect(work.ref)?.cleanup?.request ? Effect.interrupt : Effect.void)
+              const beforeAttempt = Effect.suspend(() => closed || signal.aborted || !snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request ? Effect.interrupt : Effect.void)
               return yield* retryOperation(operation, { ...retryOptions, attemptTimeoutMs: retryOptions.attemptTimeoutMs === undefined ? executionAttemptTimeoutMs : retryOptions.attemptTimeoutMs }, {
                 previous: snapshot.retry(work.ref), beforeAttempt,
                 wait: dueAt => waitForRetry(work.ref, "execution", dueAt).pipe(Effect.andThen(Effect.gen(function* () {
@@ -582,7 +600,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
                 record: (attempt, dueAt, reason) => execution.record({ type: "RetryScheduled", ref: work.ref, attempt, dueAt, reason }),
               })
             }),
-            publish: payload => Effect.suspend(() => closed || signal.aborted || snapshot.effect(work.ref)?.cleanup?.request
+            publish: payload => Effect.suspend(() => closed || signal.aborted || !snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request
               ? Effect.void
               : executionStream.publish({ ...(options.delivery ? { address: options.delivery.address } : {}), ref: work.ref, attemptId, sequence: executionSequence++, payload })),
             cancel: runtime.cancel,
@@ -596,7 +614,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             }).pipe(Effect.uninterruptible),
             get: store.get,
             waitFor,
-            record: event => enqueue(Effect.suspend(() => snapshot.effect(work.ref)?.cleanup?.request ? Effect.void : appendNow(event as unknown as RuntimeEvent<Event>))),
+            record: event => enqueue(Effect.suspend(() => !snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request ? Effect.void : appendNow(event as unknown as RuntimeEvent<Event>))),
             fork: (operation, options) => Effect.gen(function* () {
               const context = yield* Effect.context<Effect.Services<typeof operation>>()
               const id = effectKey(work.ref)
@@ -627,7 +645,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           if (Exit.isFailure(exit)) {
             executions.delete(key)
             dispatched.delete(key)
-            if (snapshot.effect(work.ref)?.cleanup?.request || snapshot.promise(work.ref)) return
+            if (!snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) return
             if (!Cause.hasDies(exit.cause)) return yield* Effect.failCause(exit.cause)
             yield* recordDeath(work.ref, exit.cause)
             return
@@ -666,7 +684,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         if (persistenceFailure) return yield* persistenceFailure
         const defect = store.get(executionDefect)
         if (defect && !(cleanupWork().length && events.every(event => Schema.is(EffectCancelled)(event)))) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
-        if (owner && snapshot.effect(owner)?.cleanup?.request) return
+        if (owner && (!snapshot.effect(owner) || snapshot.effect(owner)?.cleanup?.request)) return
         if (!admitted) {
           if (when && !(yield* Effect.try({ try: () => when(store.get), catch: RuntimeError.from }))) return
           admitted = true
@@ -739,23 +757,24 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }).pipe(Effect.forkIn(scope))
       services = yield* buildServices()
       yield* Effect.gen(function* () {
-        const stored = options.journal ? yield* options.journal.readCheckpoint : undefined
-        const checkpoint = stored ? yield* Effect.try({ try: () => retireCheckpoint(decodeCheckpoint(stored.payload), digestMinBytes), catch: RuntimeError.from }) : undefined
+        const stored = options.journal ? yield* journalCall(() => options.journal!.readCheckpoint()) : undefined
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off: Undefined selects full journal replay; Effect.void would widen the checkpoint result.
+        const checkpoint = stored ? yield* Effect.try({ try: () => decodeCheckpoint(stored.payload), catch: cause => cause instanceof CheckpointReplayRequired ? cause : RuntimeError.from(cause) }).pipe(Effect.catch(error => error instanceof CheckpointReplayRequired ? Effect.succeed(undefined) : Effect.fail(error))) : undefined
         if (stored && checkpoint && checkpoint.position !== stored.position) return yield* Effect.fail(new ActorReplayError({ stage: "checkpoint", reason: "position_mismatch", position: stored.position, cause: new Error("Checkpoint payload position differs from journal metadata") }))
         checkpointSeed = checkpoint
         checkpointPosition = checkpoint?.position ?? 0
-        // Atomic checkpoint commits make the prefix durable; recovery only needs its suffix.
+        // Checkpointed atoms fold the suffix; omitted atoms read their prefix on first access (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent).
         let history: readonly Recorded<Event>[] | undefined = options.journal
-          ? checkpoint ? yield* options.journal.readAfter(checkpoint.position) : yield* options.journal.read
+          ? checkpoint ? yield* journalCall(() => options.journal!.readAfter(checkpoint.position)) : yield* journalCall(() => options.journal!.read())
           : (options.events ?? []).map(event => ({ event }))
-        let readFull: typeof ReplayContext.Service["readFull"] | undefined = yield* Effect.cached(checkpoint && options.journal ? options.journal.read : Effect.succeed(history))
+        let readFull: typeof ReplayContext.Service["readFull"] | undefined = yield* Effect.cached(checkpoint && options.journal ? journalCall(() => options.journal!.read()) : Effect.succeed(history))
         setup = yield* options.setup.pipe(
           Effect.provideService(ReplayContext, { records: history, readFull, ...(checkpoint ? { checkpoint } : {}) }),
           Effect.provideService(Scope.Scope, scope), Effect.provide(options.actorContext(services)),
         )
-        const inputs = options.journal ? yield* options.journal.readInputs : []
+        const inputs = options.journal ? yield* journalCall(() => options.journal!.readInputs()) : []
         for (const input of inputs) persistedInputRefs.set(effectKey(input.ref), input.ref)
-        definition = createEventLog({ inputs, schema: setup.schema, ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
+        definition = createEventLog({ inputs, schema: setup.schema, ...(options.journal ? { readBefore: (position: number) => options.journal!.readBefore(position) } : {}), ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
           methods: setup.contracts, ...(options.delivery ? { address: options.delivery.address } : {}),
         }) }, ...(checkpoint ? { checkpoint } : {}) })
         // takeHistory releases startup records and their cached reader before the actor's generator suspends for its lifetime.
@@ -766,7 +785,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           const known = new Set(inputs.map(input => effectKey(input.ref)))
           const missing = retained.filter(input => !known.has(effectKey(input.ref)) && snapshot.effect(input.ref)?.request.request.input._tag === "InputDigest")
           if (missing.length) {
-            yield* options.journal.append(snapshot.position, [], { put: missing })
+            yield* journalCommit(options.journal, () => options.journal!.append(snapshot.position, [], { put: missing }))
             for (const input of missing) persistedInputRefs.set(effectKey(input.ref), input.ref)
           }
         }
@@ -775,6 +794,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         // localRecovery reruns the originating act with its recorded reference and deadline; implementations must recreate local producers (packages/platform/test/properties/runtime/deferred-recovery.ts, ownedProducerRecovery).
         for (const work of deferred) if (work.handle.executor === "local") localRecovery.set(effectKey(work.ref), work)
         yield* Effect.try({ try: sync, catch: RuntimeError.from })
+        if (options.journal?.acknowledge) yield* options.journal.acknowledge()
       }).pipe(Effect.withSpan("actor.replay"))
       if (!options.inspect) {
         yield* Deferred.succeed(ready, undefined)
@@ -812,7 +832,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
               const request = yield* Schema.decodeUnknownEffect(MethodCancellation, { onExcessProperty: "error" })(body).pipe(Effect.mapError(InvalidMessage.from))
               const method = Object.hasOwn(setup.contracts, request.method) ? setup.contracts[request.method] : undefined
               if (!method?.onCancel) return yield* Effect.fail(new InvalidMessage(`Method is not cancellable: ${request.method}`))
-              const original = yield* journal.readMessage(request.cancel.id)
+              const original = yield* journalCall(() => journal.readMessage(request.cancel.id))
               const invocation = original?.record.message?.invocation
               if (!invocation || invocation.method !== request.method) return yield* Effect.fail(new InvalidMessage("Cancellation requires a matching invocation"))
               if (!isDeepStrictEqual(original?.record.message?.from, context.from)) return yield* Effect.fail(new InvalidMessage("Cancellation requires the invoking sender"))
@@ -828,10 +848,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           const event = context.inReplyTo ? yield* Schema.decodeEffect(Schema.Json)(body).pipe(Effect.mapError(InvalidMessage.from)) : yield* Schema.decodeUnknownEffect(Schema.toType(setup.schema), { onExcessProperty: "error" })(input).pipe(Effect.mapError(InvalidMessage.from))
           if (!context.inReplyTo && typeof event === "object" && event !== null && hasCoreEventType(event)) return yield* Effect.fail(new InvalidMessage("Actor inputs must be domain events"))
           if (message.invocation && Schema.is(MessageAddress)(message.from) && !options.delivery) return yield* Effect.fail(new RuntimeError("Addressed requests require a delivery adapter"))
-          const previous = yield* journal.readMessage(message.id)
+          const previous = yield* journalCall(() => journal.readMessage(message.id))
           if (previous) {
             if (!isMessageReceived(previous.record.event) || !isDeepStrictEqual(previous.record.message, message) || !isDeepStrictEqual(previous.record.event.body, event)) return yield* Effect.fail(new MessageConflict("Message identity reused with different input or sender"))
-            yield* journal.acknowledge
+            yield* journal.acknowledge()
             return { id: message.id, position: previous.position }
           }
           const defect = store.get(executionDefect)
@@ -850,7 +870,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           if (!checkpoint) return yield* Effect.fail(new RuntimeError("Cannot checkpoint while work is pending or initialised atoms are unread"))
           const payload = yield* Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from })
           const digest = yield* checkpointDigest(payload).pipe(Effect.mapError(RuntimeError.from))
-          yield* options.journal.appendWithCheckpoint(snapshot.position, [], { position: snapshot.position, payload, digest }).pipe(Effect.mapError(RuntimeError.from))
+          yield* journalCommit(options.journal, () => options.journal!.appendWithCheckpoint(snapshot.position, [], { position: snapshot.position, payload, digest })).pipe(Effect.mapError(RuntimeError.from))
           checkpointPosition = snapshot.position
         })),
         active: () => [...background.keys()],
@@ -868,7 +888,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             }
           }
           const deferred = snapshot.deferred()
-          const pendingRefs = [...snapshot.effects().flatMap(work => work.ref ? [work.ref] : []), ...deferred.map(work => work.ref)]
+          const pendingRefs = [...executableEffects().flatMap(work => work.ref ? [work.ref] : []), ...deferred.map(work => work.ref)]
           const pendingKeys = [...pendingRefs.map(effectKey), ...cleanup.map(work => `cancellation:${effectKey(work.ref)}`)]
           if (pendingKeys.length && pendingKeys.every(key => retryWaits.has(key)) && !snapshot.cancellations().length && !snapshot.deliveries().length) {
             const times = pendingKeys.map(key => retryWaits.get(key)!.dueAt)
@@ -877,13 +897,13 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           }
           if (cleanup.length) return { progressCursor, status: "running" }
           // recoveryState preserves live inline execution without a deadline (packages/platform/test/properties/runtime/inline-execution.ts, inlineExecutionSupervision).
-          if (executions.size && snapshot.effects().length) return { progressCursor, status: "running" }
+          if (executions.size && executableEffects().length) return { progressCursor, status: "running" }
           const live = deferred.filter(work => work.handle.executor === "local" && background.has(work.handle.id))
-          if (live.length && !snapshot.effects().length && !snapshot.pending().length && !snapshot.cancellations().length && !snapshot.deliveries().length) {
+          if (live.length && !executableEffects().length && !snapshot.pending().length && !snapshot.cancellations().length && !snapshot.deliveries().length) {
             const deadlines = deferred.map(work => work.deadlineAt)
             if (deadlines.every((at): at is number => at !== undefined)) return { progressCursor, status: "running", wakeAt: Math.min(...deadlines) }
           }
-          if (snapshot.effects().length || snapshot.pending().length || snapshot.cancellations().length || snapshot.deliveries().length || deferred.some(work => work.handle.executor === "local")) return { progressCursor, status: "pending" }
+          if (executableEffects().length || snapshot.pending().length || snapshot.cancellations().length || snapshot.deliveries().length || deferred.some(work => work.handle.executor === "local")) return { progressCursor, status: "pending" }
           if (!deferred.length) return { progressCursor, status: "settled" }
           const deadlines = deferred.map(work => {
             const recordedAt = snapshot.records.find(record => Schema.is(EffectRequested)(record.event) && effectKey(record.event.ref) === effectKey(work.ref))?.recordedAt ?? 0

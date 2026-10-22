@@ -1,3 +1,5 @@
+import { memoryJournalReads } from "../../fixtures/memory-journal"
+import { completionState } from "../../fixtures/completion-state"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, type RuntimeEvent, type StoredCheckpoint } from "@clavia/tardigrade-core"
@@ -6,13 +8,15 @@ import { Promises } from "../../../../core/src/services/promises"
 
 const Started = Schema.Struct({ type: Schema.Literal("Started") })
 const Returned = Schema.Struct({ type: Schema.Literal("Returned") })
-const Event = Schema.Union([Started, Returned])
+const completion = completionState("cancellation.completion", Schema.Finite)
+const batchCompletions = [completionState("batch.left", Schema.Finite), completionState("batch.right", Schema.Finite)] as const
+const Event = Schema.Union([Started, Returned, completion.event, ...batchCompletions.map(completion => completion.event)])
 type Event = typeof Event.Type
 const Job = act({ name: "test.cancellation", input: Schema.Finite, success: Schema.Finite, failure: Schema.String })
 const actor = (id: number) => defineActor("cancellation", Effect.sync(() => {
   const started = durableAtom({ name: "test.cancellation", input: Event, schema: Schema.Boolean, initial: false, reduce: (state, event) => state || event.type === "Started" })
-  const request = Job.request({ input: id, onSettled: () => [{ type: "Returned" }] })
-  return { atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: get(started) ? { job: request } : {} })), schema: Event }
+  const request = Job.request({ input: id, onSettled: outcome => [...completion.onSettled(outcome), { type: "Returned" }] })
+  return { atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(started) && get(completion.state).status === "pending" ? { job: request } : {} })), schema: Event }
 }))
 
 interface CancellationCase {
@@ -40,16 +44,15 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
   let cleanups = 0
   let cleanedHandle = false
   let abortedBeforeCommit = false
-  const append = (position: number, events: readonly Recorded<Event>[], checkpoint?: StoredCheckpoint) => Effect.gen(function* () {
-    if (position !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal position"))
+  const append = (position: number, events: readonly Recorded<Event>[], checkpoint?: StoredCheckpoint): undefined => {
+    if (position !== records.length) throw new RuntimeError("Unexpected journal position")
     records.push(...events)
     if (checkpoint) saved = checkpoint
-    if (events.some(({ event }) => event.type === "EffectSettled")) yield* Deferred.succeed(settled, undefined)
-  })
+    if (events.some(({ event }) => event.type === "EffectSettled")) Deferred.doneUnsafe(settled, Effect.void)
+  }
   const journal: Journal<Event> = {
-    readInputs: Effect.succeed([]),
-    read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
-    readCheckpoint: Effect.sync(() => saved), append: (position, events) => append(position, events), appendWithCheckpoint: append,
+    ...memoryJournalReads(() => records),
+    readCheckpoint: () => saved, append: (position, events) => append(position, events), appendWithCheckpoint: append,
   }
   const result = () => {
     const promise = durablePromise(reference, { success: Schema.Finite, error: Schema.String })
@@ -105,6 +108,7 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
       else if (options.mode !== "inline") yield* runtime.send([result()])
     }
     yield* first.wait
+    if (Object.keys(first.getState().acts).length) return yield* Effect.fail(new RuntimeError("Completed invocation remained proposed"))
     if (abortedBeforeCommit || (!options.completionFirst && (!signal.aborted || cleanups === 0))) return yield* Effect.fail(new RuntimeError("Cancellation must commit before abort and cleanup"))
     if (!options.completionFirst && options.mode !== "inline" && !cleanedHandle) return yield* Effect.fail(new RuntimeError("Cancellation lost the deferred handle"))
     if (options.mode === "submitting" && !options.completionFirst) {
@@ -118,7 +122,9 @@ const runCancellationScenario = (options: CancellationCase) => Effect.runPromise
       yield* restored.wait
       yield* restored.cancel(reference, "reopened")
       if (!options.completionFirst) yield* runtime.deliver(reference, [result(), { type: "Returned" }])
+      else if (options.mode !== "inline") yield* runtime.send([result()])
       yield* restored.wait
+      if (Object.keys(restored.getState().acts).length) return yield* Effect.fail(new RuntimeError("Recovery reproposed completed work"))
       const state = restored.getState().view
       if (!options.completionFirst && (state.status !== "rejected" || !Schema.is(Schema.TaggedStruct("Cancelled", { reason: Schema.Literal(options.reason) }))(state.reason))) return yield* Effect.fail(new RuntimeError("Recovery lost the durable cancellation outcome"))
     }).pipe(Effect.ensuring(restored.close))
@@ -202,8 +208,8 @@ export const cancellationBatchIsolation = fc.asyncProperty(fc.record({
   let runtime!: ActorRuntime<Event>
   const definition = defineActor("batch-cancellation", Effect.sync(() => {
     const started = durableAtom({ name: "test.batch-cancellation", input: Event, schema: Schema.Array(Schema.Finite), initial: [], reduce: (state, event, _metadata, position) => event.type === "Started" ? [...state, position] : state })
-    const requests = [0, 1].map(id => Job.request({ origin: id, input: id, onSettled: () => [{ type: "Returned" }] }))
-    return { atom: effectAtom(get => ({ view: requests.map(request => get(request.result)), events: {}, acts: get(started).length === 2 ? Object.fromEntries(requests.map((request, index) => [String(index), request])) : {} })), schema: Event }
+    const requests = [0, 1].map(id => Job.request({ origin: id, input: id, onSettled: outcome => [...batchCompletions[id]!.onSettled(outcome), { type: "Returned" }] }))
+    return { atom: effectAtom(get => ({ view: batchCompletions.map(completion => get(completion.state)), events: {}, acts: get(started).length === 2 ? Object.fromEntries(requests.flatMap((request, index) => get(batchCompletions[index]!.state).status === "pending" ? [[String(index), request]] : [])) : {} })), schema: Event }
   }))
   const store = yield* createTestStore({ actor: definition, actorContext: () => Context.empty(),
     services: host => {
@@ -221,6 +227,7 @@ export const cancellationBatchIsolation = fc.asyncProperty(fc.record({
     if (options.reverse) batch.reverse()
     for (let index = 0; index <= options.duplicates; index++) yield* runtime.send(batch)
     yield* store.wait
+    if (Object.keys(store.getState().acts).length) return yield* Effect.fail(new RuntimeError("Completed batch members remained proposed"))
     const states = store.getState().view
     const valid = states[1 - options.cancelled]!
     const cancelled = states[options.cancelled]!

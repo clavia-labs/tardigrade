@@ -11,8 +11,7 @@ export interface ActService<Name extends string> {
   readonly act: Name
 }
 
-export type ActState<Value, Failure> =
-  | { readonly status: "pending" }
+export type ActOutcome<Value, Failure> =
   | { readonly status: "fulfilled"; readonly value: Value }
   | { readonly status: "rejected"; readonly reason: Failure }
 
@@ -25,7 +24,7 @@ export interface DeferredAct {
 }
 
 export interface ActRequest<Value, Failure, Services> {
-  // origin identifies the journal event that made this invocation ready (quint/checkpoint/acceptanceBinding.qnt, recoveryEquivalent). Omission identifies a startup invocation scoped to its atom and act.
+  // origin identifies the journal event that made this invocation ready and remains stable across reconstruction (quint/checkpoint/acceptanceBinding.qnt, uniqueInvocations, admissionSound). Distinct invocations of the same atom and act require distinct origins; omission identifies a startup invocation scoped to its atom and act.
   readonly origin?: number
   readonly request: EffectRequest
   readonly kind: "act"
@@ -36,10 +35,8 @@ export interface ActRequest<Value, Failure, Services> {
   // onDeferred derives domain events committed with the submitted handle; callbacks must be pure.
   onDeferred?(handle: ExecutionHandle, ref: EffectRef): readonly object[]
   // onSettled derives domain events committed with the terminal decision; handle identifies deferred completion and callbacks must be pure.
-  onSettled?(result: Exclude<ActState<Value, ActFailure<Failure>>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
+  onSettled?(result: ActOutcome<Value, ActFailure<Failure>>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
   readonly ref: Atom<EffectRef | undefined>
-  // result exposes cancellation as a rejected Cancelled value delivered through onSettled (quint/terminalDelivery.qnt, deliverySound, callbackAtMostOnce).
-  readonly result: Atom<ActState<Value, ActFailure<Failure>>>
 }
 
 export interface ActCancellation {
@@ -109,7 +106,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
     }
   }))
 
-  // request creates an invocation handle retained across reevaluation; another invocation requires another handle.
+  // request creates an invocation proposal whose callbacks retain needed outcomes in durable actor state (platform/test/properties/runtime/cancellation.ts).
   const request = (invocation: { readonly origin?: number; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
     const decoded = decodeInput(invocation.input, { freeze: true })
     const input = decoded ? decoded.value as Schema.Json : Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
@@ -122,33 +119,11 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       const bindings = Context.get(context, EventLog).bindings
       return bindings ? get(bindings).get(identity) : undefined
     })
-    const result = atom((get): ActState<Value, ActFailure<Failure>> => {
-      const reference = get(ref)
-      const context = get(eventLogContext)
-      if (!reference || !context) return { status: "pending" }
-      const service = Context.get(context, EventLog)
-      const events = get(service.events)
-      const key = effectKey(reference)
-      const operation = service.effect?.(reference)
-      const cancellation = service.effect ? operation?.cleanup?.request : events.find(event => Schema.is(EffectCancelled)(event) && effectKey(event.ref) === key)
-      if (Schema.is(EffectCancelled)(cancellation)) return { status: "rejected", reason: { _tag: "Cancelled", reason: cancellation.reason } }
-      const settlement = service.effect ? operationSettlement(operation) : events.find(event => Schema.is(EffectSettled)(event) && effectKey(event.ref) === key)
-      if (!Schema.is(EffectSettled)(settlement)) return { status: "pending" }
-      if (settlement.outcome.status === "rejected") return { status: "rejected", reason: decodeFailure(settlement.outcome.reason) }
-      const outcome = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
-      if (operation?.execution.retired?.value || operation?.execution.retired?.promise) throw new Error(`Act result was retired: ${key}`)
-      if (outcome.type === "value") return { status: "fulfilled", value: decodeSuccess(outcome.value) }
-      const resolved = service.promise ? service.promise(reference) : events.find(event => Schema.is(PromiseSettled)(event) && effectKey(event.ref) === key)
-      if (!Schema.is(PromiseSettled)(resolved)) return { status: "pending" }
-      return resolved.result.status === "fulfilled"
-        ? { status: "fulfilled", value: decodeSuccess(resolved.result.value) }
-        : { status: "rejected", reason: Schema.is(PromiseTimedOut)(resolved.result.reason) ? resolved.result.reason : decodeFailure(resolved.result.reason) }
-    })
     const handle: ActRequest<Value, Failure, ActService<Name>> = Object.freeze({
-      kind: "act", identity, ...(origin === undefined ? {} : { origin }), request: { act: options.name, input }, ref, result,
+      kind: "act", identity, ...(origin === undefined ? {} : { origin }), request: { act: options.name, input }, ref,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
       ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
-      onSettled: (outcome: Exclude<ActState<Value, ActFailure<Failure>>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
+      onSettled: (outcome: ActOutcome<Value, ActFailure<Failure>>, ref: EffectRef, handle?: ExecutionHandle) => {
         const result = outcome.status === "fulfilled"
           ? { status: "fulfilled" as const, value: decodeSuccess(outcome.value) }
           : { status: "rejected" as const, reason: (Schema.is(Cancelled)(outcome.reason) || Schema.is(PromiseTimedOut)(outcome.reason)) ? outcome.reason : decodeFailure(outcome.reason) }

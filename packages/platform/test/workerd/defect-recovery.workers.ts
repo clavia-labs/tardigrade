@@ -29,10 +29,12 @@ test("recovery: a spawn defect blocks the watchdog", async () => {
     if (restart) {
       await runInDurableObject(parent, async object => { await object.dispose() })
       await runInDurableObject(bindings.ACTORS.getByName(instance), async object => { await object.dispose() })
+      await flow.call("parent", "read", null, "reopened", 32)
     }
     await parent.failSpawns(true)
     try {
-      expect((await flow.request("/parent/methods/spawn", 99, "retry")).status).toBe(202)
+      const response = await flow.request("/parent/methods/spawn", 99, "retry")
+      expect(response.status, await response.text()).toBe(202)
       const status = () => runInDurableObject(parent, async (_object, state) => Effect.runPromise(cloudflareWatchdogStorage(state.storage).transaction(tx => tx.list)))
       await expect.poll(async () => (await status()).get(watchdogKey(coordinate(instance, "parent")))?.status, { timeout: 5_000 }).toBe("blocked")
       expect((await status()).get(watchdogKey(coordinate(instance, "parent")))?.reason).toContain("injected spawn defect")
@@ -40,5 +42,5 @@ test("recovery: a spawn defect blocks the watchdog", async () => {
       await parent.failSpawns(false)
       if (held) await parent.releaseSpawns()
     }
-  }), { numRuns: 8, examples: [[{ held: false, restart: false }], [{ held: true, restart: false }]] })
+  }), { numRuns: 8, examples: [[{ held: false, restart: false }], [{ held: true, restart: false }], [{ held: true, restart: true }]] })
 }, 120_000)

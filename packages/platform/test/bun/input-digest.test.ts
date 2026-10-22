@@ -62,17 +62,18 @@ test("settlement callbacks, input release and checkpoint restore preserve the jo
     const settled = log.append(accepted, { type: "EffectSettled", ref, outcome: { status: "fulfilled", value: { type: "value", value: "done" } } })
     const before = JSON.stringify(settled.records)
     const checkpoint = decodeCheckpoint(encodeCheckpoint(settled.checkpoint()!))
-    expect(checkpoint.operations[0]!.request.request.input).toEqual(digestInput({ system: "original", text: "x".repeat(4096) }))
+    expect(Object.keys(checkpoint).sort()).toEqual(["durable", "position"])
     expect(JSON.stringify(settled.records)).toBe(before)
     const restored = createEventLog({ ...setup(), checkpoint })
     const changed = createEventLog({ ...setup("changed"), checkpoint })
     try {
       expect(restored.initial.position).toBe(settled.position)
       expect(changed.initial.position).toBe(settled.position)
-      expect(settled.followups(settled.events.at(-1)!)).toEqual([{ type: "Finished" }])
+      expect(settled.events.at(-1)).toEqual({ type: "Finished" })
+      expect(settled.effect(ref)).toBeUndefined()
     } finally { restored.dispose(); changed.dispose() }
     const finished = log.append(settled, { type: "Finished" })
-    expect(finished.effect(ref)!.request.request.input).toEqual(checkpoint.operations[0]!.request.request.input)
+    expect(finished.effect(ref)).toBeUndefined()
     expect(JSON.stringify(finished.records.slice(0, settled.records.length))).toBe(before)
   } finally { log.dispose() }
 })
@@ -100,7 +101,7 @@ test("latestOnly releases preceding domain handles", () => {
   expect(all("first", "one")).toBe(retained)
 })
 
-test("deferred inputs survive settlement and cancellation checkpoints for recovery and cleanup", () => {
+test("deferred and cancelled work blocks checkpoints and recovers from journal", () => {
   const { log, snapshot, ref, text } = acceptedHistory()
   try {
     const submitted = log.append(snapshot, { type: "EffectSettled", ref, outcome: { status: "fulfilled", value: { type: "promise", handle: { executor: "local", id: "producer" } } } })
@@ -109,10 +110,15 @@ test("deferred inputs survive settlement and cancellation checkpoints for recove
     expect(advanced.deferred()[0]!.request.input).toEqual({ system: "original", text })
     expect(advanced.checkpoint()).toBeUndefined()
     const cancelled = log.append(advanced, { type: "EffectCancelled", ref, reason: "stop" })
-    const checkpoint = decodeCheckpoint(encodeCheckpoint(cancelled.checkpoint()!))
-    expect(checkpoint.operations[0]!.request.request.input).toEqual({ _tag: "InlineInput", value: { system: "original", text } })
-    const restored = createEventLog({ ...setup(), checkpoint })
-    try { expect(restored.initial.cancelled()[0]!.request.input).toEqual({ system: "original", text }) }
+    expect(cancelled.checkpoint()).toBeUndefined()
+    const restored = createEventLog(setup())
+    try {
+      const recovered = restored.replay(cancelled.records)
+      expect(recovered.cancelled()[0]!.request.input).toEqual({ system: "original", text })
+      expect(recovered.checkpoint()).toBeUndefined()
+      const cleaned = restored.append(recovered, { type: "CancellationSettled", ref, outcome: { status: "fulfilled" } })
+      expect(Object.keys(decodeCheckpoint(encodeCheckpoint(cleaned.checkpoint()!))).sort()).toEqual(["durable", "position"])
+    }
     finally { restored.dispose() }
   } finally { log.dispose() }
 })

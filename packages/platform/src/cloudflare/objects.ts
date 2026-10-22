@@ -1,3 +1,4 @@
+import { journalCall } from "@clavia/tardigrade-core"
 import { DurableObject } from "cloudflare:workers"
 import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Scope } from "effect"
 import { isDeepStrictEqual } from "node:util"
@@ -10,9 +11,9 @@ import type { SupervisorEvent } from "@clavia/tardigrade-core/services/superviso
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { makeRetryingAlarms, makeRetryingRpc, type CloudflareAlarmOptions, type CloudflareRetryOptions } from "@clavia/tardigrade-cloudflare/retry"
 import { recordRetryWakes } from "../shared/retry-wakes"
-import { cloudflareSchedulerStorage, cloudflareSchedulerTransaction } from "./scheduler"
-import { cloudflareWatchdogStorage, cloudflareWatchdogTransaction } from "./watchdog"
-import { sqlJournal } from "../shared/sql-journal"
+import { cloudflareSchedulerStorage, cloudflareSchedulerTransaction, cloudflareSchedulerTransactionSync } from "./scheduler"
+import { cloudflareWatchdogStorage, cloudflareWatchdogTransactionSync } from "./watchdog"
+import { runSynchronous, sqlJournal } from "../shared/sql-journal"
 import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
@@ -67,12 +68,19 @@ export function objectJournal<Event extends object>(options: {
   readonly watchdog: ReturnType<typeof createWatchdog>
 }) {
   const alarms = makeRetryingAlarms(options.storage, options.alarms)
-  return sqlJournal<Event>({ actor: options.key, limits: CLOUDFLARE_SQL_LIMITS, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, layer: SqliteClient.layer({ storage: options.storage }), flush: alarms.sync,
-    commit: (work, records, position) => Effect.gen(function* () {
+  return sqlJournal<Event>({ actor: options.key, limits: CLOUDFLARE_SQL_LIMITS, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, layer: SqliteClient.layer({ storage: options.storage }), transaction: work => options.storage.transactionSync(work),
+    flush: alarms.sync,
+    acknowledge: write => Effect.gen(function* () {
       const context = yield* Effect.context<never>()
       yield* Effect.tryPromise({ try: () => options.storage.transaction(tx => Effect.runPromiseWith(context)(Effect.gen(function* () {
-        yield* work
-        const scheduler = cloudflareSchedulerTransaction(tx, options.alarms)
+        yield* journalCall(write)
+        yield* schedulerAlarm(cloudflareSchedulerTransaction(tx, options.alarms))
+      }))), catch: RuntimeError.from })
+    }).pipe(Effect.uninterruptible),
+    commit: (work, records, position) => options.storage.transactionSync(() => {
+      work()
+      runSynchronous(Effect.gen(function* () {
+        const scheduler = cloudflareSchedulerTransactionSync(options.storage, options.alarms)
         yield* recordRetryWakes(scheduler, records)
         let progressCursor = 0
         let admission = false
@@ -80,14 +88,14 @@ export function objectJournal<Event extends object>(options: {
         for (const [index, record] of records.entries()) {
           const event: object = record.event
           if (Schema.is(PromiseSettled)(event) && event.result.status === "rejected" && Schema.is(PromiseTimedOut)(event.result.reason)) expired = true
-          if ("type" in event && event.type === "ThreadUpdated") yield* options.watchdog.adoptVersion(cloudflareWatchdogTransaction(tx, options.alarms), options.target, (yield* Schema.decodeUnknownEffect(ThreadUpdated)(event)).version)
+          if ("type" in event && event.type === "ThreadUpdated") yield* options.watchdog.adoptVersion(cloudflareWatchdogTransactionSync(options.storage, options.alarms), options.target, (yield* Schema.decodeUnknownEffect(ThreadUpdated)(event)).version)
           if ("type" in event && (event.type === "EffectSettled" || event.type === "PromiseSettled")) progressCursor = position - records.length + index + 1
           if ("type" in event && (event.type === "MessageReceived" || event.type === "ThreadCreated" || event.type === "ThreadRequested" || event.type === "EffectCancelled" || event.type === "EffectDied")) admission = true
         }
-        if (records.length) yield* options.watchdog.admit(cloudflareWatchdogTransaction(tx, options.alarms), options.target, progressCursor, admission, expired)
-        yield* schedulerAlarm(scheduler)
-      }))), catch: RuntimeError.from })
-    }).pipe(Effect.uninterruptible),
+        if (records.length) yield* options.watchdog.admit(cloudflareWatchdogTransactionSync(options.storage, options.alarms), options.target, progressCursor, admission, expired)
+      }))
+      return undefined
+    }),
   })
 }
 
@@ -245,7 +253,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       this.coordinate = await this.ctx.storage.get<ThreadCoordinate>("tardie:thread:coordinate")
       if (this.coordinate && this.version !== undefined) {
         const journal = this.storage()
-        if (await Effect.runPromise(journal.readFirst)) await Effect.runPromise(updateThreadVersion(journal, this.coordinate, this.version))
+        if (await Effect.runPromise(journalCall(() => journal.readFirst()))) await Effect.runPromise(updateThreadVersion(journal, this.coordinate, this.version))
       }
       await Effect.runPromise(this.watchdog.restore)
     })
@@ -351,8 +359,8 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       return methodHttp(host, http, context)(request)
     }
     async alarm() { await this.identityReady; if (this.coordinate) { this.storage(); await Effect.runPromise(this.watchdog.restore.pipe(Effect.andThen(this.scheduler.alarm))) } }
-    async records(): Promise<readonly Recorded<Event>[]> { await this.identityReady; return Effect.runPromise(this.storage().read) }
-    async checkpoint(): Promise<StoredCheckpoint | undefined> { await this.identityReady; return Effect.runPromise(this.storage().readCheckpoint) }
+    async records(): Promise<readonly Recorded<Event>[]> { await this.identityReady; return Effect.runPromise(journalCall(() => this.storage().read())) }
+    async checkpoint(): Promise<StoredCheckpoint | undefined> { await this.identityReady; return Effect.runPromise(journalCall(() => this.storage().readCheckpoint())) }
     async dispose() { return this.ctx.blockConcurrencyWhile(async () => {
       for (const fiber of this.recovering) await Effect.runPromise(Fiber.interrupt(fiber))
       await Effect.runPromise(Scope.close(this.scope, Exit.succeed(undefined)))

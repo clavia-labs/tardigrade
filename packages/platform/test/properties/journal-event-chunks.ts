@@ -1,3 +1,4 @@
+import { journalCall, journalCommit } from "@clavia/tardigrade-core"
 import { Effect, Cause, Exit } from "effect"
 import { checkpointDigest } from "@clavia/tardigrade-core"
 import { isDeepStrictEqual } from "node:util"
@@ -21,7 +22,7 @@ export async function journalEventChunks(fixture: {
   }
   const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
   const limit = fixture.maxRowBytes
-  await run(journal.read)
+  journal.read()
   fixture.execute(
     `CREATE TRIGGER row_limit BEFORE INSERT ON experimental_events WHEN length(CAST(NEW.event AS BLOB))+length(CAST(NEW.actor AS BLOB))+32>${limit} BEGIN SELECT RAISE(ABORT, 'string or blob too big'); END`
   )
@@ -36,12 +37,12 @@ export async function journalEventChunks(fixture: {
     },
     message
   }
-  await run(journal.append(0, [record]))
-  same(await run(journal.read), [record])
-  same(await run(journal.readFirst), record)
-  same(await run(journal.readMessage(message.id)), { position: 1, record })
-  same(await run(journal.readAfter(0)), [record])
-  same(await run(journal.readAfter(1)), [])
+  await run(journalCommit(journal, () => journal.append(0, [record])))
+  same(journal.read(), [record])
+  same(journal.readFirst(), record)
+  same(journal.readMessage(message.id), { position: 1, record })
+  same(journal.readAfter(0), [record])
+  same(journal.readAfter(1), [])
   const chunks = [
     ...fixture.execute(
       "SELECT length(payload)+length(CAST(actor AS BLOB))+32 AS bytes FROM experimental_event_chunks"
@@ -54,8 +55,8 @@ export async function journalEventChunks(fixture: {
   )
   await run(journal.close)
   journal = open()
-  same(await run(journal.read), [record])
-  same(await run(journal.readMessage(message.id)), { position: 1, record })
+  same(journal.read(), [record])
+  same(journal.readMessage(message.id), { position: 1, record })
   const payload = new TextEncoder().encode("checkpoint".repeat(250000)),
     checkpoint = {
       position: 2,
@@ -67,11 +68,11 @@ export async function journalEventChunks(fixture: {
   )
   const failure = await run(
     Effect.exit(
-      journal.appendWithCheckpoint(
+      journalCommit(journal, () => journal.appendWithCheckpoint(
         1,
         [{ ...record, message: { ...message, id: "second" } }],
         checkpoint
-      )
+      ))
     )
   )
   assert(
@@ -79,9 +80,9 @@ export async function journalEventChunks(fixture: {
       Cause.pretty(failure.cause).includes("Injected event chunk failure"),
     "Injected failure was not returned"
   )
-  same(await run(journal.read), [record])
-  same(await run(journal.readCheckpoint), undefined)
-  same(await run(journal.readMessage("second")), undefined)
+  same(journal.read(), [record])
+  same(journal.readCheckpoint(), undefined)
+  same(journal.readMessage("second"), undefined)
   assert(
     [...fixture.execute("SELECT * FROM experimental_event_chunks WHERE seq=1")]
       .length === 0,
@@ -89,19 +90,19 @@ export async function journalEventChunks(fixture: {
   )
   fixture.execute("DROP TRIGGER fail_chunk")
   const second = { ...record, message: { ...message, id: "second" } }
-  await run(journal.appendWithCheckpoint(1, [second], checkpoint))
-  same(await run(journal.readCheckpoint), checkpoint)
-  same(await run(journal.readAfter(1)), [second])
+  await run(journalCommit(journal, () => journal.appendWithCheckpoint(1, [second], checkpoint)))
+  same(journal.readCheckpoint(), checkpoint)
+  same(journal.readAfter(1), [second])
   await run(journal.close)
   journal = open()
-  same(await run(journal.read), [record, second])
-  same(await run(journal.readCheckpoint), checkpoint)
+  same(journal.read(), [record, second])
+  same(journal.readCheckpoint(), checkpoint)
   const boundary = { event: { type: "Boundary", text: "" } }
   const overhead = new TextEncoder().encode(JSON.stringify(boundary)).byteLength
   const inline = { event: { ...boundary.event, text: "x".repeat(fixture.eventInlineBytes - overhead) } }
   const chunked = { event: { ...inline.event, text: inline.event.text + "x" } }
-  await run(journal.append(2, [inline, chunked]))
-  same(await run(journal.readAfter(2)), [inline, chunked])
+  await run(journalCommit(journal, () => journal.append(2, [inline, chunked])))
+  same(journal.readAfter(2), [inline, chunked])
   const stored = [...fixture.execute("SELECT seq, event FROM experimental_events WHERE seq >= 2 ORDER BY seq")]
   same(JSON.parse(String(stored[0]!.event)), inline)
   const header = JSON.parse(String(stored[1]!.event))
@@ -111,7 +112,7 @@ export async function journalEventChunks(fixture: {
   fixture.execute(
     "DELETE FROM experimental_event_chunks WHERE seq=0 AND ordinal=1"
   )
-  const corrupt = await run(Effect.exit(journal.readFirst))
+  const corrupt = await run(Effect.exit(journalCall(() => journal.readFirst())))
   assert(Exit.isFailure(corrupt), "Missing event chunk was accepted")
   await run(journal.close)
   return {

@@ -1,9 +1,10 @@
+import { journalCommit } from "@clavia/tardigrade-core"
 import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Schema, Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { Promises } from "../../../../core/src/services/promises"
 import { waitFor } from "../../fixtures/wait"
 import { isDeepStrictEqual } from "node:util"
-import { act, createActorStore, defineActor, durableAtom, effectAtom, EffectExecution, Scheduler, checkpointDigest, decodeCheckpoint, type EffectCheckpoint, effectKey, RuntimeError, ActorCommitError, ActorReplayError, type EffectRef, type Journal } from "@clavia/tardigrade-core"
+import { act, createActorStore, defineActor, durableAtom, effectAtom, EffectExecution, Scheduler, checkpointDigest, type EffectCheckpoint, effectKey, RuntimeError, ActorCommitError, ActorReplayError, type StoredOperation, type EffectRef, type Journal } from "@clavia/tardigrade-core"
 
 const Finished = Schema.Struct({ type: Schema.Literal("Finished") })
 type Event = typeof Finished.Type
@@ -15,16 +16,16 @@ const actor = (input: string) => defineActor("accepted-input", Effect.sync(() =>
   return { schema: Finished, atom: effectAtom(get => ({ view: get(done), events: {}, acts: get(done) ? {} : { job: request } })) }
 }))
 
-async function writeLegacyCheckpoint(journal: Journal<Event>, checkpoint: EffectCheckpoint) {
+async function writeLegacyCheckpoint(journal: Journal<Event>, checkpoint: EffectCheckpoint, operations: readonly StoredOperation[] = [], version: 2 | 3 = 2) {
   const legacy = { version: 2, position: checkpoint.position, durable: checkpoint.durable,
-    effects: checkpoint.operations.map(operation => ({ ref: operation.ref, request: operation.request,
+    effects: operations.map(operation => ({ ref: operation.ref, request: operation.request,
       ...(operation.execution.outcome?.type === "EffectSettled" ? { settlement: operation.execution.outcome } : {}),
       ...(operation.cleanup ? { cancellation: operation.cleanup.request } : {}),
-    })), promises: checkpoint.operations.flatMap(operation => operation.execution.promise ?? []),
+    })), promises: operations.flatMap(operation => operation.execution.promise ?? []),
   }
-  const payload = new TextEncoder().encode(JSON.stringify(legacy))
+  const payload = new TextEncoder().encode(JSON.stringify(version === 2 ? legacy : { version: 3, ...checkpoint, operations }))
   const digest = await Effect.runPromise(checkpointDigest(payload))
-  await Effect.runPromise(journal.appendWithCheckpoint(checkpoint.position, [], { position: checkpoint.position, payload, digest }))
+  await Effect.runPromise(journalCommit(journal, () => journal.appendWithCheckpoint(checkpoint.position, [], { position: checkpoint.position, payload, digest })))
 }
 
 // pendingInputRecovery preserves accepted input and reference across runtime changes and local deferred recovery (quint/checkpoint/inputLifecycle.qnt, verifiedExecution, inputRetained).
@@ -48,12 +49,12 @@ export async function pendingInputRecovery(fixture: { readonly open: (name: stri
   let store = await open(original, 1)
   try {
     await Effect.runPromise(Deferred.await(entered).pipe(Effect.timeout(1_000)))
-    const accepted = (await Effect.runPromise(journal.readInputs))[0]
+    const accepted = journal.readInputs()[0]
     if (!accepted || accepted.request.input !== original) throw new Error("Acceptance did not persist its input")
     const ref = accepted.ref
     await Effect.runPromise(store.close)
     if (legacy) {
-      await Effect.runPromise(journal.append(store.snapshot().position, [], { remove: [ref] }))
+      await Effect.runPromise(journalCommit(journal, () => journal.append(store.snapshot().position, [], { remove: [ref] })))
       const incompatible = await Effect.runPromise(Effect.exit(Effect.tryPromise({ try: () => open("changed", 2), catch: RuntimeError.from })))
       if (Exit.isSuccess(incompatible)) throw new Error("Legacy divergence was silently accepted")
       const error = Cause.squash(incompatible.cause)
@@ -62,8 +63,8 @@ export async function pendingInputRecovery(fixture: { readonly open: (name: stri
     await Effect.runPromise(journal.close)
     journal = fixture.open(legacy ? "legacy-input" : "accepted-input")
     store = await open(legacy ? original : "changed-v2", 2)
-    await waitFor(() => Effect.runPromise(journal.read), records => records.some(record => record.event.type === "EffectSettled"))
-    if ((await Effect.runPromise(journal.readInputs)).length !== 1) throw new Error("Deferred work released its accepted input")
+    await waitFor(async () => journal.read(), records => records.some(record => record.event.type === "EffectSettled"))
+    if (journal.readInputs().length !== 1) throw new Error("Deferred work released its accepted input")
     await Effect.runPromise(store.close)
     await Effect.runPromise(journal.close)
     journal = fixture.open(legacy ? "legacy-input" : "accepted-input")
@@ -71,15 +72,15 @@ export async function pendingInputRecovery(fixture: { readonly open: (name: stri
     await Effect.runPromise(store.wait)
     if (attempts.length !== 3 || attempts.some(attempt => attempt.input !== original || effectKey(attempt.ref) !== effectKey(ref))) throw new Error("Recovery changed accepted input or reference")
     if (!isDeepStrictEqual(attempts.map(attempt => attempt.runtime), [1, 2, 3])) throw new Error("Recovery did not use current services")
-    if ((await Effect.runPromise(journal.readInputs)).length || store.getState().view !== true) throw new Error("Terminal settlement retained input or lost its follow-up")
-    const records = await Effect.runPromise(journal.read)
+    if (journal.readInputs().length || store.getState().view !== true) throw new Error("Terminal settlement retained input or lost its follow-up")
+    const records = journal.read()
     await writeLegacyCheckpoint(journal, store.snapshot().checkpoint()!)
     await Effect.runPromise(store.close)
     await Effect.runPromise(journal.close)
     journal = fixture.open(legacy ? "legacy-input" : "accepted-input")
     store = await open("changed-v4", 4)
     await Effect.runPromise(store.wait)
-    if (attempts.length !== 3 || !isDeepStrictEqual(await Effect.runPromise(journal.read), records)) throw new Error("Settled recovery executed or rewrote history")
+    if (attempts.length !== 3 || !isDeepStrictEqual(journal.read(), records)) throw new Error("Settled recovery executed or rewrote history")
   } finally { await Effect.runPromise(store.close); await Effect.runPromise(journal.close) }
 }
 
@@ -89,8 +90,8 @@ interface CleanupFixture {
 }
 
 // cancellationInputRecovery checks acknowledgement, producer quiescence, checkpoint recovery, and atomic payload release (core/tla/InputRetention.tla, DurableSerializedSafety, RecoveryStability).
-export async function cancellationInputRecovery(fixture: CleanupFixture) {
-  const name = "cancellation-input"
+export async function cancellationInputRecovery(fixture: CleanupFixture, legacyVersion: 2 | 3 = 2) {
+  const name = `cancellation-input-${legacyVersion}`
   let journal = fixture.open(name)
   const entered = Deferred.makeUnsafe<void>()
   const releaseSubmission = Deferred.makeUnsafe<void>()
@@ -117,37 +118,38 @@ export async function cancellationInputRecovery(fixture: CleanupFixture) {
   let store = await open(1)
   try {
     await Effect.runPromise(Deferred.await(entered).pipe(Effect.timeout(1_000)))
-    const pending = (await Effect.runPromise(journal.readInputs))[0]!
+    const pending = journal.readInputs()[0]!
     await fixture.execute(name, "CREATE TRIGGER fail_cleanup_release BEFORE DELETE ON effect_inputs BEGIN SELECT RAISE(ABORT, 'Injected cleanup release failure'); END")
     await Effect.runPromise(store.cancel(pending.ref, "stop"))
-    if (Number(cleanups) !== 0 || (await Effect.runPromise(journal.readInputs)).length !== 1) throw new Error("Cleanup acknowledged before the producer stopped")
+    if (Number(cleanups) !== 0 || journal.readInputs().length !== 1) throw new Error("Cleanup acknowledged before the producer stopped")
     await Effect.runPromise(Deferred.succeed(releaseSubmission, undefined))
     const failed = await Effect.runPromise(Effect.exit(store.wait))
     if (Exit.isSuccess(failed) || !Cause.pretty(failed.cause).includes("Injected cleanup release failure")) throw new Error("Cleanup release failure was not reported")
     const recovery = await Effect.runPromise(Effect.exit(Effect.try({ try: () => store.recoveryState(), catch: RuntimeError.from })))
     if (Exit.isSuccess(recovery) || !Cause.pretty(recovery.cause).includes("Actor state could not be persisted")) throw new Error("Cleanup concealed a failed journal commit from recovery")
-    const retry = (await Effect.runPromise(journal.read)).find(record => record.event.type === "RetryScheduled")?.event
+    const retry = journal.read().find(record => record.event.type === "RetryScheduled")?.event
     if (retry?.type !== "RetryScheduled" || retry.phase !== "cancellation" || retry.attempt !== 1 || retry.reason !== "Retry cleanup") throw new Error("Cleanup retry did not record its decision")
-    if (Number(cleanups) !== 2 || (await Effect.runPromise(journal.readInputs)).length !== 1
-      || (await Effect.runPromise(journal.read)).some(record => record.event.type === "CancellationSettled")) throw new Error("Failed release committed a partial acknowledgement")
+    if (Number(cleanups) !== 2 || journal.readInputs().length !== 1
+      || journal.read().some(record => record.event.type === "CancellationSettled")) throw new Error("Failed release committed a partial acknowledgement")
     await fixture.execute(name, "DROP TRIGGER fail_cleanup_release")
     await Effect.runPromise(store.close)
     await Effect.runPromise(journal.close)
     journal = fixture.open(name)
     store = await open(2)
     await Effect.runPromise(Deferred.await(cleanupEntered).pipe(Effect.timeout(1_000)))
-    await writeLegacyCheckpoint(journal, store.snapshot().checkpoint()!)
+    if (store.snapshot().checkpoint() !== undefined || Exit.isSuccess(await Effect.runPromise(Effect.exit(store.checkpoint)))) throw new Error("Unfinished cleanup allowed checkpoint capture")
+    await writeLegacyCheckpoint(journal, { position: store.snapshot().position, durable: [{ name: "accepted-input.done", state: store.getState().view, position: store.snapshot().position }] }, [store.snapshot().effect(pending.ref)!], legacyVersion)
     await Effect.runPromise(store.close)
-    if ((await Effect.runPromise(journal.readInputs)).length !== 1) throw new Error("Interrupted cleanup released its input")
+    if (journal.readInputs().length !== 1) throw new Error("Interrupted cleanup released its input")
     await Effect.runPromise(journal.close)
     journal = fixture.open(name)
     store = await open(3)
     await Effect.runPromise(store.wait)
-    const records = await Effect.runPromise(journal.read)
+    const records = journal.read()
     if (executions !== 1 || Number(cleanups) !== 4 || records.filter(record => record.event.type === "CancellationSettled").length !== 1
-      || (await Effect.runPromise(journal.readInputs)).length !== 0) throw new Error("Cleanup acknowledgement did not release input exactly once")
+      || journal.readInputs().length !== 0) throw new Error("Cleanup acknowledgement did not release input exactly once")
     await Effect.runPromise(store.checkpoint)
-    const checkpoint = await Effect.runPromise(journal.readCheckpoint)
+    const checkpoint = journal.readCheckpoint()
     if (!checkpoint || new TextDecoder().decode(checkpoint.payload).includes(original)) throw new Error("Acknowledged checkpoint retained the full input")
     await Effect.runPromise(store.close)
     await Effect.runPromise(journal.close)
@@ -155,7 +157,7 @@ export async function cancellationInputRecovery(fixture: CleanupFixture) {
     store = await open(4)
     await Effect.runPromise(store.cancel(pending.ref, "duplicate"))
     await Effect.runPromise(store.wait)
-    if (Number(cleanups) !== 4 || executions !== 1 || !isDeepStrictEqual(await Effect.runPromise(journal.read), records)) throw new Error("Acknowledged cleanup repeated after checkpoint recovery")
+    if (Number(cleanups) !== 4 || executions !== 1 || !isDeepStrictEqual(journal.read(), records)) throw new Error("Acknowledged cleanup repeated after checkpoint recovery")
   } finally {
     await Effect.runPromise(Deferred.succeed(releaseSubmission, undefined))
     await Effect.runPromise(store.close)
@@ -195,14 +197,14 @@ export async function stoppedInputRecovery(fixture: CleanupFixture, failCleanupC
   }))
   let store = await open(1)
   try {
-    const records = await waitFor(() => Effect.runPromise(journal.read), records => records.some(record => record.event.type === "EffectSettled"))
+    const records = await waitFor(async () => journal.read(), records => records.some(record => record.event.type === "EffectSettled"))
     const submitted = records.find(record => record.event.type === "EffectSettled")!.event
     if (submitted.type !== "EffectSettled") throw new Error("Missing submission")
     await Effect.runPromise(store.cancel(submitted.ref, "stop"))
     await Effect.runPromise(Deferred.await(cleanupEntered).pipe(Effect.timeout(1_000)))
     await Effect.runPromise(Deferred.succeed(die, undefined))
-    await waitFor(() => Effect.runPromise(journal.read), records => records.some(record => record.event.type === "EffectDied"))
-    const retained = await Effect.runPromise(journal.readInputs)
+    await waitFor(async () => journal.read(), records => records.some(record => record.event.type === "EffectDied"))
+    const retained = journal.readInputs()
     if (retained.length !== 2 || !retained.some(input => effectKey(input.ref) === effectKey(submitted.ref))) throw new Error("Death released cleanup or forwarding input")
     if (failCleanupCommit) await fixture.execute(name, "CREATE TRIGGER fail_stopped_cleanup BEFORE DELETE ON effect_inputs BEGIN SELECT RAISE(ABORT, 'Injected stopped cleanup failure'); END")
     await Effect.runPromise(Deferred.succeed(releaseCleanup, undefined))
@@ -212,15 +214,15 @@ export async function stoppedInputRecovery(fixture: CleanupFixture, failCleanupC
       let stateFailure: unknown
       try { store.recoveryState() } catch (error) { stateFailure = error }
       if (!(waitFailure instanceof ActorCommitError) || waitFailure !== recoverFailure || waitFailure !== stateFailure) throw new Error(`Storage failure after death disagreed across APIs: wait=${waitFailure}, recover=${recoverFailure}, state=${stateFailure}`)
-      if ((await Effect.runPromise(journal.readInputs)).length !== 2 || (await Effect.runPromise(journal.read)).some(record => record.event.type === "CancellationSettled")) throw new Error("Failed cleanup after death released input or committed acknowledgement")
+      if (journal.readInputs().length !== 2 || journal.read().some(record => record.event.type === "CancellationSettled")) throw new Error("Failed cleanup after death released input or committed acknowledgement")
       await fixture.execute(name, "DROP TRIGGER fail_stopped_cleanup")
       await Effect.runPromise(store.close)
       await Effect.runPromise(journal.close)
       journal = fixture.open(name)
       store = await open(2)
     }
-    await waitFor(() => Effect.runPromise(journal.read), records => records.some(record => record.event.type === "CancellationSettled"))
-    if ((await Effect.runPromise(journal.readInputs)).length !== 0) throw new Error("Cleanup after death retained its payload")
+    await waitFor(async () => journal.read(), records => records.some(record => record.event.type === "CancellationSettled"))
+    if (journal.readInputs().length !== 0) throw new Error("Cleanup after death retained its payload")
     await Effect.runPromise(store.close)
     await Effect.runPromise(journal.close)
     journal = fixture.open(name)
@@ -270,9 +272,10 @@ export async function cancellationStall(fixture: Pick<CleanupFixture, "open">, m
   let store = await open(false)
   try {
     await Effect.runPromise(Deferred.await(entered).pipe(Effect.timeout(1_000)))
-    if (mode !== "producer") await waitFor(() => Effect.runPromise(journal.read), records => records.some(record => record.event.type === "EffectSettled"))
-    const input = (await Effect.runPromise(journal.readInputs))[0]!
+    if (mode !== "producer") await waitFor(async () => journal.read(), records => records.some(record => record.event.type === "EffectSettled"))
+    const input = journal.readInputs()[0]!
     await Effect.runPromise(store.cancel(input.ref, "stop"))
+    if (journal.lookupInvocation({ atom: input.ref.atom, act: input.ref.act }).status !== "pending") throw new Error("Unfinished cancellation was reported as settled")
     if (mode !== "producer") await Effect.runPromise(Deferred.await(cleanupEntered).pipe(Effect.timeout(1_000)))
     if (mode === "failure") await waitFor(async () => cleanups, count => count >= 3)
     if (mode === "defect" || mode === "rejected") {
@@ -282,29 +285,29 @@ export async function cancellationStall(fixture: Pick<CleanupFixture, "open">, m
       await Effect.runPromise(store.cancel(input.ref, "retry"))
       await Effect.runPromise(Effect.exit(store.wait))
       if (Number(cleanups) !== 1) throw new Error("Duplicate cancellation retried a dead cleanup")
-      const records = await Effect.runPromise(journal.read)
+      const records = journal.read()
       const final = records.find(record => mode === "defect" ? record.event.type === "CancellationDied" : record.event.type === "CancellationSettled")?.event
       if (!final || (final.type === "CancellationSettled" && final.outcome.status !== "rejected")
         || records.some(record => record.event.type === "RetryScheduled" || record.event.type === "EffectDied")
-        || (await Effect.runPromise(journal.readInputs)).length !== 1) throw new Error("Final cleanup failure lost its durable outcome or input")
-      await Effect.runPromise(store.checkpoint)
+        || journal.readInputs().length !== 1) throw new Error("Final cleanup failure lost its durable outcome or input")
+      if (Exit.isSuccess(await Effect.runPromise(Effect.exit(store.checkpoint)))) throw new Error("Failed cleanup allowed checkpoint capture")
       await Effect.runPromise(store.close)
       await Effect.runPromise(journal.close)
       journal = fixture.open(name)
       store = await open(true)
       const recovered = await Effect.runPromise(Effect.exit(store.wait.pipe(Effect.timeout(1_000))))
       if (Exit.isSuccess(recovered) || !Cause.pretty(recovered.cause).includes(diagnostic) || Number(cleanups) !== 1
-        || !isDeepStrictEqual(await Effect.runPromise(journal.read), records) || (await Effect.runPromise(journal.readInputs)).length !== 1) throw new Error("Recovery repeated or lost final cleanup failure")
+        || !isDeepStrictEqual(journal.read(), records) || journal.readInputs().length !== 1) throw new Error("Recovery repeated or lost final cleanup failure")
       return
     } else {
       const outcome = await Effect.runPromise(store.wait.pipe(Effect.timeoutOption(25)))
       if (outcome._tag !== "None") throw new Error("Unresolved cancellation unexpectedly finished waiting")
       if (mode === "producer" && Number(cleanups) !== 0) throw new Error("Cleanup ran before producer quiescence")
     }
-    const records = await Effect.runPromise(journal.read)
+    const records = journal.read()
     if (!records.some(record => record.event.type === "EffectCancelled")
       || records.some(record => record.event.type === "CancellationSettled" || record.event.type === "EffectDied")
-      || (await Effect.runPromise(journal.readInputs)).length !== 1) throw new Error("Unresolved cancellation lost input or recorded a terminal outcome")
+      || journal.readInputs().length !== 1) throw new Error("Unresolved cancellation lost input or recorded a terminal outcome")
     if (mode === "producer") {
       await Effect.runPromise(Deferred.succeed(release, undefined))
       await Effect.runPromise(store.wait.pipe(Effect.timeout(1_000)))
@@ -315,8 +318,9 @@ export async function cancellationStall(fixture: Pick<CleanupFixture, "open">, m
       store = await open(true)
       await Effect.runPromise(store.wait.pipe(Effect.timeout(1_000)))
     }
-    if ((await Effect.runPromise(journal.readInputs)).length !== 0
-      || (await Effect.runPromise(journal.read)).filter(record => record.event.type === "CancellationSettled").length !== 1) throw new Error("Resolved cancellation did not acknowledge and release input")
+    if (journal.readInputs().length !== 0
+      || journal.read().filter(record => record.event.type === "CancellationSettled").length !== 1) throw new Error("Resolved cancellation did not acknowledge and release input")
+    if (journal.lookupInvocation({ atom: input.ref.atom, act: input.ref.act }).status !== "settled") throw new Error("Acknowledged cleanup remained pending")
   } finally {
     await Effect.runPromise(Deferred.succeed(release, undefined))
     await Effect.runPromise(store.close)
@@ -325,7 +329,7 @@ export async function cancellationStall(fixture: Pick<CleanupFixture, "open">, m
 }
 
 
-// cancellationRetryRecovery checks shared retry counters, checkpointed wakes, and final success on Bun and workerd SQLite.
+// cancellationRetryRecovery checks retry counters and wake recovery from journal records on Bun and workerd SQLite.
 export async function cancellationRetryRecovery(fixture: Pick<CleanupFixture, "open">) {
   const name = "cancellation-retry-recovery"
   let journal = fixture.open(name)
@@ -355,16 +359,14 @@ export async function cancellationRetryRecovery(fixture: Pick<CleanupFixture, "o
   }))
   let store = await open(1)
   try {
-    const records = await waitFor(() => run(journal.read), records => records.some(record => record.event.type === "EffectSettled"))
+    const records = await waitFor(async () => journal.read(), records => records.some(record => record.event.type === "EffectSettled"))
     const accepted = records.find(record => record.event.type === "EffectRequested")!.event
     if (accepted.type !== "EffectRequested") throw new Error("Missing accepted request")
     await run(store.cancel(accepted.ref, "stop"))
     await waitFor(async () => store.recoveryState(), state => state.status === "parked")
     if (store.snapshot().retry(accepted.ref)?.attempt !== 1 || store.snapshot().retry(accepted.ref, "cancellation")?.attempt !== 1) throw new Error("Execution and cleanup retry counters interfered")
-    await run(store.checkpoint)
-    const saved = await run(journal.readCheckpoint)
-    if (!saved) throw new Error("Missing nested checkpoint")
-    if (decodeCheckpoint(saved.payload).operations.every(operation => !operation.cleanup?.retry)) throw new Error("Checkpoint lost cleanup retry state")
+    if (store.snapshot().checkpoint() !== undefined || Exit.isSuccess(await run(Effect.exit(store.checkpoint)))) throw new Error("Cleanup retry allowed checkpoint capture")
+    if ((journal.readCheckpoint()) !== undefined) throw new Error("Cleanup retry persisted a checkpoint")
     await run(store.close)
     await run(journal.close)
     journal = fixture.open(name)
@@ -375,11 +377,11 @@ export async function cancellationRetryRecovery(fixture: Pick<CleanupFixture, "o
     await run(store.resume)
     await run(store.wait)
     await run(store.checkpoint)
-    const checkpoint = await run(journal.readCheckpoint)
-    if (!checkpoint || JSON.parse(new TextDecoder().decode(checkpoint.payload)).version !== 3) throw new Error("Cleanup checkpoint lost its current encoding")
-    const history = await run(journal.read)
+    const checkpoint = journal.readCheckpoint()
+    if (!checkpoint || JSON.parse(new TextDecoder().decode(checkpoint.payload)).version !== 4) throw new Error("Cleanup checkpoint lost its current encoding")
+    const history = journal.read()
     const retries = history.flatMap(record => record.event.type === "RetryScheduled" && record.event.phase === "cancellation" ? [record.event.attempt] : [])
     if (!isDeepStrictEqual(retries, [1, 2]) || !isDeepStrictEqual(decisions, [0, 1]) || Number(cleanups) !== 3 || executions !== 2
-      || history.filter(record => record.event.type === "CancellationSettled").length !== 1 || (await run(journal.readInputs)).length !== 0) throw new Error("Cleanup retry did not preserve its sequence or discharge input")
+      || history.filter(record => record.event.type === "CancellationSettled").length !== 1 || journal.readInputs().length !== 0) throw new Error("Cleanup retry did not preserve its sequence or discharge input")
   } finally { await run(store.close); await run(journal.close); await run(Scope.close(scope, Exit.succeed(undefined))) }
 }

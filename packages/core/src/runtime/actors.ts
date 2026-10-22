@@ -1,3 +1,4 @@
+import { journalCall } from "../services/journal"
 import { isDeepStrictEqual } from "node:util"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Random, Schema, Scope, Semaphore } from "effect"
 import { Actor, ActorRequest, ActorCall, type ActorCaller } from "../services/actor"
@@ -211,7 +212,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
     }))
     const result = <Name extends keyof Contracts & string>(name: Name, id: string): Effect.Effect<MethodResult<MethodOutput<Contracts[Name]>>, Error> => options.run(Effect.gen(function* () {
       const thread = yield* open(coordinate)
-      const record = yield* journal.readMessage(id)
+      const record = yield* journalCall(() => journal.readMessage(id))
       if (!record) return yield* Effect.fail(new InvocationNotFound("Invocation not found"))
       const invocation = record.record.message?.invocation
       const method = thread.contracts[name]
@@ -236,7 +237,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
     // methodState reads a committed invocation without waiting for its result.
     const methodState = <Name extends keyof Contracts & string>(name: Name, id: string) => options.run(Effect.gen(function* () {
       const thread = yield* open(coordinate)
-      const record = yield* journal.readMessage(id)
+      const record = yield* journalCall(() => journal.readMessage(id))
       if (!record) return yield* Effect.fail(new InvocationNotFound("Invocation not found"))
       const invocation = record.record.message?.invocation
       const method = thread.contracts[name]
@@ -246,9 +247,9 @@ export function createActorExecution<Event extends object, Services, State, Cont
     type Client = { readonly [Name in keyof Contracts]: (input: MethodInput<Contracts[Name]>, request: { readonly id: string }) => Effect.Effect<MethodOutput<Contracts[Name]>, Error> }
     const methods = Object.fromEntries(Object.keys(thread.contracts).map(name => [name, (input: Schema.Json, request: { readonly id: string }) => invoke(name, input, request).pipe(Effect.andThen(result(name, request.id)), Effect.flatMap(result => result.status === "completed" ? Effect.succeed(result.output) : Effect.fail(result.status === "failed" ? new MethodFailed(result.error) : new MethodCancelled(result.reason))))])) as Client
     return { coordinate: Object.freeze({ ...coordinate }), execution: thread.execution, store: createThreadStore(coordinate, source), contracts: thread.contracts, methods, invoke, result, cancel, methodState,
-      records: () => options.run(journal.read),
+      records: () => options.run(journalCall(() => journal.read())),
       get: source.get, getState: () => current(coordinate).getState(), resume: options.run(open(coordinate).pipe(Effect.flatMap(thread => thread.resume))), wait: options.run(open(coordinate).pipe(Effect.flatMap(thread => thread.wait))),
-      receipt: (id: string) => options.run(journal.readMessage(id).pipe(Effect.tap(record => record ? journal.acknowledge : Effect.void), Effect.map(record => record ? { id, position: record.position } : undefined))),
+      receipt: (id: string) => options.run(journalCall(() => journal.readMessage(id)).pipe(Effect.tap(record => record ? journal.acknowledge() : Effect.void), Effect.map(record => record ? { id, position: record.position } : undefined))),
     }
   })
   return {

@@ -4,19 +4,21 @@ import { act, createEventLog, decodeCheckpoint, durableAtom, effectAtom, encodeC
 import { storeRequest } from "../../../../core/src/runtime/input-digest"
 
 const Started = Schema.Struct({ type: Schema.Literal("Started"), text: Schema.String })
+const Finished = Schema.Struct({ type: Schema.Literal("Finished") })
+const Events = Schema.Union([Started, Finished])
 const Job = act({ name: "test.settledEffect", input: Schema.Struct({ system: Schema.String, text: Schema.String }), success: Schema.String, failure: Schema.String })
 const outcomes = ["value", "rejected", "promise", "deferred", "pending"] as const
 
 // eventLog offers one Job for the started text while system is defined; system stands in for an author-edited prompt.
 const eventLog = (system: string | undefined, digestMinBytes: number, checkpoint?: EffectCheckpoint, inputs: readonly PendingEffectInput[] = []) => {
-  const state = durableAtom({ name: "settledEffect.state", input: Started, schema: Schema.NullOr(Schema.String), initial: null, reduce: (_, event) => event.text })
+  const state = durableAtom({ name: "settledEffect.state", input: Events, schema: Schema.Struct({ text: Schema.NullOr(Schema.String), done: Schema.Boolean }), initial: { text: null, done: false }, reduce: (_, event) => event.type === "Started" ? { text: event.text, done: false } : { text: null, done: true } })
   let request: ReturnType<typeof Job.request> | undefined
   const root = effectAtom(get => {
-    const text = get(state)
-    if (text !== null && system !== undefined) request ??= Job.request({ input: { system, text } })
-    return { view: text, events: {}, acts: request ? { call: request } : {} }
+    const view = get(state)
+    if (view.text !== null && system !== undefined && !view.done) request ??= Job.request({ input: { system, text: view.text }, onSettled: () => [{ type: "Finished" }] })
+    return { view, events: {}, acts: request && !view.done ? { call: request } : {} }
   })
-  return createEventLog({ schema: Started, atoms: { root }, digestMinBytes, inputs, ...(checkpoint ? { checkpoint } : {}) })
+  return createEventLog({ schema: Events, atoms: { root }, digestMinBytes, inputs, ...(checkpoint ? { checkpoint } : {}) })
 }
 
 const rejected = (run: () => unknown) => {

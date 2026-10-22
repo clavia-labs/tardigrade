@@ -1,3 +1,4 @@
+import { memoryJournalReads } from "../fixtures/memory-journal"
 import { Clock, Context, Effect, Layer } from "effect"
 import * as fc from "fast-check"
 import { defineActor, effectAtom, RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
@@ -17,19 +18,18 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
   const records: Recorded<Event>[] = []
   let checkpoint: StoredCheckpoint | undefined
   const journal: Journal<Event> = {
-    readInputs: Effect.succeed([]),
-    read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
-    readCheckpoint: Effect.sync(() => checkpoint),
-    append: (position, events) => Effect.sync(() => {
+    ...memoryJournalReads(() => records),
+    readCheckpoint: () => checkpoint,
+    append: (position, events) => {
       if (position !== records.length) throw new RuntimeError("Unexpected journal position")
       records.push(...events)
-    }),
-    appendWithCheckpoint: (position, events, value) => Effect.sync(() => {
+    },
+    appendWithCheckpoint: (position, events, value) => {
       if (position !== records.length) throw new RuntimeError("Unexpected checkpoint position")
       if (value.position !== (checkpoint?.position ?? 0) + 2) throw new RuntimeError("Checkpoint threshold cadence changed across recovery")
       records.push(...events)
       checkpoint = value
-    }),
+    },
   }
   const actor = defineActor("turn-facts", Effect.sync(() => ({
     atom: effectAtom(get => ({

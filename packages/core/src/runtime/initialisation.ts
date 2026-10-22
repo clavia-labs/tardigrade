@@ -1,3 +1,4 @@
+import { journalCommit, journalCall } from "../services/journal"
 import { Effect, Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import type { Journal } from "../services/journal"
@@ -48,10 +49,10 @@ export function initialiseState<Event extends object>(options: {
 }): Effect.Effect<void, Error> {
   return Effect.gen(function* () {
     const event = yield* prepareInitialState(options.atoms, options.initialState, options.source)
-    const records = yield* options.journal.read
+    const records = yield* journalCall(() => options.journal.read())
     const prior = records.map(record => record.event).find(Schema.is(StateInitialised))
     if (prior && isDeepStrictEqual(prior, event)) return
     if (records.length > 1 || records.some(record => !Schema.is(ThreadCreated)(record.event))) return yield* Effect.fail(new RuntimeError("State initialisation requires a fresh journal"))
-    yield* options.journal.append(records.length, [{ event }])
+    yield* journalCommit(options.journal, () => options.journal.append(records.length, [{ event }]))
   })
 }

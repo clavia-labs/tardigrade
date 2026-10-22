@@ -1,11 +1,13 @@
 import * as fc from "fast-check"
-import { act, effectAtom, createEventLog, encodeCheckpoint, decodeCheckpoint, effectKey, DeliverMessage } from "@clavia/tardigrade-core"
+import { act, durableAtom, effectAtom, createEventLog, encodeCheckpoint, decodeCheckpoint, effectKey, DeliverMessage } from "@clavia/tardigrade-core"
 import { codeModeState, CodeModeState } from "../../../../agent/src/atoms/durable/code-mode"
 import { inferState, initialInference } from "../../../../agent/src/atoms/durable/inference"
 import { EvaluateCode, ExecutePackage } from "../../../../agent/src/contracts/code-mode"
 import { Schema } from "effect"
 
 const Requested = Schema.Struct({ type: Schema.Literal("Requested") })
+const Completed = Schema.Struct({ type: Schema.Literal("Completed"), origin: Schema.Finite })
+const Event = Schema.Union([Requested, Completed])
 const Job = act({ name: "test.origin", input: Schema.Json, success: Schema.Json, failure: Schema.String })
 
 const name = fc.string({ minLength: 1, maxLength: 24 })
@@ -47,9 +49,12 @@ function rejects(run: () => unknown) {
 
 // roundtripBindings restores identical calls after reordering and renaming their producer slots.
 function roundtripBindings(root: string, input: Schema.Json, reverse: boolean) {
-  const requests = [0, 1].map(origin => Job.request({ origin, input }))
-  const output = (calls: typeof requests, renamed: boolean) => ({ [root]: effectAtom(() => ({ view: null, events: {}, acts: Object.fromEntries(calls.map((request, index) => [renamed ? `new/${index}` : `old/${index}`, request])) })) })
-  const log = createEventLog({ schema: Requested, atoms: output(requests, false) })
+  const requests = [0, 1].map(origin => Job.request({ origin, input, onSettled: () => [{ type: "Completed", origin }] }))
+  const output = (calls: typeof requests, renamed: boolean) => {
+    const completed = durableAtom({ name: "bindings.completed", input: Completed, schema: Schema.Array(Schema.Finite), initial: [], reduce: (state, event) => [...state, event.origin] })
+    return { [root]: effectAtom(get => ({ view: get(completed), events: {}, acts: Object.fromEntries(calls.flatMap((request, index) => get(completed).includes(request.origin!) ? [] : [[renamed ? `new/${index}` : `old/${index}`, request]])) })) }
+  }
+  const log = createEventLog({ schema: Event, atoms: output(requests, false) })
   try {
     let snapshot = log.replay([{ event: { type: "Requested" } }, { event: { type: "Requested" } }])
     const refs = new Map<number, { seq: number; atom: string; act: string }>()
@@ -58,12 +63,14 @@ function roundtripBindings(root: string, input: Schema.Json, reverse: boolean) {
       snapshot = log.append(snapshot, { type: "EffectRequested", ref, origin, request: { act: Job.name, input: { _tag: "InlineInput", value: input } } })
       refs.set(origin, ref)
     }
+    for (const request of requests) if (effectKey(snapshot.get(request.ref)!) !== effectKey(refs.get(request.origin!)!)) throw new Error("Acceptance bound the wrong active invocation")
     for (const ref of refs.values()) snapshot = log.append(snapshot, { type: "EffectSettled", ref, outcome: { status: "fulfilled", value: { type: "value", value: null } } })
-    const restoredRequests = [1, 0].map(origin => Job.request({ origin, input }))
-    const restored = createEventLog({ schema: Requested, atoms: output(restoredRequests, true), checkpoint: decodeCheckpoint(encodeCheckpoint(snapshot.checkpoint()!)) })
+    const restoredRequests = [1, 0].map(origin => Job.request({ origin, input, onSettled: () => [{ type: "Completed", origin }] }))
+    const restored = createEventLog({ schema: Event, atoms: output(restoredRequests, true), checkpoint: decodeCheckpoint(encodeCheckpoint(snapshot.checkpoint()!)) })
     try {
       const recovered = restored.initial
-      for (const request of restoredRequests) if (effectKey(recovered.get(request.ref)!) !== effectKey(refs.get(request.origin!)!)) throw new Error("Recovery guessed invocation ownership from inputs or slots")
+      for (const request of restoredRequests) if (recovered.get(request.ref) !== undefined) throw new Error("Recovery retained a completed invocation binding")
+      if (recovered.bindings.size !== 0 || "operations" in recovered.checkpoint()!) throw new Error("Checkpoint retained completed operations")
       if (recovered.effects().length !== 0) throw new Error("Recovery proposed already settled work")
     } finally { restored.dispose() }
   } finally { log.dispose() }

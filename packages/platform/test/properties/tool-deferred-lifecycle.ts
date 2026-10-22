@@ -1,3 +1,4 @@
+import { memoryJournalReads } from "../fixtures/memory-journal"
 import { createTestStore } from "./runtime/store"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/unstable/rpc"
@@ -22,16 +23,14 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
   let reopening = false
   let watches = 0
   const journal: Journal<Event> = {
-    readInputs: Effect.succeed([]),
-    read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
-    // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined; Effect.void has a void result type.
-    readCheckpoint: Effect.succeed(undefined),
-    append: (expected, events) => Effect.gen(function* () {
-      if (expected !== records.length) return yield* Effect.fail(new RuntimeError("Unexpected journal length"))
+    ...memoryJournalReads(() => records),
+    readCheckpoint: () => undefined,
+    append: (expected, events) => {
+      if (expected !== records.length) throw new RuntimeError("Unexpected journal length")
       records.push(...events)
-      if (events.some(({ event }) => event.type === "ToolReturned")) yield* Deferred.succeed(recorded, undefined)
-    }),
-    appendWithCheckpoint: () => Effect.fail(new RuntimeError("Unexpected checkpoint")),
+      if (events.some(({ event }) => event.type === "ToolReturned")) Deferred.doneUnsafe(recorded, Effect.void)
+    },
+    appendWithCheckpoint: () => { throw new RuntimeError("Unexpected checkpoint") },
   }
   const input = Schema.Struct({ value: Schema.Finite })
   const libraries = [defineLibrary({ name: "test", description: "Jobs", methods: [

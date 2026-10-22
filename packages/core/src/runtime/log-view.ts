@@ -84,7 +84,7 @@ export class LogView<T> implements ReadonlyLog<T> {
   }
 }
 
-// ReadonlyIndex is the read surface of a map that only gains keys; readonly maps satisfy it.
+// ReadonlyIndex is the read surface of a map; readonly maps satisfy it.
 export interface ReadonlyIndex<K, V> {
   readonly size: number
   get(key: K): V | undefined

@@ -4,6 +4,7 @@ import { expect, inject, test } from "vitest"
 import { Effect } from "effect"
 import { createWatchdog, watchdogKey, DEFAULT_PROVISION_RETRY_LIMIT } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
+import { RUNTIME_PROPERTY_TEST_TIMEOUT_MS } from "../properties/runtime/config"
 import { threadFlow } from "../fixtures/thread-flow"
 import { cloudflareThreadName } from "../../src/cloudflare"
 import type { LayoutActorDO, LayoutThreadDO } from "../fixtures/workerd/layout-fixture"
@@ -161,7 +162,7 @@ test("provisioning retries survive reopening and concurrent named requests share
     })
     expect((await flow.request("", { name: "after-failure" })).status).toBe(200)
   } finally { await held.releaseProvision(); await original }
-})
+}, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
 
 test.skipIf(!inject("longTests"))("200 concurrent creates finish while another thread is still provisioning", async () => {
   const instance = "parallel-creates"

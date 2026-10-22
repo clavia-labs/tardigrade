@@ -1,3 +1,4 @@
+import { journalCall } from "@clavia/tardigrade-core"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -34,7 +35,7 @@ export async function bunContentFixture(): Promise<ContentFixture & { readonly s
     seed: () => Effect.runPromise(Effect.gen(function* () {
       yield* thread.wait
       const journal = bunJournal({ actor: "events", filename: bunThreadPath(join(root, "host"), thread.coordinate) })
-      const checkpoint = yield* journal.readCheckpoint.pipe(Effect.ensuring(journal.close))
+      const checkpoint = yield* journalCall(() => journal.readCheckpoint()).pipe(Effect.ensuring(journal.close))
       if (!checkpoint) return yield* Effect.fail(new RuntimeError("Expected a completed agent checkpoint"))
       const initialState = Object.fromEntries(decodeCheckpoint(checkpoint.payload).durable.filter(entry => entry.name.startsWith("agent.")).map(entry => [entry.name, Schema.decodeUnknownSync(Schema.Json)(entry.state)]))
       thread = yield* host.allocateRootThread({ instance: "main", name: "seeded", initialState })

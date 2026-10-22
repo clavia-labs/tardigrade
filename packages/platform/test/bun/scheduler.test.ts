@@ -1,3 +1,4 @@
+import { journalCommit } from "@clavia/tardigrade-core"
 import { test } from "bun:test"
 import { strict as assert } from "node:assert"
 import { mkdtemp, rm } from "node:fs/promises"
@@ -57,7 +58,7 @@ for (const mutation of ["schedule", "append"] as const) test(`concurrent journal
     await Effect.runPromise(Deferred.await(entered))
     const secondSchedule = Effect.runPromise(mutation === "schedule"
       ? journal.scheduler!.schedule({ id: "earlier", target: null, dueAt: earlier })
-      : journal.append(0, [{ event: { type: "RetryScheduled", ref: { seq: 0, atom: "test", act: "work" }, attempt: 1, dueAt: earlier, reason: null } }]))
+      : journalCommit(journal, () => journal.append(0, [{ event: { type: "RetryScheduled", ref: { seq: 0, atom: "test", act: "work" }, attempt: 1, dueAt: earlier, reason: null } }])))
     await Bun.sleep(20)
     await Effect.runPromise(Deferred.succeed(release, undefined))
     await Promise.all([firstSchedule, secondSchedule])

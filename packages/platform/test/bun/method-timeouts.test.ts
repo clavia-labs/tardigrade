@@ -1,3 +1,5 @@
+import { completionState } from "../fixtures/completion-state"
+import { ModelReply } from "@clavia/tardigrade-agent/contracts/events"
 import { expect, test } from "bun:test"
 import { Context, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/unstable/rpc"
@@ -20,10 +22,11 @@ test("library promise timeout validates annotations and survives tool compilatio
 })
 
 test("inference promise uses its model waiting budget", async () => {
+  const completion = completionState("inference-timeout", ModelReply)
   const actor = defineActor("inference-timeout", Effect.sync(() => {
-    const request = Generate.request({ input: { model: { provider: "openrouter", model_id: "test" }, system: "", tools: [], context: [] } })
-    return { schema: Schema.Struct({ type: Schema.Literal("Unused") }), atom: effectAtom(get => {
-      const view = get(request.result)
+    const request = Generate.request({ onSettled: completion.onSettled, input: { model: { provider: "openrouter", model_id: "test" }, system: "", tools: [], context: [] } })
+    return { schema: completion.event, atom: effectAtom(get => {
+      const view = get(completion.state)
       return { view, events: {}, acts: view.status === "pending" ? { generate: request } : {} }
     }) }
   }))

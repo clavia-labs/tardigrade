@@ -1,3 +1,4 @@
+import { completionState } from "../completion-state"
 import { effectServiceClient, type EffectServicePolicy } from "../effect-service"
 import { waitFor } from "../wait"
 export { EffectServiceDO } from "./effect-service.worker"
@@ -24,7 +25,8 @@ import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
 import { cloudflareSchedulerStorage } from "../../../src/cloudflare/scheduler"
 
 const NativeJob = act({ name: "native-input", input: Schema.String, success: Schema.String, failure: Schema.String })
-const NativeEvent = Schema.Struct({ type: Schema.Literal("Unused") })
+const completion = completionState("native.completion", Schema.String)
+const NativeEvent = Schema.Union([Schema.Struct({ type: Schema.Literal("Unused") }), completion.event])
 type NativeConfig = { readonly input: string; readonly mode: "pending" | "deferred" | "complete"; readonly cleanup: "retry" | "success"; readonly attemptTimeoutMs?: number | null }
 const nativeTarget = { actor: "native-input", instance: "main", thread: "one" }
 const nativeRecoveryPolicy = { attemptTimeoutMs: 1_000, keepAliveIntervalMs: 250, retryIntervalMs: 250, maxRetryIntervalMs: 250 }
@@ -53,8 +55,8 @@ export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByNam
   private createStore(input: string, mode: "pending" | "deferred" | "complete", cleanup: "retry" | "success", attemptTimeoutMs?: number | null) {
     return Effect.runPromise(createActorStore({
       actor: defineActor("native-input", Effect.sync(() => {
-        const request = NativeJob.request({ input })
-        return { schema: NativeEvent, atom: effectAtom(get => ({ view: get(request.result), events: {}, acts: get(request.result).status === "pending" ? { job: request } : {} })) }
+        const request = NativeJob.request({ input, onSettled: completion.onSettled })
+        return { schema: NativeEvent, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(completion.state).status === "pending" ? { job: request } : {} })) }
       })), journal: this.journal, effectInput: { digestMinBytes: 0 }, checkpoint: { mode: "manual" }, cancellation: { retryIntervalMs: 250 }, actorContext: Context.pick(), ...(attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs }),
       services: () => Layer.mergeAll(Layer.succeed(Promises, { watch: () => Effect.void, cancel: () => Effect.void }), Layer.succeed(Scheduler, this.scheduler), NativeJob.layer((accepted, { ref }) => Effect.gen({ self: this }, function* () {
         yield* this.observe("execution", accepted, ref)
@@ -98,12 +100,12 @@ export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByNam
     return this.instance
   }
   async state() {
-    return { instance: this.instance, service: this.ctx.id.toString(), externalJobs: await this.external.jobs(), records: await Effect.runPromise(this.journal.read), inputs: await Effect.runPromise(this.journal.readInputs), calls: await this.ctx.storage.get<readonly NativeCall[]>("calls") ?? [], watchdog: [...(await this.ctx.storage.list<WatchdogEntry>({ prefix: "tardie:watchdog:" })).values()], alarmAt: await this.ctx.storage.getAlarm() }
+    return { instance: this.instance, service: this.ctx.id.toString(), externalJobs: await this.external.jobs(), records: this.journal.read(), inputs: this.journal.readInputs(), calls: await this.ctx.storage.get<readonly NativeCall[]>("calls") ?? [], watchdog: [...(await this.ctx.storage.list<WatchdogEntry>({ prefix: "tardie:watchdog:" })).values()], alarmAt: await this.ctx.storage.getAlarm() }
   }
   async cancel(ref: EffectRef) { await Effect.runPromise(this.store!.cancel(ref, "stop")) }
   async resume() { await Effect.runPromise(this.store!.resume) }
   async wait() { await Effect.runPromise(this.store!.wait) }
-  async checkpoint() { await Effect.runPromise(this.store!.checkpoint) }
+  async checkpoint() { return Effect.runPromise(this.store!.checkpoint.pipe(Effect.match({ onSuccess: () => "captured", onFailure: error => error.message }))) }
   abort() { this.ctx.abort("Native input reset fixture") }
   async dispose() {
     try { await this.external.configure({ holdSubmissionResponse: false, holdCancellationResponse: false }) }
