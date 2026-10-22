@@ -3,24 +3,37 @@
 // checks the args before the method runs, so a wrong call settles with a teaching error. Both
 // are pure functions of the schema, so replay reproduces every refusal (contract.test.ts).
 
-// SchemaNode is the schema subset the contract reads: type, properties, required, enum, items.
-// The subset keeps standard JSON Schema semantics. A keyword outside the subset is ignored, so
-// a richer schema stays a valid declaration.
+// SchemaNode is the schema subset the contract reads: type, properties, required, enum, items,
+// anyOf, oneOf. The subset keeps standard JSON Schema semantics. A keyword outside the subset is
+// ignored, so a richer schema stays a valid declaration.
 interface SchemaNode {
   readonly type?: string
   readonly properties?: Readonly<Record<string, SchemaNode>>
   readonly required?: ReadonlyArray<string>
   readonly enum?: ReadonlyArray<unknown>
   readonly items?: SchemaNode
+  readonly anyOf?: ReadonlyArray<SchemaNode>
+  readonly oneOf?: ReadonlyArray<SchemaNode>
 }
 
 const asNode = (schema: unknown): SchemaNode | undefined =>
   typeof schema === "object" && schema !== null ? (schema as SchemaNode) : undefined
 
+// unionMembers flattens nested unions and enums into distinct members, so `(string | null) | null`
+// renders as `string | null` and a member never repeats (contract.test.ts).
+const unionMembers = (node: SchemaNode, depth: number): ReadonlyArray<string> => {
+  const union = node.anyOf ?? node.oneOf
+  if (union !== undefined && union.length > 0) return [...new Set(union.flatMap((branch) => unionMembers(branch, depth)))]
+  if (node.enum !== undefined && node.enum.length > 0) return node.enum.map((v) => JSON.stringify(v))
+  return [typeName(node, depth)]
+}
+
+const hasMembers = (node: SchemaNode): boolean => (node.anyOf ?? node.oneOf ?? node.enum ?? []).length > 0
+
 // typeName renders one schema node as a type expression. Depth caps the nesting: an object
 // below the cap renders as `object`, so a deep schema still fits one line.
 const typeName = (node: SchemaNode, depth: number): string => {
-  if (node.enum !== undefined && node.enum.length > 0) return node.enum.map((v) => JSON.stringify(v)).join(" | ")
+  if (hasMembers(node)) return unionMembers(node, depth).join(" | ")
   switch (node.type) {
     case "string":
     case "boolean":
@@ -29,8 +42,11 @@ const typeName = (node: SchemaNode, depth: number): string => {
     case "number":
     case "integer":
       return "number"
-    case "array":
-      return node.items === undefined ? "array" : `${typeName(node.items, depth)}[]`
+    case "array": {
+      if (node.items === undefined) return "array"
+      const members = unionMembers(node.items, depth)
+      return members.length === 1 ? `${members[0]}[]` : `(${members.join(" | ")})[]`
+    }
     case "object": {
       if (node.properties === undefined || depth <= 0) return "object"
       return objectBody(node, depth)

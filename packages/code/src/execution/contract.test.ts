@@ -48,6 +48,23 @@ describe("renderSignature", () => {
     expect(renderSignature("judge", schema)).toBe('judge({status: "pass" | "fail", limit?: number, tags?: string[]})')
   })
 
+  test("anyOf and oneOf render as unions, flattened and deduped, with a union array item in parentheses", () => {
+    // Schema.Struct({ n: Schema.Number, note: Schema.NullOr(Schema.String), memo: Schema.optional(Schema.NullOr(Schema.String)), tags: Schema.Array(Schema.NullOr(Schema.String)), kinds: Schema.Array(Schema.Literals(["a", "b"])), u: Schema.Union([Schema.String, Schema.Boolean], { mode: "oneOf" }) })
+    const effect = {
+      type: "object",
+      properties: {
+        n: { anyOf: [{ type: "number" }, { type: "string", enum: ["Infinity", "-Infinity", "NaN"] }] },
+        note: { anyOf: [{ type: "string" }, { type: "null" }] },
+        memo: { anyOf: [{ anyOf: [{ type: "string" }, { type: "null" }] }, { type: "null" }] },
+        tags: { type: "array", items: { anyOf: [{ type: "string" }, { type: "null" }] } },
+        kinds: { type: "array", items: { type: "string", enum: ["a", "b"] } },
+        u: { oneOf: [{ type: "string" }, { type: "boolean" }] }
+      },
+      required: ["n", "note", "tags", "kinds", "u"]
+    }
+    expect(renderSignature("save", effect)).toBe('save({n: number | "Infinity" | "-Infinity" | "NaN", note: string | null, memo?: string | null, tags: (string | null)[], kinds: ("a" | "b")[], u: string | boolean})')
+  })
+
   test("a nested object renders one level deep, then flattens to `object`", () => {
     const schema = {
       type: "object",
