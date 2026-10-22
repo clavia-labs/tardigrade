@@ -119,6 +119,7 @@ export interface ActorExecutionOptions<Event extends object, Services, State, Co
   readonly executionStreamBus?: typeof ExecutionStream.Service
   readonly cancellation?: CancellationOptions
   readonly checkpointPolicy?: CheckpointPolicy
+  readonly journalReadBatchSize?: number
   readonly effectInput?: { readonly digestMinBytes?: number }
   readonly promises?: Partial<PromisePolicy>
   readonly canDrive?: (target: WatchdogTarget) => Effect.Effect<boolean, Error>
@@ -189,6 +190,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
         ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
         ...(options.cancellation ? { cancellation: options.cancellation } : {}),
         ...(options.checkpointPolicy ? { checkpoint: options.checkpointPolicy } : {}),
+        ...(options.journalReadBatchSize === undefined ? {} : { journalReadBatchSize: options.journalReadBatchSize }),
         ...(options.effectInput ? { effectInput: options.effectInput } : {}), actor: options.actor, actorContext: options.actorContext, journal, ...(options.executionStream ? { executionStream: options.executionStream } : {}), ...(options.executionStreamBus ? { executionStreamBus: options.executionStreamBus } : {}), ...(options.canDrive ? { canDrive: options.canDrive(coordinate) } : {}), ...(options.promises ? { promises: options.promises } : {}), delivery: options.delivery(coordinate), services: runtime => options.services(coordinate, runtime),
       })), Effect.onError(() => Effect.sync(() => { threads.delete(key) }))))
       threads.set(key, pending)

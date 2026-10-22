@@ -1,16 +1,25 @@
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
-import { atom, type Atom } from "./atom"
+import type { Atom } from "./atom"
 import { incrementalValidator, invalid } from "./incremental/validate"
 import { recordEvent, recordMetadata } from "../runtime/record"
 import type { RecordMetadata } from "../services/journal"
 import { EventLog, eventLogContext } from "../services/event-log"
 import { AtomState, initialStateSeed, type StatefulAtom } from "../initialise"
+import type { JournalFamily } from "../services/journal/family"
 
 export interface DurableAtom<State, Event> extends Atom<State>, StatefulAtom {
   readonly name: string
   readonly schema: Schema.Schema<State>
   readonly input: Schema.Schema<Event>
+}
+
+export interface DurableAtomOptions<State, Event> {
+  readonly name: string
+  readonly input: Schema.Schema<Event>
+  readonly schema: Schema.Schema<State>
+  readonly initial: NoInfer<State>
+  readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<State>
 }
 
 /*
@@ -24,13 +33,13 @@ const count = durableAtom({
 */
 
 // durableAtom folds matching input events into validated state and supplies their zero-based journal positions. Schemas must be pure; reducers preserve unchanged references and leave published state unchanged. Plain-data states are frozen (packages/platform/test/properties/runtime/state-validation.ts).
-export function durableAtom<State, Event>(options: {
-  readonly name: string
-  readonly input: Schema.Schema<Event>
-  readonly schema: Schema.Schema<State>
-  readonly initial: NoInfer<State>
-  readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<State>
-}): DurableAtom<State, Event> {
+export function durableAtom<State, Event>(options: DurableAtomOptions<State, Event>): DurableAtom<State, Event> {
+  return makeDurableAtom(options)
+}
+
+// makeDurableAtom constructs a durable atom with an optional idle retention duration.
+export function makeDurableAtom<State, Event>(options: DurableAtomOptions<State, Event>, idleTTL?: number, member?: { readonly family: JournalFamily; readonly key: string }): DurableAtom<State, Event> {
+  const retain = <Node extends Atom<unknown>>(node: Node): Node => idleTTL === undefined ? NativeAtom.keepAlive(node) : NativeAtom.setIdleTTL(node, idleTTL)
   const accepts = Schema.is(options.input)
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
@@ -51,7 +60,7 @@ export function durableAtom<State, Event>(options: {
   const initial = structuredClone(options.initial)
   validate(initial)
   check(initial)
-  const codec = { name: options.name, decode: restore, encode: (value: unknown) => encode(value as State) }
+  const codec = { name: options.name, decode: restore, encode: (value: unknown) => encode(value as State), ...(idleTTL === undefined ? {} : { idleTTL }) }
   type Frame = { readonly source: Atom<unknown>; readonly position: number; readonly state: State }
   const reduced = NativeAtom.readable((get): Frame => {
     const context = get(eventLogContext)
@@ -74,6 +83,20 @@ export function durableAtom<State, Event>(options: {
     }
     let state = continued ? previous.state : retained ? check(retained.value as State) : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : check(structuredClone(initial))
     let start = continued ? previous.position : retained ? retained.position : seed?.state.has(options.name) ? seed.position : 0
+    if (member && replay.readFamily) {
+      if (!continued && !retained && start === 0) {
+        const initialSeed = replay.originSeed ? replay.originSeed.value : initialStateSeed(replay.read(0))
+        if (initialSeed?.state.has(options.name)) state = restore(initialSeed.state.get(options.name))
+        start = initialSeed?.position ?? 0
+      }
+      let cursor = start - 1
+      for (const entry of replay.readFamily(member.family, member.key, start)) {
+        if (!Number.isSafeInteger(entry.position) || entry.position < start || entry.position >= position || entry.position <= cursor) throw new Error(`Durable atom family replay position is invalid: ${options.name}`)
+        state = fold(state, recordEvent(entry.record), recordMetadata(entry.record), entry.position)
+        cursor = entry.position
+      }
+      return { source, position, state }
+    }
     if (start < position) {
       const records = replay.read(start)
       if (records.length !== position - start) throw new Error(`Durable atom replay range is unavailable: ${options.name}`)
@@ -90,8 +113,8 @@ export function durableAtom<State, Event>(options: {
       }
     }
     return { source, position, state }
-  }).pipe(NativeAtom.keepAlive)
-  const output = atom(get => get(reduced).state)
+  }).pipe(retain)
+  const output = NativeAtom.readable(get => get(reduced).state).pipe(retain)
   return Object.assign(output, {
     name: options.name,
     schema: options.schema,

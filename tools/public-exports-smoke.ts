@@ -23,7 +23,8 @@ await load("tardie/deprecated/bun")
 await load("tardie/deprecated/client")
 await load("tardie/model")
 await load("tardie/code")
-for (const path of ["tardie", "tardie/experimental", "tardie/core/atoms/atom", "tardie/agent/atoms", "tardie/deprecated/core/component/runtime", "tardie/deprecated/core/component/composition/parent"]) {
+await load("tardie/experimental")
+for (const path of ["tardie", "tardie/core/atoms/atom", "tardie/agent/atoms", "tardie/deprecated/core/component/runtime", "tardie/deprecated/core/component/composition/parent"]) {
   let blocked = false
   try { require.resolve(path) } catch { blocked = true }
   if (!blocked) throw new Error(`${path} is publicly importable`)

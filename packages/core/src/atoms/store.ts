@@ -1,5 +1,5 @@
 import { Context, Schema } from "effect"
-import { AtomRegistry } from "effect/unstable/reactivity"
+import { AtomRegistry, Atom as NativeAtom } from "effect/unstable/reactivity"
 import type { Atom, PrimitiveAtom, SetStateAction } from "./atom"
 import { EventLog, eventLogContext } from "../services/event-log"
 import { actorGraph } from "./graph"
@@ -8,7 +8,19 @@ import { AtomState } from "../initialise"
 
 // createStore owns an Effect registry and provides services to durable projections.
 export function createStore(services?: Context.Context<EventLog>) {
-  const registry = AtomRegistry.make()
+  const scheduled = new Set<() => void>()
+  const registry = AtomRegistry.make({ scheduleTask: task => {
+    let work: (() => void) | undefined = task
+    const run = () => {
+      const current = work
+      work = undefined
+      scheduled.delete(run)
+      current?.()
+    }
+    scheduled.add(run)
+    queueMicrotask(run)
+    return () => { work = undefined; scheduled.delete(run) }
+  } })
   if (services) registry.set(eventLogContext, services)
   const reachable = (roots: Readonly<Record<string, Atom<unknown>>>) => {
     for (const root of Object.values(roots)) registry.get(root)
@@ -29,6 +41,8 @@ export function createStore(services?: Context.Context<EventLog>) {
     get: <Value>(node: Atom<Value>): Value => registry.get(node),
     graph: (roots: Readonly<Record<string, Atom<unknown>>>) => actorGraph(registry, roots),
     nodes: () => registry.getNodes(),
+    flush: () => { while (scheduled.size) for (const run of scheduled) run() },
+    batch: NativeAtom.batch,
     eventSchemas: (roots: Readonly<Record<string, Atom<unknown>>>) => {
       const schemas = new Set<Schema.Top>()
       for (const { atom } of reachable(roots)) {

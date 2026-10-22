@@ -4,6 +4,9 @@ import { SqlClient } from "effect/unstable/sql"
 import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage, PendingEffectInput, effectKey, type EffectInputChanges } from "@clavia/tardigrade-core"
 import { initializeSqlScheduler, sqlSchedulerTransaction } from "./sql-scheduler"
 import { recordRetryWakes } from "./retry-wakes"
+import { DEFAULT_FAMILY_INDEX_BATCH_SIZE, initializeSqlFamilyIndex, sqlFamilyIndex, type FamilyIndexOptions } from "./sql-family-index"
+import type { JournalFamily, FamilyRecord } from "@clavia/tardigrade-core"
+export { DEFAULT_FAMILY_INDEX_BATCH_SIZE, type FamilyIndexOptions } from "./sql-family-index"
 
 import { checkpointDigestSync, journalCall } from "@clavia/tardigrade-core"
 import { CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES, DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes, encodeCheckpointChunks, decodeCheckpointChunks, type CheckpointChunk, type CheckpointChunkOptions } from "./checkpoint-chunks"
@@ -39,7 +42,11 @@ const indexInvocationRecord = (sql: SqlClient.SqlClient, actor: string, seq: num
 
 // DEFAULT_EVENT_INLINE_BYTES bounds inline UTF-8 record bytes before chunking (journalEventChunks).
 export const DEFAULT_EVENT_INLINE_BYTES = 1_500_000
-export interface JournalRecordOptions { readonly eventInlineBytes?: number | undefined }
+export const DEFAULT_INVOCATION_INDEX_BATCH_SIZE = 16
+export interface JournalRecordOptions extends FamilyIndexOptions {
+  readonly eventInlineBytes?: number | undefined
+  readonly invocationIndexBatchSize?: number | undefined
+}
 
 export interface SqlJournalLimits { readonly maxRowBytes: number }
 
@@ -55,6 +62,10 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
   readonly commit?: (work: () => undefined, records: readonly Recorded<Event>[], position: number) => undefined
 }) {
   if (!options.actor) throw new RuntimeError("Journal actor identity must be nonempty")
+  const familyIndexBatchSize = options.familyIndexBatchSize ?? DEFAULT_FAMILY_INDEX_BATCH_SIZE
+  if (!Number.isSafeInteger(familyIndexBatchSize) || familyIndexBatchSize < 1) throw new RuntimeError("familyIndexBatchSize must be a positive safe integer")
+  const invocationIndexBatchSize = options.invocationIndexBatchSize ?? DEFAULT_INVOCATION_INDEX_BATCH_SIZE
+  if (!Number.isSafeInteger(invocationIndexBatchSize) || invocationIndexBatchSize < 1) throw new RuntimeError("invocationIndexBatchSize must be a positive safe integer")
   const chunkBytes = options.checkpointChunkBytes ?? DEFAULT_CHECKPOINT_CHUNK_BYTES
   validateCheckpointChunkBytes(chunkBytes, options.limits ? options.limits.maxRowBytes - CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES : undefined)
   const actorBytes = new TextEncoder().encode(options.actor).byteLength
@@ -67,6 +78,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
   const transaction = <Value>(sql: SqlClient.SqlClient, work: Effect.Effect<Value, Error>): Effect.Effect<Value, Error> => options.transaction
     ? journalCall(() => options.transaction!(() => runSynchronous(work)))
     : sql.withTransaction(work)
+  const familyIndex = sqlFamilyIndex<Event>({ actor: options.actor, batchSize: familyIndexBatchSize, transaction, readRecord: (sql, row) => readSqlJournalRecord<Event>(sql, options.actor, row) })
   const setup = Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_events (actor TEXT NOT NULL, seq INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY (actor, seq)) WITHOUT ROWID`
@@ -76,25 +88,31 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_invocation_requests (actor TEXT NOT NULL, atom TEXT NOT NULL, act TEXT NOT NULL, origin INTEGER NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (actor, atom, act, origin), FOREIGN KEY (actor, seq) REFERENCES experimental_events(actor, seq)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_invocation_events (actor TEXT NOT NULL, atom TEXT NOT NULL, act TEXT NOT NULL, ref_seq INTEGER NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (actor, atom, act, ref_seq, seq), FOREIGN KEY (actor, seq) REFERENCES experimental_events(actor, seq)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_invocation_index (actor TEXT PRIMARY KEY, position INTEGER NOT NULL) WITHOUT ROWID`
-    yield* sql`CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK (id = 1), position INTEGER NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL)`
+    yield* initializeSqlFamilyIndex(sql)
+    yield* sql`CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK (id = 1), position INTEGER NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL, tag TEXT)`
+    const checkpointColumns = yield* sql<{ name: string }>`PRAGMA table_info(checkpoint)`
+    if (!checkpointColumns.some(column => column.name === "tag")) yield* sql`ALTER TABLE checkpoint ADD COLUMN tag TEXT`
     yield* sql`CREATE TABLE IF NOT EXISTS checkpoint_chunks (ordinal INTEGER PRIMARY KEY CHECK (ordinal >= 0), payload BLOB NOT NULL CHECK (typeof(payload) = 'blob' AND length(payload) > 0))`
     yield* sql`CREATE TABLE IF NOT EXISTS effect_inputs (actor TEXT NOT NULL, ref TEXT NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL, PRIMARY KEY (actor, ref)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS effect_input_chunks (actor TEXT NOT NULL, ref TEXT NOT NULL, ordinal INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY (actor, ref, ordinal)) WITHOUT ROWID`
     // TODO: drop these statements once no database holds tables written by 0.49.0 to 0.50.0 checkpoint trees.
     for (const table of ["grove_nodes", "grove_chunks", "grove_owners", "checkpoint_trees"]) yield* sql.unsafe(`DROP TABLE IF EXISTS ${table}`)
     if (options.scheduler) yield* initializeSqlScheduler(sql)
-    yield* transaction(sql, Effect.gen(function* () {
+    let complete = false
+    while (!complete) complete = yield* transaction(sql, Effect.gen(function* () {
       const indexed = yield* sql<{ position: number }>`SELECT position FROM experimental_invocation_index WHERE actor = ${options.actor}`
       const position = indexed[0]?.position ?? 0
       const head = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
       const length = head.length === 0 ? 0 : head[0]!.seq + 1
       if (!Number.isSafeInteger(position) || position < 0 || position > length) return yield* Effect.fail(new RuntimeError("Invalid invocation index position"))
-      const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND seq >= ${position} ORDER BY seq`
+      const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND seq >= ${position} AND seq < ${length} ORDER BY seq LIMIT ${invocationIndexBatchSize}`
+      if (rows.length !== Math.min(invocationIndexBatchSize, length - position)) return yield* Effect.fail(new RuntimeError("Invocation index journal range is unavailable"))
       for (const [index, row] of rows.entries()) {
         if (row.seq !== position + index) return yield* Effect.fail(new RuntimeError("Invalid invocation index journal sequence"))
         yield* indexInvocationRecord(sql, options.actor, row.seq, yield* readSqlJournalRecord(sql, options.actor, row))
       }
       yield* sql`INSERT INTO experimental_invocation_index (actor, position) VALUES (${options.actor}, ${position + rows.length}) ON CONFLICT(actor) DO UPDATE SET position = excluded.position`
+      return position + rows.length === length
     }))
     return sql
   })
@@ -130,6 +148,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       return { text: stored, chunks }
     }), catch: RuntimeError.from })
     if (checkpoint && checkpoint.digest !== checkpointDigestSync(checkpoint.payload)) return yield* Effect.fail(new RuntimeError("Invalid checkpoint digest"))
+    if (checkpoint?.tag !== undefined && !checkpoint.tag.trim()) return yield* Effect.fail(new RuntimeError("Checkpoint tag must be nonempty"))
     const chunks = checkpoint ? encodeCheckpointChunks(checkpoint.payload, chunkBytes) : []
     const pending = yield* Effect.forEach(inputs.put ?? [], input => Effect.gen(function* () {
       const value = yield* Schema.decodeEffect(PendingEffectInput)(input).pipe(Effect.mapError(RuntimeError.from))
@@ -140,6 +159,10 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       return { ref, payload, digest: checkpointDigestSync(payload), chunks: encodeCheckpointChunks(payload, inputChunkBytes) }
     }))
     const sql = yield* client
+    if (familyIndex.size) {
+      const head = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
+      yield* familyIndex.catchUp(sql, head.length === 0 ? 0 : head[0]!.seq + 1)
+    }
     const work = Effect.gen(function* () {
       const rows = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
       const count = rows.length === 0 ? 0 : rows[0]!.seq + 1
@@ -152,6 +175,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
         yield* indexInvocationRecord(sql, options.actor, expectedLength + index, events[index]!)
       }
       yield* sql`UPDATE experimental_invocation_index SET position = ${expectedLength + events.length} WHERE actor = ${options.actor}`
+      yield* familyIndex.append(sql, expectedLength, events)
       for (const input of pending) {
         const existing = yield* sql<{ digest: string }>`SELECT digest FROM effect_inputs WHERE actor = ${options.actor} AND ref = ${input.ref}`
         if (existing.length && existing[0]!.digest !== input.digest) return yield* Effect.fail(new RuntimeError("Accepted effect input cannot change"))
@@ -167,7 +191,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       if (scheduling) yield* recordRetryWakes(sqlSchedulerTransaction(sql, scheduling.alarm), events)
       if (checkpoint) {
         yield* sql`DELETE FROM checkpoint_chunks`
-        yield* sql`INSERT INTO checkpoint (id, position, byte_length, chunk_count, digest) VALUES (1, ${checkpoint.position}, ${checkpoint.payload.byteLength}, ${chunks.length}, ${checkpoint.digest}) ON CONFLICT(id) DO UPDATE SET position = excluded.position, byte_length = excluded.byte_length, chunk_count = excluded.chunk_count, digest = excluded.digest`
+        yield* sql`INSERT INTO checkpoint (id, position, byte_length, chunk_count, digest, tag) VALUES (1, ${checkpoint.position}, ${checkpoint.payload.byteLength}, ${chunks.length}, ${checkpoint.digest}, ${checkpoint.tag ?? null}) ON CONFLICT(id) DO UPDATE SET position = excluded.position, byte_length = excluded.byte_length, chunk_count = excluded.chunk_count, digest = excluded.digest, tag = excluded.tag`
         for (const chunk of chunks) yield* sql`INSERT INTO checkpoint_chunks (ordinal, payload) VALUES (${chunk.ordinal}, ${chunk.payload})`
       }
     })
@@ -275,17 +299,18 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       }))
     }),
     append: (position: number, events: readonly Recorded<Event>[], inputs?: EffectInputChanges) => append(position, events, undefined, inputs),
-    readCheckpoint: Effect.gen(function* () {
+    readCheckpoint: (tag?: string) => Effect.gen(function* () {
       const sql = yield* client
       return yield* transaction(sql, Effect.gen(function* () {
-        const rows = yield* sql<{ position: number; byte_length: number; chunk_count: number; digest: string }>`SELECT position, byte_length, chunk_count, digest FROM checkpoint WHERE id = 1`
+        const rows = yield* sql<{ position: number; byte_length: number; chunk_count: number; digest: string; tag: string | null }>`SELECT position, byte_length, chunk_count, digest, tag FROM checkpoint WHERE id = 1`
         const row = rows[0]
         if (!row) return undefined
+        if (tag !== undefined && row.tag !== tag) return undefined
         if (!Number.isSafeInteger(row.position) || row.position < 0 || typeof row.digest !== "string") return yield* Effect.fail(new RuntimeError("Invalid journal checkpoint"))
         const chunks = yield* sql<CheckpointChunk>`SELECT ordinal, payload FROM checkpoint_chunks ORDER BY ordinal`
         const payload = yield* Effect.try({ try: () => decodeCheckpointChunks(chunks, row.byte_length, row.chunk_count), catch: RuntimeError.from })
         if ((checkpointDigestSync(payload)) !== row.digest) return yield* Effect.fail(new RuntimeError("Journal checkpoint digest mismatch"))
-        return { position: row.position, payload, digest: row.digest } satisfies StoredCheckpoint
+        return { position: row.position, payload, digest: row.digest, ...(row.tag === null ? {} : { tag: row.tag }) } satisfies StoredCheckpoint
       }))
     }),
     appendWithCheckpoint: append,
@@ -296,11 +321,33 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     readPosition: () => runSynchronous(access.readPosition),
     readRange: (from: number, to: number) => runSynchronous(access.readRange(from, to)),
     readOperation: (ref: EffectRef, position: number) => runSynchronous(access.readOperation(ref, position)),
+    readFamily: function* (family: JournalFamily, key: string, from: number, to: number): Iterable<FamilyRecord<Recorded<Event>>> {
+      if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from) throw new RuntimeError("Invalid journal family range")
+      const sql = runSynchronous(client)
+      const position = runSynchronous(readPosition)
+      if (to > position) throw new RuntimeError("Journal family range is unavailable")
+      runSynchronous(familyIndex.prepare(sql, family, position))
+      let cursor = from
+      while (cursor < to) {
+        const page = runSynchronous(familyIndex.readPage(sql, family, key, cursor, to))
+        if (!page.length) return
+        yield* page
+        cursor = page[page.length - 1]!.position + 1
+      }
+    },
+    readFamilyKeys: (family: JournalFamily, after: string | undefined, limit: number, position: number): readonly string[] => {
+      if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(position) || position < 0) throw new RuntimeError("Invalid journal family key range")
+      const sql = runSynchronous(client)
+      const length = runSynchronous(readPosition)
+      if (position > length) throw new RuntimeError("Journal family key range is unavailable")
+      runSynchronous(familyIndex.prepare(sql, family, length))
+      return runSynchronous(familyIndex.readKeys(sql, family, after, limit, position))
+    },
     read: () => runSynchronous(access.read),
     readAfter: (position: number) => runSynchronous(access.readAfter(position)),
     readBefore: (position: number) => runSynchronous(access.readBefore(position)),
     readInputs: () => runSynchronous(access.readInputs),
-    readCheckpoint: () => runSynchronous(access.readCheckpoint),
+    readCheckpoint: (tag?: string) => runSynchronous(access.readCheckpoint(tag)),
     readFirst: () => runSynchronous(access.readFirst),
     readVersion: () => runSynchronous(access.readVersion),
     readMessage: (id: string) => runSynchronous(access.readMessage(id)),

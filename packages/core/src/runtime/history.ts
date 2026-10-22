@@ -3,16 +3,19 @@ import { CoreEvent } from "./events"
 import { effectKey, RuntimeError, type EffectRef } from "./effects"
 import { LogView, type ReadonlyLog } from "./log-view"
 import type { Recorded } from "../services/journal"
+import type { ReadJournalFamily, ReadJournalFamilyKeys } from "../services/journal/family"
 
 export interface ReplayHistory<Event> {
   readonly readRange: (from: number, to: number) => ReadonlyLog<Recorded<Event>>
   readonly readOperation: (ref: EffectRef, position: number) => ReadonlyLog<Recorded<Event>>
+  readonly readFamily?: ReadJournalFamily<Event>
+  readonly readFamilyKeys?: ReadJournalFamilyKeys
   readonly append: (position: number, batch: readonly Recorded<Event>[]) => ReplayHistory<Event>
 }
 
 // journalHistory reads externally committed records; its caller owns persistence (platform/test/properties/runtime/snapshot-lookups.ts).
-export function journalHistory<Event>(readRange: ReplayHistory<Event>["readRange"], readOperation: ReplayHistory<Event>["readOperation"]): ReplayHistory<Event> {
-  const history: ReplayHistory<Event> = { readRange, readOperation, append: () => history }
+export function journalHistory<Event>(readRange: ReplayHistory<Event>["readRange"], readOperation: ReplayHistory<Event>["readOperation"], readFamily?: ReadJournalFamily<Event>, readFamilyKeys?: ReadJournalFamilyKeys): ReplayHistory<Event> {
+  const history: ReplayHistory<Event> = { readRange, readOperation, ...(readFamily ? { readFamily } : {}), ...(readFamilyKeys ? { readFamilyKeys } : {}), append: () => history }
   return history
 }
 

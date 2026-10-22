@@ -55,7 +55,7 @@ const threadsCommand = Command.make("threads", { directory, instance }, printThr
 
 const newThread = (host: ChatHost, options: ThreadOptions, name?: string) => Effect.gen(function* () {
   const supervisor = yield* host.supervisorStore(options.instance)
-  if (name && supervisor.threads.get().some(thread => thread.parent === null && thread.name === name)) return yield* Effect.fail(new RuntimeError(`Thread already exists: ${name}. Use /switch to resume it.`))
+  if (name && supervisor.threadByName(null, name).get() !== undefined) return yield* Effect.fail(new RuntimeError(`Thread already exists: ${name}. Use /switch to resume it.`))
   return yield* host.allocateRootThread({ instance: options.instance, ...(name ? { name } : {}) })
 }).pipe(Effect.mapError(RuntimeError.from))
 

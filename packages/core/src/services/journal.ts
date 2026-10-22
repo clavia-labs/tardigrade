@@ -3,6 +3,7 @@ import { MessageMetadata, type MessageReceived } from "../actor/message"
 import type { CoreEvent, ObservedCoreEvent, InvocationIdentity } from "../runtime/events"
 import { EffectRef, RuntimeError } from "../runtime/effects"
 import { EffectRequest } from "../runtime/events"
+import type { ReadJournalFamily, ReadJournalFamilyKeys } from "./journal/family"
 
 // RecordMetadata carries journal time and host-established delivery context separately from event payloads.
 export const RecordMetadata = Schema.Struct({
@@ -24,6 +25,8 @@ export interface ObservedRecord<Event> extends RecordMetadata {
 }
 
 export interface StoredCheckpoint {
+  // tag identifies a checkpoint layout so readers can reject incompatible payloads before loading their chunks.
+  readonly tag?: string
   readonly position: number
   readonly payload: Uint8Array
   readonly digest: string
@@ -40,6 +43,8 @@ export interface EffectInputChanges {
 
 // Journal accesses a local ordered event prefix synchronously; append commits a batch atomically or throws for a stale expected length (platform/test/properties/checkpoint-storage.ts).
 export interface Journal<Event extends object> {
+  readonly readFamily?: ReadJournalFamily<Event>
+  readonly readFamilyKeys?: ReadJournalFamilyKeys
   // acknowledge encloses a synchronous local write in the host durability boundary, including physical wake staging (platform/test/workerd/watchdog.workers.ts).
   readonly acknowledge?: (write?: () => undefined) => Effect.Effect<void, Error>
   // lookupInvocation includes history before checkpoints; read failures remain errors. Callers serialize lookup and acceptance against the same journal prefix (quint/checkpoint/acceptanceBinding.qnt, uniqueInvocations).
@@ -56,7 +61,8 @@ export interface Journal<Event extends object> {
   readonly readBefore: (position: number) => readonly Recorded<Event>[]
   readonly readInputs: () => readonly PendingEffectInput[]
   readonly append: (expectedLength: number, events: readonly Recorded<Event>[], inputs?: EffectInputChanges) => undefined
-  readonly readCheckpoint: () => StoredCheckpoint | undefined
+  // readCheckpoint may select a layout tag without materializing a checkpoint for another layout.
+  readonly readCheckpoint: (tag?: string) => StoredCheckpoint | undefined
   readonly appendWithCheckpoint: (expectedLength: number, events: readonly Recorded<Event>[], checkpoint: StoredCheckpoint, inputs?: EffectInputChanges) => undefined
 }
 
