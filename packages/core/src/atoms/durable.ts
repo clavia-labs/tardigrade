@@ -60,7 +60,7 @@ export function makeDurableAtom<State, Event>(options: DurableAtomOptions<State,
   const initial = structuredClone(options.initial)
   validate(initial)
   check(initial)
-  const codec = { name: options.name, decode: restore, encode: (value: unknown) => encode(value as State), ...(idleTTL === undefined ? {} : { idleTTL }) }
+  const codec = { name: options.name, decode: restore, encode: (value: unknown) => encode(value as State), ...(idleTTL === undefined ? {} : { idleTTL }), ...(member ? { checkpoint: false as const } : {}) }
   type Frame = { readonly source: Atom<unknown>; readonly position: number; readonly state: State }
   const reduced = NativeAtom.readable((get): Frame => {
     const context = get(eventLogContext)

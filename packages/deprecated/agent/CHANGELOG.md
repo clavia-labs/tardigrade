@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.51.0](https://github.com/clavia-labs/tardigrade/compare/v0.50.0...v0.51.0) (2026-10-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** retain only active work ([#805](https://github.com/clavia-labs/tardigrade/issues/805))
+* drop grove storage ([#803](https://github.com/clavia-labs/tardigrade/issues/803))
+
+### Features
+
+* **core:** expose atom schemas ([#793](https://github.com/clavia-labs/tardigrade/issues/793)) ([ec75ff7](https://github.com/clavia-labs/tardigrade/commit/ec75ff78ff952c9305c1319edcf64c88027193a9))
+* **core:** inspect actor schemas ([#794](https://github.com/clavia-labs/tardigrade/issues/794)) ([adbc0a9](https://github.com/clavia-labs/tardigrade/commit/adbc0a9244ebd589e99a68c3f5e7e93621965f92))
+* **grove:** add whole values ([#787](https://github.com/clavia-labs/tardigrade/issues/787)) ([0e7d153](https://github.com/clavia-labs/tardigrade/commit/0e7d15387810776fc6cfea4ef8442038c39ebb93))
+* **grove:** materialise actor state ([#772](https://github.com/clavia-labs/tardigrade/issues/772)) ([7627ff0](https://github.com/clavia-labs/tardigrade/commit/7627ff00f840a1553912518a5baf11a5aaf8022e))
+* **grove:** materialise reducer state ([#789](https://github.com/clavia-labs/tardigrade/issues/789)) ([8dcbb4d](https://github.com/clavia-labs/tardigrade/commit/8dcbb4d73df2b6a5615e698752af68db17eb665d))
+
+
+### Bug Fixes
+
+* **agent:** defer compaction calls ([#795](https://github.com/clavia-labs/tardigrade/issues/795)) ([cf70467](https://github.com/clavia-labs/tardigrade/commit/cf70467badffd4b08b2bc09b245759c15162b6b4))
+* **cloudflare:** export retry helpers ([#790](https://github.com/clavia-labs/tardigrade/issues/790)) ([6404880](https://github.com/clavia-labs/tardigrade/commit/6404880be9cd3d62a8cab6167e4d6d27958757ff))
+* **core:** classify replay failures ([#792](https://github.com/clavia-labs/tardigrade/issues/792)) ([fca4e4e](https://github.com/clavia-labs/tardigrade/commit/fca4e4e1e94cc24d38b9624bac7de915073cdf6c))
+* **core:** restore standalone projections ([#776](https://github.com/clavia-labs/tardigrade/issues/776)) ([9a839a8](https://github.com/clavia-labs/tardigrade/commit/9a839a8ebe90107c4957056facf4ee27432a06a0))
+* **grove:** iterative staged log scan ([#781](https://github.com/clavia-labs/tardigrade/issues/781)) ([7c444df](https://github.com/clavia-labs/tardigrade/commit/7c444df4c2819a4c89182258c95bb9cc121722f2))
+* **model:** redact credential headers ([#791](https://github.com/clavia-labs/tardigrade/issues/791)) ([f28169a](https://github.com/clavia-labs/tardigrade/commit/f28169aa98ec547ffc691c2a21308bb2b8a2428c))
+* **platform:** persist promise deadlines ([#796](https://github.com/clavia-labs/tardigrade/issues/796)) ([c80bfd0](https://github.com/clavia-labs/tardigrade/commit/c80bfd0df21b69fc5f007b559670d8e71f5a8612))
+* **release:** embed workspace Grove ([#780](https://github.com/clavia-labs/tardigrade/issues/780)) ([3d7896e](https://github.com/clavia-labs/tardigrade/commit/3d7896efb6c371b386b95c686dd804e68d6cc372))
+
+
+### Performance Improvements
+
+* **agent:** index permission lookups ([#777](https://github.com/clavia-labs/tardigrade/issues/777)) ([b9adafb](https://github.com/clavia-labs/tardigrade/commit/b9adafbd228eec8288a952eae9f86efbc339bdb4))
+* **agent:** memoize inference reads ([#785](https://github.com/clavia-labs/tardigrade/issues/785)) ([3fc925c](https://github.com/clavia-labs/tardigrade/commit/3fc925cbc26294fc41483fa8b777f215dfe3e5e5))
+* **core:** one replay engine ([#807](https://github.com/clavia-labs/tardigrade/issues/807)) ([d5d045d](https://github.com/clavia-labs/tardigrade/commit/d5d045d78b3f23ef3382f27e61d116cfbd739cc7))
+* **core:** share durable projection folds ([#784](https://github.com/clavia-labs/tardigrade/issues/784)) ([2321925](https://github.com/clavia-labs/tardigrade/commit/2321925fb8b8df61be2086e0985b02ccc49f3bc3))
+* **grove:** discard by staged roots ([#779](https://github.com/clavia-labs/tardigrade/issues/779)) ([a1f5a59](https://github.com/clavia-labs/tardigrade/commit/a1f5a5939d1b7d7c6f3787325b939b7e648d236d))
+* **grove:** incremental owner sync ([#778](https://github.com/clavia-labs/tardigrade/issues/778)) ([32272dd](https://github.com/clavia-labs/tardigrade/commit/32272ddea6fa8eef2946978b781570c5df739dc5))
+* **platform:** point read for drive check ([#786](https://github.com/clavia-labs/tardigrade/issues/786)) ([1abf611](https://github.com/clavia-labs/tardigrade/commit/1abf611e4a2d7395dfb20f26146db538305d8b10))
+* **platform:** stage alarm in transaction ([#783](https://github.com/clavia-labs/tardigrade/issues/783)) ([3210ae4](https://github.com/clavia-labs/tardigrade/commit/3210ae458b133e00a03636ce6df53aab41d42504))
+
+
+### Code Refactoring
+
+* **core:** retain only active work ([#805](https://github.com/clavia-labs/tardigrade/issues/805)) ([7f5f6de](https://github.com/clavia-labs/tardigrade/commit/7f5f6de050f347c85119b348508ca0aa6f77c9c7))
+* drop grove storage ([#803](https://github.com/clavia-labs/tardigrade/issues/803)) ([d572db4](https://github.com/clavia-labs/tardigrade/commit/d572db4e77781af6af0edecd8402bead75b3d2a0))
+
 ## [0.50.0](https://github.com/clavia-labs/tardigrade/compare/v0.49.1...v0.50.0) (2026-10-16)
 
 

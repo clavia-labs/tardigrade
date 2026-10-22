@@ -50,14 +50,3 @@ export function collectFamilyKeys(input: Iterable<string | undefined>, after: st
   }
   return keys
 }
-
-// familyCheckpoint identifies a reserved member checkpoint name belonging to a registered family.
-export function familyCheckpoint(name: string, families: ReadonlyMap<string, JournalFamily>): boolean {
-  if (!name.startsWith("[")) return false
-  let identity: unknown
-  try { identity = JSON.parse(name) }
-  catch { return false }
-  if (!Array.isArray(identity) || identity.length !== 3) return false
-  const [family, version, key]: unknown[] = identity
-  return typeof family === "string" && typeof version === "string" && typeof key === "string" && families.has(family)
-}
