@@ -27,5 +27,8 @@ export function cloudflareWatchdogStorage(storage: DurableObjectStorage, alarms?
     const value = yield* Effect.tryPromise({ try: () => storage.transaction(tx => Effect.runPromiseWith(context)(work(cloudflareWatchdogTransaction(tx, alarms)).pipe(Effect.tap(() => schedulerAlarm(cloudflareSchedulerTransaction(tx, alarms)))))), catch: RuntimeError.from })
     yield* Effect.tryPromise({ try: () => storage.sync(), catch: RuntimeError.from })
     return value
-  }).pipe(Effect.uninterruptible) }
+  }).pipe(Effect.uninterruptible), read: work => Effect.gen(function* () {
+    const context = yield* Effect.context<never>()
+    return yield* Effect.tryPromise({ try: () => storage.transaction(tx => Effect.runPromiseWith(context)(work(cloudflareWatchdogTransaction(tx, alarms)))), catch: RuntimeError.from })
+  }) }
 }

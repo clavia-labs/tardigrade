@@ -27,6 +27,7 @@ export interface WatchdogTransaction {
 }
 export interface WatchdogStorage {
   readonly transaction: <Value>(work: (tx: WatchdogTransaction) => Effect.Effect<Value, Error>) => Effect.Effect<Value, Error>
+  readonly read?: <Value>(work: (tx: WatchdogTransaction) => Effect.Effect<Value, Error>) => Effect.Effect<Value, Error>
 }
 
 // WatchdogTerminalError blocks recovery until an explicit resume or interpreter version change (packages/platform/quint/interpreterVersion.qnt, sameVersionTest).
@@ -119,7 +120,7 @@ export function createWatchdog(options: {
       versionAdopted = true
     })),
     status: options.storage.transaction(tx => tx.list),
-    blocked: (target: WatchdogTarget) => options.storage.transaction(tx => tx.get(watchdogKey(target))).pipe(Effect.map(entry => entry?.status === "blocked")),
+    blocked: (target: WatchdogTarget) => (options.storage.read ?? options.storage.transaction)(tx => tx.get(watchdogKey(target))).pipe(Effect.map(entry => entry?.status === "blocked")),
     resume: (target: WatchdogTarget) => cleanupLock.withPermit(options.storage.transaction(tx => resetBudget(tx, target))),
     alarm: lock.withPermit(Effect.gen(function* () {
       const entries = yield* options.storage.transaction(tx => tx.list)
