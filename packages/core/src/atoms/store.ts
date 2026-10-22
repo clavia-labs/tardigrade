@@ -5,28 +5,11 @@ import { EventLog, eventLogContext } from "../services/event-log"
 import { actorGraph } from "./graph"
 import { atomInput, atomValidator } from "./effect"
 import { AtomState } from "../initialise"
-import { memoryDocuments } from "../services/tree-state"
 
-// createStore owns an Effect registry and provides documents to durable projections.
+// createStore owns an Effect registry and provides services to durable projections.
 export function createStore(services?: Context.Context<EventLog>) {
   const registry = AtomRegistry.make()
-  let documents: ReturnType<typeof memoryDocuments> | undefined
-  let localLog: typeof EventLog.Service | undefined
-  const withDocuments = (context: Context.Context<EventLog> | undefined) => {
-    const service = context && Context.get(context, EventLog)
-    if (service && service === localLog) return context
-    if (localLog) documents!.release(localLog)
-    localLog = undefined
-    if (!context || !service) return context
-    if (service.documents) {
-      if (service.documents === documents) localLog = service
-      return context
-    }
-    documents ??= memoryDocuments()
-    localLog = { ...service, documents }
-    return Context.add(context, EventLog, localLog)
-  }
-  if (services) registry.set(eventLogContext, withDocuments(services))
+  if (services) registry.set(eventLogContext, services)
   const reachable = (roots: Readonly<Record<string, Atom<unknown>>>) => {
     for (const root of Object.values(roots)) registry.get(root)
     const nodes = registry.getNodes()
@@ -71,22 +54,11 @@ export function createStore(services?: Context.Context<EventLog>) {
       }
       for (const validate of validators) validate(event, node => registry.get(node))
     },
-    set: <Value>(node: PrimitiveAtom<Value>, value: SetStateAction<Value>) => {
-      if (Object.is(node, eventLogContext)) {
-        const context = typeof value === "function" ? (value as (previous: Value) => Value)(registry.get(node)) : value
-        registry.set(eventLogContext, withDocuments(context as Context.Context<EventLog> | undefined))
-      } else registry.set(node, value)
-    },
+    set: <Value>(node: PrimitiveAtom<Value>, value: SetStateAction<Value>) => registry.set(node, value),
     sub: <Value>(node: Atom<Value>, listener: () => void) => {
       registry.get(node)
       return registry.subscribe(node, () => listener())
     },
-    dispose: () => {
-      registry.dispose()
-      if (localLog) documents!.release(localLog)
-      localLog = undefined
-      documents?.discard()
-      documents?.clear()
-    },
+    dispose: () => registry.dispose(),
   }
 }

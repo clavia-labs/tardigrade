@@ -7,8 +7,6 @@ import type { Prompt } from "effect/unstable/ai"
 import { actorContext, createActor } from "@clavia/tardigrade-agent"
 import { ObjectStorage } from "@clavia/tardigrade-model/object"
 import { objectStorageFromFileSystem } from "@clavia/tardigrade-bun"
-import * as Grove from "@tardie/grove"
-import { DocumentState } from "@clavia/tardigrade-core/services/tree-state"
 import { decodeCheckpoint, methodResult, RuntimeError } from "@clavia/tardigrade-core"
 import { bunJournal, createBunHost } from "../../../src/bun"
 import { agentDurableAtoms } from "@clavia/tardigrade-agent/atoms/durable"
@@ -36,12 +34,11 @@ export async function bunContentFixture(): Promise<ContentFixture & { readonly s
     seed: () => Effect.runPromise(Effect.gen(function* () {
       yield* thread.wait
       const journal = bunJournal({ actor: "events", filename: bunThreadPath(join(root, "host"), thread.coordinate) })
-      yield* Effect.addFinalizer(() => journal.close.pipe(Effect.orDie))
-      const checkpoint = yield* journal.readCheckpoint
+      const checkpoint = yield* journal.readCheckpoint.pipe(Effect.ensuring(journal.close))
       if (!checkpoint) return yield* Effect.fail(new RuntimeError("Expected a completed agent checkpoint"))
-      const initialState = Object.fromEntries(decodeCheckpoint(checkpoint.payload).durable.filter(entry => entry.name.startsWith("agent.")).map(entry => [entry.name, Schema.is(DocumentState)(entry.state) ? journal.grove.view(Grove.decodeReference(entry.state.reference), Schema.Json).materialize() : Schema.decodeUnknownSync(Schema.Json)(entry.state)]))
+      const initialState = Object.fromEntries(decodeCheckpoint(checkpoint.payload).durable.filter(entry => entry.name.startsWith("agent.")).map(entry => [entry.name, Schema.decodeUnknownSync(Schema.Json)(entry.state)]))
       thread = yield* host.allocateRootThread({ instance: "main", name: "seeded", initialState })
-    }).pipe(Effect.scoped)),
+    })),
     prompt: () => prompt,
     calls: () => calls,
     close: async () => { try { await Effect.runPromise(host.close) } finally { await rm(root, { recursive: true, force: true }) } },

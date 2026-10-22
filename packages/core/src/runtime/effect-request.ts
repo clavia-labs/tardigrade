@@ -1,4 +1,3 @@
-import { InputSelection } from "../services/tree-state"
 import { Schema } from "effect"
 import { EffectRef } from "./effects"
 import { InputDigest } from "./input-digest"
@@ -8,7 +7,6 @@ export const InlineInput = Schema.TaggedStruct("InlineInput", { value: Schema.Js
 // StoredEffectRequest distinguishes executable JSON from a validation digest (quint/effectInput.qnt, Stored).
 export const StoredEffectRequest = Schema.Struct({
   act: Schema.NonEmptyString,
-  selections: Schema.optionalKey(Schema.Array(InputSelection)),
   input: Schema.Union([InlineInput, InputDigest]),
 })
 export type StoredEffectRequest = typeof StoredEffectRequest.Type

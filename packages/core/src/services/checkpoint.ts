@@ -1,6 +1,4 @@
-import { DocumentState } from "./tree-state"
-import { createHash } from "node:crypto"
-import { Schema, Effect } from "effect"
+import { Schema, Crypto, Effect, Encoding, PlatformError } from "effect"
 import { ActorReplayError, RuntimeError, ExecutionResult, effectKey } from "../runtime/effects"
 import { StoredOperation, operationSettlement, cleanupSucceeded } from "../runtime/operation"
 import type { EffectCheckpoint } from "../runtime/replay"
@@ -8,20 +6,20 @@ import { migrateCheckpoint } from "./checkpoint/migrations"
 
 export const DEFAULT_CHECKPOINT_MAX_BYTES = 256 * 1024 * 1024
 
-export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => Effect.try({ try: () => createHash("sha256").update(payload).digest("hex"), catch: RuntimeError.from })
+const crypto = Crypto.make({
+  randomBytes: size => globalThis.crypto.getRandomValues(new Uint8Array(size)),
+  digest: (algorithm, data) => Effect.tryPromise({ try: () => globalThis.crypto.subtle.digest(algorithm, data.slice().buffer as ArrayBuffer).then(value => new Uint8Array(value)), catch: cause => PlatformError.systemError({ _tag: "Unknown", module: "Crypto", method: "digest", description: "Checkpoint digest failed", cause }) }),
+})
 
-const checkpointValue = (checkpoint: EffectCheckpoint) => {
+export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => crypto.digest("SHA-256", payload).pipe(Effect.map(Encoding.encodeHex), Effect.mapError(RuntimeError.from))
+
+export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
   if (!Number.isSafeInteger(checkpoint.position) || checkpoint.position < 0) throw new Error("Invalid checkpoint position")
   if (checkpoint.durable.some(entry => entry.position !== checkpoint.position)) throw new Error("Durable entry position differs from checkpoint position")
   if (checkpoint.durable.some(entry => !Schema.is(Schema.Json)(entry.state))) throw new Error("Checkpoint state must be JSON")
-  return { version: 3, ...checkpoint }
-}
-
-export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
-  const value = checkpointValue(checkpoint)
   let encoded: string
   try {
-    encoded = JSON.stringify(value)
+    encoded = JSON.stringify({ version: 3, ...checkpoint })
   } catch (cause) {
     throw new Error("Checkpoint state is not serializable", { cause })
   }
@@ -33,8 +31,7 @@ export const decodeCheckpoint = (payload: Uint8Array): EffectCheckpoint => {
   catch (cause) { throw ActorReplayError.wrap(cause, { stage: "checkpoint", reason: "decode_failed" }) }
 }
 
-// checkpointFromJson validates decoded checkpoint data before encoding a converted version (platform/test/bun/migration.test.ts).
-export function checkpointFromJson(value: unknown): EffectCheckpoint {
+function checkpointFromJson(value: unknown): EffectCheckpoint {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid checkpoint payload")
   const record = migrateCheckpoint(value as Record<string, unknown>)
   if (!Number.isSafeInteger(record.position) || (record.position as number) < 0 ||
@@ -44,8 +41,7 @@ export function checkpointFromJson(value: unknown): EffectCheckpoint {
     const item = entry as Record<string, unknown>
     if (typeof item.name !== "string" || !item.name || !Number.isSafeInteger(item.position) || (item.position as number) < 0 || item.state === undefined) throw new Error("Invalid durable checkpoint entry")
     if (item.position !== record.position) throw new Error("Durable entry position differs from checkpoint position")
-    if (item.reference !== undefined && (!Schema.is(DocumentState)(item.state) || item.state.reference !== item.reference)) throw new Error("Invalid durable document reference")
-    return { name: item.name, state: item.state, position: item.position as number, ...(item.reference === undefined ? {} : { reference: item.reference }) }
+    return { name: item.name, state: item.state, position: item.position as number }
   })
   if (!Array.isArray(record.operations)) throw new Error("Invalid checkpoint operations")
   const operations = record.operations.map(entry => Schema.decodeUnknownSync(StoredOperation)(entry))

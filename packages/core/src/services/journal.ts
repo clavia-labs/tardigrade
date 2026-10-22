@@ -1,4 +1,3 @@
-import type { DocumentChanges, DocumentSession } from "./tree-state"
 import { Schema, type Effect } from "effect"
 import { MessageMetadata, type MessageReceived } from "../actor/message"
 import type { CoreEvent, ObservedCoreEvent } from "../runtime/events"
@@ -35,14 +34,12 @@ export type PendingEffectInput = typeof PendingEffectInput.Type
 
 // EffectInputChanges commits accepted payloads and terminal releases with journal records (quint/checkpoint/inputLifecycle.qnt, inputRetained).
 export interface EffectInputChanges {
-  readonly documents?: DocumentChanges
   readonly put?: readonly PendingEffectInput[]
   readonly remove?: readonly EffectRef[]
 }
 
-// Journal colocates events and Grove values; append commits records, referenced dependencies and retention atomically (platform/test/bun/journal.test.ts).
+// Journal stores an ordered event prefix; append commits a batch atomically or rejects a stale expected length.
 export interface Journal<Event extends object> {
-  readonly storedValues: DocumentSession
   readonly read: Effect.Effect<readonly Recorded<Event>[], Error>
   // readAfter returns the suffix starting at the consumed event count; positions beyond the journal length fail.
   readonly readAfter: (position: number) => Effect.Effect<readonly Recorded<Event>[], Error>
@@ -54,7 +51,6 @@ export interface Journal<Event extends object> {
 
 export interface MessageJournal<Event extends object> extends Journal<Event> {
   readonly readMessage: (id: string) => Effect.Effect<{ readonly position: number; readonly record: Recorded<Event> } | undefined, Error>
-  // acknowledge completes durability and recovery synchronization before confirming an existing receipt (platform/test/properties/recovery.ts).
   readonly acknowledge: Effect.Effect<void, Error>
 }
 

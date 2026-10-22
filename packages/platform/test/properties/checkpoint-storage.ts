@@ -1,9 +1,10 @@
 import { Cause, Effect, Exit } from "effect"
 import { isDeepStrictEqual } from "node:util"
-import { checkpointDigest, encodeCheckpoint, decodeCheckpoint, type Recorded, type PendingEffectInput, type Journal as CoreJournal } from "@clavia/tardigrade-core"
+import { checkpointDigest, encodeCheckpoint, decodeCheckpoint, type Recorded, type PendingEffectInput } from "@clavia/tardigrade-core"
+import type { sqlJournal } from "../../src/shared/sql-journal"
 
 type Event = { readonly type: "Stored"; readonly value: string }
-type Journal = CoreJournal<Event> & { readonly close: Effect.Effect<void, Error> }
+type Journal = ReturnType<typeof sqlJournal<Event>>
 
 // checkpointStorage checks replacement, rollback, reopening and corruption through the same SQL flow on both hosts.
 export async function checkpointStorage(fixture: {
@@ -30,8 +31,8 @@ export async function checkpointStorage(fixture: {
   const verify = async (expected: typeof first, records: readonly Recorded<Event>[]) => {
     const actual = await Effect.runPromise(journal.readCheckpoint)
     if (!isDeepStrictEqual(actual, expected) || !isDeepStrictEqual(await Effect.runPromise(journal.read), records)) throw new Error("Checkpoint or journal changed unexpectedly")
-    const rows = await fixture.execute("SELECT ordinal, length(payload) AS bytes, typeof(payload) AS kind FROM journal_checkpoint_chunks ORDER BY ordinal")
-    const [header] = await fixture.execute("SELECT byte_length, chunk_count FROM journal_checkpoints WHERE id=1")
+    const rows = await fixture.execute("SELECT ordinal, length(payload) AS bytes, typeof(payload) AS kind FROM checkpoint_chunks ORDER BY ordinal")
+    const [header] = await fixture.execute("SELECT byte_length, chunk_count FROM checkpoint WHERE id = 1")
     if (header?.byte_length !== expected.payload.length || header?.chunk_count !== rows.length || rows.some((row, ordinal) => row.ordinal !== ordinal || row.kind !== "blob")) throw new Error("Checkpoint layout differs from its header")
     return rows.length
   }
@@ -39,7 +40,7 @@ export async function checkpointStorage(fixture: {
     if (await Effect.runPromise(journal.readCheckpoint) !== undefined) throw new Error("Fresh database has a checkpoint")
     await Effect.runPromise(journal.appendWithCheckpoint(0, [record("first")], first))
     const largeCount = await verify(first, [record("first")])
-    await fixture.execute("CREATE TRIGGER fail_checkpoint_chunk BEFORE INSERT ON journal_checkpoint_chunks WHEN NEW.ordinal = 1 BEGIN SELECT RAISE(ABORT, 'Injected chunk failure'); END")
+    await fixture.execute("CREATE TRIGGER fail_checkpoint_chunk BEFORE INSERT ON checkpoint_chunks WHEN NEW.ordinal = 1 BEGIN SELECT RAISE(ABORT, 'Injected chunk failure'); END")
     await rejects(journal.appendWithCheckpoint(1, [record("second")], second), "Injected chunk failure")
     await verify(first, [record("first")])
     await fixture.execute("DROP TRIGGER fail_checkpoint_chunk")
@@ -50,10 +51,10 @@ export async function checkpointStorage(fixture: {
     await Effect.runPromise(journal.close)
     journal = fixture.open(31)
     await verify(second, [record("first"), record("second")])
-    await fixture.execute("UPDATE journal_checkpoint_chunks SET payload = zeroblob(length(payload)) WHERE ordinal = 0")
+    await fixture.execute("UPDATE checkpoint_chunks SET payload = zeroblob(length(payload)) WHERE ordinal = 0")
     await rejects(journal.readCheckpoint, "digest mismatch")
     await Effect.runPromise(journal.appendWithCheckpoint(2, [], second))
-    await fixture.execute("DELETE FROM journal_checkpoint_chunks WHERE ordinal = 0")
+    await fixture.execute("DELETE FROM checkpoint_chunks WHERE ordinal = 0")
     await rejects(journal.readCheckpoint, "chunk metadata")
     await Effect.runPromise(journal.appendWithCheckpoint(2, [], second))
     await verify(second, [record("first"), record("second")])
@@ -63,7 +64,7 @@ export async function checkpointStorage(fixture: {
     await Effect.runPromise(journal.appendWithCheckpoint(2, [], boundary))
     if (await verify(boundary, [record("first"), record("second")]) !== 2) throw new Error("Host-sized chunk failed its SQL round trip")
     const pending: PendingEffectInput = { ref: { seq: 2, atom: "model", act: "test.input" }, request: { act: "test.input", input: "é😀".repeat(chunkBytes) } }
-    await fixture.execute("CREATE TRIGGER fail_input_chunk BEFORE INSERT ON journal_accepted_input_chunks WHEN NEW.ordinal = 1 BEGIN SELECT RAISE(ABORT, 'Injected input failure'); END")
+    await fixture.execute("CREATE TRIGGER fail_input_chunk BEFORE INSERT ON effect_input_chunks WHEN NEW.ordinal = 1 BEGIN SELECT RAISE(ABORT, 'Injected input failure'); END")
     await rejects(journal.append(2, [record("pending")], { put: [pending] }), "Injected input failure")
     if ((await Effect.runPromise(journal.read)).length !== 2 || (await Effect.runPromise(journal.readInputs)).length !== 0) throw new Error("Input failure committed a partial acceptance")
     await fixture.execute("DROP TRIGGER fail_input_chunk")
@@ -72,10 +73,10 @@ export async function checkpointStorage(fixture: {
     journal = fixture.open(chunkBytes)
     if (!isDeepStrictEqual(await Effect.runPromise(journal.readInputs), [pending])) throw new Error("Pending input did not survive reopening")
     await rejects(journal.append(3, [], { put: [{ ...pending, request: { ...pending.request, input: "changed" } }] }), "cannot change")
-    await fixture.execute("UPDATE journal_accepted_input_chunks SET payload = zeroblob(length(payload)) WHERE ordinal = 0")
+    await fixture.execute("UPDATE effect_input_chunks SET payload = zeroblob(length(payload)) WHERE ordinal = 0")
     await rejects(journal.readInputs, "digest mismatch")
     await Effect.runPromise(journal.append(3, [record("settled")], { remove: [pending.ref] }))
-    if ((await Effect.runPromise(journal.readInputs)).length || (await fixture.execute("SELECT * FROM journal_accepted_input_chunks")).length) throw new Error("Terminal input release retained payloads")
+    if ((await Effect.runPromise(journal.readInputs)).length || (await fixture.execute("SELECT * FROM effect_input_chunks")).length) throw new Error("Terminal input release retained payloads")
   } finally { await Effect.runPromise(journal.close) }
 }
 

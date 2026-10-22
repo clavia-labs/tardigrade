@@ -1,7 +1,6 @@
 import { Context, Effect, Layer, Stream, Schema } from "effect"
 import { AiError, LanguageModel, Prompt, Response } from "effect/unstable/ai"
 import { atom, createEventLog, type EffectCheckpoint, type EffectExecution } from "@clavia/tardigrade-core"
-import { documentSession, type DocumentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { compact } from "@clavia/tardigrade-agent/atoms/compact"
 import { infer } from "@clavia/tardigrade-agent/atoms/infer"
 import { messages } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
@@ -23,9 +22,9 @@ const agentProjection = Effect.gen(function* () {
   return yield* infer(atom(get => ({ system: "Test", tools: { view: { specs: [] }, events: {}, acts: {} }, context: get(context) })))
 })
 
-export function agentLog(contextWindowTokens: number, checkpoint?: EffectCheckpoint, context: Context.Context<ModelInfo> = Context.make(ModelInfo, { ...selection, contextWindowTokens }), documents: DocumentSession = documentSession({ load: () => { throw new Error("Missing test checkpoint node") } })) {
+export function agentLog(contextWindowTokens: number, checkpoint?: EffectCheckpoint, context: Context.Context<ModelInfo> = Context.make(ModelInfo, { ...selection, contextWindowTokens })) {
   const agent = Effect.runSync(agentProjection.pipe(Effect.provide(context)))
-  return Object.assign(createEventLog({ schema: Event, atoms: { agent }, documents, ...(checkpoint === undefined ? {} : { checkpoint }) }), { documents })
+  return createEventLog({ schema: Event, atoms: { agent }, ...(checkpoint === undefined ? {} : { checkpoint }) })
 }
 
 type AgentLog = ReturnType<typeof agentLog>
@@ -60,14 +59,13 @@ const lock = modelLockService(modelLockOf({
   models: [{ provider: "fixture", model_id: "test", contextWindowTokens: 4096 }],
 }), { allow: "*", default: model })
 export const contentServices = (observe: (prompt: Prompt.Prompt) => void, options: {
-  readonly provider?: Layer.Layer<LanguageModel.LanguageModel>
   readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined
   readonly request?: RequestOptions
   readonly libraries?: readonly LibraryImplementation<EffectExecution>[]
   readonly toolCalls?: readonly { readonly id: string; readonly name: string; readonly params: Schema.Json }[]
 } = {}) => {
   const settings = { ...binding, policy: requestPolicyOf(options.request ?? {}) }
-  const provider = options.provider ?? Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+  const provider = Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
     generateText: input => Effect.suspend(() => { observe(input.prompt); const failure = options.failure?.(input.prompt); return failure ? Effect.fail(failure) : Effect.succeed([Response.makePart("text", { text: "ok" })]) }),
     streamText: input => Stream.suspend((): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> => {
       observe(input.prompt)

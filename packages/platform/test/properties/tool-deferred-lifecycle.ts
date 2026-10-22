@@ -1,4 +1,3 @@
-import { documentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { createTestStore } from "./runtime/store"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/unstable/rpc"
@@ -23,7 +22,6 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
   let reopening = false
   let watches = 0
   const journal: Journal<Event> = {
-    storedValues: documentSession({ load: () => { throw new RuntimeError("Missing test document") } }),
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]), readAfter: position => Effect.sync(() => records.slice(position)),
     // @effect-diagnostics-next-line effectSucceedWithVoid:off: Journal requires undefined; Effect.void has a void result type.

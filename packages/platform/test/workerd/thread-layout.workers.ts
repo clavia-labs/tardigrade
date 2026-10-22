@@ -2,10 +2,10 @@ import { env } from "cloudflare:workers"
 import { SELF, runInDurableObject } from "cloudflare:test"
 import { expect, inject, test } from "vitest"
 import { Effect } from "effect"
-import { createWatchdog, watchdogKey, DEFAULT_PROVISION_RETRY_LIMIT, decodeCheckpoint } from "@clavia/tardigrade-core"
+import { createWatchdog, watchdogKey, DEFAULT_PROVISION_RETRY_LIMIT } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { threadFlow } from "../fixtures/thread-flow"
-import { cloudflareJournal, cloudflareThreadName } from "../../src/cloudflare"
+import { cloudflareThreadName } from "../../src/cloudflare"
 import type { LayoutActorDO, LayoutThreadDO } from "../fixtures/workerd/layout-fixture"
 
 const bindings = env as unknown as { ACTORS: DurableObjectNamespace<InstanceType<typeof LayoutActorDO>>; THREADS: DurableObjectNamespace<LayoutThreadDO> }
@@ -137,8 +137,8 @@ test("provisioning retries survive reopening and concurrent named requests share
     expect((await flow.request("", { name: "failed", initialState: { "layout.value": 99 } })).status).toBeGreaterThanOrEqual(400)
     await runInDurableObject(actor, async (object, state) => {
       await object.dispose()
-      state.storage.sql.exec("DELETE FROM journal_checkpoint_chunks")
-      state.storage.sql.exec("DELETE FROM journal_checkpoints")
+      state.storage.sql.exec("DELETE FROM checkpoint_chunks")
+      state.storage.sql.exec("DELETE FROM checkpoint")
     })
     await failed.failNextProvisions(1)
     const retried = await Promise.all(Array.from({ length: 5 }, () => flow.request("", { name: "failed" })))
@@ -190,28 +190,3 @@ test.skipIf(!inject("longTests"))("200 concurrent creates finish while another t
     expect((await blocked).status).toBe(200)
   }
 }, 30_000)
-
-
-test("large materialisations survive native abort", async () => {
-  const instance = "large-checkpoint"
-  const flow = threadFlow(request => SELF.fetch(request), instance)
-  const spawns = Array.from({ length: 50 }, (_, index) => ({ id: `${index}:${"x".repeat(81920)}`, origin: 0, value: index, child: coordinate(instance, "done") }))
-  expect((await flow.request("", { name: "parent", initialState: { "layout.value": 32, "layout.spawns": spawns } })).status).toBe(200)
-  await flow.call("parent", "read", null, "initial", 32)
-  const parent = threadStub(instance, "parent")
-  await runInDurableObject(parent, async (_object, state) => {
-    expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) count FROM grove_state_chunks").one().count).toBeGreaterThan(1)
-  })
-  try { await parent.abort() }
-  catch (error) { expect(String(error)).toContain("injected checkpoint reset") }
-  await flow.call("parent", "read", null, "recovered", 32)
-  const checkpoint = await threadStub(instance, "parent").checkpoint()
-  if (!checkpoint) throw new Error("Expected recovered checkpoint")
-  const reference = decodeCheckpoint(checkpoint.payload).durable.find(atom => atom.name === "layout.spawns")?.reference
-  if (!reference) throw new Error("Expected materialised state reference")
-  await runInDurableObject(threadStub(instance, "parent"), async (_object, state) => {
-    const journal = cloudflareJournal(state.storage, "events")
-    try { expect(journal.storedValues.readReference(reference)).toEqual(spawns) }
-    finally { await Effect.runPromise(journal.close) }
-  })
-})

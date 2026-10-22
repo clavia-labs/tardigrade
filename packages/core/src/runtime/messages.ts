@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { CoreEvent } from "./events"
 import { MessageAddress, MessageDelivered } from "../actor/message"
-import { durableAtom } from "../atoms/durable/atom"
+import { durableAtom } from "../atoms/durable"
 import { effectAtom } from "../atoms/effect"
 import { resolveMethodResult, type ActorMethods } from "../actor/method"
 import type { ThreadCoordinate } from "../actor/thread"

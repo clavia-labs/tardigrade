@@ -103,40 +103,10 @@ export function turnOutput(events: readonly Event[], settlement: TurnSettled): s
   return reply.text
 }
 
-export const InferenceCollections = Schema.Struct({
-  turns: Schema.Record(Schema.String, Turn), pending: Schema.Array(Schema.String),
-  invocations: Schema.Record(Schema.String, Schema.String), cancelled: Schema.Record(Schema.String, Schema.Boolean),
-  turnId: Schema.String, callId: Schema.String, origin: Schema.NullOr(Schema.Finite),
-  needsReply: Schema.Boolean, running: Schema.Boolean, waiting: Schema.Boolean,
-})
-
-// inferenceCollections indexes turn records and retains pending order (platform/test/bun/agent-compaction.test.ts).
-export function inferenceCollections(value: typeof InferenceState.Type): typeof InferenceCollections.Type {
-  return { ...value, turns: Object.fromEntries(value.turns.map(turn => [turn.turnId, turn])),
-    pending: value.turns.filter(turn => turn.settlement === null).map(turn => turn.turnId),
-    invocations: Object.fromEntries(value.turns.flatMap(turn => turn.invocationRef ? [[JSON.stringify([turn.invocationRef.method, turn.invocationRef.id]), turn.turnId]] : [])),
-    cancelled: Object.fromEntries(value.turns.filter(turn => turn.cancellation !== null && turn.settlement !== null).flatMap(turn => turn.effects.map(work => [effectKey(work.ref), true]))),
-  }
-}
-
 export const inferenceState = durableAtom({
-  name: "agent.inference.state", schema: InferenceState,
+  name: "agent.inference.state",
   input: Schema.Union([TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled, AbortRequested, ObservedCoreEvent]),
+  schema: InferenceState,
   initial: initialInference,
-  migrate: stored => {
-    if (Schema.is(InferenceState)(stored)) return stored
-    const { turns, pending, invocations: _invocations, cancelled: _cancelled, ...controls } = Schema.decodeUnknownSync(InferenceCollections)(stored)
-    return { ...controls, turns: [...Object.values(turns).filter(turn => turn.settlement !== null), ...pending.map(id => turns[id]!)] }
-  },
   reduce: inferState,
 })
-
-// readInference exposes controls and pending turns (platform/test/properties/actors.ts).
-export function readInference(state: typeof InferenceState.Type): typeof InferenceState.Type {
-  return { ...state, turns: state.turns.filter(turn => turn.settlement === null) }
-}
-
-// findTurn reads a turn by identifier (platform/test/bun/agent-compaction.test.ts).
-export function findTurn(state: typeof InferenceState.Type, id: string) {
-  return state.turns.find(turn => turn.turnId === id)
-}

@@ -1,6 +1,5 @@
 import { atom, durableAtom, ObservedCoreEvent, type RecordMetadata } from "@clavia/tardigrade-core"
-import { Option, Schema } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Schema } from "effect"
 import { Event } from "../../contracts/events"
 
 const Count = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
@@ -9,15 +8,13 @@ const TokenSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, input: Co
 const UsdSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, usd: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))) }))
 const TimeSpend = Schema.Array(Schema.Struct({ turnId: Schema.String, ms: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))) }))
 const Calls = Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String }))
-export const SpendState = Schema.Struct({
+const SpendState = Schema.Struct({
   toolSpend: ToolSpend, tokenSpend: TokenSpend, usdSpend: UsdSpend, timeSpend: TimeSpend, timers: Schema.Array(Schema.Struct({ turnId: Schema.String, index: Count, startedAt: Schema.NullOr(Count) })),
   turns: Schema.Array(Schema.String), models: Calls, tools: Calls,
 })
 const SpendEvent = Schema.Union([Event, ObservedCoreEvent])
 
-const Spend = Schema.Struct({ turnId: Schema.String, count: Count, input: Count, output: Count, usd: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))), ms: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))), startedAt: Schema.NullOr(Count) })
-export const SpendCollections = Schema.Struct({ totals: Schema.Record(Schema.String, Spend), pending: Schema.Array(Schema.String), models: Schema.Record(Schema.String, Schema.String), tools: Schema.Record(Schema.String, Schema.String) })
-// reduceSpend updates ordered turn totals and pending call attribution (platform/test/properties/actors.ts).
+// reduceSpend retains pending call attribution alongside ordered turn totals across checkpoint recovery.
 function reduceSpend(state: typeof SpendState.Type, event: typeof SpendEvent.Type, metadata: RecordMetadata): typeof SpendState.Type {
   if (metadata.recordedAt !== undefined) {
     let updated: Array<typeof TimeSpend.Type[number]> | undefined
@@ -95,23 +92,10 @@ function reduceSpend(state: typeof SpendState.Type, event: typeof SpendEvent.Typ
   }
 }
 
-export const spendRecords = durableAtom({
+export const spendState = durableAtom({
   name: "agent.spend", input: SpendEvent, schema: SpendState,
-  initial: { toolSpend: [], tokenSpend: [], usdSpend: [], timeSpend: [], timers: [], turns: [], models: [], tools: [] },
-  migrate: stored => {
-    if (Schema.is(SpendState)(stored)) return stored
-    const state = Schema.decodeUnknownSync(SpendCollections)(stored), totals = Object.values(state.totals)
-    return {
-      toolSpend: totals.map(({ turnId, count }) => ({ turnId, count })), tokenSpend: totals.map(({ turnId, input, output }) => ({ turnId, input, output })),
-      usdSpend: totals.map(({ turnId, usd }) => ({ turnId, usd })), timeSpend: totals.map(({ turnId, ms }) => ({ turnId, ms })), turns: state.pending,
-      timers: state.pending.map(turnId => ({ turnId, index: totals.findIndex(turn => turn.turnId === turnId), startedAt: state.totals[JSON.stringify(turnId)]!.startedAt })),
-      models: Object.entries(state.models).map(([callId, turnId]) => ({ callId, turnId })), tools: Object.entries(state.tools).map(([callId, turnId]) => ({ callId, turnId })),
-    }
-  },
-  reduce: reduceSpend,
+  initial: { toolSpend: [], tokenSpend: [], usdSpend: [], timeSpend: [], timers: [], turns: [], models: [], tools: [] }, reduce: reduceSpend,
 })
-
-export const spendState = atom(get => get(spendRecords))
 
 // toolSpend records budget-counted tool calls per turn, including execution failures.
 export const toolSpend = atom(get => get(spendState).toolSpend)
@@ -119,8 +103,6 @@ export const toolSpend = atom(get => get(spendState).toolSpend)
 export const tokenSpend = atom(get => get(spendState).tokenSpend)
 // usdSpend sums reported provider costs per turn; a missing cost makes that turn's total unknown.
 export const usdSpend = atom(get => get(spendState).usdSpend)
+
 // timeSpend records wall milliseconds from turn request to turn settlement at journal boundaries, including queueing and downtime; missing timestamps produce unknown totals.
-export const timeSpend = NativeAtom.readable(get => {
-  const next = get(spendState).timeSpend, previous = Option.getOrUndefined(get.self<typeof next>())
-  return next.map((value, index) => { const before = previous?.[index]; return before?.turnId === value.turnId && before.ms === value.ms ? before : value })
-}).pipe(NativeAtom.keepAlive)
+export const timeSpend = atom(get => get(spendState).timeSpend)

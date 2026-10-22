@@ -1,4 +1,3 @@
-import { InputSelection } from "../services/tree-state"
 import { Schema } from "effect"
 import { EffectRef, EffectCancelled, EffectDied, CancellationSettled, CancellationDied } from "./effects"
 import { EffectAcceptance, StoredEffectRequested } from "./effect-request"
@@ -9,7 +8,7 @@ import { StateInitialised } from "../initialise"
 export { StateInitialised } from "../initialise"
 export { InlineInput, StoredEffectRequest, StoredEffectRequested, EffectAcceptance } from "./effect-request"
 
-export const EffectRequest = Schema.Struct({ act: Schema.NonEmptyString, input: Schema.Json, selections: Schema.optionalKey(Schema.Array(InputSelection)) })
+export const EffectRequest = Schema.Struct({ act: Schema.NonEmptyString, input: Schema.Json })
 export type EffectRequest = typeof EffectRequest.Type
 
 // EffectRequested records a request durably accepted for execution.

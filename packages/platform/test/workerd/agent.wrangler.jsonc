@@ -6,8 +6,7 @@
   "r2_buckets": [{ "binding": "OBJECTS", "bucket_name": "tardigrade-agent-content-test" }],
   "durable_objects": { "bindings": [
     { "name": "ACTORS", "class_name": "AgentActorDO" },
-    { "name": "THREADS", "class_name": "AgentThreadDO" },
-    { "name": "MODELS", "class_name": "ModelServerDO" }
+    { "name": "THREADS", "class_name": "AgentThreadDO" }
   ] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentActorDO", "AgentThreadDO", "ModelServerDO"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentActorDO", "AgentThreadDO"] }]
 }

@@ -1,10 +1,11 @@
 import { Effect, Cause, Exit } from "effect"
-import { checkpointDigest, encodeCheckpoint, type ThreadJournal } from "@clavia/tardigrade-core"
+import { checkpointDigest } from "@clavia/tardigrade-core"
 import { isDeepStrictEqual } from "node:util"
+import type { sqlJournal } from "../../src/shared/sql-journal"
 
 // journalEventChunks verifies logical replay, indexed reads, reopening and transactional rollback under a SQL row limit.
 export async function journalEventChunks(fixture: {
-  readonly open: () => ThreadJournal<object> & { readonly close: Effect.Effect<void, Error> }
+  readonly open: () => ReturnType<typeof sqlJournal>
   readonly execute: (query: string) => Iterable<Record<string, unknown>>
   readonly eventInlineBytes: number
   readonly maxRowBytes: number
@@ -55,7 +56,7 @@ export async function journalEventChunks(fixture: {
   journal = open()
   same(await run(journal.read), [record])
   same(await run(journal.readMessage(message.id)), { position: 1, record })
-  const payload = encodeCheckpoint({ position: 2, durable: [{ name: "state", position: 2, state: { text: "checkpoint".repeat(250000) } }], operations: [] }),
+  const payload = new TextEncoder().encode("checkpoint".repeat(250000)),
     checkpoint = {
       position: 2,
       payload,
@@ -105,7 +106,7 @@ export async function journalEventChunks(fixture: {
   same(JSON.parse(String(stored[0]!.event)), inline)
   const header = JSON.parse(String(stored[1]!.event))
   same(header.event, { type: "Boundary" })
-  assert(header.byteLength === fixture.eventInlineBytes + 1 && Number(header.chunkCount) > 0, "Inline threshold was ignored")
+  assert(header.byteLength === fixture.eventInlineBytes + 1 && header.chunkCount > 0, "Inline threshold was ignored")
   same([...fixture.execute("SELECT seq FROM experimental_events WHERE json_extract(event, '$.event.type') = 'Boundary' ORDER BY seq")].map(row => row.seq), [2, 3])
   fixture.execute(
     "DELETE FROM experimental_event_chunks WHERE seq=0 AND ordinal=1"

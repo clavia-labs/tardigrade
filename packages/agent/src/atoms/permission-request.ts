@@ -1,18 +1,18 @@
 import { type ActService, effectAtom, type Atom, eventValue, type ActorOutput } from "@clavia/tardigrade-core"
 import { AskPermission, requests, failureMessage } from "../contracts/acts"
-import { permissionState, type PermissionView } from "./durable/permissions"
+import { permissionState, PermissionState } from "./durable/permissions"
 import { Schema } from "effect"
 import { type ToolState } from "./durable/tools"
 import { type ToolSpec } from "@clavia/tardigrade-libraries/types"
 import { PermissionPolicy, type Event } from "../contracts/events"
 
-type PermissionOutput<R> = ActorOutput<PermissionView & {
+type PermissionView<R> = ActorOutput<typeof PermissionState.Type & {
   readonly position: "configuring" | "ready" | "checking" | "waiting"
 }, Event, R>
 export const DEFAULT_PERMISSION_POLICY: typeof PermissionPolicy.Type = { default: "ask", actions: {} }
 
 // permissions records its initial policy and uses logged updates for subsequent calls.
-export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: { readonly policy?: typeof PermissionPolicy.Type; readonly tools?: Atom<ActorOutput<{ readonly specs: readonly ToolSpec[] }, unknown, unknown>> } = {}): Atom<PermissionOutput<ActService<"agent.permission.request">>> {
+export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: { readonly policy?: typeof PermissionPolicy.Type; readonly tools?: Atom<ActorOutput<{ readonly specs: readonly ToolSpec[] }, unknown, unknown>> } = {}): Atom<PermissionView<ActService<"agent.permission.request">>> {
   const initialPolicy = Schema.decodeSync(PermissionPolicy)(options.policy ?? DEFAULT_PERMISSION_POLICY)
   const request = requests(AskPermission.request)
   return effectAtom(get => {
@@ -22,7 +22,7 @@ export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: 
       acts: {}, events: { permission: eventValue({ type: "PermissionConfigured", policy: initialPolicy } satisfies Event) },
     }
     const call = get(pendingTools).pending
-    if (!call || state.decision("tool.execute", call.callId)) return { view: { ...state, position: "ready" }, events: {}, acts: {} }
+    if (!call || state.decisions.some(value => value.action === "tool.execute" && value.requestId === call.callId)) return { view: { ...state, position: "ready" }, events: {}, acts: {} }
     const hints = options.tools ? get(options.tools).view.specs.find(tool => tool.name === call.name)?.annotations : undefined
     const metadata = hints?.readOnlyHint === undefined ? undefined : { readOnly: hints.readOnlyHint }
     const rule = Object.hasOwn(state.policy.actions, "tool.execute") ? state.policy.actions["tool.execute"] : undefined

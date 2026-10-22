@@ -1,4 +1,3 @@
-import { prepareDocumentInput, type SelectedInput } from "../services/tree-state"
 import { operationSettlement } from "../runtime/operation"
 import { incrementalDecoder } from "./incremental/decode"
 import { Context, Effect, Layer, Schema, Option } from "effect"
@@ -39,7 +38,7 @@ export interface ActRequest<Value, Failure, Services> {
   // onSettled derives domain events committed with the terminal decision; handle identifies deferred completion and callbacks must be pure.
   onSettled?(result: Exclude<ActState<Value, ActFailure<Failure>>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle): readonly object[]
   readonly ref: Atom<EffectRef | undefined>
-  // result exposes execution status and loads fulfilled cold values when value is read (platform/test/properties/accepted-work.ts). Cancellation returns a rejected Cancelled value (quint/terminalDelivery.qnt, deliverySound).
+  // result exposes cancellation as a rejected Cancelled value delivered through onSettled (quint/terminalDelivery.qnt, deliverySound, callbackAtMostOnce).
   readonly result: Atom<ActState<Value, ActFailure<Failure>>>
 }
 
@@ -110,12 +109,10 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
     }
   }))
 
-  type Invocation<A> = { readonly origin?: number; readonly input: A; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }
   // request creates an invocation handle retained across reevaluation; another invocation requires another handle.
-  const request = (invocation: Invocation<Input> | Invocation<SelectedInput<Input>>, select = false): ActRequest<Value, Failure, ActService<Name>> => {
-    const planned = select ? prepareDocumentInput(invocation.input) : { input: invocation.input as Input }
-    const decoded = planned.selections ? undefined : decodeInput(invocation.input, { freeze: true })
-    const input = planned.selections ? Schema.decodeSync(Schema.Json)(planned.input) : decoded ? decoded.value as Schema.Json : Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input as Input)))
+  const request = (invocation: { readonly origin?: number; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
+    const decoded = decodeInput(invocation.input, { freeze: true })
+    const input = decoded ? decoded.value as Schema.Json : Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
     if (typeof input === "object" && input !== null) actInputs.add(input)
     const origin = invocation.origin === undefined ? undefined : Schema.decodeSync(EffectRef.fields.seq)(invocation.origin)
     const identity = {}
@@ -139,23 +136,16 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       if (!Schema.is(EffectSettled)(settlement)) return { status: "pending" }
       if (settlement.outcome.status === "rejected") return { status: "rejected", reason: decodeFailure(settlement.outcome.reason) }
       const outcome = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
-      const fulfilled = (value: Schema.Json, kind: "value" | "promise"): ActState<Value, ActFailure<Failure>> => {
-        const cold = operation?.execution.results?.[kind]
-        if (!cold && !operation?.execution.retired?.[kind]) return { status: "fulfilled", value: decodeSuccess(value) }
-        return Object.freeze({ status: "fulfilled" as const, get value(): Value {
-          if (!cold || !service.documents) throw new Error(`Act result payload is unavailable: ${key}`)
-          return decodeSuccess(service.documents.read(cold))
-        } })
-      }
-      if (outcome.type === "value") return fulfilled(outcome.value, "value")
+      if (operation?.execution.retired?.value || operation?.execution.retired?.promise) throw new Error(`Act result was retired: ${key}`)
+      if (outcome.type === "value") return { status: "fulfilled", value: decodeSuccess(outcome.value) }
       const resolved = service.promise ? service.promise(reference) : events.find(event => Schema.is(PromiseSettled)(event) && effectKey(event.ref) === key)
       if (!Schema.is(PromiseSettled)(resolved)) return { status: "pending" }
       return resolved.result.status === "fulfilled"
-        ? fulfilled(resolved.result.value, "promise")
+        ? { status: "fulfilled", value: decodeSuccess(resolved.result.value) }
         : { status: "rejected", reason: Schema.is(PromiseTimedOut)(resolved.result.reason) ? resolved.result.reason : decodeFailure(resolved.result.reason) }
     })
     const handle: ActRequest<Value, Failure, ActService<Name>> = Object.freeze({
-      kind: "act", identity, ...(origin === undefined ? {} : { origin }), request: { act: options.name, input, ...(planned.selections ? { selections: planned.selections } : {}) }, ref, result,
+      kind: "act", identity, ...(origin === undefined ? {} : { origin }), request: { act: options.name, input }, ref, result,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
       ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
       onSettled: (outcome: Exclude<ActState<Value, ActFailure<Failure>>, { status: "pending" }>, ref: EffectRef, handle?: ExecutionHandle) => {
@@ -189,8 +179,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       })
     }),
     layer,
-    request: (invocation: Invocation<Input>) => request(invocation),
-    requestTree: (invocation: Invocation<SelectedInput<Input>>) => request(invocation, true),
+    request,
     defer: (handle: ExecutionHandle): DeferredAct => ({ [DeferredType]: true, handle: Schema.decodeSync(ExecutionHandle)(handle) }),
   }
 }
