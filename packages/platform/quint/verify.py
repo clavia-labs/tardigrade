@@ -72,6 +72,9 @@ check("interpreterVersion", "initWithoutWake", "wakeCoverage", expected=12)
 check("invocationReplay", "init", "invariant", "eventualOutcome")
 check("invocationReplay", "initUnsafe", "invariant", "eventualOutcome")
 check("promiseLifecycle", "init", "invariant", "eventualSettlement,eventualProcessing,terminalStable")
+check("localProducerHealth", "init", "typeInvariant")
+check("localProducerHealth", "init", "runningMeansCovered", expected=12)
+check("localProducerHealth", "initWithOrphanGuard", "invariant")
 
 for initializer in ["initWithoutAdmissionWake", "initWithoutRenewal", "initWithoutRetry", "initStaleClear", "initFiniteRetry"]:
     check("watchdog", initializer, "wakeCoverage", expected=12)
