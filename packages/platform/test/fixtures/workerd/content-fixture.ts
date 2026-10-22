@@ -1,27 +1,24 @@
 import { strict as assert } from "node:assert"
 import { env } from "cloudflare:workers"
-import { SELF, evictDurableObject, runInDurableObject } from "cloudflare:test"
+import { SELF, evictDurableObject } from "cloudflare:test"
 import { Effect, Schema } from "effect"
-import { decodeCheckpoint, methodResult, ThreadCoordinate } from "@clavia/tardigrade-core"
+import { methodResult, ThreadCoordinate } from "@clavia/tardigrade-core"
 import { ObjectStorage, type InputContentPart, type ContentPart } from "@clavia/tardigrade-model/object"
 import { objectStorageFromR2 } from "@clavia/tardigrade-cloudflare/object-storage/r2"
-import * as Grove from "@tardie/grove"
-import { DocumentState } from "@clavia/tardigrade-core/services/tree-state"
-import { cloudflareJournal, cloudflareThreadName } from "../../../src/cloudflare"
+import { cloudflareThreadName } from "../../../src/cloudflare"
 import { waitFor } from "../wait"
 import type { ContentFixture } from "../../properties/content/hydration"
 import { observedPrompt, providerCallCount, type AgentEnv, type AgentThreadDO } from "./agent-fixture.worker"
 
 interface WorkerdContentFixture extends ContentFixture {
   readonly persist: (content: readonly InputContentPart[]) => Promise<readonly ContentPart[]>
-  readonly states: () => Promise<Readonly<Record<string, Schema.Json>>>
   readonly records: () => ReturnType<InstanceType<typeof AgentThreadDO>["records"]>
   readonly restart: () => Promise<void>
 }
 
-export async function workerdContentFixture(options: { readonly cache?: boolean; readonly tools?: "files" | "background"; readonly instance?: string } = {}): Promise<WorkerdContentFixture> {
+export async function workerdContentFixture(options: { readonly cache?: boolean; readonly tools?: "files" | "background" } = {}): Promise<WorkerdContentFixture> {
   const prefix = options.tools ? `content-r2-tools${options.tools === "files" ? "" : `-${options.tools}`}` : options.cache === false ? "content-r2" : "content"
-  const instance = options.instance ?? `${prefix}-${crypto.randomUUID()}`
+  const instance = `${prefix}-${crypto.randomUUID()}`
   const base = `http://test/v1/actors/${instance}/threads`
   const created = await SELF.fetch(base, { method: "POST", body: JSON.stringify({ name: "thread" }) })
   assert.equal(created.status, 200)
@@ -35,14 +32,6 @@ export async function workerdContentFixture(options: { readonly cache?: boolean;
     put: bytes => Effect.runPromise(storage.put(bytes)),
     persist: content => Effect.runPromise(ObjectStorage.persist(content).pipe(Effect.provideService(ObjectStorage, storage))),
     records: () => stub.records(),
-    states: () => runInDurableObject(stub, async (_object, state) => {
-      const journal = cloudflareJournal(state.storage, "events")
-      try {
-        const checkpoint = await Effect.runPromise(journal.readCheckpoint)
-        if (!checkpoint) throw new Error("Expected agent checkpoint")
-        return Object.fromEntries(decodeCheckpoint(checkpoint.payload).durable.map(entry => [entry.name, Schema.is(DocumentState)(entry.state) ? journal.grove.view(Grove.decodeReference(entry.state.reference), Schema.Json).materialize() : Schema.decodeUnknownSync(Schema.Json)(entry.state)]))
-      } finally { await Effect.runPromise(journal.close) }
-    }),
     restart: async () => { await stub.dispose(); await evictDurableObject(stub) },
     message: async (content, id) => {
       const method = `${base}/thread/methods/message`

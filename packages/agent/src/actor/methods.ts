@@ -1,6 +1,6 @@
 import { RuntimeError, type Getter, type MethodResult, actorMethod, AbortRequested } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
-import { inferenceState, findTurn } from "../atoms/durable/inference"
+import { inferenceState } from "../atoms/durable/inference"
 import { MessageContent, TurnRequested } from "../contracts/events"
 
 export const AgentMessageOutput = Schema.Struct({ text: Schema.String })
@@ -8,7 +8,7 @@ export type AgentMessageOutput = typeof AgentMessageOutput.Type
 
 // agentReply projects a terminal turn into an invocation result for durable return delivery.
 export function agentReply(id: string, get: Getter): MethodResult<AgentMessageOutput> | undefined {
-  const turn = findTurn(get(inferenceState), id)
+  const turn = get(inferenceState).turns.find(turn => turn.turnId === id)
   if (!turn || turn.settlement === null) return undefined
   if (turn.settlement === "completed") {
     if (turn.answer === null) throw new RuntimeError("Completed turn has no answer")

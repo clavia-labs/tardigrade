@@ -1,7 +1,2 @@
-import { isFrozenJson } from "@tardie/grove"
-
-// FrozenPlainData recognizes locally verified plain data and Grove's immutable JSON values (platform/test/properties/runtime/state-validation.ts; grove/test/value.test.ts).
-class FrozenPlainData extends WeakSet<object> {
-  override has(value: object): boolean { return super.has(value) || isFrozenJson(value) }
-}
-export const frozenPlainData = new FrozenPlainData()
+// frozenPlainData holds objects verified as deep-frozen plain data: array or plain-object prototypes, value properties only, no functions. Such an object cannot change, so a result computed from it once stays valid (validate.ts, decode.ts).
+export const frozenPlainData = new WeakSet<object>()

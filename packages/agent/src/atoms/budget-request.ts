@@ -1,6 +1,6 @@
 import { type ActService, RuntimeError, atom, effectAtom, type Atom, eventValue, type ActorOutput } from "@clavia/tardigrade-core"
 import { AskBudget, requests, failureMessage } from "../contracts/acts"
-import { spendRecords } from "./durable/spend"
+import { toolSpend } from "./durable/spend"
 import { budgetState } from "./durable/budget"
 import { Schema } from "effect"
 import { type ToolState } from "./durable/tools"
@@ -30,8 +30,8 @@ export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: {
   const request = requests(AskBudget.request)
   return effectAtom(get => {
     const state = get(budgetState).find(entry => entry.metric === "toolCalls")
-    const spend = get(spendRecords), turnId = state?.turnId
-    const used = turnId === undefined ? 0 : spend.toolSpend.find(turn => turn.turnId === turnId)?.count ?? 0
+    const spend = get(toolSpend)
+    const used = spend.find(turn => turn.turnId === state?.turnId)?.count ?? 0
     if (!state) return {
       view: { configured: false, used, limit: 0, remaining: 0, decision: null, request: null },
       acts: {}, events: initialPolicy ? { budget: eventValue({ type: "BudgetConfigured", metric: "toolCalls", policy: initialPolicy } satisfies Event) } : {},

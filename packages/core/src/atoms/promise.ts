@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util"
 import { Schema } from "effect"
 import { Atom } from "effect/unstable/reactivity"
-import { valueAtom } from "./durable/value"
+import { durableAtom } from "./durable"
 import { EffectRef, effectKey, RuntimeError, Cancelled, EffectCancelled, PromiseTimedOut } from "../runtime/effects"
 
 export type PromiseState<Value, Error> =
@@ -28,7 +28,7 @@ export function durablePromise<Value, Error = never>(reference: EffectRef, optio
   const result = schema.fields.result
   const validate = Schema.decodeUnknownSync(Schema.toType(schema), { onExcessProperty: "error" })
   const stateSchema: Schema.Schema<PromiseState<Value, Error | Cancelled | PromiseTimedOut>> = Schema.Union([Schema.Struct({ status: Schema.Literal("pending") }), result, Schema.Struct({ status: Schema.Literal("rejected"), reason: Cancelled })])
-  const state = valueAtom({
+  const state = durableAtom({
     name: `promise:${id}`,
     input: Schema.Union([Schema.Struct({ type: Schema.Literal("PromiseSettled"), ref: EffectRef, result: Schema.Unknown }), EffectCancelled]),
     schema: stateSchema,

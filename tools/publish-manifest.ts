@@ -13,7 +13,6 @@ import manifest11 from "../packages/deprecated/http/package.json"
 import manifest12 from "../apps/server/package.json"
 import manifest13 from "../apps/cli/package.json"
 
-import grove from "../packages/grove/package.json"
 import platform from "../packages/platform/package.json"
 import core from "../packages/core/package.json"
 import agent from "../packages/agent/package.json"
@@ -27,7 +26,6 @@ interface DependencyManifest {
 }
 
 export const publishSources = [
-  { dir: "packages/grove", namespace: "grove", pkg: grove },
   { dir: "packages/agent", namespace: "agent", pkg: agent },
   { dir: "packages/libraries", namespace: "libraries", pkg: libraries },
   { dir: "packages/platform", namespace: "platform", pkg: platform },

@@ -1,4 +1,3 @@
-import { documentSession } from "../services/tree-state"
 import { eventCatalog } from "./event"
 import { historicalEventDecoder } from "../event/versioned"
 import type { ActorMethods, ActorMethod } from "./method"
@@ -54,7 +53,7 @@ export function defineActor<Value, const Name extends string, Services, const Co
     const root = atom(get => resolveOutput(get(definition.atom)))
     const catalog = eventCatalog<DomainEvents>()
     for (const method of Object.values(definition.methods ?? {})) for (const schema of method.events) catalog.add(schema)
-    const discovery = createStore(Context.make(EventLog, { events: createEventSource().events, documents: documentSession({ load: () => { throw new RuntimeError("Discovery cannot read persisted tree nodes") } }) }))
+    const discovery = createStore(Context.make(EventLog, { events: createEventSource().events }))
     let durableAtoms: ActorInspection<Contracts>["durableAtoms"]
     try {
       // TODO: Discover subscriptions first read after a branch change; setup currently registers the graph observed from initial state.
@@ -79,7 +78,6 @@ export function defineActor<Value, const Name extends string, Services, const Co
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => createStore(Context.make(EventLog, {
         events: createEventSource().events,
-        documents: documentSession({ load: () => { throw new RuntimeError("Discovery cannot read persisted tree nodes") } }),
       }))),
       store => Effect.try({ try: () => store.graph({ [name]: root }), catch: RuntimeError.from }),
       store => Effect.sync(() => store.dispose()),

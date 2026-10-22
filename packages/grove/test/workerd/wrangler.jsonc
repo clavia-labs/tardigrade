@@ -1,8 +1,0 @@
-{
-  "name": "grove-test",
-  "main": "fixture.ts",
-  "compatibility_date": "2026-08-08",
-  "compatibility_flags": ["nodejs_compat"],
-  "durable_objects": { "bindings": [{ "name": "GROVE", "class_name": "GroveDO" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GroveDO"] }]
-}

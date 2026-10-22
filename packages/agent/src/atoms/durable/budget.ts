@@ -1,12 +1,11 @@
-import { durableAtom, atom, RuntimeError } from "@clavia/tardigrade-core"
+import { durableAtom, RuntimeError } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
 import { BudgetConfigured, BudgetUpdated, BudgetResolved, ModelCalled, TurnSettled, BudgetDecision, BudgetPolicy, BudgetMetric, type Event } from "../../contracts/events"
 
-const Budget = Schema.Struct({
+export const BudgetState = Schema.Array(Schema.Struct({
   metric: BudgetMetric, turnId: Schema.optionalKey(Schema.String), policy: BudgetPolicy, granted: Schema.Finite,
   decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: BudgetDecision })),
-})
-export const BudgetState = Schema.Array(Budget)
+}))
 
 function validateBudgetAmount(metric: string, amount: number) {
   if (!Number.isFinite(amount) || (metric === "toolCalls" && !Number.isSafeInteger(amount))) throw new RuntimeError(`Invalid budget amount for ${metric}`)
@@ -55,12 +54,8 @@ export function reduceBudget(state: typeof BudgetState.Type, event: Event): type
   return state
 }
 
-export const budgetRecords = durableAtom({
+export const budgetState = durableAtom({
   name: "agent.budget",
   input: Schema.Union([BudgetConfigured, BudgetUpdated, BudgetResolved, ModelCalled, TurnSettled]),
-  schema: BudgetState, initial: [],
-  migrate: stored => Array.isArray(stored) ? stored : Object.values(Schema.decodeUnknownSync(Schema.Record(Schema.String, Budget))(stored)),
-  reduce: reduceBudget,
+  schema: BudgetState, initial: [], reduce: reduceBudget,
 })
-
-export const budgetState = atom(get => get(budgetRecords))

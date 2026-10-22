@@ -9,13 +9,13 @@
     "./journal": "./src/shared/sql-journal.ts"
   },
   "dependencies": {
-    "@tardie/grove": "workspace:*",
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-cloudflare": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-worker-loader": "workspace:*",
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+    "@effect/sql-sqlite-do": "4.0.0-rc.115",
     "@effect/platform-bun": "4.0.0-rc.115",
     "effect": "4.0.0-rc.115"
   },

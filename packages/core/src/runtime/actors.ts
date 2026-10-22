@@ -119,7 +119,6 @@ export interface ActorExecutionOptions<Event extends object, Services, State, Co
   readonly cancellation?: CancellationOptions
   readonly checkpointPolicy?: CheckpointPolicy
   readonly effectInput?: { readonly digestMinBytes?: number }
-  readonly effectResult?: { readonly coldMinBytes?: number }
   readonly promises?: Partial<PromisePolicy>
   readonly canDrive?: (target: WatchdogTarget) => Effect.Effect<boolean, Error>
   // initialStateAtoms supplies destination codecs for state accepted during thread creation.
@@ -189,7 +188,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
         ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
         ...(options.cancellation ? { cancellation: options.cancellation } : {}),
         ...(options.checkpointPolicy ? { checkpoint: options.checkpointPolicy } : {}),
-        ...(options.effectInput ? { effectInput: options.effectInput } : {}), ...(options.effectResult ? { effectResult: options.effectResult } : {}), actor: options.actor, actorContext: options.actorContext, journal, ...(options.executionStream ? { executionStream: options.executionStream } : {}), ...(options.executionStreamBus ? { executionStreamBus: options.executionStreamBus } : {}), ...(options.canDrive ? { canDrive: options.canDrive(coordinate) } : {}), ...(options.promises ? { promises: options.promises } : {}), delivery: options.delivery(coordinate), services: runtime => options.services(coordinate, runtime),
+        ...(options.effectInput ? { effectInput: options.effectInput } : {}), actor: options.actor, actorContext: options.actorContext, journal, ...(options.executionStream ? { executionStream: options.executionStream } : {}), ...(options.executionStreamBus ? { executionStreamBus: options.executionStreamBus } : {}), ...(options.canDrive ? { canDrive: options.canDrive(coordinate) } : {}), ...(options.promises ? { promises: options.promises } : {}), delivery: options.delivery(coordinate), services: runtime => options.services(coordinate, runtime),
       })), Effect.onError(() => Effect.sync(() => { threads.delete(key) }))))
       threads.set(key, pending)
     }
@@ -220,8 +219,6 @@ export function createActorExecution<Event extends object, Services, State, Cont
       const node = atom(get => resolveMethodResult(current(coordinate).contracts[name]!, invocation.input, get, { id, ref: { method: name, id } }))
       const settled = yield* Deferred.make<MethodResult<Schema.Json>, Error>()
       const check = () => {
-        // check waits for projection rebinding across runtime replacement (packages/platform/test/bun/thread-recovery.test.ts).
-        if (!liveThreads.has(identity(coordinate))) return
         try {
           const value = source.get(node)
           if (value !== undefined) Deferred.doneUnsafe(settled, Effect.succeed(value))

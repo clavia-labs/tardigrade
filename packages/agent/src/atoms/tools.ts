@@ -4,7 +4,7 @@ import { RuntimeError, effectAtom, type Atom, type ActRequest, type ActorOutput 
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { ToolCalled, ToolReturned, toolReturnedOutput, BudgetResolved, type Event, ToolCall } from "../contracts/events"
-import { type PermissionView } from "./durable/permissions"
+import { type PermissionState } from "./durable/permissions"
 import { toolPromises } from "./tool-promises"
 import { type ToolBudgetView } from "./budget-request"
 import { type ToolSpec, type LibrarySource } from "@clavia/tardigrade-libraries/types"
@@ -43,7 +43,7 @@ export function tools(sources?: readonly LibrarySource[]) {
 }
 
 // withPermissions waits for a decision and denies execution without counting a call.
-export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<ActorOutput<PermissionView, Event, P>>): Atom<Tools<R | P>> {
+export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<ActorOutput<typeof PermissionState.Type, Event, P>>): Atom<Tools<R | P>> {
   return effectAtom(get => {
     const inner = get(tools)
     const permission = get(permissions)
@@ -57,7 +57,7 @@ export function withPermissions<R, P>(tools: Atom<Tools<R>>, permissions: Atom<A
         prepare: call => {
           const plan = inner.view.prepare(call)
           if (plan.position !== "ready" || !plan.counted) return plan
-          const decision = state.decision("tool.execute", call.callId)
+          const decision = state.decisions.findLast(value => value.action === "tool.execute" && value.requestId === call.callId)?.decision
           if (!decision) return { position: "waiting", reason: "Waiting for tool permission" }
           return decision.allowed ? plan : { position: "ready", counted: false, error: decision.reason }
         },

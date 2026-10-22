@@ -5,16 +5,12 @@
     "@clavia/tardigrade-ui"
   ],
   "workspaces": {
-    "packages/grove": {
-      "entry": ["test/workerd/fixture.ts", "test/workerd/*.workers.ts"],
-      "project": ["src/**/*.ts!", "test/**/*.ts"]
-    },
     "packages/tardie": {
       "entry": ["src/generated/**/*.ts!", "src/deprecated/*.ts!"],
       "project": ["src/**/*.ts"]
     },
     "packages/platform": {
-      "entry": ["test/fixtures/workerd/fixture.worker.ts", "test/fixtures/workerd/agent-fixture.worker.ts", "test/fixtures/migration/generate-050.ts", "test/workerd/*.workers.ts"],
+      "entry": ["test/fixtures/workerd/fixture.worker.ts", "test/fixtures/workerd/agent-fixture.worker.ts", "test/workerd/*.workers.ts"],
       "project": ["src/**/*.ts!", "test/**/*.ts"],
       "ignoreIssues": {
         "src/cloudflare/index.ts": ["duplicates"]

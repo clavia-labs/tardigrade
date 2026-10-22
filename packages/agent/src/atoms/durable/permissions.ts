@@ -1,4 +1,4 @@
-import { durableAtom, atom, RuntimeError } from "@clavia/tardigrade-core"
+import { durableAtom, RuntimeError } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
 import { PermissionConfigured, PermissionUpdated, PermissionResolved, Decision, PermissionPolicy, PermissionAction, type Event } from "../../contracts/events"
 
@@ -20,28 +20,8 @@ export function reducePermissions(state: typeof PermissionState.Type, event: Eve
   return state
 }
 
-const PermissionRecord = Schema.Struct({ action: PermissionAction, requestId: Schema.NonEmptyString, decision: Decision })
-const PermissionCollections = Schema.Struct({ policy: Schema.NullOr(PermissionPolicy), decisions: Schema.Record(Schema.String, PermissionRecord), latest: Schema.Record(Schema.String, Schema.String) })
-export const permissionRecords = durableAtom({
-  name: "agent.permissions.decisions", input: Schema.Union([PermissionConfigured, PermissionUpdated, PermissionResolved]),
-  schema: PermissionState, initial: { policy: null, decisions: [] },
-  migrate: stored => {
-    if (Schema.is(PermissionState)(stored)) return stored
-    const state = Schema.decodeUnknownSync(PermissionCollections)(stored)
-    const latest = new Set(Object.values(state.latest)), entries = Object.entries(state.decisions)
-    return { policy: state.policy, decisions: [...entries.filter(([id]) => !latest.has(id)), ...entries.filter(([id]) => latest.has(id))].map(([, entry]) => entry) }
-  },
-  reduce: reducePermissions,
-})
-
-export interface PermissionView {
-  readonly policy: typeof PermissionPolicy.Type | null
-  readonly decision: (action: typeof PermissionAction.Type, requestId: string) => typeof Decision.Type | undefined
-}
-export const permissionState = atom((get): PermissionView => {
-  const state = get(permissionRecords)
-  return {
-    policy: state.policy,
-    decision: (action, requestId) => state.decisions.findLast(entry => entry.action === action && entry.requestId === requestId)?.decision,
-  }
+export const permissionState = durableAtom({
+  name: "agent.permissions.decisions",
+  input: Schema.Union([PermissionConfigured, PermissionUpdated, PermissionResolved]),
+  schema: PermissionState, initial: { policy: null, decisions: [] }, reduce: reducePermissions,
 })

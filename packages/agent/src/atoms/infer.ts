@@ -1,4 +1,4 @@
-import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter, type SelectedInput } from "@clavia/tardigrade-core"
+import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled } from "../contracts/events"
@@ -6,12 +6,12 @@ import { ModelInfo } from "../actor/context"
 import { modelSelection } from "../compat/model"
 import { Generate, requests, failureMessage } from "../contracts/acts"
 import type { OutputContract } from "../contracts/acts"
-import { inferenceState, readInference } from "./durable/inference"
-import { spendRecords } from "./durable/spend"
+import { inferenceState } from "./durable/inference"
+import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
 import { type ToolView } from "./tools"
 
 export type ContextView = ActorOutput<{ readonly position: "configuring" | "compacting" } | { readonly position: "failed"; readonly reason: string } | {
-  readonly position: "ready"; readonly messages: SelectedInput<typeof Conversation.Type>
+  readonly position: "ready"; readonly messages: typeof Conversation.Type
 }, Event, ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>
 export interface AgentInput<R, ToolEvents extends object = Event> {
   readonly system: string
@@ -22,13 +22,15 @@ export interface AgentInput<R, ToolEvents extends object = Event> {
 
 export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>> | ((get: Getter) => AgentInput<R, ToolEvents>)) {
   const agentAtom = typeof agent === "function" ? atom(agent) : agent
-  const request = requests(Generate.requestTree, { latestOnly: true })
+  const request = requests(Generate.request, { latestOnly: true })
 
   const output = Effect.map(Effect.all([ModelInfo, modelSelection]), ([current, model]) => effectAtom(get => {
-    get(spendRecords)
+    get(toolSpend)
+    get(tokenSpend)
+    get(usdSpend)
+    get(timeSpend)
     const input = get(agentAtom)
-    const inference = get(inferenceState)
-    const state = readInference(inference)
+    const state = get(inferenceState)
     const turn = state.turns.find(turn => turn.turnId === state.turnId)
 
     if (turn && turn.cancellation !== null) {
@@ -43,7 +45,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
       }
     }
 
-    const cancelled = new Set(inference.turns.filter(turn => turn.cancellation !== null).flatMap(turn => turn.effects.map(work => effectKey(work.ref))))
+    const cancelled = new Set(state.turns.filter(turn => turn.cancellation !== null).flatMap(turn => turn.effects.map(work => effectKey(work.ref))))
     const proposals = {
       events: Object.fromEntries(Object.entries({ ...input.context.events, ...input.tools.events }).filter(([, proposal]) => {
         const event = proposal.event

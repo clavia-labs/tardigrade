@@ -27,7 +27,6 @@ export interface WatchdogTransaction {
 }
 export interface WatchdogStorage {
   readonly transaction: <Value>(work: (tx: WatchdogTransaction) => Effect.Effect<Value, Error>) => Effect.Effect<Value, Error>
-  // read runs work that does not write without the commit work transaction performs; storage without it reads through transaction.
   readonly read?: <Value>(work: (tx: WatchdogTransaction) => Effect.Effect<Value, Error>) => Effect.Effect<Value, Error>
 }
 
@@ -121,7 +120,6 @@ export function createWatchdog(options: {
       versionAdopted = true
     })),
     status: options.storage.transaction(tx => tx.list),
-    // blocked reads one target's entry, so a drive check costs one lookup at any number of watchdog entries.
     blocked: (target: WatchdogTarget) => (options.storage.read ?? options.storage.transaction)(tx => tx.get(watchdogKey(target))).pipe(Effect.map(entry => entry?.status === "blocked")),
     resume: (target: WatchdogTarget) => cleanupLock.withPermit(options.storage.transaction(tx => resetBudget(tx, target))),
     alarm: lock.withPermit(Effect.gen(function* () {

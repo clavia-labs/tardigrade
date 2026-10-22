@@ -1,12 +1,8 @@
-import { StateReference } from "../services/tree-state"
 import { Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { EffectRef, EffectDied, EffectCancelled, CancellationOutcome, ExecutionResult } from "./effects"
 import { StoredEffectRequested, EffectSettled, PromiseSettled, RetryScheduled, type EffectAcceptance } from "./events"
 import { InputDigest, digestInput } from "./input-digest"
-
-// DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES moves large fulfilled results into Grove storage (platform/test/properties/accepted-work.ts).
-export const DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES = 2 * 1024
 
 export const StoredOperation = Schema.Struct({
   ref: EffectRef,
@@ -15,7 +11,6 @@ export const StoredOperation = Schema.Struct({
     outcome: Schema.optionalKey(Schema.Union([Schema.toType(EffectSettled), EffectDied])),
     deferred: Schema.optionalKey(Schema.toType(EffectSettled)),
     promise: Schema.optionalKey(Schema.toType(PromiseSettled)),
-    results: Schema.optionalKey(Schema.Struct({ value: Schema.optionalKey(StateReference), promise: Schema.optionalKey(StateReference) })),
     retry: Schema.optionalKey(RetryScheduled),
     // retired holds digests of the fulfilled values retireOutcome removed from outcome and promise.
     retired: Schema.optionalKey(Schema.Struct({ value: Schema.optionalKey(InputDigest), promise: Schema.optionalKey(InputDigest) })),
@@ -61,20 +56,19 @@ export function cleanupSubmission(operation: AcceptedOperation<unknown> | undefi
   return cleanupOwed(operation) && event.outcome.status === "fulfilled" && Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "promise"
 }
 
-// retireOutcome replaces large fulfilled payloads with digests and readable cold references (platform/test/properties/accepted-work.ts).
-export function retireOutcome<Operation extends AcceptedOperation<unknown>>(operation: Operation, minBytes: number, capture?: (value: Schema.Json) => string): Operation {
-  if (!capture) return operation
+// retireOutcome replaces fulfilled values of at least minBytes canonical bytes with null and records their digests, so a completed operation keeps its identity and outcome kind without its payload.
+export function retireOutcome<Operation extends AcceptedOperation<unknown>>(operation: Operation, minBytes: number): Operation {
   const settlement = operation.execution.outcome
   const promise = operation.execution.promise
   let execution = operation.execution
   if (settlement?.type === "EffectSettled" && settlement.outcome.status === "fulfilled" && !execution.retired?.value) {
     const result = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
     const digest = result.type === "value" ? digestInput(result.value) : undefined
-    if (result.type === "value" && digest && digest.bytes >= minBytes) execution = { ...execution, outcome: { ...settlement, outcome: { status: "fulfilled", value: { type: "value", value: null } } }, retired: { ...execution.retired, value: digest }, results: { ...execution.results, value: capture(result.value) } }
+    if (digest && digest.bytes >= minBytes) execution = { ...execution, outcome: { ...settlement, outcome: { status: "fulfilled", value: { type: "value", value: null } } }, retired: { ...execution.retired, value: digest } }
   }
   if (promise?.result.status === "fulfilled" && !execution.retired?.promise) {
     const digest = digestInput(promise.result.value)
-    if (digest.bytes >= minBytes) execution = { ...execution, promise: { ...promise, result: { status: "fulfilled", value: null } }, retired: { ...execution.retired, promise: digest }, results: { ...execution.results, promise: capture(promise.result.value) } }
+    if (digest.bytes >= minBytes) execution = { ...execution, promise: { ...promise, result: { status: "fulfilled", value: null } }, retired: { ...execution.retired, promise: digest } }
   }
   return execution === operation.execution ? operation : { ...operation, execution }
 }

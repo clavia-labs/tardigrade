@@ -139,11 +139,6 @@ describe("boundaryViolations", () => {
     ])
   })
 
-  test("permits core to depend on Grove", () => {
-    const grove = node("packages/grove/src/tree.ts", "grove")
-    expect(boundaryViolations([...nodes, grove], [edge(core.id, grove.id)], [pkg("packages/core", "core", ["packages/grove"]), pkg("packages/grove", "grove")])).toEqual([])
-  })
-
   test("checks type dependencies for layering but permits test harnesses to cross layers", () => {
     const spec = node("packages/deprecated/core/src/actor.test.ts", "core", true)
     expect(boundaryViolations([...nodes, spec], [edge(core.id, host.id, true), edge(spec.id, bun.id)], [])

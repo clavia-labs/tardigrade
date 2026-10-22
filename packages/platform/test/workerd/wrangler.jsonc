@@ -2,8 +2,8 @@
   "name": "tardigrade-experimental-test",
   "main": "../fixtures/workerd/fixture.worker.ts",
   "compatibility_date": "2026-08-08",
-  "durable_objects": { "bindings": [{ "name": "MIGRATION", "class_name": "MigrationDO" }, { "name": "EFFECT_SERVICE", "class_name": "EffectServiceDO" }, { "name": "TREE_STATE", "class_name": "TreeStateDO" }, { "name": "INPUT_LIFECYCLE", "class_name": "InputLifecycleDO" }, { "name": "PROMISE_RESOLVER", "class_name": "TestPromiseResolver" }, { "name": "ACTORS", "class_name": "LayoutActorDO" }, { "name": "THREADS", "class_name": "LayoutThreadDO" }, { "name": "RETRY_ACTORS", "class_name": "RetryActorDO" }, { "name": "RETRY_THREADS", "class_name": "RetryThreadDO" }, { "name": "SLOW_ACTORS", "class_name": "SlowActorDO" }, { "name": "SLOW_THREADS", "class_name": "SlowThreadDO" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MigrationDO", "TreeStateDO", "EffectServiceDO", "InputLifecycleDO", "TestPromiseResolver", "LayoutActorDO", "LayoutThreadDO", "RetryActorDO", "RetryThreadDO", "SlowActorDO", "SlowThreadDO"] }],
+  "durable_objects": { "bindings": [{ "name": "EFFECT_SERVICE", "class_name": "EffectServiceDO" }, { "name": "INPUT_LIFECYCLE", "class_name": "InputLifecycleDO" }, { "name": "PROMISE_RESOLVER", "class_name": "TestPromiseResolver" }, { "name": "ACTORS", "class_name": "LayoutActorDO" }, { "name": "THREADS", "class_name": "LayoutThreadDO" }, { "name": "RETRY_ACTORS", "class_name": "RetryActorDO" }, { "name": "RETRY_THREADS", "class_name": "RetryThreadDO" }, { "name": "SLOW_ACTORS", "class_name": "SlowActorDO" }, { "name": "SLOW_THREADS", "class_name": "SlowThreadDO" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["EffectServiceDO", "InputLifecycleDO", "TestPromiseResolver", "LayoutActorDO", "LayoutThreadDO", "RetryActorDO", "RetryThreadDO", "SlowActorDO", "SlowThreadDO"] }],
   "worker_loaders": [{ "binding": "LOADER" }],
   "compatibility_flags": ["nodejs_compat"]
 }

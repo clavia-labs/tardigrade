@@ -1,4 +1,3 @@
-import type { DocumentSession } from "./tree-state"
 import type { ReadonlyIndex, ReadonlyLog } from "../runtime/log-view"
 import { Context, Schema, type Effect } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
@@ -12,7 +11,6 @@ import type { EffectCheckpoint } from "../runtime/replay"
 
 export class EventLog extends Context.Service<EventLog, {
   // events extends an immutable prefix; another history requires another source atom.
-  readonly documents?: DocumentSession
   readonly events: Atom<ReadonlyLog<unknown>>
   readonly records?: Atom<ReadonlyLog<ObservedRecord<unknown>>>
   // position is the absolute log position immediately before events[0].
@@ -22,8 +20,6 @@ export class EventLog extends Context.Service<EventLog, {
   readonly effect?: (ref: EffectRef) => AcceptedOperation | undefined
   readonly defect?: () => EffectDied | undefined
   readonly promise?: (ref: EffectRef) => PromiseSettled | undefined
-  // reduced returns another store's fold of the same journal for a durable projection, which reuses it at an equal position instead of folding again.
-  readonly reduced?: <Value>(node: Atom<Value>) => Value | undefined
 }>()("experimental/EventLog") {}
 
 // ReplayContext supplies committed history during actor setup; runtime/execution.ts caches readFull for the loading attempt.

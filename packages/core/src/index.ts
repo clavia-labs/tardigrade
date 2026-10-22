@@ -1,11 +1,5 @@
-export { value, tree, appendOnly, keyValue, type Tree, type AppendOnly, type KeyValue } from "@tardie/grove"
-export { DEFAULT_EFFECT_RESULT_COLD_MIN_BYTES } from "./runtime/operation"
-export { storedSession } from "./services/stored-session"
-export { memoryDocuments } from "./services/tree-state"
 export * from "./atoms/atom"
-export type { MerkleTree, ValueSelection, SelectedInput, DocumentChanges, DocumentSession } from "./services/tree-state"
-export { durableAtom, type DurableAtom, type DurableState } from "./atoms/durable/atom"
-export { durableMerkleAtom } from "./atoms/durable/merkle"
+export { durableAtom, type DurableAtom } from "./atoms/durable"
 export { EventLog, ReplayContext } from "./services/event-log"
 export type { ReadonlyIndex, ReadonlyLog } from "./runtime/log-view"
 export * from "./atoms/store"
@@ -55,5 +49,3 @@ export * from "./services/watchdog"
 export * from "./services/execution-stream"
 
 export { DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES, InputDigest } from "./runtime/input-digest"
-
-export { selectEach } from "./atoms/durable/plain"

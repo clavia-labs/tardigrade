@@ -1,9 +1,8 @@
-import type { TreeStateDO } from "../fixtures/workerd/tree-state.worker"
 import { effectServiceClient, type EffectServiceClient } from "../fixtures/effect-service"
 import type { EffectServiceDO } from "../fixtures/workerd/effect-service.worker"
 import { createWatchdog, effectKey, type CancellationOutcome, type Journal } from "@clavia/tardigrade-core"
 import { objectJournal } from "../../src/cloudflare/objects"
-import { cloudflareSchedulerStorage } from "../fixtures/workerd/scheduler"
+import { cloudflareSchedulerStorage } from "../../src/cloudflare/scheduler"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
 import { Effect } from "effect"
 import * as fc from "fast-check"
@@ -15,8 +14,6 @@ import { runInDurableObject, evictDurableObject } from "cloudflare:test"
 import { cloudflareJournal, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "../../src/cloudflare"
 import { pendingInputRecovery, cancellationInputRecovery, stoppedInputRecovery, cancellationStall, cancellationRetryRecovery } from "../properties/runtime/pending-input-recovery"
 import { DEFAULT_WAIT_POLICY, testStage, waitFor } from "../fixtures/wait"
-import { synchronousJournal } from "../../src/shared/synchronous-journal"
-import { cloudflareNativeDriver } from "../../src/cloudflare/native-recovery"
 import { checkpointStorage } from "../properties/checkpoint-storage"
 import type { TestPromiseResolver, InputLifecycleDO } from "../fixtures/workerd/fixture.worker"
 
@@ -24,7 +21,7 @@ import type { TestPromiseResolver, InputLifecycleDO } from "../fixtures/workerd/
 test("checkpointStorage", async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
   await runInDurableObject(namespace.getByName("checkpoint-storage"), async (_instance, state) => {
-    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES, open: checkpointChunkBytes => synchronousJournal({ actor: "events", driver: cloudflareNativeDriver(state.storage), limits: { maxRowBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES + 32 }, checkpointChunkBytes }), execute: async query => state.storage.sql.exec(query).toArray() })
+    await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES, open: checkpointChunkBytes => cloudflareJournal(state.storage, "events", { checkpointChunkBytes }), execute: async query => state.storage.sql.exec(query).toArray() })
   })
 })
 
@@ -35,13 +32,12 @@ test("accepted input recovery", async () => {
       await pendingInputRecovery({ open: actor => cloudflareJournal(state.storage, actor, { checkpointChunkBytes: 127 }) }, legacy)
     })
   }
-  for (const scenario of ["stopped", "failed-cleanup", "cancelled"]) {
-    await runInDurableObject(namespace.getByName(`accepted-input-recovery-${scenario}`), async (_instance, state) => {
-      const fixture: Parameters<typeof cancellationInputRecovery>[0] = { open: (actor: string) => cloudflareJournal(state.storage, actor, { checkpointChunkBytes: 127 }), execute: async (_name: string, query: string) => state.storage.sql.exec(query).toArray() }
-      if (scenario === "cancelled") await cancellationInputRecovery(fixture)
-      else await stoppedInputRecovery(fixture, scenario === "failed-cleanup")
-    })
-  }
+  await runInDurableObject(namespace.getByName("accepted-input-recovery"), async (_instance, state) => {
+    const fixture: Parameters<typeof cancellationInputRecovery>[0] = { open: (actor: string) => cloudflareJournal(state.storage, actor, { checkpointChunkBytes: 127 }), execute: async (_name: string, query: string) => state.storage.sql.exec(query).toArray() }
+    await stoppedInputRecovery(fixture)
+    await stoppedInputRecovery(fixture, true)
+    await cancellationInputRecovery(fixture)
+  })
 })
 
 for (const mode of ["producer", "cleanup", "failure", "defect", "rejected"] as const) {
@@ -252,36 +248,3 @@ for (const scenario of operationRaceCases) {
   test(`operation race ${scenario.order} (fault: ${scenario.fault})`, () =>
     withEffectService((journal, service, execute) => operationRace(journal, service, execute, scenario)))
 }
-
-for (const cleanup of [false, true]) test(`native tree state recovers ${cleanup ? "cleanup" : "execution"} with frozen selection`, async () => {
-  const namespace = (env as unknown as { TREE_STATE: DurableObjectNamespace<TreeStateDO> }).TREE_STATE
-  let stub = namespace.getByName(`tree-state-${cleanup}`)
-  await testStage("tree seed", () => stub.seed())
-  await evictDurableObject(stub)
-  let state = await stub.inspect()
-  expect(state.state.count).toBe(4096)
-  expect(state.loadedBytes).toBeLessThan(16000)
-  await testStage("tree start", () => stub.start())
-  state = await waitFor(() => stub.inspect(), state => state.calls.length === 1)
-  const accepted = state.inputs[0]!
-  const selection = accepted.request.selections![0]!
-  const root = selection.reference
-  expect(accepted.request.input).toEqual({ messages: null })
-  await testStage("tree append", () => stub.append())
-  if (cleanup) {
-    await stub.cancel()
-    await waitFor(() => stub.inspect(), state => state.calls.length === 2)
-    await stub.checkpoint()
-  }
-  try { await stub.abort() } catch (error) { expect(String(error)).toContain("Native tree reset fixture") }
-  stub = namespace.getByName(`tree-state-${cleanup}`)
-  state = await waitFor(() => stub.inspect(), state => state.calls.length >= (cleanup ? 3 : 2))
-  expect(state.state.count).toBe(4097)
-  expect(state.calls.every(call => call.count === 4096 && call.digest === state.calls[0]!.digest && call.ref === JSON.stringify(accepted.ref))).toBe(true)
-  expect(state.owners.filter(owner => owner.name.includes('"input"')).length).toBe(1)
-  await testStage("tree finish", () => stub.finish(cleanup))
-  state = await stub.inspect()
-  expect(state.inputs).toHaveLength(0)
-  expect(state.owners.filter(owner => owner.name.includes('"input"'))).toHaveLength(0)
-  expect(state.nodes).not.toContain(root)
-}, 30000)

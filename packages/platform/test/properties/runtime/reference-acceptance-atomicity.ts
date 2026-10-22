@@ -1,4 +1,3 @@
-import { documentSession } from "@clavia/tardigrade-core/services/tree-state"
 import { Context, Deferred, Effect, Schema } from "effect"
 import * as fc from "fast-check"
 import { act, defineActor, durableAtom, effectAtom, effectKey, RuntimeError, EffectRef, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
@@ -86,7 +85,6 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
     if (checkpoint) stored = checkpoint
   })
   const journal: Journal<Event> = {
-    storedValues: documentSession({ load: () => { throw new RuntimeError("Missing test document") } }),
     readInputs: Effect.succeed([]),
     read: Effect.sync(() => [...records]),
     readAfter: cursor => Effect.sync(() => {
