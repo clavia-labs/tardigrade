@@ -32,9 +32,21 @@ export type SupervisorEvent = typeof SupervisorEvent.Type
 
 const Requested = SupervisorEvent.members[0]
 const Identity = Schema.Struct({ actor: Schema.NonEmptyString, instance: Schema.NonEmptyString })
-export const SUPERVISOR_CHECKPOINT_TAG = "host.supervisor.families/1"
+// SUPERVISOR_CHECKPOINT_TAG excludes pending-index layouts without legacy re-verification state (platform/test/workerd/thread-layout.workers.ts).
+export const SUPERVISOR_CHECKPOINT_TAG = "host.supervisor.families/2"
 
 export const threadNameKey = (parent: string | null, name: string): string => JSON.stringify([parent, name])
+
+// replayLegacyLateRegistration requeues historical failed-then-registered allocations with a fresh provisioning origin (#804; platform/test/bun/supervisor-compatibility.test.ts).
+const replayLegacyLateRegistration = (state: typeof Thread.Type | undefined, event: SupervisorEvent, position: number): typeof Thread.Type | undefined => {
+  if (state?.status !== "failed" || event.type !== "ThreadRegistered" || state.coordinate.actor !== event.coordinate.actor || state.coordinate.instance !== event.coordinate.instance || state.coordinate.thread !== event.coordinate.thread) return undefined
+  return { ...state, origin: position, status: "requested" }
+}
+
+// validateRegistration admits live outcomes only for matching requested allocations (platform/test/bun/supervisor-compatibility.test.ts).
+function validateRegistration(state: typeof Thread.Type | undefined, event: Exclude<SupervisorEvent, typeof Requested.Type>): asserts state is typeof Thread.Type {
+  if (!state || state.status !== "requested" || state.coordinate.actor !== event.coordinate.actor || state.coordinate.instance !== event.coordinate.instance || state.coordinate.thread !== event.coordinate.thread) throw new Error("Unknown thread registration")
+}
 
 // thread preserves allocation identity and validates per-thread lifecycle transitions (packages/platform/test/workerd/thread-layout.workers.ts).
 export const thread = durableAtomFamily({
@@ -45,7 +57,9 @@ export const thread = durableAtomFamily({
       if (state && (state.status !== "failed" || !sameAllocation(state, event.allocation))) throw new Error("Duplicate thread allocation")
       return { ...event.allocation, origin: position, status: "requested" as const }
     }
-    if (!state || state.status !== "requested" || state.coordinate.actor !== event.coordinate.actor || state.coordinate.instance !== event.coordinate.instance) throw new Error("Unknown thread registration")
+    const legacy = replayLegacyLateRegistration(state, event, position)
+    if (legacy) return legacy
+    validateRegistration(state, event)
     return event.type === "ThreadRegistered" ? { ...state, status: "registered" as const } : { ...state, status: "failed" as const, reason: event.reason }
   },
 })
@@ -83,12 +97,20 @@ const threadPages = NativeAtom.family((identity: string) => {
 
 export const threadPage = (options: SupervisorPageOptions = {}) => threadPages(JSON.stringify({ after: options.after, limit: options.limit ?? DEFAULT_SUPERVISOR_PAGE_SIZE }))
 
-export const pendingThreads = durableAtom({
-  name: "host.supervisor.pending", input: SupervisorEvent, schema: Schema.Array(Schema.String), initial: [],
-  reduce: (state, event) => event.type === "ThreadRequested"
-    ? state.includes(event.allocation.coordinate.thread) ? state : [...state, event.allocation.coordinate.thread]
-    : state.filter(id => id !== event.coordinate.thread),
+// pendingLifecycle retains failed IDs until retry or legacy verification; registered threads leave this index.
+const pendingLifecycle = durableAtom({
+  name: "host.supervisor.pending", input: SupervisorEvent,
+  schema: Schema.Struct({ pending: Schema.Array(Schema.String), failed: Schema.Array(Schema.String) }), initial: { pending: [], failed: [] },
+  reduce: (state, event) => {
+    const id = event.type === "ThreadRequested" ? event.allocation.coordinate.thread : event.coordinate.thread
+    const pending = state.pending.filter(key => key !== id)
+    const failed = state.failed.filter(key => key !== id)
+    if (event.type === "ThreadRequested" || (event.type === "ThreadRegistered" && state.failed.includes(id))) return { pending: [...pending, id], failed }
+    return { pending, failed: event.type === "ThreadFailed" ? [...failed, id] : failed }
+  },
 })
+
+export const pendingThreads = NativeAtom.readable(get => get(pendingLifecycle).pending)
 
 const identity = durableAtom({
   name: "host.supervisor.identity", input: Requested, schema: Schema.UndefinedOr(Identity), initial: undefined,
@@ -128,7 +150,9 @@ export const threads = durableAtom({ name: "host.supervisor.threads",
       return existing ? state.map(entry => entry === existing ? requested : entry) : [...state, requested]
     }
     const current = state.find(entry => entry.coordinate.thread === event.coordinate.thread)
-    if (!current || current.status !== "requested" || current.coordinate.actor !== event.coordinate.actor || current.coordinate.instance !== event.coordinate.instance) throw new Error("Unknown thread registration")
+    const legacy = replayLegacyLateRegistration(current, event, position)
+    if (legacy) return state.map(entry => entry === current ? legacy : entry)
+    validateRegistration(current, event)
     return state.map(entry => entry === current ? event.type === "ThreadFailed" ? { ...entry, status: "failed" as const, reason: event.reason } : { ...entry, status: "registered" as const } : entry)
   },
 })
@@ -166,7 +190,10 @@ export const familySupervisorActor = defineActor("supervisor", Effect.sync(() =>
     }))
     return { view: { pending }, events: {}, acts }
   }, { input: SupervisorEvent, validate: (event, get) => {
-    if (event.type !== "ThreadRequested") return
+    if (event.type !== "ThreadRequested") {
+      validateRegistration(get(thread(event.coordinate.thread)), event)
+      return
+    }
     const allocation = event.allocation
     validateParent(allocation, get)
     const current = get(thread(allocation.coordinate.thread))
@@ -197,6 +224,8 @@ export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
       return [key, request]
     }))
     return { view: { threads: directory }, events: {}, acts }
-  })
+  }, { input: SupervisorEvent, validate: (event, get) => {
+    if (event.type !== "ThreadRequested") validateRegistration(get(threads).find(entry => entry.coordinate.thread === event.coordinate.thread), event)
+  } })
   return { atom: supervisor, schema: SupervisorEvent }
 }))
