@@ -1,5 +1,4 @@
 import type { StatefulAtom } from "@clavia/tardigrade-core"
-import { history } from "../activity"
 import { toolPromiseSubmissions } from "../tool-promises"
 import { budgetState } from "./budget"
 import { executions } from "./code-mode"
@@ -13,5 +12,5 @@ import { trajectoryState } from "./trajectory"
 
 export const agentDurableAtoms: readonly StatefulAtom[] = [
   trajectoryState, modelState, inferenceState, spendState, permissionState, budgetState, pendingTools,
-  createCompactionState(), executions, toolPromiseSubmissions, history,
+  createCompactionState(), executions, toolPromiseSubmissions,
 ]
