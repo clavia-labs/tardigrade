@@ -51,6 +51,8 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
   readonly http?: (env: Env) => MethodHttpOptions
   readonly checkpointChunkBytes?: number
   readonly eventInlineBytes?: number
+  readonly familyIndexBatchSize?: number
+  readonly invocationIndexBatchSize?: number
   readonly generateName?: () => string
 }
 
@@ -63,12 +65,14 @@ export function objectJournal<Event extends object>(options: {
   readonly key: string
   readonly checkpointChunkBytes?: number | undefined
   readonly eventInlineBytes?: number | undefined
+  readonly familyIndexBatchSize?: number | undefined
+  readonly invocationIndexBatchSize?: number | undefined
   readonly target: WatchdogTarget
   readonly alarms?: CloudflareAlarmOptions | undefined
   readonly watchdog: ReturnType<typeof createWatchdog>
 }) {
   const alarms = makeRetryingAlarms(options.storage, options.alarms)
-  return sqlJournal<Event>({ actor: options.key, limits: CLOUDFLARE_SQL_LIMITS, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, layer: SqliteClient.layer({ storage: options.storage }), transaction: work => options.storage.transactionSync(work),
+  return sqlJournal<Event>({ actor: options.key, limits: CLOUDFLARE_SQL_LIMITS, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, layer: SqliteClient.layer({ storage: options.storage }), transaction: work => options.storage.transactionSync(work),
     flush: alarms.sync,
     acknowledge: write => Effect.gen(function* () {
       const context = yield* Effect.context<never>()
@@ -160,8 +164,9 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     private supervisor(instance: string) {
       if (this.instance !== instance) throw new RuntimeError("Actor DO instance is not initialized")
       if (!this.directory) {
-        this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
+        this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
         this.directory = createSupervisor({ actor: options.actor.actorName, journal: () => this.journal!, run: this.run,
+          ...(options.journalReadBatchSize === undefined ? {} : { journalReadBatchSize: options.journalReadBatchSize }),
           ...(options.provisionRetry ? { provisionRetry: options.provisionRetry } : {}),
           ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
         ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
@@ -190,7 +195,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       const found = await Effect.runPromise(directory.lookup(coordinate))
       if (found) {
         const store = await Effect.runPromise(directory.store(coordinate.instance))
-        const entry = store.threads.get().find(entry => entry.coordinate.thread === coordinate.thread)
+        const entry = store.thread(coordinate.thread).get()
         if (entry?.placement !== "independent") throw new RuntimeError("Stored colocated threads require migration before independent routing")
       }
       return found
@@ -281,7 +286,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     })
     private address() { if (!this.coordinate) throw new RuntimeError("Thread DO is not provisioned"); return this.coordinate }
     private storage() {
-      if (!this.journal) this.journal = objectJournal({ storage: this.ctx.storage, key: "events", checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, target: this.address(), watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
+      if (!this.journal) this.journal = objectJournal({ storage: this.ctx.storage, key: "events", checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, target: this.address(), watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
       return this.journal
     }
     async provision(input: ThreadCreated, initialState?: InitialState): Promise<void> {
@@ -313,6 +318,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
         return this.storage()
       } }, services: (coordinate, runtime) => options.services(this.env, coordinate, runtime, this.ctx.storage).pipe(Layer.provideMerge(Layer.mergeAll(Layer.succeed(Scheduler, this.scheduler), Layer.succeed(Supervisor, this.supervisor()), Layer.succeed(Invocation, { send: this.send })))),
         delivery: () => ({ ...options.delivery, address: this.address(), send: this.send }), from: options.from ?? DEFAULT_EXTERNAL_SENDER, run: this.run,
+        ...(options.journalReadBatchSize === undefined ? {} : { journalReadBatchSize: options.journalReadBatchSize }),
         ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
         ...(options.cancellation ? { cancellation: options.cancellation } : {}),
         ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),

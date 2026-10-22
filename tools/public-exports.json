@@ -1,5 +1,6 @@
 {
   "./core": "./src/core/index.ts",
+  "./experimental": "./src/core/experimental/index.ts",
   "./agent": "./src/agent/index.ts",
   "./agent/services": "./src/agent/services/index.ts",
   "./libraries": "./src/libraries/index.ts",

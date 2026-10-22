@@ -46,6 +46,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
     return check.pipe(Effect.andThen(Effect.acquireUseRelease(instrumented.pipe(Effect.forkIn(scope)), Fiber.join, Fiber.interrupt)))
   }
   const supervisor = createSupervisor({
+    ...(options.journalReadBatchSize === undefined ? {} : { journalReadBatchSize: options.journalReadBatchSize }),
     ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
     actor: options.actor.actorName,
     ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),

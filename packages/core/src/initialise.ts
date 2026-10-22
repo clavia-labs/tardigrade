@@ -10,6 +10,8 @@ export interface StatefulAtom {
     readonly name: string
     readonly decode: (state: unknown) => unknown
     readonly encode: (value: unknown) => unknown
+    readonly idleTTL?: number
+    readonly checkpoint?: false
   }
 }
 

@@ -17,7 +17,7 @@ test("public entrypoints expose actor and migration APIs", () => {
 })
 
 test("public imports hide implementation modules", () => {
-  for (const path of ["tardie", "tardie/experimental", "tardie/core/atoms/atom", "tardie/agent/atoms", "tardie/deprecated/core/component/runtime", "tardie/deprecated/core/component/composition/parent"]) {
+  for (const path of ["tardie", "tardie/core/atoms/atom", "tardie/agent/atoms", "tardie/deprecated/core/component/runtime", "tardie/deprecated/core/component/composition/parent"]) {
     expect(() => import.meta.resolve(path)).toThrow()
   }
 })

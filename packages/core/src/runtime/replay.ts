@@ -1,4 +1,4 @@
-import { RangeLog, DEFAULT_JOURNAL_READ_BATCH_SIZE, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
+import { LogView, RangeLog, DEFAULT_JOURNAL_READ_BATCH_SIZE, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
 import { historicalEventDecoder } from "../event/versioned"
 import { frozenPlainData } from "../atoms/incremental/frozen"
 import { actInputs } from "../atoms/act"
@@ -19,6 +19,7 @@ import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "..
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
 import { ThreadCreated } from "../actor/thread"
 import { AtomState, initialStateSeed, StateInitialised, type StatefulAtom, type StateSeed } from "../initialise"
+import { collectFamilyKeys, type JournalFamily, type ReadJournalFamily, type ReadJournalFamilyKeys } from "../services/journal/family"
 
 
 import { operationSettlement, settlementCompletesExecution, cleanupSubmission, cleanupSucceeded, operationComplete, recordedOperation, type StoredOperation } from "./operation"
@@ -45,6 +46,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   readonly checkpoint?: EffectCheckpoint
   readonly readBefore?: (position: number) => ReadonlyLog<Recorded<Event>>
   readonly readOperation?: (ref: EffectRef, position: number) => ReadonlyLog<Recorded<Event>>
+  readonly readFamily?: ReadJournalFamily<Event>
+  readonly readFamilyKeys?: ReadJournalFamilyKeys
   readonly inputs?: readonly PendingEffectInput[]
 }) {
   const digestMinBytes = options.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
@@ -53,6 +56,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw new Error("Journal read batchSize must be a positive safe integer")
   if (options.readRange && !options.readOperation) throw new Error("Journal replay requires operation lookup")
   const restored = initialCheckpoint
+  const families = new Map<string, JournalFamily>()
+  const indexedFamilies = new Map<JournalFamily, JournalFamily>()
   type EffectValues = Proposed<Values<Atoms>[keyof Atoms]>
   type Work = EffectWork<ServicesOf<EffectValues>>
   type DeferredWork = IdentifiedEffectValue<ServicesOf<EffectValues>> & { readonly handle: ExecutionHandle; readonly deadlineAt: number | undefined }
@@ -141,6 +146,17 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const prefix = begin < tailOffset ? journal.readRange(begin, Math.min(end, tailOffset)).slice().map((record, index) => recordOf(record, true, begin + index)) : []
     return [...prefix, ...tail.slice(Math.max(0, begin - tailOffset), Math.max(0, end - tailOffset))]
   }, batchSize)
+  const indexedFamily = (family: JournalFamily): JournalFamily => {
+    const existing = families.get(family.name)
+    if (existing && existing !== family) throw new Error(`Duplicate durable atom family name: ${family.name}`)
+    families.set(family.name, family)
+    let indexed = indexedFamilies.get(family)
+    if (!indexed) {
+      indexed = { name: family.name, indexVersion: family.indexVersion, key: (record, at) => family.key(recordOf(record as Recorded<Event>, true, at), at) }
+      indexedFamilies.set(family, indexed)
+    }
+    return indexed
+  }
   type Snapshot = {
     readonly events: ReadonlyLog<RuntimeEvent<Event>>
     readonly records: ReadonlyLog<Recorded<Event>>
@@ -246,7 +262,39 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const tailOffset = offset
       const tail = records
       return {
-        position, seed: stateSeed(), ...(inheritedStates ? { states: inheritedStates } : {}),
+        position, seed: stateSeed(), ...(!seed ? { originSeed: { value: stateSeed() } } : {}), ...(inheritedStates ? { states: inheritedStates } : {}),
+        readFamily: function* (family, key, from) {
+          if (!Number.isSafeInteger(from) || from < 0 || from > position) throw new Error("Atom replay cursor is outside its snapshot")
+          const indexed = indexedFamily(family)
+          const committedEnd = Math.min(tailOffset, position)
+          if (journal.readFamily) {
+            for (const entry of journal.readFamily(indexed, key, Math.min(from, committedEnd), committedEnd)) yield { position: entry.position, record: observeRecord(recordOf(entry.record, true, entry.position)) }
+          } else if (from < committedEnd) {
+            const prefix = recordRange(journal, committedEnd, from, tailOffset, tail)
+            let cursor = from
+            for (const record of prefix) {
+              if (family.key(record, cursor) === key) yield { position: cursor, record: observeRecord(record) }
+              cursor++
+            }
+          }
+          for (let cursor = Math.max(from, tailOffset); cursor < position; cursor++) {
+            const record = tail.at(cursor - tailOffset)!
+            if (family.key(record, cursor) === key) yield { position: cursor, record: observeRecord(record) }
+          }
+        },
+        familyKeys: (family, after, limit) => {
+          const indexed = indexedFamily(family)
+          const prefix = journal.readFamilyKeys?.(indexed, after, limit, tailOffset)
+          const keys = function* () {
+            if (prefix) yield* prefix
+            else {
+              let cursor = 0
+              for (const record of recordRange(journal, tailOffset, 0, tailOffset, tail)) yield family.key(record, cursor++)
+            }
+            for (let cursor = tailOffset; cursor < position; cursor++) yield family.key(tail.at(cursor - tailOffset)!, cursor)
+          }
+          return collectFamilyKeys(keys(), after, limit)
+        },
         read: from => {
           if (!Number.isSafeInteger(from) || from < 0 || from > position) throw new Error("Atom replay cursor is outside its snapshot")
           const history = recordRange(journal, position, from, tailOffset, tail)
@@ -285,7 +333,15 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       return found
     }
     const actReferences = new Map(frame?.references)
-    let records: ReadonlyLog<Recorded<Event>> = store.get(source.records)
+    let records = store.get(source.records)
+    const appendRecords = (batch: readonly Recorded<Event>[]) => {
+      records = records.append(batch)
+      source.append(store, batch)
+    }
+    const clearRecords = () => {
+      records = LogView.empty
+      source.clear(store)
+    }
     let disposed = false
     const dispose = () => {
       if (disposed) return
@@ -331,7 +387,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const captured = new Set<unknown>()
       const durable = [...store.nodes().values()].flatMap(node => {
         const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
-        return codec && !captured.has(codec) && captured.add(codec) ? [{ name: codec.name, state: codec.encode(store.get(node.atom)), position: offset + records.length }] : []
+        return codec && codec.checkpoint !== false && !captured.has(codec) && captured.add(codec) ? [{ name: codec.name, state: codec.encode(store.get(node.atom)), position: offset + records.length }] : []
       })
       const names = new Set<string>()
       for (const entry of durable) {
@@ -472,8 +528,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           if (activeOperations.has(key)) {
             const prior = requestOf(key)
             if (!prior || !isDeepStrictEqual(prior.ref, event.ref) || prior.origin !== event.origin || !sameStoredRequest(prior.request, event.request)) throw new Error("Conflicting core effect request")
-            source.append(store, [record])
-            records = store.get(source.records)
+            appendRecords([record])
             effects()
             return
           }
@@ -551,8 +606,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (result.type !== "value" || !isDeepStrictEqual(result.value, event.receipt)) throw new Error("Delivery receipt differs from effect settlement")
       }
       if (Schema.is(EffectSettled)(event) || Schema.is(PromiseSettled)(event) || Schema.is(CancellationOutcome)(event)) progressCursor = offset + records.length + 1
-      source.append(store, [record])
-      records = store.get(source.records)
+      appendRecords([record])
       effects()
     }
     try {
@@ -560,8 +614,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       for (const raw of history) {
         append(recordOf(raw, true, offset + records.length))
         offset += records.length
-        source.clear(store)
-        records = store.get(source.records)
+        clearRecords()
+        store.flush()
       }
       recovering = false
       finish()
@@ -574,7 +628,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const states = new Map(inheritedStates)
         for (const node of store.nodes().values()) {
           const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
-          if (codec) states.set(codec, Object.freeze({ position: offset + records.length, value: store.get(node.atom) }))
+          if (codec && (codec.idleTTL === undefined || codec.idleTTL === Infinity)) states.set(codec, Object.freeze({ position: offset + records.length, value: store.get(node.atom) }))
         }
         return Object.freeze({
           position: offset + records.length, journal: journal.append(offset, records.slice()), source: source.snapshot(store), progressCursor, initialState,
@@ -587,8 +641,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       release: () => {
         journal = journal.append(offset, records.slice())
         offset += records.length
-        source.clear(store)
-        records = store.get(source.records)
+        clearRecords()
       },
       seed,
       observations,
@@ -726,7 +779,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     return snapshot
   }
   const replay = (history: ReadonlyLog<Recorded<Event>>): Snapshot => {
-    const journal = options.readRange ? journalHistory(options.readRange, options.readOperation!) : memoryHistory(history, restored?.position ?? 0, options.readBefore, options.readOperation)
+    const journal = options.readRange ? journalHistory(options.readRange, options.readOperation!, options.readFamily, options.readFamilyKeys) : memoryHistory(history, restored?.position ?? 0, options.readBefore, options.readOperation)
     const engine = createEngine(history, journal, restored)
     try {
       const snapshot = snapshotOf(engine)

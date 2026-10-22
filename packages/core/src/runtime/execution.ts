@@ -168,10 +168,10 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       defect: () => snapshot?.defect,
       promise: ref => snapshot?.promise(ref),
     }))
-    const sync = () => {
+    const sync = () => store.batch(() => {
       store.set(bindings, snapshot.bindings)
       store.set(published, snapshot)
-    }
+    })
     const recovery: Effect.Effect<void, Error>[] = []
     const committed: Effect.Effect<void, Error>[] = []
     const ready = Deferred.makeUnsafe<void>()
@@ -779,6 +779,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         definition = createEventLog({ inputs, schema: setup.schema, ...(options.journal ? {
           readRange: (from: number, to: number) => options.journal!.readRange(from, to),
           readOperation: (ref: EffectRef, position: number) => options.journal!.readOperation(ref, position),
+          ...(options.journal.readFamily ? { readFamily: options.journal.readFamily } : {}),
+          ...(options.journal.readFamilyKeys ? { readFamilyKeys: options.journal.readFamilyKeys } : {}),
         } : {}), ...(setup.decodeEvent ? { decodeEvent: setup.decodeEvent } : {}), digestMinBytes, ...(options.journalReadBatchSize === undefined ? {} : { journalReadBatchSize: options.journalReadBatchSize }), atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
           methods: setup.contracts, ...(options.delivery ? { address: options.delivery.address } : {}),
         }) }, ...(checkpoint ? { checkpoint } : {}) })

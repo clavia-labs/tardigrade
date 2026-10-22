@@ -26,6 +26,7 @@
   "type": "module",
   "exports": {
     "./core": "./src/generated/core.ts",
+    "./experimental": "./src/generated/experimental.ts",
     "./agent": "./src/generated/agent.ts",
     "./agent/services": "./src/generated/agent/services.ts",
     "./libraries": "./src/generated/libraries.ts",

@@ -8,14 +8,19 @@ import type { AtomState, StatefulAtom, StateSeed } from "../initialise"
 import type { AcceptedOperation } from "../runtime/operation"
 import type { PromiseSettled } from "../runtime/events"
 import type { EffectCheckpoint } from "../runtime/replay"
+import type { FamilyRecord, JournalFamily } from "./journal/family"
 
 // AtomReplay supplies missing observations up to a fixed consumed position (platform/test/properties/runtime/atom-checkpoint.ts).
 export interface AtomReplay {
   readonly position: number
   readonly seed: StateSeed | undefined
+  // originSeed caches the initial journal marker, including its absence, independently of a checkpoint seed.
+  readonly originSeed?: { readonly value: StateSeed | undefined }
   // states carries atom values and cursors by codec identity across registry forks (platform/test/properties/runtime/snapshot-lookups.ts).
   readonly states?: ReadonlyMap<StatefulAtom[typeof AtomState], { readonly position: number; readonly value: unknown }>
   readonly read: (from: number) => ReadonlyLog<ObservedRecord<unknown>>
+  readonly readFamily?: (family: JournalFamily, key: string, from: number) => Iterable<FamilyRecord<ObservedRecord<unknown>>>
+  readonly familyKeys?: (family: JournalFamily, after: string | undefined, limit: number) => readonly string[]
 }
 
 export class EventLog extends Context.Service<EventLog, {

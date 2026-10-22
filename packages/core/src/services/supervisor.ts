@@ -8,13 +8,15 @@ import { durablePromise } from "../atoms/promise"
 import { RuntimeError } from "../runtime/effects"
 import type { ChildPlacement, ThreadCoordinate } from "../actor/thread"
 import type { Journal } from "./journal"
-import { Provision, supervisorActor, type SupervisorEvent, type ThreadAllocation } from "./supervisor/graph"
+import { Provision, familySupervisorActor, thread as threadAtom, threadByName, threadNameKey, SUPERVISOR_CHECKPOINT_TAG, type SupervisorEvent, type ThreadAllocation } from "./supervisor/graph"
 import { createActorStore, type CheckpointPolicy } from "../runtime/execution"
 import type { ActorRuntime } from "../runtime/contracts"
 import { createSupervisorStore, type SupervisorStore } from "../runtime/stores/supervisor"
+export { DEFAULT_SUPERVISOR_PAGE_SIZE, type SupervisorPageOptions } from "./supervisor/page"
 
 export const DEFAULT_PROVISION_RETRY_LIMIT = 2
 export const DEFAULT_PROVISION_RETRY_INTERVAL_MS = 1_000
+export const DEFAULT_SUPERVISOR_JOURNAL_READ_BATCH_SIZE = 16
 // DEFAULT_PROVISION_RETRY bounds typed provisioning failures using durable retries (platform/test/workerd/thread-layout.workers.ts).
 export const DEFAULT_PROVISION_RETRY: RetryOptions<Error> = {
   decide: (failure, attempt) => Effect.succeed(attempt < DEFAULT_PROVISION_RETRY_LIMIT ? { delayMs: DEFAULT_PROVISION_RETRY_INTERVAL_MS, reason: String(failure) } : undefined),
@@ -40,6 +42,7 @@ export function createSupervisor(options: {
   readonly attemptTimeoutMs?: number | null
   readonly actor: string
   readonly checkpointPolicy?: CheckpointPolicy
+  readonly journalReadBatchSize?: number
   readonly promises?: Partial<PromisePolicy>
   readonly canDrive?: (instance: string) => Effect.Effect<boolean, Error>
   readonly journal: (instance: string) => Journal<SupervisorEvent>
@@ -54,13 +57,23 @@ export function createSupervisor(options: {
   if (!options.supportedChildPlacements.includes(options.defaultChildPlacement)) throw new RuntimeError("Default child placement is unsupported")
   const openSupervisor = (instance: string) => Effect.gen(function* () {
     let runtime!: ActorRuntime<SupervisorEvent>
+    const journal = options.journal(instance)
+    const familyJournal: Journal<SupervisorEvent> = {
+      ...journal,
+      readCheckpoint: () => {
+        const checkpoint = journal.readCheckpoint(SUPERVISOR_CHECKPOINT_TAG)
+        return checkpoint?.tag === SUPERVISOR_CHECKPOINT_TAG ? checkpoint : undefined
+      },
+      appendWithCheckpoint: (position, records, checkpoint, inputs) => journal.appendWithCheckpoint(position, records, { ...checkpoint, tag: SUPERVISOR_CHECKPOINT_TAG }, inputs),
+    }
     const store = yield* createActorStore({
       ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
-      actor: supervisorActor,
+      actor: familySupervisorActor,
+      journalReadBatchSize: options.journalReadBatchSize ?? DEFAULT_SUPERVISOR_JOURNAL_READ_BATCH_SIZE,
       ...(options.checkpointPolicy ? { checkpoint: options.checkpointPolicy } : {}),
       ...(options.canDrive ? { canDrive: options.canDrive(instance) } : {}),
       ...(options.promises ? { promises: options.promises } : {}),
-      journal: options.journal(instance),
+      journal: familyJournal,
       actorContext: () => Context.empty(),
       services: current => {
         runtime = current
@@ -105,12 +118,13 @@ export function createSupervisor(options: {
     if (!options.supportedChildPlacements.includes(placement)) return yield* Effect.fail(new RuntimeError(`Unsupported child placement: ${placement}`))
     if (parent && (parent.actor !== options.actor || parent.instance !== instance)) return yield* Effect.fail(new RuntimeError("Parent belongs to another actor instance"))
     const supervisor = yield* supervisorFor(instance)
-    const directory = supervisor.getState().view.threads
-    const ancestor = parent ? directory.find(entry => entry.coordinate.thread === parent.thread && entry.status === "registered") : undefined
-    if (parent && !ancestor) return yield* Effect.fail(new RuntimeError("Unknown parent thread"))
+    const ancestor = parent ? supervisor.get(threadAtom(parent.thread)) : undefined
+    if (parent && ancestor?.status !== "registered") return yield* Effect.fail(new RuntimeError("Unknown parent thread"))
     const name = suppliedName ?? (options.generateName ? yield* Effect.try({ try: options.generateName, catch: RuntimeError.from }) : yield* randomName)
     if (!name || name.includes("/")) return yield* Effect.fail(new RuntimeError("Thread name must be nonempty and contain no slash"))
-    const existing = directory.find(entry => entry.name === name && entry.parent === (parent?.thread ?? null))
+    const claimed = supervisor.get(threadByName(threadNameKey(parent?.thread ?? null, name)))
+    const existing = claimed === undefined ? undefined : supervisor.get(threadAtom(claimed))
+    if (claimed !== undefined && !existing) return yield* Effect.fail(new RuntimeError("Named thread has no allocation"))
     if (existing) {
       if (initialState !== undefined && !isDeepStrictEqual(existing.initialState, initialState)) return yield* Effect.fail(new RuntimeError("Named thread already has different initial state"))
       if (requestedPlacement !== undefined && existing.placement !== requestedPlacement) return yield* Effect.fail(new RuntimeError("Named thread already has different placement"))
@@ -121,15 +135,15 @@ export function createSupervisor(options: {
       } else yield* supervisor.resume
       return { supervisor, coordinate: existing.coordinate }
     }
-    const thread = directory.some(entry => entry.coordinate.thread === name) ? `${name}-${yield* randomName}` : name
-    if (directory.some(entry => entry.coordinate.thread === thread)) return yield* Effect.fail(new RuntimeError("Thread identity collision"))
+    const thread = supervisor.get(threadAtom(name)) ? `${name}-${yield* randomName}` : name
+    if (supervisor.get(threadAtom(thread))) return yield* Effect.fail(new RuntimeError("Thread identity collision"))
     const coordinate = { actor: options.actor, instance, thread }
     yield* supervisor.send([{ type: "ThreadRequested", allocation: { coordinate, name, parent: parent?.thread ?? null, depth: ancestor ? ancestor.depth + 1 : 0, placement, ...(initialState === undefined ? {} : { initialState }) } }])
     return { supervisor, coordinate }
   })).pipe(Effect.flatMap(({ supervisor, coordinate }) => Effect.gen(function* () {
     const registered = Deferred.makeUnsafe<void, Error>()
     const check = () => {
-      const allocated = supervisor.getState().view.threads.find(entry => entry.coordinate.thread === coordinate.thread)
+      const allocated = supervisor.get(threadAtom(coordinate.thread))
       if (allocated?.status === "registered") Deferred.doneUnsafe(registered, Effect.void)
       else if (allocated?.status === "failed") Deferred.doneUnsafe(registered, Effect.fail(new RuntimeError(allocated.reason ?? "Thread provisioning did not complete")))
     }
@@ -146,8 +160,8 @@ export function createSupervisor(options: {
   const lookup = (coordinate: ThreadCoordinate) => Effect.gen(function* () {
     if (coordinate.actor !== options.actor) return yield* Effect.fail(new RuntimeError(`Unknown actor: ${coordinate.actor}`))
     const supervisor = yield* supervisorFor(coordinate.instance)
-    const entry = supervisor.getState().view.threads.find(thread => thread.coordinate.thread === coordinate.thread && thread.status === "registered")
-    return entry ? Object.freeze({ ...entry.coordinate }) : undefined
+    const entry = supervisor.get(threadAtom(coordinate.thread))
+    return entry?.status === "registered" ? Object.freeze({ ...entry.coordinate }) : undefined
   })
   return {
     allocate: (request: ThreadRequest) => options.run(Effect.try({ try: () => structuredClone(request), catch: RuntimeError.from }).pipe(Effect.flatMap(allocate))),
