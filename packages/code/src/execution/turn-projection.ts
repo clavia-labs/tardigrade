@@ -90,11 +90,13 @@ const reduceTurn = (state: TurnProjectionState, event: Event): TurnProjectionSta
     terminals,
     epoch: advanceEpoch({ ...previous, failed, resumed, terminals })
   }
-  if (!HashMap.has(state.heads, id)) return { ...state, turns: HashMap.set(state.turns, id, record) }
+  // HashMap.set compares a replaced value structurally, so removal first skips hashing the turn's events (turn-projection.test.ts, "a turn update does not hash the turn's event history").
+  const turns = HashMap.set(HashMap.remove(state.turns, id), id, record)
+  if (!HashMap.has(state.heads, id)) return { ...state, turns }
   const head = Option.getOrUndefined(HashMap.get(state.heads, id))!
   return {
     ...state,
-    turns: HashMap.set(state.turns, id, record),
+    turns,
     open: HashMap.has(record.terminals, record.epoch)
       ? HashMap.remove(state.open, id)
       : HashMap.set(state.open, id, head.order)
