@@ -105,6 +105,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     if (!concluded && !matchesPrepared(record.request, proposed)) throw new ActorReplayError({ stage: "retained_input", reason: "unavailable", position: record.ref.seq, cause: new Error(`Accepted input is unavailable; effect request differs from its proposal: ${effectKey(record.ref)}`) })
     return proposed.request
   }
+  // TODO: drop withoutSelections once no journal holds requests recorded by 0.49.0 to 0.50.0, which stored Grove selections beside a pruned input.
+  const withoutSelections = (event: object): object => "type" in event && event.type === "EffectRequested" && "request" in event && typeof event.request === "object" && event.request !== null && "selections" in event.request
+    ? { ...event, request: Object.fromEntries(Object.entries(event.request).filter(([key]) => key !== "selections")) }
+    : event
   const eventOf = (event: unknown, reply = false, historical = false): JournalEvent<Event> => {
     const decodeDomain = historical ? (input: unknown) => validate(read(input)) : validate
     if (typeof event !== "object" || event === null || Array.isArray(event)) throw new Error("Domain event must be an object")
@@ -116,7 +120,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (typeof inbox.body !== "object" || inbox.body === null || hasCoreEventType(inbox.body)) throw new Error("Actor inputs must be domain events")
       return freeze({ type: "MessageReceived", body: structuredClone(decodeDomain(inbox.body)) }) as JournalEvent<Event>
     }
-    const result = freeze(structuredClone(hasCoreEventType(event) ? validateCore(event) : decodeDomain(event)))
+    const result = freeze(structuredClone(hasCoreEventType(event) ? validateCore(historical ? withoutSelections(event) : event) : decodeDomain(event)))
     if ("type" in result && result.type === "EffectRequested") processedRequests.add(result)
     return result
   }
