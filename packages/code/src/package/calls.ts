@@ -88,7 +88,8 @@ export const packageCalls = <R>(definition: PackageDefinition<R>) => component({
             const fn = definition.methods[method]
             const recorded = event.policy as CallPolicy | undefined
             const callPolicy = packageCallPolicyOf(recorded?.call)
-            const spillPolicy = spillPolicyOf(recorded === undefined ? { note: BARE_SPILL_NOTE } : { ...recorded.spill, note: () => recorded.spill.note })
+            // The stamped note renders the call key; it must name the per-attempt ref (calls.test.ts).
+            const spillPolicy = spillPolicyOf(recorded === undefined ? { note: BARE_SPILL_NOTE } : { ...recorded.spill, note: ref => recorded.spill.note.replaceAll(packageKeyOf(event), ref) })
             const annotations = definition.annotations?.[method]
             const shadow = recorded?.shadow ?? (turnHead(log)?.shadow === true)
             const input = definition.docs?.[method]?.input
@@ -123,9 +124,11 @@ export const packageCalls = <R>(definition: PackageDefinition<R>) => component({
             }
             const json = JSON.stringify(outcome.result ?? null)
             if (json.length > spillPolicy.spillBytes) {
-              const key = packageKeyOf(event)
-              yield* Effect.orDie(spill(key, json))
-              return [packageReturned({ ...stamp, ...spillPointer(key, json.length, json.slice(0, spillPolicy.previewChars), spillPolicy.note), at })]
+              // Each attempt spills under its own ref, independent of replay-seeded randomness, so a losing activation cannot overwrite committed bytes (calls.test.ts).
+              // @effect-diagnostics-next-line cryptoRandomUUIDInEffect:off
+              const ref = `${packageKeyOf(event)}.${crypto.randomUUID()}`
+              yield* Effect.orDie(spill(ref, json))
+              return [packageReturned({ ...stamp, ...spillPointer(ref, json.length, json.slice(0, spillPolicy.previewChars), spillPolicy.note), at })]
             }
             return [packageReturned({ ...stamp, result: outcome.result, at })]
           })
