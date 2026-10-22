@@ -82,7 +82,7 @@ export function objectJournal<Event extends object>(options: {
           if (Schema.is(PromiseSettled)(event) && event.result.status === "rejected" && Schema.is(PromiseTimedOut)(event.result.reason)) expired = true
           if ("type" in event && event.type === "ThreadUpdated") yield* options.watchdog.adoptVersion(cloudflareWatchdogTransaction(tx, options.alarms), options.target, (yield* Schema.decodeUnknownEffect(ThreadUpdated)(event)).version)
           if ("type" in event && (event.type === "EffectSettled" || event.type === "PromiseSettled")) progressCursor = position - records.length + index + 1
-          if ("type" in event && (event.type === "MessageReceived" || event.type === "ThreadCreated" || event.type === "ThreadRequested" || event.type === "EffectCancelled")) admission = true
+          if ("type" in event && (event.type === "MessageReceived" || event.type === "ThreadCreated" || event.type === "ThreadRequested" || event.type === "EffectCancelled" || event.type === "EffectDied")) admission = true
         }
         if (records.length) yield* options.watchdog.admit(cloudflareWatchdogTransaction(tx, options.alarms), options.target, progressCursor, admission, expired)
         yield* schedulerAlarm(scheduler)
