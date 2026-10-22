@@ -36,7 +36,7 @@ export const SUPERVISOR_CHECKPOINT_TAG = "host.supervisor.families/1"
 
 export const threadNameKey = (parent: string | null, name: string): string => JSON.stringify([parent, name])
 
-// thread preserves allocation identity and validates per-thread lifecycle transitions (packages/platform/bench/directory/README.md).
+// thread preserves allocation identity and validates per-thread lifecycle transitions (packages/platform/test/workerd/thread-layout.workers.ts).
 export const thread = durableAtomFamily({
   name: "host.supervisor.thread", input: SupervisorEvent, schema: Schema.UndefinedOr(Thread), initial: undefined,
   key: event => event.type === "ThreadRequested" ? event.allocation.coordinate.thread : event.coordinate.thread,

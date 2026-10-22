@@ -20,8 +20,6 @@
     "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
-    "esbuild": "0.28.2",
-    "miniflare": "5.20261006.2-beta",
     "@cfworker/json-schema": "^4.1.1",
     "@cloudflare/workers-types": "^5.20260804.1",
     "@cloudflare/vitest-plugin": "^1.4.1",
@@ -31,7 +29,6 @@
     "@clavia/tardigrade-libraries": "workspace:*"
   },
   "scripts": {
-    "bench:directory": "node bench/directory/run.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test test/bun",
     "test:workers": "vitest run --config vitest.config.ts && vitest run --config vitest.agent.config.ts",

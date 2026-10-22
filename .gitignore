@@ -46,3 +46,6 @@ packages/tardie/src/generated/
 
 # Local experiment reports
 .experiments/
+
+# Local directory benchmark
+/packages/platform/bench/directory/
