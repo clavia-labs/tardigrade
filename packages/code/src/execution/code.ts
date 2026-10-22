@@ -53,6 +53,11 @@ const executeRecorded = (
     const log = yield* EventLog
     const events = yield* log.read
     const shadow = (turnHead(events) as { shadow?: unknown } | undefined)?.shadow === true
+    const callIdFor = (ordinal: number) => callIdOf(executionKeyOf({ type: "CodeSettled", execId, ...stamp }), ordinal)
+    const callKeyOf = (ordinal: number) => packageKeyOf({ type: "PackageCalled", callId: callIdFor(ordinal), ...stamp, ordinal })
+    const answered = new Set(events.flatMap((e) => e.type === "PackageReturned" ? [packageKeyOf(e)] : []))
+    let replayed = 0
+    while (answered.has(callKeyOf(replayed))) replayed++
     const sandbox = yield* Sandbox
     const context = yield* Effect.context<KeyValueStore.KeyValueStore>()
     let inFlight = 0
@@ -76,9 +81,9 @@ const executeRecorded = (
       for (const method of pkg.methods) {
         methods[method] = (args: unknown, ordinal: number) => {
           if (!accepting) return Promise.resolve(sandboxParked)
-          const callId = callIdOf(executionKeyOf({ type: "CodeSettled", execId, ...stamp }), ordinal)
+          const callId = callIdFor(ordinal)
           const callStamp = { ...stamp, ordinal }
-          const callKey = packageKeyOf({ type: "PackageCalled", callId, ...callStamp })
+          const callKey = callKeyOf(ordinal)
           inFlight++
           return Effect.runPromiseWith(context)(
             Effect.gen(function* () {
@@ -137,7 +142,7 @@ const executeRecorded = (
         .run(
           code,
           { ...bindings, brief: String(head?.text ?? ""), input: head?.input ?? null } as Bindings,
-          { at: dispatchedAt ?? 0, seed: execId }
+          { at: dispatchedAt ?? 0, seed: execId, replayed }
         )
         .pipe(
           Effect.tap(() => { bodyDone = true; return Effect.void }),
