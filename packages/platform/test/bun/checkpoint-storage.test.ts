@@ -1,3 +1,4 @@
+import { logStorage } from "../properties/log"
 import type { Journal } from "@clavia/tardigrade-core"
 import type { EffectServiceClient } from "../fixtures/effect-service"
 import { bunEffectService } from "../fixtures/bun/effect-service"
@@ -87,3 +88,11 @@ for (const scenario of operationRaceCases) {
   test(`operation race ${scenario.order} (fault: ${scenario.fault})`, () =>
     withEffectService((journal, service, execute) => operationRace(journal, service, execute, scenario)))
 }
+
+test("logStorage", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tardie-log-"))
+  const filename = join(directory, "log.sqlite")
+  const db = new Database(filename, { create: true })
+  try { await logStorage({ open: () => bunJournal({ filename, actor: "events", familyIndexBatchSize: 8 }), execute: query => db.query<Record<string, unknown>, []>(query).all() }) }
+  finally { db.close(); rmSync(directory, { recursive: true, force: true }) }
+})

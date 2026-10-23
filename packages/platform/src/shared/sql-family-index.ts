@@ -67,10 +67,12 @@ export function sqlFamilyIndex<Event extends object>(options: {
         yield* sql`UPDATE experimental_journal_family_index SET position = ${position + records.length} WHERE actor = ${actor} AND family = ${family.name}`
       }
     }),
-    readPage: (sql: SqlClient.SqlClient, family: JournalFamily, key: string, from: number, to: number): Effect.Effect<readonly FamilyRecord<Recorded<Event>>[], Error> => transaction(sql, Effect.gen(function* () {
+    readPage: (sql: SqlClient.SqlClient, family: JournalFamily, key: string, from: number, to: number, order: "asc" | "desc" = "asc"): Effect.Effect<readonly FamilyRecord<Recorded<Event>>[], Error> => transaction(sql, Effect.gen(function* () {
       const indexed = yield* sql<{ version: string; position: number }>`SELECT version, position FROM experimental_journal_family_index WHERE actor = ${actor} AND family = ${family.name}`
       if (indexed[0]?.version !== family.indexVersion || indexed[0].position < to) return yield* Effect.fail(new RuntimeError("Family index does not cover the requested journal range"))
-      const rows = yield* sql<{ seq: number; event: string | null }>`SELECT k.seq, e.event FROM experimental_journal_keys k LEFT JOIN experimental_events e ON e.actor = k.actor AND e.seq = k.seq WHERE k.actor = ${actor} AND k.family = ${family.name} AND k.key = ${key} AND k.seq >= ${from} AND k.seq < ${to} ORDER BY k.seq LIMIT ${batchSize}`
+      const rows = order === "asc"
+        ? yield* sql<{ seq: number; event: string | null }>`SELECT k.seq, e.event FROM experimental_journal_keys k LEFT JOIN experimental_events e ON e.actor = k.actor AND e.seq = k.seq WHERE k.actor = ${actor} AND k.family = ${family.name} AND k.key = ${key} AND k.seq >= ${from} AND k.seq < ${to} ORDER BY k.seq LIMIT ${batchSize}`
+        : yield* sql<{ seq: number; event: string | null }>`SELECT k.seq, e.event FROM experimental_journal_keys k LEFT JOIN experimental_events e ON e.actor = k.actor AND e.seq = k.seq WHERE k.actor = ${actor} AND k.family = ${family.name} AND k.key = ${key} AND k.seq >= ${from} AND k.seq < ${to} ORDER BY k.seq DESC LIMIT ${batchSize}`
       return yield* Effect.forEach(rows, row => Effect.gen(function* () {
         if (!Number.isSafeInteger(row.seq) || row.seq < from || row.seq >= to || row.event === null) return yield* Effect.fail(new RuntimeError("Family index is missing journal records"))
         const record = yield* readRecord(sql, { seq: row.seq, event: row.event })

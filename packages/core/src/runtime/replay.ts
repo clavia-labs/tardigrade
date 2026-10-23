@@ -263,24 +263,47 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const tail = records
       return {
         position, seed: stateSeed(), ...(!seed ? { originSeed: { value: stateSeed() } } : {}), ...(inheritedStates ? { states: inheritedStates } : {}),
-        readFamily: function* (family, key, from) {
-          if (!Number.isSafeInteger(from) || from < 0 || from > position) throw new Error("Atom replay cursor is outside its snapshot")
+        readFamily: function* (family, key, from, options = {}) {
+          const to = options.to ?? position
+          const order = options.order ?? "asc"
+          if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || from > to || to > position) throw new Error("Atom replay cursor is outside its snapshot")
           const indexed = indexedFamily(family)
-          const committedEnd = Math.min(tailOffset, position)
-          if (journal.readFamily) {
-            for (const entry of journal.readFamily(indexed, key, Math.min(from, committedEnd), committedEnd)) yield { position: entry.position, record: observeRecord(recordOf(entry.record, true, entry.position)) }
-          } else if (from < committedEnd) {
-            const prefix = recordRange(journal, committedEnd, from, tailOffset, tail)
-            let cursor = from
-            for (const record of prefix) {
-              if (family.key(record, cursor) === key) yield { position: cursor, record: observeRecord(record) }
-              cursor++
+          const committedEnd = Math.min(tailOffset, to)
+          function* prefix() {
+            if (from >= committedEnd) return
+            if (journal.readFamily) {
+              for (const entry of journal.readFamily(indexed, key, from, committedEnd, order)) yield { position: entry.position, record: observeRecord(recordOf(entry.record, true, entry.position)) }
+            } else {
+              const prefix = recordRange(journal, committedEnd, from, tailOffset, tail)
+              if (order === "asc") {
+                let cursor = from
+                for (const record of prefix) {
+                  if (family.key(record, cursor) === key) yield { position: cursor, record: observeRecord(record) }
+                  cursor++
+                }
+              } else {
+                for (let end = prefix.length; end > 0; end -= batchSize) {
+                  const start = Math.max(0, end - batchSize)
+                  const batch = prefix.slice(start, end)
+                  for (let index = batch.length - 1; index >= 0; index--) {
+                    const cursor = from + start + index
+                    const record = batch[index]!
+                    if (family.key(record, cursor) === key) yield { position: cursor, record: observeRecord(record) }
+                  }
+                }
+              }
             }
           }
-          for (let cursor = Math.max(from, tailOffset); cursor < position; cursor++) {
-            const record = tail.at(cursor - tailOffset)!
-            if (family.key(record, cursor) === key) yield { position: cursor, record: observeRecord(record) }
+          function* suffix() {
+            const start = Math.max(from, tailOffset)
+            for (let index = 0; index < to - start; index++) {
+              const cursor = order === "asc" ? start + index : to - index - 1
+              const record = tail.at(cursor - tailOffset)!
+              if (family.key(record, cursor) === key) yield { position: cursor, record: observeRecord(record) }
+            }
           }
+          if (order === "desc") { yield* suffix(); yield* prefix() }
+          else { yield* prefix(); yield* suffix() }
         },
         familyKeys: (family, after, limit) => {
           const indexed = indexedFamily(family)

@@ -1,3 +1,4 @@
+import { logStorage } from "../properties/log"
 import { journalCommit } from "@clavia/tardigrade-core"
 import { effectServiceClient, type EffectServiceClient } from "../fixtures/effect-service"
 import type { EffectServiceDO } from "../fixtures/workerd/effect-service.worker"
@@ -262,3 +263,10 @@ for (const scenario of operationRaceCases) {
   test(`operation race ${scenario.order} (fault: ${scenario.fault})`, () =>
     withEffectService((journal, service, execute) => operationRace(journal, service, execute, scenario)))
 }
+
+test("logStorage", async () => {
+  const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
+  await runInDurableObject(namespace.getByName("log-storage"), async (_instance, state) => {
+    await logStorage({ open: () => cloudflareJournal(state.storage, "events", { familyIndexBatchSize: 8 }), execute: query => state.storage.sql.exec(query).toArray() })
+  })
+}, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
