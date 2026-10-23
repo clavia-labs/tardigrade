@@ -349,7 +349,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       snapshot.defect || !snapshot.effect(ref) || snapshot.effect(ref)?.cleanup?.request ? Effect.void
         : appendNow({ type: "EffectDied", ref, diagnostic: Cause.pretty(cause) }),
     ))
-    // expireLocalPromises admits due local timeouts independently of the execution drain (platform/test/properties/runtime/deadline-progress.ts).
+    // expireLocalPromises admits due local timeouts independently of the execution drain (platform/test/properties/runtime/promise-deadline.ts).
     const expireLocalPromises = Effect.gen(function* () {
       for (const work of snapshot.deferred()) {
         if (work.handle.executor !== "local" || !snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
