@@ -75,6 +75,12 @@ check("promiseLifecycle", "init", "invariant", "eventualSettlement,eventualProce
 check("localProducerHealth", "init", "typeInvariant")
 check("localProducerHealth", "init", "runningMeansCovered", expected=12)
 check("localProducerHealth", "initWithOrphanGuard", "invariant")
+check("deadlineProgress", "init", "typeInvariant", "deadlineSettles,callbackDelivered")
+check("deadlineProgress", "initSharedDrain", "typeInvariant")
+check("deadlineProgress", "initSharedDrain", "expiryCanProgress", expected=12)
+check("deadlineProgress", "initSharedDrain", temporal="deadlineSettles", expected=13)
+for initializer in ["initNoOther", "initDeferredOther"]:
+    check("deadlineProgress", initializer, "typeInvariant", "deadlineSettles,callbackDelivered")
 
 for initializer in ["initWithoutAdmissionWake", "initWithoutRenewal", "initWithoutRetry", "initStaleClear", "initFiniteRetry"]:
     check("watchdog", initializer, "wakeCoverage", expected=12)

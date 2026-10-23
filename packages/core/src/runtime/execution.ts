@@ -349,6 +349,15 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       snapshot.defect || !snapshot.effect(ref) || snapshot.effect(ref)?.cleanup?.request ? Effect.void
         : appendNow({ type: "EffectDied", ref, diagnostic: Cause.pretty(cause) }),
     ))
+    // expireLocalPromises admits due local timeouts independently of the execution drain (platform/test/properties/runtime/promise-deadline.ts).
+    const expireLocalPromises = Effect.gen(function* () {
+      for (const work of snapshot.deferred()) {
+        if (work.handle.executor !== "local" || !snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
+        if (work.deadlineAt !== undefined && work.deadlineAt <= (yield* Clock.currentTimeMillis)) {
+          yield* appendNow({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: work.deadlineAt } } })
+        }
+      }
+    })
     const promiseTimeouts = new Map<string, number | null>()
     const normalizePromise = (ref: EffectRef, value: ExecutionResult) => Effect.gen(function* () {
       if (value.type !== "promise") return value
@@ -502,14 +511,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const drain = () => Effect.gen(function* () {
       while (true) {
         yield* observePromises.pipe(Effect.catchCause(reportCause))
-        if (yield* Effect.try({ try: () => snapshot.deferred().some(work => work.handle.executor === "local" && work.deadlineAt !== undefined), catch: RuntimeError.from })) yield* enqueue(Effect.gen(function* () {
-          for (const work of snapshot.deferred()) {
-            if (work.handle.executor !== "local" || !snapshot.effect(work.ref) || snapshot.effect(work.ref)?.cleanup?.request) continue
-            if (work.deadlineAt !== undefined && work.deadlineAt <= (yield* Clock.currentTimeMillis)) {
-              yield* appendNow({ type: "PromiseSettled", ref: work.ref, result: { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: work.deadlineAt } } })
-            }
-          }
-        }))
+        if (yield* Effect.try({ try: () => snapshot.deferred().some(work => work.handle.executor === "local" && work.deadlineAt !== undefined), catch: RuntimeError.from })) yield* enqueue(expireLocalPromises)
         if (!store.get(executionDefect) && options.canDrive && !(yield* options.canDrive)) return
         yield* afterCommit()
         const next = yield* enqueue(Effect.gen(function* () {
@@ -685,6 +687,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       let cursor = 0
       yield* enqueue(Effect.gen(function* () {
         if (persistenceFailure) return yield* persistenceFailure
+        if (!events.length) yield* expireLocalPromises
         const defect = store.get(executionDefect)
         if (defect && !(cleanupWork().length && events.every(event => Schema.is(EffectCancelled)(event)))) return yield* Effect.fail(new WatchdogTerminalError(defect.diagnostic))
         if (owner && (!snapshot.effect(owner) || snapshot.effect(owner)?.cleanup?.request)) return
