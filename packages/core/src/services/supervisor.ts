@@ -48,7 +48,8 @@ export function createSupervisor(options: {
   readonly journal: (instance: string) => Journal<SupervisorEvent>
   readonly provisionRetry?: RetryOptions<Error>
   readonly provision: (allocation: ThreadAllocation) => Effect.Effect<void, Error>
-  readonly initialStateDefaults?: InitialState
+  readonly initialStateInheritedKeys?: Readonly<Record<string, Schema.Json>>
+  readonly initialStateDefaults?: InitialState | undefined
   readonly validateInitialState?: (state: InitialState) => Effect.Effect<void, Error>
   readonly generateName?: () => string
   readonly defaultChildPlacement: ChildPlacement
@@ -139,13 +140,18 @@ export function createSupervisor(options: {
     const thread = supervisor.get(threadAtom(name)) ? `${name}-${yield* randomName}` : name
     if (supervisor.get(threadAtom(thread))) return yield* Effect.fail(new RuntimeError("Thread identity collision"))
     const coordinate = { actor: options.actor, instance, thread }
-    // initialStateDefaults belongs to the allocation and preserves named-thread identity on reuse (host-initial-state.test.ts).
-    const seeded = options.initialStateDefaults === undefined ? initialState : { ...options.initialStateDefaults, ...initialState }
+    // initialStateInheritedKeys selects recorded ancestor seeds before explicit child overrides (host-initial-state.test.ts).
+    const parentInitialState = ancestor?.status === "registered" ? ancestor.initialState : undefined
+    const inherited = ancestor && options.initialStateInheritedKeys ? Object.fromEntries(Object.entries(options.initialStateInheritedKeys)
+      .filter(([key]) => Object.hasOwn(parentInitialState ?? {}, key) || Object.hasOwn(options.initialStateDefaults ?? {}, key))
+      .map(([key, fallback]) => [key, Object.hasOwn(parentInitialState ?? {}, key) ? parentInitialState![key]! : fallback])) : {}
+    const defaults = Object.keys(inherited).length ? { ...options.initialStateDefaults, ...inherited } : options.initialStateDefaults
+    const seeded = defaults === undefined ? initialState : { ...defaults, ...initialState }
     if (seeded !== undefined && seeded !== initialState) {
       if (!options.validateInitialState) return yield* Effect.fail(new RuntimeError("Initial state validation is not configured"))
       yield* options.validateInitialState(seeded)
     }
-    yield* supervisor.send([{ type: "ThreadRequested", allocation: { coordinate, name, parent: parent?.thread ?? null, depth: ancestor ? ancestor.depth + 1 : 0, placement, ...(seeded === undefined ? {} : { initialState: seeded }), ...(options.initialStateDefaults === undefined ? {} : { initialStateDefaultKeys: Object.keys(options.initialStateDefaults).filter(key => !Object.hasOwn(initialState ?? {}, key)) }) } }])
+    yield* supervisor.send([{ type: "ThreadRequested", allocation: { coordinate, name, parent: parent?.thread ?? null, depth: ancestor ? ancestor.depth + 1 : 0, placement, ...(seeded === undefined ? {} : { initialState: seeded }), ...(defaults === undefined ? {} : { initialStateDefaultKeys: Object.keys(defaults).filter(key => !Object.hasOwn(initialState ?? {}, key)) }) } }])
     return { supervisor, coordinate }
   })).pipe(Effect.flatMap(({ supervisor, coordinate }) => Effect.gen(function* () {
     const registered = Deferred.makeUnsafe<void, Error>()

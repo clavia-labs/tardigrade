@@ -45,7 +45,7 @@ const paused = new Set<string>()
 const failed = new Set<string>()
 const held = new Map<string, Deferred.Deferred<void>>()
 const attempts = new Map<string, number>()
-const worker = createActorWorker({ actor, initialStateDefaults: () => ({ "layout.value": 17 }), provisionRetry: { ...DEFAULT_PROVISION_RETRY, decide: (failure, attempt) => DEFAULT_PROVISION_RETRY.decide(failure, attempt).pipe(Effect.map(decision => decision && { ...decision, delayMs: 50 })) }, checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } }, actorContext: Context.pick(), initialStateAtoms: [value, spawns], http: env => typeof env.FIXTURE_TOKEN === "string" ? { token: env.FIXTURE_TOKEN } : {}, effectInput: { digestMinBytes: 0 }, services: (_env, coordinate) => Spawn.layer(input => Effect.gen(function* () {
+const worker = createActorWorker({ actor, initialStateInheritedKeys: { "layout.value": 0 }, initialStateDefaults: env => "omitDefaults" in env && env.omitDefaults ? undefined : ({ "layout.value": 17 }), provisionRetry: { ...DEFAULT_PROVISION_RETRY, decide: (failure, attempt) => DEFAULT_PROVISION_RETRY.decide(failure, attempt).pipe(Effect.map(decision => decision && { ...decision, delayMs: 50 })) }, checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } }, actorContext: Context.pick(), initialStateAtoms: [value, spawns], http: env => typeof env.FIXTURE_TOKEN === "string" ? { token: env.FIXTURE_TOKEN } : {}, effectInput: { digestMinBytes: 0 }, services: (_env, coordinate) => Spawn.layer(input => Effect.gen(function* () {
   const name = cloudflareThreadName(coordinate)
   attempts.set(name, (attempts.get(name) ?? 0) + 1)
   const execution = yield* EffectExecution
@@ -66,6 +66,10 @@ const worker = createActorWorker({ actor, initialStateDefaults: () => ({ "layout
   return Spawn.defer(handle)
 }).pipe(Effect.mapError(String))) })
 export class LayoutActorDO extends worker.ActorObject {
+  constructor(ctx: DurableObjectState, env: ConstructorParameters<typeof worker.ActorObject>[1]) {
+    const configured = { ...env, omitDefaults: ctx.id.name?.startsWith("without-defaults") === true }
+    super(ctx, configured)
+  }
   resetNextProvision(thread: string) { provisionResets.add(cloudflareThreadName({ actor: "layout", instance: this.ctx.id.name!, thread })) }
   resetNextLookup() { lookupResets.add(this.ctx.id.name!) }
   override async lookup(coordinate: ThreadCoordinate) {
