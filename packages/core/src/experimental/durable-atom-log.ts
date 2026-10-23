@@ -11,18 +11,6 @@ export const DEFAULT_DURABLE_ATOM_LOG_PAGE_SIZE = 100
 export const DEFAULT_DURABLE_ATOM_LOG_IDLE_TTL = 0
 export const DEFAULT_DURABLE_ATOM_LOG_INDEX_VERSION = "1"
 
-const Position = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
-
-// LogRef identifies a fixed projected range in the resolving actor's journal; callers must preserve that journal when transporting references (platform/test/properties/log.ts, logPages).
-export const LogRef = Schema.Struct({
-  log: Schema.NonEmptyString,
-  version: Schema.NonEmptyString,
-  from: Position,
-  to: Position,
-}).check(Schema.makeFilter(ref => ref.from <= ref.to, { title: "Ordered log bounds" }))
-export type LogRef = typeof LogRef.Type
-const isLogRef = Schema.is(LogRef)
-
 export interface LogCursor {
   readonly log: string
   readonly version: string
@@ -34,7 +22,6 @@ export interface LogCursor {
 }
 
 export interface LogRangeOptions {
-  readonly ref?: LogRef
   readonly from?: number
   readonly to?: number
   readonly order?: "asc" | "desc"
@@ -65,7 +52,6 @@ export interface DurableAtomLog<Row, Event> {
   readonly pageSize: number
   readonly idleTTL: number
   readonly indexVersion: string
-  readonly ref: (bounds: { readonly from: number; readonly to: number }) => LogRef
   readonly range: (options?: LogRangeOptions) => Atom<LogPage<Row>>
   readonly row: (position: number) => Atom<Row | undefined>
 }
@@ -92,9 +78,9 @@ export function durableAtomLog<Row, Event>(options: DurableAtomLogOptions<Row, E
       if (!context) throw new Error("Missing EventLog service")
       const replay = get(Context.get(context, EventLog).replay)
       const cursor = query.after
-      const snapshot = cursor?.snapshot ?? query.ref?.to ?? replay.position
-      const from = cursor?.from ?? query.ref?.from ?? query.from ?? 0
-      const to = cursor?.to ?? query.ref?.to ?? query.to ?? snapshot
+      const snapshot = cursor?.snapshot ?? replay.position
+      const from = cursor?.from ?? query.from ?? 0
+      const to = cursor?.to ?? query.to ?? snapshot
       const order = cursor?.order ?? query.order ?? "asc"
       const limit = query.limit ?? pageSize
       if (!validPosition(snapshot) || snapshot > replay.position || !validPosition(from) || !validPosition(to) || from > to || to > snapshot) throw new Error("Log range is outside its journal prefix")
@@ -124,8 +110,6 @@ export function durableAtomLog<Row, Event>(options: DurableAtomLogOptions<Row, E
     }).pipe(NativeAtom.setIdleTTL(idleTTL)), { input })
   })
   const range = (query: LogRangeOptions = {}) => {
-    const ref = query.ref
-    if (ref && (!isLogRef(ref) || ref.log !== name || ref.version !== indexVersion || (query.from !== undefined && query.from !== ref.from) || (query.to !== undefined && query.to !== ref.to) || (query.after && (query.after.snapshot !== ref.to || query.after.from !== ref.from || query.after.to !== ref.to)))) throw new Error("Log reference does not belong to this range")
     if ((query.from !== undefined && !validPosition(query.from)) || (query.to !== undefined && !validPosition(query.to))) throw new Error("Log bounds must be nonnegative safe integers")
     if (query.after && (![query.after.snapshot, query.after.from, query.after.to, query.after.position].every(validPosition) || query.after.log !== name || query.after.version !== indexVersion)) throw new Error("Log cursor does not belong to this range")
     if (!validLimit(query.limit ?? pageSize)) throw new Error("Log page limit must be a positive safe integer with room for lookahead")
@@ -139,13 +123,7 @@ export function durableAtomLog<Row, Event>(options: DurableAtomLogOptions<Row, E
     const replay = get(Context.get(context, EventLog).replay)
     return position >= replay.position ? undefined : get(range({ from: position, to: position + 1, limit: 1 })).rows[0]?.value
   }).pipe(NativeAtom.setIdleTTL(idleTTL)), { input }))
-  // ref pins bounds and the projection's indexVersion; changing projected values requires a new version (platform/test/properties/log.ts, logQueries).
-  const ref = (bounds: { readonly from: number; readonly to: number }): LogRef => {
-    const value = { log: name, version: indexVersion, from: bounds.from, to: bounds.to }
-    if (!isLogRef(value)) throw new Error("Invalid log reference bounds")
-    return Object.freeze(value)
-  }
-  return { name, input, schema, pageSize, idleTTL, indexVersion, ref, range, row: position => {
+  return { name, input, schema, pageSize, idleTTL, indexVersion, range, row: position => {
     if (!validPosition(position) || position >= Number.MAX_SAFE_INTEGER) throw new Error("Log row position must be a nonnegative safe integer with room for its upper bound")
     return members(position)
   } }
