@@ -18,11 +18,12 @@ const Allocation = Schema.Struct({
   depth: ThreadDepth,
   placement: ChildPlacement,
   initialState: Schema.optionalKey(InitialState),
+  initialStateDefaultKeys: Schema.optionalKey(Schema.Array(Schema.String)),
 })
 export type ThreadAllocation = typeof Allocation.Type
 const sameAllocation = Schema.toEquivalence(Allocation)
 const Thread = Schema.Struct({ ...Allocation.fields, origin: Schema.Finite, status: Schema.Literals(["requested", "registered", "failed"]), reason: Schema.optionalKey(Schema.String) })
-export type ThreadMetadata = Omit<typeof Thread.Type, "initialState">
+export type ThreadMetadata = Omit<typeof Thread.Type, "initialState" | "initialStateDefaultKeys">
 export const SupervisorEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("ThreadRequested"), allocation: Allocation }),
   Schema.Struct({ type: Schema.Literal("ThreadRegistered"), coordinate: ThreadCoordinate }),
@@ -74,7 +75,7 @@ export const threadByName = durableAtomFamily({
 export const threadMetadata = NativeAtom.family((id: string) => NativeAtom.readable(get => {
   const allocation = get(thread(id))
   if (!allocation) return undefined
-  const { initialState: _initialState, ...metadata } = allocation
+  const { initialState: _initialState, initialStateDefaultKeys: _initialStateDefaultKeys, ...metadata } = allocation
   return Object.freeze(metadata) satisfies ThreadMetadata
 }))
 

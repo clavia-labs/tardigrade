@@ -93,7 +93,7 @@ test("resolver failures stop before object hydration and provider invocation", a
 test("undefined resolution retains native object integrity verification", async () => {
   const current = await fixture()
   current.objects.set(`sha256:${current.reference.digest}`, new Uint8Array([1]))
-  await expect(current.call({ resolve: () => Effect.void })).rejects.toThrow("Object digest does not match its bytes")
+  await expect(current.call({ resolve: () => Effect.void.pipe(Effect.as(undefined)) })).rejects.toThrow("Object digest does not match its bytes")
   expect(current.reads()).toBe(1)
   expect(current.requests).toHaveLength(0)
 })

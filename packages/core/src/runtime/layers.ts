@@ -32,6 +32,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
   readonly actorTransport?: ActorMessageTransport
   readonly transports?: Readonly<Record<string, MessageTransport>>
   readonly delivery?: { readonly retryIntervalMs?: number }
+  readonly initialStateDefaults?: import("../initialise").InitialState
   readonly provisionRetry?: RetryOptions<Error>
   readonly generateName?: () => string
   readonly defaultChildPlacement?: ChildPlacement
@@ -49,6 +50,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
     ...(options.journalReadBatchSize === undefined ? {} : { journalReadBatchSize: options.journalReadBatchSize }),
     ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
     actor: options.actor.actorName,
+    ...(options.initialStateDefaults === undefined ? {} : { initialStateDefaults: options.initialStateDefaults }),
     ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
     ...(options.canDrive ? { canDrive: (instance: string) => options.canDrive!({ actor: options.actor.actorName, instance }) } : {}),
     ...(options.promises ? { promises: options.promises } : {}),

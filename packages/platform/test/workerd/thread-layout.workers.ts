@@ -12,6 +12,19 @@ import type { LayoutActorDO, LayoutThreadDO } from "../fixtures/workerd/layout-f
 const bindings = env as unknown as { ACTORS: DurableObjectNamespace<InstanceType<typeof LayoutActorDO>>; THREADS: DurableObjectNamespace<LayoutThreadDO> }
 const coordinate = (instance: string, thread: string) => ({ actor: "layout", instance, thread })
 const threadStub = (instance: string, thread: string) => bindings.THREADS.getByName(cloudflareThreadName(coordinate(instance, thread)))
+test("host defaults reach independent roots and children before a turn", async () => {
+  const instance = "initial-defaults"
+  const flow = threadFlow(request => SELF.fetch(request), instance)
+  expect((await flow.request("", { name: "parent" })).status).toBe(200)
+  const parent = threadStub(instance, "parent")
+  expect((await parent.records())[1]?.event).toMatchObject({ type: "StateInitialised", initialState: { "layout.value": 17 } })
+  await flow.call("parent", "read", null, "initial", 17)
+  const actor = bindings.ACTORS.getByName(instance)
+  const child = await actor.allocate({ instance, name: "child", parent: coordinate(instance, "parent") })
+  expect((await threadStub(instance, child.thread).records())[1]?.event).toMatchObject({ type: "StateInitialised", initialState: { "layout.value": 17 } })
+  await flow.call(child.thread, "read", null, "initial", 17)
+})
+
 test("a fresh instance creates, queries, and messages flat independent threads with separate databases", async () => {
   const instance = "layout"
   const actor = bindings.ACTORS.getByName(instance)
