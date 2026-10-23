@@ -119,7 +119,8 @@ test("R2 content persists as refs in the journal and hydrates after thread evict
     expect(turn?.message?.invocation).toMatchObject({ method: "message", input: { content } })
     expect(JSON.stringify(records)).not.toContain(new TextDecoder().decode(bytes))
     expect(JSON.stringify(records)).not.toContain(JSON.stringify(Array.from(bytes)))
-    expect(JSON.stringify(records)).not.toContain('"bytes":')
+    expect(JSON.stringify(turn?.message?.invocation)).not.toContain('"bytes":')
+    expect(JSON.stringify(records)).not.toContain(btoa(String.fromCharCode(...bytes)))
     const assertImage = () => {
       const user = fixture.prompt()?.content.find(message => message.role === "user")
       if (user?.role !== "user") throw new Error("Expected user content in model prompt")
