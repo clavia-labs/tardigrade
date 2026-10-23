@@ -19,7 +19,7 @@ export interface AtomReplay {
   // states carries atom values and cursors by codec identity across registry forks (platform/test/properties/runtime/snapshot-lookups.ts).
   readonly states?: ReadonlyMap<StatefulAtom[typeof AtomState], { readonly position: number; readonly value: unknown }>
   readonly read: (from: number) => ReadonlyLog<ObservedRecord<unknown>>
-  readonly readFamily?: (family: JournalFamily, key: string, from: number) => Iterable<FamilyRecord<ObservedRecord<unknown>>>
+  readonly readFamily?: (family: JournalFamily, key: string, from: number, options?: { readonly to?: number; readonly order?: "asc" | "desc" }) => Iterable<FamilyRecord<ObservedRecord<unknown>>>
   readonly familyKeys?: (family: JournalFamily, after: string | undefined, limit: number) => readonly string[]
 }
 

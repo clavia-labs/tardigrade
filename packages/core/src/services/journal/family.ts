@@ -11,7 +11,7 @@ export interface FamilyRecord<Record> {
   readonly record: Record
 }
 
-export type ReadJournalFamily<Event> = (family: JournalFamily, key: string, from: number, to: number) => Iterable<FamilyRecord<Recorded<Event>>>
+export type ReadJournalFamily<Event> = (family: JournalFamily, key: string, from: number, to: number, order?: "asc" | "desc") => Iterable<FamilyRecord<Recorded<Event>>>
 export type ReadJournalFamilyKeys = (family: JournalFamily, after: string | undefined, limit: number, position: number) => readonly string[]
 
 export interface FamilyKeyPage {

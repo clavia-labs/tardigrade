@@ -321,18 +321,20 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     readPosition: () => runSynchronous(access.readPosition),
     readRange: (from: number, to: number) => runSynchronous(access.readRange(from, to)),
     readOperation: (ref: EffectRef, position: number) => runSynchronous(access.readOperation(ref, position)),
-    readFamily: function* (family: JournalFamily, key: string, from: number, to: number): Iterable<FamilyRecord<Recorded<Event>>> {
+    readFamily: function* (family: JournalFamily, key: string, from: number, to: number, order: "asc" | "desc" = "asc"): Iterable<FamilyRecord<Recorded<Event>>> {
       if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from) throw new RuntimeError("Invalid journal family range")
       const sql = runSynchronous(client)
       const position = runSynchronous(readPosition)
       if (to > position) throw new RuntimeError("Journal family range is unavailable")
       runSynchronous(familyIndex.prepare(sql, family, position))
-      let cursor = from
-      while (cursor < to) {
-        const page = runSynchronous(familyIndex.readPage(sql, family, key, cursor, to))
+      let lower = from
+      let upper = to
+      while (lower < upper) {
+        const page = runSynchronous(familyIndex.readPage(sql, family, key, lower, upper, order))
         if (!page.length) return
         yield* page
-        cursor = page[page.length - 1]!.position + 1
+        if (order === "asc") lower = page[page.length - 1]!.position + 1
+        else upper = page[page.length - 1]!.position
       }
     },
     readFamilyKeys: (family: JournalFamily, after: string | undefined, limit: number, position: number): readonly string[] => {
