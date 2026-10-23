@@ -20,9 +20,14 @@ export function trajectoryRevision(get: Getter) {
 
 const messageValidator = incrementalValidator(Conversation)
 
+// immutableConversation validates and freezes a prepared context for reuse by act input decoding (platform/test/properties/turn-facts.ts, trajectoryWindowCache).
+export function immutableConversation(messages: typeof Conversation.Type): typeof Conversation.Type {
+  const value = messageValidator.parse(messages)
+  if (value === invalid) throw new RuntimeError("Invalid projected conversation")
+  return value as typeof Conversation.Type
+}
+
 // immutableMessage validates a detached message and records it as frozen plain data for request reuse (platform/test/properties/turn-facts.ts, trajectoryWindowCache).
 export function immutableMessage(message: typeof Conversation.Type[number]): typeof Conversation.Type[number] {
-  const value = messageValidator.parse(structuredClone([message]))
-  if (value === invalid) throw new RuntimeError("Invalid projected conversation message")
-  return (value as typeof Conversation.Type)[0]!
+  return immutableConversation(structuredClone([message]))[0]!
 }

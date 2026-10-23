@@ -5,8 +5,9 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { createActor } from "@clavia/tardigrade-agent"
 import { ModelInfo, ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
 import { Generate, Summarize, ExecuteTool, AskPermission } from "@clavia/tardigrade-agent/contracts/acts"
+import { resolveModelInput } from "@clavia/tardigrade-agent/services/model-context"
 import type { Event } from "@clavia/tardigrade-agent/contracts/events"
-import { InputDigest } from "@clavia/tardigrade-core"
+import { InputDigest, EffectExecution } from "@clavia/tardigrade-core"
 import { cloudflareJournal, DEFAULT_CHECKPOINT_CHUNK_BYTES } from "../../src/cloudflare"
 import { createTestStore } from "../properties/runtime/store"
 import type { TestPromiseResolver } from "../fixtures/workerd/fixture.worker"
@@ -19,9 +20,11 @@ test("stock agent reaches 10k events with bounded SQLite checkpoints and linear 
     const open = () => Effect.runPromise(createTestStore({ actor: createActor, journal, actorContext: Context.pick(ModelInfo, ToolCatalog), services: () => Layer.mergeAll(
       Layer.succeed(ModelInfo, { model: { provider: "openrouter", model_id: "test" }, contextWindowTokens: 1_000_000 }),
       Layer.succeed(ToolCatalog, { names: ["test.job"], specs: [{ name: "test.job", description: "Return test data", inputSchema: { type: "object" } }] }),
-      Generate.layer(input => Effect.sync(() => {
-        const start = input.context.findLastIndex(message => message.role === "user")
-        const calls = input.context.slice(start).filter(message => message.role === "tool").length
+      Generate.layer(input => Effect.gen(function* () {
+        const execution = yield* EffectExecution
+        const value = resolveModelInput(input, execution.get)
+        const start = value.context.findLastIndex(message => message.role === "user")
+        const calls = value.context.slice(start).filter(message => message.role === "tool").length
         return calls < 8 ? { text: "", toolCalls: [{ callId: `tool:${calls}`, name: "test.job", input: {} }] } : { text: "a".repeat(160), toolCalls: [] }
       })),
       Summarize.layer(() => Effect.succeed({ text: "summary", toolCalls: [] })),

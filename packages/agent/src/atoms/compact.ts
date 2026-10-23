@@ -1,6 +1,7 @@
 import { createCompactionState } from "./durable/compaction"
 import { RuntimeError, effectAtom, type Atom } from "@clavia/tardigrade-core"
-import { immutableMessage } from "../experimental/trajectory-log"
+import { immutableMessage, immutableConversation } from "../experimental/trajectory-log"
+import type { LogModelContext } from "../contracts/model-context"
 import { type TrajectorySource } from "./durable/trajectory"
 import { Effect } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
@@ -120,6 +121,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
     const totals = [0]
     const sizes: number[] = []
     let more = false
+    let logContext: LogModelContext | undefined
     const append = (message: typeof Conversation.Type[number], position: number) => {
       const value = immutableMessage(render([message])[0]!)
       messages.push(value)
@@ -130,6 +132,10 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
     }
     if (paged) {
       const revision = trajectory.revision?.(get)
+      if (revision && trajectory.selection) logContext = {
+        version: 1, messages: trajectory.selection({ from: cursor, to: revision.position }), summary: state.summary, pageSize: policy.pageSize,
+        render: { charsPerToken: policy.charsPerToken, toolOutputTokenLimit: policy.toolOutputTokenLimit, userMessageTokenLimit: policy.userMessageTokenLimit },
+      }
       const budget = selection.contextWindowTokens * policy.charsPerToken - summarySize
       const cached = revision ? windows.get(revision.source) : undefined
       const reusable = cached && revision && cached.from <= cursor && cached.through <= revision.position && cached.budget === budget
@@ -160,7 +166,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
       if (revision) windows.set(revision.source, { from: cursor, through, budget, messages, positions, sizes, more })
     } else for (let index = cursor; index < source!.length; index++) append(source![index]!, index)
     const size = summarySize + totals[totals.length - 1]!
-    const ready = { position: "ready" as const, messages: [...summary, ...messages], policy, ...usage(size) }
+    const ready = { position: "ready" as const, messages: immutableConversation([...summary, ...messages]), ...(logContext ? { logContext } : {}), policy, ...usage(size) }
     if (!more && ready.estimatedTokens < triggerTokens) return { view: ready, events: {}, acts: {} }
     const boundaries: number[] = []
     const pending = new Set<string>()

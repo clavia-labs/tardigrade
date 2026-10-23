@@ -14,6 +14,7 @@ export interface TrajectoryRangeOptions extends LogReadOptions {
 }
 
 export interface TrajectorySource<Row> {
+  readonly selection?: typeof trajectoryLog.range
   // revision identifies an append-only source whose projected rows remain immutable (platform/test/properties/turn-facts.ts, trajectoryWindowCache).
   readonly revision?: (get: Getter) => { readonly source: object; readonly position: number }
   readonly legacyCursor?: (get: Getter, through: number) => number
@@ -71,4 +72,4 @@ const messagePages = NativeAtom.family((identity: string): Atom<LogReadPage<type
 }).pipe(NativeAtom.setIdleTTL(0)), { input: agentLog.schema }))
 
 // messages pages model messages without retaining a complete conversation array.
-export const messages: TrajectorySource<typeof Conversation.Type[number]> = { revision: trajectoryRevision, legacyCursor: legacyTrajectoryCursor, range: (options = {}) => messagePages(JSON.stringify(options)) }
+export const messages: TrajectorySource<typeof Conversation.Type[number]> = { selection: trajectoryLog.range, revision: trajectoryRevision, legacyCursor: legacyTrajectoryCursor, range: (options = {}) => messagePages(JSON.stringify(options)) }

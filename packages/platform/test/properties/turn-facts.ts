@@ -1,14 +1,19 @@
 import { strict as assert } from "node:assert"
 import { memoryJournalReads } from "../fixtures/memory-journal"
-import { Clock, Context, Effect, Layer, Schema } from "effect"
+import { Clock, Context, Effect, Layer, Option, Schema } from "effect"
 import * as fc from "fast-check"
-import { createEventLog, StateInitialised, defineActor, effectAtom, RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
+import { atom, createEventLog, journalCommit, StateInitialised, defineActor, effectAtom, RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
 import { createTestStore } from "./runtime/store"
 import { trajectory, messages, timeSpend } from "@clavia/tardigrade-agent/atoms/durable"
 import { compact } from "@clavia/tardigrade-agent/atoms/compact"
 import { ModelInfo } from "@clavia/tardigrade-agent/actor/context"
-import { Generate } from "@clavia/tardigrade-agent/contracts/acts"
+import { Generate, generateRequest } from "@clavia/tardigrade-agent/contracts/acts"
 import { Event } from "@clavia/tardigrade-agent/contracts/events"
+import { PreparedModelContext } from "@clavia/tardigrade-agent/contracts/model-context"
+import { resolveModelInput } from "@clavia/tardigrade-agent/services/model-context"
+import { Model, modelActs, type ModelInput } from "@clavia/tardigrade-agent/services/model"
+import { infer } from "@clavia/tardigrade-agent/atoms/infer"
+import { inferenceState } from "@clavia/tardigrade-agent/atoms/durable/inference"
 
 // turnFactRecovery preserves message order, attribution, and receipt-to-settlement elapsed time across replay and checkpoints.
 export const turnFactRecovery = fc.asyncProperty(fc.record({
@@ -170,7 +175,7 @@ export const trajectoryWindowCache = () => {
   const make = (trajectory: Parameters<typeof compact>[0]) => Effect.runSync(compact(trajectory, options).pipe(Effect.provideService(ModelInfo, selection)))
   const context = make(source)
   const log = createEventLog({ schema: Event, atoms: { context } })
-  const oracle = createEventLog({ schema: Event, atoms: { context: make({ range: messages.range }) } })
+  const oracle = createEventLog({ schema: Event, atoms: { context: make({ ...messages, revision: get => ({ position: messages.revision!(get).position, source: {} }) }) } })
   try {
     const records: Recorded<Event>[] = [{ event: { type: "ModelConfigured", ...selection } }]
     for (let index = 0; index < 3; index++) records.push(
@@ -185,7 +190,7 @@ export const trajectoryWindowCache = () => {
       const view = snapshot.view().context.view
       assert.deepEqual(view, oracle.replay(snapshot.records).view().context.view)
       if (view.position === "ready") {
-        const request = () => Generate.request({ input: { model: selection.model, system: "", tools: [], context: [...view.messages] } }).request.input as { readonly context: readonly unknown[] }
+        const request = () => Generate.request({ input: { model: selection.model, system: "", tools: [], context: view.messages } }).request.input as { readonly context: readonly unknown[] }
         const first = request(), second = request()
         for (const [index, message] of view.messages.entries()) {
           assert.equal(first.context[index], message)
@@ -232,4 +237,82 @@ export const trajectorySeedBoundary = () => {
       { "agent.compaction.state": { through: 2, summary: "Earlier" } },
     ]) assert.throws(() => log.replay([{ event: StateInitialised.make({ type: "StateInitialised", version: 1, initialState }) }]), /Trajectory logs require journal history/)
   } finally { log.dispose() }
+}
+
+// modelContextRecipes checks captured rendering, live reuse, fixed prefixes, and hash rejection.
+export const modelContextRecipes = () => {
+  const selection = { model: { provider: "test", model_id: "test" }, contextWindowTokens: 1_000_000 }
+  const context = Effect.runSync(compact(messages, { pageSize: 2, userMessageTokenLimit: 8, toolOutputTokenLimit: 8 }).pipe(Effect.provideService(ModelInfo, selection)))
+  const log = createEventLog({ schema: Event, atoms: { context } })
+  try {
+    const records: Recorded<Event>[] = [{ event: { type: "ModelConfigured", ...selection } }]
+    for (let index = 0; index < 3; index++) records.push(
+      { event: { type: "TurnRequested", turnId: String(index), text: "question \ud83d\udc1b ".repeat(20) } },
+      { event: { type: "ModelCalled", purpose: "inference", turnId: String(index), callId: String(index), ...selection } },
+      { event: { type: "ModelReturned", purpose: "inference", turnId: String(index), callId: String(index), text: "working", toolCalls: [{ callId: `tool:${index}`, providerId: String(index), name: "tool", input: {} }] } },
+      { event: { type: "ToolReturned", version: 1, turnId: String(index), tool: { name: "tool", providerId: String(index) }, callId: `tool:${index}`, content: [{ type: "text", text: "result \ud83d\udc1b ".repeat(20) }], error: null } },
+    )
+    records.push({ event: { type: "ModelCalled", purpose: "compaction", callId: "summary", through: 3, cursor: 5, ...selection } }, { event: { type: "ModelReturned", purpose: "compaction", callId: "summary", text: "summary \ud83d\udc1b ".repeat(20) } })
+    const snapshot = log.replay(records)
+    const view = snapshot.view().context.view
+    if (view.position !== "ready" || !view.logContext) throw new Error("Missing log context")
+    const input = { model: selection.model, system: "system", tools: [], context: view.messages }
+    const request = generateRequest({ input, logContext: view.logContext })
+    const stored = request.request.input as Parameters<typeof Generate.request>[0]["input"]
+    assert.deepEqual(resolveModelInput(stored, snapshot.get), input)
+    assert.equal(resolveModelInput(stored, () => { throw new Error("Live input must not reload history") }, input.context).context, input.context)
+    const extended = log.append(snapshot, { type: "TurnRequested", turnId: "future", text: "excluded" })
+    assert.deepEqual(resolveModelInput(stored, extended.get), input)
+    const recipe = stored.context
+    if (!("messages" in recipe)) throw new Error("Expected persisted log context")
+    assert.throws(() => resolveModelInput({ ...stored, context: { ...recipe, summary: "changed" } }, extended.get), /hash mismatch/)
+    assert.throws(() => resolveModelInput({ ...stored, context: { ...recipe, messages: { ...recipe.messages, events: ["ModelCalled"] } } }, extended.get))
+    assert.throws(() => Generate.request({ input: { ...stored, context: { ...recipe, version: 2 as 1 } } }))
+  } finally { log.dispose() }
+}
+
+// modelContextRecovery resumes both inline and log-backed Generate inputs after defaults change and checks live prepared reuse.
+export async function modelContextRecovery(open: () => Journal<Event> & { readonly close: Effect.Effect<void, Error> }, inline: boolean) {
+  const selection = { model: { provider: "test", model_id: "test" }, contextWindowTokens: 1_000_000 }
+  const makeActor = (userMessageTokenLimit: number, legacy = false) => defineActor("model-context", Effect.gen(function* () {
+    const source = legacy ? atom(get => get(messages.range({ limit: 64 })).rows.map(row => row.value)) : messages
+    const context = yield* compact(source, { userMessageTokenLimit })
+    const node = yield* infer<never>(atom(get => ({ system: "system", tools: { view: { specs: [] }, events: {}, acts: {} }, context: get(context) })))
+    return { atom: node, schema: Event }
+  }))
+  const setup = Effect.runSync(makeActor(262_144, inline).setup.pipe(Effect.provideService(ModelInfo, selection)))
+  const projection = createEventLog({ schema: setup.schema, atoms: setup.effects })
+  let journal = open()
+  const text = "accepted input ".repeat(8_000)
+  try {
+    let snapshot = projection.replay([{ event: { type: "ModelConfigured", ...selection } }, { event: { type: "TurnRequested", turnId: "turn", text } }])
+    const work = snapshot.effects()[0]!
+    const request = work.request
+    const ref = { seq: snapshot.position, atom: work.atom, act: Generate.name }
+    snapshot = projection.append(snapshot, projection.requestEvent(ref, request, work.origin))
+    const pending = snapshot.pending().map(({ ref, request }) => ({ ref, request }))
+    assert.equal(JSON.stringify(pending).includes(text), inline)
+    if (!inline) assert.ok(JSON.stringify(pending).length < 2_000)
+    await Effect.runPromise(journalCommit(journal, () => journal.append(0, snapshot.records.slice(), { put: pending })))
+    await Effect.runPromise(journal.close)
+    projection.dispose()
+    journal = open()
+    const seen: ModelInput[] = [], prepared: boolean[] = []
+    const provider = Layer.succeed(Model, { call: input => Effect.gen(function* () {
+      seen.push(input)
+      prepared.push(Option.isSome(yield* Effect.serviceOption(PreparedModelContext)))
+      return { text: "answer", toolCalls: [] }
+    }) })
+    const services = Layer.merge(Layer.succeed(ModelInfo, selection), modelActs.pipe(Layer.provideMerge(provider)))
+    const store = await Effect.runPromise(createTestStore({ actor: makeActor(8), journal, actorContext: Context.pick(ModelInfo), services: () => services }))
+    try {
+      await Effect.runPromise(store.wait)
+      assert.deepEqual(seen[0]!.context, [{ role: "user", text }])
+      assert.equal(store.snapshot().get(inferenceState).turns.find(turn => turn.turnId === "turn")?.answer, "answer")
+      await Effect.runPromise(store.send([{ type: "TurnRequested", turnId: "live", text: "live" }]))
+      await Effect.runPromise(store.wait)
+      assert.equal(prepared[1], true)
+      assert.deepEqual(journal.readInputs(), [])
+    } finally { await Effect.runPromise(store.close) }
+  } finally { projection.dispose(); await Effect.runPromise(journal.close) }
 }

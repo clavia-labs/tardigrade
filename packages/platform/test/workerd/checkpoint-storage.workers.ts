@@ -1,4 +1,5 @@
 import { logStorage } from "../properties/log"
+import { modelContextRecovery } from "../properties/turn-facts"
 import { journalCommit } from "@clavia/tardigrade-core"
 import { effectServiceClient, type EffectServiceClient } from "../fixtures/effect-service"
 import type { EffectServiceDO } from "../fixtures/workerd/effect-service.worker"
@@ -25,6 +26,13 @@ test("checkpointStorage", async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
   await runInDurableObject(namespace.getByName("checkpoint-storage"), async (_instance, state) => {
     await checkpointStorage({ maxChunkBytes: CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES, open: checkpointChunkBytes => cloudflareJournal(state.storage, "events", { checkpointChunkBytes, eventInlineBytes: 1 }), execute: async query => state.storage.sql.exec(query).toArray() })
+  })
+}, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+
+for (const inline of [false, true]) test(`model context recovery (inline: ${inline})`, async () => {
+  const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
+  await runInDurableObject(namespace.getByName(`model-context-${inline}`), async (_instance, state) => {
+    await modelContextRecovery(() => cloudflareJournal(state.storage, "events"), inline)
   })
 }, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
 

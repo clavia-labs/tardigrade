@@ -1,8 +1,10 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { act } from "@clavia/tardigrade-core"
 import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ToolSpec } from "@clavia/tardigrade-libraries/types"
 import { ModelReply, ToolCall, Decision, BudgetDecision, BudgetMetric, PermissionRequest, Conversation } from "./events"
+import { digestInput } from "@clavia/tardigrade-core/runtime/input-digest"
+import { LogModelContext, StoredModelContext, PreparedModelContext } from "./model-context"
 
 // OutputContract carries the schema that a provider-native response format must enforce.
 export const OutputContract = Schema.Struct({
@@ -13,12 +15,22 @@ export const OutputContract = Schema.Struct({
 export type OutputContract = typeof OutputContract.Type
 
 const ModelInput = Schema.Struct({ model: ModelRef, system: Schema.String, tools: Schema.Array(ToolSpec), context: Conversation, output: Schema.optionalKey(OutputContract) })
+export type InlineModelInput = typeof ModelInput.Type
 export const Generate = act({
   name: "agent.model.generate",
-  input: ModelInput,
+  input: Schema.Struct({ ...ModelInput.fields, context: Schema.Union([Conversation, StoredModelContext]) }),
   success: ModelReply,
   failure: Schema.String,
 })
+
+// generateRequest persists a verified log selection while reusing prepared messages during live execution (platform/test/properties/turn-facts.ts, modelContextRecovery).
+export function generateRequest({ logContext, ...options }: Parameters<typeof Generate.request>[0] & { readonly logContext?: LogModelContext }) {
+  const full = Generate.request(options)
+  if (!logContext || !Array.isArray(options.input.context)) return full
+  const input = full.request.input as unknown as InlineModelInput
+  const request = Generate.request({ ...options, input: { ...input, context: { ...logContext, expected: digestInput(full.request.input) } } })
+  return { ...request, execute: (accepted: Schema.Json) => request.execute(accepted).pipe(Effect.provideService(PreparedModelContext, input.context)) }
+}
 export const Summarize = act({ name: "agent.model.summarize", input: ModelInput, success: ModelReply, failure: Schema.String })
 export const AskPermission = act({
   name: "agent.permission.request",
