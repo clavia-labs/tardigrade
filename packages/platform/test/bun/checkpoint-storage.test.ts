@@ -1,4 +1,3 @@
-import { journalInputRecovery } from "../properties/journal-input"
 import { logStorage } from "../properties/log"
 import type { Journal } from "@clavia/tardigrade-core"
 import type { EffectServiceClient } from "../fixtures/effect-service"
@@ -96,11 +95,4 @@ test("logStorage", async () => {
   const db = new Database(filename, { create: true })
   try { await logStorage({ open: () => bunJournal({ filename, actor: "events", familyIndexBatchSize: 8 }), execute: query => db.query<Record<string, unknown>, []>(query).all() }) }
   finally { db.close(); rmSync(directory, { recursive: true, force: true }) }
-})
-
-test("journalInputRecovery", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "tardie-journal-input-"))
-  const filename = join(directory, "journal.sqlite")
-  try { await journalInputRecovery(() => bunJournal({ filename, actor: "events" })) }
-  finally { rmSync(directory, { recursive: true, force: true }) }
 })

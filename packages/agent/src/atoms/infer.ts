@@ -1,4 +1,4 @@
-import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type Getter } from "@clavia/tardigrade-core"
+import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled } from "../contracts/events"
@@ -103,7 +103,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
   }))
   return Effect.map(output, node => {
     type Output = typeof node extends Atom<infer Value> ? Value : never
-    const typed: Atom<ActorOutput<Output["view"], Event | ToolEvents, R | ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>> = node
+    const typed: Atom<Omit<Output, "events"> & { readonly events: Readonly<Record<string, EventValue<Event | ToolEvents>>> }> = node
     return typed.pipe(NativeAtom.withLabel("infer"))
   })
 }

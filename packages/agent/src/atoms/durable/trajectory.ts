@@ -11,11 +11,9 @@ import { agentLog, trajectoryLog, trajectoryRevision } from "../../experimental/
 export interface TrajectoryRangeOptions extends LogReadOptions {
   readonly from?: number
   readonly to?: number
-  readonly selection?: ReturnType<typeof trajectoryLog.range>
 }
 
 export interface TrajectorySource<Row> {
-  readonly journalSource?: { readonly name: "agent.messages.v1"; readonly range: typeof trajectoryLog.range }
   // revision identifies an append-only source whose projected rows remain immutable (platform/test/properties/turn-facts.ts, trajectoryWindowCache).
   readonly revision?: (get: Getter) => { readonly source: object; readonly position: number }
   readonly legacyCursor?: (get: Getter, through: number) => number
@@ -33,13 +31,11 @@ function toolAttribution(get: Getter, event: ToolReturned, position: number) {
 }
 
 const eventPages = durableAtom.log(trajectoryLog)
-const validSelection = Schema.is(trajectoryLog.Range)
 const pages = NativeAtom.family((identity: string): Atom<LogReadPage<typeof Trajectory.Type[number]>> => Object.assign(NativeAtom.readable(get => {
   if (get(legacyTrajectorySeed)) throw new RuntimeError("Trajectory logs require journal history; aggregate trajectory initial state is unsupported")
   const query = JSON.parse(identity) as TrajectoryRangeOptions
   const source = logSource(get)
-  const selection = query.selection ?? trajectoryLog.range({ from: query.after?.from ?? query.from ?? 0, to: query.after?.to ?? query.to ?? source.readPosition() })
-  if (!validSelection(selection)) throw new RuntimeError("Invalid trajectory log selection")
+  const selection = trajectoryLog.range({ from: query.after?.from ?? query.from ?? 0, to: query.after?.to ?? query.to ?? source.readPosition() })
   const limit = query.limit ?? agentLog.pageSize
   if (!Number.isSafeInteger(limit) || limit < 1 || limit >= Number.MAX_SAFE_INTEGER) throw new RuntimeError("Invalid trajectory page limit")
   const order = query.order ?? query.after?.order ?? "asc"
@@ -75,4 +71,4 @@ const messagePages = NativeAtom.family((identity: string): Atom<LogReadPage<type
 }).pipe(NativeAtom.setIdleTTL(0)), { input: agentLog.schema }))
 
 // messages pages model messages without retaining a complete conversation array.
-export const messages: TrajectorySource<typeof Conversation.Type[number]> = { journalSource: { name: "agent.messages.v1", range: trajectoryLog.range }, revision: trajectoryRevision, legacyCursor: legacyTrajectoryCursor, range: (options = {}) => messagePages(JSON.stringify(options)) }
+export const messages: TrajectorySource<typeof Conversation.Type[number]> = { revision: trajectoryRevision, legacyCursor: legacyTrajectoryCursor, range: (options = {}) => messagePages(JSON.stringify(options)) }

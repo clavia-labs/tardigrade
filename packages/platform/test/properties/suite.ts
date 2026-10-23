@@ -1,4 +1,3 @@
-import { journalInputRecipes } from "./journal-input"
 import { logPages, logQueries, logViews, logViewVersions } from "./log"
 import { stateValidation } from "./runtime/state-validation"
 import { snapshotLookups } from "./runtime/snapshot-lookups"
@@ -24,7 +23,6 @@ import { toolDeferredLifecycle } from "./tool-deferred-lifecycle"
 import { agentTurnCancellation, agentCancellationRecovery, codeModeCancellationRecovery, compactionCancellationRecovery } from "./agent-cancellation"
 
 export const propertyCases = {
-  journalInputRecipes,
   trajectoryCompaction: () => fc.assert(trajectoryCompaction, RUNTIME_PROPERTY_OPTIONS),
   trajectoryWindowCache,
   trajectorySeedBoundary,

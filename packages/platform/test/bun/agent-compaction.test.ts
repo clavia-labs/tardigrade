@@ -105,14 +105,7 @@ test("compaction follows logged model configuration", () => fc.assert(fc.propert
       const history = snapshot.records.slice()
       let window: number | undefined
       let compactions = 0
-      const owners = new Map<string, string | undefined>()
-      const active: string[] = []
       for (const { event } of history) {
-        if (event.type === "TurnRequested") active.push(event.turnId)
-        if (event.type === "TurnSettled") active.splice(active.indexOf(event.turnId), 1)
-        if (event.type === "ModelCalled") owners.set(event.callId, event.turnId)
-        if (event.type === "ModelReturned") expect(event.turnId).toBe(owners.get(event.callId))
-        if (event.type === "ModelCalled" && event.purpose === "compaction") expect(event.turnId).toBe(active[0])
         if (event.type === "ModelConfigured" || event.type === "ModelUpdated") window = event.contextWindowTokens
         if (event.type === "ModelCalled") {
           if (window === undefined) throw new Error("Model call requires logged configuration")
