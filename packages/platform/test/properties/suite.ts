@@ -1,4 +1,4 @@
-import { logPages, logQueries } from "./log"
+import { logPages, logQueries, logViews, logViewVersions } from "./log"
 import { stateValidation } from "./runtime/state-validation"
 import { snapshotLookups } from "./runtime/snapshot-lookups"
 import { checkpointChunks } from "./runtime/checkpoint-chunks"
@@ -25,6 +25,8 @@ import { agentTurnCancellation, agentCancellationRecovery, codeModeCancellationR
 export const propertyCases = {
   logPages: () => fc.assert(logPages, RUNTIME_PROPERTY_OPTIONS),
   logQueries,
+  logViews: () => fc.assert(logViews, RUNTIME_PROPERTY_OPTIONS),
+  logViewVersions,
   stateValidation,
   snapshotLookups: () => fc.assert(snapshotLookups, RUNTIME_PROPERTY_OPTIONS),
   checkpointChunks: () => fc.assert(checkpointChunks, RUNTIME_PROPERTY_OPTIONS),
