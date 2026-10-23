@@ -4,14 +4,15 @@ import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled } from "../contracts/events"
 import { ModelInfo } from "../actor/context"
 import { modelSelection } from "../compat/model"
-import { Generate, requests, failureMessage } from "../contracts/acts"
+import { generateRequest, requests, failureMessage } from "../contracts/acts"
+import type { LogModelContext } from "../contracts/model-context"
 import type { OutputContract } from "../contracts/acts"
 import { inferenceState } from "./durable/inference"
 import { toolSpend, tokenSpend, usdSpend, timeSpend } from "./durable/spend"
 import { type ToolView } from "./tools"
 
 export type ContextView = ActorOutput<{ readonly position: "configuring" | "compacting" } | { readonly position: "failed"; readonly reason: string } | {
-  readonly position: "ready"; readonly messages: typeof Conversation.Type
+  readonly position: "ready"; readonly messages: typeof Conversation.Type; readonly logContext?: LogModelContext
 }, Event, ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>
 export interface AgentInput<R, ToolEvents extends object = Event> {
   readonly system: string
@@ -22,7 +23,7 @@ export interface AgentInput<R, ToolEvents extends object = Event> {
 
 export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>> | ((get: Getter) => AgentInput<R, ToolEvents>)) {
   const agentAtom = typeof agent === "function" ? atom(agent) : agent
-  const request = requests(Generate.request, { latestOnly: true })
+  const request = requests(generateRequest, { latestOnly: true })
 
   const output = Effect.map(Effect.all([ModelInfo, modelSelection]), ([current, model]) => effectAtom(get => {
     get(toolSpend)
@@ -86,6 +87,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
       acts: {
         ...proposals.acts,
         inference: request(state.callId, {
+          ...(input.context.view.logContext ? { logContext: input.context.view.logContext } : {}),
           ...(state.origin === null ? {} : { origin: state.origin }),
           input: { model: selection.model, system: `${input.system}${correctionSystem}`, tools: input.tools.view.specs, context: messages, ...(input.output === undefined ? {} : { output: input.output }) },
           onRequested: () => [{ type: "ModelCalled", purpose: "inference", ...selection, callId: state.callId, turnId: state.turnId } satisfies ModelCalled],
@@ -93,7 +95,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
             if (result.status === "rejected") return [{ type: "ModelFailed", callId: state.callId, reason: failureMessage(result.reason) } satisfies typeof ModelFailed.Type]
             if (result.value.outputErrors !== undefined) return [{ type: "OutputRejected", turnId: state.turnId, callId: state.callId, contract: input.output?.name ?? "output", text: result.value.text, errors: result.value.outputErrors, attempt: turn?.calls.length ?? 0, maxCorrections: input.output?.correction?.attempts ?? 0 } satisfies typeof OutputRejected.Type]
             if (new Set(result.value.toolCalls.map(call => call.callId)).size !== result.value.toolCalls.length) return [{ type: "ModelFailed", callId: state.callId, reason: "Duplicate provider tool call IDs" } satisfies typeof ModelFailed.Type]
-            return [{ type: "ModelReturned", purpose: "inference", callId: state.callId, text: result.value.text, ...(result.value.reasoning === undefined ? {} : { reasoning: result.value.reasoning }), ...(result.value.continuation === undefined ? {} : { continuation: result.value.continuation }), ...(result.value.usage ? { usage: result.value.usage } : {}),
+            return [{ type: "ModelReturned", purpose: "inference", turnId: state.turnId, callId: state.callId, text: result.value.text, ...(result.value.reasoning === undefined ? {} : { reasoning: result.value.reasoning }), ...(result.value.continuation === undefined ? {} : { continuation: result.value.continuation }), ...(result.value.usage ? { usage: result.value.usage } : {}),
               toolCalls: result.value.toolCalls.map((call, index) => ({ ...call, providerId: call.callId, callId: JSON.stringify([ref.seq, ref.atom, ref.act, index]) })),
             } satisfies ModelReturned]
           },

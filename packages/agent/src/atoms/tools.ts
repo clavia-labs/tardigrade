@@ -122,6 +122,8 @@ function toolValue<R>(state: typeof ToolState.Type, tools: Tools<R>): Tools<R> {
   const { execution: _execution, ...acts } = tools.acts
   const call = state.pending
   if (!call || state.running) return { ...tools, acts }
+  const turnId = state.queue.find(item => item.call.callId === call.callId)?.turnId
+  const owner = { ...(turnId === undefined ? {} : { turnId }), tool: { name: call.name, providerId: call.providerId } }
   const plan = tools.view.prepare(call)
   if (plan.position !== "ready") return { ...tools, acts }
   return {
@@ -135,11 +137,11 @@ function toolValue<R>(state: typeof ToolState.Type, tools: Tools<R>): Tools<R> {
         onRequested: () => [{ type: "ToolCalled", callId: call.callId, counted: plan.counted } satisfies ToolCalled],
         onDeferred: (handle, ref) => {
           const promise = { type: "promise" as const, ref, handle }
-          return [{ type: "ToolReturned", callId: call.callId, ...toolReturnedOutput(promise), error: null, promise } satisfies ToolReturned]
+          return [{ type: "ToolReturned", ...owner, callId: call.callId, ...toolReturnedOutput(promise), error: null, promise } satisfies ToolReturned]
         },
         onSettled: (result, _ref, handle) => handle ? [] : [result.status === "fulfilled"
-          ? { type: "ToolReturned", callId: call.callId, ...toolReturnedOutput(result.value), error: null } satisfies ToolReturned
-          : { type: "ToolReturned", version: 1, callId: call.callId, content: [], error: failureMessage(result.reason) } satisfies ToolReturned],
+          ? { type: "ToolReturned", ...owner, callId: call.callId, ...toolReturnedOutput(result.value), error: null } satisfies ToolReturned
+          : { type: "ToolReturned", ...owner, version: 1, callId: call.callId, content: [], error: failureMessage(result.reason) } satisfies ToolReturned],
       }),
     },
   }

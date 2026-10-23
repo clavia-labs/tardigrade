@@ -12,10 +12,10 @@ import { type Conversation } from "@clavia/tardigrade-agent/contracts/events"
 
 const file = (mediaType: string) => ({ type: "file" as const, mediaType, object: { algorithm: "sha256" as const, digest: "a".repeat(64) } })
 
-test("unconfigured agent setup retains conversation and compaction codecs", async () => {
+test("unconfigured agent setup retains summary without trajectory state", async () => {
   const setup = await Effect.runPromise(createActor.setup.pipe(Effect.provide(contentServices(() => { throw new RuntimeError("Schema discovery cannot call the model") }))))
   const names = new Set(setup.inspection.durableAtoms.map(atom => atom.name))
-  expect(names.has("agent.trajectory")).toBe(true)
+  expect(names.has("agent.trajectory")).toBe(false)
   expect(names.has("agent.compaction.state")).toBe(true)
 })
 
@@ -118,7 +118,7 @@ test("compaction follows logged model configuration", () => fc.assert(fc.propert
       expect(loaded.view()).toEqual(snapshot.view())
       const pending = history.findIndex(({ event }) => event.type === "ModelCalled" && event.purpose === "compaction")
       expect(restored.replay(history.slice(0, pending + 1)).pending()[0]?.request.act).toBe("agent.model.summarize")
-      const suffix = agentLog(hostWindow, checkpoint)
+      const suffix = agentLog(hostWindow, checkpoint, undefined, history)
       try {
         expect(suffix.replay(history.slice(checkpoint!.position)).view()).toEqual(snapshot.view())
       } finally { suffix.dispose() }
@@ -126,3 +126,10 @@ test("compaction follows logged model configuration", () => fc.assert(fc.propert
     } finally { original.dispose(); restored.dispose() }
   },
 ), RUNTIME_PROPERTY_OPTIONS), RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+
+test("compaction rejects invalid paging limits", () => {
+  for (const limit of [0, -1, 0.5, Infinity, Number.NaN]) {
+    expect(() => compact(atom<typeof Conversation.Type>([]), { pageSize: limit })).toThrow("pageSize")
+    expect(() => compact(atom<typeof Conversation.Type>([]), { maxContextMessages: limit })).toThrow("maxContextMessages")
+  }
+})

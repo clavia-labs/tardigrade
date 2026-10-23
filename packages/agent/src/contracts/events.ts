@@ -88,12 +88,12 @@ export const ModelUpdated = Schema.Struct({ type: Schema.Literal("ModelUpdated")
 
 export const ModelCalled = Schema.Union([
   Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("inference"), ...ModelConfiguration.fields, turnId: Schema.String, callId: Schema.String }),
-  Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("compaction"), ...ModelConfiguration.fields, callId: Schema.String, through: Schema.Finite }),
+  Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("compaction"), ...ModelConfiguration.fields, callId: Schema.String, through: Schema.Finite, cursor: Schema.optionalKey(Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))) }),
 ])
 export type ModelCalled = typeof ModelCalled.Type
 
 export const ModelReturned = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("inference"), callId: Schema.String, ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall), usage: Schema.optionalKey(ModelUsage) }),
+  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("inference"), turnId: Schema.optionalKey(Schema.String), callId: Schema.String, ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall), usage: Schema.optionalKey(ModelUsage) }),
   Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("compaction"), callId: Schema.String, ...ModelReasoning, text: Schema.String, usage: Schema.optionalKey(ModelUsage) }),
 ])
 export type ModelReturned = typeof ModelReturned.Type

@@ -17,12 +17,16 @@ import { promiseLifetimeRecovery } from "./runtime/promise-lifetime"
 
 import { cancellationTerminality, cancellationForwarding, cancellationBatchIsolation } from "./runtime/cancellation"
 
-import { turnFactRecovery } from "./turn-facts"
+import { turnFactRecovery, trajectoryCompaction, trajectoryWindowCache, trajectorySeedBoundary, modelContextRecipes } from "./turn-facts"
 import { toolDeferredLifecycle } from "./tool-deferred-lifecycle"
 
 import { agentTurnCancellation, agentCancellationRecovery, codeModeCancellationRecovery, compactionCancellationRecovery } from "./agent-cancellation"
 
 export const propertyCases = {
+  modelContextRecipes,
+  trajectoryCompaction: () => fc.assert(trajectoryCompaction, RUNTIME_PROPERTY_OPTIONS),
+  trajectoryWindowCache,
+  trajectorySeedBoundary,
   logPages: () => fc.assert(logPages, RUNTIME_PROPERTY_OPTIONS),
   logQueries,
   logViews: () => fc.assert(logViews, RUNTIME_PROPERTY_OPTIONS),

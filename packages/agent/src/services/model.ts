@@ -16,6 +16,8 @@ import { DEFAULT_METHOD_EXECUTION, type ToolSpec } from "@clavia/tardigrade-libr
 import { type Conversation, MessageContentPart, ModelReply as ModelReplySchema } from "../contracts/events"
 import type { OutputContract } from "../contracts/acts"
 import { Generate, Summarize } from "../contracts/acts"
+import { PreparedModelContext } from "../contracts/model-context"
+import { resolveModelInput } from "./model-context"
 import { collectModelStream, type ModelCallContext } from "./model-stream"
 
 export { type ModelCallContext, type ModelDelta } from "./model-stream"
@@ -252,8 +254,15 @@ const durableModelCall = (input: ModelInput, purpose: ModelCallContext["purpose"
   ), { timeoutMs })
 }).pipe(Effect.mapError(String))
 
-export const generate = Generate.layer(input => durableModelCall(input, "inference").pipe(Effect.map(Generate.defer)), {
-  cancel: (input, context) => Model.use(model => model.cancel?.(input, context) ?? Effect.void),
+export const generate = Generate.layer(input => Effect.gen(function* () {
+  const execution = yield* EffectExecution
+  const prepared = yield* Effect.serviceOption(PreparedModelContext)
+  const value = yield* Effect.try(() => resolveModelInput(input, execution.get, Option.getOrUndefined(prepared)))
+  return yield* durableModelCall(value, "inference").pipe(Effect.map(Generate.defer))
+}).pipe(Effect.mapError(String)), {
+  cancel: (input, context) => Effect.try(() => resolveModelInput(input, context.get)).pipe(
+    Effect.flatMap(value => Model.use(model => model.cancel?.(value, context) ?? Effect.void)),
+  ),
 })
 
 export const summarize = Summarize.layer(input => durableModelCall(input, "compaction").pipe(Effect.map(Summarize.defer)))

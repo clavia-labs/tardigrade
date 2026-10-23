@@ -1,4 +1,5 @@
 import { logStorage } from "../properties/log"
+import { modelContextRecovery } from "../properties/turn-facts"
 import type { Journal } from "@clavia/tardigrade-core"
 import type { EffectServiceClient } from "../fixtures/effect-service"
 import { bunEffectService } from "../fixtures/bun/effect-service"
@@ -95,4 +96,10 @@ test("logStorage", async () => {
   const db = new Database(filename, { create: true })
   try { await logStorage({ open: () => bunJournal({ filename, actor: "events", familyIndexBatchSize: 8 }), execute: query => db.query<Record<string, unknown>, []>(query).all() }) }
   finally { db.close(); rmSync(directory, { recursive: true, force: true }) }
+})
+
+for (const inline of [false, true]) test(`model context recovery (inline: ${inline})`, async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tardie-model-context-"))
+  try { await modelContextRecovery(() => bunJournal({ filename: join(directory, "log.sqlite"), actor: "events" }), inline) }
+  finally { rmSync(directory, { recursive: true, force: true }) }
 })
