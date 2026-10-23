@@ -1,3 +1,4 @@
+import { journalInputRecipes } from "./journal-input"
 import { logPages, logQueries, logViews, logViewVersions } from "./log"
 import { stateValidation } from "./runtime/state-validation"
 import { snapshotLookups } from "./runtime/snapshot-lookups"
@@ -17,12 +18,16 @@ import { promiseLifetimeRecovery } from "./runtime/promise-lifetime"
 
 import { cancellationTerminality, cancellationForwarding, cancellationBatchIsolation } from "./runtime/cancellation"
 
-import { turnFactRecovery } from "./turn-facts"
+import { turnFactRecovery, trajectoryCompaction, trajectoryWindowCache, trajectorySeedBoundary } from "./turn-facts"
 import { toolDeferredLifecycle } from "./tool-deferred-lifecycle"
 
 import { agentTurnCancellation, agentCancellationRecovery, codeModeCancellationRecovery, compactionCancellationRecovery } from "./agent-cancellation"
 
 export const propertyCases = {
+  journalInputRecipes,
+  trajectoryCompaction: () => fc.assert(trajectoryCompaction, RUNTIME_PROPERTY_OPTIONS),
+  trajectoryWindowCache,
+  trajectorySeedBoundary,
   logPages: () => fc.assert(logPages, RUNTIME_PROPERTY_OPTIONS),
   logQueries,
   logViews: () => fc.assert(logViews, RUNTIME_PROPERTY_OPTIONS),

@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util"
 import { Exit, Schema } from "effect"
 import * as fc from "fast-check"
 import { AtomState, createEventLog, durableAtom, effectAtom } from "@clavia/tardigrade-core"
-import { TrajectoryState } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
+import { Trajectory } from "@clavia/tardigrade-agent/contracts/events"
 import { incrementalValidator } from "../../../../core/src/atoms/incremental/validate"
 import { RUNTIME_PROPERTY_OPTIONS } from "./config"
 
@@ -35,7 +35,7 @@ export function stateValidation() {
       }
       compare(arbitrary)
     }
-    const compare = equivalent(TrajectoryState)
+    const compare = equivalent(Schema.Struct({ entries: Trajectory, models: Schema.Array(Schema.Struct({ callId: Schema.String, turnId: Schema.String })) }))
     const entry = { turnId: "turn", message: { role: "user" as const, text: "hello" } }
     const initial = { entries: [entry], models: [] }
     if (!compare(initial)) throw new Error("Valid trajectory rejected")

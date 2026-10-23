@@ -1,18 +1,15 @@
 import { expect, test } from "bun:test"
 import { Schema } from "effect"
-import { ToolReturned } from "@clavia/tardigrade-agent/contracts/events"
+import { Event, ToolReturned } from "@clavia/tardigrade-agent/contracts/events"
 import { toolReturnedVersions } from "@clavia/tardigrade-agent/contracts/events/tool-returned/upcast"
-import { createEventLog, durableAtom, type Recorded } from "@clavia/tardigrade-core"
-import { reduceTrajectory, TrajectoryState } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
+import { createEventLog, type Recorded } from "@clavia/tardigrade-core"
+import { trajectory } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
 
 const base = { type: "ToolReturned" as const, callId: "call", error: null }
 const content = [{ type: "text" as const, text: "Image captured" }, {
   type: "file" as const, mediaType: "image/png", byteSize: 10,
   object: { algorithm: "sha256" as const, digest: "a".repeat(64) },
 }]
-const state: typeof TrajectoryState.Type = { models: [], entries: [{ turnId: "turn", message: {
-  role: "assistant", text: "", toolCalls: [{ callId: "call", providerId: "provider-call", name: "capture", input: {} }],
-} }] }
 const decode = Schema.decodeUnknownSync(ToolReturned, { onExcessProperty: "error" })
 
 test("historical tool events upcast to content-only version one", () => {
@@ -32,14 +29,16 @@ test("historical tool events upcast to content-only version one", () => {
 
 test("tool history reaches trajectory with literal text, media, and error semantics intact", () => {
   for (const payload of [{ output: "legacy" }, { content }, { output: "ignored", content }, { version: 1, content, error: "Capture failed" }]) {
-    const log = createEventLog({ schema: ToolReturned, atoms: { trajectory: durableAtom({
-      name: "trajectory", input: ToolReturned, schema: TrajectoryState, initial: state, reduce: reduceTrajectory,
-    }) } })
+    const log = createEventLog({ schema: Event, atoms: { trajectory: trajectory.range() } })
     try {
       const records = JSON.parse(JSON.stringify([{ recordedAt: 10, event: { ...base, ...payload } }])) as readonly Recorded<ToolReturned>[]
-      const snapshot = log.replay(records)
+      const snapshot = log.replay([
+        { event: { type: "ModelCalled", purpose: "inference", callId: "model", turnId: "turn", model: { provider: "test", model_id: "test" }, contextWindowTokens: 4096 } },
+        { event: { type: "ModelReturned", purpose: "inference", callId: "model", text: "", toolCalls: [{ callId: "call", providerId: "provider-call", name: "capture", input: {} }] } },
+        ...records,
+      ])
       const error = "error" in payload ? payload.error : null
-      expect(snapshot.view().trajectory.entries.at(-1)?.message).toEqual({
+      expect(snapshot.view().trajectory.rows.at(-1)?.value.message).toEqual({
         role: "tool", callId: "call", providerId: "provider-call", name: "capture", error: error !== null,
         text: error ?? ("content" in payload ? "Image captured" : "legacy"),
         ...("content" in payload && error === null ? { content } : {}),

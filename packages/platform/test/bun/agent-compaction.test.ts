@@ -12,10 +12,10 @@ import { type Conversation } from "@clavia/tardigrade-agent/contracts/events"
 
 const file = (mediaType: string) => ({ type: "file" as const, mediaType, object: { algorithm: "sha256" as const, digest: "a".repeat(64) } })
 
-test("unconfigured agent setup retains conversation and compaction codecs", async () => {
+test("unconfigured agent setup retains summary without trajectory state", async () => {
   const setup = await Effect.runPromise(createActor.setup.pipe(Effect.provide(contentServices(() => { throw new RuntimeError("Schema discovery cannot call the model") }))))
   const names = new Set(setup.inspection.durableAtoms.map(atom => atom.name))
-  expect(names.has("agent.trajectory")).toBe(true)
+  expect(names.has("agent.trajectory")).toBe(false)
   expect(names.has("agent.compaction.state")).toBe(true)
 })
 
@@ -105,7 +105,14 @@ test("compaction follows logged model configuration", () => fc.assert(fc.propert
       const history = snapshot.records.slice()
       let window: number | undefined
       let compactions = 0
+      const owners = new Map<string, string | undefined>()
+      const active: string[] = []
       for (const { event } of history) {
+        if (event.type === "TurnRequested") active.push(event.turnId)
+        if (event.type === "TurnSettled") active.splice(active.indexOf(event.turnId), 1)
+        if (event.type === "ModelCalled") owners.set(event.callId, event.turnId)
+        if (event.type === "ModelReturned") expect(event.turnId).toBe(owners.get(event.callId))
+        if (event.type === "ModelCalled" && event.purpose === "compaction") expect(event.turnId).toBe(active[0])
         if (event.type === "ModelConfigured" || event.type === "ModelUpdated") window = event.contextWindowTokens
         if (event.type === "ModelCalled") {
           if (window === undefined) throw new Error("Model call requires logged configuration")
@@ -118,7 +125,7 @@ test("compaction follows logged model configuration", () => fc.assert(fc.propert
       expect(loaded.view()).toEqual(snapshot.view())
       const pending = history.findIndex(({ event }) => event.type === "ModelCalled" && event.purpose === "compaction")
       expect(restored.replay(history.slice(0, pending + 1)).pending()[0]?.request.act).toBe("agent.model.summarize")
-      const suffix = agentLog(hostWindow, checkpoint)
+      const suffix = agentLog(hostWindow, checkpoint, undefined, history)
       try {
         expect(suffix.replay(history.slice(checkpoint!.position)).view()).toEqual(snapshot.view())
       } finally { suffix.dispose() }
@@ -126,3 +133,10 @@ test("compaction follows logged model configuration", () => fc.assert(fc.propert
     } finally { original.dispose(); restored.dispose() }
   },
 ), RUNTIME_PROPERTY_OPTIONS), RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+
+test("compaction rejects invalid paging limits", () => {
+  for (const limit of [0, -1, 0.5, Infinity, Number.NaN]) {
+    expect(() => compact(atom<typeof Conversation.Type>([]), { pageSize: limit })).toThrow("pageSize")
+    expect(() => compact(atom<typeof Conversation.Type>([]), { maxContextMessages: limit })).toThrow("maxContextMessages")
+  }
+})

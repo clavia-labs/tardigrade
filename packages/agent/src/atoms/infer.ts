@@ -1,4 +1,4 @@
-import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter } from "@clavia/tardigrade-core"
+import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type Getter } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected, ToolReturned, TurnSettled } from "../contracts/events"
@@ -93,7 +93,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
             if (result.status === "rejected") return [{ type: "ModelFailed", callId: state.callId, reason: failureMessage(result.reason) } satisfies typeof ModelFailed.Type]
             if (result.value.outputErrors !== undefined) return [{ type: "OutputRejected", turnId: state.turnId, callId: state.callId, contract: input.output?.name ?? "output", text: result.value.text, errors: result.value.outputErrors, attempt: turn?.calls.length ?? 0, maxCorrections: input.output?.correction?.attempts ?? 0 } satisfies typeof OutputRejected.Type]
             if (new Set(result.value.toolCalls.map(call => call.callId)).size !== result.value.toolCalls.length) return [{ type: "ModelFailed", callId: state.callId, reason: "Duplicate provider tool call IDs" } satisfies typeof ModelFailed.Type]
-            return [{ type: "ModelReturned", purpose: "inference", callId: state.callId, text: result.value.text, ...(result.value.reasoning === undefined ? {} : { reasoning: result.value.reasoning }), ...(result.value.continuation === undefined ? {} : { continuation: result.value.continuation }), ...(result.value.usage ? { usage: result.value.usage } : {}),
+            return [{ type: "ModelReturned", purpose: "inference", turnId: state.turnId, callId: state.callId, text: result.value.text, ...(result.value.reasoning === undefined ? {} : { reasoning: result.value.reasoning }), ...(result.value.continuation === undefined ? {} : { continuation: result.value.continuation }), ...(result.value.usage ? { usage: result.value.usage } : {}),
               toolCalls: result.value.toolCalls.map((call, index) => ({ ...call, providerId: call.callId, callId: JSON.stringify([ref.seq, ref.atom, ref.act, index]) })),
             } satisfies ModelReturned]
           },
@@ -103,7 +103,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
   }))
   return Effect.map(output, node => {
     type Output = typeof node extends Atom<infer Value> ? Value : never
-    const typed: Atom<Omit<Output, "events"> & { readonly events: Readonly<Record<string, EventValue<Event | ToolEvents>>> }> = node
+    const typed: Atom<ActorOutput<Output["view"], Event | ToolEvents, R | ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>> = node
     return typed.pipe(NativeAtom.withLabel("infer"))
   })
 }

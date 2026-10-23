@@ -55,7 +55,7 @@ export type BudgetResolved = typeof BudgetResolved.Type
 export const PermissionResolved = Schema.Struct({ type: Schema.Literal("PermissionResolved"), action: PermissionAction, requestId: Schema.NonEmptyString, decision: Decision })
 export type PermissionResolved = typeof PermissionResolved.Type
 
-export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), callId: Schema.String, codeMode: Schema.optionalKey(Schema.NonEmptyString), counted: Schema.Boolean })
+export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), turnId: Schema.optionalKey(Schema.String), callId: Schema.String, codeMode: Schema.optionalKey(Schema.NonEmptyString), counted: Schema.Boolean })
 export type ToolCalled = typeof ToolCalled.Type
 
 export const ToolReturned = toolReturnedVersions.schema
@@ -88,18 +88,18 @@ export const ModelUpdated = Schema.Struct({ type: Schema.Literal("ModelUpdated")
 
 export const ModelCalled = Schema.Union([
   Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("inference"), ...ModelConfiguration.fields, turnId: Schema.String, callId: Schema.String }),
-  Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("compaction"), ...ModelConfiguration.fields, callId: Schema.String, through: Schema.Finite }),
+  Schema.Struct({ type: Schema.Literal("ModelCalled"), purpose: Schema.Literal("compaction"), ...ModelConfiguration.fields, turnId: Schema.optionalKey(Schema.String), callId: Schema.String, through: Schema.Finite, cursor: Schema.optionalKey(Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))) }),
 ])
 export type ModelCalled = typeof ModelCalled.Type
 
 export const ModelReturned = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("inference"), callId: Schema.String, ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall), usage: Schema.optionalKey(ModelUsage) }),
-  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("compaction"), callId: Schema.String, ...ModelReasoning, text: Schema.String, usage: Schema.optionalKey(ModelUsage) }),
+  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("inference"), turnId: Schema.optionalKey(Schema.String), callId: Schema.String, ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall), usage: Schema.optionalKey(ModelUsage) }),
+  Schema.Struct({ type: Schema.Literal("ModelReturned"), purpose: Schema.Literal("compaction"), turnId: Schema.optionalKey(Schema.String), callId: Schema.String, ...ModelReasoning, text: Schema.String, usage: Schema.optionalKey(ModelUsage) }),
 ])
 export type ModelReturned = typeof ModelReturned.Type
 
-export const CompactionFailed = Schema.Struct({ type: Schema.Literal("CompactionFailed"), callId: Schema.String, reason: Schema.String })
-export const ModelFailed = Schema.Struct({ type: Schema.Literal("ModelFailed"), callId: Schema.String, reason: Schema.String })
+export const CompactionFailed = Schema.Struct({ type: Schema.Literal("CompactionFailed"), turnId: Schema.optionalKey(Schema.String), callId: Schema.String, reason: Schema.String })
+export const ModelFailed = Schema.Struct({ type: Schema.Literal("ModelFailed"), turnId: Schema.optionalKey(Schema.String), callId: Schema.String, reason: Schema.String })
 export const OutputRejected = Schema.Struct({
   type: Schema.Literal("OutputRejected"), turnId: Schema.String, callId: Schema.String,
   contract: Schema.String, text: Schema.String, errors: Schema.Array(Schema.String),

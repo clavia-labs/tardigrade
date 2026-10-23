@@ -1,3 +1,4 @@
+import { journalInputRecovery } from "../properties/journal-input"
 import { logStorage } from "../properties/log"
 import { journalCommit } from "@clavia/tardigrade-core"
 import { effectServiceClient, type EffectServiceClient } from "../fixtures/effect-service"
@@ -268,5 +269,12 @@ test("logStorage", async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
   await runInDurableObject(namespace.getByName("log-storage"), async (_instance, state) => {
     await logStorage({ open: () => cloudflareJournal(state.storage, "events", { familyIndexBatchSize: 8 }), execute: query => state.storage.sql.exec(query).toArray() })
+  })
+}, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+
+test("journalInputRecovery", async () => {
+  const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
+  await runInDurableObject(namespace.getByName("journal-input-recovery"), async (_instance, state) => {
+    await journalInputRecovery(() => cloudflareJournal(state.storage, "events"))
   })
 }, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)

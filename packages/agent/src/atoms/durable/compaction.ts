@@ -2,9 +2,11 @@ import { RuntimeError, durableAtom } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
 import { type Event, ModelCalled, ModelReturned, CompactionFailed, TurnSettled } from "../../contracts/events"
 
+const Cursor = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))
+
 export const CompactionState = Schema.Struct({
-  origin: Schema.NullOr(Schema.Finite), through: Schema.Finite, attempts: Schema.Finite, summary: Schema.String, failure: Schema.NullOr(Schema.String),
-  pending: Schema.NullOr(Schema.Struct({ callId: Schema.String, through: Schema.Finite })),
+  origin: Schema.NullOr(Schema.Finite), through: Schema.Finite, cursor: Schema.optionalKey(Schema.NullOr(Cursor)), attempts: Schema.Finite, summary: Schema.String, failure: Schema.NullOr(Schema.String),
+  pending: Schema.NullOr(Schema.Struct({ callId: Schema.String, through: Schema.Finite, cursor: Schema.optionalKey(Cursor) })),
 })
 export function compactState(state: typeof CompactionState.Type, event: Event, _metadata?: unknown, position?: number): typeof CompactionState.Type {
   if (position !== undefined && (event.type === "TurnSettled" || event.type === "ModelReturned" || event.type === "CompactionFailed")) state = { ...state, origin: position }
@@ -14,12 +16,12 @@ export function compactState(state: typeof CompactionState.Type, event: Event, _
     return { ...state, pending: null, failure: event.reason }
   }
   if (event.type === "ModelCalled" && event.purpose === "compaction") {
-    if (state.pending || !Number.isSafeInteger(event.through) || event.through <= state.through) throw new RuntimeError(`Compaction call is unavailable: ${event.callId}`)
-    return { ...state, attempts: state.attempts + 1, pending: { callId: event.callId, through: event.through } }
+    if (state.pending || !Number.isSafeInteger(event.through) || event.through <= state.through || (event.cursor !== undefined && event.cursor <= (state.cursor ?? 0))) throw new RuntimeError(`Compaction call is unavailable: ${event.callId}`)
+    return { ...state, attempts: state.attempts + 1, pending: { callId: event.callId, through: event.through, ...(event.cursor === undefined ? {} : { cursor: event.cursor }) } }
   }
   if (event.type === "ModelReturned" && event.purpose === "compaction") {
     if (!state.pending || event.callId !== state.pending.callId) throw new RuntimeError(`No matching running compaction: ${event.callId}`)
-    return { ...state, through: state.pending.through, summary: event.text, pending: null, failure: null }
+    return { ...state, through: state.pending.through, cursor: state.pending.cursor ?? null, summary: event.text, pending: null, failure: null }
   }
   return state
 }

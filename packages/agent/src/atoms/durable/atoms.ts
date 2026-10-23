@@ -8,9 +8,8 @@ import { inferenceState } from "./inference"
 import { permissionState } from "./permissions"
 import { spendState } from "./spend"
 import { pendingTools } from "./tools"
-import { trajectoryState } from "./trajectory"
 
 export const agentDurableAtoms: readonly StatefulAtom[] = [
-  trajectoryState, modelState, inferenceState, spendState, permissionState, budgetState, pendingTools,
+  modelState, inferenceState, spendState, permissionState, budgetState, pendingTools,
   createCompactionState(), executions, toolPromiseSubmissions,
 ]

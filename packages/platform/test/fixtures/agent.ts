@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Stream, Schema } from "effect"
 import { AiError, LanguageModel, Prompt, Response } from "effect/unstable/ai"
-import { atom, createEventLog, type EffectCheckpoint, type EffectExecution } from "@clavia/tardigrade-core"
+import { atom, createEventLog, type EffectCheckpoint, type EffectExecution, type Recorded } from "@clavia/tardigrade-core"
 import { compact } from "@clavia/tardigrade-agent/atoms/compact"
 import { infer } from "@clavia/tardigrade-agent/atoms/infer"
 import { messages } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
@@ -22,9 +22,9 @@ const agentProjection = Effect.gen(function* () {
   return yield* infer(atom(get => ({ system: "Test", tools: { view: { specs: [] }, events: {}, acts: {} }, context: get(context) })))
 })
 
-export function agentLog(contextWindowTokens: number, checkpoint?: EffectCheckpoint, context: Context.Context<ModelInfo> = Context.make(ModelInfo, { ...selection, contextWindowTokens })) {
+export function agentLog(contextWindowTokens: number, checkpoint?: EffectCheckpoint, context: Context.Context<ModelInfo> = Context.make(ModelInfo, { ...selection, contextWindowTokens }), history?: readonly Recorded<Event>[]) {
   const agent = Effect.runSync(agentProjection.pipe(Effect.provide(context)))
-  return createEventLog({ schema: Event, atoms: { agent }, ...(checkpoint === undefined ? {} : { checkpoint }) })
+  return createEventLog({ schema: Event, atoms: { agent }, ...(checkpoint === undefined ? {} : { checkpoint }), ...(history === undefined ? {} : { readBefore: (position: number) => history.slice(0, position) }) })
 }
 
 type AgentLog = ReturnType<typeof agentLog>
