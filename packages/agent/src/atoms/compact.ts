@@ -17,7 +17,18 @@ export const DEFAULT_COMPACTION_POLICY = {
 
 const TRUNCATION_MARKER = "\n[truncated]\n"
 
+/** CompactionBudget measures additive message resources, including repeated occurrences (platform/test/bun/agent-compaction.test.ts). */
+export interface CompactionBudget {
+  readonly name: string
+  readonly limit: number
+  readonly retain: number
+  readonly cost: (message: typeof Conversation.Type[number]) => number
+}
+
 export interface CompactionOptions {
+  // budgets selects additive limits and retained-tail targets (platform/test/bun/agent-compaction.test.ts).
+  readonly budgets?: Atom<readonly CompactionBudget[]>
+
   // pageSize bounds each journal page read.
   readonly pageSize?: number
   // maxContextMessages bounds uncompacted messages; the summary adds a message.
@@ -35,7 +46,8 @@ export interface CompactionOptions {
 
 // compact clips projected text and Summarizes above the trigger threshold, retaining a tail near the lower threshold.
 export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectorySource<typeof Conversation.Type[number]>, options: CompactionOptions = {}) {
-  const policy = { ...DEFAULT_COMPACTION_POLICY, ...options }
+  const { budgets: budgetAtom, ...settings } = options
+  const policy = { ...DEFAULT_COMPACTION_POLICY, ...settings }
   if (!Number.isSafeInteger(policy.pageSize) || policy.pageSize < 1 || !Number.isSafeInteger(policy.maxContextMessages) || policy.maxContextMessages < 1) throw new RuntimeError("Compaction requires pageSize >= 1 and maxContextMessages >= 1")
   const paged = "range" in trajectory
   if (!Number.isSafeInteger(policy.imageTokenEstimate) || policy.imageTokenEstimate < 0) {
@@ -93,6 +105,8 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
   const request = requests(Summarize.request, { latestOnly: true })
   return Effect.map(modelSelection, model => effectAtom(get => {
     const state = get(compactionState)
+    const budgets = budgetAtom ? get(budgetAtom) : []
+    for (const budget of budgets) if (!Number.isSafeInteger(budget.limit) || budget.limit < 1 || !Number.isSafeInteger(budget.retain) || budget.retain < 0 || budget.retain >= budget.limit) throw new RuntimeError(`Invalid compaction budget: ${budget.name}`)
     const source = paged ? undefined : get(trajectory as Atom<typeof Conversation.Type>)
     let cursor = state.cursor ?? state.through
     if (paged && state.cursor == null && state.through > 0) {
@@ -167,7 +181,26 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
     } else for (let index = cursor; index < source!.length; index++) append(source![index]!, index)
     const size = summarySize + totals[totals.length - 1]!
     const ready = { position: "ready" as const, messages: immutableConversation([...summary, ...messages]), ...(logContext ? { logContext } : {}), policy, ...usage(size) }
-    if (!more && ready.estimatedTokens < triggerTokens) return { view: ready, events: {}, acts: {} }
+    let resourceTotals: Array<{ budget: CompactionBudget; totals: number[]; summaryCost: number }>
+    try {
+      resourceTotals = budgets.map(budget => {
+        const totals = [0]
+        for (const message of messages) {
+          const cost = budget.cost(message)
+          if (!Number.isSafeInteger(cost) || cost < 0) throw new RuntimeError(`Invalid compaction cost: ${budget.name}`)
+          const total = totals[totals.length - 1]! + cost
+          if (!Number.isSafeInteger(total)) throw new RuntimeError(`Compaction budget overflow: ${budget.name}`)
+          totals.push(total)
+        }
+        const summaryCost = summaryCache ? budget.cost(summaryCache.message) : 0
+        if (!Number.isSafeInteger(summaryCost) || summaryCost < 0) throw new RuntimeError(`Invalid summary compaction cost: ${budget.name}`)
+        return { budget, totals, summaryCost }
+      })
+    } catch (error) {
+      return { view: { position: "failed" as const, reason: error instanceof Error ? error.message : String(error), policy, ...usage(size) }, events: {}, acts: {} }
+    }
+    const overBudget = resourceTotals.some(({ budget, totals, summaryCost }) => summaryCost + totals[messages.length]! > budget.limit)
+    if (!more && !overBudget && ready.estimatedTokens < triggerTokens) return { view: ready, events: {}, acts: {} }
     const boundaries: number[] = []
     const pending = new Set<string>()
     for (let index = 0; index < messages.length; index++) {
@@ -178,10 +211,11 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
     }
     if (more && pending.size === 0 && messages.length > 0) boundaries.push(messages.length)
     if (!boundaries.length) {
-      if (more) return { view: { position: "failed" as const, reason: "Compaction window cannot fit a complete message or tool exchange; increase maxContextMessages or the model context window", policy, ...usage(size) }, events: {}, acts: {} }
+      if (more || overBudget) return { view: { position: "failed" as const, reason: overBudget ? "Compaction window cannot fit a complete message or tool exchange within its budgets" : "Compaction window cannot fit a complete message or tool exchange; increase maxContextMessages or the model context window", policy, ...usage(size) }, events: {}, acts: {} }
       return { view: ready, events: {}, acts: {} }
     }
-    const boundary = more ? boundaries[boundaries.length - 1]! : boundaries.find(index => Math.ceil((totals[messages.length]! - totals[index]!) / policy.charsPerToken) <= retainTokens) ?? boundaries[boundaries.length - 1]!
+    const boundary = more ? boundaries[boundaries.length - 1]! : boundaries.find(index => Math.ceil((totals[messages.length]! - totals[index]!) / policy.charsPerToken) <= retainTokens
+      && resourceTotals.every(({ budget, totals }) => totals[messages.length]! - totals[index]! <= budget.retain)) ?? boundaries[boundaries.length - 1]!
     const through = state.through + boundary
     const nextCursor = positions[boundary - 1]! + 1
     const callId = `compact:${through}:${state.attempts}`

@@ -3,12 +3,15 @@ import { expect, test } from "bun:test"
 import { Context, Effect } from "effect"
 import * as fc from "fast-check"
 import { RUNTIME_PROPERTY_OPTIONS, RUNTIME_PROPERTY_TEST_TIMEOUT_MS } from "../properties/runtime/config"
-import { atom, createStore, EventLog, RuntimeError, type EffectCheckpoint } from "@clavia/tardigrade-core"
+import { atom, createStore, createEventLog, EventLog, RuntimeError, type EffectCheckpoint, type Recorded } from "@clavia/tardigrade-core"
 import { createActor } from "@clavia/tardigrade-agent"
 import { compact, DEFAULT_COMPACTION_POLICY, type CompactionOptions } from "@clavia/tardigrade-agent/atoms/compact"
 import { agentLog, contentServices, selection, turn } from "../fixtures/agent"
 import { ModelInfo } from "@clavia/tardigrade-agent/actor/context"
 import { type Conversation } from "@clavia/tardigrade-agent/contracts/events"
+import { Event } from "@clavia/tardigrade-agent/contracts/events"
+import { messages } from "@clavia/tardigrade-agent/atoms/durable/trajectory"
+import { infer } from "@clavia/tardigrade-agent/atoms/infer"
 
 const file = (mediaType: string) => ({ type: "file" as const, mediaType, object: { algorithm: "sha256" as const, digest: "a".repeat(64) } })
 
@@ -30,6 +33,77 @@ function project(messages: typeof Conversation.Type, options: CompactionOptions 
     return { ...output, view: output.view }
   } finally { store.dispose() }
 }
+
+test("additive budgets count repeated resources and choose complete tool exchanges independently of tokens", () => {
+  const image = { ...file("image/png"), byteSize: 4 }
+  const exchange = (id: string): typeof Conversation.Type => [
+    { role: "assistant", text: "", toolCalls: [{ callId: id, providerId: id, name: "read", input: {} }] },
+    { role: "tool", callId: id, providerId: id, name: "read", text: "", error: false, content: [image] },
+  ]
+  const history: typeof Conversation.Type = [{role: "user", content: [image]}, ...exchange("one"), ...exchange("two"), {role: "user", text: "Continue"}]
+  const cost = (message: typeof Conversation.Type[number]) => "content" in message ? message.content?.filter(part => part.type === "file").length ?? 0 : 0
+  const before = structuredClone(history)
+  const plain = project(history, {imageTokenEstimate: 0})
+  const count = project(history, {imageTokenEstimate: 0, budgets: atom([{name: "items", limit: 2, retain: 1, cost}])})
+  expect(plain.view.position).toBe("ready")
+  expect(count.view.position).toBe("compacting")
+  expect(count.view.estimatedTokens).toBe(plain.view.estimatedTokens)
+  expect(count.acts.compact?.onRequested?.({seq: 0, atom: "context", act: "compact"})[0]).toMatchObject({type: "ModelCalled", purpose: "compaction", through: 3})
+  expect(history).toEqual(before)
+  const bytes = project(history, {imageTokenEstimate: 0, budgets: atom([{name: "encoded bytes", limit: 16, retain: 8, cost: message => 8 * cost(message)}])})
+  expect(bytes.view.position).toBe("compacting")
+  expect(project(history, {imageTokenEstimate: 0, budgets: atom([{name: "items", limit: 3, retain: 1, cost}])}).view.position).toBe("ready")
+})
+
+test("budget failures stop an unsplittable exchange and reject invalid or overflowing costs", () => {
+  const history: typeof Conversation.Type = [{role: "user", content: [file("image/png"), file("image/png")]}]
+  const budget = {name: "items", limit: 1, retain: 0, cost: () => 2}
+  expect(project(history, {budgets: atom([budget])}).view.position).toBe("failed")
+  for (const cost of [-1, 0.5, Infinity, Number.NaN]) expect(project(history, {budgets: atom([{...budget, cost: () => cost}])}).view.position).toBe("failed")
+  const overflow = project([...history, ...history], {budgets: atom([{...budget, cost: () => Number.MAX_SAFE_INTEGER}])})
+  expect(overflow.view).toMatchObject({position: "failed", reason: "Compaction budget overflow: items"})
+  expect(project(history, {budgets: atom([{...budget, cost: () => {throw new Error("Resource metadata unavailable")} }])}).view).toMatchObject({position: "failed", reason: "Resource metadata unavailable"})
+  for (const limit of [0, -1, 0.5, Infinity, Number.NaN]) expect(() => project(history, {budgets: atom([{...budget, limit}])})).toThrow("Invalid compaction budget")
+})
+
+for (const paged of [false, true]) test(`resource compaction settles and replays through native summaries with ${paged ? "paged" : "aggregate"} context`, () => {
+  const setup = () => {
+    const source = paged ? messages : atom(get => get(messages.range({limit: 64})).rows.map(row => row.value))
+    const context = Effect.runSync(compact(source, {pageSize: 2, imageTokenEstimate: 0, budgets: atom([{name: "items", limit: 3, retain: 1, cost: message => "content" in message ? message.content?.filter(part => part.type === "file").length ?? 0 : 0}])}).pipe(Effect.provideService(ModelInfo, {...selection, contextWindowTokens: 100_000})))
+    return Effect.runSync(infer(atom(get => ({system: "Test", tools: {view: {specs: []}, events: {}, acts: {}}, context: get(context)}))).pipe(Effect.provideService(ModelInfo, {...selection, contextWindowTokens: 100_000})))
+  }
+  const open = (checkpoint?: EffectCheckpoint, history?: readonly Recorded<Event>[]) => createEventLog({schema: Event, atoms: {agent: setup()}, ...(checkpoint ? {checkpoint} : {}), ...(history ? {readBefore: (position: number) => history.slice(0, position)} : {})})
+  const log = open()
+  const restored = open()
+  try {
+    let snapshot = log.initial
+    let checkpoint: EffectCheckpoint | undefined
+    for (let index = 0; index < 4; index++) {
+      snapshot = log.append(snapshot, {type: "TurnRequested", turnId: String(index), text: "", content: [file("image/png")]})
+      for (let step = 0; step < 10; step++) {
+        const work = snapshot.effects().find(work => !work.ref)
+        if (work) {
+          const ref = {seq: snapshot.position, atom: work.atom, act: work.request.act}
+          snapshot = log.append(snapshot, log.requestEvent(ref, work.request, work.origin))
+          snapshot = log.append(snapshot, {type: "EffectSettled", ref, outcome: {status: "fulfilled", value: {type: "value", value: {text: work.request.act === "agent.model.summarize" ? "Summary" : "Answer", toolCalls: []}}}})
+        } else {
+          const proposal = Object.values(snapshot.view().agent.events)[0]
+          if (!proposal) break
+          snapshot = log.append(snapshot, proposal.event)
+        }
+      }
+      if (index === 1) checkpoint = snapshot.checkpoint()
+      expect(snapshot.view().agent.view.position).toBe("idle")
+    }
+    const history = snapshot.records.slice()
+    expect(history.filter(row => row.event.type === "ModelCalled" && row.event.purpose === "compaction")).toHaveLength(1)
+    expect(restored.replay(history).view()).toEqual(snapshot.view())
+    const suffix = open(checkpoint, history)
+    try { expect(suffix.replay(history.slice(checkpoint!.position)).view()).toEqual(snapshot.view()) }
+    finally { suffix.dispose() }
+    expect(turn(restored, restored.replay(history), "next", "Continue").records.slice()).toEqual(turn(log, snapshot, "next", "Continue").records.slice())
+  } finally { log.dispose(); restored.dispose() }
+})
 
 for (const role of ["user", "tool"] as const) test(`compaction counts images in ${role} content and exposes the configured estimate`, () => {
   const content = [file("image/png"), file("image/jpeg")]

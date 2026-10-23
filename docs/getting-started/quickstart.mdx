@@ -108,6 +108,8 @@ export default defineActor(actorName, Effect.gen(function* () {
 
 `messages` derives message history from the event log. `compact` prepares model context, and `infer` proposes model calls. The actor composes these atoms and exposes `agentMethods`.
 
+`compact(source, { budgets })` accepts an optional atom of additive resource budgets. Each budget supplies `name`, `limit`, `retain`, and a pure `cost(message)` function. Costs count every message occurrence, including repeated file references and the retained summary. Exceeding a limit requests the native summary at a complete message or tool-exchange boundary. Boundary selection considers both token and resource retention targets. An unsplittable over-budget exchange fails before inference. Keep replay-sensitive budget values in durable state and derive the budget atom from that state.
+
 The weather library declares a typed method with Effect RPC. Its implementation belongs in `services.ts`:
 
 ```ts

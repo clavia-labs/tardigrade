@@ -40,6 +40,8 @@ export interface CloudflareObjectBindings {
 
 type ExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event>> = ActorExecutionOptions<Event, Services, State, Contracts>
 export type ActorObjectOptions<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Omit<ExecutionOptions<Event, Services, State, Contracts>, "storage" | "services" | "from" | "delivery" | "actorContext" | "executionStreamBus" | "version"> & Pick<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "from" | "delivery" | "transports" | "actorTransport" | "telemetry" | "defaultChildPlacement" | "provisionRetry"> & {
+  readonly initialStateInheritedKeys?: Readonly<Record<string, Schema.Json>>
+  readonly initialStateDefaults?: (env: Env) => InitialState | undefined
   readonly version?: (env: Env) => string | undefined
   readonly actorContext?: ExecutionOptions<Event, Services, State, Contracts>["actorContext"]
   // services receives the current Durable Object storage for local cache layers.
@@ -166,6 +168,8 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
       if (!this.directory) {
         this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
         this.directory = createSupervisor({ actor: options.actor.actorName, journal: () => this.journal!, run: this.run,
+          ...(options.initialStateInheritedKeys === undefined ? {} : {initialStateInheritedKeys: options.initialStateInheritedKeys}),
+          ...(options.initialStateDefaults === undefined ? {} : {initialStateDefaults: options.initialStateDefaults(this.env)}),
           ...(options.journalReadBatchSize === undefined ? {} : { journalReadBatchSize: options.journalReadBatchSize }),
           ...(options.provisionRetry ? { provisionRetry: options.provisionRetry } : {}),
           ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),

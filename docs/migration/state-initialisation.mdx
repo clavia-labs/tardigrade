@@ -117,6 +117,12 @@ await Effect.runPromise(host.close)
 
 `createThreadHost` and `createActorWorker` accept the same `initialStateAtoms` option. Child allocation also accepts `initialState`. Unknown atom names, duplicate destination names, and incompatible state fail before allocation is recorded. Identical named retries reuse the thread; conflicting state fails.
 
+### Host defaults and child seeds
+
+`initialStateDefaults` supplies a state map on Bun and an environment callback on Cloudflare. The callback can return `undefined` to omit current host defaults. With no defaults, inherited values or explicit state, allocation records omit seed and defaults provenance. Explicit allocation state overrides host defaults. Named allocations, failed provisioning retries, and reopened threads retain their recorded seeds.
+
+`initialStateInheritedKeys` maps selected atom names to fallback values for child allocation. A child inherits each selected value from the parent's recorded initial seed. An explicit child value takes precedence. A stored `null` remains authoritative. When the parent lacks a selected key, the fallback applies only if the current host defaults contain that key. With neither a parent value nor that host default, the child retains the absent key. Inheritance uses allocation seeds rather than the parent's current mutable state.
+
 ## Remote logs, including Cloudflare
 
 Read or export the old log using your application's storage access, then call `extractState` on its counter events. Configure the destination Cloudflare host with `initialStateAtoms: [counter]` and send the resulting map to its creation route:

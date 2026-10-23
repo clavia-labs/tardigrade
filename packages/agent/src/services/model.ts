@@ -44,6 +44,11 @@ export type ModelReply = typeof ModelReplySchema.Type
 
 export interface ModelInput { readonly model: ModelRef; readonly system: string; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type; readonly output?: OutputContract }
 
+// ModelFileResolver lowers stored files at request time; undefined retains verified byte hydration (model-file-resolver.test.ts).
+export class ModelFileResolver extends Context.Service<ModelFileResolver, {
+  readonly resolve: (file: Extract<MessageContentPart, { readonly type: "file" }>, model: ModelRef) => Effect.Effect<Prompt.FilePart["data"] | undefined, Error>
+}>()("tardigrade/agent/ModelFileResolver") {}
+
 export class Model extends Context.Service<Model, {
   readonly call: (input: ModelInput, context?: ModelCallContext) => Effect.Effect<ModelReply, Error>
   readonly retry?: (input: ModelInput) => Effect.Effect<RetryOptions<Error>, Error>
@@ -91,16 +96,28 @@ export function modelError(error: AiError.AiError): RuntimeError {
   } catch { return RuntimeError.from(error) }
 }
 
-const resolveContentObjects = (context: typeof Conversation.Type): Effect.Effect<ReadonlyMap<string, Uint8Array>, Error> => Effect.gen(function* () {
+const fileKey = (part: Extract<MessageContentPart, { readonly type: "file" }>) => `${objectKeyOf(part.object)}\0${part.mediaType}`
+
+const resolveContentObjects = (context: typeof Conversation.Type, model: ModelRef): Effect.Effect<ReadonlyMap<string, Prompt.FilePart["data"]>, Error> => Effect.gen(function* () {
   const content = context.flatMap(message => (message.role === "user" || message.role === "tool") && "content" in message && message.content !== undefined ? message.content : [])
-  if (!content.some(part => part.type === "file")) return new Map<string, Uint8Array>()
+  const objects = new Map<string, Prompt.FilePart["data"]>()
+  if (!content.some(part => part.type === "file")) return objects
+  const resolver = yield* Effect.serviceOption(ModelFileResolver)
+  if (Option.isSome(resolver)) {
+    const files = new Map(content.flatMap(part => part.type === "file" ? [[fileKey(part), part] as const] : []))
+    for (const [key, file] of files) {
+      const data = yield* resolver.value.resolve(file, model)
+      if (data !== undefined) objects.set(key, data)
+    }
+  }
+  const remaining = content.filter(part => part.type === "file" && !objects.has(fileKey(part)))
+  if (!remaining.length) return objects
   const service = yield* Effect.serviceOption(ObjectStorage)
   if (Option.isNone(service)) return yield* Effect.fail(new RuntimeError("File input requires a runtime ObjectStorage service"))
-  const resolved = yield* ObjectStorage.resolve(content).pipe(Effect.provideService(ObjectStorage, service.value), Effect.mapError(RuntimeError.from))
-  const objects = new Map<string, Uint8Array>()
-  content.forEach((part, index) => {
+  const resolved = yield* ObjectStorage.resolve(remaining).pipe(Effect.provideService(ObjectStorage, service.value), Effect.mapError(RuntimeError.from))
+  remaining.forEach((part, index) => {
     const value = resolved[index]
-    if (part.type === "file" && value?.type === "file") objects.set(objectKeyOf(part.object), value.bytes)
+    if (part.type === "file" && value?.type === "file") objects.set(fileKey(part), value.bytes)
   })
   return objects
 })
@@ -112,9 +129,9 @@ const outputDecode = (schema: Schema.Top, text: string) => Effect.result(Effect.
   catch: RuntimeError.from,
 }).pipe(Effect.flatMap(value => (Schema.decodeUnknownEffect as unknown as (schema: Schema.Top) => (value: unknown) => Effect.Effect<unknown, Error>)(schema)(value))))
 
-const promptPartsOf = (content: ReadonlyArray<MessageContentPart>, objects: ReadonlyMap<string, Uint8Array>) => content.map((part) => {
+const promptPartsOf = (content: ReadonlyArray<MessageContentPart>, objects: ReadonlyMap<string, Prompt.FilePart["data"]>) => content.map((part) => {
   if (part.type === "text") return Prompt.makePart("text", { text: part.text })
-  const data = objects.get(objectKeyOf(part.object))
+  const data = objects.get(fileKey(part))
   if (data === undefined) throw new RuntimeError(`Unresolved object: ${objectKeyOf(part.object)}`)
   return Prompt.filePart({ mediaType: part.mediaType, data, ...(part.filename === undefined ? {} : { fileName: part.filename }) })
 })
@@ -143,7 +160,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
     const retry = (input: ModelInput) => settingsOf(input).pipe(Effect.map(({ settings }) => ({ ...modelRetry(settings.policy.retry), attemptTimeoutMs: options.timeoutMs !== undefined ? options.timeoutMs : settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS })))
     return { promiseTimeoutMs, retry, call: (input, context) => Effect.gen(function* () {
       const { resolved, settings } = yield* settingsOf(input)
-      const objects = yield* resolveContentObjects(input.context)
+      const objects = yield* resolveContentObjects(input.context, resolved.model)
       const toolkit = yield* Effect.try({
         try: () => Toolkit.make(...input.tools.map(tool => AiTool.dynamic(tool.name, {
           description: `${tool.description} Execution: ${tool.execution ?? DEFAULT_METHOD_EXECUTION}.${tool.promiseTimeoutMs === undefined ? "" : ` Promise timeout: ${tool.promiseTimeoutMs}ms.`}`,

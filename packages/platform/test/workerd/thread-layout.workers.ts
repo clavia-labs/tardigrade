@@ -12,6 +12,55 @@ import type { LayoutActorDO, LayoutThreadDO } from "../fixtures/workerd/layout-f
 const bindings = env as unknown as { ACTORS: DurableObjectNamespace<InstanceType<typeof LayoutActorDO>>; THREADS: DurableObjectNamespace<LayoutThreadDO> }
 const coordinate = (instance: string, thread: string) => ({ actor: "layout", instance, thread })
 const threadStub = (instance: string, thread: string) => bindings.THREADS.getByName(cloudflareThreadName(coordinate(instance, thread)))
+test("host defaults reach independent roots and children before a turn", async () => {
+  const instance = "initial-defaults"
+  const flow = threadFlow(request => SELF.fetch(request), instance)
+  expect((await flow.request("", { name: "parent" })).status).toBe(200)
+  const parent = threadStub(instance, "parent")
+  expect((await parent.records())[1]?.event).toMatchObject({ type: "StateInitialised", initialState: { "layout.value": 17 } })
+  await flow.call("parent", "read", null, "initial", 17)
+  const actor = bindings.ACTORS.getByName(instance)
+  const child = await actor.allocate({ instance, name: "child", parent: coordinate(instance, "parent") })
+  expect((await threadStub(instance, child.thread).records())[1]?.event).toMatchObject({ type: "StateInitialised", initialState: { "layout.value": 17 } })
+  await flow.call(child.thread, "read", null, "initial", 17)
+})
+
+test("undefined host defaults preserve unseeded root and child records", async () => {
+  const instance = "without-defaults"
+  const flow = threadFlow(request => SELF.fetch(request), instance)
+  expect((await flow.request("", {name: "parent"})).status).toBe(200)
+  const actor = bindings.ACTORS.getByName(instance)
+  const child = await actor.allocate({instance, name: "child", parent: coordinate(instance, "parent")})
+  for (const name of ["parent", child.thread]) {
+    expect((await threadStub(instance, name).records()).some(row => row.event.type === "StateInitialised")).toBe(false)
+    await flow.call(name, "read", null, "initial", 0)
+  }
+  await runInDurableObject(actor, async (_object, state) => {
+    for (const row of state.storage.sql.exec<{event: string}>("SELECT event FROM experimental_events").toArray()) {
+      const record = JSON.parse(row.event) as {event: {type: string; allocation?: object}}
+      if (record.event.type === "ThreadRequested") {
+        expect(record.event.allocation).not.toHaveProperty("initialState")
+        expect(record.event.allocation).not.toHaveProperty("initialStateDefaultKeys")
+      }
+    }
+  })
+})
+
+test("independent children inherit selected recorded seeds across directory reopen", async () => {
+  const instance = "inherited-seeds"
+  const flow = threadFlow(request => SELF.fetch(request), instance)
+  expect((await flow.request("", {name: "parent", initialState: {"layout.value": 32}})).status).toBe(200)
+  const actor = bindings.ACTORS.getByName(instance)
+  const child = await actor.allocate({instance, name: "child", parent: coordinate(instance, "parent")})
+  await flow.call(child.thread, "read", null, "initial", 32)
+  const override = await actor.allocate({instance, name: "override", parent: coordinate(instance, "parent"), initialState: {"layout.value": 44}})
+  await flow.call(override.thread, "read", null, "initial", 44)
+  await runInDurableObject(actor, async object => { await object.dispose() })
+  const grandchild = await actor.allocate({instance, name: "grandchild", parent: child})
+  await flow.call(grandchild.thread, "read", null, "initial", 32)
+  expect((await threadStub(instance, grandchild.thread).records())[1]?.event).toMatchObject({type: "StateInitialised", initialState: {"layout.value": 32}})
+})
+
 test("a fresh instance creates, queries, and messages flat independent threads with separate databases", async () => {
   const instance = "layout"
   const actor = bindings.ACTORS.getByName(instance)
