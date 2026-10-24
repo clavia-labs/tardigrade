@@ -3,6 +3,8 @@ import { Schema } from "effect"
 import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { type Event, ModelCalled, ModelReturned, ModelFailed, ModelUpdated, OutputRejected, TurnRequested, ToolReturned, CompactionFailed, TurnSettled } from "../../contracts/events"
 
+export const DEFAULT_COMPACTION_MAX_CONTEXT_MESSAGES = 512
+
 const Cursor = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))
 // UsageAnchor measures context through an assistant reply; after counts later trajectory messages for array inputs (platform/test/bun/agent-compaction.test.ts).
 const UsageAnchor = Schema.Struct({ tokens: Cursor, position: Cursor, after: Cursor, through: Cursor, model: ModelRef })
@@ -12,12 +14,15 @@ export const CompactionState = Schema.Struct({
   origin: Schema.NullOr(Schema.Finite), through: Schema.Finite, cursor: Schema.optionalKey(Schema.NullOr(Cursor)), attempts: Schema.Finite, summary: Schema.String, failure: Schema.NullOr(Schema.String),
   pending: Schema.NullOr(Schema.Struct({ callId: Schema.String, through: Schema.Finite, cursor: Schema.optionalKey(Cursor) })),
   usageAnchor: Schema.optionalKey(Schema.NullOr(UsageAnchor)),
+  usageAnchors: Schema.optionalKey(Schema.Array(UsageAnchor)),
   usageCall: Schema.optionalKey(Schema.NullOr(UsageCall)),
 })
-export function compactState(state: typeof CompactionState.Type, event: Event, _metadata?: unknown, position?: number): typeof CompactionState.Type {
-  if (event.type === "ModelUpdated") state = { ...state, usageAnchor: null, usageCall: null }
+export function compactState(state: typeof CompactionState.Type, event: Event, _metadata?: unknown, position?: number, maxContextMessages = DEFAULT_COMPACTION_MAX_CONTEXT_MESSAGES): typeof CompactionState.Type {
+  if (event.type === "ModelUpdated") state = { ...state, usageAnchor: null, usageAnchors: [], usageCall: null }
   if (state.usageAnchor && (event.type === "TurnRequested" || event.type === "ToolReturned" || (event.type === "ModelReturned" && event.purpose === "inference"))) {
-    state = { ...state, usageAnchor: { ...state.usageAnchor, after: state.usageAnchor.after + 1 } }
+    state = { ...state, usageAnchor: { ...state.usageAnchor, after: state.usageAnchor.after + 1 },
+      usageAnchors: (state.usageAnchors ?? [state.usageAnchor]).filter(anchor => anchor.after + 1 < maxContextMessages).map(anchor => ({ ...anchor, after: anchor.after + 1 })),
+    }
   }
   if (event.type === "ModelCalled" && event.purpose === "inference") {
     state = { ...state, usageCall: { callId: event.callId, through: state.through, model: event.model } }
@@ -26,9 +31,14 @@ export function compactState(state: typeof CompactionState.Type, event: Event, _
     const call = state.usageCall
     if (call?.callId === event.callId) {
       const tokens = event.type === "ModelReturned" && event.usage?.input !== undefined ? event.usage.input + (event.usage.output ?? 0) : undefined
-      state = { ...state, usageCall: null, ...(tokens !== undefined && Number.isSafeInteger(tokens) && position !== undefined ? {
-        usageAnchor: { tokens, position, after: 0, through: call.through, model: call.model },
-      } : {}) }
+      state = { ...state, usageCall: null }
+      if (tokens !== undefined && Number.isSafeInteger(tokens) && position !== undefined && call.through === state.through) {
+        const anchor = { tokens, position, after: 0, through: call.through, model: call.model }
+        const previous = state.usageAnchor
+        const continuous = previous && previous.through === call.through && previous.model.provider === call.model.provider
+          && previous.model.model_id === call.model.model_id && previous.tokens <= tokens
+        state = { ...state, usageAnchor: anchor, usageAnchors: [...(continuous ? state.usageAnchors ?? [previous] : []), anchor].slice(-maxContextMessages) }
+      }
     }
   }
   if (position !== undefined && (event.type === "TurnSettled" || event.type === "ModelReturned" || event.type === "CompactionFailed")) state = { ...state, origin: position }
@@ -43,12 +53,13 @@ export function compactState(state: typeof CompactionState.Type, event: Event, _
   }
   if (event.type === "ModelReturned" && event.purpose === "compaction") {
     if (!state.pending || event.callId !== state.pending.callId) throw new RuntimeError(`No matching running compaction: ${event.callId}`)
-    return { ...state, through: state.pending.through, cursor: state.pending.cursor ?? null, summary: event.text, pending: null, failure: null }
+    return { ...state, through: state.pending.through, cursor: state.pending.cursor ?? null, summary: event.text, pending: null, failure: null, usageAnchor: null, usageAnchors: [] }
   }
   return state
 }
 
 // createCompactionState constructs the durable summary state for a compaction projection.
-export function createCompactionState() {
-  return durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, ModelFailed, ModelUpdated, OutputRejected, TurnRequested, ToolReturned, CompactionFailed, TurnSettled]), schema: CompactionState, initial: { origin: null, through: 0, attempts: 0, summary: "", pending: null, failure: null }, reduce: compactState })
+export function createCompactionState(maxContextMessages = DEFAULT_COMPACTION_MAX_CONTEXT_MESSAGES) {
+  if (!Number.isSafeInteger(maxContextMessages) || maxContextMessages < 1) throw new RuntimeError("Compaction requires maxContextMessages >= 1")
+  return durableAtom({ name: "agent.compaction.state", input: Schema.Union([ModelCalled, ModelReturned, ModelFailed, ModelUpdated, OutputRejected, TurnRequested, ToolReturned, CompactionFailed, TurnSettled]), schema: CompactionState, initial: { origin: null, through: 0, attempts: 0, summary: "", pending: null, failure: null }, reduce: (state, event, metadata, position) => compactState(state, event, metadata, position, maxContextMessages) })
 }
