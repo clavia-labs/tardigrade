@@ -44,6 +44,7 @@ export const cachedObjectStorage = <E>(backing: typeof ObjectStorage.Service, ca
     && bytes.byteLength <= cache.policy.maxCachedObjectBytes && bytes.byteLength <= cache.policy.maxCacheBytes
     ? attempt(cache.put(reference, new Uint8Array(bytes))).pipe(Effect.asVoid) : Effect.void
   return ObjectStorage.of({
+    ...(backing.url === undefined ? {} : { url: (reference, options) => backing.url!(reference, options) }),
     put: (bytes) => Effect.gen(function* () {
       const snapshot = new Uint8Array(bytes)
       const reference = yield* backing.put(snapshot)
