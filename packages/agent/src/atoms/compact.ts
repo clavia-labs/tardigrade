@@ -166,7 +166,12 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
       if (revision) windows.set(revision.source, { from: cursor, through, budget, messages, positions, sizes, more })
     } else for (let index = cursor; index < source!.length; index++) append(source![index]!, index)
     const size = summarySize + totals[totals.length - 1]!
-    const ready = { position: "ready" as const, messages: immutableConversation([...summary, ...messages]), ...(logContext ? { logContext } : {}), policy, ...usage(size) }
+    const anchor = state.usageAnchor
+    const anchorIndex = anchor ? paged ? positions.indexOf(anchor.position) : messages.length - anchor.after - 1 : -1
+    const anchored = anchor && anchor.through === state.through && anchor.model.provider === selection.model.provider
+      && anchor.model.model_id === selection.model.model_id && anchorIndex >= 0 && messages[anchorIndex]?.role === "assistant"
+    const contextSize = anchored ? Math.max(size, anchor.tokens * policy.charsPerToken + totals[messages.length]! - totals[anchorIndex + 1]!) : size
+    const ready = { position: "ready" as const, messages: immutableConversation([...summary, ...messages]), ...(logContext ? { logContext } : {}), policy, ...usage(contextSize) }
     if (!more && ready.estimatedTokens < triggerTokens) return { view: ready, events: {}, acts: {} }
     const boundaries: number[] = []
     const pending = new Set<string>()
@@ -178,7 +183,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
     }
     if (more && pending.size === 0 && messages.length > 0) boundaries.push(messages.length)
     if (!boundaries.length) {
-      if (more) return { view: { position: "failed" as const, reason: "Compaction window cannot fit a complete message or tool exchange; increase maxContextMessages or the model context window", policy, ...usage(size) }, events: {}, acts: {} }
+      if (more) return { view: { position: "failed" as const, reason: "Compaction window cannot fit a complete message or tool exchange; increase maxContextMessages or the model context window", policy, ...usage(contextSize) }, events: {}, acts: {} }
       return { view: ready, events: {}, acts: {} }
     }
     const boundary = more ? boundaries[boundaries.length - 1]! : boundaries.find(index => Math.ceil((totals[messages.length]! - totals[index]!) / policy.charsPerToken) <= retainTokens) ?? boundaries[boundaries.length - 1]!
@@ -186,7 +191,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
     const nextCursor = positions[boundary - 1]! + 1
     const callId = `compact:${through}:${state.attempts}`
     return {
-      view: { position: "compacting" as const, policy, ...usage(size) },
+      view: { position: "compacting" as const, policy, ...usage(contextSize) },
       events: {}, acts: { compact: request(callId, {
         ...(state.origin === null ? {} : { origin: state.origin }),
         input: {
