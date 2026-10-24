@@ -57,6 +57,8 @@ export const DEFAULT_SCHEMA_IMPORT_OPTIONS = { patterns: "apply" } as const sati
 export const DEFAULT_MODEL_IMAGE_TRANSPORT = "inline"
 export type ModelImageTransport = "inline" | "url"
 
+const isModelImageTransport = (value: unknown): value is ModelImageTransport => value === "inline" || value === "url"
+
 // DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS closes tool objects with declared properties when additionalProperties is omitted; a binding's schemaImport replaces it (packages/platform/test/bun/rpc-libraries.test.ts).
 export const DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS = {
   ...DEFAULT_SCHEMA_IMPORT_OPTIONS,
@@ -100,27 +102,27 @@ const fileKey = (part: Extract<MessageContentPart, { readonly type: "file" }>) =
 const resolveContentObjects = (context: typeof Conversation.Type, imageTransport: NonNullable<ModelServiceOptions["imageTransport"]>, model: ModelRef): Effect.Effect<ReadonlyMap<string, Prompt.FilePart["data"]>, Error> => Effect.gen(function* () {
   const content = context.flatMap(message => (message.role === "user" || message.role === "tool") && "content" in message && message.content !== undefined ? message.content : [])
   const objects = new Map<string, Prompt.FilePart["data"]>()
-  if (!content.some(part => part.type === "file")) return objects
-  const hasImages = content.some(part => part.type === "file" && part.mediaType.startsWith("image/"))
-  const transport = typeof imageTransport === "function" ? hasImages ? yield* imageTransport(model) : DEFAULT_MODEL_IMAGE_TRANSPORT : imageTransport
-  if (transport !== "inline" && transport !== "url") return yield* Effect.fail(new RuntimeError("Image transport selector must return inline or url"))
+  const files = new Map(content.flatMap(part => part.type === "file" ? [[fileKey(part), part] as const] : []))
+  if (!files.size) return objects
+  const images = [...files].filter(([, file]) => file.mediaType.startsWith("image/"))
+  const transport = typeof imageTransport === "function" ? images.length ? yield* imageTransport(model) : DEFAULT_MODEL_IMAGE_TRANSPORT : imageTransport
+  if (!isModelImageTransport(transport)) return yield* Effect.fail(new RuntimeError("Image transport selector must return inline or url"))
   const service = yield* Effect.serviceOption(ObjectStorage)
   if (Option.isNone(service)) return yield* Effect.fail(new RuntimeError("File input requires a runtime ObjectStorage service"))
   const storage = service.value
   if (transport === "url") {
-    const files = new Map(content.flatMap(part => part.type === "file" && part.mediaType.startsWith("image/") ? [[fileKey(part), part] as const] : []))
-    if (files.size && storage.url === undefined) return yield* Effect.fail(new RuntimeError("Image URL transport requires ObjectStorage.url"))
-    for (const [key, file] of files) {
+    if (images.length && storage.url === undefined) return yield* Effect.fail(new RuntimeError("Image URL transport requires ObjectStorage.url"))
+    for (const [key, file] of images) {
       const data = yield* storage.url!(file.object, { mediaType: file.mediaType }).pipe(Effect.mapError(RuntimeError.from))
       objects.set(key, data)
     }
   }
-  const remaining = content.filter(part => part.type === "file" && !objects.has(fileKey(part)))
+  const remaining = [...files.values()].filter(part => !objects.has(fileKey(part)))
   if (!remaining.length) return objects
   const resolved = yield* ObjectStorage.resolve(remaining).pipe(Effect.provideService(ObjectStorage, storage), Effect.mapError(RuntimeError.from))
   remaining.forEach((part, index) => {
     const value = resolved[index]
-    if (part.type === "file" && value?.type === "file") objects.set(fileKey(part), value.bytes)
+    if (value?.type === "file") objects.set(fileKey(part), value.bytes)
   })
   return objects
 })
@@ -146,7 +148,7 @@ const carriesProviderMetadata = (metadata: Response.ProviderMetadata) =>
 // modelServices adapts native AI providers to the agent's model service without executing tools.
 export function modelServices(options: ModelServiceOptions = {}) {
   const { imageTransport = DEFAULT_MODEL_IMAGE_TRANSPORT, ...timeouts } = options
-  if (typeof imageTransport !== "function" && imageTransport !== "inline" && imageTransport !== "url") throw new RuntimeError("imageTransport must be inline, url, or a model transport selector")
+  if (typeof imageTransport !== "function" && !isModelImageTransport(imageTransport)) throw new RuntimeError("imageTransport must be inline, url, or a model transport selector")
   for (const [name, value] of Object.entries(timeouts)) if (value !== undefined && value !== null && (!Number.isSafeInteger(value) || value < 1)) throw new RuntimeError(`${name} must be a positive safe integer or null`)
   return Layer.effect(Model, Effect.gen(function* () {
     const lock = yield* ModelLock

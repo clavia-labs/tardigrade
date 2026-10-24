@@ -9,7 +9,7 @@ const directory = dirname(fileURLToPath(import.meta.url))
 const count = Number(process.argv[2] ?? 10)
 const bytes = Number(process.argv[3] ?? 524288)
 const modes = process.argv[4]?.split(",") ?? ["before", "after", "url"]
-if (![count, bytes].every(value => Number.isSafeInteger(value) && value > 0) || modes.some(mode => !["before", "after", "url"].includes(mode))) throw new Error("Usage: bun run image-memory.mjs [image-count] [bytes-per-image] [before,after,url]")
+if (![count, bytes].every(value => Number.isSafeInteger(value) && value > 0) || new Set(modes).size !== modes.length || modes.some(mode => !["before", "after", "url"].includes(mode))) throw new Error("Usage: bun run image-memory.mjs [image-count] [bytes-per-image] [before,after,url]")
 const temporary = await mkdtemp(join(tmpdir(), "image-memory-"))
 const response = { id: "fixture", created_at: 1, model: "fixture", status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } }
 const received = []
@@ -32,6 +32,12 @@ const sink = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   received.push({ bytes: body.byteLength, sha256: new Bun.CryptoHasher("sha256").update(body).digest("hex"), fetchedImages, fetchedBytes })
   return new Response(`data: ${JSON.stringify({ type: "response.completed", sequence_number: 0, response })}\n\n`, { headers: { "content-type": "text/event-stream" } })
 } })
+
+function replaceOnce(source, pattern, replacement) {
+  const matches = typeof pattern === "string" ? source.split(pattern).length - 1 : [...source.matchAll(new RegExp(pattern.source, "g"))].length
+  if (matches !== 1) throw new Error(`Expected one instrumentation hook, found ${matches}: ${pattern}`)
+  return source.replace(pattern, replacement)
+}
 
 async function connect(port) {
   let targets
@@ -79,7 +85,7 @@ try {
     const before = encodeBefore.toString()
     const build = await Bun.build({ entrypoints: [join(directory, "image-memory.worker.ts")], target: "browser", external: ["node:*"], write: false, plugins: [{ name: "encoding-probe", setup(build) {
       build.onLoad({ filter: /packages\/agent\/src\/services\/model\.ts$/ }, async args => ({
-        contents: (await readFile(args.path, "utf8")).replace("const objects = yield* resolveContentObjects(input.context, imageTransport, resolved.model)", "const objects = yield* resolveContentObjects(input.context, imageTransport, resolved.model); globalThis.imageMemoryStage = 'resolved'; debugger;"),
+        contents: replaceOnce(await readFile(args.path, "utf8"), "const objects = yield* resolveContentObjects(input.context, imageTransport, resolved.model)", "const objects = yield* resolveContentObjects(input.context, imageTransport, resolved.model); globalThis.imageMemoryStage = 'resolved'; debugger;"),
         loader: "ts",
       }))
       build.onLoad({ filter: /effect\/dist\/Encoding\.js$/ }, async args => {
@@ -87,9 +93,10 @@ try {
         if (mode === "before") {
           const start = contents.indexOf("const base64EncodeUint8Array =")
           const end = contents.indexOf("\nfunction getBase64Code", start)
+          if (start < 0 || end < start) throw new Error("Original encoder hook missing")
           contents = contents.slice(0, start) + before.replace("function encodeBefore", "function base64EncodeUint8Array") + contents.slice(end)
         }
-        contents = contents.replace(/export const encodeBase64 = input => ([^;]+);/, (_, expression) => `export const encodeBase64 = input => { const result = ${expression}; globalThis.imageMemoryStage = 'base64'; debugger; return result; };`)
+        contents = replaceOnce(contents, /export const encodeBase64 = input => ([^;]+);/, (_, expression) => `export const encodeBase64 = input => { const result = ${expression}; globalThis.imageMemoryStage = 'base64'; debugger; return result; };`)
         return { contents, loader: "js" }
       })
     } }] })
@@ -109,6 +116,10 @@ const config :Workerd.Config = (
       if (!result.ok) throw new Error(await result.text())
       const details = await result.json()
       const wire = received.at(-1)
+      if (received.length !== modes.indexOf(mode) + 1) throw new Error("Expected one complete request per mode")
+      const stages = inspector.samples.map(sample => sample.stage)
+      for (const stage of ["baseline", "resolved", "json-body", "http-sent"]) if (stages.filter(value => value === stage).length !== 1) throw new Error(`Expected one ${stage} sample`)
+      if (stages.filter(stage => stage === "base64").length !== (mode === "before" || mode === "after" ? count : 0)) throw new Error("Unexpected base64 sample count")
       if (mode === "url" && (details.imageReads !== 0 || wire.fetchedImages !== count || wire.fetchedBytes !== count * bytes)) throw new Error("URL transport did not fetch every image without actor hydration")
       console.log(JSON.stringify({ mode, request: details, samples: inspector.samples, wire }))
     } finally {

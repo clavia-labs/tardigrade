@@ -145,3 +145,20 @@ test("image transport selection leaves text and document-only calls unchanged", 
   expect(bodies).toHaveLength(2)
   expect(bodies[1]!.input[1]).toMatchObject({ content: [{ type: "input_file", file_data: "data:application/pdf;base64,AQID" }] })
 })
+
+
+test("repeated documents keep their filenames and occurrences after shared hydration", async () => {
+  const { bodies, run } = fixture("openai/fixture", {})
+  const first = { ...file(0, "application/pdf"), filename: "first.pdf" }
+  const second = { ...first, filename: "second.pdf" }
+  let reads = 0
+  await run([{ role: "user", content: [first, second] }], ObjectStorage.of({
+    put: () => Effect.die("unused"),
+    get: () => Effect.sync(() => { reads++; return new Uint8Array([1, 2, 3]) }),
+  }))
+  expect(reads).toBe(1)
+  expect(bodies[0]!.input[1]).toMatchObject({ content: [
+    { type: "input_file", filename: "first.pdf", file_data: "data:application/pdf;base64,AQID" },
+    { type: "input_file", filename: "second.pdf", file_data: "data:application/pdf;base64,AQID" },
+  ] })
+})
