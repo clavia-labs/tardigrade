@@ -7,6 +7,7 @@ import { atom, createStore, createEventLog, EventLog, RuntimeError, type EffectC
 import { createActor } from "@clavia/tardigrade-agent"
 import { compact, DEFAULT_COMPACTION_POLICY, type CompactionOptions } from "@clavia/tardigrade-agent/atoms/compact"
 import { agentLog, contentServices, selection, turn } from "../fixtures/agent"
+import { compactState, type CompactionState } from "@clavia/tardigrade-agent/atoms/durable/compaction"
 import { ModelInfo } from "@clavia/tardigrade-agent/actor/context"
 import { Event, type Conversation } from "@clavia/tardigrade-agent/contracts/events"
 
@@ -136,9 +137,9 @@ test("compaction rejects invalid paging limits", () => {
   }
 })
 
-function usageLog(paged: boolean, checkpoint?: EffectCheckpoint, history?: readonly Recorded<Event>[]) {
+function usageLog(paged: boolean, checkpoint?: EffectCheckpoint, history?: readonly Recorded<Event>[], options: CompactionOptions = {}) {
   const source = paged ? trajectoryMessages : atom(get => get(trajectoryMessages.range({ limit: 1_000 })).rows.map(row => row.value))
-  const context = Effect.runSync(compact(source).pipe(Effect.provideService(ModelInfo, selection)))
+  const context = Effect.runSync(compact(source, options).pipe(Effect.provideService(ModelInfo, selection)))
   return createEventLog({ schema: Event, atoms: { context }, ...(checkpoint ? { checkpoint } : {}), ...(history ? { readBefore: (position: number) => history.slice(0, position) } : {}) })
 }
 
@@ -278,3 +279,137 @@ for (const paged of [false, true]) {
     } finally { log.dispose() }
   })
 }
+
+for (const paged of [false, true]) test(`measured tails prevent repeated image compaction (paged=${paged})`, () => fc.assert(fc.property(
+  fc.record({
+    steps: fc.array(fc.record({ imageTokens: fc.integer({ min: 1_800, max: 6_000 }), outputTokens: fc.integer({ min: 10, max: 800 }) }), { minLength: 26, maxLength: 30 }),
+    imageTokenEstimate: fc.integer({ min: 0, max: 6_000 }),
+    skipUsage: fc.boolean(),
+    pendingPage: fc.boolean(),
+  }),
+  ({ steps, imageTokenEstimate, skipUsage, pendingPage }) => {
+    const log = usageLog(paged, undefined, undefined, { imageTokenEstimate })
+    try {
+      const costs: number[] = []
+      let measured = 0
+      let estimated = 0
+      const user = { role: "user" as const, content: [file("image/png")] }
+      const assistant = { role: "assistant" as const, text: "Answer", toolCalls: [] }
+      for (const step of steps) {
+        costs.push(step.imageTokens + step.outputTokens)
+        measured += costs[costs.length - 1]!
+        estimated += (JSON.stringify(user).length + JSON.stringify(assistant).length) / 4 + imageTokenEstimate
+        if (Math.max(measured, estimated) >= 38_400) break
+      }
+      const count = costs.length
+      const history: Recorded<Event>[] = [{ event: { type: "ModelConfigured", ...selection, contextWindowTokens: 48_000 } }]
+      let input = 0
+      for (let index = 0; index < count; index++) {
+        input += costs[index]!
+        history.push(
+        { event: { type: "TurnRequested", turnId: `${index}`, text: "Page", content: [file("image/png")] } },
+        { event: { type: "ModelCalled", purpose: "inference", turnId: `${index}`, callId: `${index}`, ...selection, contextWindowTokens: 48_000 } },
+        { event: { type: "ModelReturned", purpose: "inference", callId: `${index}`, text: "Answer", toolCalls: [], ...(!skipUsage || index % 2 === 0 || index === count - 1 ? { usage: { input: input - steps[index]!.outputTokens, output: steps[index]!.outputTokens, usd: null } } : {}) } },
+        )
+      }
+      if (pendingPage) history.push({ event: { type: "TurnRequested", turnId: "pending", text: "Page", content: [file("image/png")] } })
+      const checkpoint = log.replay(history.slice(0, 7)).checkpoint()!
+      let snapshot = log.replay(history)
+      const before = snapshot.view().context
+      expect(before.view.position).toBe("compacting")
+      const ref = { seq: snapshot.position, atom: "context", act: "compact" }
+      const called = before.acts.compact!.onRequested!(ref)[0] as Event
+      if (called.type !== "ModelCalled" || called.purpose !== "compaction") throw new Error("Expected compaction call")
+      const retainedTokens = costs.slice(called.through / 2).reduce((sum, cost) => sum + cost, 0)
+      expect(retainedTokens + (pendingPage ? JSON.stringify(user).length / 4 + imageTokenEstimate : 0)).toBeLessThanOrEqual(24_000)
+      const restored = usageLog(paged, checkpoint, history, { imageTokenEstimate })
+      try {
+        const loaded = restored.replay(history.slice(checkpoint.position))
+        expect(loaded.view().context.acts.compact!.onRequested!(ref)).toEqual([called])
+        expect(loaded.checkpoint()!.durable.find(entry => entry.name === "agent.compaction.state")?.state).toEqual(snapshot.checkpoint()!.durable.find(entry => entry.name === "agent.compaction.state")?.state)
+      } finally { restored.dispose() }
+      const reset = log.append(snapshot, { type: "ModelUpdated", ...selection, contextWindowTokens: 48_000 })
+      const nativeHistory = history.map(({ event }) => {
+        if (event.type !== "ModelReturned") return { event }
+        const { usage: _usage, ...withoutUsage } = event
+        return { event: withoutUsage }
+      })
+      const native = log.replay(nativeHistory)
+      expect(reset.view().context.view.position).toBe(native.view().context.view.position)
+      expect(tokensOf(reset)).toBe(tokensOf(native))
+      expect(reset.view().context.acts.compact?.onRequested?.(ref)).toEqual(native.view().context.acts.compact?.onRequested?.(ref))
+      snapshot = log.append(snapshot, called)
+      snapshot = log.append(snapshot, { type: "ModelReturned", purpose: "compaction", callId: called.callId, text: "Summary" })
+      expect(snapshot.view().context.view.position).toBe("ready")
+      if (!pendingPage) snapshot = log.append(snapshot, { type: "TurnRequested", turnId: "next", text: "Page", content: [file("image/png")] })
+      expect(snapshot.view().context.view.position).toBe("ready")
+      snapshot = log.append(snapshot, { type: "ModelCalled", purpose: "inference", turnId: pendingPage ? "pending" : "next", callId: "next", ...selection, contextWindowTokens: 48_000 })
+      snapshot = log.append(snapshot, { type: "ModelReturned", purpose: "inference", callId: "next", text: "Answer", toolCalls: [], usage: { input: 1_000 + retainedTokens + steps[0]!.imageTokens, output: steps[0]!.outputTokens, usd: null } })
+      expect(snapshot.view().context.view.position).toBe("ready")
+    } finally { log.dispose() }
+  },
+), { ...RUNTIME_PROPERTY_OPTIONS, numRuns: paged ? RUNTIME_PROPERTY_OPTIONS.numRuns : RUNTIME_PROPERTY_OPTIONS.numRuns / 4, examples: [[{ steps: Array.from({ length: 26 }, () => ({ imageTokens: 2_548, outputTokens: 100 })), imageTokenEstimate: 1_200, skipUsage: false, pendingPage: false }]] }), RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+
+test("usage checkpoints stay bounded and reset across context generations", () => fc.assert(fc.property(
+  fc.integer({ min: 1, max: 20 }), fc.integer({ min: 3, max: 30 }),
+  (maxContextMessages, count) => {
+    let state: typeof CompactionState.Type = { origin: null, through: 0, attempts: 0, summary: "", pending: null, failure: null }
+    let position = 0
+    const append = (event: Event) => {
+      state = compactState(state, event, undefined, position++, maxContextMessages)
+      expect(state.usageAnchors?.length ?? 0).toBeLessThanOrEqual(maxContextMessages)
+      for (const anchor of state.usageAnchors ?? []) expect(anchor.after).toBeLessThan(maxContextMessages)
+    }
+    for (let index = 0; index < count; index++) {
+      append({ type: "TurnRequested", turnId: `${index}`, text: "Page" })
+      append({ type: "ModelCalled", purpose: "inference", turnId: `${index}`, callId: `${index}`, ...selection })
+      append({ type: "ModelReturned", purpose: "inference", callId: `${index}`, text: "Answer", toolCalls: [], usage: { input: (index + 1) * 100, output: 10, usd: null } })
+    }
+    expect(state.usageAnchors!.length).toBeGreaterThan(0)
+    append({ type: "ModelUpdated", ...selection })
+    expect(state.usageAnchors).toEqual([])
+    append({ type: "ModelCalled", purpose: "inference", turnId: "late", callId: "late", ...selection })
+    append({ type: "ModelCalled", purpose: "compaction", callId: "summary", through: 2, ...selection })
+    append({ type: "ModelReturned", purpose: "compaction", callId: "summary", text: "Summary" })
+    append({ type: "ModelReturned", purpose: "inference", callId: "late", text: "Answer", toolCalls: [], usage: { input: 40_000, output: 100, usd: null } })
+    expect(state.usageAnchors).toEqual([])
+    expect(state.usageAnchor).toBeNull()
+  },
+), RUNTIME_PROPERTY_OPTIONS))
+
+for (const paged of [false, true]) test(`measured boundaries preserve image tool exchanges (paged=${paged})`, () => {
+  const log = usageLog(paged)
+  try {
+    const history: Recorded<Event>[] = [
+      { event: { type: "ModelConfigured", ...selection, contextWindowTokens: 48_000 } },
+      { event: { type: "TurnRequested", turnId: "first", text: "Read pages" } },
+    ]
+    const conversation: Array<typeof Conversation.Type[number]> = [{ role: "user", text: "Read pages" }]
+    for (let index = 0; index < 16; index++) {
+      const call = { callId: `page:${index}`, providerId: `page:${index}`, name: "page", input: {} }
+      const assistant = { role: "assistant" as const, text: "Page", toolCalls: [call] }
+      const tool = { role: "tool" as const, callId: call.callId, providerId: call.providerId, name: call.name, text: "", content: [file("image/png")], error: false }
+      conversation.push(assistant, tool)
+      history.push(
+        { event: { type: "ModelCalled", purpose: "inference", turnId: "first", callId: `${index}`, ...selection, contextWindowTokens: 48_000 } },
+        { event: { type: "ModelReturned", purpose: "inference", callId: `${index}`, text: "Page", toolCalls: [call], usage: { input: 1_000 + index * 2_648, output: 100, usd: null } } },
+        { event: { type: "ToolReturned", version: 1, turnId: "first", callId: call.callId, tool: { name: call.name, providerId: call.providerId }, content: tool.content, error: null } },
+      )
+    }
+    const snapshot = log.replay(history)
+    const proposal = snapshot.view().context.acts.compact!
+    const ref = { seq: snapshot.position, atom: "context", act: "compact" }
+    const called = proposal.onRequested!(ref)[0] as Event
+    if (called.type !== "ModelCalled" || called.purpose !== "compaction") throw new Error("Expected compaction")
+    const retained = conversation.slice(called.through)
+    const measured = retained.slice(0, -1).reduce((sum, message) => sum + (message.role === "tool" ? 2_548 : 100), 0)
+    expect(measured + JSON.stringify(retained.at(-1)).length / 4 + 1_200).toBeLessThanOrEqual(24_000)
+    expect(retained[0]?.role).toBe("assistant")
+    for (let index = 0; index < retained.length; index += 2) {
+      const assistant = retained[index]
+      const tool = retained[index + 1]
+      if (assistant?.role !== "assistant" || tool?.role !== "tool") throw new Error("Split tool exchange")
+      expect(assistant.toolCalls[0]?.callId).toBe(tool.callId)
+    }
+  } finally { log.dispose() }
+})

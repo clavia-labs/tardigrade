@@ -1,4 +1,4 @@
-import { createCompactionState } from "./durable/compaction"
+import { createCompactionState, DEFAULT_COMPACTION_MAX_CONTEXT_MESSAGES } from "./durable/compaction"
 import { RuntimeError, effectAtom, type Atom } from "@clavia/tardigrade-core"
 import { immutableMessage, immutableConversation } from "../experimental/trajectory-log"
 import type { LogModelContext } from "../contracts/model-context"
@@ -12,7 +12,7 @@ import { Summarize, requests, failureMessage } from "../contracts/acts"
 export const DEFAULT_COMPACTION_POLICY = {
   triggerRatio: 0.8, retainRatio: 0.5, charsPerToken: 4,
   toolOutputTokenLimit: 10_000, userMessageTokenLimit: 262_144,
-  imageTokenEstimate: 1_200, pageSize: 64, maxContextMessages: 512,
+  imageTokenEstimate: 1_200, pageSize: 64, maxContextMessages: DEFAULT_COMPACTION_MAX_CONTEXT_MESSAGES,
 } as const
 
 const TRUNCATION_MARKER = "\n[truncated]\n"
@@ -84,7 +84,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
       ? message.content.filter(part => part.type === "file" && part.mediaType.startsWith("image/")).length : 0
     return JSON.stringify(message).length + images * policy.imageTokenEstimate * policy.charsPerToken
   }
-  const compactionState = createCompactionState()
+  const compactionState = createCompactionState(policy.maxContextMessages)
   type Window = { from: number; through: number; budget: number; messages: readonly typeof Conversation.Type[number][]; positions: readonly number[]; sizes: readonly number[]; more: boolean }
   // windows retains the current bounded context per append-only source; source identity isolates branches (platform/test/properties/turn-facts.ts, trajectoryWindowCache).
   const windows = new WeakMap<object, Window>()
@@ -186,7 +186,23 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
       if (more) return { view: { position: "failed" as const, reason: "Compaction window cannot fit a complete message or tool exchange; increase maxContextMessages or the model context window", policy, ...usage(contextSize) }, events: {}, acts: {} }
       return { view: ready, events: {}, acts: {} }
     }
-    const boundary = more ? boundaries[boundaries.length - 1]! : boundaries.find(index => Math.ceil((totals[messages.length]! - totals[index]!) / policy.charsPerToken) <= retainTokens) ?? boundaries[boundaries.length - 1]!
+    // measuredPrefixes bounds retained spans at recorded replies; incomplete spans remain charged to the tail (platform/test/bun/agent-compaction.test.ts, measured tails prevent repeated image compaction).
+    const measuredPrefixes = new Map<number, number>()
+    if (anchored) for (const point of state.usageAnchors ?? [anchor]) {
+      if (point.through !== state.through || point.model.provider !== selection.model.provider || point.model.model_id !== selection.model.model_id) continue
+      const index = paged ? positions.indexOf(point.position) : messages.length - point.after - 1
+      if (index >= 0 && index <= anchorIndex && messages[index]?.role === "assistant") measuredPrefixes.set(index + 1, point.tokens * policy.charsPerToken)
+    }
+    const tailSizes = totals.map(total => totals[messages.length]! - total)
+    if (anchored) {
+      const measuredTotal = anchor.tokens * policy.charsPerToken + totals[messages.length]! - totals[anchorIndex + 1]!
+      let prefix = 0
+      for (let index = 0; index <= anchorIndex; index++) {
+        prefix = measuredPrefixes.get(index) ?? prefix
+        tailSizes[index] = Math.max(tailSizes[index]!, measuredTotal - prefix)
+      }
+    }
+    const boundary = more ? boundaries[boundaries.length - 1]! : boundaries.find(index => Math.ceil(tailSizes[index]! / policy.charsPerToken) <= retainTokens) ?? boundaries[boundaries.length - 1]!
     const through = state.through + boundary
     const nextCursor = positions[boundary - 1]! + 1
     const callId = `compact:${through}:${state.attempts}`
