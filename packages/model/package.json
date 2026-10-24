@@ -43,7 +43,7 @@
   },
   "dependencies": {
     "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.7",
-    "@tardie/ai-openai": "4.0.0-rc.113-clavia.8",
+    "@tardie/ai-openai": "4.0.0-rc.113-clavia.9",
     "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.9",
     "effect": "4.0.0-rc.115",
     "@tardie/ai": "0.0.5",
