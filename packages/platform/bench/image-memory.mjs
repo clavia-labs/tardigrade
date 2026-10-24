@@ -8,8 +8,8 @@ import encodeBefore from "./image-memory-before.mjs"
 const directory = dirname(fileURLToPath(import.meta.url))
 const count = Number(process.argv[2] ?? 10)
 const bytes = Number(process.argv[3] ?? 524288)
-const modes = process.argv[4]?.split(",") ?? ["before", "after", "url"]
-if (![count, bytes].every(value => Number.isSafeInteger(value) && value > 0) || new Set(modes).size !== modes.length || modes.some(mode => !["before", "after", "url"].includes(mode))) throw new Error("Usage: bun run image-memory.mjs [image-count] [bytes-per-image] [before,after,url]")
+const modes = process.argv[4]?.split(",") ?? ["before", "stream", "url"]
+if (![count, bytes].every(value => Number.isSafeInteger(value) && value > 0) || new Set(modes).size !== modes.length || modes.some(mode => !["before", "stream", "url"].includes(mode))) throw new Error("Usage: bun run image-memory.mjs [image-count] [bytes-per-image] [before,stream,url]")
 const temporary = await mkdtemp(join(tmpdir(), "image-memory-"))
 const response = { id: "fixture", created_at: 1, model: "fixture", status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } }
 const received = []
@@ -112,14 +112,15 @@ const config :Workerd.Config = (
     let inspector
     try {
       inspector = await connect(19339)
-      const result = await fetch(`http://127.0.0.1:18799/?count=${count}&bytes=${bytes}&transport=${mode === "url" ? "url" : "inline"}&endpoint=${encodeURIComponent(`http://127.0.0.1:${sink.port}`)}`)
+      const result = await fetch(`http://127.0.0.1:18799/?count=${count}&bytes=${bytes}&transport=${mode === "url" ? "url" : "inline"}&streamFiles=${mode === "stream"}&endpoint=${encodeURIComponent(`http://127.0.0.1:${sink.port}`)}`)
       if (!result.ok) throw new Error(await result.text())
       const details = await result.json()
       const wire = received.at(-1)
       if (received.length !== modes.indexOf(mode) + 1) throw new Error("Expected one complete request per mode")
       const stages = inspector.samples.map(sample => sample.stage)
       for (const stage of ["baseline", "resolved", "json-body", "http-sent"]) if (stages.filter(value => value === stage).length !== 1) throw new Error(`Expected one ${stage} sample`)
-      if (stages.filter(stage => stage === "base64").length !== (mode === "before" || mode === "after" ? count : 0)) throw new Error("Unexpected base64 sample count")
+      const base64Samples = stages.filter(stage => stage === "base64").length
+      if (mode === "stream" ? base64Samples < count : base64Samples !== (mode === "url" ? 0 : count)) throw new Error("Unexpected base64 sample count")
       if (mode === "url" && (details.imageReads !== 0 || wire.fetchedImages !== count || wire.fetchedBytes !== count * bytes)) throw new Error("URL transport did not fetch every image without actor hydration")
       console.log(JSON.stringify({ mode, request: details, samples: inspector.samples, wire }))
     } finally {
@@ -128,7 +129,8 @@ const config :Workerd.Config = (
       await child.exited
     }
   }
-  if (modes.includes("before") && modes.includes("after") && received[modes.indexOf("before")].sha256 !== received[modes.indexOf("after")].sha256) throw new Error("Inline request bodies differ")
+  const inlineHashes = received.filter((_, index) => modes[index] !== "url").map(request => request.sha256)
+  if (new Set(inlineHashes).size > 1) throw new Error("Inline request bodies differ")
 } finally {
   sink.stop(true)
   await rm(temporary, { recursive: true, force: true })

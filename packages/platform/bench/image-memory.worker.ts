@@ -18,7 +18,9 @@ export default {
     const count = Number(url.searchParams.get("count"))
     const bytes = Number(url.searchParams.get("bytes"))
     const endpoint = url.searchParams.get("endpoint")!
-    const transport = url.searchParams.get("transport") === "url" ? "url" : "inline"
+    const selected = url.searchParams.get("transport")
+    const transport = selected === "url" ? "url" : "inline"
+    const streamFiles = url.searchParams.get("streamFiles") === "true"
     checkpoint("baseline")
     const content = Array.from({ length: count }, (_, index) => ({
       type: "file" as const, mediaType: "image/png", byteSize: bytes, object: { algorithm: "sha256" as const, digest: index.toString(16).padStart(64, "0") },
@@ -45,7 +47,7 @@ export default {
       models: [{ ...model, contextWindowTokens: 128000 }],
     }), { allow: "*", default: model })
     const layer = modelServices({ imageTransport: transport }).pipe(
-      Layer.provide(providerLayer({ provider: "openai", client: { apiKey: Redacted.make("fixture"), apiUrl: endpoint }, model: { model: "fixture" } }).pipe(Layer.provide(FetchHttpClient.layer))),
+      Layer.provide(providerLayer({ provider: "openai", client: { apiKey: Redacted.make("fixture"), apiUrl: endpoint, streamFiles }, model: { model: "fixture" } }).pipe(Layer.provide(FetchHttpClient.layer))),
       Layer.provide(Layer.succeed(ModelLock, lock)),
     )
     try {
