@@ -10,8 +10,8 @@
       "project": ["src/**/*.ts"]
     },
     "packages/platform": {
-      "entry": ["test/fixtures/workerd/fixture.worker.ts", "test/fixtures/workerd/agent-fixture.worker.ts", "test/workerd/*.workers.ts"],
-      "project": ["src/**/*.ts!", "test/**/*.ts"],
+      "entry": ["test/fixtures/workerd/fixture.worker.ts", "test/fixtures/workerd/agent-fixture.worker.ts", "test/workerd/*.workers.ts", "bench/image-memory.mjs", "bench/image-memory.worker.ts"],
+      "project": ["src/**/*.ts!", "test/**/*.ts", "bench/image-memory*"],
       "ignoreIssues": {
         "src/cloudflare/index.ts": ["duplicates"]
       }

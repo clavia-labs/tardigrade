@@ -54,6 +54,8 @@ export class Model extends Context.Service<Model, {
 
 export const DEFAULT_MODEL_TIMEOUT_MS = 90_000
 export const DEFAULT_SCHEMA_IMPORT_OPTIONS = { patterns: "apply" } as const satisfies SchemaRepresentation.FromJsonSchemaOptions
+export const DEFAULT_MODEL_IMAGE_TRANSPORT = "inline"
+export type ModelImageTransport = "inline" | "url"
 
 // DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS closes tool objects with declared properties when additionalProperties is omitted; a binding's schemaImport replaces it (packages/platform/test/bun/rpc-libraries.test.ts).
 export const DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS = {
@@ -65,6 +67,8 @@ export const DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS = {
 export interface ModelServiceOptions {
   readonly timeoutMs?: number | null
   readonly promiseTimeoutMs?: number | null
+  // imageTransport selects URL-capable storage for images; URL failures stop without byte fallback (platform/test/bun/model-image-url.test.ts).
+  readonly imageTransport?: ModelImageTransport | ((model: ModelRef) => Effect.Effect<ModelImageTransport, Error>)
 }
 
 const ProviderError = Schema.Struct({ error: Schema.Struct({
@@ -91,16 +95,32 @@ export function modelError(error: AiError.AiError): RuntimeError {
   } catch { return RuntimeError.from(error) }
 }
 
-const resolveContentObjects = (context: typeof Conversation.Type): Effect.Effect<ReadonlyMap<string, Uint8Array>, Error> => Effect.gen(function* () {
+const fileKey = (part: Extract<MessageContentPart, { readonly type: "file" }>) => `${objectKeyOf(part.object)}\0${part.mediaType}`
+
+const resolveContentObjects = (context: typeof Conversation.Type, imageTransport: NonNullable<ModelServiceOptions["imageTransport"]>, model: ModelRef): Effect.Effect<ReadonlyMap<string, Prompt.FilePart["data"]>, Error> => Effect.gen(function* () {
   const content = context.flatMap(message => (message.role === "user" || message.role === "tool") && "content" in message && message.content !== undefined ? message.content : [])
-  if (!content.some(part => part.type === "file")) return new Map<string, Uint8Array>()
+  const objects = new Map<string, Prompt.FilePart["data"]>()
+  if (!content.some(part => part.type === "file")) return objects
+  const hasImages = content.some(part => part.type === "file" && part.mediaType.startsWith("image/"))
+  const transport = typeof imageTransport === "function" ? hasImages ? yield* imageTransport(model) : DEFAULT_MODEL_IMAGE_TRANSPORT : imageTransport
+  if (transport !== "inline" && transport !== "url") return yield* Effect.fail(new RuntimeError("Image transport selector must return inline or url"))
   const service = yield* Effect.serviceOption(ObjectStorage)
   if (Option.isNone(service)) return yield* Effect.fail(new RuntimeError("File input requires a runtime ObjectStorage service"))
-  const resolved = yield* ObjectStorage.resolve(content).pipe(Effect.provideService(ObjectStorage, service.value), Effect.mapError(RuntimeError.from))
-  const objects = new Map<string, Uint8Array>()
-  content.forEach((part, index) => {
+  const storage = service.value
+  if (transport === "url") {
+    const files = new Map(content.flatMap(part => part.type === "file" && part.mediaType.startsWith("image/") ? [[fileKey(part), part] as const] : []))
+    if (files.size && storage.url === undefined) return yield* Effect.fail(new RuntimeError("Image URL transport requires ObjectStorage.url"))
+    for (const [key, file] of files) {
+      const data = yield* storage.url!(file.object, { mediaType: file.mediaType }).pipe(Effect.mapError(RuntimeError.from))
+      objects.set(key, data)
+    }
+  }
+  const remaining = content.filter(part => part.type === "file" && !objects.has(fileKey(part)))
+  if (!remaining.length) return objects
+  const resolved = yield* ObjectStorage.resolve(remaining).pipe(Effect.provideService(ObjectStorage, storage), Effect.mapError(RuntimeError.from))
+  remaining.forEach((part, index) => {
     const value = resolved[index]
-    if (part.type === "file" && value?.type === "file") objects.set(objectKeyOf(part.object), value.bytes)
+    if (part.type === "file" && value?.type === "file") objects.set(fileKey(part), value.bytes)
   })
   return objects
 })
@@ -112,9 +132,9 @@ const outputDecode = (schema: Schema.Top, text: string) => Effect.result(Effect.
   catch: RuntimeError.from,
 }).pipe(Effect.flatMap(value => (Schema.decodeUnknownEffect as unknown as (schema: Schema.Top) => (value: unknown) => Effect.Effect<unknown, Error>)(schema)(value))))
 
-const promptPartsOf = (content: ReadonlyArray<MessageContentPart>, objects: ReadonlyMap<string, Uint8Array>) => content.map((part) => {
+const promptPartsOf = (content: ReadonlyArray<MessageContentPart>, objects: ReadonlyMap<string, Prompt.FilePart["data"]>) => content.map((part) => {
   if (part.type === "text") return Prompt.makePart("text", { text: part.text })
-  const data = objects.get(objectKeyOf(part.object))
+  const data = objects.get(fileKey(part))
   if (data === undefined) throw new RuntimeError(`Unresolved object: ${objectKeyOf(part.object)}`)
   return Prompt.filePart({ mediaType: part.mediaType, data, ...(part.filename === undefined ? {} : { fileName: part.filename }) })
 })
@@ -125,7 +145,9 @@ const carriesProviderMetadata = (metadata: Response.ProviderMetadata) =>
 
 // modelServices adapts native AI providers to the agent's model service without executing tools.
 export function modelServices(options: ModelServiceOptions = {}) {
-  for (const [name, value] of Object.entries(options)) if (value !== undefined && value !== null && (!Number.isSafeInteger(value) || value < 1)) throw new RuntimeError(`${name} must be a positive safe integer or null`)
+  const { imageTransport = DEFAULT_MODEL_IMAGE_TRANSPORT, ...timeouts } = options
+  if (typeof imageTransport !== "function" && imageTransport !== "inline" && imageTransport !== "url") throw new RuntimeError("imageTransport must be inline, url, or a model transport selector")
+  for (const [name, value] of Object.entries(timeouts)) if (value !== undefined && value !== null && (!Number.isSafeInteger(value) || value < 1)) throw new RuntimeError(`${name} must be a positive safe integer or null`)
   return Layer.effect(Model, Effect.gen(function* () {
     const lock = yield* ModelLock
     const languageModel = yield* LanguageModel.LanguageModel
@@ -143,7 +165,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
     const retry = (input: ModelInput) => settingsOf(input).pipe(Effect.map(({ settings }) => ({ ...modelRetry(settings.policy.retry), attemptTimeoutMs: options.timeoutMs !== undefined ? options.timeoutMs : settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS })))
     return { promiseTimeoutMs, retry, call: (input, context) => Effect.gen(function* () {
       const { resolved, settings } = yield* settingsOf(input)
-      const objects = yield* resolveContentObjects(input.context)
+      const objects = yield* resolveContentObjects(input.context, imageTransport, resolved.model)
       const toolkit = yield* Effect.try({
         try: () => Toolkit.make(...input.tools.map(tool => AiTool.dynamic(tool.name, {
           description: `${tool.description} Execution: ${tool.execution ?? DEFAULT_METHOD_EXECUTION}.${tool.promiseTimeoutMs === undefined ? "" : ` Promise timeout: ${tool.promiseTimeoutMs}ms.`}`,
@@ -234,8 +256,8 @@ export function modelServices(options: ModelServiceOptions = {}) {
 
 // liveModelServices connects the agent to Tardie's locked provider configuration and credentials.
 export function liveModelServices(options: Omit<ModelBindingOptions, "observer"> & ModelServiceOptions) {
-  const { timeoutMs, promiseTimeoutMs, ...binding } = options
-  return modelServices({ ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs }) }).pipe(Layer.provideMerge(modelLayer(binding)))
+  const { timeoutMs, promiseTimeoutMs, imageTransport, ...binding } = options
+  return modelServices({ ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs }), ...(imageTransport === undefined ? {} : { imageTransport }) }).pipe(Layer.provideMerge(modelLayer(binding)))
 }
 
 const durableModelCall = (input: ModelInput, purpose: ModelCallContext["purpose"]) => Effect.gen(function* () {

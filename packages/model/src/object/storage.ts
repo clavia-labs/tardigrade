@@ -12,10 +12,16 @@ export class ObjectStorageError extends Data.TaggedError("ObjectStorageError")<{
   readonly actualBytes?: number
 }> {}
 
+export interface ObjectUrlOptions {
+  readonly mediaType?: string
+}
+
 // ObjectStorage stores bytes by content identity and verifies retrieved content (key-value.test.ts).
 export class ObjectStorage extends Context.Service<ObjectStorage, {
   readonly put: (bytes: Uint8Array) => Effect.Effect<ObjectRef, ObjectStorageError>
   readonly get: (reference: ObjectRef) => Effect.Effect<Uint8Array, ObjectStorageError>
+  // url exposes an immutable object without loading bytes (platform/test/bun/model-image-url.test.ts).
+  readonly url?: (reference: ObjectRef, options?: ObjectUrlOptions) => Effect.Effect<URL, ObjectStorageError>
 }>()("tardigrade/ObjectStorage") {
   // persist translates incoming content into parts suitable for the event log.
   static persist(content: readonly InputContentPart[]): Effect.Effect<readonly ContentPart[], ObjectStorageError, ObjectStorage> {
@@ -69,7 +75,11 @@ export const ObjectReadConcurrency = Context.Reference<number | "unbounded">("ta
 export const makeObjectStorage = <E>(backend: {
   readonly read: (key: string) => Effect.Effect<Uint8Array | undefined, E>
   readonly write: (key: string, bytes: Uint8Array) => Effect.Effect<void, E>
+  readonly url?: (key: string, options?: ObjectUrlOptions) => Effect.Effect<URL, E>
 }): typeof ObjectStorage.Service => ObjectStorage.of({
+  ...(backend.url === undefined ? {} : { url: (reference: ObjectRef, options?: ObjectUrlOptions) => backend.url!(objectKeyOf(reference), options).pipe(
+    Effect.mapError(cause => new ObjectStorageError({ reason: "Read", reference, message: "Object URL resolution failed", cause })),
+  ) }),
   put: (bytes) => Effect.gen(function* () {
     const snapshot = new Uint8Array(bytes)
     const reference = yield* objectRefOf(snapshot)
