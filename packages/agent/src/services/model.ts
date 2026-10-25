@@ -67,6 +67,8 @@ export const DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS = {
 } satisfies SchemaRepresentation.FromJsonSchemaOptions
 
 export interface ModelServiceOptions {
+  // Opt in only for tool-using inference; summaries and structured outputs still fail closed.
+  readonly continueOnOutputLimit?: boolean
   readonly timeoutMs?: number | null
   readonly promiseTimeoutMs?: number | null
   // imageTransport selects URL-capable storage for images; URL failures stop without byte fallback (platform/test/bun/model-image-url.test.ts).
@@ -147,7 +149,8 @@ const carriesProviderMetadata = (metadata: Response.ProviderMetadata) =>
 
 // modelServices adapts native AI providers to the agent's model service without executing tools.
 export function modelServices(options: ModelServiceOptions = {}) {
-  const { imageTransport = DEFAULT_MODEL_IMAGE_TRANSPORT, ...timeouts } = options
+  const { imageTransport = DEFAULT_MODEL_IMAGE_TRANSPORT, continueOnOutputLimit = false, ...timeouts } = options
+  if (typeof continueOnOutputLimit !== "boolean") throw new RuntimeError("continueOnOutputLimit must be boolean")
   if (typeof imageTransport !== "function" && !isModelImageTransport(imageTransport)) throw new RuntimeError("imageTransport must be inline, url, or a model transport selector")
   for (const [name, value] of Object.entries(timeouts)) if (value !== undefined && value !== null && (!Number.isSafeInteger(value) || value < 1)) throw new RuntimeError(`${name} must be a positive safe integer or null`)
   return Layer.effect(Model, Effect.gen(function* () {
@@ -228,21 +231,27 @@ export function modelServices(options: ModelServiceOptions = {}) {
         Effect.mapError(error => AiError.isAiError(error) ? modelError(error) : RuntimeError.from(error)),
       )
       const { response } = collected
-      if (response.finishReason === "length") return yield* Effect.fail(new RuntimeError(`Model reached maxOutputTokens=${settings.policy.maxOutputTokens}`))
+      const outputLimit = response.finishReason === "length" ? settings.policy.maxOutputTokens : undefined
+      if (outputLimit !== undefined && (!continueOnOutputLimit || context?.purpose !== "inference" || input.output !== undefined))
+        return yield* Effect.fail(new RuntimeError(`Model reached maxOutputTokens=${outputLimit}`))
       let outputErrors: string[] | undefined
       if (input.output !== undefined) {
         const decoded = yield* outputDecode(responseFormat!.schema, response.text)
         if (decoded._tag === "Failure") outputErrors = [decoded.failure instanceof Error ? decoded.failure.message : String(decoded.failure)]
       }
-      const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: Schema.decodeUnknownSync(Schema.Json)(call.params) }))
+      const toolCalls = outputLimit === undefined ? response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: Schema.decodeUnknownSync(Schema.Json)(call.params) })) : []
       const finish = response.content.find(part => part.type === "finish")
       const usd = finish ? reportedCostOf(finish) : undefined
       const reasoning = response.reasoningText
-      const continuation = response.reasoning.length === 0 && !response.toolCalls.some(call => carriesProviderMetadata(call.metadata)) ? undefined : {
+      // A truncated call cannot be executed or sent back as an unresolved provider call.
+      // Retain native reasoning/text continuation and reported usage for the next durable generation.
+      const providerContinuation = outputLimit === undefined ? collected.continuation : Prompt.fromMessages(collected.continuation.content.map(message =>
+        message.role === "assistant" ? { ...message, content: message.content.filter(part => part.type !== "tool-call") } : message))
+      const continuation = response.reasoning.length === 0 && (outputLimit !== undefined || !response.toolCalls.some(call => carriesProviderMetadata(call.metadata))) ? undefined : {
         provider: settings.provider, protocol: settings.protocol, model: resolved.model.model_id,
-        payload: yield* Schema.encodeEffect(Prompt.Prompt)(collected.continuation).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json))),
+        payload: yield* Schema.encodeEffect(Prompt.Prompt)(providerContinuation).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json))),
       }
-      return { text: response.text, toolCalls, ...(outputErrors === undefined ? {} : { outputErrors }),
+      return { text: response.text, toolCalls, ...(outputLimit === undefined ? {} : { outputLimit }), ...(outputErrors === undefined ? {} : { outputErrors }),
         ...(reasoning === undefined ? {} : { reasoning }),
         ...(continuation === undefined ? {} : { continuation }),
         usage: {
@@ -258,8 +267,8 @@ export function modelServices(options: ModelServiceOptions = {}) {
 
 // liveModelServices connects the agent to Tardie's locked provider configuration and credentials.
 export function liveModelServices(options: Omit<ModelBindingOptions, "observer"> & ModelServiceOptions) {
-  const { timeoutMs, promiseTimeoutMs, imageTransport, ...binding } = options
-  return modelServices({ ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs }), ...(imageTransport === undefined ? {} : { imageTransport }) }).pipe(Layer.provideMerge(modelLayer(binding)))
+  const { timeoutMs, promiseTimeoutMs, imageTransport, continueOnOutputLimit, ...binding } = options
+  return modelServices({ ...(continueOnOutputLimit === undefined ? {} : { continueOnOutputLimit }), ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs }), ...(imageTransport === undefined ? {} : { imageTransport }) }).pipe(Layer.provideMerge(modelLayer(binding)))
 }
 
 const durableModelCall = (input: ModelInput, purpose: ModelCallContext["purpose"]) => Effect.gen(function* () {

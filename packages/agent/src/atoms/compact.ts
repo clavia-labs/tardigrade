@@ -181,7 +181,9 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
       if (message.role === "assistant") for (const call of message.toolCalls) pending.add(call.callId)
       if (message.role === "tool") pending.delete(message.callId)
     }
-    if (more && pending.size === 0 && messages.length > 0) boundaries.push(messages.length)
+    // Output-limited inference leaves a complete tool-free exchange for native compaction.
+    const tail = messages.at(-1)
+    if ((more || tail?.role === "assistant" && tail.outputLimit !== undefined) && pending.size === 0 && messages.length > 0) boundaries.push(messages.length)
     if (!boundaries.length) {
       if (more) return { view: { position: "failed" as const, reason: "Compaction window cannot fit a complete message or tool exchange; increase maxContextMessages or the model context window", policy, ...usage(contextSize) }, events: {}, acts: {} }
       return { view: ready, events: {}, acts: {} }

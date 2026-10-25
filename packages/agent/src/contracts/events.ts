@@ -19,7 +19,9 @@ export const ProviderContinuation = Schema.Struct({
   payload: Schema.Json,
 })
 export type ProviderContinuation = typeof ProviderContinuation.Type
+const OutputLimit = Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0)))
 const ModelReasoning = {
+  outputLimit: OutputLimit,
   reasoning: Schema.optionalKey(Schema.String),
   continuation: Schema.optionalKey(ProviderContinuation),
 }

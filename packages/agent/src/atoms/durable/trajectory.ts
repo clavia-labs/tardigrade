@@ -48,7 +48,7 @@ const pages = NativeAtom.family((identity: string): Atom<LogReadPage<typeof Traj
       if (event.type === "TurnRequested") rows.push({ position, value: { turnId: event.turnId, message: event.content === undefined ? { role: "user", text: event.text } : { role: "user", content: event.content } } })
       if (event.type === "ModelReturned" && event.purpose === "inference") {
         const turnId = event.turnId ?? get(modelTurns(event.callId))
-        if (turnId !== undefined) rows.push({ position, value: { turnId, message: { role: "assistant", text: event.text, toolCalls: event.toolCalls, ...(event.reasoning === undefined ? {} : { reasoning: event.reasoning }), ...(event.continuation === undefined ? {} : { continuation: event.continuation }) } } })
+        if (turnId !== undefined) rows.push({ position, value: { turnId, message: { role: "assistant", text: event.text, toolCalls: event.toolCalls, ...(event.outputLimit === undefined ? {} : { outputLimit: event.outputLimit }), ...(event.reasoning === undefined ? {} : { reasoning: event.reasoning }), ...(event.continuation === undefined ? {} : { continuation: event.continuation }) } } })
       }
       if (event.type === "ToolReturned") {
         const owner = toolAttribution(get, event, position)
