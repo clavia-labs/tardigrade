@@ -223,7 +223,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   }
   const resting = async (): Promise<boolean> => {
     if (!driver.resting()) return false
-    return Effect.runPromise(execution.isResting(events.read))
+    return Effect.runPromise(execution.isResting(events.read).pipe(Effect.provide(layers)))
   }
   return {
     identity,
