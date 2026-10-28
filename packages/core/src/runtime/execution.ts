@@ -566,7 +566,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         if (next.kind === "delivery") continue
         const { work, completion } = next
         const key = effectKey(work.ref)
-        yield* Effect.gen(function* () {
+        const run = Effect.gen(function* () {
           yield* afterCommit()
           let lifetime = lifetimes.get(key)
           if (!lifetime) {
@@ -676,6 +676,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             lifetimes.delete(key)
           }
         }).pipe(Effect.ensuring(Effect.sync(() => { completing.delete(key) }).pipe(Effect.andThen(Deferred.succeed(completion, undefined)))))
+        // The proposing scheduler bounds concurrent work; native lifetimes own cancellation.
+        if (work.concurrent) yield* run.pipe(Effect.catchCause(reportCause), Effect.forkIn(scope))
+        else yield* run
       }
     })
     const send = (events: readonly RuntimeEvent<Event>[], when?: (get: ActorRuntime<Event>["get"]) => boolean, owner?: EffectRef) => Effect.gen(function* () {
