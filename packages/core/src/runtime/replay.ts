@@ -500,7 +500,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           return []
         }
         proposals.set(name, proposal)
-        return [{ kind: "act" as const, atom: root, ...(proposal.origin === undefined ? {} : { origin: proposal.origin }), source: name, request: executionRequest, execute: proposal.execute }]
+        return [{ kind: "act" as const, ...(proposal.concurrent ? {concurrent: true as const} : {}), atom: root, ...(proposal.origin === undefined ? {} : { origin: proposal.origin }), source: name, request: executionRequest, execute: proposal.execute }]
       })
       return [...[...accepted.values()].filter(work => !defect || work.atom === "host.message.replies"), ...work]
     }
@@ -714,7 +714,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const proposal = acts.get(key)
         const request = requestOf(key)
         if (!proposal || !request) throw reconstructionError("Deferred work requires its reconstructed execution", settlement.ref.seq)
-        return [{ kind: "act" as const, atom: settlement.ref.atom, source: actOwners.get(proposal.identity)!, ref: settlement.ref,
+        return [{ kind: "act" as const, ...(proposal.concurrent ? {concurrent: true as const} : {}), atom: settlement.ref.atom, source: actOwners.get(proposal.identity)!, ref: settlement.ref,
           request: inputOf(key), execute: proposal.execute, handle: result.handle, deadlineAt: result.deadlineAt, ...(result.unbounded ? { unbounded: true as const } : {}) }]
       }),
       pending: () => activeRequests().filter(([key]) => !hasSettlement(key) && !hasCancellation(key) && (!defect || requestOf(key)!.ref.atom === "host.message.replies")).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),

@@ -25,6 +25,7 @@ export interface DeferredAct {
 
 export interface ActRequest<Value, Failure, Services> {
   // origin identifies the journal event that made this invocation ready and remains stable across reconstruction (quint/checkpoint/acceptanceBinding.qnt, uniqueInvocations, admissionSound). Distinct invocations of the same atom and act require distinct origins; omission identifies a startup invocation scoped to its atom and act.
+  readonly concurrent?: true
   readonly origin?: number
   readonly request: EffectRequest
   readonly kind: "act"
@@ -107,7 +108,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
   }))
 
   // request creates an invocation proposal whose callbacks retain needed outcomes in durable actor state (platform/test/properties/runtime/cancellation.ts).
-  const request = (invocation: { readonly origin?: number; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
+  const request = (invocation: { readonly concurrent?: true; readonly origin?: number; readonly input: Input; readonly onRequested?: ActRequest<Value, Failure, ActService<Name>>["onRequested"]; readonly onDeferred?: ActRequest<Value, Failure, ActService<Name>>["onDeferred"]; readonly onSettled?: ActRequest<Value, Failure, ActService<Name>>["onSettled"] }): ActRequest<Value, Failure, ActService<Name>> => {
     const decoded = decodeInput(invocation.input, { freeze: true })
     const input = decoded ? decoded.value as Schema.Json : Schema.decodeUnknownSync(Schema.Json)(structuredClone(Schema.decodeSync(inputSchema)(invocation.input)))
     if (typeof input === "object" && input !== null) actInputs.add(input)
@@ -120,7 +121,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       return bindings ? get(bindings).get(identity) : undefined
     })
     const handle: ActRequest<Value, Failure, ActService<Name>> = Object.freeze({
-      kind: "act", identity, ...(origin === undefined ? {} : { origin }), request: { act: options.name, input }, ref,
+      kind: "act", identity, ...(invocation.concurrent ? {concurrent: true as const} : {}), ...(origin === undefined ? {} : { origin }), request: { act: options.name, input }, ref,
       ...(invocation.onRequested ? { onRequested: invocation.onRequested } : {}),
       ...(invocation.onDeferred ? { onDeferred: invocation.onDeferred } : {}),
       onSettled: (outcome: ActOutcome<Value, ActFailure<Failure>>, ref: EffectRef, handle?: ExecutionHandle) => {
