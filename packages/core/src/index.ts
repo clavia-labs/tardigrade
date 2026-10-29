@@ -19,6 +19,7 @@ export { event, type EventDeclaration, type DeclaredEvent, type EventHandler } f
 export { versionedEvent, type VersionedEvent } from "./event/versioned"
 export { AbortRequested, abortRequested } from "./actor/cancellation"
 export * from "./runtime/contracts"
+export * from "./services/external-execution"
 export * from "./services/journal"
 export { createInvocationLookup } from "./services/journal/invocation"
 export type { ThreadJournal } from "./services/journal/thread"

@@ -5,13 +5,14 @@ import { createStore } from "../atoms/store"
 import { observeRecord } from "./event-source"
 import { recordEvent } from "./record"
 import { atom, type Atom } from "../atoms/atom"
-import { EventLog, ReplayContext, executionDefect } from "../services/event-log"
+import { EventLog, eventLogContext, ReplayContext, executionDefect } from "../services/event-log"
 import { Scheduler } from "../services/scheduler"
 import { createInvocationLookup, selectInvocationRecords } from "../services/journal/invocation"
 import { operationSettlement, cleanupRunnable, cleanupSucceeded } from "./operation"
+import { ExternalExecution, ExternalCancellationError } from "../services/external-execution"
 import { EffectExecution, DEFAULT_ATTEMPT_TIMEOUT_MS, type AttemptOptions, type RetryOptions } from "../services/effect-execution"
 import { createExecutionStream, type ExecutionStream, type ExecutionStreamPolicy } from "../services/execution-stream"
-import { CoreEvent, EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType, type RetryScheduled, type InvocationIdentity } from "./events"
+import { CoreEvent, EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType, ExternalRequested, ExternalSubmitted, ExternalSettled, type RetryScheduled, type InvocationIdentity } from "./events"
 import { cancelAct, type ActCancellation } from "../atoms/act"
 import type { RuntimeEvent, JournalEvent, Journal, MessageJournal, RecordMetadata, Recorded } from "../services/journal"
 import type { ActorRuntime, ActorSetup, Requirements } from "./contracts"
@@ -31,6 +32,8 @@ import { DeliverMessage, type MessageDelivery } from "../services/invocation"
 import { select } from "./stores/thread"
 
 export interface CancellationOptions extends AttemptOptions {
+  // External cleanup stops at its earliest retained deadline plus this grace (at most 60 seconds).
+  readonly externalGraceMs?: number
   // retryIntervalMs sets the default delay when decide is omitted.
   readonly retryIntervalMs?: number
   // decide returns undefined to record a final typed cleanup failure.
@@ -196,6 +199,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       if (outcome) { reportCleanup(outcome); return }
       if (!cleaning.has(key)) pendingCleanup.add(key)
     }
+    const externalCancellationGraceMs = options.cancellation?.externalGraceMs ?? 60_000
+    if (!Number.isSafeInteger(externalCancellationGraceMs) || externalCancellationGraceMs < 0 || externalCancellationGraceMs > 60_000) return yield* Effect.fail(new RuntimeError("Cancellation externalGraceMs must be an integer between zero and 60000"))
     const cancellationRetryIntervalMs = options.cancellation?.retryIntervalMs ?? DEFAULT_CANCELLATION_RETRY_INTERVAL_MS
     if (!Number.isSafeInteger(cancellationRetryIntervalMs) || cancellationRetryIntervalMs < 1) return yield* Effect.fail(new RuntimeError("Cancellation retryIntervalMs must be a positive safe integer"))
     const background = new Map<string, Fiber.Fiber<void, never>>()
@@ -318,6 +323,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         const key = effectKey(event.ref)
         watched.delete(key)
         promiseTimeouts.delete(key)
+        promiseDeadlines.delete(key)
         deadlineTimers.delete(key)
         localRecovery.delete(key)
       }
@@ -339,9 +345,12 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       return yield* Deferred.await(accepted)
     })
     const appendNow = (event: JournalEvent<Event>, metadata: Omit<RecordMetadata, "recordedAt"> = {}): Effect.Effect<void, Error> => Effect.gen(function* () {
+      // External expiry owns durable cancellation cleanup, while its domain outcome stays PromiseTimedOut.
+      if (Schema.is(PromiseSettled)(event) && event.result.status === "rejected" && Schema.is(PromiseTimedOut)(event.result.reason) && snapshot.effect(event.ref)?.execution.external?.length) event = EffectCancelled.make({ type: "EffectCancelled", ref: event.ref, reason: event.result.reason }) as JournalEvent<Event>
       const recordedAt = yield* Clock.currentTimeMillis
       const updated = yield* Effect.try({ try: () => definition.prepare(snapshot, event, { ...metadata, recordedAt }), catch: RuntimeError.from })
       yield* commit(updated)
+      if (Schema.is(ExternalSettled)(event) && event.result.status === "rejected" && Schema.is(PromiseTimedOut)(event.result.reason) && !snapshot.effect(event.ref)?.cleanup?.request) yield* appendNow(EffectCancelled.make({ type: "EffectCancelled", ref: event.ref, reason: event.result.reason }))
       for (const cancellation of snapshot.cancellations()) yield* appendNow(cancellation)
     })
     const append = (event: RuntimeEvent<Event>) => enqueue(appendNow(event))
@@ -358,21 +367,26 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         }
       }
     })
+    const optionsDeliveryAddress = options.delivery?.address
+    const eventRevision = atom(get => get(Context.get(get(eventLogContext)!, EventLog).events))
+    const promiseDeadlines = new Map<string, number>()
     const promiseTimeouts = new Map<string, number | null>()
     const normalizePromise = (ref: EffectRef, value: ExecutionResult) => Effect.gen(function* () {
       if (value.type !== "promise") return value
       const prior = operationSettlement(snapshot.effect(ref))?.outcome
       const recorded = prior?.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(prior.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
       const configured = promiseTimeouts.get(effectKey(ref))
+      const retainedDeadline = promiseDeadlines.get(effectKey(ref))
       promiseTimeouts.delete(effectKey(ref))
+      promiseDeadlines.delete(effectKey(ref))
       const previous = recorded?.type === "promise" ? recorded : undefined
-      if (previous?.unbounded || (!previous && (configured === null || value.unbounded))) {
+      if (previous?.unbounded || (!previous && retainedDeadline === undefined && (configured === null || value.unbounded))) {
         if (value.handle.executor !== "local") return yield* Effect.fail(new RuntimeError("Unbounded promises require a local producer"))
         return { type: "promise" as const, handle: value.handle, unbounded: true as const }
       }
       const startedAt = yield* Clock.currentTimeMillis
       const timeoutMs = configured ?? resolutionPolicy.timeoutMs
-      const deadlineAt = promiseDeadline(value.handle, startedAt, { ...resolutionPolicy, timeoutMs }, previous?.deadlineAt)
+      const deadlineAt = promiseDeadline(value.handle, startedAt, { ...resolutionPolicy, timeoutMs }, previous?.deadlineAt ?? retainedDeadline)
       return { type: "promise" as const, handle: value.handle, deadlineAt }
     })
     let services: Effect.Success<ReturnType<typeof buildServices>>
@@ -439,6 +453,11 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           const ref = snapshot.cancelled().find(work => effectKey(work.ref) === key)?.ref
           if (!ref) return
           const observer = Context.getOption(services, Promises)
+          const external = snapshot.effect(ref)?.execution.external ?? []
+          const cleanupDeadlineAt = external.length ? Math.min(...external.map(entry => entry.request.deadlineAt)) + externalCancellationGraceMs : undefined
+          const checkCleanupBudget = Effect.gen(function* () {
+            if (cleanupDeadlineAt !== undefined && (yield* Clock.currentTimeMillis) >= cleanupDeadlineAt) return yield* Effect.fail(new ExternalCancellationError("async_cancel_budget_exhausted: external cleanup deadline expired"))
+          })
           const operation = Effect.gen(function* () {
             const completion = completing.get(key)
             if (completion) yield* Deferred.await(completion)
@@ -453,11 +472,24 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             }
             yield* cancelAct(current, { get: store.get, cancel: runtime.cancel }).pipe(Effect.provide(services))
           })
-          const result = yield* Effect.exit(retryOperation(operation, {
+          const boundedOperation = Effect.gen(function* () {
+            yield* checkCleanupBudget
+            if (cleanupDeadlineAt === undefined) return yield* operation
+            const remaining = Math.max(1, cleanupDeadlineAt - (yield* Clock.currentTimeMillis))
+            return yield* Effect.raceFirst(operation, Effect.sleep(remaining).pipe(Effect.andThen(Effect.fail(new ExternalCancellationError("async_cancel_budget_exhausted: external cleanup deadline expired")))))
+          })
+          const decide = options.cancellation?.decide ?? ((error: Error) => Effect.succeed({ delayMs: cancellationRetryIntervalMs, reason: error.message }))
+          const result = yield* Effect.exit(retryOperation(boundedOperation, {
             attemptTimeoutMs: options.cancellation?.attemptTimeoutMs === undefined ? executionAttemptTimeoutMs : options.cancellation.attemptTimeoutMs,
-            decide: options.cancellation?.decide ?? (error => Effect.succeed({ delayMs: cancellationRetryIntervalMs, reason: error.message })),
+            decide: (error, attempt) => Effect.gen(function* () {
+              if (error instanceof ExternalCancellationError) return undefined
+              const decision = yield* decide(error, attempt)
+              if (!decision || cleanupDeadlineAt === undefined) return decision
+              const remaining = cleanupDeadlineAt - (yield* Clock.currentTimeMillis)
+              return remaining <= 0 ? undefined : { ...decision, delayMs: Math.min(decision.delayMs, remaining) }
+            }),
           }, {
-            previous: snapshot.retry(ref, "cancellation"), beforeAttempt: Effect.suspend(() => closed ? Effect.interrupt : Effect.void),
+            previous: snapshot.retry(ref, "cancellation"), beforeAttempt: Effect.suspend(() => closed ? Effect.interrupt : checkCleanupBudget),
             wait: dueAt => waitForRetry(ref, "cancellation", dueAt),
             record: (attempt, dueAt, reason) => append({ type: "RetryScheduled", phase: "cancellation", ref, attempt, dueAt, reason }),
           }))
@@ -582,6 +614,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           }
           let attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
           let executionSequence = 0
+          let externalOrdinal = 0
+          let externalAttempt: number | undefined
           let retryStarted = false
           const registerPromiseTimeout = (timeoutMs: number | null | undefined) => Effect.try({ try: () => {
             if (timeoutMs === undefined) return
@@ -600,6 +634,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
                 wait: dueAt => waitForRetry(work.ref, "execution", dueAt).pipe(Effect.andThen(Effect.gen(function* () {
                   attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
                   executionSequence = 0
+                  externalOrdinal = 0
+                  externalAttempt = undefined
                 }))),
                 record: (attempt, dueAt, reason) => execution.record({ type: "RetryScheduled", ref: work.ref, attempt, dueAt, reason }),
               })
@@ -610,8 +646,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
             cancel: runtime.cancel,
             submit: (operation, options) => Effect.gen(function* () {
               if (signal.aborted) return yield* Effect.interrupt
-              if (options?.timeoutMs === null) return yield* Effect.fail(new RuntimeError("Unbounded promises require a local producer"))
+              if (options?.timeoutMs === null && options.deadlineAt === undefined) return yield* Effect.fail(new RuntimeError("Unbounded promises require a local producer"))
               yield* registerPromiseTimeout(options?.timeoutMs)
+              if (options?.deadlineAt !== undefined) promiseDeadlines.set(key, options.deadlineAt)
               const handle = yield* runAttempt(operation, executionAttemptTimeoutMs, () => retryStarted)
               const value = yield* normalizePromise(work.ref, { type: "promise", handle })
               yield* append({ type: "EffectSettled", ref: work.ref, outcome: { status: "fulfilled", value } })
@@ -625,6 +662,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
               const id = effectKey(work.ref)
               if (signal.aborted) return yield* Effect.interrupt
               yield* registerPromiseTimeout(options?.timeoutMs)
+              if (options?.deadlineAt !== undefined) promiseDeadlines.set(key, options.deadlineAt)
               yield* runtime.fork(id, runAttempt(operation, executionAttemptTimeoutMs, () => retryStarted).pipe(
                 Effect.provide(context),
                 Effect.flatMap(result => runtime.deliver(work.ref, (Array.isArray(result) ? result : [result]) as readonly Event[])),
@@ -634,8 +672,63 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
               return { executor: "local" as const, id }
             }),
           }
+          const external = ExternalExecution.of({ submit: (submit, options) => Effect.gen(function* () {
+            const retryAttempt = snapshot.retry(work.ref)?.attempt ?? 0
+            const entries = snapshot.effect(work.ref)?.execution.external ?? []
+            // A lost submit acknowledgement leaves an accepted job possible. Re-enter
+            // that producer generation, including its earlier settled ordinals, before
+            // allocating another key. Existing recorded current generations keep priority.
+            externalAttempt ??= entries.some(entry => entry.request.attempt === retryAttempt)
+              ? retryAttempt
+              : entries.findLast(entry => !entry.submitted)?.request.attempt ?? retryAttempt
+            const attempt = externalAttempt
+            const submission = externalOrdinal++
+            const find = () => snapshot.effect(work.ref)?.execution.external?.find(entry => entry.request.attempt === attempt && entry.request.submission === submission)
+            let acceptedHandle: import("./effects").ExecutionHandle | undefined
+            let retained = find()
+            if (!retained) {
+              const deadlineAt = Math.min(options.deadlineAt, ...(snapshot.effect(work.ref)?.execution.external ?? []).map(entry => entry.request.deadlineAt))
+              if (!Number.isSafeInteger(deadlineAt) || deadlineAt <= (yield* Clock.currentTimeMillis)) return yield* Effect.fail(new RuntimeError("External promise deadline expired"))
+              if (!optionsDeliveryAddress) return yield* Effect.fail(new RuntimeError("External execution requires an addressed actor"))
+              const identity = JSON.stringify([optionsDeliveryAddress.actor, optionsDeliveryAddress.instance, optionsDeliveryAddress.thread, work.ref.atom, work.ref.seq, work.ref.act, attempt, submission])
+              yield* execution.record(ExternalRequested.make({ type: "ExternalRequested", ref: work.ref, attempt, submission, deadlineAt, key: identity }))
+              retained = find()!
+            }
+            if (retained.request.deadlineAt <= (yield* Clock.currentTimeMillis)) {
+              if (retained.submitted && !retained.settled && options.cancel) yield* options.cancel(retained.submitted.handle)
+              return yield* Effect.fail(new RuntimeError("External promise deadline expired"))
+            }
+            if (!retained.submitted) {
+              yield* Effect.uninterruptible(Effect.gen(function* () {
+                const handle = yield* submit({ key: retained!.request.key, attempt, submission, deadlineAt: retained!.request.deadlineAt })
+                acceptedHandle = handle
+                if (retained!.request.deadlineAt <= (yield* Clock.currentTimeMillis) || !snapshot.effect(work.ref)) {
+                  if (options.cancel) yield* options.cancel(handle)
+                  return yield* Effect.fail(new RuntimeError("External promise deadline expired"))
+                }
+                yield* append(ExternalSubmitted.make({ type: "ExternalSubmitted", ref: work.ref, attempt, submission, handle }))
+              }))
+              retained = find()!
+            }
+            const observer = Context.getOption(services, Promises)
+            if (Option.isNone(observer)) return yield* Effect.fail(new RuntimeError("External execution requires a Promises service"))
+            const request = { ref: work.ref, attempt, submission, handle: retained.submitted!.handle, deadlineAt: retained.request.deadlineAt }
+            if (!retained.settled) yield* observer.value.watch(request)
+            const settled = atom(get => { get(eventRevision); return find()?.settled?.result })
+            acceptedHandle = retained.submitted!.handle
+            const result = retained.settled?.result ?? (yield* waitFor(settled).pipe(Effect.onInterrupt(() => Effect.gen(function* () {
+              if (!closed || signal.aborted || retained!.request.deadlineAt <= (yield* Clock.currentTimeMillis)) {
+                if (options.cancel && acceptedHandle && !snapshot.effect(work.ref)?.cleanup?.request) yield* options.cancel(acceptedHandle)
+                yield* observer.value.cancel(request)
+              }
+            }))))
+            if (result.status === "rejected" && typeof result.reason !== "string" && Schema.is(PromiseTimedOut)(result.reason) && options.cancel && !snapshot.effect(work.ref)?.cleanup?.request) yield* options.cancel(acceptedHandle)
+            if (result.status === "rejected") return yield* Effect.fail(new RuntimeError(typeof result.reason === "string" ? result.reason : JSON.stringify(result.reason)))
+            return result.value
+          }) })
           const fiber = yield* runAttempt(work.execute(work.request.input), executionAttemptTimeoutMs, () => retryStarted).pipe(
             Effect.provideService(EffectExecution, execution),
+            Effect.provideService(ExternalExecution, external),
             Effect.provide(services),
             Effect.flatMap(result => Schema.decodeEffect(ExecutionResult)(result).pipe(Effect.mapError(String))),
             Effect.map(value => ({ status: "fulfilled" as const, value })),
@@ -730,6 +823,22 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           Effect.forkIn(scope),
         )
         background.set(id, fiber)
+      }),
+      settle: (request, result) => Effect.suspend(() => {
+        if (!snapshot.effect(request.ref) || snapshot.effect(request.ref)?.cleanup) return Effect.void
+        if ((request.attempt === undefined) !== (request.submission === undefined)) return Effect.fail(new RuntimeError("External settlement requires both attempt and submission"))
+        if (request.attempt === undefined) {
+          const outcome = operationSettlement(snapshot.effect(request.ref))?.outcome
+          if (outcome?.status !== "fulfilled") return Effect.fail(new RuntimeError("Promise settlement requires a retained handle"))
+          return Schema.decodeUnknownEffect(ExecutionResult)(outcome.value).pipe(Effect.mapError(RuntimeError.from), Effect.flatMap(deferred => {
+            if (deferred.type !== "promise" || !isDeepStrictEqual(deferred.handle, request.handle)) return Effect.fail(new RuntimeError("Promise settlement does not match its retained handle"))
+            return Clock.currentTimeMillis.pipe(Effect.flatMap(now => send([{ type: "PromiseSettled", ref: request.ref, result: deferred.deadlineAt !== undefined && now >= deferred.deadlineAt ? { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: deferred.deadlineAt } } : result }], undefined, request.ref)))
+          }))
+        }
+        const retained = snapshot.effect(request.ref)?.execution.external?.find(entry => entry.request.attempt === request.attempt && entry.request.submission === request.submission)
+        if (!retained?.submitted || !isDeepStrictEqual(retained.submitted.handle, request.handle)) return Effect.fail(new RuntimeError("External settlement does not match its accepted handle"))
+        if (retained.settled) return Effect.void
+        return Clock.currentTimeMillis.pipe(Effect.flatMap(now => send([ExternalSettled.make({ type: "ExternalSettled", ref: request.ref, attempt: request.attempt!, submission: request.submission!, result: now >= retained.request.deadlineAt ? { status: "rejected", reason: { _tag: "PromiseTimedOut", deadlineAt: retained.request.deadlineAt } } : result })], undefined, request.ref)))
       }),
       deliver: (ref, events) => send(events, undefined, ref),
       cancel: (ref, reason) => send([{ type: "EffectCancelled", ref, reason }]),

@@ -31,6 +31,7 @@
     "./agent/services": "./src/generated/agent/services.ts",
     "./libraries": "./src/generated/libraries.ts",
     "./code": "./src/generated/code.ts",
+    "./platform/bifrost-responses": "./src/generated/platform/bifrost-responses.ts",
     "./platform/bun": "./src/generated/platform/bun.ts",
     "./platform/cloudflare": "./src/generated/platform/cloudflare.ts",
     "./platform/cloudflare/retry": "./src/generated/platform/cloudflare/retry.ts",

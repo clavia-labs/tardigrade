@@ -3,7 +3,7 @@ import { Deadline, EffectRef, ExecutionHandle } from "../runtime/effects"
 import { promiseSchema } from "../atoms/promise"
 import { ThreadCoordinate } from "../actor/thread"
 
-export const ResolutionRequest = Schema.Struct({ ref: EffectRef, handle: ExecutionHandle, deadlineAt: Schema.optionalKey(Deadline), mode: Schema.optionalKey(Schema.Literals(["poll", "push"])) })
+export const ResolutionRequest = Schema.Struct({ ref: EffectRef, handle: ExecutionHandle, deadlineAt: Schema.optionalKey(Deadline), mode: Schema.optionalKey(Schema.Literals(["poll", "push"])), attempt: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))), submission: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))) })
 export type ResolutionRequest = typeof ResolutionRequest.Type
 export const ResolutionRegistration = Schema.Struct({ ...ResolutionRequest.fields, recipient: ThreadCoordinate })
 export type ResolutionRegistration = typeof ResolutionRegistration.Type
@@ -43,5 +43,8 @@ export function promisePolicy(overrides: Partial<PromisePolicy> = {}): PromisePo
   return policy
 }
 
-export const resolutionKey = (request: ResolutionRequest) => JSON.stringify([request.ref.atom, request.ref.seq, request.ref.act])
+export const resolutionKey = (request: ResolutionRequest) => {
+  if ((request.attempt === undefined) !== (request.submission === undefined)) throw new Error("External resolution requires both attempt and submission")
+  return JSON.stringify([request.ref.atom, request.ref.seq, request.ref.act, ...(request.attempt === undefined ? [] : [request.attempt, request.submission])])
+}
 export const registrationKey = (request: ResolutionRegistration) => JSON.stringify([request.recipient.actor, request.recipient.instance, request.recipient.thread, resolutionKey(request)])

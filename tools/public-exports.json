@@ -5,6 +5,7 @@
   "./agent/services": "./src/agent/services/index.ts",
   "./libraries": "./src/libraries/index.ts",
   "./code": "./src/code/index.ts",
+  "./platform/bifrost-responses": "./src/platform/shared/bifrost-responses.ts",
   "./platform/bun": "./src/platform/bun/index.ts",
   "./platform/cloudflare": "./src/platform/cloudflare/index.ts",
   "./platform/cloudflare/retry": "./src/deprecated/cloudflare/retry.ts",

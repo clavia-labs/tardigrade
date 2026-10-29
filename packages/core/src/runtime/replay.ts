@@ -13,7 +13,7 @@ import { journalHistory, memoryHistory, type ReplayHistory } from "./history"
 import { recordEvent } from "./record"
 import type { ActRequest, ActCancellation } from "../atoms/act"
 import { ActorReplayError, ExecutionResult, PromiseTimedOut, EffectCancelled, effectKey, EffectRef, type ExecutionHandle, PromiseNotReady, CancellationOutcome } from "./effects"
-import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, EffectSettled, EffectDied, PromiseSettled, RetryScheduled } from "./events"
+import { StoredEffectRequested, EffectAcceptance, EffectRequest, CoreEvent, hasCoreEventType, EffectRequested, EffectSettled, EffectDied, PromiseSettled, RetryScheduled, ExternalEvent } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent, type PendingEffectInput } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
@@ -22,7 +22,7 @@ import { AtomState, initialStateSeed, StateInitialised, type StatefulAtom, type 
 import { collectFamilyKeys, type JournalFamily, type ReadJournalFamily, type ReadJournalFamilyKeys } from "../services/journal/family"
 
 
-import { operationSettlement, settlementCompletesExecution, cleanupSubmission, cleanupSucceeded, operationComplete, recordedOperation, type StoredOperation } from "./operation"
+import { externalOperation, operationSettlement, settlementCompletesExecution, cleanupSubmission, cleanupSucceeded, operationComplete, recordedOperation, type StoredOperation } from "./operation"
 
 type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<infer Value> ? Value : never }
 
@@ -579,6 +579,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
 
           retire.add(key)
           accepted.delete(key)
+        } else if (Schema.is(ExternalEvent)(event)) {
+          if (!activeOperations.has(key) || (hasCancellation(key) && event.type !== "ExternalSubmitted") || hasPromise(key)) throw new Error("External work requires an unfinished accepted effect")
+          updateExecution(key, { external: externalOperation(activeOperations.get(key)!.execution.external, event) })
         } else if (event.type === "RetryScheduled") {
           if (!activeOperations.has(key)) throw new Error("Retry requires accepted work")
           if (event.phase === "cancellation") {
@@ -689,10 +692,10 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (event.type === "EffectCancelled") {
           const settled = settlementOf(effectKey(event.ref))
           const result = settled?.outcome.status === "fulfilled" ? Schema.decodeUnknownSync(ExecutionResult)(settled.outcome.value) : undefined
-          return request.onSettled?.({ status: "rejected", reason: { _tag: "Cancelled", reason: event.reason } }, event.ref, result?.type === "promise" ? result.handle : undefined) ?? []
+          return request.onSettled?.({ status: "rejected", reason: effect(event.ref)?.execution.external?.length && Schema.is(PromiseTimedOut)(event.reason) ? event.reason : { _tag: "Cancelled", reason: event.reason } }, event.ref, result?.type === "promise" ? result.handle : undefined) ?? []
         }
         if (hasCancellation(effectKey(event.ref))) return []
-        if (event.type === "RetryScheduled" || event.type === "EffectDied" || Schema.is(CancellationOutcome)(event)) return []
+        if (Schema.is(ExternalEvent)(event) || event.type === "RetryScheduled" || event.type === "EffectDied" || Schema.is(CancellationOutcome)(event)) return []
         if (event.type === "EffectRequested") return request.onRequested?.(event.ref) ?? []
         if (event.type === "PromiseSettled") {
           const settled = settlementOf(effectKey(event.ref))
@@ -839,7 +842,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           return snapshot
         }
       }
-      const prior = record.type === "RetryScheduled" ? ((record.phase === "cancellation" ? lifecycle?.cleanup?.retry : lifecycle?.execution.retry)?.attempt === record.attempt ? (record.phase === "cancellation" ? lifecycle?.cleanup?.retry : lifecycle?.execution.retry) : undefined) : record.type === "EffectRequested" ? lifecycle?.request
+      const external = Schema.is(ExternalEvent)(record) ? lifecycle?.execution.external?.find(entry => entry.request.attempt === record.attempt && entry.request.submission === record.submission) : undefined
+      const prior = Schema.is(ExternalEvent)(record) ? (record.type === "ExternalRequested" ? external?.request : record.type === "ExternalSubmitted" ? external?.submitted : external?.settled) : record.type === "RetryScheduled" ? ((record.phase === "cancellation" ? lifecycle?.cleanup?.retry : lifecycle?.execution.retry)?.attempt === record.attempt ? (record.phase === "cancellation" ? lifecycle?.cleanup?.retry : lifecycle?.execution.retry) : undefined) : record.type === "EffectRequested" ? lifecycle?.request
         : record.type === "EffectSettled" ? operationSettlement(lifecycle) : record.type === "EffectCancelled" ? lifecycle?.cleanup?.request : Schema.is(CancellationOutcome)(record) ? lifecycle?.cleanup?.outcome : lifecycle?.execution.promise
       if (prior) {
         if (record.type === "PromiseSettled" && Schema.is(PromiseSettled)(prior) &&

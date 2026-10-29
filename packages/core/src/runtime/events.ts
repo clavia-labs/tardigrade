@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { EffectRef, EffectCancelled, EffectDied, CancellationSettled, CancellationDied } from "./effects"
+import { EffectRef, EffectCancelled, EffectDied, CancellationSettled, CancellationDied, ExecutionHandle, Deadline } from "./effects"
 import { EffectAcceptance, StoredEffectRequested } from "./effect-request"
 import { promiseSchema } from "../atoms/promise"
 import { MessageReceived, MessageDelivered, isMessageReceived } from "../actor/message"
@@ -48,7 +48,13 @@ export const RetryScheduled = Schema.Struct({
 })
 export type RetryScheduled = typeof RetryScheduled.Type
 
-const lifecycleEvents = [EffectSettled, EffectDied, CancellationSettled, CancellationDied, PromiseSettled, RetryScheduled, EffectCancelled, ThreadCreated, ThreadUpdated, MessageDelivered, MessageReceived, StateInitialised] as const
+const externalIdentity = { ref: EffectRef, attempt: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), submission: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) }
+export const ExternalRequested = Schema.Struct({ type: Schema.Literal("ExternalRequested"), ...externalIdentity, deadlineAt: Deadline, key: Schema.NonEmptyString })
+export const ExternalSubmitted = Schema.Struct({ type: Schema.Literal("ExternalSubmitted"), ...externalIdentity, handle: ExecutionHandle })
+export const ExternalSettled = Schema.Struct({ type: Schema.Literal("ExternalSettled"), ...externalIdentity, result: PromiseSettled.fields.result })
+export const ExternalEvent = Schema.Union([ExternalRequested, ExternalSubmitted, ExternalSettled])
+
+const lifecycleEvents = [ExternalRequested, ExternalSubmitted, ExternalSettled, EffectSettled, EffectDied, CancellationSettled, CancellationDied, PromiseSettled, RetryScheduled, EffectCancelled, ThreadCreated, ThreadUpdated, MessageDelivered, MessageReceived, StateInitialised] as const
 export const CoreEvent = Schema.Union([EffectRequested, ...lifecycleEvents])
 export type CoreEvent = typeof CoreEvent.Type
 export const ObservedCoreEvent = Schema.Union([EffectAcceptance, ...lifecycleEvents])
@@ -56,5 +62,5 @@ export type ObservedCoreEvent = typeof ObservedCoreEvent.Type
 
 // hasCoreEventType identifies event names reserved for framework records.
 export function hasCoreEventType(event: object): boolean {
-  return isMessageReceived(event) || "type" in event && (event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "EffectDied" || event.type === "PromiseSettled" || event.type === "RetryScheduled" || event.type === "EffectCancelled" || event.type === "CancellationSettled" || event.type === "CancellationDied" || event.type === "ThreadCreated" || event.type === "ThreadUpdated" || event.type === "MessageDelivered" || event.type === "StateInitialised")
+  return isMessageReceived(event) || "type" in event && (event.type === "ExternalRequested" || event.type === "ExternalSubmitted" || event.type === "ExternalSettled" || event.type === "EffectRequested" || event.type === "EffectSettled" || event.type === "EffectDied" || event.type === "PromiseSettled" || event.type === "RetryScheduled" || event.type === "EffectCancelled" || event.type === "CancellationSettled" || event.type === "CancellationDied" || event.type === "ThreadCreated" || event.type === "ThreadUpdated" || event.type === "MessageDelivered" || event.type === "StateInitialised")
 }

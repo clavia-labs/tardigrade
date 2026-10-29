@@ -32,6 +32,8 @@ export function createThreadHost<Event extends object, Services, State, Contract
   readonly actorTransport?: ActorMessageTransport
   readonly transports?: Readonly<Record<string, MessageTransport>>
   readonly delivery?: { readonly retryIntervalMs?: number }
+  readonly initialStateInheritedKeys?: Readonly<Record<string, import("effect").Schema.Json>>
+  readonly initialStateDefaults?: import("../initialise").InitialState | undefined
   readonly provisionRetry?: RetryOptions<Error>
   readonly generateName?: () => string
   readonly defaultChildPlacement?: ChildPlacement
@@ -49,6 +51,8 @@ export function createThreadHost<Event extends object, Services, State, Contract
     ...(options.journalReadBatchSize === undefined ? {} : { journalReadBatchSize: options.journalReadBatchSize }),
     ...(options.attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs: options.attemptTimeoutMs }),
     actor: options.actor.actorName,
+    ...(options.initialStateInheritedKeys === undefined ? {} : { initialStateInheritedKeys: options.initialStateInheritedKeys }),
+    ...(options.initialStateDefaults === undefined ? {} : { initialStateDefaults: options.initialStateDefaults }),
     ...(options.checkpointPolicy ? { checkpointPolicy: options.checkpointPolicy } : {}),
     ...(options.canDrive ? { canDrive: (instance: string) => options.canDrive!({ actor: options.actor.actorName, instance }) } : {}),
     ...(options.promises ? { promises: options.promises } : {}),
