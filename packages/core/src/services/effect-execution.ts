@@ -6,6 +6,7 @@ import type { ExecutionUpdatePayload } from "./execution-stream"
 export interface PromiseOptions {
   // timeoutMs bounds durable waiting; null disables expiry for a forked local producer (platform/test/properties/runtime/promise-lifetime.ts).
   readonly timeoutMs?: number | null | undefined
+  readonly deadlineAt?: number
 }
 export const DEFAULT_ATTEMPT_TIMEOUT_MS = 60_000
 export interface AttemptOptions {

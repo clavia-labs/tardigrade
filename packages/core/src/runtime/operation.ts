@@ -1,7 +1,24 @@
 import { Schema } from "effect"
-import { EffectRef, EffectDied, EffectCancelled, CancellationOutcome, ExecutionResult, effectKey } from "./effects"
-import { CoreEvent, StoredEffectRequested, EffectSettled, PromiseSettled, RetryScheduled, type EffectAcceptance } from "./events"
+import { EffectRef, EffectDied, EffectCancelled, CancellationOutcome, ExecutionResult, effectKey, RuntimeError } from "./effects"
+import { CoreEvent, StoredEffectRequested, EffectSettled, PromiseSettled, RetryScheduled, ExternalRequested, ExternalSubmitted, ExternalSettled, ExternalEvent, type EffectAcceptance } from "./events"
 import { RecordMetadata } from "../services/journal"
+
+export const ExternalAttempt = Schema.Struct({ request: ExternalRequested, submitted: Schema.optionalKey(ExternalSubmitted), settled: Schema.optionalKey(ExternalSettled) })
+export type ExternalAttempt = typeof ExternalAttempt.Type
+
+// externalOperation retains each submission ordinal independently of local retry wakes.
+export function externalOperation(entries: readonly ExternalAttempt[] = [], event: typeof ExternalEvent.Type): readonly ExternalAttempt[] {
+  const index = entries.findIndex(entry => entry.request.attempt === event.attempt && entry.request.submission === event.submission)
+  if (event.type === "ExternalRequested") {
+    if (index >= 0) throw new RuntimeError("Duplicate external request")
+    return [...entries, { request: event }]
+  }
+  if (index < 0) throw new RuntimeError("External completion requires a request")
+  const entry = entries[index]!
+  if (event.type === "ExternalSubmitted" && entry.submitted || event.type === "ExternalSettled" && entry.settled) throw new RuntimeError("Duplicate external completion")
+  if (event.type === "ExternalSettled" && !entry.submitted) throw new RuntimeError("External settlement requires an accepted handle")
+  return entries.map((value, at) => at !== index ? value : { ...value, ...(event.type === "ExternalSubmitted" ? { submitted: event } : { settled: event }) })
+}
 
 export const StoredOperation = Schema.Struct({
   ref: EffectRef,
@@ -12,6 +29,7 @@ export const StoredOperation = Schema.Struct({
     deferred: Schema.optionalKey(Schema.toType(EffectSettled)),
     promise: Schema.optionalKey(Schema.toType(PromiseSettled)),
     retry: Schema.optionalKey(RetryScheduled),
+    external: Schema.optionalKey(Schema.Array(ExternalAttempt)),
   }),
   cleanup: Schema.optionalKey(Schema.Struct({
     request: EffectCancelled,
@@ -63,7 +81,8 @@ export function recordedOperation(records: Iterable<{ readonly event: unknown; r
     if (!Schema.is(CoreEvent)(event) || !("ref" in event) || effectKey(event.ref) !== key) continue
     if (event.type === "EffectRequested") operation = { ref: event.ref, request: event, ...(recordedAt === undefined ? {} : { recordedAt }), execution: {} }
     else if (operation) {
-      if (event.type === "EffectSettled") operation = { ...operation, execution: { ...operation.execution, outcome: event } }
+      if (Schema.is(ExternalEvent)(event)) operation = { ...operation, execution: { ...operation.execution, external: externalOperation(operation.execution.external, event) } }
+      else if (event.type === "EffectSettled") operation = { ...operation, execution: { ...operation.execution, outcome: event } }
       else if (event.type === "EffectDied") {
         const settlement = operationSettlement(operation)
         operation = { ...operation, execution: { ...operation.execution, outcome: event, ...(settlement ? { deferred: settlement } : {}) } }

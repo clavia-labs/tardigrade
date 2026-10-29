@@ -4,6 +4,7 @@ import type { Atom } from "../atoms/atom"
 import type { RuntimeEvent } from "../services/journal"
 import type { Proposed, ServicesOf, EffectExecution } from "../atoms/effect"
 import type { EffectRef } from "./effects"
+import type { ResolutionRequest, ResolutionResult } from "../services/promises"
 import type { PromisePolicy } from "../services/promises"
 import type { ExecutionStream } from "../services/execution-stream"
 
@@ -24,6 +25,7 @@ export interface ActorRuntime<Event extends object> {
   // send acknowledges validated message acceptance; runtime processing failures are reported through the store wait method.
   readonly send: (events: readonly RuntimeEvent<Event>[], when?: (get: ActorRuntime<Event>["get"]) => boolean) => Effect.Effect<void, Error>
   // deliver scopes a result and its domain follow-ups to the originating effect; cancellation suppresses that group.
+  readonly settle: (request: ResolutionRequest, result: ResolutionResult) => Effect.Effect<void, Error>
   readonly deliver: (ref: EffectRef, events: readonly RuntimeEvent<Event>[]) => Effect.Effect<void, Error>
   readonly fork: (id: string, work: Effect.Effect<void, Error>) => Effect.Effect<void, Error>
   readonly interrupt: (id: string) => Effect.Effect<void, Error>

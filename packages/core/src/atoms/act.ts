@@ -6,6 +6,7 @@ import { EventLog, eventLogContext } from "../services/event-log"
 import { effectKey, EffectRef, EffectCancelled, Cancelled, PromiseTimedOut, AttemptTimedOut, ExecutionHandle, RuntimeError, ExecutionResult } from "../runtime/effects"
 import { type EffectRequest, EffectAcceptance, EffectSettled, PromiseSettled } from "../runtime/events"
 import { EffectExecution } from "../services/effect-execution"
+import { ExternalExecution } from "../services/external-execution"
 
 export interface ActService<Name extends string> {
   readonly act: Name
@@ -97,7 +98,7 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
         return decoded ? Effect.succeed(decoded.value as Input) : Schema.decodeUnknownEffect(inputSchema)(input)
       }).pipe(
         Effect.orDie,
-        Effect.flatMap(value => EffectExecution.use(execution => Effect.suspend(() => implement(value, { ref, signal: execution.signal })).pipe(Effect.provideService(EffectExecution, execution), Effect.provide(services)))),
+        Effect.flatMap(value => EffectExecution.use(execution => ExternalExecution.use(external => Effect.suspend(() => implement(value, { ref, signal: execution.signal })).pipe(Effect.provideService(EffectExecution, execution), Effect.provideService(ExternalExecution, external), Effect.provide(services))))),
         Effect.flatMap((value): Effect.Effect<ExecutionResult> => typeof value === "object" && value !== null && DeferredType in value
           ? Schema.decodeEffect(ExecutionHandle)(value.handle).pipe(Effect.orDie, Effect.map(handle => ({ type: "promise" as const, handle })))
           : Schema.decodeUnknownEffect(successSchema)(value).pipe(Effect.orDie, Effect.map(value => ({ type: "value" as const, value })))),

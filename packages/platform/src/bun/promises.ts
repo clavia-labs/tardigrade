@@ -6,7 +6,7 @@ import { Promises, ResolutionSettled as PromiseSettled, ResolutionRequest, resol
 // bunPromises resolves promises in actor-scoped fibers and retains settlements while delivery is retried.
 export function bunPromises(host: Pick<ActorRuntime<object>, "fork" | "interrupt"> & Partial<Pick<ActorRuntime<object>, "promisePolicy">>, options: {
   readonly poll?: ResolutionPoll
-  readonly deliver: (settlement: PromiseSettled) => Effect.Effect<void, Error>
+  readonly deliver: (settlement: PromiseSettled, request: ResolutionRequest) => Effect.Effect<void, Error>
   readonly policy?: Partial<PromisePolicy>
   readonly onError?: (error: Error, request: ResolutionRequest) => void
 }) {
@@ -57,7 +57,7 @@ export function bunPromises(host: Pick<ActorRuntime<object>, "fork" | "interrupt
                 }
               }
               if (entry.cancelled) return true
-              yield* options.deliver(settlement).pipe(Effect.timeout(policy.attemptTimeoutMs))
+              yield* options.deliver(settlement, value).pipe(Effect.timeout(policy.attemptTimeoutMs))
               return true
             }).pipe(Effect.result)
             if (attempt._tag === "Success" && attempt.success) return
