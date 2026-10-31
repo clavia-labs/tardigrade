@@ -1,7 +1,11 @@
 import { ThreadCreated, ThreadUpdated, CoreEvent, EffectRequested, EffectRef, InvocationIdentity, createInvocationLookup, hasCoreEventType } from "@clavia/tardigrade-core"
 import { Effect, ManagedRuntime, Schema, Semaphore, Exit, Cause, Fiber, type Layer } from "effect"
 import { SqlClient } from "effect/unstable/sql"
-import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage, PendingEffectInput, effectKey, type EffectInputChanges } from "@clavia/tardigrade-core"
+import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage, PendingEffectInput, effectKey, type JournalChanges } from "@clavia/tardigrade-core"
+import { initializeCheckpointSchema } from "./checkpoint/schema"
+import { writeAtomCheckpoints, readAtomCheckpoint } from "./checkpoint/atoms"
+import { writeActorCheckpoint, readActorCheckpoint } from "./checkpoint/actor"
+import type { AtomCheckpointIdentity } from "@clavia/tardigrade-core"
 import { initializeSqlScheduler, sqlSchedulerTransaction } from "./sql-scheduler"
 import { recordRetryWakes } from "./retry-wakes"
 import { DEFAULT_FAMILY_INDEX_BATCH_SIZE, initializeSqlFamilyIndex, sqlFamilyIndex, type FamilyIndexOptions } from "./sql-family-index"
@@ -9,8 +13,8 @@ import type { JournalFamily, FamilyRecord } from "@clavia/tardigrade-core"
 export { DEFAULT_FAMILY_INDEX_BATCH_SIZE, type FamilyIndexOptions } from "./sql-family-index"
 
 import { checkpointDigestSync, journalCall } from "@clavia/tardigrade-core"
-import { CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES, DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes, encodeCheckpointChunks, decodeCheckpointChunks, type CheckpointChunk, type CheckpointChunkOptions } from "./checkpoint-chunks"
-export { DEFAULT_CHECKPOINT_CHUNK_BYTES, type CheckpointChunkOptions } from "./checkpoint-chunks"
+import { CHECKPOINT_CHUNK_ROW_OVERHEAD_BYTES, DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes, encodeCheckpointChunks, decodeCheckpointChunks, type CheckpointChunk, type CheckpointChunkOptions } from "./checkpoint/chunks"
+export { DEFAULT_CHECKPOINT_CHUNK_BYTES, type CheckpointChunkOptions } from "./checkpoint/chunks"
 
 // decodeSqlJournalRecord reconstructs a logical record for journal readers and storage exporters (journalEventChunks).
 export function decodeSqlJournalRecord<Event extends object>(text: string, chunks: readonly CheckpointChunk[] | (() => readonly CheckpointChunk[]) = []): Recorded<Event> {
@@ -27,7 +31,7 @@ export const readSqlJournalRecord = <Event extends object>(sql: SqlClient.SqlCli
   return yield* Effect.try({ try: () => decodeSqlJournalRecord<Event>(row.event, chunks), catch: RuntimeError.from })
 })
 
-// indexInvocationRecord links invocation identities and references to physical journal rows (test/properties/checkpoint-storage.ts).
+// indexInvocationRecord links invocation identities and references to physical journal rows (test/properties/checkpoint/storage.ts).
 const indexInvocationRecord = (sql: SqlClient.SqlClient, actor: string, seq: number, record: Recorded<object>) => Effect.gen(function* () {
   if (!hasCoreEventType(record.event) || !("ref" in record.event)) return
   const event = yield* Schema.decodeEffect(Schema.toType(CoreEvent))(record.event).pipe(Effect.mapError(RuntimeError.from))
@@ -89,10 +93,12 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_invocation_events (actor TEXT NOT NULL, atom TEXT NOT NULL, act TEXT NOT NULL, ref_seq INTEGER NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (actor, atom, act, ref_seq, seq), FOREIGN KEY (actor, seq) REFERENCES experimental_events(actor, seq)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS experimental_invocation_index (actor TEXT PRIMARY KEY, position INTEGER NOT NULL) WITHOUT ROWID`
     yield* initializeSqlFamilyIndex(sql)
-    yield* sql`CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK (id = 1), position INTEGER NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL, tag TEXT)`
-    const checkpointColumns = yield* sql<{ name: string }>`PRAGMA table_info(checkpoint)`
-    if (!checkpointColumns.some(column => column.name === "tag")) yield* sql`ALTER TABLE checkpoint ADD COLUMN tag TEXT`
-    yield* sql`CREATE TABLE IF NOT EXISTS checkpoint_chunks (ordinal INTEGER PRIMARY KEY CHECK (ordinal >= 0), payload BLOB NOT NULL CHECK (typeof(payload) = 'blob' AND length(payload) > 0))`
+    const migrationClient = options.transaction ? new Proxy(sql, {
+      get: (target, property, receiver) => property === "withTransaction"
+        ? <Value>(work: Effect.Effect<Value, Error>) => transaction(sql, work)
+        : Reflect.get(target, property, receiver),
+    }) : sql
+    yield* initializeCheckpointSchema.pipe(Effect.provideService(SqlClient.SqlClient, migrationClient))
     yield* sql`CREATE TABLE IF NOT EXISTS effect_inputs (actor TEXT NOT NULL, ref TEXT NOT NULL, byte_length INTEGER NOT NULL, chunk_count INTEGER NOT NULL, digest TEXT NOT NULL, PRIMARY KEY (actor, ref)) WITHOUT ROWID`
     yield* sql`CREATE TABLE IF NOT EXISTS effect_input_chunks (actor TEXT NOT NULL, ref TEXT NOT NULL, ordinal INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY (actor, ref, ordinal)) WITHOUT ROWID`
     // TODO: drop these statements once no database holds tables written by 0.49.0 to 0.50.0 checkpoint trees.
@@ -129,7 +135,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     return result
   }).pipe(Effect.uninterruptible)) } : undefined
   const scheduler = scheduling && schedulerStorage ? createScheduler({ storage: schedulerStorage, deliver: scheduling.deliver, policy: scheduling.policy }) : undefined
-  const append = (expectedLength: number, events: readonly Recorded<Event>[], providedCheckpoint?: StoredCheckpoint, inputs: EffectInputChanges = {}) => Effect.gen(function* () {
+  const append = (expectedLength: number, events: readonly Recorded<Event>[], providedCheckpoint?: StoredCheckpoint, inputs: JournalChanges = {}) => Effect.gen(function* () {
     const checkpoint = providedCheckpoint && { ...providedCheckpoint, payload: providedCheckpoint.payload.slice() }
     if (!Number.isSafeInteger(expectedLength) || expectedLength < 0) return yield* Effect.fail(new RuntimeError("Invalid expected journal length"))
     if (checkpoint && (!Number.isSafeInteger(checkpoint.position) || checkpoint.position !== expectedLength + events.length || checkpoint.position < 0)) return yield* Effect.fail(new RuntimeError("Invalid checkpoint position"))
@@ -149,7 +155,6 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     }), catch: RuntimeError.from })
     if (checkpoint && checkpoint.digest !== checkpointDigestSync(checkpoint.payload)) return yield* Effect.fail(new RuntimeError("Invalid checkpoint digest"))
     if (checkpoint?.tag !== undefined && !checkpoint.tag.trim()) return yield* Effect.fail(new RuntimeError("Checkpoint tag must be nonempty"))
-    const chunks = checkpoint ? encodeCheckpointChunks(checkpoint.payload, chunkBytes) : []
     const pending = yield* Effect.forEach(inputs.put ?? [], input => Effect.gen(function* () {
       const value = yield* Schema.decodeEffect(PendingEffectInput)(input).pipe(Effect.mapError(RuntimeError.from))
       const payload = new TextEncoder().encode(JSON.stringify(value))
@@ -188,12 +193,9 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
         yield* sql`DELETE FROM effect_input_chunks WHERE actor = ${options.actor} AND ref = ${key}`
         yield* sql`DELETE FROM effect_inputs WHERE actor = ${options.actor} AND ref = ${key}`
       }
+      yield* writeAtomCheckpoints(sql, inputs.atomCheckpoints ?? [], expectedLength + events.length, chunkBytes)
       if (scheduling) yield* recordRetryWakes(sqlSchedulerTransaction(sql, scheduling.alarm), events)
-      if (checkpoint) {
-        yield* sql`DELETE FROM checkpoint_chunks`
-        yield* sql`INSERT INTO checkpoint (id, position, byte_length, chunk_count, digest, tag) VALUES (1, ${checkpoint.position}, ${checkpoint.payload.byteLength}, ${chunks.length}, ${checkpoint.digest}, ${checkpoint.tag ?? null}) ON CONFLICT(id) DO UPDATE SET position = excluded.position, byte_length = excluded.byte_length, chunk_count = excluded.chunk_count, digest = excluded.digest, tag = excluded.tag`
-        for (const chunk of chunks) yield* sql`INSERT INTO checkpoint_chunks (ordinal, payload) VALUES (${chunk.ordinal}, ${chunk.payload})`
-      }
+      if (checkpoint) yield* writeActorCheckpoint(sql, checkpoint, chunkBytes)
     })
     yield* options.commit ? journalCall(() => options.commit!(() => { runSynchronous(work); return undefined }, events, expectedLength + events.length)) : transaction(sql, work)
   })
@@ -298,20 +300,10 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
         }))
       }))
     }),
-    append: (position: number, events: readonly Recorded<Event>[], inputs?: EffectInputChanges) => append(position, events, undefined, inputs),
+    append: (position: number, events: readonly Recorded<Event>[], inputs?: JournalChanges) => append(position, events, undefined, inputs),
     readCheckpoint: (tag?: string) => Effect.gen(function* () {
       const sql = yield* client
-      return yield* transaction(sql, Effect.gen(function* () {
-        const rows = yield* sql<{ position: number; byte_length: number; chunk_count: number; digest: string; tag: string | null }>`SELECT position, byte_length, chunk_count, digest, tag FROM checkpoint WHERE id = 1`
-        const row = rows[0]
-        if (!row) return undefined
-        if (tag !== undefined && row.tag !== tag) return undefined
-        if (!Number.isSafeInteger(row.position) || row.position < 0 || typeof row.digest !== "string") return yield* Effect.fail(new RuntimeError("Invalid journal checkpoint"))
-        const chunks = yield* sql<CheckpointChunk>`SELECT ordinal, payload FROM checkpoint_chunks ORDER BY ordinal`
-        const payload = yield* Effect.try({ try: () => decodeCheckpointChunks(chunks, row.byte_length, row.chunk_count), catch: RuntimeError.from })
-        if ((checkpointDigestSync(payload)) !== row.digest) return yield* Effect.fail(new RuntimeError("Journal checkpoint digest mismatch"))
-        return { position: row.position, payload, digest: row.digest, ...(row.tag === null ? {} : { tag: row.tag }) } satisfies StoredCheckpoint
-      }))
+      return yield* transaction(sql, readActorCheckpoint(sql, tag))
     }),
     appendWithCheckpoint: append,
   }
@@ -321,6 +313,10 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     readPosition: () => runSynchronous(access.readPosition),
     readRange: (from: number, to: number) => runSynchronous(access.readRange(from, to)),
     readOperation: (ref: EffectRef, position: number) => runSynchronous(access.readOperation(ref, position)),
+    readAtomCheckpoint: (identity: AtomCheckpointIdentity, position: number) => {
+      const sql = runSynchronous(client)
+      return runSynchronous(transaction(sql, readAtomCheckpoint(sql, identity, position)))
+    },
     readFamily: function* (family: JournalFamily, key: string, from: number, to: number, order: "asc" | "desc" = "asc"): Iterable<FamilyRecord<Recorded<Event>>> {
       if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from) throw new RuntimeError("Invalid journal family range")
       const sql = runSynchronous(client)
@@ -353,8 +349,8 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     readFirst: () => runSynchronous(access.readFirst),
     readVersion: () => runSynchronous(access.readVersion),
     readMessage: (id: string) => runSynchronous(access.readMessage(id)),
-    append: (position: number, events: readonly Recorded<Event>[], inputs?: EffectInputChanges) => { runSynchronous(access.append(position, events, inputs)); return undefined },
-    appendWithCheckpoint: (position: number, events: readonly Recorded<Event>[], checkpoint: StoredCheckpoint, inputs?: EffectInputChanges) => { runSynchronous(access.appendWithCheckpoint(position, events, checkpoint, inputs)); return undefined },
+    append: (position: number, events: readonly Recorded<Event>[], inputs?: JournalChanges) => { runSynchronous(access.append(position, events, inputs)); return undefined },
+    appendWithCheckpoint: (position: number, events: readonly Recorded<Event>[], checkpoint: StoredCheckpoint, inputs?: JournalChanges) => { runSynchronous(access.appendWithCheckpoint(position, events, checkpoint, inputs)); return undefined },
     acknowledge: (write?: () => undefined) => wakeLock.withPermit(Effect.gen(function* () {
       const sql = yield* client
       if (options.acknowledge) yield* options.acknowledge(write ?? (() => undefined))
@@ -366,7 +362,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
   }
 }
 
-// runSynchronous rejects storage work that suspends and preserves transaction failures for rollback (test/properties/checkpoint-storage.ts).
+// runSynchronous rejects storage work that suspends and preserves transaction failures for rollback (test/properties/checkpoint/storage.ts).
 export const runSynchronous = <Value>(work: Effect.Effect<Value, Error>): Value => {
   const context = Fiber.getCurrent()?.context
   const result = Effect.runSyncExit(context ? work.pipe(Effect.provideContext(context)) : work)

@@ -1,3 +1,5 @@
+import { atomCheckpointKey } from "../services/checkpoint/atom"
+import type { AtomCheckpoint, ReadAtomCheckpoint } from "../services/checkpoint/atom"
 import { LogView, RangeLog, DEFAULT_JOURNAL_READ_BATCH_SIZE, type ReadonlyIndex, type ReadonlyLog } from "./log-view"
 import { historicalEventDecoder } from "../event/versioned"
 import { frozenPlainData } from "../atoms/incremental/frozen"
@@ -6,7 +8,7 @@ import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAUL
 import { Context, Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { atom, type Atom } from "../atoms/atom"
-import { EventLog, executionDefect, type AtomReplay } from "../services/event-log"
+import { EventLog, executionDefect, type AtomReplay, type AtomCheckpointCandidate, type AtomCheckpointCodec } from "../services/event-log"
 import { createStore } from "../atoms/store"
 import { createRecordSource, emptyRecordFrame, observeRecord, type RecordSourceFrame } from "./event-source"
 import { journalHistory, memoryHistory, type ReplayHistory } from "./history"
@@ -18,7 +20,7 @@ import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent, ty
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
 import { ThreadCreated } from "../actor/thread"
-import { AtomState, initialStateSeed, StateInitialised, type StatefulAtom, type StateSeed } from "../initialise"
+import { initialStateSeed, StateInitialised, type StateSeed } from "../initialise"
 import { collectFamilyKeys, type JournalFamily, type ReadJournalFamily, type ReadJournalFamilyKeys } from "../services/journal/family"
 
 
@@ -32,7 +34,7 @@ const reconstructionError = (message: string, position: number) => new ActorRepl
 
 export interface EffectCheckpoint {
   readonly position: number
-  readonly durable: readonly { readonly name: string; readonly state: unknown; readonly position: number }[]
+  readonly durable: readonly AtomCheckpoint[]
 }
 
 // createEventLog replays validated domain events and derives identified effect descriptions without executing them.
@@ -48,6 +50,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   readonly readOperation?: (ref: EffectRef, position: number) => ReadonlyLog<Recorded<Event>>
   readonly readFamily?: ReadJournalFamily<Event>
   readonly readFamilyKeys?: ReadJournalFamilyKeys
+  readonly readAtomCheckpoint?: ReadAtomCheckpoint
   readonly inputs?: readonly PendingEffectInput[]
 }) {
   const digestMinBytes = options.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
@@ -180,6 +183,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly operations: () => Iterable<StoredOperation>
     readonly retry: (ref: EffectRef, phase?: "execution" | "cancellation") => RetryScheduled | undefined
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
+    readonly releaseAtomCheckpoints: () => void
+    readonly atomCheckpoints: () => readonly AtomCheckpoint[]
     readonly checkpoint: () => EffectCheckpoint | undefined
     readonly validate: (roots: Readonly<Record<string, Atom<unknown>>>, event: object) => void
   }
@@ -199,11 +204,14 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly acts: ReadonlyMap<string, Proposal>
     readonly accepted: ReadonlyMap<string, IdentifiedEffectValue<ServicesOf<EffectValues>>>
     readonly origins: ReadonlyMap<string, EffectRef>
-    readonly states: NonNullable<AtomReplay["states"]>
+    readonly states: ReadonlyMap<AtomCheckpointCodec, { readonly position: number; readonly value: unknown }>
+    readonly atomCheckpoints: readonly AtomCheckpointCandidate[]
   }
   const actOwners = new WeakMap<object, string>()
   const executionDeclarations = new WeakMap<object, StoredEffectRequested["request"]>()
   const createEngine = (history: ReadonlyLog<Recorded<Event>>, journal: ReplayHistory<Event>, seed?: EffectCheckpoint, frame?: RuntimeFrame) => {
+    const pendingCheckpoints = new Map((frame?.atomCheckpoints ?? []).map(entry => [entry.codec, entry]))
+    const retainedStates = new Map(frame?.states)
     const inheritedStates = frame?.states
     const availableInputs = new Map(frame?.availableInputs ?? persistedInputs)
     let offset = frame?.position ?? seed?.position ?? 0
@@ -263,6 +271,11 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       const tail = records
       return {
         position, seed: stateSeed(), ...(!seed ? { originSeed: { value: stateSeed() } } : {}), ...(inheritedStates ? { states: inheritedStates } : {}),
+        captureAtomCheckpoint: (entry: AtomCheckpointCandidate) => {
+          pendingCheckpoints.set(entry.codec, entry)
+          if (entry.codec.idleTTL === undefined || entry.codec.idleTTL === Infinity) retainedStates.set(entry.codec, { position: entry.position, value: entry.value })
+        },
+        ...(options.readAtomCheckpoint ? { readAtomCheckpoint: options.readAtomCheckpoint } : {}),
         readFamily: function* (family, key, from, options = {}) {
           const to = options.to ?? position
           const order = options.order ?? "asc"
@@ -403,24 +416,23 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       next.set(proposal.identity, ref)
       store.set(bindings, next)
     }
-    const checkpoint = (): EffectCheckpoint | undefined => {
-      // checkpoint captures durable actor state after execution and cleanup settle (platform/test/properties/runtime/snapshot-lookups.ts).
-      if (store.get(executionDefect)) return undefined
-      if (activeOperations.size !== 0) return undefined
-      const captured = new Set<unknown>()
-      const durable = [...store.nodes().values()].flatMap(node => {
-        const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
-        return codec && codec.checkpoint !== false && !captured.has(codec) && captured.add(codec) ? [{ name: codec.name, state: codec.encode(store.get(node.atom)), position: offset + records.length }] : []
-      })
-      const names = new Set<string>()
-      for (const entry of durable) {
-        if (names.has(entry.name)) throw new Error(`Duplicate durable atom checkpoint name: ${entry.name}`)
-        names.add(entry.name)
+    const encodeCandidates = (candidates: Iterable<AtomCheckpointCandidate>): readonly AtomCheckpoint[] => {
+      const identities = new Map<string, AtomCheckpointCandidate>()
+      for (const candidate of candidates) {
+        const key = atomCheckpointKey(candidate.codec.identity)
+        const previous = identities.get(key)
+        if (previous && previous.codec.owner !== candidate.codec.owner) throw new Error(`Duplicate durable atom checkpoint name: ${candidate.codec.identity.name}`)
+        if (!previous || candidate.position >= previous.position) identities.set(key, candidate)
       }
-      return Object.freeze({
-        position: offset + records.length,
-        durable: Object.freeze(durable),
-      })
+      return [...identities.values()].map(({ codec, value, position }) => ({ ...codec.identity, position, state: codec.encode(value) }))
+    }
+    const atomCheckpoints = (): readonly AtomCheckpoint[] => encodeCandidates(pendingCheckpoints.values())
+    const checkpoint = (): EffectCheckpoint | undefined => {
+      if (store.get(executionDefect) || activeOperations.size !== 0) return undefined
+      const captured = new Map<AtomCheckpointCodec, AtomCheckpointCandidate>()
+      for (const [codec, saved] of retainedStates) captured.set(codec, { position: saved.position, codec, value: saved.value })
+      for (const [codec, candidate] of pendingCheckpoints) captured.set(codec, candidate)
+      return Object.freeze({ position: offset + records.length, durable: Object.freeze(encodeCandidates(captured.values())) })
     }
     const view = (): Values<Atoms> => Object.fromEntries(Object.entries(options.atoms).map(([name, node]) => [name, store.get(node)])) as Values<Atoms>
     const effects = (): readonly Work[] => {
@@ -648,12 +660,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     return {
       frame: (): RuntimeFrame => {
-        const states = new Map(inheritedStates)
-        for (const node of store.nodes().values()) {
-          const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
-          if (codec && (codec.idleTTL === undefined || codec.idleTTL === Infinity)) states.set(codec, Object.freeze({ position: offset + records.length, value: store.get(node.atom) }))
-        }
+        const states = new Map(retainedStates)
         return Object.freeze({
+          atomCheckpoints: [...pendingCheckpoints.values()],
           position: offset + records.length, journal: journal.append(offset, records.slice()), source: source.snapshot(store), progressCursor, initialState,
           defect,
           operations: new Map(activeOperations), inputs: new Map(loadedInputs), availableInputs: new Map(availableInputs),
@@ -719,6 +728,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       }),
       pending: () => activeRequests().filter(([key]) => !hasSettlement(key) && !hasCancellation(key) && (!defect || requestOf(key)!.ref.atom === "host.message.replies")).map(([key, record]) => ({ type: record.type, ref: record.ref, request: inputOf(key) })),
       effect,
+      releaseAtomCheckpoints: () => pendingCheckpoints.clear(),
+      atomCheckpoints,
       checkpoint,
       validate: store.validate,
     }
@@ -794,6 +805,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       operations: () => operations.values(),
       retry: (ref: EffectRef, phase?: "execution" | "cancellation") => phase === "cancellation" ? operations.get(effectKey(ref))?.cleanup?.retry : operations.get(effectKey(ref))?.execution.retry,
       promise: (ref: EffectRef) => operations.get(effectKey(ref))?.execution.promise,
+      releaseAtomCheckpoints: () => engineOf(snapshot).releaseAtomCheckpoints(),
+      atomCheckpoints: () => engineOf(snapshot).atomCheckpoints(),
       checkpoint: () => engineOf(snapshot).checkpoint(),
       validate: (roots: Readonly<Record<string, Atom<unknown>>>, event: object) => engineOf(snapshot).validate(roots, event),
     })

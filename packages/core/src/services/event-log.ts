@@ -1,3 +1,4 @@
+import type { AtomCheckpointIdentity, ReadAtomCheckpoint } from "./checkpoint/atom"
 import type { ReadonlyIndex, ReadonlyLog } from "../runtime/log-view"
 import { Context, Schema, type Effect } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
@@ -10,7 +11,18 @@ import type { PromiseSettled } from "../runtime/events"
 import type { EffectCheckpoint } from "../runtime/replay"
 import type { FamilyRecord, JournalFamily } from "./journal/family"
 
-// AtomReplay supplies missing observations up to a fixed consumed position (platform/test/properties/runtime/atom-checkpoint.ts).
+export type AtomCheckpointCodec = StatefulAtom[typeof AtomState] & {
+  readonly identity: AtomCheckpointIdentity
+  readonly owner: object
+}
+
+export interface AtomCheckpointCandidate {
+  readonly codec: AtomCheckpointCodec
+  readonly position: number
+  readonly value: unknown
+}
+
+// AtomReplay supplies missing observations up to a fixed consumed position (platform/test/properties/checkpoint/safety.ts).
 export interface AtomReplay {
   readonly position: number
   readonly seed: StateSeed | undefined
@@ -20,6 +32,8 @@ export interface AtomReplay {
   readonly states?: ReadonlyMap<StatefulAtom[typeof AtomState], { readonly position: number; readonly value: unknown }>
   readonly read: (from: number) => ReadonlyLog<ObservedRecord<unknown>>
   readonly readFamily?: (family: JournalFamily, key: string, from: number, options?: { readonly to?: number; readonly order?: "asc" | "desc" }) => Iterable<FamilyRecord<ObservedRecord<unknown>>>
+  readonly captureAtomCheckpoint?: (checkpoint: AtomCheckpointCandidate) => void
+  readonly readAtomCheckpoint?: ReadAtomCheckpoint
   readonly familyKeys?: (family: JournalFamily, after: string | undefined, limit: number) => readonly string[]
 }
 

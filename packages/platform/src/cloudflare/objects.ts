@@ -15,7 +15,7 @@ import { cloudflareSchedulerStorage, cloudflareSchedulerTransaction, cloudflareS
 import { cloudflareWatchdogStorage, cloudflareWatchdogTransactionSync } from "./watchdog"
 import { runSynchronous, sqlJournal } from "../shared/sql-journal"
 import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
-import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint-chunks"
+import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint/chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 import { HttpRouter } from "effect/unstable/http"
 import { hostRoutes, httpFailure, type ErrorLogPolicy } from "../shared/http"

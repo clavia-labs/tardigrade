@@ -6,7 +6,7 @@ import { RuntimeError, type Recorded } from "@clavia/tardigrade-core"
 import { createJournalStore, createSupervisorStore, createThreadStore, SupervisorEvent, type ThreadCoordinate } from "@clavia/tardigrade-core"
 
 import { decodeSqlJournalRecord } from "../shared/sql-journal"
-import type { CheckpointChunk } from "../shared/checkpoint-chunks"
+import type { CheckpointChunk } from "../shared/checkpoint/chunks"
 
 const encoded = (value: string) => Buffer.from(value).toString("base64url")
 export const bunSupervisorPath = (storage: string, actor: string, instance: string) => join(storage, `${encoded(JSON.stringify([actor, instance]))}.sqlite`)

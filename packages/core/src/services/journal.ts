@@ -1,3 +1,4 @@
+import type { AtomCheckpoint, ReadAtomCheckpoint } from "./checkpoint/atom"
 import { Schema, Effect } from "effect"
 import { MessageMetadata, type MessageReceived } from "../actor/message"
 import type { CoreEvent, ObservedCoreEvent, InvocationIdentity } from "../runtime/events"
@@ -41,29 +42,34 @@ export interface EffectInputChanges {
   readonly remove?: readonly EffectRef[]
 }
 
-// Journal accesses a local ordered event prefix synchronously; append commits a batch atomically or throws for a stale expected length (platform/test/properties/checkpoint-storage.ts).
+export interface JournalChanges extends EffectInputChanges {
+  readonly atomCheckpoints?: readonly AtomCheckpoint[]
+}
+
+// Journal accesses a local ordered event prefix synchronously; append commits a batch atomically or throws for a stale expected length (platform/test/properties/checkpoint/storage.ts).
 export interface Journal<Event extends object> {
+  readonly readAtomCheckpoint?: ReadAtomCheckpoint
   readonly readFamily?: ReadJournalFamily<Event>
   readonly readFamilyKeys?: ReadJournalFamilyKeys
   // acknowledge encloses a synchronous local write in the host durability boundary, including physical wake staging (platform/test/workerd/watchdog.workers.ts).
   readonly acknowledge?: (write?: () => undefined) => Effect.Effect<void, Error>
   // lookupInvocation includes history before checkpoints; read failures remain errors. Callers serialize lookup and acceptance against the same journal prefix (quint/checkpoint/acceptanceBinding.qnt, uniqueInvocations).
   readonly lookupInvocation: (identity: InvocationIdentity) => InvocationLookup
-  // readOperation returns a reference's lifecycle records before the consumed position, including records before checkpoints (platform/test/properties/checkpoint-storage.ts).
+  // readOperation returns a reference's lifecycle records before the consumed position, including records before checkpoints (platform/test/properties/checkpoint/storage.ts).
   readonly readOperation: (ref: EffectRef, position: number) => readonly Recorded<Event>[]
   readonly readPosition: () => number
-  // readRange returns exactly [from, to); unavailable or reversed boundaries fail (platform/test/properties/checkpoint-storage.ts).
+  // readRange returns exactly [from, to); unavailable or reversed boundaries fail (platform/test/properties/checkpoint/storage.ts).
   readonly readRange: (from: number, to: number) => readonly Recorded<Event>[]
   readonly read: () => readonly Recorded<Event>[]
   // readAfter returns the suffix starting at the consumed event count; positions beyond the journal length fail.
   readonly readAfter: (position: number) => readonly Recorded<Event>[]
-  // readBefore returns exactly the consumed prefix; positions beyond the journal length fail (platform/test/properties/checkpoint-storage.ts).
+  // readBefore returns exactly the consumed prefix; positions beyond the journal length fail (platform/test/properties/checkpoint/storage.ts).
   readonly readBefore: (position: number) => readonly Recorded<Event>[]
   readonly readInputs: () => readonly PendingEffectInput[]
-  readonly append: (expectedLength: number, events: readonly Recorded<Event>[], inputs?: EffectInputChanges) => undefined
+  readonly append: (expectedLength: number, events: readonly Recorded<Event>[], inputs?: JournalChanges) => undefined
   // readCheckpoint may select a layout tag without materializing a checkpoint for another layout.
   readonly readCheckpoint: (tag?: string) => StoredCheckpoint | undefined
-  readonly appendWithCheckpoint: (expectedLength: number, events: readonly Recorded<Event>[], checkpoint: StoredCheckpoint, inputs?: EffectInputChanges) => undefined
+  readonly appendWithCheckpoint: (expectedLength: number, events: readonly Recorded<Event>[], checkpoint: StoredCheckpoint, inputs?: JournalChanges) => undefined
 }
 
 // InvocationLookup reports admission state and the original accepted reference (quint/checkpoint/acceptanceBinding.qnt, admissionSound). Unfinished cancellation remains pending until cleanup succeeds (quint/operationRecovery.qnt, cleanupComplete).

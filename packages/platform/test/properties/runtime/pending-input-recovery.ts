@@ -386,7 +386,7 @@ export async function cancellationRetryRecovery(fixture: Pick<CleanupFixture, "o
     await run(store.wait)
     await run(store.checkpoint)
     const checkpoint = journal.readCheckpoint()
-    if (!checkpoint || JSON.parse(new TextDecoder().decode(checkpoint.payload)).version !== 4) throw new Error("Cleanup checkpoint lost its current encoding")
+    if (!checkpoint || JSON.parse(new TextDecoder().decode(checkpoint.payload)).version !== 5) throw new Error("Cleanup checkpoint lost its current encoding")
     const history = journal.read()
     const retries = history.flatMap(record => record.event.type === "RetryScheduled" && record.event.phase === "cancellation" ? [record.event.attempt] : [])
     if (!isDeepStrictEqual(retries, [1, 2]) || !isDeepStrictEqual(decisions, [0, 1]) || Number(cleanups) !== 3 || executions !== 2

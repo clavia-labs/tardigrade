@@ -28,7 +28,7 @@ export async function checkpointStorage(fixture: {
   const record = (value: string): Recorded<Event> => ({ event: { type: "Stored", value } })
   const first = await checkpoint(1, "é😀".repeat(40))
   const encoded = JSON.parse(new TextDecoder().decode(first.payload)) as Record<string, unknown>
-  if (encoded.version !== 4 || !isDeepStrictEqual(Object.keys(encoded).sort(), ["durable", "position", "version"])) throw new Error("Checkpoint encoding contains more than actor state and position")
+  if (encoded.version !== 5 || !isDeepStrictEqual(Object.keys(encoded).sort(), ["durable", "position", "version"])) throw new Error("Checkpoint encoding contains more than actor state and position")
   for (const invalid of [{ ...encoded, operations: [] }, { ...encoded, version: 99 }]) {
     let rejected = false
     try { decodeCheckpoint(new TextEncoder().encode(JSON.stringify(invalid))) } catch { rejected = true }
@@ -40,11 +40,11 @@ export async function checkpointStorage(fixture: {
     { ...state, durable: null }, { ...state, operations: [] },
     ...[
       { ...state.durable[0], name: "" }, { ...state.durable[0], name: " " },
-      { ...state.durable[0], name: 1 }, { ...state.durable[0], position: 0 },
+      { ...state.durable[0], name: 1 }, { ...state.durable[0], position: 2 },
       { ...state.durable[0], state: undefined }, { ...state.durable[0], extra: true },
     ].map(entry => ({ ...state, durable: [entry] })),
   ]) {
-    for (const read of [() => encodeCheckpoint(invalid as EffectCheckpoint), () => decodeCheckpoint(new TextEncoder().encode(JSON.stringify({ version: 4, ...invalid })))]) {
+    for (const read of [() => encodeCheckpoint(invalid as EffectCheckpoint), () => decodeCheckpoint(new TextEncoder().encode(JSON.stringify({ version: 5, ...invalid })))]) {
       let rejected = false
       try { read() } catch { rejected = true }
       if (!rejected) throw new Error("Checkpoint codec accepted invalid actor state")
@@ -63,7 +63,8 @@ export async function checkpointStorage(fixture: {
     const rows = await fixture.execute("SELECT ordinal, length(payload) AS bytes, typeof(payload) AS kind FROM checkpoint_chunks ORDER BY ordinal")
     const [header] = await fixture.execute("SELECT byte_length, chunk_count FROM checkpoint WHERE id = 1")
     if (header?.byte_length !== expected.payload.length || header?.chunk_count !== rows.length || rows.some((row, ordinal) => row.ordinal !== ordinal || row.kind !== "blob")) throw new Error("Checkpoint layout differs from its header")
-    return rows.length
+    const atomChunks = await fixture.execute("SELECT c.ordinal, length(c.payload) AS bytes FROM atom_checkpoint_chunks c JOIN atom_checkpoints a ON a.id = c.atom_id WHERE a.name = 'state' AND a.family IS NULL ORDER BY c.ordinal")
+    return atomChunks.length
   }
   try {
     if (journal.readCheckpoint() !== undefined) throw new Error("Fresh database has a checkpoint")
