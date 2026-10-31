@@ -1,8 +1,8 @@
 import { journalCall, journalCommit } from "@clavia/tardigrade-core"
 import { Cause, Effect, Exit } from "effect"
 import { isDeepStrictEqual } from "node:util"
-import { checkpointDigest, encodeCheckpoint, decodeCheckpoint, JournalConflict, type EffectCheckpoint, type Recorded, type PendingEffectInput, type InvocationIdentity, type EffectRef } from "@clavia/tardigrade-core"
-import type { sqlJournal } from "../../src/shared/sql-journal"
+import { checkpointDigest, encodeCheckpoint, JournalConflict, type Recorded, type PendingEffectInput, type InvocationIdentity, type EffectRef } from "@clavia/tardigrade-core"
+import type { sqlJournal } from "../../../src/shared/sql-journal"
 
 type Event = { readonly type: "Stored"; readonly value: string }
 type Journal = ReturnType<typeof sqlJournal<Event>>
@@ -22,39 +22,10 @@ export async function checkpointStorage(fixture: {
   const checkpoint = async (position: number, text: string) => {
     const state = { position, durable: [{ name: "state", state: { text }, position }] }
     const payload = encodeCheckpoint(state)
-    if (!isDeepStrictEqual(decodeCheckpoint(payload), state)) throw new Error("Checkpoint state failed codec round trip")
     return { position, payload, digest: await Effect.runPromise(checkpointDigest(payload)) }
   }
   const record = (value: string): Recorded<Event> => ({ event: { type: "Stored", value } })
   const first = await checkpoint(1, "é😀".repeat(40))
-  const encoded = JSON.parse(new TextDecoder().decode(first.payload)) as Record<string, unknown>
-  if (encoded.version !== 5 || !isDeepStrictEqual(Object.keys(encoded).sort(), ["durable", "position", "version"])) throw new Error("Checkpoint encoding contains more than actor state and position")
-  for (const invalid of [{ ...encoded, operations: [] }, { ...encoded, version: 99 }]) {
-    let rejected = false
-    try { decodeCheckpoint(new TextEncoder().encode(JSON.stringify(invalid))) } catch { rejected = true }
-    if (!rejected) throw new Error("Checkpoint decoder accepted an incompatible format")
-  }
-  const state = { position: 1, durable: [{ name: "state", state: null, position: 1 }] }
-  for (const invalid of [
-    { ...state, position: -1 }, { ...state, position: 0.5 }, { ...state, position: Number.MAX_SAFE_INTEGER + 1 },
-    { ...state, durable: null }, { ...state, operations: [] },
-    ...[
-      { ...state.durable[0], name: "" }, { ...state.durable[0], name: " " },
-      { ...state.durable[0], name: 1 }, { ...state.durable[0], position: 2 },
-      { ...state.durable[0], state: undefined }, { ...state.durable[0], extra: true },
-    ].map(entry => ({ ...state, durable: [entry] })),
-  ]) {
-    for (const read of [() => encodeCheckpoint(invalid as EffectCheckpoint), () => decodeCheckpoint(new TextEncoder().encode(JSON.stringify({ version: 5, ...invalid })))]) {
-      let rejected = false
-      try { read() } catch { rejected = true }
-      if (!rejected) throw new Error("Checkpoint codec accepted invalid actor state")
-    }
-  }
-  for (const value of [Number.NaN, Number.POSITIVE_INFINITY, () => null]) {
-    let rejected = false
-    try { encodeCheckpoint({ ...state, durable: [{ ...state.durable[0]!, state: value }] }) } catch { rejected = true }
-    if (!rejected) throw new Error("Checkpoint encoder accepted non-JSON state")
-  }
   const second = await checkpoint(2, "small")
   let journal = fixture.open(7)
   const verify = async (expected: typeof first, records: readonly Recorded<Event>[]) => {

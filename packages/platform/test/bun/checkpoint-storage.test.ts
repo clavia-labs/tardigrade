@@ -1,3 +1,9 @@
+import { checkpointAtomKinds } from "../fixtures/atoms/atom"
+import { atomPopulationKinds } from "../fixtures/atoms/population"
+import { atomCheckpointStorageSafety } from "../properties/checkpoint/storage-safety"
+import { checkpointLimits } from "../properties/checkpoint/limits"
+import { checkpointSchema, checkpointFormats } from "../properties/checkpoint/schema"
+import { familyCheckpointIndexing } from "../properties/checkpoint/family"
 import { logStorage } from "../properties/log"
 import { modelContextRecovery } from "../properties/turn-facts"
 import type { Journal } from "@clavia/tardigrade-core"
@@ -15,9 +21,12 @@ import { join, dirname } from "node:path"
 import { bunJournal, observeBunThread } from "../../src/bun"
 import { bunThreadPath } from "../../src/bun/observe"
 import { pendingInputRecovery, cancellationInputRecovery, stoppedInputRecovery, cancellationStall, cancellationRetryRecovery } from "../properties/runtime/pending-input-recovery"
-import { checkpointStorage } from "../properties/checkpoint-storage"
-import { lazyAtomRecovery } from "../properties/runtime/atom-checkpoint"
+import { checkpointStorage } from "../properties/checkpoint/storage"
+import { atomCheckpointLiveness } from "../properties/checkpoint/liveness"
+import { atomCheckpointSafety, atomReplaySafety, atomCheckpointValidation } from "../properties/checkpoint/safety"
 
+
+test("checkpoint payload formats", checkpointFormats)
 
 test("checkpointStorage", async () => {
   const directory = mkdtempSync(join(tmpdir(), "tardie-checkpoint-"))
@@ -44,11 +53,25 @@ test("accepted input recovery", async () => {
   finally { rmSync(directory, { recursive: true, force: true }) }
 })
 
-test("lazy atom checkpoint recovery", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "tardie-lazy-checkpoint-"))
-  try { await lazyAtomRecovery({ open: () => bunJournal({ filename: join(directory, "lazy.sqlite"), actor: "lazy-checkpoint" }) }) }
-  finally { rmSync(directory, { recursive: true, force: true }) }
-})
+for (const kind of checkpointAtomKinds) test(`atom replay safety (${kind})`, () => fc.assert(atomReplaySafety(kind), RUNTIME_PROPERTY_OPTIONS), RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+
+for (const kind of atomPopulationKinds) {
+  test(`atom checkpoint validation (${kind})`, () => atomCheckpointValidation(kind))
+  test(`atom checkpoint safety (${kind})`, () => fc.assert(atomCheckpointSafety(kind), RUNTIME_PROPERTY_OPTIONS), RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+  test(`atom checkpoint liveness (${kind})`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), `tardie-checkpoint-${kind}-`))
+    try { await atomCheckpointLiveness(kind, { open: () => bunJournal({ filename: join(directory, "lifecycle.sqlite"), actor: "lifecycle" }) }) }
+    finally { rmSync(directory, { recursive: true, force: true }) }
+  }, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+}
+
+for (const kind of atomPopulationKinds) test(`atom checkpoint storage safety (${kind})`, async () => {
+  const directory = mkdtempSync(join(tmpdir(), `tardie-checkpoint-storage-${kind}-`))
+  const filename = join(directory, "storage.sqlite")
+  const db = new Database(filename, { create: true })
+  try { await atomCheckpointStorageSafety(kind, { open: () => bunJournal({ filename, actor: "storage", checkpointChunkBytes: 23 }), execute: query => db.query<Record<string, unknown>, []>(query).all() }) }
+  finally { db.close(); rmSync(directory, { recursive: true, force: true }) }
+}, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
 
 for (const mode of ["producer", "cleanup", "failure", "defect", "rejected"] as const) {
   test(`unresolved cancellation: ${mode}`, async () => {
@@ -101,5 +124,25 @@ test("logStorage", async () => {
 for (const inline of [false, true]) test(`model context recovery (inline: ${inline})`, async () => {
   const directory = mkdtempSync(join(tmpdir(), "tardie-model-context-"))
   try { await modelContextRecovery(() => bunJournal({ filename: join(directory, "log.sqlite"), actor: "events" }), inline) }
+  finally { rmSync(directory, { recursive: true, force: true }) }
+})
+
+test("family checkpoint indexing", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tardie-family-checkpoint-"))
+  try { await familyCheckpointIndexing({ open: () => bunJournal({ filename: join(directory, "family.sqlite"), actor: "family", checkpointChunkBytes: 23 }) }) }
+  finally { rmSync(directory, { recursive: true, force: true }) }
+})
+
+test("checkpoint schema migration", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tardie-checkpoint-schema-"))
+  const filename = join(directory, "schema.sqlite")
+  const db = new Database(filename, { create: true })
+  try { await checkpointSchema({ open: () => bunJournal({ filename, actor: "schema", checkpointChunkBytes: 23 }), execute: query => db.query<Record<string, unknown>, []>(query).all() }) }
+  finally { db.close(); rmSync(directory, { recursive: true, force: true }) }
+})
+
+test("combined checkpoint write limit", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tardie-checkpoint-limits-"))
+  try { await checkpointLimits({ open: () => bunJournal({ filename: join(directory, "limits.sqlite"), actor: "limits" }) }) }
   finally { rmSync(directory, { recursive: true, force: true }) }
 })
