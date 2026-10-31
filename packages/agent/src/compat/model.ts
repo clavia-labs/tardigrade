@@ -6,7 +6,7 @@ import { modelState } from "../atoms/durable/model"
 
 // prepareModel indexes old calls when the loading boundary lacks durable model configuration.
 const prepareModel = (replay: typeof ReplayContext.Service) => Effect.gen(function* () {
-  const configured = replay.checkpoint?.durable.find(entry => entry.name === modelState[AtomState].name)
+  const configured = replay.checkpoint?.durable.find(entry => entry.family === undefined && entry.name === modelState[AtomState].name)
   if (configured && Schema.is(ModelConfiguration)(configured.state)) return undefined
   const records = replay.checkpoint ? yield* replay.readFull : replay.records
   const configuredAt = records.findIndex(({ event }) => Schema.is(ModelConfigured)(event))

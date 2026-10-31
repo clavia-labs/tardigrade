@@ -1,6 +1,6 @@
 import * as fc from "fast-check"
 import { isDeepStrictEqual } from "node:util"
-import { encodeCheckpointChunks, decodeCheckpointChunks, validateCheckpointChunkBytes } from "../../../src/shared/checkpoint-chunks"
+import { encodeCheckpointChunks, decodeCheckpointChunks, validateCheckpointChunkBytes } from "../../../src/shared/checkpoint/chunks"
 
 // checkpointChunks checks byte identity and structural rejection across write boundaries on every host.
 export const checkpointChunks = fc.property(fc.oneof(fc.uint8Array({ maxLength: 4096 }), fc.constant(new TextEncoder().encode("Aé😀Z"))), fc.integer({ min: 1, max: 256 }), (payload, limit) => {

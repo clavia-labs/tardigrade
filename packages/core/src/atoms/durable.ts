@@ -1,9 +1,10 @@
+import { atomCheckpointKey } from "../services/checkpoint/atom"
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import type { Atom } from "./atom"
 import { incrementalValidator, invalid } from "./incremental/validate"
 import { recordEvent, recordMetadata } from "../runtime/record"
-import type { RecordMetadata } from "../services/journal"
+import type { ObservedRecord, RecordMetadata } from "../services/journal"
 import { EventLog, eventLogContext } from "../services/event-log"
 import { AtomState, initialStateSeed, type StatefulAtom } from "../initialise"
 import type { JournalFamily } from "../services/journal/family"
@@ -60,7 +61,8 @@ export function makeDurableAtom<State, Event>(options: DurableAtomOptions<State,
   const initial = structuredClone(options.initial)
   validate(initial)
   check(initial)
-  const codec = { name: options.name, decode: restore, encode: (value: unknown) => encode(value as State), ...(idleTTL === undefined ? {} : { idleTTL }), ...(member ? { checkpoint: false as const } : {}) }
+  const identity = member ? { name: member.key, family: member.family.name, version: member.family.indexVersion } : { name: options.name }
+  const codec = { identity, owner: member?.family ?? {}, name: options.name, decode: restore, encode: (value: unknown) => encode(value as State), ...(idleTTL === undefined ? {} : { idleTTL }) }
   type Frame = { readonly source: Atom<unknown>; readonly position: number; readonly state: State }
   const reduced = NativeAtom.readable((get): Frame => {
     const context = get(eventLogContext)
@@ -73,45 +75,54 @@ export function makeDurableAtom<State, Event>(options: DurableAtomOptions<State,
     const sameSource = previous !== undefined && previous.source === source
     if (sameSource && previous.position > position) throw new Error("EventLog source must be append-only")
     if (seed && (seed.position < 0 || seed.position > position)) throw new Error(`Atom seed position is outside the event source: ${options.name}`)
-    const continued = sameSource && previous.position >= (seed?.position ?? 0)
+    const seeded = seed?.atoms?.get(atomCheckpointKey(identity)) ?? (!member && seed?.state.has(options.name) ? { state: seed.state.get(options.name), position: seed.position } : undefined)
+    const continued = sameSource && previous.position >= (seeded?.position ?? 0)
     const inherited = replay.states?.get(codec)
-    const retained = inherited && inherited.position >= (seed?.position ?? 0) ? inherited : undefined
+    const retained = inherited && inherited.position >= (seeded?.position ?? 0) ? inherited : undefined
     const fold = (state: State, event: unknown, metadata: RecordMetadata, position: number): State => {
       if (!accepts(event)) return state
       const next = options.reduce(state, event, metadata, position)
       return Object.is(next, state) ? next : check(next)
     }
-    let state = continued ? previous.state : retained ? check(retained.value as State) : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : check(structuredClone(initial))
-    let start = continued ? previous.position : retained ? retained.position : seed?.state.has(options.name) ? seed.position : 0
-    if (member && replay.readFamily) {
+    let state = continued ? previous.state : retained ? check(retained.value as State) : seeded ? restore(seeded.state) : check(structuredClone(initial))
+    let start = continued ? previous.position : retained ? retained.position : seeded ? seeded.position : 0
+    if (!continued && !retained) {
+      const checkpoint = replay.readAtomCheckpoint?.(identity, position)
+      if (checkpoint) {
+        if (checkpoint.name !== identity.name || checkpoint.family !== ("family" in identity ? identity.family : undefined) || checkpoint.version !== ("version" in identity ? identity.version : undefined) || !Number.isSafeInteger(checkpoint.position) || checkpoint.position < 0 || checkpoint.position > position) throw new Error("Invalid atom checkpoint")
+        if (checkpoint.position >= start) {
+          state = restore(checkpoint.state)
+          start = checkpoint.position
+        }
+      }
+    }
+    const indexed = member && replay.readFamily
+    if (start < position || indexed) {
+      const records = indexed ? undefined : replay.read(start)
+      if (records && records.length !== position - start) throw new Error(`Durable atom replay range is unavailable: ${options.name}`)
+      const from = start
       if (!continued && !retained && start === 0) {
-        const initialSeed = replay.originSeed ? replay.originSeed.value : initialStateSeed(replay.read(0))
+        const initialSeed = replay.originSeed ? replay.originSeed.value : initialStateSeed(records ?? replay.read(0))
         if (initialSeed?.state.has(options.name)) state = restore(initialSeed.state.get(options.name))
         start = initialSeed?.position ?? 0
       }
       let cursor = start - 1
-      for (const entry of replay.readFamily(member.family, member.key, start)) {
-        if (!Number.isSafeInteger(entry.position) || entry.position < start || entry.position >= position || entry.position <= cursor) throw new Error(`Durable atom family replay position is invalid: ${options.name}`)
-        state = fold(state, recordEvent(entry.record), recordMetadata(entry.record), entry.position)
-        cursor = entry.position
+      const consume = (record: ObservedRecord<unknown>, at: number) => {
+        if (!Number.isSafeInteger(at) || at < start || at >= position || at <= cursor) throw new Error(`Durable atom replay position is invalid: ${options.name}`)
+        state = fold(state, recordEvent(record), recordMetadata(record), at)
+        cursor = at
       }
-      return { source, position, state }
-    }
-    if (start < position) {
-      const records = replay.read(start)
-      if (records.length !== position - start) throw new Error(`Durable atom replay range is unavailable: ${options.name}`)
-      if (!continued && !retained && start === 0) {
-        const initialSeed = initialStateSeed(records)
-        if (initialSeed?.state.has(options.name)) state = restore(initialSeed.state.get(options.name))
-        start = initialSeed?.position ?? 0
-      }
-      const from = position - records.length
-      let cursor = from
-      for (const record of records) {
-        if (cursor >= start) state = fold(state, recordEvent(record), recordMetadata(record), cursor)
-        cursor++
+      if (indexed) {
+        for (const entry of indexed(member.family, member.key, start)) consume(entry.record, entry.position)
+      } else {
+        let at = from
+        for (const record of records!) {
+          if (at >= start) consume(record, at)
+          at++
+        }
       }
     }
+    replay.captureAtomCheckpoint?.({ position, codec, value: state })
     return { source, position, state }
   }).pipe(retain)
   const output = NativeAtom.readable(get => get(reduced).state).pipe(retain)

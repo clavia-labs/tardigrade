@@ -1,3 +1,4 @@
+import { atomCheckpointKey, type AtomCheckpointIdentity } from "./services/checkpoint/atom"
 import type { ReadonlyLog } from "./runtime/log-view"
 import { Schema } from "effect"
 import type { Recorded } from "./services/journal"
@@ -11,13 +12,15 @@ export interface StatefulAtom {
     readonly decode: (state: unknown) => unknown
     readonly encode: (value: unknown) => unknown
     readonly idleTTL?: number
-    readonly checkpoint?: false
+    readonly identity?: AtomCheckpointIdentity
+    readonly owner?: object
   }
 }
 
 export interface StateSeed {
   readonly position: number
   readonly state: ReadonlyMap<string, unknown>
+  readonly atoms?: ReadonlyMap<string, { readonly state: unknown; readonly position: number }>
 }
 
 // InitialState maps destination durable atom names to encoded state.
@@ -34,8 +37,12 @@ export const StateInitialised = Schema.Struct({
 export type StateInitialised = typeof StateInitialised.Type
 
 // initialStateSeed resolves checkpoint state or a fresh journal marker into an atom seed.
-export function initialStateSeed(records: ReadonlyLog<Recorded<unknown>>, checkpoint?: { readonly position: number; readonly durable: readonly { readonly name: string; readonly state: unknown }[] }): StateSeed | undefined {
-  if (checkpoint) return { position: checkpoint.position, state: new Map(checkpoint.durable.map(entry => [entry.name, entry.state] as const)) }
+export function initialStateSeed(records: ReadonlyLog<Recorded<unknown>>, checkpoint?: { readonly position: number; readonly durable: readonly { readonly name: string; readonly family?: string; readonly version?: string; readonly position?: number; readonly state: unknown }[] }): StateSeed | undefined {
+  if (checkpoint) return {
+    position: checkpoint.position,
+    state: new Map(checkpoint.durable.filter(entry => entry.family === undefined).map(entry => [entry.name, entry.state] as const)),
+    atoms: new Map(checkpoint.durable.map(entry => [atomCheckpointKey(entry), { state: entry.state, position: entry.position ?? checkpoint.position }] as const)),
+  }
   const first = records.at(0)?.event
   const index = Schema.is(ThreadCreated)(first) ? 1 : 0
   const event = records.at(index)?.event
