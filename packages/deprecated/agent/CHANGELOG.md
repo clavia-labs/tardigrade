@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.52.0](https://github.com/clavia-labs/tardigrade/compare/v0.51.0...v0.52.0) (2026-10-31)
+
+
+### Features
+
+* **core:** add durable logs ([#817](https://github.com/clavia-labs/tardigrade/issues/817)) ([c446564](https://github.com/clavia-labs/tardigrade/commit/c446564a0f5d07c2ded14acb8249275d63625aaa))
+* **core:** add typed logs ([#818](https://github.com/clavia-labs/tardigrade/issues/818)) ([884797a](https://github.com/clavia-labs/tardigrade/commit/884797a9698c97d44f9ae050c0ee6c95d099cdc5))
+* **core:** durable atom families ([#811](https://github.com/clavia-labs/tardigrade/issues/811)) ([40e0d16](https://github.com/clavia-labs/tardigrade/commit/40e0d162c9141b298fe2031c7bb912e9f7c6fa24))
+* **core:** support unbounded promises ([#814](https://github.com/clavia-labs/tardigrade/issues/814)) ([db99119](https://github.com/clavia-labs/tardigrade/commit/db991190ee2ce33edb257577d454c799942afa09))
+* **core:** unify atom checkpoints ([#832](https://github.com/clavia-labs/tardigrade/issues/832)) ([0c47549](https://github.com/clavia-labs/tardigrade/commit/0c47549047ca6120f4619adec2a12abab48bcc79))
+* **model:** support image URLs ([#821](https://github.com/clavia-labs/tardigrade/issues/821)) ([7b5746e](https://github.com/clavia-labs/tardigrade/commit/7b5746e912f9167a8479e941c85f083025fa6eab))
+
+
+### Bug Fixes
+
+* **agent:** anchor compaction usage ([#824](https://github.com/clavia-labs/tardigrade/issues/824)) ([4c699b0](https://github.com/clavia-labs/tardigrade/commit/4c699b06f263aa6f7d8c01c8090c8bed49ea7621))
+* **agent:** discover compaction state ([#812](https://github.com/clavia-labs/tardigrade/issues/812)) ([907840a](https://github.com/clavia-labs/tardigrade/commit/907840a2228a16761aeebdc44432321db39e502f))
+* **agent:** measure retained context ([#826](https://github.com/clavia-labs/tardigrade/issues/826)) ([9ba1397](https://github.com/clavia-labs/tardigrade/commit/9ba13979e251f338a0f6c7baaf29f4f2d67a34d5))
+* **core:** checkpoint unread seeded atoms ([#809](https://github.com/clavia-labs/tardigrade/issues/809)) ([e06d397](https://github.com/clavia-labs/tardigrade/commit/e06d397eeb27d87e299a5fc6d35ae513f8709674))
+* **core:** recover orphaned producers ([#813](https://github.com/clavia-labs/tardigrade/issues/813)) ([ebb1743](https://github.com/clavia-labs/tardigrade/commit/ebb17438291aadbd2ad06747f89c209d38c9e44a))
+* **core:** unblock promise deadlines ([#816](https://github.com/clavia-labs/tardigrade/issues/816)) ([a41cedf](https://github.com/clavia-labs/tardigrade/commit/a41cedf82a4c2087aed3d9ea51c294f827f4851f))
+* **supervisor:** tolerate settled outcomes ([#815](https://github.com/clavia-labs/tardigrade/issues/815)) ([1911251](https://github.com/clavia-labs/tardigrade/commit/1911251d892fcf57ade4345d0ac38361692085fb))
+
+
+### Performance Improvements
+
+* **agent:** use log context ([#819](https://github.com/clavia-labs/tardigrade/issues/819)) ([ae191ca](https://github.com/clavia-labs/tardigrade/commit/ae191ca8459df4aa62c03fb341918476f2a344e8))
+* **model:** stream inline images ([#822](https://github.com/clavia-labs/tardigrade/issues/822)) ([09108b3](https://github.com/clavia-labs/tardigrade/commit/09108b37b10ecc72c39bbe05d211e8eca9f55b26))
+
 ## [0.51.0](https://github.com/clavia-labs/tardigrade/compare/v0.50.0...v0.51.0) (2026-10-22)
 
 
