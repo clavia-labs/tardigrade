@@ -1,3 +1,9 @@
+import { checkpointAtomKinds } from "../fixtures/atoms/atom"
+import { atomPopulationKinds } from "../fixtures/atoms/population"
+import { atomCheckpointStorageSafety } from "../properties/checkpoint/storage-safety"
+import { checkpointLimits } from "../properties/checkpoint/limits"
+import { checkpointSchema, checkpointFormats } from "../properties/checkpoint/schema"
+import { familyCheckpointIndexing } from "../properties/checkpoint/family"
 import { logStorage } from "../properties/log"
 import { modelContextRecovery } from "../properties/turn-facts"
 import { journalCommit } from "@clavia/tardigrade-core"
@@ -17,10 +23,13 @@ import { runInDurableObject, evictDurableObject } from "cloudflare:test"
 import { cloudflareJournal, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "../../src/cloudflare"
 import { pendingInputRecovery, cancellationInputRecovery, stoppedInputRecovery, cancellationStall, cancellationRetryRecovery } from "../properties/runtime/pending-input-recovery"
 import { DEFAULT_WAIT_POLICY, testStage, waitFor } from "../fixtures/wait"
-import { checkpointStorage } from "../properties/checkpoint-storage"
-import { lazyAtomRecovery } from "../properties/runtime/atom-checkpoint"
+import { checkpointStorage } from "../properties/checkpoint/storage"
+import { atomCheckpointLiveness } from "../properties/checkpoint/liveness"
+import { atomCheckpointSafety, atomReplaySafety, atomCheckpointValidation } from "../properties/checkpoint/safety"
 import type { TestPromiseResolver, InputLifecycleDO } from "../fixtures/workerd/fixture.worker"
 
+
+test("checkpoint payload formats", checkpointFormats)
 
 test("checkpointStorage", async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
@@ -56,12 +65,26 @@ test("accepted input recovery", async () => {
   }
 })
 
-test("lazy atom checkpoint recovery", async () => {
+for (const kind of checkpointAtomKinds) test(`atom replay safety (${kind})`, () => fc.assert(atomReplaySafety(kind), RUNTIME_PROPERTY_OPTIONS), RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+
+for (const kind of atomPopulationKinds) {
+  test(`atom checkpoint validation (${kind})`, () => atomCheckpointValidation(kind))
+  test(`atom checkpoint safety (${kind})`, () => fc.assert(atomCheckpointSafety(kind), RUNTIME_PROPERTY_OPTIONS), RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+  test(`atom checkpoint liveness (${kind})`, async () => {
+    const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
+    await runInDurableObject(namespace.getByName(`checkpoint-liveness-${kind}`), async (_instance, state) => {
+      await atomCheckpointLiveness(kind, { open: () => cloudflareJournal(state.storage, "lifecycle") })
+    })
+  }, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+}
+
+
+for (const kind of atomPopulationKinds) test(`atom checkpoint storage safety (${kind})`, async () => {
   const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
-  await runInDurableObject(namespace.getByName("lazy-atom-checkpoint"), async (_instance, state) => {
-    await lazyAtomRecovery({ open: () => cloudflareJournal(state.storage, "lazy-checkpoint") })
+  await runInDurableObject(namespace.getByName(`checkpoint-storage-${kind}`), async (_instance, state) => {
+    await atomCheckpointStorageSafety(kind, { open: () => cloudflareJournal(state.storage, "storage", { checkpointChunkBytes: 23 }), execute: query => state.storage.sql.exec(query).toArray() })
   })
-})
+}, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
 
 for (const mode of ["producer", "cleanup", "failure", "defect", "rejected"] as const) {
   test(`unresolved cancellation: ${mode}`, async () => {
@@ -278,3 +301,24 @@ test("logStorage", async () => {
     await logStorage({ open: () => cloudflareJournal(state.storage, "events", { familyIndexBatchSize: 8 }), execute: query => state.storage.sql.exec(query).toArray() })
   })
 }, RUNTIME_PROPERTY_TEST_TIMEOUT_MS)
+
+test("family checkpoint indexing", async () => {
+  const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
+  await runInDurableObject(namespace.getByName("family-checkpoint"), async (_instance, state) => {
+    await familyCheckpointIndexing({ open: () => cloudflareJournal(state.storage, "family", { checkpointChunkBytes: 23 }) })
+  })
+})
+
+test("checkpoint schema migration", async () => {
+  const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
+  await runInDurableObject(namespace.getByName("checkpoint-schema"), async (_instance, state) => {
+    await checkpointSchema({ open: () => cloudflareJournal(state.storage, "schema", { checkpointChunkBytes: 23 }), execute: query => state.storage.sql.exec(query).toArray() })
+  })
+})
+
+test("combined checkpoint write limit", async () => {
+  const namespace = (env as unknown as { PROMISE_RESOLVER: DurableObjectNamespace<TestPromiseResolver> }).PROMISE_RESOLVER
+  await runInDurableObject(namespace.getByName("checkpoint-limits"), async (_instance, state) => {
+    await checkpointLimits({ open: () => cloudflareJournal(state.storage, "limits") })
+  })
+})

@@ -1,3 +1,5 @@
+export { RegularCheckpointActorDO, RegularCheckpointThreadDO, FamilyCheckpointActorDO, FamilyCheckpointThreadDO, MixedCheckpointActorDO, MixedCheckpointThreadDO } from "./checkpoint-e2e.worker"
+import { checkpointFetch } from "./checkpoint-e2e.worker"
 import { completionState } from "../completion-state"
 import { effectServiceClient, type EffectServicePolicy } from "../effect-service"
 import { waitFor } from "../wait"
@@ -9,9 +11,9 @@ import layout from "./layout-fixture"
 import { retryFetch } from "./retry-fixture.worker"
 import { slowFetch } from "./slow-act-fixture.worker"
 
-export default { fetch: (request: Request, env: Parameters<typeof retryFetch>[1] & Parameters<typeof slowFetch>[1] & Parameters<typeof layout.fetch>[1]) => {
+export default { fetch: (request: Request, env: Parameters<typeof retryFetch>[1] & Parameters<typeof slowFetch>[1] & Parameters<typeof layout.fetch>[1] & Parameters<typeof checkpointFetch>[1]) => {
   const path = new URL(request.url).pathname
-  return path.startsWith("/v1/actors/retry-direct-") ? retryFetch(request, env) : path.startsWith("/v1/actors/watchdog-slow-") ? slowFetch(request, env) : layout.fetch(request, env)
+  return path.startsWith("/v1/actors/checkpoint-e2e-") ? checkpointFetch(request, env) : path.startsWith("/v1/actors/retry-direct-") ? retryFetch(request, env) : path.startsWith("/v1/actors/watchdog-slow-") ? slowFetch(request, env) : layout.fetch(request, env)
 },
 }
 import { DurableObject } from "cloudflare:workers"
