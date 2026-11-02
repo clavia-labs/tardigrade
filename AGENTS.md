@@ -1,6 +1,6 @@
 # AGENTS.md
 
-[docs/start-here/Welcome.mdx](docs/start-here/Welcome.mdx) introduces the framework and links its published documentation. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the gate, and pull requests.
+[docs/introduction.mdx](docs/introduction.mdx) introduces the framework and links its published documentation. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the gate, and pull requests.
 
 ## Design
 

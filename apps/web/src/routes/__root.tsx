@@ -1,7 +1,7 @@
 import { HeadContent, Outlet, Scripts, createRootRoute, useRouterState } from "@tanstack/react-router"
 import type { ReactElement, ReactNode } from "react"
 
-import { SiteShell } from "../App"
+import { SiteShell } from "../site/SiteShell"
 import "katex/dist/katex.min.css"
 import "../styles.css"
 

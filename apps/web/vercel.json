@@ -2,6 +2,45 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "tanstack-start",
   "redirects": [
-    { "source": "/notes/telling-forms-from-the-shadows", "destination": "/notes/telling-forms-from-their-shadows", "permanent": true }
+    {
+      "source": "/docs/why",
+      "destination": "/notes/why-tardigrade",
+      "permanent": true
+    },
+    {
+      "source": "/docs/why-tardigrade",
+      "destination": "/notes/why-tardigrade",
+      "permanent": true
+    },
+    {
+      "source": "/docs/forms-and-shadows",
+      "destination": "/notes/forms-and-shadows",
+      "permanent": true
+    },
+    {
+      "source": "/notes/telling-forms-from-the-shadows",
+      "destination": "/notes/forms-and-shadows",
+      "permanent": true
+    },
+    {
+      "source": "/notes/telling-forms-from-their-shadows",
+      "destination": "/notes/forms-and-shadows",
+      "permanent": true
+    },
+    {
+      "source": "/docs/notes",
+      "destination": "/notes",
+      "permanent": true
+    },
+    {
+      "source": "/docs/notes/why-tardigrade",
+      "destination": "/notes/why-tardigrade",
+      "permanent": true
+    },
+    {
+      "source": "/docs/notes/forms-and-shadows",
+      "destination": "/notes/forms-and-shadows",
+      "permanent": true
+    }
   ]
 }

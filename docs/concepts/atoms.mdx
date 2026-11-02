@@ -1,0 +1,168 @@
+---
+title: Atoms
+description: Learn how durable atoms hold state, and effect atoms propose actions.
+articleClass: atoms-article
+route: /docs/atoms
+section: Concepts
+sectionOrder: 2
+order: 3
+---
+
+Atoms are the smallest state primitive of Tardigrade. Think of them like cells in a spreadsheet. Once you store a value in a cell, other cells can refer to it to derive new values. They can easily compose on top of each other and make it easy to author complex logic.
+
+<AtomSpreadsheet />
+
+Atoms can read the values of other atoms. This creates a reactive graph where the an atom is automically recomputed when the value of connected atoms change.
+
+## Durable Atom
+
+A durable atom is an atom backed by an append-only event log. Its value at any given point can be derived from the events that led to it. This makes the value survive across restarts and crashes.
+
+<DurableAtomDiagram />
+
+
+Take a simple example of a durable atom that holds a count. To increase the count, we append an event called `Incremented` and `Decremented` to decrease the count. Both of these can be called `CounterEvent`.
+
+```ts
+import { Schema } from "effect"
+import { atom, durableAtom } from "tardie/core"
+
+const Incremented = Schema.Struct({
+  type: Schema.Literal("Incremented"),
+})
+
+const Decremented = Schema.Struct({
+  type: Schema.Literal("Decremented"),
+})
+
+const CounterEvent = Schema.Union([Incremented, Decremented])
+```
+
+To get the count whenever a `CounterEvent` is added, we use a reduce function. In this case, it takes the count at the given point and the event that's added to find the new count. For example, if the count is 10, and an `Incremeented` event is added, the count becomes 11.
+
+```ts
+const count = durableAtom({
+  name: "counter.count",
+  input: CounterEvent,
+  schema: Schema.Int,
+  initial: 0,
+  reduce: (count, event) =>
+    event.type === "Incremented" ? count + 1 : count - 1,
+})
+
+const doubled = atom(get => get(count) * 2)
+```
+
+## Effect Atom
+
+An effect atom proposes actions to be performed in the real world. For example, we might want to make a console log whenever the value of count is even.
+
+<EffectAtomDiagram />
+
+```ts
+import { Effect, Schema } from "effect"
+import { act, effectAtom } from "tardie/core"
+
+const Notify = act({
+  name: "notify",
+  input: Schema.Int,
+  success: Schema.Null,
+  failure: Schema.String,
+})
+
+const notify = effectAtom(get => ({
+  view: get(count),
+  events: {},
+  acts: get(count) > 0 && get(count) % 2 === 0
+    ? { notify: Notify.request({ input: get(count) }) }
+    : {},
+}))
+
+export const notifyLayer = Notify.layer(count =>
+  Effect.log(`${count} is even`).pipe(Effect.as(null))
+)
+```
+
+`notifyLayer` supplies the implementation of `notify` to the host.
+
+## Advanced
+
+### Durable Atom Family
+
+A durable atom family is a keyed collection of atoms.
+
+<DurableAtomFamilyDiagram />
+
+
+
+An example of counter state to be associated with multiple users:
+
+```ts
+import { Schema } from "effect"
+import { atom } from "tardie/core"
+import { durableAtom } from "tardie/experimental"
+
+const CounterEvent = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("Incremented"), id: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("Decremented"), id: Schema.String }),
+])
+
+const counters = durableAtom.family({
+  name: "counters",
+  input: CounterEvent,
+  schema: Schema.Int,
+  initial: 0,
+  key: event => event.id,
+  reduce: (count, event) =>
+    event.type === "Incremented" ? count + 1 : count - 1,
+})
+
+const rick = counters("rick")
+const morty = counters("morty")
+const total = atom(get => get(rick) + get(morty))
+```
+
+### Durable Atom Log
+
+A durable atom log projects matching events into ordered rows. This is useful for growing histories, such as messages or activity feeds. Each event produces a row, and you can read a page of rows without collecting the whole history into a single atom.
+
+<DurableAtomLogDiagram />
+
+An example is the conversation history with an agent.
+
+```ts
+import { Schema } from "effect"
+import { durableAtom } from "tardie/experimental"
+
+const MessageAdded = Schema.Struct({
+  type: Schema.Literal("MessageAdded"),
+  text: Schema.String,
+})
+
+const messages = durableAtom.log({
+  name: "conversation.messages",
+  input: MessageAdded,
+  project: event => event.text,
+  schema: Schema.String,
+})
+```
+
+Read the message values and pass them to another function:
+
+```ts
+import { atom } from "tardie/core"
+
+const formatConversation = (messages: readonly string[]) =>
+  messages.join("\n")
+
+const latest = messages.range({ order: "desc", limit: 20 })
+
+const transcript = atom(get => {
+  const texts = get(latest).rows.toReversed().map(row => row.value)
+  return formatConversation(texts)
+})
+```
+
+## Next
+
+Compose atoms into an actor and expose methods for the outside world to interact with it. Continue to [Actors](/docs/actors).

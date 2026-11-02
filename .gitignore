@@ -5,6 +5,7 @@ node_modules/
 dist/
 build/
 out/
+/output/
 *.tsbuildinfo
 
 # Test output and tool caches

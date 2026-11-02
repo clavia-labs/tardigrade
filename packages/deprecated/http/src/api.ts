@@ -66,7 +66,7 @@ const actorOf = (threads: Context.Service.Shape<typeof Threads>, id: string) =>
     actor === undefined ? Effect.fail(UnknownActor.of(unknownActorDetail(id))) : Effect.succeed(actor))
 
 // logOf reads a thread's events, failing the route when the log is empty. A thread exists once its
-// log has an event (docs/how-to/server.md, "Creation is delivery"), so an empty log is the only
+// log has an event (docs/references/http-server.md, "Creation is delivery"), so an empty log is the only
 // unknown thread there is.
 const logOf = (read: (id: string) => Effect.Effect<ReadonlyArray<Event>>, id: string) =>
   Effect.flatMap(read(id), (log) =>

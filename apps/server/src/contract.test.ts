@@ -149,7 +149,7 @@ describe("the OpenAPI document", () => {
 
 describe("problem documents", () => {
   // RFC 9457's four fields are what the voyager renders, so every failure carries all four rather
-  // than whichever subset a schema default would leave (docs/how-to/server.md, "Endpoints").
+  // than whichever subset a schema default would leave (docs/references/http-server.md, "Endpoints").
   test("carry type, title, status, and detail", async () => {
     const failures = await serving({}, (client) =>
       Effect.gen(function*() {
