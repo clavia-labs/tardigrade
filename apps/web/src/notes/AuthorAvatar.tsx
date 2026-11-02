@@ -1,6 +1,6 @@
 import { useId, type ReactElement } from "react"
 import arjun from "../../../../assets/authors/arjun-square-clear.svg"
-import { PostalStamp } from "../PostalStamp"
+import { PostalStamp } from "../site/artwork/PostalStamp"
 
 // hatches are hand-drawn "/" strokes, each drawn from its lower-left end to its upper-right end, ordered from the top-left corner down to the bottom-right; a fixed wobble per stroke keeps renders stable.
 const hatches = Array.from({ length: 20 }, (_, index) => {

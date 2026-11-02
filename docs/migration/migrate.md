@@ -1,0 +1,219 @@
+# Migrate an existing agent
+
+This guide moves an existing agent application to Tardigrade. It uses Vercel AI SDK names because they are common, and the same inventory applies to another agent harness. The migration covers actor logic, stored conversations, the HTTP boundary, client updates, and deployment configuration.
+
+Read the [Tardigrade skill](../../skills/tardigrade/SKILL.md), the [agent guide](../guides/build-an-agent.mdx), and the [server guide](../references/http-server.md) before editing the application.
+
+## Inventory and baseline
+
+Record the current behavior before changing code:
+
+- Find the agent definition, model configuration, system instructions, tools, stopping rules, structured outputs, persistence, API routes, client state, authentication, and deployment commands.
+- Run the existing tests and save their commands and results.
+- Choose one representative task with a stable input and an answer that can be checked for semantic parity.
+- Run that task once with the current harness. Record the provider, model, model settings, output, input tokens, output tokens, provider cost, and wall-clock latency. Vercel AI SDK exposes aggregate model usage through `totalUsage` on [`generateText`](https://ai-sdk.dev/docs/reference/ai-sdk-core/generate-text) and agent results.
+- Count nonblank, non-generated lines in the agent loop, tool adapters, persistence, API, and client integration. Report any one-time history import script separately.
+- List direct agent and model dependencies from the application manifest.
+
+Use the same provider, model, settings, task, data, and measurement boundary for the Tardigrade run. If a value cannot be collected on both runs, report it as unavailable.
+
+## Map the harness
+
+The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop control](https://ai-sdk.dev/docs/agents/loop-control), [`generateText` and `streamText`](https://ai-sdk.dev/docs/ai-sdk-core/generating-text), [tools](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling), [structured output](https://ai-sdk.dev/docs/ai-sdk-core/generating-structured-data), and [UI stream responses](https://ai-sdk.dev/docs/reference/ai-sdk-core/create-agent-ui-stream-response). Map another framework by responsibility instead of type name.
+
+| Existing concern | Tardigrade home |
+| --- | --- |
+| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `actor({ name, methods, components: [infer([...])] })`; pass `{ models: { allow?, default? } }` as the second argument to `infer` to narrow or override the host policy |
+| System instructions | `system(...)` |
+| Tool declarations and handlers | Package components mounted through `codeMode`, or fixed tools mounted through `tool` |
+| `stopWhen`, maximum steps, and retry options | `budget`, `infer` policy, and domain components with explicit policy values |
+| `prepareStep` and dynamic context | A component whose `step(state, event)` tracks sufficient state and whose `output(state)` changes its view |
+| Message arrays and conversation storage | One append-only event log per thread |
+| Structured output | `output(...)` plus `outputValidateOnce` or `outputRepairFor(...)` |
+| Lifecycle callbacks and telemetry | Recorded events, usage projections, and host telemetry |
+| AI SDK UI stream protocol | `makeActorClient().call()` plus the durable event stream from `follow()` |
+
+Install Tardigrade with the repository's package manager. Bun 1.4 or later runs the CLI and the durable SQLite host.
+
+```bash
+bun add tardie
+bunx tardie init agent --dir agents/agent
+```
+
+Edit the generated `agents/agent/actor.ts`. Keep the actor name stable across build, push, client configuration, and stored traces.
+
+### Instructions and tools
+
+Move static system text into `system(...)`. When instructions depend on recorded events, declare their sufficient state with `initial`, `step`, and `output` so each event updates the projection once:
+
+```ts
+system({
+  initial: () => ({ installed: 0 }),
+  step: (state, event) => event.type === "PackageInstalled" ? { installed: state.installed + 1 } : state,
+  output: (state) => `Installed packages: ${state.installed}`
+})
+```
+
+Keep application data out of the prompt when a scoped package can read it on demand.
+
+Use a package component through `codeMode([...components])` when its methods are ordinary operations that the model can combine, filter, or repeat in JavaScript. This exposes one `execute` tool to the model and keeps package methods behind the code surface. Use `tool` when a provider-visible tool call, approval step, or exact tool schema is part of the application contract.
+
+Preserve tool names, descriptions, input checks, authorization, side-effect rules, and result shapes during the first pass. Convert Zod or framework-specific schemas to the JSON Schema accepted by Tardigrade. Wrap asynchronous handlers in Effect and turn expected failures into serializable results that the model can act on.
+
+Move related tools to code packages only when the decision rule above applies. Measure the result because one `execute` schema can reduce repeated tool-schema context while code generation and compaction can add model work.
+
+### Policies and output
+
+State every policy that affects behavior. `budget([codeMode(packages)], { limit })` limits calls within its component subtree, so it is not a direct replacement for a model-step limit that counts completions. Express a custom stop condition as a component whose state retains the events that affect the decision. Pass `giveUpAfter` through the second argument to `infer`, and use `compaction(...)` when the application needs a model-window resolver or hysteresis ratios that differ from `DEFAULT_COMPACTION_POLICY`.
+
+Convert each structured result to `output({ name, schema })`. Send that contract with the turn and mount one explicit fallback. Use `outputValidateOnce` when one invalid response should end the turn, or `outputRepairFor({ attempts, projectHistory })` when bounded correction is part of the product behavior.
+
+### Model binding
+
+Keep the baseline provider and model when the Tardigrade binding supports their transport. The built-in binding accepts OpenAI Responses, OpenAI-compatible chat completions, Anthropic Messages, and Bedrock Converse. Run `tdg setup` to write the first private provider connection and default model together. Once that baseline exists, use `tdg setup provider` or `tdg setup default` when the migration changes one concern. The server resolves model metadata from its catalog snapshot.
+
+List every model option and check that the selected provider represents it. Supply custom providers through Effect's `LanguageModel` service. Libraries with another model interface need a bridge to that service. Configure request limits through `maxOutputTokens`, `timeout`, and `retry`. Keep provider options, output guarantees, and model identity explicit.
+
+## Move the application boundary
+
+Enter the actor directory, build it, then start its API:
+
+```bash
+cd agents/agent
+tdg build actor.ts
+bun run dev
+```
+
+Replace direct model invocation in the application backend with the generated client:
+
+```ts
+import { makeActorClient } from "tardie/deprecated/client"
+import { agentMethods } from "tardie/deprecated/agent"
+
+const client = makeActorClient({
+  baseUrl: process.env.TARDIGRADE_URL!,
+  methods: agentMethods
+})
+
+const instance = "main"
+const thread = await client.allocateRoot(instance, conversationId)
+const invocation = await client.call(instance, thread.thread, "message", {
+  id: messageId,
+  input: { text }
+})
+```
+
+Use a stable `conversationId` as the requested thread name and a stable `messageId` for each user turn. Retain the assigned thread coordinate. Reuse the message ID when retrying the call so the log absorbs the duplicate. `client.state(invocation)` reads its durable result.
+
+Replace AI SDK UI transport and `useChat` state with application state derived from Tardigrade events. In a browser, follow a thread after its last rendered sequence:
+
+```ts
+const stop = client.follow(instance, thread.thread, {
+  after: lastSequence,
+  onEvent: ({ seq, event }) => {
+    lastSequence = seq
+    render(event)
+  },
+  onError: showStreamError
+})
+```
+
+Render `MessageReceived` as the user turn, `TextReturned` as working text, `ToolCalled` and `ToolReturned` as progress, `TurnCompleted` as the final answer, and `TurnFailed` as the failure. The stream carries durable event-level updates. It does not carry provider token chunks.
+
+Bun and Node consumers without `EventSource` can poll `client.events(instance, thread.thread, { after })` or supply an `eventSource` factory in the follow options. Browser `EventSource` cannot attach the bearer token used by `TARDIGRADE_TOKEN`. Keep a protected Tardigrade server private and relay its authenticated event stream through the application backend. Use `client.events(instance, thread.thread, { after })` as a polling fallback when the relay is unavailable.
+
+Keep an existing public API route as an adapter until every caller uses the new event and result shapes. Remove the adapter after its consumers and tests move to the Tardigrade client.
+
+## Import conversation history
+
+Import history into a separate SQLite database. Keep the source store unchanged until the new system passes validation and its rollback window ends. Stop writes or take a consistent export before conversion.
+
+Use `createBunHost().seed()` from `tardie/deprecated/bun/host` for imported history. This lower-level host opens one actor instance database; its actor name, instance ID, and database filename must match the host that will serve it. `seed` appends a complete batch without waking the actor, so recorded conversations do not run again during import.
+
+```ts
+import { join } from "node:path"
+import { createBunHost } from "tardie/deprecated/bun/host"
+import type { Event } from "tardie/deprecated/core/event"
+import definition from "./actor"
+
+const storage = ".tardigrade/imported"
+const instance = "main"
+const filename = Buffer.from(JSON.stringify([definition.name, instance])).toString("base64url")
+const host = await createBunHost({
+  database: join(storage, `${filename}.sqlite`),
+  actorName: definition.name,
+  actorInstance: instance,
+  actorFor: () => undefined
+})
+
+try {
+  const thread = await host.allocate({
+    kind: "root",
+    coordinate: { actor: definition.name, instance, thread: "legacy-conversation-42" }
+  })
+  const turn = "legacy:conversation-42:message-7"
+  const events: Event[] = [
+    { type: "MessageReceived", id: turn, text: "What changed?", at: 1_700_000_000_000 },
+    { type: "TurnCompleted", turn, output: "The deployment changed.", at: 1_700_000_001_000 }
+  ]
+  await host.seed(thread.thread, events)
+} finally {
+  await host.close()
+}
+```
+
+Derive stable thread, turn, and call ids from legacy identifiers. Preserve event order and timestamps. Every imported `MessageReceived` must have one terminal in its active epoch.
+
+Map a complete tool exchange between its message and terminal as `ToolCalled` followed by `ToolReturned`. Stamp both events with the turn id, keep call ids unique within the thread, and preserve the tool arguments and result. Map stored assistant working text to `TextReturned` with the same turn id.
+
+Map an incomplete legacy turn to `TurnFailed` with the same turn id, a clear import error, and `cause: "inference_error"`. Include any saved partial assistant text as `TextReturned` before the failure. This keeps every imported thread settled and makes the incomplete state visible.
+
+Before running the script, refuse an existing target storage directory. A fresh target makes the script repeatable from the unchanged source and prevents duplicate unkeyed history events.
+
+Validate the import before cutover:
+
+1. Compare source conversation, message, tool call, tool result, and terminal counts with the target events.
+2. Check that timestamps and ids retain their order and that every call and turn is complete.
+3. Start `TARDIGRADE_ACTOR_DATA=.tardigrade/imported bun run dev`, inspect representative threads with `tdg events`, and confirm that no turn is pending and `tdg ls` reports no imported thread as running or blocked.
+4. Send a new message to an imported thread and verify that the model receives the imported context and produces one new terminal.
+5. Stop and restart the server, then confirm the imported history and new turn remain available.
+
+## Compare the result
+
+Run the same representative task once with Tardigrade. Use the same model, settings, input, data, and timer boundary as the baseline. Check semantic output parity before comparing efficiency.
+
+Use `usageIn(events, turn)` or the recorded attempt usage to total Tardigrade input and output tokens. Each usage stamp keeps normalized cache-read, cache-write, and reasoning counts when the provider supplies them. Each `providerReports` entry keeps one physical request's unconventional fields unchanged under `providerSpecific`, including reports from retried requests. `providerReports` is always an array, including when there is only one report. `reportedCostUsd` keeps the provider figure, and `estimatedCostUsd` keeps an independent projection from the configured price table. `costUsd` remains the provider figure when available and otherwise uses the table estimate. Measure latency from request delivery through the terminal event.
+
+A price table needs `cachedPromptUsdPerToken` or `cacheWritePromptUsdPerToken` when the matching usage bucket is greater than zero. Tardigrade leaves the estimate unknown when a reported cache bucket has no declared rate. Calling `priced` with a complete new table recomputes `estimatedCostUsd`; a table that cannot price the usage preserves a recorded estimate.
+
+For each numeric measure, report `change = Tardigrade - existing` and `percent = change / existing * 100`. A negative token, cost, latency, line, or dependency change is a reduction. Leave the percentage unavailable when the existing value is zero or either value is missing.
+
+| Measure | Existing | Tardigrade | Change | Method |
+| --- | ---: | ---: | ---: | --- |
+| Harness lines | | | | Nonblank, non-generated lines in the inventoried harness and integration files |
+| Direct dependencies | | | | Agent and model dependencies in the application manifest |
+| Input tokens | | | | One matched task |
+| Output tokens | | | | One matched task |
+| Cost | | | | Provider value or stated price table |
+| Latency | | | | Delivery through terminal |
+
+Treat one matched model run as a sample. State any output difference or provider variance that limits the comparison. Report a regression with the same detail as an improvement.
+
+## Cut over and report
+
+Prepare the production Tardigrade deployment, database path, credentials, health check, and client URL. Keep production deployment as a separate authorized action. The migration itself proves the local actor with `tdg build`, `bun run dev`, and a representative `tdg call`.
+
+Keep the existing endpoint and store available for rollback. Switch traffic only after tests pass, imported threads settle, a new turn succeeds, and the application renders event progress and terminals. Remove the existing harness dependencies after a repository search finds no remaining imports and the rollback window closes.
+
+Finish with a short report containing:
+
+- A summary of the actor, tool, policy, persistence, API, client, history, and deployment configuration changes.
+- Existing test results, migration checks, and the matched task result.
+- The comparison table with unavailable values labeled.
+- Known behavior gaps and rollback instructions.
+- The thread and event evidence for the migrated task.
+
+
+### Failed attempt accounting
+
+`costsOf(events)` and `usageIn(events, turn)` exclude failed `ModelReturned` attempts from aggregate totals. Failed attempts retain their original usage and cost evidence in the log and in `costsOf(events).attempts`. Excluding failed attempts can undercount billed work; it does not establish that inference never started.

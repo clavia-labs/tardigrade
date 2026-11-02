@@ -95,7 +95,7 @@ export const layerAuth = (token?: string) => HttpRouter.middleware(
 export type { Health }
 
 // 200 whenever the host answers, carrying the driver's state and the count of threads that still owe
-// work (docs/how-to/server.md, "Endpoints").
+// work (docs/references/http-server.md, "Endpoints").
 export const layerHealthGroup = HttpApiBuilder.group(Api, "health", (handlers) =>
   handlers.handle("healthz", () =>
     Effect.gen(function*() {

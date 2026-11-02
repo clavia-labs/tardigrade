@@ -30,7 +30,7 @@
         "@effect/language-service"
       ],
       "entry": [
-        "tools/*.ts",
+        "tools/*.ts", "tools/bundle-size/*.ts",
         "tools/**/*.test.ts",
         "examples/*/*.ts"
       ],

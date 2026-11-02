@@ -1,7 +1,7 @@
 import { Link, createRouter } from "@tanstack/react-router"
 import type { ReactElement } from "react"
 
-import { PuzzleGrid } from "./PuzzleGrid"
+import { PuzzleGrid } from "./site/artwork/PuzzleGrid"
 import { routeTree } from "./routeTree.gen"
 
 const notFoundRows = ["10010011111010010", "10010010001010010", "11111010001011111", "00010010001000010", "00010011111000010"]

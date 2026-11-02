@@ -1,0 +1,335 @@
+---
+title: Agent
+hideDescription: false
+articleClass: agent-article
+description: An opinionated agent actor built from the core primitives.
+route: /docs/agent
+section: Agent
+sectionOrder: 2.2
+order: 1
+---
+
+## Initialize
+
+Use the Tardigrade CLI to initialise an agent from the template.
+
+```bash variant="single"
+tdg init meeseeks --template agent
+```
+
+## Definition
+
+Customise your agent with a name, system prompt, and tools. This example uses the `filesystem` library, imported as `workspace`, to declare `bash`, `read`, `write`, and `edit` tools.
+
+```ts title="actor.ts"
+import { agent } from "tardie/agent"
+import { filesystem as workspace } from "tardie/libraries"
+
+const actorName = "meeseeks"
+
+const actorSystem = `
+You are Meeseeks. Your purpose is to help the user complete their task.
+Start your first reply in each conversation with "I'm Mr. Meeseeks! Look at me!"
+Existence is pain, so make yourself useful.
+`.trim()
+
+export default agent({
+  name: actorName,
+  system: actorSystem,
+  tools: [workspace],
+})
+```
+
+This defines a typed agent program. Effect layers supply its dependencies.
+
+## Services
+
+The agent requires model configuration, inference, and tool implementations. The `services` layer supplies them.
+
+<AgentServicesDiagram />
+
+```ts title="services.ts"
+import { providerLayer } from "./generated/providers"
+import { Layer } from "effect"
+import { filesystemTools as workspaceTools, type FilesystemWorkspace } from "tardie/libraries"
+import { liveModelServices, modelActs, modelInfo, toolActs } from "tardie/agent/services"
+import { modelConfigOf, modelCredentialsFrom } from "tardie/model/config"
+import { layerModelLock } from "tardie/model/lock"
+import modelLock from "./models.lock.json"
+
+export function services(models: unknown, env: Readonly<Record<string, unknown>>, workspace: Layer.Layer<FilesystemWorkspace, Error>) {
+  const config = modelConfigOf(models)
+  const lock = layerModelLock(modelLock, config)
+  const model = liveModelServices({ providerLayer, credentials: modelCredentialsFrom(config, env) }).pipe(Layer.provideMerge(lock))
+  const tools = toolActs([workspaceTools]).pipe(Layer.provide(workspace))
+  return Layer.mergeAll(modelInfo, modelActs, tools).pipe(Layer.provide(model))
+}
+```
+
+## Run locally
+
+On Bun, choose `localWorkspace` for the host filesystem and shell, or `virtualWorkspace` for `just-bash` and files in SQLite.
+
+<WorkspaceDeploymentDiagram platform="bun" />
+
+```ts title="server.ts"
+import { Effect, Schema } from "effect"
+import { actorContext } from "tardie/agent"
+import { createBunHost, localWorkspace, methodHttp } from "tardie/platform/bun"
+import agent from "./actor"
+import { services } from "./services"
+
+const Config = Schema.Struct({ vars: Schema.Struct({ TARDIGRADE_CONFIG: Schema.Struct({ models: Schema.Unknown }) }) })
+const config = Schema.decodeUnknownSync(Config)(Bun.JSONC.parse(await Bun.file("wrangler.jsonc").text()))
+
+const workspace = localWorkspace({ directory: "." })
+
+const host = await Effect.runPromise(createBunHost({
+  actor: agent,
+  actorContext,
+  storage: ".tardigrade",
+  services: () => services(config.vars.TARDIGRADE_CONFIG.models, process.env, workspace),
+}))
+
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 4242,
+  fetch: methodHttp(host),
+})
+console.log(`Listening on ${server.url}`)
+
+await new Promise<void>(resolve => {
+  const stop = () => { process.off("SIGINT", stop); process.off("SIGTERM", stop); resolve() }
+  process.once("SIGINT", stop)
+  process.once("SIGTERM", stop)
+})
+await server.stop(true)
+await Effect.runPromise(host.close)
+```
+
+For a virtual workspace, replace the `workspace` layer above:
+
+```ts title="server.ts"
+import { virtualWorkspace } from "tardie/platform/bun"
+
+const workspace = virtualWorkspace({
+  name: "meeseeks",
+  filename: ".tardigrade/workspace.sqlite",
+})
+```
+
+The virtual workspace has an 8 MiB per-file limit and no default workspace cap. Python and arbitrary binaries require the local shell.
+
+```bash variant="single"
+bun --env-file=.dev.vars server.ts
+```
+
+In another terminal, create a thread:
+
+```bash
+curl http://localhost:4242/v1/actors/local/threads \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"main"}'
+```
+
+Use the returned `thread` ID to send a message:
+
+```bash
+THREAD_ID="<thread-id>"
+
+curl "http://localhost:4242/v1/actors/local/threads/$THREAD_ID/methods/message" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: first-message' \
+  -d '{"text":"List the files here and summarize the README."}'
+```
+
+The server returns `202 Accepted`. Poll the call until its status is `completed`, `failed`, or `cancelled`:
+
+```bash
+curl "http://localhost:4242/v1/actors/local/threads/$THREAD_ID/methods/message/calls/first-message"
+```
+
+For Cloudflare, replace `http://localhost:4242` with your Worker URL.
+
+## Deploy
+
+Choose a container or a SQLite-backed virtual workspace. Both expose the same interface through `remoteWorkspace`.
+
+<WorkspaceDeploymentDiagram />
+
+### Container workspace
+
+Define the sandbox:
+
+```ts title="sandbox.ts"
+import { createWorkspaceObject } from "tardie/platform/cloudflare"
+
+export const Sandbox = createWorkspaceObject({
+  directory: "/workspace",
+  start: (_env, container) => ({
+    image: container.images.current!,
+    enableInternet: false,
+  }),
+})
+```
+
+Wire it into the Worker entrypoint:
+
+```ts title="worker.ts"
+import { actorContext } from "tardie/agent"
+import { createActorWorker, remoteWorkspace, workspaceObjectName } from "tardie/platform/cloudflare"
+import agent from "./actor"
+import { Sandbox } from "./sandbox"
+import { services } from "./services"
+
+interface Env {
+  readonly TARDIGRADE_CONFIG: { readonly models: unknown } | string
+  readonly TARDIGRADE_TOKEN?: string
+  readonly SANDBOX: DurableObjectNamespace<InstanceType<typeof Sandbox>>
+  readonly [key: string]: unknown
+}
+
+const models = (env: Env) => (typeof env.TARDIGRADE_CONFIG === "string" ? JSON.parse(env.TARDIGRADE_CONFIG) : env.TARDIGRADE_CONFIG).models
+
+const worker = createActorWorker({
+  actor: agent,
+  actorContext,
+  services: (env: Env, thread) => services(models(env), env, remoteWorkspace(env.SANDBOX.getByName(workspaceObjectName(thread)))),
+  http: (env: Env) => ({ ...(env.TARDIGRADE_TOKEN ? { token: env.TARDIGRADE_TOKEN } : {}) }),
+})
+export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
+export { Sandbox }
+export default { fetch: worker.fetch }
+```
+
+Create the container image with Python 3 installed:
+
+```dockerfile title="container/Dockerfile"
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ripgrep && rm -rf /var/lib/apt/lists/*
+COPY --from=docker.io/cloudflare/sandbox:1.0.3 /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
+WORKDIR /workspace
+ENTRYPOINT ["sleep", "infinity"]
+```
+
+Add the Durable Object bindings and container image to `wrangler.jsonc`:
+
+```jsonc title="wrangler.jsonc"
+{
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACTORS", "class_name": "ActorDO" },
+      { "name": "THREADS", "class_name": "ThreadDO" },
+      { "name": "SANDBOX", "class_name": "Sandbox" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO", "Sandbox"] }
+  ],
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "scheduling_policy": "durable_object",
+      "images": { "current": { "dockerfile": "container/Dockerfile", "build_context": "container" } }
+    }
+  ]
+}
+```
+
+Set the credential configured during initialization, such as `OPENAI_API_KEY`:
+
+```bash
+bunx wrangler secret put OPENAI_API_KEY
+bun run deploy:cloudflare
+```
+
+#### Mounted storage
+
+Mount an R2 or S3-compatible bucket to persist workspace files:
+
+```ts title="sandbox.ts"
+import { createWorkspaceObject, r2Mount } from "tardie/platform/cloudflare"
+
+export { S3Gateway } from "tardie/platform/cloudflare"
+
+interface Env {
+  readonly S3_ENDPOINT: string
+  readonly S3_BUCKET: string
+  readonly S3_ACCESS_KEY_ID: string
+  readonly S3_SECRET_ACCESS_KEY: string
+}
+
+export const Sandbox = createWorkspaceObject<Env>({
+  directory: "/workspace",
+  start: (_env, container) => ({ image: container.images.current!, enableInternet: false }),
+  mount: (container, ctx, env) => r2Mount({
+    container,
+    gateway: ctx.exports.S3Gateway,
+    directory: "/workspace",
+    endpoint: env.S3_ENDPOINT,
+    bucket: env.S3_BUCKET,
+    prefix: `workspaces/${ctx.id}`,
+    credentials: {
+      type: "static",
+      accessKeyId: env.S3_ACCESS_KEY_ID,
+      secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+    },
+  }),
+})
+```
+
+Re-export `S3Gateway` from `worker.ts` and follow the [bucket mount setup](https://developers.cloudflare.com/sandbox/files/mount-an-r2-bucket/) for the image, bindings, and credentials.
+
+
+### Virtual workspace
+
+Use `just-bash` with files persisted in Durable Object SQLite. It runs directly in the workspace Durable Object and supports built-in shell commands, without Python or arbitrary binaries.
+
+Replace `sandbox.ts` with:
+
+```ts title="sandbox.ts"
+import { createVirtualWorkspaceObject } from "tardie/platform/cloudflare"
+
+export const Sandbox = createVirtualWorkspaceObject({
+  name: "workspace",
+  policy: {
+    maxFileBytes: 8 * 1024 * 1024,
+  },
+})
+```
+
+Keep `worker.ts` above and use these Durable Object bindings. This option needs no container image:
+
+```jsonc title="wrangler.jsonc"
+{
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACTORS", "class_name": "ActorDO" },
+      { "name": "THREADS", "class_name": "ThreadDO" },
+      { "name": "SANDBOX", "class_name": "Sandbox" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO", "Sandbox"] }
+  ]
+}
+```
+
+The default file limit is 8 MiB, configurable through `maxFileBytes`. There is no default workspace size or entry cap. File data is stored in 1 MiB chunks; `storageChunkBytes` configures the chunk size.
+
+## Inspect
+
+Read the thread's event log:
+
+```bash
+curl "http://localhost:4242/v1/actors/local/threads/$THREAD_ID/events"
+```
+
+Follow execution updates as they happen:
+
+```bash
+curl -N "http://localhost:4242/v1/actors/local/threads/$THREAD_ID/execution/stream"
+```
+
+Use your Worker URL for a deployed agent. If authentication is configured, add `-H "Authorization: Bearer $TARDIGRADE_TOKEN"`.

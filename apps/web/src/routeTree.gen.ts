@@ -16,6 +16,7 @@ import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as DocsSplatRouteImport } from './routes/docs.$'
 import { Route as NotesIndexRouteImport } from './routes/notes.index'
+import { Route as NotesSplatRouteImport } from './routes/notes.$'
 import { Route as NotesTellingFormsFromTheirShadowsRouteImport } from './routes/notes.telling-forms-from-their-shadows'
 
 const IndexRoute = IndexRouteImport.update({
@@ -53,6 +54,11 @@ const NotesIndexRoute = NotesIndexRouteImport.update({
   path: '/notes/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NotesSplatRoute = NotesSplatRouteImport.update({
+  id: '/notes/$',
+  path: '/notes/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const NotesTellingFormsFromTheirShadowsRoute =
   NotesTellingFormsFromTheirShadowsRouteImport.update({
     id: '/notes/telling-forms-from-their-shadows',
@@ -66,6 +72,7 @@ export interface FileRoutesByFullPath {
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/docs/$': typeof DocsSplatRoute
+  '/notes/$': typeof NotesSplatRoute
   '/notes/telling-forms-from-their-shadows': typeof NotesTellingFormsFromTheirShadowsRoute
   '/docs/': typeof DocsIndexRoute
   '/notes/': typeof NotesIndexRoute
@@ -76,6 +83,7 @@ export interface FileRoutesByTo {
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/docs/$': typeof DocsSplatRoute
+  '/notes/$': typeof NotesSplatRoute
   '/notes/telling-forms-from-their-shadows': typeof NotesTellingFormsFromTheirShadowsRoute
   '/docs': typeof DocsIndexRoute
   '/notes': typeof NotesIndexRoute
@@ -87,6 +95,7 @@ export interface FileRoutesById {
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/docs/$': typeof DocsSplatRoute
+  '/notes/$': typeof NotesSplatRoute
   '/notes/telling-forms-from-their-shadows': typeof NotesTellingFormsFromTheirShadowsRoute
   '/docs/': typeof DocsIndexRoute
   '/notes/': typeof NotesIndexRoute
@@ -99,6 +108,7 @@ export interface FileRouteTypes {
     | '/llms.txt'
     | '/robots.txt'
     | '/docs/$'
+    | '/notes/$'
     | '/notes/telling-forms-from-their-shadows'
     | '/docs/'
     | '/notes/'
@@ -109,6 +119,7 @@ export interface FileRouteTypes {
     | '/llms.txt'
     | '/robots.txt'
     | '/docs/$'
+    | '/notes/$'
     | '/notes/telling-forms-from-their-shadows'
     | '/docs'
     | '/notes'
@@ -119,6 +130,7 @@ export interface FileRouteTypes {
     | '/llms.txt'
     | '/robots.txt'
     | '/docs/$'
+    | '/notes/$'
     | '/notes/telling-forms-from-their-shadows'
     | '/docs/'
     | '/notes/'
@@ -130,6 +142,7 @@ export interface RootRouteChildren {
   LlmsDottxtRoute: typeof LlmsDottxtRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   DocsSplatRoute: typeof DocsSplatRoute
+  NotesSplatRoute: typeof NotesSplatRoute
   NotesTellingFormsFromTheirShadowsRoute: typeof NotesTellingFormsFromTheirShadowsRoute
   DocsIndexRoute: typeof DocsIndexRoute
   NotesIndexRoute: typeof NotesIndexRoute
@@ -186,6 +199,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NotesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/notes/$': {
+      id: '/notes/$'
+      path: '/notes/$'
+      fullPath: '/notes/$'
+      preLoaderRoute: typeof NotesSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/notes/telling-forms-from-their-shadows': {
       id: '/notes/telling-forms-from-their-shadows'
       path: '/notes/telling-forms-from-their-shadows'
@@ -202,6 +222,7 @@ const rootRouteChildren: RootRouteChildren = {
   LlmsDottxtRoute: LlmsDottxtRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
   DocsSplatRoute: DocsSplatRoute,
+  NotesSplatRoute: NotesSplatRoute,
   NotesTellingFormsFromTheirShadowsRoute:
     NotesTellingFormsFromTheirShadowsRoute,
   DocsIndexRoute: DocsIndexRoute,

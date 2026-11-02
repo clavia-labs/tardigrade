@@ -17,7 +17,7 @@ Use `bunx tardie <command>` to run a command without installing it. Tardigrade r
 ## Commands
 
 <div className="cli-command-list">
-  <div className="cli-command-row"><code>tdg init &lt;name&gt;</code><p>Create an actor and configure its first model provider</p></div>
+  <div className="cli-command-row"><code>tdg init &lt;name&gt;</code><p>Create a counter actor or choose an agent template</p></div>
   <div className="cli-command-row"><code>tdg setup</code><p>Add provider connections and choose the default model</p></div>
   <div className="cli-command-row"><code>tdg setup provider</code><p>Add or update one provider connection</p></div>
   <div className="cli-command-row"><code>tdg setup default</code><p>Choose the default model from configured providers</p></div>
@@ -36,10 +36,16 @@ Commands that print data accept `--json` where their help lists it. Remote comma
 
 ## Initialize and configure
 
+Create the counter from the [introduction](/docs/welcome) without model credentials:
+
+```sh
+tdg init counter
+```
+
 Run interactive initialization to create a directory, choose the first provider and model, and write the generated actor:
 
 ```bash
-tdg init tardie-agent --template quickstart
+tdg init tardie-agent --template agent
 cd tardie-agent
 bun run dev
 ```
@@ -48,14 +54,14 @@ An agent or CI job can supply the connection as JSON. The JSON names secret envi
 
 ```bash
 tdg init tardie-agent \
-  --template quickstart \
+  --template agent \
   --provider openrouter \
   --provider-config '{"env":["OPENROUTER_API_KEY"]}' \
   --default-model anthropic/claude-sonnet-4.6
 cd tardie-agent
 ```
 
-Non-interactive initialization requires all three provider options. It does not read or write the named credential. Set each credential in the environment that runs the server.
+Non-interactive agent initialization requires all three provider options. It does not read or write the named credential. Set each credential in the environment that runs the server.
 
 Run `tdg setup` inside an actor directory to configure the first connection and default together. After that baseline exists, add or update a connection without changing the default, or select a different default without writing credentials:
 
@@ -93,7 +99,7 @@ A command flag takes precedence over an environment variable. An environment var
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | Values saved by interactive setup in `.dev.vars` |
 
-The generated `bun run dev` script loads `.dev.vars` and starts `server.ts`. It stores instance databases in `.tardigrade/data/`, with each instance's thread databases in a sibling `.sqlite.threads/` directory. Keep these directories present until the server stops. A deployment reads credentials from its platform secret store. Edit `server.ts` to supply application Effect services or change the server composition.
+The generated `bun run dev` script starts `server.ts`. The counter stores instance databases in `.tardigrade/`; the agent template loads `.dev.vars` and uses `.tardigrade/`. Both store each instance's thread databases in a sibling `.sqlite.threads/` directory. Keep these directories present until the server stops. A deployment reads credentials from its platform secret store. Edit `server.ts` to supply application Effect services or change the server composition.
 
 ## Validate and run locally
 
@@ -115,6 +121,7 @@ To create a project with a custom model, include `models` in the provider config
 
 ```sh
 tdg init tardie-agent \
+  --template agent \
   --provider localhost \
   --provider-config '{"protocol":"openai-chat-completions","baseUrl":"http://localhost:8080/v1","env":["API_KEY"],"models":{"qwen-local":{"metadata":{"contextWindowTokens":32768,"toolCall":true}}}}' \
   --default-model qwen-local

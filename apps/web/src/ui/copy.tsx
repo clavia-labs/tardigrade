@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState, type ReactElement } from "react"
 
 export const CopyIcon = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path fill="none" stroke="currentColor" strokeWidth="1.8" d="M9 8h9v11H9zM6 16H5V5h9v1" />
+    <rect x="9" y="8" width="11" height="13" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+    <path fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" d="M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2" />
   </svg>
 )
 
