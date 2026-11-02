@@ -19,21 +19,22 @@ test("template staging excludes local state and secrets, including stale output"
   const root = await mkdtemp(join(tmpdir(), "publish-templates-"))
   const stage = join(root, "stage")
   try {
-    for (const template of ["quickstart", "rlm"]) {
+    for (const template of ["quickstart", "agent", "rlm"]) {
       const source = join(root, "examples", template)
       await mkdir(join(source, ".tardigrade"), { recursive: true })
       await writeFile(join(source, "actor.ts"), `export default "${template}"`)
-      if (template === "quickstart") for (const file of ["services.ts.template", "server.ts.template", "worker.ts.template"]) await writeFile(join(source, file), "export {}")
+      if (template !== "rlm") for (const file of [template === "quickstart" ? "SKILL.md.template" : "services.ts.template", "server.ts.template", "worker.ts.template"]) await writeFile(join(source, file), "export {}")
+      if (template === "agent") await writeFile(join(source, "Dockerfile.template"), "FROM fixture")
       await writeFile(join(source, ".env"), "SECRET=fixture")
       await writeFile(join(source, ".tardigrade", "actor.sqlite"), "private conversation")
     }
     await mkdir(join(stage, "examples", "old-template"), { recursive: true })
     await writeFile(join(stage, "examples", "old-template", ".dev.vars"), "SECRET=stale")
     await stageInitTemplates(root, stage)
-    expect((await readdir(join(stage, "examples"))).sort()).toEqual(["quickstart", "rlm"])
-    for (const template of ["quickstart", "rlm"]) {
+    expect((await readdir(join(stage, "examples"))).sort()).toEqual(["agent", "quickstart", "rlm"])
+    for (const template of ["quickstart", "agent", "rlm"]) {
       const target = join(stage, "examples", template)
-      expect((await readdir(target)).sort()).toEqual(template === "quickstart" ? ["actor.ts", "server.ts.template", "services.ts.template", "worker.ts.template"] : ["actor.ts"])
+      expect((await readdir(target)).sort()).toEqual(template === "quickstart" ? ["SKILL.md.template", "actor.ts", "server.ts.template", "worker.ts.template"] : template === "agent" ? ["Dockerfile.template", "actor.ts", "server.ts.template", "services.ts.template", "worker.ts.template"] : ["actor.ts"])
       expect(await readFile(join(target, "actor.ts"), "utf8")).toBe(`export default "${template}"`)
     }
   } finally {

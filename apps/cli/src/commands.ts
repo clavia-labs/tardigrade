@@ -441,6 +441,21 @@ export const initCommand = Command.make("init", {
     if (existsSync(initializedRoot)) {
       return yield* userErrorOf(`init target already exists at ${initializedRoot}. Choose a new directory.`)
     }
+    if (flags.template === "quickstart") {
+      if (stated(flags.provider) || stated(flags.providerConfig) || stated(flags.defaultModel)) return yield* userErrorOf("The quickstart counter needs no model. Use --template agent to configure a model provider.")
+      const initialized = yield* Effect.tryPromise({
+        try: () => initActor(name, { cwd: cli.cwd, ...(directory === undefined ? {} : { directory }), template: flags.template }),
+        catch: userErrorOf,
+      })
+      yield* Effect.gen(function* () {
+        yield* Effect.tryPromise({
+          try: () => withLoader("Installing dependencies", () => cli.installProject(initialized.directory), { enabled: flags.json === false && process.stdout.isTTY === true }),
+          catch: userErrorOf,
+        })
+        yield* Console.log(flags.json ? jsonOf(initialized) : initSummary(initialized, undefined, undefined, { colors: terminalColorsEnabled(cli.env), cwd: cli.cwd }))
+      }).pipe(Effect.catch(error => removeIncompleteProject(initialized.directory, error)))
+      return
+    }
     const declared = yield* Effect.try({
       try: () => setupAnswersFrom({
         provider: stated(flags.provider),
@@ -487,12 +502,12 @@ export const initCommand = Command.make("init", {
         }))
     }).pipe(Effect.catch((error) => removeIncompleteProject(initialized.directory, error)))
   })).pipe(
-    Command.withDescription("Create an editable actor and configure its first provider connection."),
+    Command.withDescription("Create a counter actor, or choose an agent template and configure its model provider."),
     Command.withExamples([
-      { command: "tdg init", description: "Choose an actor name and provider interactively" },
-      { command: "tdg init researcher", description: "Choose a provider and create a ready actor" },
+      { command: "tdg init", description: "Choose a name and create a counter actor" },
+      { command: "tdg init researcher --template agent", description: "Choose a provider and create an agent" },
       {
-        command: "tdg init researcher --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4.6",
+        command: "tdg init researcher --template agent --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4.6",
         description: "Create a ready actor from provider JSON"
       }
     ])

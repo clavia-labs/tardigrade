@@ -1,20 +1,14 @@
-import { actorContext } from "tardie/agent"
+import { Context } from "effect"
 import { createActorWorker } from "tardie/platform/cloudflare"
-import definition from "./actor"
-import { services } from "./services"
-
-interface Env {
-  readonly TARDIGRADE_CONFIG: { readonly models: unknown } | string
-  readonly TARDIGRADE_TOKEN?: string
-  readonly [key: string]: unknown
-}
+import definition, { notifyLayer } from "./actor"
 
 const worker = createActorWorker({
   actor: definition,
-  actorContext,
-  services: (env: Env) => services((typeof env.TARDIGRADE_CONFIG === "string" ? JSON.parse(env.TARDIGRADE_CONFIG) : env.TARDIGRADE_CONFIG).models, env),
-  http: (env: Env) => ({ ...(env.TARDIGRADE_TOKEN ? { token: env.TARDIGRADE_TOKEN } : {}) }),
+  actorContext: Context.pick(),
+  services: () => notifyLayer,
+  http: (env: { readonly TARDIGRADE_TOKEN?: string }) => ({ ...(env.TARDIGRADE_TOKEN ? { token: env.TARDIGRADE_TOKEN } : {}) }),
 })
+
 export const ActorDO = worker.ActorObject
 export const ThreadDO = worker.ThreadObject
 export default { fetch: worker.fetch }

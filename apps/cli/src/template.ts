@@ -9,7 +9,7 @@ export interface ActorTemplateOptions {
   readonly template?: InitTemplate
 }
 
-export const INIT_TEMPLATES = ["quickstart", "rlm"] as const
+export const INIT_TEMPLATES = ["quickstart", "agent", "rlm"] as const
 export type InitTemplate = typeof INIT_TEMPLATES[number]
 export const DEFAULT_INIT_TEMPLATE: InitTemplate = "quickstart"
 
@@ -45,11 +45,12 @@ export const renderActorTemplate = (source: string, options: ActorTemplateOption
 
   const instructions = options.instructions.trim()
   if (instructions.length === 0) throw new Error("actor instructions must not be blank")
+  const promptName = options.template === "agent" ? "actorSystem" : "actorInstructions"
   rendered = replaceExactlyOnce(
     rendered,
-    /^const actorInstructions = `[\s\S]*?`\.trim\(\)$/gmu,
-    `const actorInstructions = \`\n${templateLiteralOf(instructions)}\n\`.trim()`,
-    "actorInstructions declaration"
+    /^const (?:actorInstructions|actorSystem) = `[\s\S]*?`\.trim\(\)$/gmu,
+    `const ${promptName} = \`\n${templateLiteralOf(instructions)}\n\`.trim()`,
+    `${promptName} declaration`
   )
   return rendered
 }

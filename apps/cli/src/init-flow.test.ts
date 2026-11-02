@@ -53,7 +53,73 @@ const eventually = async (check: () => Promise<boolean>, timeout = 10_000) => {
   throw new Error("quickstart condition did not complete before its deadline")
 }
 
-test.each(["registry", "custom", "interactive"] as const)("generated quickstart lifecycle with %s models", async (source) => {
+test("generated counter quickstart runs without model setup and recovers its count", async () => {
+  await mkdir(join(repository, ".cache/cli-tests"), { recursive: true })
+  const root = await mkdtemp(join(repository, ".cache/cli-tests/counter-"))
+  const reservation = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() })
+  const port = reservation.port!
+  await reservation.stop(true)
+  const url = `http://127.0.0.1:${port}`
+  const env = { PATH: process.env.PATH!, PORT: String(port) }
+  let cwd = root
+  const run = async (...args: string[]) => {
+    const lines: string[] = []
+    const capture: Console.Console = Object.assign(Object.create(console), { log: (...values: unknown[]) => { lines.push(values.map(String).join(" ")) } })
+    await Command.runWith(tdg, { version: "test", renderErrors: false })(args).pipe(
+      Effect.provideService(Console.Console, capture),
+      Effect.provide(Layer.mergeAll(BunServices.layer, Layer.succeed(Cli, {
+        cwd, env, openClient: openCliClient, fetch: Object.assign(() => { throw new Error("Counter init must not fetch model configuration") }, { preconnect: globalThis.fetch.preconnect }),
+        installProject: bundleEntry, mintId: () => crypto.randomUUID(),
+      }))), Effect.runPromise,
+    )
+    return lines.join("\n")
+  }
+  const remote = (...args: string[]) => run(...args, "--url", url, "--json")
+  let child: ReturnType<typeof Bun.spawn> | undefined
+  let stdout: Promise<string> | undefined
+  let stderr: Promise<string> | undefined
+  const start = async () => {
+    const started = Bun.spawn([process.execPath, "build/server.js"], { cwd, env, stdout: "pipe", stderr: "pipe" })
+    child = started
+    stdout = new Response(started.stdout).text()
+    stderr = new Response(started.stderr).text()
+    await eventually(async () => {
+      if (child!.exitCode !== null) throw new Error(await stderr)
+      return fetch(`${url}/healthz`).then(response => response.ok, () => false)
+    })
+  }
+  const stop = async () => {
+    child?.kill("SIGTERM")
+    if (child) expect(await child.exited).toBe(0)
+    child = undefined
+  }
+  try {
+    await run("init", "counter", "--json")
+    cwd = join(root, "counter")
+    expect(await readFile(join(cwd, "SKILL.md"), "utf8")).toContain("decrement")
+    await bundleEntry(cwd, "worker.ts")
+    await start()
+    expect(JSON.parse(await remote("methods")).map((method: { name: string }) => method.name).sort()).toEqual(["decrement", "increment"])
+    await remote("thread", "create", "--name", "main")
+    for (const [method, output] of [["increment", 1], ["increment", 2], ["decrement", 1]] as const) {
+      expect(JSON.parse(await remote("call", method, "null", "--thread", "main"))).toMatchObject({ status: "completed", output })
+    }
+    const events = await remote("events", "main")
+    expect(events).toContain("Incremented")
+    expect(events).toContain("Decremented")
+    await stop()
+    expect(await stdout).toContain("2 is even")
+    await start()
+    expect(JSON.parse(await remote("call", "increment", "null", "--thread", "main"))).toMatchObject({ status: "completed", output: 2 })
+    await stop()
+  } finally {
+    child?.kill("SIGKILL")
+    if (child) await child.exited
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30_000)
+
+test.each(["registry", "custom", "interactive"] as const)("generated agent lifecycle with %s models", async (source) => {
   const fixtures = join(repository, ".cache", "cli-tests")
   await mkdir(fixtures, { recursive: true })
   const root = await mkdtemp(join(fixtures, "flow-"))
@@ -90,10 +156,10 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
     }
     if (!("stream" in body) || !body.stream) {
       const tool = !body.messages.some(message => message.role === "tool")
-      return Response.json({ id: "chat-fixture", object: "chat.completion", model: "test", created: 1, choices: [{ index: 0, finish_reason: tool ? "tool_calls" : "stop", message: { role: "assistant", content: tool ? null : "Hello from the fixture.", ...(tool ? { tool_calls: [{ id: "weather", type: "function", function: { name: "get_weather", arguments: '{"city":"Singapore"}' } }] } : {}) } }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })
+      return Response.json({ id: "chat-fixture", object: "chat.completion", model: "test", created: 1, choices: [{ index: 0, finish_reason: tool ? "tool_calls" : "stop", message: { role: "assistant", content: tool ? null : "Hello from the fixture.", ...(tool ? { tool_calls: [{ id: "workspace-read", type: "function", function: { name: "read", arguments: '{"path":"README.md"}' } }] } : {}) } }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })
     }
     if (!body.messages.some((message) => message.role === "tool")) return new Response([
-      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "weather", type: "function", function: { name: "get_weather", arguments: '{"city":"Singapore"}' } }] } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "workspace-read", type: "function", function: { name: "read", arguments: '{"path":"README.md"}' } }] } }] },
       { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
     ].map((event) => `data: ${JSON.stringify({ id: "chat-fixture", model: "test", created: 1, ...event })}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } })
     return new Response('data: {"id":"chat-fixture","model":"test","created":1,"choices":[{"delta":{"content":"Hello from the fixture."},"index":0}]}\n\ndata: {"id":"chat-fixture","model":"test","created":1,"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
@@ -158,7 +224,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
       const descriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
       Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true })
       try {
-        await Command.runWith(tdg, { version: "test", renderErrors: false })(["init"]).pipe(
+        await Command.runWith(tdg, { version: "test", renderErrors: false })(["init", "--template", "agent"]).pipe(
           Effect.provideService(Terminal.Terminal, terminal),
           Effect.provide(Layer.mergeAll(BunServices.layer, Layer.succeed(Cli, {
             cwd, env, openClient: openCliClient, fetch: globalThis.fetch,
@@ -175,19 +241,22 @@ test.each(["registry", "custom", "interactive"] as const)("generated quickstart 
       expect(transcript).not.toContain("fixture-secret")
       expect(transcript).toContain("Enter a positive safe integer")
     } else {
-      await run("init", "tardie-agent", "--provider", "fixture", "--provider-config", JSON.stringify({ protocol: "openai-chat-completions", baseUrl: `${model.url}v1`, env: ["FIXTURE_KEY"], ...(source === "custom" ? { models: { test: { metadata: { contextWindowTokens: 32000, maxOutputTokens: 4096, toolCall: true } } } } : {}) }), "--default-model", "test", "--json")
+      await run("init", "tardie-agent", "--template", "agent", "--provider", "fixture", "--provider-config", JSON.stringify({ protocol: "openai-chat-completions", baseUrl: `${model.url}v1`, env: ["FIXTURE_KEY"], ...(source === "custom" ? { models: { test: { metadata: { contextWindowTokens: 32000, maxOutputTokens: 4096, toolCall: true } } } } : {}) }), "--default-model", "test", "--json")
     }
     cwd = join(root, "tardie-agent")
+    await writeFile(join(cwd, "README.md"), "Fixture workspace README")
     const actorPath = join(cwd, "actor.ts")
     const actorSource = await readFile(actorPath, "utf8")
     await writeFile(actorPath, actorSource
-      .replace('import { atom, defineActor } from "tardie/core"', 'import { actorMethod, atom, defineActor, event } from "tardie/core"')
+      .replace('import { agent } from "tardie/agent"', 'import { agent } from "tardie/agent"\nimport { Schema } from "effect"\nimport { actorMethod, event } from "tardie/core"')
       .replace('const actorName =', 'const Echoed = event({ type: "Echoed", text: Schema.String })\n\nconst actorName =')
-      .replace('methods: agentMethods', `methods: { ...agentMethods, echo: actorMethod({
-        inputSchema: Schema.String, outputSchema: Schema.String,
-        onReceive: Echoed.from(text => ({ text })),
-        result: input => ({ status: "completed", output: input }),
-      }) }`), "utf8")
+      .replace('  tools: [filesystem],\n', `  tools: [filesystem],
+  methods: { echo: actorMethod({
+    inputSchema: Schema.String, outputSchema: Schema.String,
+    onReceive: Echoed.from(text => ({ text })),
+    result: input => ({ status: "completed", output: input }),
+  }) },
+`), "utf8")
     await bundleEntry(cwd)
     expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("createActorWorker")
     await run("lint", "actor.ts", "--json")
