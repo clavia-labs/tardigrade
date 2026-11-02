@@ -61,3 +61,8 @@ export { cloudflarePromises, createCloudflarePromiseResolver, PromiseResolverCom
 
 export { httpMessageTransport } from "../shared/http-message"
 export { rpcMessageTransport, type ActorReceiver } from "../shared/rpc-message"
+
+export { createWorkspaceObject, workspaceObjectName, r2Mount, containerWorkspace, mountedWorkspace, remoteWorkspace, S3Gateway, DEFAULT_CONTAINER_WORKSPACE_POLICY, DEFAULT_WORKSPACE_RELEASE, DEFAULT_R2_MOUNT_REGION, DEFAULT_R2_MOUNT_ACCESS, type WorkspaceObjectOptions, type R2MountOptions, type ContainerWorkspaceOptions, type ContainerWorkspacePolicy, type WorkspaceMount, type WorkspaceRelease, type RemoteWorkspace } from "./workspace"
+
+export { virtualWorkspace, createVirtualWorkspaceObject } from "./virtual-workspace"
+export { DEFAULT_VIRTUAL_WORKSPACE_DIRECTORY, DEFAULT_VIRTUAL_WORKSPACE_CHUNK_BYTES, DEFAULT_VIRTUAL_WORKSPACE_POLICY, DEFAULT_VIRTUAL_BASH_PROFILE, type VirtualWorkspaceOptions, type VirtualWorkspacePolicy, type VirtualWorkspaceExecutor } from "../shared/workspace/virtual/index"

@@ -187,7 +187,9 @@
     "./deprecated/agent/projection/transcript": "./src/generated/deprecated/agent/projection/transcript.ts",
     "./deprecated/agent/runtime/resume": "./src/generated/deprecated/agent/runtime/resume.ts",
     "./deprecated/agent/runtime/turn": "./src/generated/deprecated/agent/runtime/turn.ts",
-    "./platform/journal": "./src/generated/platform/journal.ts"
+    "./platform/journal": "./src/generated/platform/journal.ts",
+    "./libraries/filesystem": "./src/generated/libraries/filesystem.ts",
+    "./platform/workspace": "./src/generated/platform/workspace.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-deprecated-agent": "workspace:*",

@@ -18,7 +18,7 @@ describe("worker loader sandbox bridge", () => {
     let disposed = false
     const loader = {
       load: (worker: WorkerLoaderWorkerCode) => {
-        expect(worker.env).not.toHaveProperty("BRIDGE")
+        expect(worker.env ?? {}).not.toHaveProperty("BRIDGE")
         return ({
           getEntrypoint: () => ({
             run: async (_input: unknown, callBatch: CallBatch) => {
@@ -72,7 +72,7 @@ describe("worker loader sandbox bridge", () => {
     const arrival = [4, 1, 3, 0, 2]
     const loader = {
       load: (worker: WorkerLoaderWorkerCode) => {
-        expect(worker.env).not.toHaveProperty("BRIDGE")
+        expect(worker.env ?? {}).not.toHaveProperty("BRIDGE")
         return ({
           getEntrypoint: () => ({
             run: async (_input: unknown, callBatch: CallBatch) => {

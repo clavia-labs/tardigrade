@@ -161,5 +161,7 @@
   "./deprecated/agent/projection/transcript": "./src/deprecated/agent/projection/transcript.ts",
   "./deprecated/agent/runtime/resume": "./src/deprecated/agent/runtime/resume.ts",
   "./deprecated/agent/runtime/turn": "./src/deprecated/agent/runtime/turn.ts",
-  "./platform/journal": "./src/platform/shared/sql-journal.ts"
+  "./platform/journal": "./src/platform/shared/sql-journal.ts",
+  "./libraries/filesystem": "./src/libraries/filesystem/index.ts",
+  "./platform/workspace": "./src/platform/shared/workspace/index.ts"
 }
