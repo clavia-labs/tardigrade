@@ -136,12 +136,13 @@ try {
 const packageTemplate = (
   version: string,
   effectVersion: string,
-  platformBunVersion: string
+  platformBunVersion: string,
+  template: InitTemplate
 ): string => `${JSON.stringify({
   private: true,
   type: "module",
   scripts: {
-    dev: `bun --env-file=.dev.vars --watch ${DEFAULT_SERVER_ENTRY}`,
+    dev: template === "quickstart" ? `bun --watch ${DEFAULT_SERVER_ENTRY}` : `bun --env-file=.dev.vars --watch ${DEFAULT_SERVER_ENTRY}`,
     "dev:cloudflare": "bunx wrangler dev",
     "deploy:cloudflare": "bunx wrangler deploy",
     "deploy:celld": `celld deploy --config ${CELLD_PROJECT_CONFIG_PATH}`
@@ -172,15 +173,20 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
     name,
     ...(options.template === undefined ? {} : { template: options.template })
   })
-  const modern = (options.template ?? DEFAULT_INIT_TEMPLATE) === "quickstart"
+  const template = options.template ?? DEFAULT_INIT_TEMPLATE
+  const modern = template !== "rlm"
   const manifestValue = JSON.parse(manifestTemplate(name, options.now ?? new Date()))
   if (modern) {
     delete manifestValue.worker_loaders
     delete manifestValue.d1_databases
     manifestValue.vars = { TARDIGRADE_CONFIG: {} }
+    if (template === "agent") {
+      manifestValue.durable_objects.bindings.push({ name: "SANDBOX", class_name: "Sandbox" })
+      manifestValue.migrations[0]!.new_sqlite_classes.push("Sandbox")
+    }
   }
-  const manifestSource = `${JSON.stringify(manifestValue, null, 2)}\n`
-  const quickstartFile = (file: string) => readFile(new URL(`../../examples/quickstart/${file}.template`, import.meta.url), "utf8").catch(() => readFile(new URL(`../../../examples/quickstart/${file}.template`, import.meta.url), "utf8"))
+  const manifestSource = `${JSON.stringify({ ...manifestValue, ...(template === "agent" ? { containers: [{ class_name: "Sandbox", scheduling_policy: "durable_object", images: { current: { dockerfile: "container/Dockerfile", build_context: "container" } } }] } : {}) }, null, 2)}\n`
+  const templateFile = (file: string) => readFile(new URL(`../../examples/${template}/${file}.template`, import.meta.url), "utf8").catch(() => readFile(new URL(`../../../examples/${template}/${file}.template`, import.meta.url), "utf8"))
   const packageVersion = options.packageVersion ?? await versionIn(import.meta.url)
   if (packageVersion.endsWith("-unknown")) throw new Error("cannot determine the installed Tardigrade version")
   const effectVersion = await dependencyVersionIn("effect", import.meta.url)
@@ -194,16 +200,19 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
 
   try {
     await writeFile(entry, source, "utf8")
-    await writeFile(server, modern ? await quickstartFile("server.ts") : serverTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
-    await writeFile(worker, modern ? await quickstartFile("worker.ts") : workerTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
-    if (modern) {
-      await writeFile(resolve(directory, "services.ts"), await quickstartFile("services.ts"), "utf8")
+    await writeFile(server, modern ? await templateFile("server.ts") : serverTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
+    await writeFile(worker, modern ? await templateFile("worker.ts") : workerTemplate(modelProviderModuleOf(options.modelProvider, options.modelProtocol ?? "openai-chat-completions")), "utf8")
+    if (template === "quickstart") await writeFile(resolve(directory, "SKILL.md"), await templateFile("SKILL.md"), "utf8")
+    if (template === "agent") {
+      await writeFile(resolve(directory, "services.ts"), await templateFile("services.ts"), "utf8")
+      await mkdir(resolve(directory, "container"))
+      await writeFile(resolve(directory, "container/Dockerfile"), await templateFile("Dockerfile"), "utf8")
       await mkdir(resolve(directory, "generated"))
       await writeFile(resolve(directory, PROVIDER_REGISTRY_FILE), providerRegistrySource(options.modelLock?.providers ?? {}), "utf8")
     }
     await writeFile(manifest, manifestSource, "utf8")
     await writeFile(celldManifest, celldConfigOf(manifestSource, manifest).source, "utf8")
-    await writeFile(packageManifest, packageTemplate(packageVersion, effectVersion, platformBunVersion), "utf8")
+    await writeFile(packageManifest, packageTemplate(packageVersion, effectVersion, platformBunVersion, template), "utf8")
     await writeFile(modelLock, `${JSON.stringify(options.modelLock ?? emptyModelLock(), null, 2)}\n`, "utf8")
     if (!modern) {
       await mkdir(resolve(directory, "migrations"))
@@ -240,30 +249,32 @@ export const terminalColorsEnabled = (
 
 export const initSummary = (
   actor: InitializedActor,
-  files: SetupFiles,
-  answers: SetupAnswers,
+  files: SetupFiles | undefined,
+  answers: SetupAnswers | undefined,
   options: InitSummaryOptions = {}
 ): string => {
   const colors = options.colors ?? false
   const cwd = options.cwd ?? process.cwd()
   const directory = shownPath(cwd, actor.directory)
   const shownDirectory = directory.startsWith("/") || directory.startsWith(".") ? directory : `./${directory}`
-  const credential = answers.credential === undefined
+  const credential = answers === undefined || files === undefined ? undefined : answers.credential === undefined
     ? `${answers.env.join(" or ")} (environment)`
     : `${answers.env[0]} (${shownPath(actor.directory, files.secretsPath)})`
   const lines = [
     styled(`✓ actor ${JSON.stringify(actor.name)} created in ${shownDirectory}`, "1;32", colors),
     summaryField("files", shownPath(actor.directory, actor.entry), colors),
     summaryField("", shownPath(actor.directory, actor.server), colors),
-    ...(actor.template === "quickstart" ? [summaryField("", "services.ts", colors), summaryField("", PROVIDER_REGISTRY_FILE, colors)] : []),
+    ...(actor.template === "agent" ? [summaryField("", "services.ts", colors), summaryField("", PROVIDER_REGISTRY_FILE, colors)] : []),
     summaryField("", shownPath(actor.directory, actor.worker), colors),
+    ...(actor.template === "agent" ? [summaryField("", "container/Dockerfile", colors)] : []),
     summaryField("", shownPath(actor.directory, actor.manifest), colors),
     summaryField("", shownPath(actor.directory, actor.celldManifest), colors),
     summaryField("", shownPath(actor.directory, actor.packageManifest), colors),
     summaryField("", shownPath(actor.directory, actor.modelLock), colors),
     ...(actor.catalogMigration ? [summaryField("", shownPath(actor.directory, actor.catalogMigration), colors)] : []),
-    summaryField("credential", credential, colors),
-    ...(answers.region === undefined ? [] : [summaryField("region", answers.region, colors)]),
+    ...(actor.template === "quickstart" ? [summaryField("", "SKILL.md", colors)] : []),
+    ...(credential === undefined ? [] : [summaryField("credential", credential, colors)]),
+    ...(answers?.region === undefined ? [] : [summaryField("region", answers.region, colors)]),
     "",
     styled("→ next", "1;36", colors),
     `  cd ${shellWord(directory)}`,
@@ -271,7 +282,7 @@ export const initSummary = (
     "",
     styled("→ call from another terminal", "1;36", colors),
     "  tdg thread create --name main",
-    `  ${callCommand(actor.template === "rlm" ? RLM_ONBOARDING_BRIEF : undefined)}`,
+    actor.template === "quickstart" ? "  tdg call increment null --thread main" : actor.template === "agent" ? '  tdg call message \'{"text":"List the files here and summarize the README."}\' --thread main' : `  ${callCommand(RLM_ONBOARDING_BRIEF)}`,
     "",
     styled("↗ deploy", "1;36", colors),
     summaryField("Cloudflare", "bunx wrangler deploy", colors),

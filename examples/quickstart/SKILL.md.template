@@ -1,0 +1,22 @@
+---
+name: counter-actor
+description: Run and extend the Tardigrade counter actor.
+---
+
+# Counter actor
+
+`actor.ts` defines a durable counter, increment and decrement methods, and a notification act for positive even counts. `notifyLayer` supplies the act implementation. No model provider or API key is required.
+
+Run locally with `bun run dev`. In another terminal:
+
+```sh
+tdg thread create --name main
+tdg call increment null --thread main
+tdg call increment null --thread main
+tdg call decrement null --thread main
+tdg events main
+```
+
+Keep state transitions in durable atoms and declare external work through acts. Supply I/O implementations through the host's services.
+
+`worker.ts` hosts the same actor on Cloudflare or Celld. Deploy with `bun run deploy:cloudflare` or `bun run deploy:celld --bucket s3://YOUR-BUCKET`.

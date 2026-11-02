@@ -47,15 +47,17 @@ describe("initActor", () => {
     expect(initialized.modelLock).toBe(join(cwd, "reviewer", DEFAULT_MODEL_LOCK))
     expect(initialized.catalogMigration).toBeUndefined()
     expect(source).toContain('const actorName = "reviewer"')
-    expect(source).toContain("defineActor(actorName, Effect.gen")
-    expect(server).toContain('import definition from "./actor"')
+    expect(source).toContain("defineActor(actorName, Effect.sync")
+    expect(server).toContain('import definition, { notifyLayer } from "./actor"')
     expect(server).toContain("Effect.runPromise(createBunHost({")
     expect(server).toContain("methodHttp(host")
     expect(server).toContain("host.close")
+    expect(server).toContain('?? ".tardigrade"')
     expect(worker).toContain("createActorWorker({")
     expect(worker).toContain("worker.ThreadObject")
     expect(worker).toContain('from "tardie/platform/cloudflare"')
-    expect(await readFile(join(initialized.directory, "services.ts"), "utf8")).toContain("toolActs([tools])")
+    expect(await readFile(join(initialized.directory, "SKILL.md"), "utf8")).toContain("tdg call increment null")
+    await expect(readFile(join(initialized.directory, "services.ts"), "utf8")).rejects.toThrow()
     expect(manifest).toMatchObject({
       name: "reviewer",
       main: "worker.ts",
@@ -84,7 +86,7 @@ describe("initActor", () => {
       private: true,
       type: "module",
       scripts: {
-        dev: "bun --env-file=.dev.vars --watch server.ts",
+        dev: "bun --watch server.ts",
         "dev:cloudflare": "bunx wrangler dev",
         "deploy:cloudflare": "bunx wrangler deploy",
         "deploy:celld": "celld deploy --config celld.jsonc"
@@ -134,7 +136,7 @@ describe("initActor", () => {
 describe("initSummary", () => {
   test("prints the complete local path", async () => {
     const cwd = await temporaryRoot()
-    const initialized = await initActor("reviewer", { cwd })
+    const initialized = await initActor("reviewer", { cwd, template: "agent" })
     const summary = initSummary(initialized, {
       configPath: initialized.manifest,
       celldConfigPath: initialized.celldManifest,
@@ -155,6 +157,7 @@ describe("initSummary", () => {
                 services.ts
                 generated/providers.ts
                 worker.ts
+                container/Dockerfile
                 wrangler.jsonc
                 celld.jsonc
                 package.json
@@ -167,7 +170,7 @@ describe("initSummary", () => {
 
   → call from another terminal
     tdg thread create --name main
-    tdg call message '{"text":"What is the weather in Singapore?"}' --thread main
+    tdg call message '{"text":"List the files here and summarize the README."}' --thread main
 
   ↗ deploy
     Cloudflare  bunx wrangler deploy

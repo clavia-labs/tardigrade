@@ -1,4 +1,4 @@
-export { createActor } from "./agent"
+export { agent, createActor, type AgentOptions } from "./agent"
 export * from "./actor/methods"
 export * from "./actor/context"
 export * from "./contracts/events"

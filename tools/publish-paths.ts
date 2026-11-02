@@ -16,7 +16,7 @@ export const stageInitTemplates = async (root: string, stage: string): Promise<v
   await Promise.all(INIT_TEMPLATES.map(async template => {
     const target = join(destination, template)
     await mkdir(target, { recursive: true })
-    const files = template === "quickstart" ? ["actor.ts", "services.ts.template", "server.ts.template", "worker.ts.template"] : ["actor.ts"]
+    const files = template === "quickstart" ? ["actor.ts", "SKILL.md.template", "server.ts.template", "worker.ts.template"] : template === "agent" ? ["actor.ts", "services.ts.template", "server.ts.template", "worker.ts.template", "Dockerfile.template"] : ["actor.ts"]
     for (const file of files) await cp(join(root, "examples", template, file), join(target, file))
   }))
 }

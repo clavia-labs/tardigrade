@@ -1,0 +1,26 @@
+import { actorContext } from "tardie/agent"
+import { createActorWorker, createWorkspaceObject, remoteWorkspace, workspaceObjectName } from "tardie/platform/cloudflare"
+import definition from "./actor"
+import { services } from "./services"
+
+export const Sandbox = createWorkspaceObject({
+  directory: "/workspace",
+  start: (_env, container) => ({ image: container.images.current!, enableInternet: false }),
+})
+
+interface Env {
+  readonly TARDIGRADE_CONFIG: { readonly models: unknown } | string
+  readonly TARDIGRADE_TOKEN?: string
+  readonly SANDBOX: DurableObjectNamespace<InstanceType<typeof Sandbox>>
+  readonly [key: string]: unknown
+}
+
+const worker = createActorWorker({
+  actor: definition,
+  actorContext,
+  services: (env: Env, thread) => services((typeof env.TARDIGRADE_CONFIG === "string" ? JSON.parse(env.TARDIGRADE_CONFIG) : env.TARDIGRADE_CONFIG).models, env, remoteWorkspace(env.SANDBOX.getByName(workspaceObjectName(thread)))),
+  http: (env: Env) => ({ ...(env.TARDIGRADE_TOKEN ? { token: env.TARDIGRADE_TOKEN } : {}) }),
+})
+export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
+export default { fetch: worker.fetch }

@@ -27,11 +27,11 @@ describe("actorTemplate", () => {
 
     expect(built.manifest.name).toBe("reviewer")
     expect(DEFAULT_INIT_TEMPLATE).toBe("quickstart")
-    expect(INIT_TEMPLATES).toEqual(["quickstart", "rlm"])
+    expect(INIT_TEMPLATES).toEqual(["quickstart", "agent", "rlm"])
     expect(source).toContain('const actorName = "reviewer"')
-    expect(source).toContain("defineActor(actorName, Effect.gen")
-    expect(source).toContain('current: "get_weather"')
-    expect(source).toContain("defineLibrary({")
+    expect(source).toContain("defineActor(actorName, Effect.sync")
+    expect(source).toContain("Incremented")
+    expect(source).toContain("Decremented")
   })
 
   test("builds the RLM template", async () => {
@@ -48,6 +48,7 @@ describe("actorTemplate", () => {
   test("keeps custom instructions valid inside the editable template literal", async () => {
     const source = await actorTemplate({
       name: "reviewer",
+      template: "agent",
       instructions: "Review `src` and explain ${findings}.\nKeep Windows paths like C:\\code intact."
     })
     const built = await build(source)
@@ -59,7 +60,7 @@ describe("actorTemplate", () => {
 
   test("refuses an invalid name or blank instructions", async () => {
     await expect(actorTemplate({ name: "Release Analyst" })).rejects.toThrow("actor name must match")
-    await expect(actorTemplate({ name: "reviewer", instructions: "   " })).rejects.toThrow(
+    await expect(actorTemplate({ name: "reviewer", template: "agent", instructions: "   " })).rejects.toThrow(
       "actor instructions must not be blank"
     )
   })

@@ -340,9 +340,21 @@ describe("parsing", () => {
   })
 
   test("init gives agents a declarative path instead of prompting", async () => {
-    const ran = await drive(["init", "researcher"])
+    const ran = await drive(["init", "researcher", "--template", "agent"])
     expect(ran.failed).toBe(true)
     expect(failureText(ran)).toContain("--provider-config")
+  })
+
+  test("quickstart refuses unused model configuration", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-counter-provider-"))
+    try {
+      const ran = await drive(["init", "counter", "--provider", "openrouter"], { cwd })
+      expect(ran.failed).toBe(true)
+      expect(failureText(ran)).toContain("--template agent")
+      expect(ran.recorded.installed).toEqual([])
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
   })
 
   test("init requires a name when nobody can answer", async () => {
@@ -357,6 +369,8 @@ describe("parsing", () => {
       const ran = await drive([
         "init",
         "researcher",
+        "--template",
+        "agent",
         "--provider",
         "openrouter",
         "--provider-config",
@@ -366,12 +380,9 @@ describe("parsing", () => {
         "--json"
       ], { cwd })
       const directory = join(cwd, "researcher")
-      const actor = await readFile(join(directory, "actor.ts"), "utf8")
       const config = await readFile(join(directory, "wrangler.jsonc"), "utf8")
 
       expect(ran.failed).toBe(false)
-      expect(actor).toContain("defineActor(actorName, Effect.gen")
-      expect(actor).toContain('current: "get_weather"')
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
       expect(ran.recorded.installed).toEqual([directory])
@@ -408,6 +419,8 @@ describe("parsing", () => {
       const ran = await drive([
         "init",
         "researcher",
+        "--template",
+        "agent",
         "--provider",
         "openrouter",
         "--provider-config",
@@ -432,6 +445,8 @@ describe("parsing", () => {
       const ran = await drive([
         "init",
         "researcher",
+        "--template",
+        "agent",
         "--provider",
         "openrouter",
         "--provider-config",

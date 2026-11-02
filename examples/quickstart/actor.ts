@@ -1,36 +1,67 @@
 import { Effect, Schema } from "effect"
-import { Rpc } from "effect/unstable/rpc"
-import { atom, defineActor } from "tardie/core"
-import { agentMethods, compact, infer, messages, tools as libraryTools } from "tardie/agent"
-import { defineLibrary, MethodDescription, MethodHints } from "tardie/libraries"
+import { act, actorMethod, defineActor, durableAtom, effectAtom, event, type Atom } from "tardie/core"
 
-const actorName = "weather-agent"
+const actorName = "counter"
 
-const actorInstructions = `
-Answer questions about the weather.
-Use the weather tool for current conditions.
-`.trim()
+const Incremented = event({ type: "Incremented" })
+const Decremented = event({ type: "Decremented" })
 
-export const weather = defineLibrary({
-  name: "weather",
-  description: "Weather information",
-  toolNames: { current: "get_weather" },
-  methods: [Rpc.make("current", {
-    payload: Schema.Struct({ city: Schema.String }),
-    success: Schema.Struct({ city: Schema.String, temperature: Schema.Finite }),
-  })
-    .annotate(MethodDescription, "Get example weather data for a city")
-    .annotate(MethodHints, { readOnlyHint: true, openWorldHint: false })],
+const makeCount = () => durableAtom({
+  name: "count",
+  input: Schema.Union([Incremented, Decremented]),
+  schema: Schema.Int,
+  initial: 0,
+  reduce: (count, event) => event.type === "Decremented" ? count - 1 : count + 1,
 })
 
-export default defineActor(actorName, Effect.gen(function* () {
-  const system = atom(actorInstructions)
-  const tools = yield* libraryTools([weather])
-  const context = yield* compact(messages)
-  const agent = yield* infer(atom(get => ({
-    system: get(system),
-    tools: get(tools),
-    context: get(context),
-  })))
-  return { atom: agent, methods: agentMethods }
+const Notify = act({
+  name: "notify",
+  input: Schema.Int,
+  success: Schema.Null,
+  failure: Schema.String,
+})
+
+export const notifyLayer = Notify.layer(count =>
+  Effect.log(`${count} is even`).pipe(Effect.as(null))
+)
+
+const notify = (count: Atom<number>) => effectAtom(get => ({
+  view: get(count),
+  events: {},
+  acts: get(count) > 0 && get(count) % 2 === 0
+    ? { notify: Notify.request({ input: get(count) }) }
+    : {},
 }))
+
+const counterMethods = (count: Atom<number>) => ({
+  increment: actorMethod({
+    inputSchema: Schema.Null,
+    outputSchema: Schema.Int,
+    onReceive: Incremented.from(() => ({})),
+    result: (_input, get) => ({
+      status: "completed",
+      output: get(count),
+    }),
+  }),
+  decrement: actorMethod({
+    inputSchema: Schema.Null,
+    outputSchema: Schema.Int,
+    onReceive: Decremented.from(() => ({})),
+    result: (_input, get) => ({
+      status: "completed",
+      output: get(count),
+    }),
+  }),
+})
+
+const counter = defineActor(actorName, Effect.sync(() => {
+  const count = makeCount()
+  const notifications = notify(count)
+
+  return {
+    atom: notifications,
+    methods: counterMethods(count),
+  }
+}))
+
+export default counter
