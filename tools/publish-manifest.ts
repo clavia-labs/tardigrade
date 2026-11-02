@@ -47,6 +47,8 @@ export const publishSources = [
 ] as const
 
 export const REQUIRED_PUBLISH_DEPENDENCIES = [
+  "just-bash",
+  "@cloudflare/sandbox",
   "@cfworker/json-schema",
   "@effect/platform-bun",
   "@effect/platform-node-shared",

@@ -8,3 +8,5 @@ export * from "./agents"
 export * from "./alarm"
 
 export * from "./errors"
+
+export { filesystem, filesystemTools, FilesystemWorkspace, FilesystemWorkspaceError, DEFAULT_FILESYSTEM_WORKSPACE_POLICY, type FilesystemWorkspaceService, type FilesystemWorkspacePolicy } from "./filesystem/index"
