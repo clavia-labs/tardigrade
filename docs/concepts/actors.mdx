@@ -1,0 +1,295 @@
+---
+title: Actors
+articleClass: actors-article
+description: Understand actors, allocate root and child threads, and invoke typed methods.
+socialImage: /images/actors-social.png
+socialImageAlt: Morty asks Rick for a portal code. Rick reveals C-137 from his private knowledge through a message.
+route: /docs/actors
+section: Concepts
+sectionOrder: 2
+order: 4
+---
+
+In Tardigrade, an actor is an addressable entity with private state and behavior. This builds on the [actor model](https://www.ijcai.org/Proceedings/73/Papers/027B.pdf), introduced in 1973. Related implementations include [Erlang/OTP](https://www.erlang.org/doc/system/ref_man_processes.html) and [Microsoft Orleans](https://learn.microsoft.com/en-us/dotnet/orleans/overview).
+
+A good analogy is to think of actors like regular people we interact with. People typically hold information that is accessible only to them. Others access this private information or elicit behaviors from them through communication.
+
+<PeopleTalkingDiagram />
+
+Similarly, in Tardigrade, actors hold information that is private to them. This is the actor's event log. The rest of the world communicates with them and elicit behaviors via typed methods. This will become clearer as you walk through the concepts below.
+
+<ActorCommunicationDiagram />
+
+## Define an actor
+
+An actor definition describes its methods and behavior. Defining an actor does not start a runtime.
+
+This example defines a `meeseeks` actor that records messages and answers with its private portal code. Save it as `actor.ts`. Model calls and tools can be composed into an actor using the atoms shown in the [Build an agent](/docs/build-an-agent) guide.
+
+```ts
+import { Effect, Schema } from "effect"
+import { actorMethod, atom, defineActor, durableAtom, event } from "tardie/core"
+
+const MessageReceived = event({
+  type: "MessageReceived",
+  id: Schema.String,
+  text: Schema.String,
+})
+
+export const meeseeks = defineActor("meeseeks", Effect.sync(() => {
+  const portalCode = atom("C-137")
+  const received = durableAtom({
+    name: "received",
+    input: MessageReceived,
+    schema: Schema.Record(Schema.String, Schema.String),
+    initial: {},
+    reduce: (messages, message) => ({
+      ...messages, [message.id]: message.text,
+    }),
+  })
+
+  const message = actorMethod({
+    inputSchema: Schema.Struct({ text: Schema.String }),
+    outputSchema: Schema.Struct({ text: Schema.String }),
+    onReceive: MessageReceived.from((input: { text: string }, context: { id: string }) => ({
+      id: context.id,
+      text: input.text,
+    })),
+    result: (_input, get, context) =>
+      get(received)[context.id] !== undefined
+        ? { status: "completed", output: { text: get(portalCode) } }
+        : undefined,
+  })
+
+  return { atom: received, methods: { message } }
+}))
+```
+
+`durableAtom` restores recorded messages. `actorMethod` maps an invocation into a declared event and derives its result from atom state. The actor factory creates the graph for each runtime.
+
+## Create a host
+
+A host runs the actor and owns its storage, threads, and message delivery. Save this as `host.ts`:
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import { createBunHost } from "tardie/platform/bun"
+import { meeseeks } from "./actor"
+
+export const openHost = () => Effect.runPromise(createBunHost({
+  actor: meeseeks,
+  storage: ".tardigrade",
+  actorContext: Context.pick(),
+  services: () => Layer.empty,
+}))
+```
+
+Open it in your application:
+
+```ts
+const host = await openHost()
+```
+
+Host operations return Effects. Run them with `Effect.runPromise` at the application boundary, or compose them with `Effect.gen`. Close the host with `await Effect.runPromise(host.close)` when the application finishes.
+
+### Supply atom requirements
+
+`actorContext` selects the services visible while constructing the actor graph. `services(coordinate, runtime)` supplies the implementations used by its atoms and actions. This actor needs no additional services, so it uses `Context.pick()` and `Layer.empty`. The [Build an agent](/docs/build-an-agent) guide shows model and tool service implementations.
+
+## Allocate threads
+
+The host returns references with callable methods. Repeating an allocation with the same scope and name returns a reference to the same logical thread.
+
+### Actor instances
+
+An instance scopes the actor's threads. For example, `"rick"` can identify Rick's instance of `meeseeks`. Morty can use the same actor definition with a different instance identity.
+
+<ActorInstancesDiagram />
+
+### Root threads
+
+The caller supplies a name within the actor instance. The host assigns the thread identity and returns a reference.
+
+```ts
+const rickMain = await Effect.runPromise(host.allocateRootThread({ instance: "rick", name: "main" }))
+const rickLab = await Effect.runPromise(host.allocateRootThread({ instance: "rick", name: "lab" }))
+const mortyMain = await Effect.runPromise(host.allocateRootThread({ instance: "morty", name: "main" }))
+const mortyLab = await Effect.runPromise(host.allocateRootThread({ instance: "morty", name: "lab" }))
+```
+
+Rick and Morty each have two threads, `"main"` and `"lab"`. They can reuse these names because their instances provide separate scopes.
+
+<ActorInstancesDiagram threads />
+
+### Child threads
+
+A thread can create another logical thread in the same actor instance. For example, Rick's `"main"` thread can create a `"researcher"` thread. It lives alongside `"main"` and `"lab"` as another thread in Rick's instance. The parent-child relationship determines its naming scope.
+
+```ts
+const researcher = await Effect.runPromise(host.allocateChildThread({
+  parent: rickMain.coordinate,
+  name: "researcher",
+}))
+
+const factChecker = await Effect.runPromise(host.allocateChildThread({
+  parent: researcher.coordinate,
+  name: "fact-checker",
+}))
+```
+
+`researcher.coordinate` contains the actor, instance, and assigned thread identity:
+
+```json
+{ "actor": "meeseeks", "instance": "rick", "thread": "<assigned thread ID>" }
+```
+
+The [supervisor log](#supervisor-log) records each thread's parent and depth, so the host can reconstruct the hierarchy while each coordinate stays `actor/instance/thread`.
+
+<ChildThreadsDiagram />
+
+### Generated names
+
+Omit `name` to let the host assign a name. By default, generated names are friendly slugs such as `quiet-fox-k7m2`, made from an adjective, a noun, and a short random token. The host can change the word lists and token length or supply its own name generator. It checks for collisions, retries if a name is already taken, and stores the assignment for reuse.
+
+```ts
+const root = await Effect.runPromise(host.allocateRootThread({ instance: "rick" }))
+const child = await Effect.runPromise(host.allocateChildThread({ parent: root.coordinate }))
+```
+
+## Invoke a thread
+
+Once a thread is allocated, a caller can use its reference to invoke a method defined by the actor. For example, `rickMain` identifies Rick's `"main"` thread, where a caller can invoke `meeseeks`'s `message` method.
+
+```ts
+Object.keys(rickMain.methods) // ["message"]
+
+const response = await Effect.runPromise(rickMain.methods.message({
+  text: "What is the portal code?",
+}, { id: "portal-code" }))
+// { text: "C-137" }
+```
+
+Method calls return Effects. The `id` identifies the invocation so a retry with the same input can reuse its recorded call and result.
+
+<ThreadInvocationDiagram />
+
+## Serve over HTTP
+
+Expose the host to other processes with an HTTP server. The host continues to own execution and storage; the server provides network access.
+
+```ts
+import { serve } from "tardie/platform/bun"
+
+const server = await Effect.runPromise(serve(host, { port: 4242 }))
+```
+
+Call Rick's thread from another process, replacing `$THREAD_ID` with `rickMain.coordinate.thread`:
+
+```sh
+curl -X POST "http://localhost:4242/v1/actors/rick/threads/$THREAD_ID/methods/message" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: portal-code' \
+  -d '{"text":"What is the portal code?"}'
+```
+
+The `Idempotency-Key` header makes retries reuse the same call. The server returns `202 Accepted` with a receipt and a `Location` header. Poll that location with `GET` until the state is `completed`, `failed`, or `cancelled`; the first read may still be `pending`.
+
+Remote applications connect through the Client SDK. A local script can use `host` directly. Stop the HTTP server with `await Effect.runPromise(server.close)` before closing its host.
+
+## Complete example
+
+This script opens the host, allocates threads for Rick and Morty, invokes their message methods, and closes the host.
+
+```ts
+import { Effect } from "effect"
+import { openHost } from "./host"
+
+const host = await openHost()
+try {
+  const rickMain = await Effect.runPromise(
+    host.allocateRootThread({ instance: "rick", name: "main" })
+  )
+  const mortyMain = await Effect.runPromise(
+    host.allocateRootThread({ instance: "morty", name: "main" })
+  )
+
+  const rickResponse = await Effect.runPromise(rickMain.methods.message({
+    text: "What is the portal code?",
+  }, { id: "portal-code" }))
+  const mortyResponse = await Effect.runPromise(mortyMain.methods.message({
+    text: "What is the portal code?",
+  }, { id: "portal-code" }))
+
+  console.log({ rickResponse, mortyResponse })
+} finally {
+  await Effect.runPromise(host.close)
+}
+```
+
+## How threads are stored
+
+### Supervisor log
+
+The host keeps an event log for each actor instance, called the supervisor log. It records which threads belong to the instance and how they relate. Each thread also has its own log for that thread's events.
+
+For Rick's instance, allocation records in the supervisor log can look like this. Allocation keys and timestamps are omitted:
+
+<div className="actor-event-table">
+  <table>
+    <thead>
+      <tr><th scope="col">Event</th><th scope="col">Thread</th><th scope="col">Parent thread</th><th scope="col">Depth</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ThreadRequested</code></td><td><code>main</code></td><td>None</td><td>0</td></tr>
+      <tr><td><code>ThreadRequested</code></td><td><code>lab</code></td><td>None</td><td>0</td></tr>
+      <tr><td><code>ThreadRequested</code></td><td><code>researcher</code></td><td><code>main</code></td><td>1</td></tr>
+      <tr><td><code>ThreadRequested</code></td><td><code>fact-checker</code></td><td><code>researcher</code></td><td>2</td></tr>
+    </tbody>
+  </table>
+</div>
+
+`main` and `lab` are root threads at depth 0. `researcher` is a child of `main`, and `fact-checker` is a child of `researcher`. The host builds the instance's thread directory from these records.
+
+### Physical placement
+
+A reference identifies a thread. The host resolves it to where that thread runs, so callers do not need to know its location. The receiving host is also responsible for access checks.
+
+<ThreadResolutionDiagram />
+
+For Rick's thread, the Cloudflare host uses JSON arrays to name the actor instance and thread Durable Objects. Use the assigned coordinate from the reference:
+
+```ts
+const actor = "meeseeks"
+const instance = "rick"
+const thread = rickMain.coordinate.thread
+
+const supervisor = env.ACTORS.getByName(JSON.stringify([actor, instance]))
+const target = env.THREADS.getByName(JSON.stringify([actor, instance, thread]))
+```
+
+<StorageLayoutDiagram host="cloudflare" />
+
+The layout below illustrates threads whose IDs are `main` and `lab`. Actual IDs come from the allocated references. The Bun host encodes the JSON pair `[actor, instance]` as the instance database filename. It stores each thread beside that database, using the thread ID as a base64url filename:
+
+```ts
+import { Buffer } from "node:buffer"
+import { join } from "node:path"
+
+const instanceFile = Buffer.from(JSON.stringify(["meeseeks", "rick"])).toString("base64url")
+const actorDatabase = join(".tardigrade", `${instanceFile}.sqlite`)
+const thread = rickMain.coordinate.thread
+const filename = Buffer.from(thread, "utf8").toString("base64url")
+const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
+```
+
+<StorageLayoutDiagram host="bun" />
+
+## Next steps
+
+Create a starter project with the CLI, then follow the [introduction](/docs/welcome#run-tardigrade) to run it:
+
+```sh
+tdg init counter
+```
+
+Read [Atoms](/docs/atoms) to build state and behavior inside an actor.

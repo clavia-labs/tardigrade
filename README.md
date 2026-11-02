@@ -158,7 +158,7 @@ ActorWorker -> ActorDO [supervisor DB]
                    └── C [ThreadDO, thread DB, parent: B]
 ```
 
-The [Quickstart](docs/getting-started/quickstart.mdx) generates services and deployment configs with both DO bindings. Configure your model and credentials, then run or deploy.
+The [Build an agent guide](docs/guides/build-an-agent.mdx) generates services and deployment configs with both DO bindings. Configure your model and credentials, then run or deploy.
 
 Run locally with `bunx wrangler dev`; see [local setup](docs/platforms/cloudflare.mdx#verify-locally).
 

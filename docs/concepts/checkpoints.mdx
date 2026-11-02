@@ -1,0 +1,42 @@
+---
+title: Checkpoints
+articleClass: checkpoints-article
+description: Save atom state and recover from the remaining event log.
+route: /docs/checkpoints
+section: Concepts
+sectionOrder: 2
+order: 6
+---
+
+## Save state and position
+
+```text
+regular atom ──┐
+family member ┼──→ snapshot(state, cursor) ──→ SQLite
+family member ┘
+```
+
+## Configure checkpointing
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import { createBunHost } from "tardie/platform/bun"
+import { meeseeks } from "./actor"
+
+const host = await Effect.runPromise(createBunHost({
+  actor: meeseeks,
+  storage: ".tardigrade",
+  actorContext: Context.pick(),
+  services: () => Layer.empty,
+  checkpointPolicy: {
+    mode: "threshold",
+    options: { everyEvents: 100 },
+  },
+}))
+```
+
+## Recover state
+
+```text
+saved atom state + events after its cursor → current atom state
+```

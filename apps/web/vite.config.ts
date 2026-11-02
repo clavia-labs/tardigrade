@@ -3,7 +3,7 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { nitro } from "nitro/vite"
-import rehypeHighlight from "rehype-highlight"
+import { highlight } from "./plugins/highlight"
 import rehypeMdxCodeProps from "rehype-mdx-code-props"
 import rehypeSlug from "rehype-slug"
 import { defineConfig, type Plugin } from "vite"
@@ -25,7 +25,9 @@ const docSource = (): Plugin => ({
   },
   async load(id) {
     if (!id.startsWith(DOC_SOURCE_PREFIX) || !id.endsWith(".ts")) return undefined
-    return `export default ${JSON.stringify(await readFile(id.slice(DOC_SOURCE_PREFIX.length, -3), "utf8"))}`
+    const filename = id.slice(DOC_SOURCE_PREFIX.length, -3)
+    this.addWatchFile(filename)
+    return `export default ${JSON.stringify(await readFile(filename, "utf8"))}`
   }
 })
 
@@ -37,7 +39,7 @@ export default defineConfig({
       enforce: "pre",
       ...mdx({
         providerImportSource: "@mdx-js/react",
-        rehypePlugins: [rehypeSlug, [rehypeHighlight, { detect: false, plainText: ["curl", "text", "txt"] }], rehypeMdxCodeProps],
+        rehypePlugins: [rehypeSlug, highlight, rehypeMdxCodeProps],
         remarkPlugins: [remarkGfm, remarkFrontmatter, [remarkMdxFrontmatter, { name: "frontmatter" }]]
       })
     },

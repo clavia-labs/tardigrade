@@ -1,5 +1,5 @@
 import { useId, type ReactElement, type ReactNode } from "react"
-import { PostalStamp } from "../PostalStamp"
+import { PostalStamp } from "../site/artwork/PostalStamp"
 
 type Speaker = "socrates" | "you"
 

@@ -1,0 +1,254 @@
+---
+title: Introduction
+description: A TypeScript framework for durable, composable agents.
+hideDescription: true
+route: /docs/welcome
+section: Start Here
+sectionOrder: 1
+order: 1
+---
+
+import tardie from "../assets/mascot/tardie-curious-right.svg"
+
+<div className="introduction-mascot"><img src={tardie} alt="Tardie, a curious tardigrade." width="160" height="98" /></div>
+
+<h1 className="introduction-lead">Tardigrade is a TypeScript framework for building durable, event-driven actors. Built on <a href="https://effect.website/">Effect</a>.</h1>
+
+## How it works
+
+Every event is written to an append-only log. Durable atoms reduce those events into state. Effect atoms propose effects based on current state. The runtime executes those effects and appends new events to the log.
+
+<EventLogWorldDiagram />
+
+## Why Tardigrade?
+
+<table className="introduction-benefits">
+  <tbody>
+    <tr><th scope="row">Durable</th><td>State is derived purely from an immutable event log. Actors survive crashes and resume automatically from where they stopped.</td></tr>
+    <tr><th scope="row">Composable</th><td>Build complex actors from very simple primitives. Actors are made of atoms and they infinitely compose with each other. </td></tr>
+    <tr><th scope="row">Scalable</th><td>Each actor runs on a single durable object. Scale from one to millions of actors seamlessly.</td></tr>
+    <tr><th scope="row">Native observability</th><td>With a log at the core, and behaviors defined as pure functions, you can easily inspect why your actors reached a particular state.</td></tr>
+  </tbody>
+</table>
+
+## Use Tardigrade
+
+To run and deploy an agent, follow the [Agent guide](/docs/agent).
+
+### Quickstart
+
+Install the latest [Tardie CLI](/docs/cli).
+
+<InstallCommand packageName="tardie@latest" global />
+
+Load the quickstart template. This initialises a simple counter actor along with a `SKILL.md` for your agent.
+
+```sh
+tdg init counter
+cd counter
+```
+
+### Store state in a durable atom
+
+An atom is the smallest state primitive in Tardigrade. When a new event is received, it reduces the event log into state that survives restarts.
+
+<CodePlayground>
+
+```ts
+import { Schema } from "effect"
+import { durableAtom, event } from "tardie/core"
+
+const Incremented = event({ type: "Incremented" })
+const Decremented = event({ type: "Decremented" })
+
+const makeCount = () => durableAtom({
+  name: "count",
+  input: Schema.Union([Incremented, Decremented]),
+  schema: Schema.Int,
+  initial: 0,
+  reduce: (count, event) => event.type === "Decremented" ? count - 1 : count + 1,
+})
+```
+
+</CodePlayground>
+
+### Perform actions using effect atoms
+
+Effect atoms react to state changes by proposing real world actions. The runtime executes these action using the implementation you supply.
+
+<CodePlayground kind="effect">
+
+```ts
+import { Effect } from "effect"
+import { act, effectAtom, type Atom } from "tardie/core"
+
+const Notify = act({
+  name: "notify",
+  input: Schema.Int,
+  success: Schema.Null,
+  failure: Schema.String,
+})
+
+export const notifyLayer = Notify.layer(count =>
+  Effect.log(`${count} is even`).pipe(Effect.as(null))
+)
+
+const notify = (count: Atom<number>) => effectAtom(get => ({
+  view: get(count),
+  events: {},
+  acts: get(count) > 0 && get(count) % 2 === 0
+    ? { notify: Notify.request({ input: get(count) }) }
+    : {},
+}))
+```
+
+</CodePlayground>
+
+Supply `notifyLayer` to the host to run the notification effect. In this example, the `notifyLayer` logs in the console whenever the count is an even number.
+
+### Define methods
+
+Methods are how the world interacts with your actor. It defines a typed input and output schema, and a way to declare the status of the method call for an observor.
+
+<CodePlayground kind="methods">
+
+```ts
+import { actorMethod } from "tardie/core"
+
+const counterMethods = (count: Atom<number>) => ({
+  increment: actorMethod({
+    inputSchema: Schema.Null,
+    outputSchema: Schema.Int,
+    onReceive: Incremented.from(() => ({})),
+    result: (_input, get) => ({
+      status: "completed",
+      output: get(count),
+    }),
+  }),
+  decrement: actorMethod({
+    inputSchema: Schema.Null,
+    outputSchema: Schema.Int,
+    onReceive: Decremented.from(() => ({})),
+    result: (_input, get) => ({
+      status: "completed",
+      output: get(count),
+    }),
+  }),
+})
+```
+
+</CodePlayground>
+
+### Compose atoms into an actor
+
+Return the composed atom along with methods for interaction to define your actor.
+
+```ts
+import { defineActor } from "tardie/core"
+
+export const counter = defineActor("counter", Effect.sync(() => {
+  const count = makeCount()
+  const notifications = notify(count)
+
+  return {
+    atom: notifications,
+    methods: counterMethods(count),
+  }
+}))
+```
+
+## Run Tardigrade
+
+Run Tardigrade locally or host it in a cloud of your choice as durable objects.
+
+### Local
+
+Run Tardigrade as a HTTP server by providing a storage location and service implementation for the actor's requirements.
+
+```ts title="server.ts"
+import { Context, Effect } from "effect"
+import { createBunHost, methodHttp } from "tardie/platform/bun"
+import { counter, notifyLayer } from "./actor"
+
+const host = await Effect.runPromise(createBunHost({
+  actor: counter,
+  actorContext: Context.pick(),
+  storage: ".tardigrade",
+  services: () => notifyLayer,
+}))
+
+Bun.serve({
+  hostname: "127.0.0.1",
+  port: 4242,
+  fetch: methodHttp(host),
+})
+```
+
+```sh
+bun run server.ts
+```
+
+### Cloud
+
+Run Tardigrade actors as Durable Objects on [Cloudflare](/docs/platforms/cloudflare) or self-host on your own cloud using [Celld](/docs/platforms/celld). Both use the same Worker entrypoint and configuration.
+
+```ts title="worker.ts"
+import { Context } from "effect"
+import { createActorWorker } from "tardie/platform/cloudflare"
+import { counter, notifyLayer } from "./actor"
+
+const worker = createActorWorker({
+  actor: counter,
+  actorContext: Context.pick(),
+  services: () => notifyLayer,
+})
+
+export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
+export default { fetch: worker.fetch }
+```
+
+<Tip title="wrangler.jsonc">
+
+```json
+{
+  "name": "counter",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACTORS", "class_name": "ActorDO" },
+      { "name": "THREADS", "class_name": "ThreadDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO"] }
+  ]
+}
+```
+
+</Tip>
+
+Deploy to Cloudflare with the [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/):
+
+```sh
+bun add -d wrangler
+bunx wrangler deploy
+```
+
+For self-hosting, install the [Celld CLI](https://github.com/denoland/celld#install) and deploy to your fleet's storage bucket. Celld uses `esbuild` to bundle the Worker:
+
+```sh
+bun add -g esbuild
+celld deploy . --bucket s3://YOUR-BUCKET
+```
+
+[Start your Celld nodes](/docs/platforms/celld#configure-nodes) against the same bucket to serve the actor.
+
+## Explore
+
+<div className="introduction-explore">
+  <a href="/docs/atoms"><span>Concepts</span><p>Explore atoms, actors, and how they compose.</p></a>
+  <a href="/docs/agent"><span>Agent</span><p>Build, run, and deploy your own agent.</p></a>
+</div>

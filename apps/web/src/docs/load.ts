@@ -1,19 +1,23 @@
-import Atoms, { frontmatter as atomsFrontmatter } from "@docs/getting-started/atoms.mdx"
-import atomsMarkdown from "@docs/getting-started/atoms.mdx?doc-source"
-import Components, { frontmatter as componentsFrontmatter } from "@docs/getting-started/components.mdx"
-import componentsMarkdown from "@docs/getting-started/components.mdx?doc-source"
+import BuildAnAgent, { frontmatter as buildAnAgentFrontmatter } from "@docs/guides/build-an-agent.mdx"
+import buildAnAgentMarkdown from "@docs/guides/build-an-agent.mdx?doc-source"
+import Atoms, { frontmatter as atomsFrontmatter } from "@docs/concepts/atoms.mdx"
+import atomsMarkdown from "@docs/concepts/atoms.mdx?doc-source"
+import NotesIndex, { frontmatter as notesIndexFrontmatter } from "@docs/notes/index.mdx"
+import notesIndexMarkdown from "@docs/notes/index.mdx?doc-source"
+import Agent, { frontmatter as agentFrontmatter } from "@docs/agent.mdx"
+import FormsAndShadows, { frontmatter as formsAndShadowsNote } from "@notes/telling-forms-from-their-shadows.mdx"
+import formsAndShadowsMarkdown from "@notes/telling-forms-from-their-shadows.mdx?doc-source"
+import agentMarkdown from "@docs/agent.mdx?doc-source"
 import type { ComponentType } from "react"
 
 import ActorChecking, { frontmatter as actorCheckingFrontmatter } from "@docs/references/actor-checking.mdx"
 import actorCheckingMarkdown from "@docs/references/actor-checking.mdx?doc-source"
 import Cli, { frontmatter as cliFrontmatter } from "@docs/references/cli.mdx"
 import cliMarkdown from "@docs/references/cli.mdx?doc-source"
-import Concepts, { frontmatter as conceptsFrontmatter } from "@docs/getting-started/concepts.mdx"
-import conceptsMarkdown from "@docs/getting-started/concepts.mdx?doc-source"
-import Actors, { frontmatter as actorsFrontmatter } from "@docs/getting-started/actors.mdx"
-import actorsMarkdown from "@docs/getting-started/actors.mdx?doc-source"
-import VerifyingActors, { frontmatter as verifyingActorsFrontmatter } from "@docs/getting-started/verifying-actors.mdx"
-import verifyingActorsMarkdown from "@docs/getting-started/verifying-actors.mdx?doc-source"
+import Actors, { frontmatter as actorsFrontmatter } from "@docs/concepts/actors.mdx"
+import actorsMarkdown from "@docs/concepts/actors.mdx?doc-source"
+import VerifyingActors, { frontmatter as verifyingActorsFrontmatter } from "@docs/concepts/verifying-actors.mdx"
+import verifyingActorsMarkdown from "@docs/concepts/verifying-actors.mdx?doc-source"
 import Rlm, { frontmatter as rlmFrontmatter } from "@docs/examples/rlm.mdx"
 import rlmMarkdown from "@docs/examples/rlm.mdx?doc-source"
 import Bun, { frontmatter as bunFrontmatter } from "@docs/platforms/bun.mdx"
@@ -22,14 +26,12 @@ import Celld, { frontmatter as celldFrontmatter } from "@docs/platforms/celld.md
 import celldMarkdown from "@docs/platforms/celld.mdx?doc-source"
 import Cloudflare, { frontmatter as cloudflareFrontmatter } from "@docs/platforms/cloudflare.mdx"
 import cloudflareMarkdown from "@docs/platforms/cloudflare.mdx?doc-source"
-import Quickstart, { frontmatter as quickstartFrontmatter } from "@docs/getting-started/quickstart.mdx"
-import quickstartMarkdown from "@docs/getting-started/quickstart.mdx?doc-source"
 import Sdk, { frontmatter as sdkFrontmatter } from "@docs/references/sdk.mdx"
 import sdkMarkdown from "@docs/references/sdk.mdx?doc-source"
-import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/start-here/Welcome.mdx"
-import welcomeMarkdown from "@docs/start-here/Welcome.mdx?doc-source"
-import Why, { frontmatter as whyFrontmatter } from "@docs/start-here/Why.mdx"
-import whyMarkdown from "@docs/start-here/Why.mdx?doc-source"
+import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/introduction.mdx"
+import welcomeMarkdown from "@docs/introduction.mdx?doc-source"
+import Why, { frontmatter as whyFrontmatter } from "@docs/notes/why-tardigrade.mdx"
+import whyMarkdown from "@docs/notes/why-tardigrade.mdx?doc-source"
 import StateInitialisation, { frontmatter as stateInitialisationFrontmatter } from "@docs/migration/state-initialisation.mdx"
 import stateInitialisationMarkdown from "@docs/migration/state-initialisation.mdx?doc-source"
 
@@ -63,15 +65,21 @@ type DocModule = {
 }
 
 const modules: ReadonlyArray<DocModule> = [
-  { default: Atoms, frontmatter: atomsFrontmatter, markdown: atomsMarkdown, source: "getting-started/atoms.mdx" },
+  { default: BuildAnAgent, frontmatter: buildAnAgentFrontmatter, markdown: buildAnAgentMarkdown, source: "guides/build-an-agent.mdx" },
+  { default: Atoms, frontmatter: atomsFrontmatter, markdown: atomsMarkdown, source: "concepts/atoms.mdx" },
+  { default: NotesIndex, frontmatter: notesIndexFrontmatter, markdown: notesIndexMarkdown, source: "notes/index.mdx" },
+  { default: Agent, frontmatter: agentFrontmatter, markdown: agentMarkdown, source: "agent.mdx" },
+  {
+    default: FormsAndShadows,
+    frontmatter: formsAndShadowsNote,
+    markdown: formsAndShadowsMarkdown,
+    source: "../notes/telling-forms-from-their-shadows.mdx",
+  },
   { default: ActorChecking, frontmatter: actorCheckingFrontmatter, markdown: actorCheckingMarkdown, source: "references/actor-checking.mdx" },
-  { default: Components, frontmatter: componentsFrontmatter, markdown: componentsMarkdown, source: "getting-started/components.mdx" },
-  { default: Welcome, frontmatter: welcomeFrontmatter, markdown: welcomeMarkdown, source: "start-here/Welcome.mdx" },
-  { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "start-here/Why.mdx" },
-  { default: Quickstart, frontmatter: quickstartFrontmatter, markdown: quickstartMarkdown, source: "getting-started/quickstart.mdx" },
-  { default: Concepts, frontmatter: conceptsFrontmatter, markdown: conceptsMarkdown, source: "getting-started/concepts.mdx" },
-  { default: Actors, frontmatter: actorsFrontmatter, markdown: actorsMarkdown, source: "getting-started/actors.mdx" },
-  { default: VerifyingActors, frontmatter: verifyingActorsFrontmatter, markdown: verifyingActorsMarkdown, source: "getting-started/verifying-actors.mdx" },
+  { default: Welcome, frontmatter: welcomeFrontmatter, markdown: welcomeMarkdown, source: "introduction.mdx" },
+  { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "notes/why-tardigrade.mdx" },
+  { default: Actors, frontmatter: actorsFrontmatter, markdown: actorsMarkdown, source: "concepts/actors.mdx" },
+  { default: VerifyingActors, frontmatter: verifyingActorsFrontmatter, markdown: verifyingActorsMarkdown, source: "concepts/verifying-actors.mdx" },
   { default: Bun, frontmatter: bunFrontmatter, markdown: bunMarkdown, source: "platforms/bun.mdx" },
   { default: Cloudflare, frontmatter: cloudflareFrontmatter, markdown: cloudflareMarkdown, source: "platforms/cloudflare.mdx" },
   { default: Celld, frontmatter: celldFrontmatter, markdown: celldMarkdown, source: "platforms/celld.mdx" },
@@ -148,4 +156,4 @@ export const docSections: ReadonlyArray<readonly [string, ReadonlyArray<Doc>]> =
 export const DEFAULT_DOC_ROUTE = "/docs/welcome"
 
 export const docAt = (pathname: string): Doc | undefined =>
-  docs.find((doc) => doc.frontmatter.route === (pathname === "/docs" ? DEFAULT_DOC_ROUTE : pathname))
+  docs.find((doc) => doc.frontmatter.route === (pathname === "/" || pathname === "/docs" ? DEFAULT_DOC_ROUTE : pathname.replace(/\/$/, "")))
