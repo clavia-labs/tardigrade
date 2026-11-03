@@ -2,8 +2,14 @@
   "name": "tardigrade-experimental-test",
   "main": "../fixtures/workerd/fixture.worker.ts",
   "compatibility_date": "2026-08-08",
+  "r2_buckets": [{ "binding": "WORKSPACE_LIFECYCLE_OBJECTS", "bucket_name": "tardigrade-workspace-lifecycle-test" }],
   "durable_objects": {
     "bindings": [
+      { "name": "WORKSPACE_LIFECYCLE", "class_name": "WorkspaceLifecycleDO" },
+      {
+        "name": "WORKSPACE_IDEMPOTENCY",
+        "class_name": "WorkspaceIdempotencyDO"
+      },
       {
         "name": "EFFECT_SERVICE",
         "class_name": "EffectServiceDO"
@@ -70,6 +76,8 @@
     {
       "tag": "v1",
       "new_sqlite_classes": [
+        "WorkspaceLifecycleDO",
+        "WorkspaceIdempotencyDO",
         "EffectServiceDO",
         "InputLifecycleDO",
         "TestPromiseResolver",

@@ -31,13 +31,16 @@
     "@cloudflare/workers-types": "5.20261102.1",
     "fast-check": "^4.9.0",
     "vitest": "^5.0.4",
-    "workerd": "1.20261006.1"
+    "workerd": "1.20261006.1",
+    "wrangler": "4.150.0",
+    "aws4fetch": "1.0.20"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test test/bun",
     "test:workers": "vitest run --config vitest.config.ts && vitest run --config vitest.agent.config.ts",
     "test:workers:long": "TARDIGRADE_TEST_LONG=1 vitest run --config vitest.config.ts",
-    "test:deployed": "bun run test/deployed.ts"
+    "test:deployed": "bun run test/deployed.ts",
+    "test:workspace:heavy": "bun run test/heavy/workspace/run.ts"
   }
 }
