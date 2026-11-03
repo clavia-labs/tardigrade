@@ -1,4 +1,6 @@
 export { containerWorkspace, DEFAULT_CONTAINER_WORKSPACE_POLICY, DEFAULT_WORKSPACE_RELEASE, type WorkspaceContainer, type WorkspaceProcess, type WorkspaceFiles, type ContainerWorkspaceOptions, type ContainerWorkspacePolicy, type WorkspaceMount, type WorkspaceRelease } from "./container"
 export { mountedWorkspace } from "./mounted"
 export { remoteWorkspace, type RemoteWorkspace } from "./remote"
+export { sqlIdempotencyStore } from "./idempotency-store"
 export { virtualWorkspace, virtualBash, DEFAULT_VIRTUAL_WORKSPACE_DIRECTORY, DEFAULT_VIRTUAL_WORKSPACE_CHUNK_BYTES, DEFAULT_VIRTUAL_WORKSPACE_POLICY, DEFAULT_VIRTUAL_BASH_PROFILE, type VirtualWorkspaceOptions, type VirtualWorkspacePolicy, type VirtualWorkspaceExecutor, type VirtualBashInput, type VirtualBashResult, type VirtualBashLimits, type VirtualBashProfile, type VirtualWorkspaceSnapshot, type VirtualWorkspaceEntry } from "./virtual/index"
+export { DEFAULT_WORKSPACE_NETWORK_POLICY, workspaceNetworkPolicy, type WorkspaceNetworkPolicy } from "./network"

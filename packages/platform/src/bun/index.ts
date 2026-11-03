@@ -100,3 +100,5 @@ export { localWorkspace, type LocalWorkspaceOptions } from "./workspace"
 
 export { virtualWorkspace, type BunVirtualWorkspaceOptions } from "./virtual-workspace"
 export { DEFAULT_VIRTUAL_WORKSPACE_DIRECTORY, DEFAULT_VIRTUAL_WORKSPACE_CHUNK_BYTES, DEFAULT_VIRTUAL_WORKSPACE_POLICY, DEFAULT_VIRTUAL_BASH_PROFILE, type VirtualWorkspaceOptions, type VirtualWorkspacePolicy, type VirtualWorkspaceExecutor } from "../shared/workspace/virtual/index"
+
+export { sqlIdempotencyStore } from "../shared/workspace/idempotency-store"

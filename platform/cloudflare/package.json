@@ -27,7 +27,8 @@
     "@clavia/tardigrade-model": "workspace:*",
     "@clavia/tardigrade-worker-loader": "workspace:*",
     "@effect/sql-sqlite-do": "4.0.0-rc.115",
-    "effect": "4.0.0-rc.115"
+    "effect": "4.0.0-rc.115",
+    "@clavia/tardigrade-store": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.1",

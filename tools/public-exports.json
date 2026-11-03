@@ -163,5 +163,6 @@
   "./deprecated/agent/runtime/turn": "./src/deprecated/agent/runtime/turn.ts",
   "./platform/journal": "./src/platform/shared/sql-journal.ts",
   "./libraries/filesystem": "./src/libraries/filesystem/index.ts",
-  "./platform/workspace": "./src/platform/shared/workspace/index.ts"
+  "./platform/workspace": "./src/platform/shared/workspace/index.ts",
+  "./store": "./src/store/index.ts"
 }

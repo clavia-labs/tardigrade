@@ -1,4 +1,4 @@
-import { SQL_OBJECT_CACHE_ROW_HEADROOM_BYTES } from "@clavia/tardigrade-deprecated-agent"
+import { SQL_OBJECT_CACHE_ROW_HEADROOM_BYTES } from "@clavia/tardigrade-store"
 
 import { CLOUDFLARE_SQLITE_MAX_ROW_BYTES } from "../limits"
 export { CLOUDFLARE_SQLITE_MAX_ROW_BYTES } from "../limits"

@@ -21,7 +21,8 @@
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@effect/sql-sqlite-do": "4.0.0-rc.115",
     "effect": "4.0.0-rc.115",
-    "just-bash": "3.6.0"
+    "just-bash": "3.6.0",
+    "@clavia/tardigrade-store": "workspace:*"
   },
   "devDependencies": {
     "@cfworker/json-schema": "^4.1.1",

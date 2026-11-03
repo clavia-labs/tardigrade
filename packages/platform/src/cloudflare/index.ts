@@ -62,7 +62,12 @@ export { cloudflarePromises, createCloudflarePromiseResolver, PromiseResolverCom
 export { httpMessageTransport } from "../shared/http-message"
 export { rpcMessageTransport, type ActorReceiver } from "../shared/rpc-message"
 
-export { createWorkspaceObject, workspaceObjectName, r2Mount, containerWorkspace, mountedWorkspace, remoteWorkspace, S3Gateway, DEFAULT_CONTAINER_WORKSPACE_POLICY, DEFAULT_WORKSPACE_RELEASE, DEFAULT_R2_MOUNT_REGION, DEFAULT_R2_MOUNT_ACCESS, type WorkspaceObjectOptions, type R2MountOptions, type ContainerWorkspaceOptions, type ContainerWorkspacePolicy, type WorkspaceMount, type WorkspaceRelease, type RemoteWorkspace } from "./workspace"
+export { createWorkspaceObject, DEFAULT_WORKSPACE_INACTIVITY_TIMEOUT_MS, workspaceObjectName, r2Mount, containerWorkspace, mountedWorkspace, remoteWorkspace, S3Gateway, DEFAULT_CONTAINER_WORKSPACE_POLICY, DEFAULT_WORKSPACE_RELEASE, DEFAULT_R2_MOUNT_REGION, DEFAULT_R2_MOUNT_ACCESS, type WorkspaceObjectOptions, type R2MountOptions, type ContainerWorkspaceOptions, type ContainerWorkspacePolicy, type WorkspaceMount, type WorkspaceRelease, type RemoteWorkspace } from "./workspace"
 
-export { virtualWorkspace, createVirtualWorkspaceObject } from "./virtual-workspace"
+export { virtualWorkspace, createVirtualWorkspaceObject, type VirtualWorkspaceObjectOptions } from "./virtual-workspace"
 export { DEFAULT_VIRTUAL_WORKSPACE_DIRECTORY, DEFAULT_VIRTUAL_WORKSPACE_CHUNK_BYTES, DEFAULT_VIRTUAL_WORKSPACE_POLICY, DEFAULT_VIRTUAL_BASH_PROFILE, type VirtualWorkspaceOptions, type VirtualWorkspacePolicy, type VirtualWorkspaceExecutor } from "../shared/workspace/virtual/index"
+
+export { sqlIdempotencyStore } from "../shared/workspace/idempotency-store"
+export { objectStorageFromR2, DEFAULT_R2_OBJECT_PREFIX, DEFAULT_R2_MULTIPART_PART_BYTES, DEFAULT_R2_STAGING_PREFIX, R2_MIN_MULTIPART_PART_BYTES, R2_MAX_MULTIPART_PARTS, R2_MAX_UPLOAD_BYTES, type R2ObjectStorageOptions, type R2ObjectCacheOptions, type R2ObjectStreamOptions } from "@clavia/tardigrade-cloudflare/object-storage/r2"
+export { DEFAULT_WORKSPACE_NETWORK_POLICY, workspaceNetworkPolicy, type WorkspaceNetworkPolicy } from "./workspace"
+export { WorkspaceNetworkProxy } from "./workspace"

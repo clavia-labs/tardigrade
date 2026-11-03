@@ -286,6 +286,7 @@
       "dependencies": {
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
+        "@clavia/tardigrade-store": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
     },
@@ -293,6 +294,7 @@
       "name": "@clavia/tardigrade-model",
       "version": "0.0.1",
       "dependencies": {
+        "@clavia/tardigrade-store": "workspace:*",
         "@tardie/ai": "0.0.5",
         "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.7",
         "@tardie/ai-openai": "4.0.0-rc.113-clavia.9",
@@ -325,6 +327,7 @@
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-libraries": "workspace:*",
+        "@clavia/tardigrade-store": "workspace:*",
         "@clavia/tardigrade-worker-loader": "workspace:*",
         "@cloudflare/sandbox": "1.0.3",
         "@effect/platform-bun": "4.0.0-rc.115",
@@ -341,6 +344,13 @@
         "fast-check": "^4.9.0",
         "vitest": "^5.0.4",
         "workerd": "1.20261006.1",
+      },
+    },
+    "packages/store": {
+      "name": "@clavia/tardigrade-store",
+      "version": "0.0.1",
+      "dependencies": {
+        "effect": "4.0.0-rc.115",
       },
     },
     "packages/tardie": {
@@ -363,6 +373,7 @@
         "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-platform": "workspace:*",
         "@clavia/tardigrade-server": "workspace:*",
+        "@clavia/tardigrade-store": "workspace:*",
         "@clavia/tardigrade-worker-loader": "workspace:*",
         "effect": "4.0.0-rc.115",
       },
@@ -383,7 +394,7 @@
         "@clavia/tardigrade-deprecated-core": "workspace:*",
         "@clavia/tardigrade-deprecated-host": "workspace:*",
         "@clavia/tardigrade-deprecated-http": "workspace:*",
-        "@clavia/tardigrade-model": "workspace:*",
+        "@clavia/tardigrade-store": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.115",
         "@effect/sql-sqlite-bun": "4.0.0-rc.115",
         "effect": "4.0.0-rc.115",
@@ -402,6 +413,7 @@
         "@clavia/tardigrade-deprecated-host": "workspace:*",
         "@clavia/tardigrade-deprecated-http": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
+        "@clavia/tardigrade-store": "workspace:*",
         "@clavia/tardigrade-worker-loader": "workspace:*",
         "@effect/sql-sqlite-do": "4.0.0-rc.115",
         "effect": "4.0.0-rc.115",
@@ -547,6 +559,8 @@
     "@clavia/tardigrade-react-rlm-chat-web": ["@clavia/tardigrade-react-rlm-chat-web@workspace:examples/react-rlm-chat/web"],
 
     "@clavia/tardigrade-server": ["@clavia/tardigrade-server@workspace:apps/server"],
+
+    "@clavia/tardigrade-store": ["@clavia/tardigrade-store@workspace:packages/store"],
 
     "@clavia/tardigrade-ui": ["@clavia/tardigrade-ui@workspace:packages/ui"],
 

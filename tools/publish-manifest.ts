@@ -17,6 +17,7 @@ import platform from "../packages/platform/package.json"
 import core from "../packages/core/package.json"
 import agent from "../packages/agent/package.json"
 import libraries from "../packages/libraries/package.json"
+import store from "../packages/store/package.json"
 
 interface DependencyManifest {
   readonly name: string
@@ -26,6 +27,7 @@ interface DependencyManifest {
 }
 
 export const publishSources = [
+  { dir: "packages/store", namespace: "store", pkg: store },
   { dir: "packages/agent", namespace: "agent", pkg: agent },
   { dir: "packages/libraries", namespace: "libraries", pkg: libraries },
   { dir: "packages/platform", namespace: "platform", pkg: platform },
