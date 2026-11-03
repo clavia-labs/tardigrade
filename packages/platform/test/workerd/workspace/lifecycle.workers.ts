@@ -1,8 +1,15 @@
 import { test } from "vitest"
 import { cloudflareWorkspaceLifecycle } from "../../fixtures/workspace/cloudflare"
-import { workspaceLifecycle } from "../../scenarios/workspace/lifecycle"
+import { workspaceScenarios } from "../../scenarios/workspace/lifecycle"
+import { WORKSPACE_SCENARIO_TIMEOUT_MS } from "../../fixtures/workspace/shared"
 
-test("an artifact and one keyed change survive a lost reply and DO abort", async () => {
+// eslint-disable-next-line no-empty-pattern -- Vitest requires destructuring for fixtures without dependencies.
+const scenarioTest = test.extend("workspace", async ({}, { onCleanup }) => {
   const driver = await cloudflareWorkspaceLifecycle()
-  try { await workspaceLifecycle(driver) } finally { await driver.close() }
-}, 30_000)
+  onCleanup(() => driver.close())
+  return driver
+})
+
+scenarioTest.for(workspaceScenarios)("$name", { timeout: WORKSPACE_SCENARIO_TIMEOUT_MS }, async (scenario, { workspace }) => {
+  await scenario.run(workspace)
+})

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert"
 import * as fc from "fast-check"
-import type { Fault, Mutation, Outcome, Request, Response, Snapshot } from "../../fixtures/workspace-idempotency-protocol"
+import type { Fault, Mutation, Outcome, Request, Response, Snapshot } from "../../fixtures/workspace/protocol"
 
 export interface WorkspaceIdempotencyFixture {
   readonly request: (request: Request) => Promise<Response>
@@ -22,12 +22,22 @@ export const workspaceIdempotencyActions = fc.array(fc.oneof(
   }),
 ), { maxLength: 20 })
 
+const ordinary = (key: string, value: number, fault: Fault = "none", workspace = 0, copies = 1): Extract<Action, { type: "call" }> => ({ type: "call", key, value, fault, workspace, copies })
+
+export const workspaceIdempotencyExample = [
+  ordinary("before", 1, "afterClaim", 0, 3), ordinary("before", 1),
+  ordinary("after", 2, "beforeComplete", 0, 3), ordinary("after", 2),
+  ordinary("response", 3, "afterComplete"), ordinary("response", 3),
+  ordinary("storage", 0, "claimFailure"), ordinary("storage", 0, "none", 0, 3),
+  ordinary("storage", 1), ordinary("storage", 1, "none", 1, 3),
+]
+
 const errors = (outcomes: readonly Outcome[], reason: Extract<Outcome, { status: "error" }>["reason"]) => {
   assert.ok(outcomes.length > 0)
   for (const outcome of outcomes) { assert.equal(outcome.status, "error"); if (outcome.status === "error") assert.equal(outcome.reason, reason) }
 }
 
-// workspaceIdempotencyHistory compares generated executions with a state model (test/bun/workspace-idempotency.test.ts).
+// workspaceIdempotencyHistory compares generated executions with a state model (test/bun/workspace/idempotency.property.test.ts).
 export async function workspaceIdempotencyHistory(actions: readonly Action[], fixture: WorkspaceIdempotencyFixture) {
   const records = new Map<string, RecordState>()
   const logs = ["", ""]
@@ -95,15 +105,7 @@ export async function workspaceIdempotencyHistory(actions: readonly Action[], fi
     }
     await snapshot()
   }
-  const ordinary = (key: string, value: number, fault: Fault = "none", workspace = 0, copies = 1): Extract<Action, { type: "call" }> => ({ type: "call", key, value, fault, workspace, copies })
-  const prefix = [
-    ordinary("before", 1, "afterClaim", 0, 3), ordinary("before", 1),
-    ordinary("after", 2, "beforeComplete", 0, 3), ordinary("after", 2),
-    ordinary("response", 3, "afterComplete"), ordinary("response", 3),
-    ordinary("storage", 0, "claimFailure"), ordinary("storage", 0, "none", 0, 3),
-    ordinary("storage", 1), ordinary("storage", 1, "none", 1, 3),
-  ]
-  for (const action of [...prefix, ...actions]) {
+  for (const action of actions) {
     if (action.type === "restart") { await fixture.restart(); await snapshot() }
     else await call(action)
   }
@@ -113,7 +115,7 @@ export async function workspaceIdempotencyHistory(actions: readonly Action[], fi
   }
 }
 
-// workspaceFileMutationReplay checks that saved file outcomes survive subsequent edits and process death.
+// workspaceFileMutationReplay checks that saved file outcomes survive subsequent edits and wrapper reconstruction.
 export async function workspaceFileMutationReplay(content: string, fixture: WorkspaceIdempotencyFixture) {
   const call = async (key: string, mutation: Mutation, copies = 1) => {
     const response = await fixture.request({ type: "call", workspace: 0, key, mutation, fault: "none", copies })

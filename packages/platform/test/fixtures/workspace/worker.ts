@@ -5,13 +5,15 @@ import { objectStorageFromR2 } from "@clavia/tardigrade-cloudflare/object-storag
 import { workspaceObject } from "../../../src/cloudflare/workspace-object"
 import { virtualWorkspace } from "../../../src/shared/workspace/virtual/index"
 import { sqlIdempotencyStore } from "../../../src/shared/workspace/idempotency-store"
-import { workspaceFaultStore } from "../workspace-idempotency"
+import { workspaceFaultStore } from "./idempotency"
+import type { Fault } from "./protocol"
+import type { WorkspaceCrashPoint } from "./shared"
 
 interface LifecycleEnv { readonly WORKSPACE_LIFECYCLE_OBJECTS: R2Bucket }
-const controls = new WeakMap<DurableObjectState, { loseReply: boolean; boundary: boolean }>()
+const controls = new WeakMap<DurableObjectState, { fault: Fault; boundary: boolean }>()
 const control = (ctx: DurableObjectState) => {
   let value = controls.get(ctx)
-  if (!value) { value = { loseReply: false, boundary: false }; controls.set(ctx, value) }
+  if (!value) { value = { fault: "none", boundary: false }; controls.set(ctx, value) }
   return value
 }
 const objects = (ctx: DurableObjectState, env: LifecycleEnv) => objectStorageFromR2(env.WORKSPACE_LIFECYCLE_OBJECTS, { prefix: `lifecycle/${ctx.id}/` })
@@ -20,14 +22,14 @@ const Workspace = workspaceObject<LifecycleEnv>((ctx, env) => Layer.unwrap(Effec
   const contentStore = yield* ObjectStorage
   const pause = () => Effect.promise(async () => { await ctx.storage.sync(); control(ctx).boundary = true }).pipe(Effect.andThen(Effect.never))
   return virtualWorkspace({ name: ctx.id.toString(), storageChunkBytes: 7, contentStore, idempotency: {
-    workspaceId: ctx.id.toString(), store: workspaceFaultStore(store, () => control(ctx).loseReply ? "afterComplete" : "none", pause),
+    workspaceId: ctx.id.toString(), store: workspaceFaultStore(store, () => control(ctx).fault, pause),
   } })
 })).pipe(Layer.provide(SqliteClient.layer({ storage: ctx.storage })), Layer.provide(objects(ctx, env))))
 
 export class WorkspaceLifecycleDO extends Workspace {
   private readonly incarnation = crypto.randomUUID()
   instance() { return this.incarnation }
-  armLostReply() { control(this.ctx).loseReply = true }
+  armFault(fault: WorkspaceCrashPoint) { control(this.ctx).fault = fault; control(this.ctx).boundary = false }
   boundary() { return control(this.ctx).boundary }
   reset() { this.ctx.abort("Workspace lifecycle restart") }
   resolve(object: ObjectRef) {

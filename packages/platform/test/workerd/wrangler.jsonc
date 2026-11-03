@@ -7,10 +7,6 @@
     "bindings": [
       { "name": "WORKSPACE_LIFECYCLE", "class_name": "WorkspaceLifecycleDO" },
       {
-        "name": "WORKSPACE_IDEMPOTENCY",
-        "class_name": "WorkspaceIdempotencyDO"
-      },
-      {
         "name": "EFFECT_SERVICE",
         "class_name": "EffectServiceDO"
       },
@@ -77,7 +73,6 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "WorkspaceLifecycleDO",
-        "WorkspaceIdempotencyDO",
         "EffectServiceDO",
         "InputLifecycleDO",
         "TestPromiseResolver",

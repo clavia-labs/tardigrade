@@ -5,10 +5,10 @@ import { createInterface } from "node:readline"
 import { Readable } from "node:stream"
 import { join } from "node:path"
 import { testStage } from "../wait"
-import type { LifecycleRequest, LifecycleResponse, WorkspaceLifecycleDriver } from "./shared"
+import type { WorkspaceScenarioRequest, LifecycleResponse, WorkspaceScenarioDriver, WorkspaceCrashPoint } from "./shared"
 
 // bunWorkspaceLifecycle hosts the workspace and SQLite content store in a killable subprocess.
-export async function bunWorkspaceLifecycle(): Promise<WorkspaceLifecycleDriver> {
+export async function bunWorkspaceLifecycle(): Promise<WorkspaceScenarioDriver> {
   const directory = await mkdtemp(join(tmpdir(), "tardie-workspace-lifecycle-"))
   const start = () => {
     const child = Bun.spawn([process.execPath, new URL("./bun-process.ts", import.meta.url).pathname, directory], { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
@@ -27,32 +27,38 @@ export async function bunWorkspaceLifecycle(): Promise<WorkspaceLifecycleDriver>
     processState = start()
     assert.equal((await next()).type, "ready")
   })
-  const kill = async () => {
+  const kill = () => testStage("stopping workspace lifecycle process", async () => {
     if (!processState) return
     processState.child.kill("SIGKILL")
     await processState.child.exited
     await processState.reader.return?.()
     await processState.errors
     processState = undefined
-  }
-  const request = (input: LifecycleRequest) => testStage(`workspace lifecycle ${input.type}`, async () => {
+  })
+  const request = (input: WorkspaceScenarioRequest) => testStage(`workspace lifecycle ${input.type}`, async () => {
     assert.ok(processState)
     processState.child.stdin.write(`${JSON.stringify(input)}\n`)
     await processState.child.stdin.flush()
     return next()
   })
-  const result = async <Value>(input: LifecycleRequest): Promise<Value> => {
+  const result = async <Value>(input: WorkspaceScenarioRequest): Promise<Value> => {
     const response = await request(input)
     assert.equal(response.type, "result")
     assert.ok("value" in response)
     return response.value as Value
+  }
+  const interrupt = async (command: string, key: string, fault: WorkspaceCrashPoint) => {
+    assert.equal((await request({ type: "bash", command, key, fault })).type, "boundary")
   }
   try { await launch() } catch (error) { await kill(); await rm(directory, { recursive: true, force: true }); throw error }
   return {
     bash: (command, key) => result({ type: "bash", command, key }),
     read: path => result({ type: "read", path }),
     resolve: async object => new Uint8Array(await result<number[]>({ type: "resolve", object })),
-    loseReply: async (command, key) => { assert.equal((await request({ type: "bash", command, key, loseReply: true })).type, "boundary") },
+    write: async (path, content, key) => { await result({ type: "write", path, content, key }) },
+    edit: async (path, oldText, newText, key) => { await result({ type: "edit", path, oldText, newText, key }) },
+    interrupt,
+    loseReply: (command, key) => interrupt(command, key, "afterComplete"),
     restart: async () => { await kill(); await launch() },
     close: async () => { try { await kill() } finally { await rm(directory, { recursive: true, force: true }) } },
   }
