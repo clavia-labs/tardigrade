@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Option, Stream } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import { FilesystemWorkspaceError } from "@clavia/tardigrade-libraries/filesystem/index"
 
@@ -34,6 +34,18 @@ export const sqliteWorkspaceStore = (name: string, chunkBytes = DEFAULT_VIRTUAL_
   )`
   yield* sql`INSERT INTO virtual_workspaces (name, revision) VALUES (${name}, 0) ON CONFLICT (name) DO NOTHING`
   return {
+    metadata: sql<VirtualWorkspaceEntry>`SELECT path, kind, NULL AS content, target, mode, mtime FROM virtual_workspace_entries WHERE workspace = ${name} ORDER BY path`,
+    content: (path: string) => Stream.unwrap(Effect.gen(function* () {
+      const [entry] = yield* sql<{ kind: string; content: Uint8Array | null }>`SELECT kind, content FROM virtual_workspace_entries WHERE workspace = ${name} AND path = ${path}`
+      if (!entry || entry.kind !== "file") return yield* Effect.fail(new FilesystemWorkspaceError("Read requires a file"))
+      const tail = Stream.paginate(1, ordinal => Effect.gen(function* () {
+        const [chunk] = yield* sql<{ ordinal: number; payload: Uint8Array }>`SELECT ordinal, payload FROM virtual_workspace_file_chunks WHERE workspace = ${name} AND path = ${path} AND ordinal >= ${ordinal} ORDER BY ordinal LIMIT 1`
+        if (!chunk) return [[], Option.none<number>()] as const
+        if (chunk.ordinal !== ordinal) return yield* Effect.fail(new FilesystemWorkspaceError(`Invalid file chunk sequence for ${path}`))
+        return [[chunk.payload], Option.some(ordinal + 1)] as const
+      }))
+      return Stream.concat(Stream.succeed(entry.content ?? new Uint8Array()), tail)
+    })).pipe(Stream.mapError(FilesystemWorkspaceError.from)),
     load: sql.withTransaction(Effect.gen(function* () {
       const [row] = yield* sql<{ revision: number }>`SELECT revision FROM virtual_workspaces WHERE name = ${name}`
       if (!row) return yield* Effect.fail(new FilesystemWorkspaceError("Workspace revision is missing"))

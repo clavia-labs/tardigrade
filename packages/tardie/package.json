@@ -189,7 +189,8 @@
     "./deprecated/agent/runtime/turn": "./src/generated/deprecated/agent/runtime/turn.ts",
     "./platform/journal": "./src/generated/platform/journal.ts",
     "./libraries/filesystem": "./src/generated/libraries/filesystem.ts",
-    "./platform/workspace": "./src/generated/platform/workspace.ts"
+    "./platform/workspace": "./src/generated/platform/workspace.ts",
+    "./store": "./src/generated/store.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-deprecated-agent": "workspace:*",
@@ -209,7 +210,8 @@
     "@clavia/tardigrade-deprecated-http": "workspace:*",
     "@clavia/tardigrade-deprecated-host": "workspace:*",
     "@clavia/tardigrade-worker-loader": "workspace:*",
-    "@clavia/tardigrade-deprecated-cli": "workspace:*"
+    "@clavia/tardigrade-deprecated-cli": "workspace:*",
+    "@clavia/tardigrade-store": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

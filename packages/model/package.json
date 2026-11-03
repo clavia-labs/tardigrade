@@ -47,7 +47,8 @@
     "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.9",
     "effect": "4.0.0-rc.115",
     "@tardie/ai": "0.0.5",
-    "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.4"
+    "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.4",
+    "@clavia/tardigrade-store": "workspace:*"
   },
   "devDependencies": {
     "@smithy/fetch-http-handler": "^5.6.3",

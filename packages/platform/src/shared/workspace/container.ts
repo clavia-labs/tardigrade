@@ -1,7 +1,7 @@
 import { posix } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { Effect, Layer, Semaphore } from "effect"
-import { FilesystemWorkspace, FilesystemWorkspaceError, editWorkspaceText, filesystemWorkspacePolicy, workspaceText, type FilesystemWorkspacePolicy } from "@clavia/tardigrade-libraries/filesystem/index"
+import { Effect, Layer, Semaphore, Stream } from "effect"
+import { FilesystemWorkspace, FilesystemWorkspaceError, workspaceIdempotency, type WorkspaceIdempotencyOptions, readWorkspaceContent, type WorkspaceReadOptions, editWorkspaceText, filesystemWorkspacePolicy, workspaceText, type FilesystemWorkspacePolicy } from "@clavia/tardigrade-libraries/filesystem/index"
 
 export interface WorkspaceProcess {
   readonly stdout: ReadableStream<Uint8Array> | null
@@ -26,7 +26,9 @@ export interface ContainerWorkspacePolicy extends FilesystemWorkspacePolicy {
 export const DEFAULT_CONTAINER_WORKSPACE_POLICY: ContainerWorkspacePolicy = { ...filesystemWorkspacePolicy(), startupTimeoutMs: 120_000, startupPollIntervalMs: 250 }
 export const DEFAULT_WORKSPACE_RELEASE = "destroy" as const
 export type WorkspaceRelease = "retain" | "unmount" | "destroy"
-export interface ContainerWorkspaceOptions {
+export interface ContainerWorkspaceOptions extends WorkspaceReadOptions {
+  readonly mounts?: readonly WorkspaceMount[]
+  readonly idempotency?: WorkspaceIdempotencyOptions
   readonly container: WorkspaceContainer
   readonly files: WorkspaceFiles
   readonly directory: string
@@ -37,7 +39,12 @@ export interface ContainerWorkspaceOptions {
 export interface WorkspaceMount {
   readonly directory: string
   readonly access: "read-only" | "read-write"
+  // connected reports whether the configured mount is present and usable.
+  readonly connected: (signal: AbortSignal) => Promise<boolean>
+  // mount attaches the configured filesystem or reuses a matching connection.
   readonly mount: (signal: AbortSignal) => Promise<void>
+  // flush resolves after preceding workspace mutations are durable in backing storage.
+  readonly flush: (signal: AbortSignal) => Promise<void>
   readonly unmount: (signal: AbortSignal) => Promise<void>
 }
 
@@ -53,23 +60,38 @@ function workspaceContainerPath(directory: string, path: string): string {
 // makeContainerWorkspace supplies scoped workspace operations after startup and optional mount readiness.
 export function makeContainerWorkspace(options: ContainerWorkspaceOptions, mount?: WorkspaceMount): Layer.Layer<FilesystemWorkspace, FilesystemWorkspaceError> {
   return Layer.effect(FilesystemWorkspace, Effect.gen(function* () {
-    const policy = yield* Effect.try({ try: () => {
+    const { policy, mounts } = yield* Effect.try({ try: () => {
       const value = { ...DEFAULT_CONTAINER_WORKSPACE_POLICY, ...options.policy }
       filesystemWorkspacePolicy(value)
       workspaceContainerPath(options.directory, ".")
-      if (mount && posix.resolve(mount.directory) !== posix.resolve(options.directory)) throw new FilesystemWorkspaceError("Mount and workspace directories must match")
-      return value
+      const mounts = [...(options.mounts ?? []), ...(mount ? [mount] : [])].sort((left, right) => posix.resolve(left.directory).localeCompare(posix.resolve(right.directory)))
+      for (let index = 0; index < mounts.length; index++) {
+        const current = mounts[index]!
+        if (!posix.isAbsolute(current.directory)) throw new FilesystemWorkspaceError("Mount directories must be absolute")
+        const directory = workspaceContainerPath(options.directory, current.directory)
+        if (current.access !== "read-only" && current.access !== "read-write") throw new FilesystemWorkspaceError("Mount access must be read-only or read-write")
+        for (const method of ["connected", "mount", "flush", "unmount"] as const) {
+          if (typeof current[method] !== "function") throw new FilesystemWorkspaceError(`Workspace mount requires ${method}`)
+        }
+        for (const previous of mounts.slice(0, index)) {
+          const parent = posix.resolve(previous.directory)
+          if (directory === parent || parent === "/" || directory.startsWith(`${parent}/`)) throw new FilesystemWorkspaceError(`Workspace mount paths overlap: ${previous.directory} and ${current.directory}`)
+        }
+      }
+      return { policy: value, mounts }
     }, catch: FilesystemWorkspaceError.from })
     const release = options.release ?? DEFAULT_WORKSPACE_RELEASE
     const lock = yield* Semaphore.make(1)
     let ready = false
-    let mounted = false
+    const attached = new Set<WorkspaceMount>()
+    let generation = 0
     const ensure = async (signal: AbortSignal) => {
       if (ready && options.container.running) return
       ready = false
+      const current = ++generation
       const startup = AbortSignal.any([signal, AbortSignal.timeout(policy.startupTimeoutMs)])
       try {
-        if (!options.container.running) await options.start()
+        if (!options.container.running) { attached.clear(); await options.start() }
         while (true) {
           startup.throwIfAborted()
           try {
@@ -82,31 +104,60 @@ export function makeContainerWorkspace(options: ContainerWorkspaceOptions, mount
             await delay(policy.startupPollIntervalMs, undefined, { signal: startup })
           }
         }
-        if (mount) { await mount.mount(startup); mounted = true }
-        else await options.files.mkdir(options.directory, { recursive: true, signal: startup })
+        if (!mounts.some(mount => posix.resolve(mount.directory) === posix.resolve(options.directory))) await options.files.mkdir(options.directory, { recursive: true, signal: startup })
+        for (const mount of mounts) {
+          const connected = await mount.connected(startup)
+          attached.add(mount)
+          if (!connected) await mount.mount(startup)
+        }
         ready = true
-        void options.container.monitor().then(() => { ready = false; mounted = false }, () => { ready = false; mounted = false })
+        const stopped = () => { if (generation === current) { ready = false; attached.clear() } }
+        void options.container.monitor().then(stopped, stopped)
       } catch (cause) {
         if (startup.aborted && !signal.aborted) throw new FilesystemWorkspaceError(`Container startup did not complete within ${policy.startupTimeoutMs}ms`, { cause })
         throw cause
       }
     }
-    const operation = <A>(run: (signal: AbortSignal) => Promise<A>) => lock.withPermit(Effect.tryPromise({ try: async signal => { await ensure(signal); return run(signal) }, catch: FilesystemWorkspaceError.from }))
+    const operation = <A>(run: (signal: AbortSignal) => Promise<A>) => lock.withPermit(Effect.tryPromise({ try: async signal => {
+      await ensure(signal)
+      const value = await run(signal)
+      signal.throwIfAborted()
+      for (const mount of mounts) if (mount.access === "read-write") {
+        try { await mount.flush(signal) } catch (cause) {
+          throw new FilesystemWorkspaceError(`Workspace flush failed for ${mount.directory}; durability is unknown`, { cause })
+        }
+      }
+      return value
+    }, catch: FilesystemWorkspaceError.from }))
     yield* Effect.addFinalizer(() => Effect.tryPromise({ try: async signal => {
       if (release === "retain" || !options.container.running) return
-      if (mount && mounted) await mount.unmount(signal)
-      if (release === "destroy") await options.container.destroy()
       ready = false
+      const failures: unknown[] = []
+      for (const mount of mounts.toReversed()) if (attached.has(mount)) {
+        try { await mount.unmount(signal); attached.delete(mount) } catch (cause) { failures.push(cause) }
+      }
+      if (failures.length) throw new AggregateError(failures, "Workspace mount release failed")
+      if (release === "destroy") await options.container.destroy()
     }, catch: FilesystemWorkspaceError.from }).pipe(Effect.orDie))
-    const writable = () => { if (mount?.access === "read-only") throw new FilesystemWorkspaceError("Workspace mount is read-only") }
+    const writable = (path: string) => {
+      const target = workspaceContainerPath(options.directory, path)
+      const mount = mounts.find(mount => {
+        const directory = posix.resolve(mount.directory)
+        return directory === "/" || target === directory || target.startsWith(`${directory}/`)
+      })
+      if (mount?.access === "read-only") throw new FilesystemWorkspaceError(`Workspace mount ${mount.directory} is read-only`)
+    }
     const read = async (path: string, signal: AbortSignal) => (await options.files.readFile(workspaceContainerPath(options.directory, path), { signal })).text()
     const write = async (path: string, content: string, signal: AbortSignal) => {
-      writable()
+      writable(path)
       const resolved = workspaceContainerPath(options.directory, path)
       await options.files.mkdir(posix.dirname(resolved), { recursive: true, signal })
       await options.files.writeFile(resolved, content, { signal })
     }
-    return {
+    const mountConfiguration = mounts.length === 0 ? "read-write"
+      : mounts.length === 1 && posix.resolve(mounts[0]!.directory) === posix.resolve(options.directory) ? mounts[0]!.access
+      : mounts.map(mount => [posix.resolve(mount.directory), mount.access])
+    return workspaceIdempotency({
       bash: command => operation(async signal => {
         const timeout = AbortSignal.timeout(policy.commandTimeoutMs)
         try {
@@ -119,12 +170,25 @@ export function makeContainerWorkspace(options: ContainerWorkspaceOptions, mount
           throw cause
         }
       }),
-      read: path => operation(async signal => workspaceText(await read(path, signal), policy.maxReadChars)),
+      read: (path, range) => lock.withPermit(Effect.scoped(Effect.gen(function* () {
+        const response = yield* Effect.acquireRelease(Effect.tryPromise({ try: async signal => {
+          await ensure(signal)
+          const response = await options.files.readFile(workspaceContainerPath(options.directory, path), { signal })
+          if (!response.ok) { await response.body?.cancel(); throw new FilesystemWorkspaceError(`File read failed: HTTP ${response.status}`) }
+          return response
+        }, catch: FilesystemWorkspaceError.from }), response => Effect.promise(async () => {
+          if (response.body && !response.body.locked) await response.body.cancel()
+        }))
+        const source = response.body ? Stream.fromReadableStream({ evaluate: () => response.body!, onError: FilesystemWorkspaceError.from }) : Stream.empty
+        return yield* readWorkspaceContent(path, source, policy.maxReadChars, options, range)
+      }))),
       write: (path, content) => operation(signal => write(path, content, signal)),
-      edit: (path, oldText, newText) => operation(async signal => { writable(); await write(path, editWorkspaceText(await read(path, signal), oldText, newText), signal) }),
-    }
+      edit: (path, oldText, newText) => operation(async signal => { writable(path); await write(path, editWorkspaceText(await read(path, signal), oldText, newText), signal) }),
+    }, options.idempotency, ["container", options.directory, policy, mountConfiguration, ...(mounts.length ? ["flush-before-success"] : [])], (method, args) => {
+      if (method !== "bash") writable(args[0]!)
+    })
   }))
 }
 
-// containerWorkspace supplies file and shell operations on an ephemeral container filesystem.
+// containerWorkspace supplies file and shell operations after container and mount readiness.
 export const containerWorkspace = (options: ContainerWorkspaceOptions) => makeContainerWorkspace(options)

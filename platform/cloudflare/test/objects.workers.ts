@@ -35,7 +35,7 @@ test("local SQLite retains objects without R2 or eviction and rejects oversized 
   }).pipe(Effect.provide(objectStorageFromSqlite(state.storage)))))
   await evictDurableObject(stub)
   await runInDurableObject(stub, async (_instance, state) => {
-    expect(() => objectStorageFromSqlite(state.storage, { maxObjectBytes: CLOUDFLARE_OBJECT_CACHE_CAPABILITIES.maxObjectBytes + 1 })).toThrow("Cloudflare SQLite object limit")
+    expect(() => objectStorageFromSqlite(state.storage, { chunkBytes: CLOUDFLARE_OBJECT_CACHE_CAPABILITIES.maxObjectBytes + 1 })).toThrow("Cloudflare SQLite object limit")
     await Effect.runPromise(Effect.gen(function* () {
       const storage = yield* ObjectStorage
       expectBytesEqual(yield* storage.get(ref), bytes)

@@ -1,9 +1,12 @@
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises"
+import { workspaceNetworkPolicy, type WorkspaceNetworkPolicy } from "../shared/workspace/network"
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
-import { Effect, Layer, Semaphore } from "effect"
-import { FilesystemWorkspace, FilesystemWorkspaceError, editWorkspaceText, filesystemWorkspacePolicy, workspaceText, type FilesystemWorkspacePolicy } from "@clavia/tardigrade-libraries/filesystem/index"
+import { Effect, Layer, Semaphore, Stream } from "effect"
+import { FilesystemWorkspace, FilesystemWorkspaceError, workspaceIdempotency, type WorkspaceIdempotencyOptions, readWorkspaceContent, type WorkspaceReadOptions, editWorkspaceText, filesystemWorkspacePolicy, workspaceText, type FilesystemWorkspacePolicy } from "@clavia/tardigrade-libraries/filesystem/index"
 
-export interface LocalWorkspaceOptions {
+export interface LocalWorkspaceOptions extends WorkspaceReadOptions {
+  readonly network?: WorkspaceNetworkPolicy
+  readonly idempotency?: WorkspaceIdempotencyOptions
   readonly directory: string
   readonly policy?: Partial<FilesystemWorkspacePolicy>
 }
@@ -11,7 +14,10 @@ export interface LocalWorkspaceOptions {
 // localWorkspace uses a local directory; shell commands execute with the host user's permissions.
 export function localWorkspace(options: LocalWorkspaceOptions): Layer.Layer<FilesystemWorkspace, FilesystemWorkspaceError> {
   return Layer.effect(FilesystemWorkspace, Effect.gen(function* () {
-    const policy = yield* Effect.try({ try: () => filesystemWorkspacePolicy(options.policy), catch: FilesystemWorkspaceError.from })
+    const policy = yield* Effect.try({ try: () => {
+      if (options.network !== undefined && workspaceNetworkPolicy(options.network).mode !== "all") throw new FilesystemWorkspaceError("Local Bun workspaces cannot enforce network restrictions; use an isolated platform adapter")
+      return filesystemWorkspacePolicy(options.policy)
+    }, catch: FilesystemWorkspaceError.from })
     const root = yield* Effect.tryPromise({ try: async () => { await mkdir(options.directory, { recursive: true }); return realpath(options.directory) }, catch: FilesystemWorkspaceError.from })
     const lock = yield* Semaphore.make(1)
     const contained = (path: string) => {
@@ -39,7 +45,7 @@ export function localWorkspace(options: LocalWorkspaceOptions): Layer.Layer<File
       await mkdir(dirname(resolved), { recursive: true })
       await writeFile(resolved, content, "utf8")
     }
-    return {
+    return workspaceIdempotency({
       bash: command => operation(async signal => {
         const timeout = AbortSignal.timeout(policy.commandTimeoutMs)
         const abort = AbortSignal.any([signal, timeout])
@@ -60,13 +66,23 @@ export function localWorkspace(options: LocalWorkspaceOptions): Layer.Layer<File
           throw cause
         } finally { abort.removeEventListener("abort", kill) }
       }),
-      read: path => operation(async () => workspaceText(await readFile(await pathOf(path), "utf8"), policy.maxReadChars)),
+      read: (path, range) => lock.withPermit(Effect.gen(function* () {
+        const target = yield* Effect.tryPromise({ try: () => pathOf(path), catch: FilesystemWorkspaceError.from })
+        const source = Stream.fromReadableStream({ evaluate: () => Bun.file(target).stream(), onError: FilesystemWorkspaceError.from })
+        return yield* readWorkspaceContent(path, source, policy.maxReadChars, options, range)
+      })),
       write: (path, content) => operation(() => write(path, content)),
       edit: (path, oldText, newText) => operation(async () => {
         const resolved = await pathOf(path)
         if (!(await stat(resolved)).isFile()) throw new FilesystemWorkspaceError("Edit requires a file")
         await write(resolved, editWorkspaceText(await readFile(resolved, "utf8"), oldText, newText))
       }),
-    }
+    }, options.idempotency, ["bun", root, policy], (method, args) => {
+      if (method !== "bash") {
+        const path = args[0]!
+        if (!path || path.includes("\0")) throw new FilesystemWorkspaceError("Path must be nonempty and contain no NUL")
+        contained(resolve(root, path))
+      }
+    })
   }))
 }
