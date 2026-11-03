@@ -1039,7 +1039,7 @@
 @media (hover: hover) and (pointer: fine) { .docs-site .introduction-explore > a:hover { background: var(--hair); } }
 @media (max-width: 600px) { .introduction-explore { grid-template-columns: 1fr; } }
 
-.introduction-footer { margin-top: 80px; color: var(--ink-2); font-size: 17px; line-height: 1.6; }
+.introduction-footer { margin-top: 40px; color: var(--ink-2); font-size: 17px; line-height: 1.6; }
 .introduction-footer p { margin: 0; }
 .docs-site .introduction-footer a { color: var(--ink); }
 .introduction-footer nav { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 24px; }
