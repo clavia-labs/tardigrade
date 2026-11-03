@@ -1043,8 +1043,9 @@
 .introduction-footer p { margin: 0; }
 .docs-site .introduction-footer a { color: var(--ink); }
 .introduction-footer nav { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 24px; }
-.introduction-credit { display: inline-block; margin-top: 64px; }
+.introduction-credit { display: inline-block; margin-top: 12px; }
 .introduction-credit span { color: var(--faint); margin-right: 4px; }
+.introduction-footer .introduction-layout-credit { margin-top: 20px; font-size: 14px; text-align: right; }
 
 .docs-nav-group { display: grid; }
 .docs-site .docs-nav-group > .docs-nav-section { margin: 16px 0 0; color: var(--ink); line-height: 1.25; font-weight: 400; }
