@@ -42,18 +42,18 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@tardie/ai-anthropic": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-anthropic-4.1.2-clavia.0.tgz",
-    "@tardie/ai-openai": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-openai-4.1.2-clavia.0.tgz",
-    "@tardie/ai-openai-compat": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-openai-compat-4.1.2-clavia.0.tgz",
+    "@tardie/ai-anthropic": "4.1.2-clavia.0",
+    "@tardie/ai-openai": "4.1.2-clavia.0",
+    "@tardie/ai-openai-compat": "4.1.2-clavia.0",
     "effect": "4.1.2",
-    "@tardie/ai": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-0.2.0.tgz",
-    "@tardie/ai-openrouter": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-openrouter-4.1.2-clavia.0.tgz",
+    "@tardie/ai": "0.2.0",
+    "@tardie/ai-openrouter": "4.1.2-clavia.0",
     "@clavia/tardigrade-store": "workspace:*"
   },
   "devDependencies": {
     "@smithy/fetch-http-handler": "^5.6.3",
     "@smithy/node-http-handler": "^4.11.2",
-    "@tardie/ai-bedrock": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-bedrock-4.1.2-clavia.0.tgz"
+    "@tardie/ai-bedrock": "4.1.2-clavia.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

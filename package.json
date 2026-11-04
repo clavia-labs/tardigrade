@@ -47,8 +47,5 @@
     "oxlint": "^1.69.0",
     "oxc-parser": "0.143.0"
   },
-  "overrides": {
-    "@tardie/ai": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-0.2.0.tgz"
-  },
   "private": true
 }
