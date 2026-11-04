@@ -1,5 +1,6 @@
 import { bindTransitionContext } from "@clavia/tardigrade-deprecated-core/transition/transition"
-import { Context, Effect, Encoding, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
+import { Base64 } from "effect/encoding"
 import { actor, actorMethod, component } from "@clavia/tardigrade-deprecated-core/actor"
 import { allocateRootThread } from "@clavia/tardigrade-deprecated-core/actor"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
@@ -62,14 +63,14 @@ const seal = async (key: CryptoKey, thread: string, event: Event): Promise<Event
   )
   return {
     ...identity,
-    iv: Encoding.encodeBase64(iv),
-    ciphertext: Encoding.encodeBase64(new Uint8Array(ciphertext))
+    iv: Base64.encode(iv),
+    ciphertext: Base64.encode(new Uint8Array(ciphertext))
   } as Event
 }
 
 const decode = (value: unknown, field: string): Uint8Array<ArrayBuffer> => {
   if (typeof value !== "string") throw new Error(`encrypted test store found no ${field}`)
-  const decoded = Encoding.decodeBase64(value)
+  const decoded = Base64.decode(value)
   if (decoded._tag === "Failure") throw new Error(`encrypted test store found invalid ${field}`)
   return Uint8Array.from(decoded.success)
 }

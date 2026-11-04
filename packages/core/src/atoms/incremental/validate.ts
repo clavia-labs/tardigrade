@@ -86,7 +86,7 @@ export function incrementalValidator(schema: Schema.Top, onFallback?: () => void
       const names = new Set(fields.map(field => field.name))
       check = value => {
         if (typeof value !== "object" || value === null || Array.isArray(value)) return false
-        for (const key of Reflect.ownKeys(value)) if (!names.has(key)) return false
+        for (const key of Reflect.ownKeys(value)) if (!names.has(key) && Object.prototype.propertyIsEnumerable.call(value, key)) return false
         const record = value as Record<PropertyKey, unknown>
         for (const field of fields) {
           if (!(field.name === "__proto__" ? Object.hasOwn(record, field.name) : field.name in record)) {

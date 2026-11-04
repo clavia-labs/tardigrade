@@ -218,6 +218,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated agent lifec
       await Effect.runPromise(Queue.offerAll(queue, inputs))
       const terminal = Terminal.make({
         columns: Effect.succeed(100), rows: Effect.succeed(40), readInput: Effect.succeed(queue),
+        size: Effect.die("prompts must not subscribe to resizes"),
         readLine: Effect.die("prompts must consume key events"),
         display: (text) => Effect.sync(() => { transcript += text })
       })

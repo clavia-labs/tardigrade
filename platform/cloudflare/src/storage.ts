@@ -1,4 +1,5 @@
-import { Effect, Encoding, Layer } from "effect"
+import { Effect, Layer } from "effect"
+import { Base64 } from "effect/encoding"
 import { KeyValueStore } from "effect/persistence"
 import { SqlClient } from "effect/sql"
 import { SqliteMigrator } from "@effect/sql-sqlite-do"
@@ -253,14 +254,18 @@ export const layerWorkspace = (sql: SqlClient.SqlClient): Layer.Layer<KeyValueSt
     get,
     getUint8Array: (key) => get(key).pipe(Effect.map((value) => {
       if (value === undefined) return undefined
-      const decoded = Encoding.decodeBase64(value)
+      const decoded = Base64.decode(value)
       return decoded._tag === "Success" ? decoded.success : new TextEncoder().encode(value)
     })),
-    set: (key, value) => set(key, typeof value === "string" ? value : Encoding.encodeBase64(value)),
+    set: (key, value) => set(key, typeof value === "string" ? value : Base64.encode(value)),
     remove: (key) => sql.unsafe("DELETE FROM workspace WHERE key = ?", [key]).pipe(Effect.asVoid, Effect.orDie),
     clear: sql.unsafe("DELETE FROM workspace").pipe(Effect.asVoid, Effect.orDie),
     size: sql.unsafe<{ readonly count: number }>("SELECT COUNT(*) AS count FROM workspace").pipe(
       Effect.map((rows) => Number(rows[0]?.count ?? 0)),
+      Effect.orDie
+    ),
+    keys: sql.unsafe<{ readonly key: string }>("SELECT key FROM workspace").pipe(
+      Effect.map((rows) => rows.map((row) => row.key)),
       Effect.orDie
     ),
     modify: (key, f) => sql.withTransaction(

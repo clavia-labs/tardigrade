@@ -1,4 +1,5 @@
-import { Clock, Context, Data, Effect, Encoding, Layer, Ref, Schema, Semaphore } from "effect"
+import { Clock, Context, Data, Effect, Layer, Ref, Schema, Semaphore } from "effect"
+import { Base64Url } from "effect/encoding"
 import { HttpClient, HttpClientRequest } from "effect/http"
 
 export const AUTH_DEFAULTS = {
@@ -21,7 +22,7 @@ export class CodexCredentials extends Context.Service<CodexCredentials, {
 const record = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))
 const required = Schema.decodeUnknownSync(Schema.NonEmptyString)
 const claims = (token: string) => {
-  const decoded = Encoding.decodeBase64UrlString(required(token.split(".")[1]))
+  const decoded = Base64Url.decodeString(required(token.split(".")[1]))
   if (decoded._tag === "Failure") throw new Error("Invalid token")
   return record(JSON.parse(decoded.success))
 }

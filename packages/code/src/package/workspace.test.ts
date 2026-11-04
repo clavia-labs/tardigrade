@@ -44,7 +44,8 @@ const mapStore = (): KeyValueStore.KeyValueStore => {
     set: (key, value) => Effect.sync(() => void held.set(key, value)),
     remove: (key) => Effect.sync(() => void held.delete(key)),
     clear: Effect.sync(() => held.clear()),
-    size: Effect.sync(() => held.size)
+    size: Effect.sync(() => held.size),
+    keys: Effect.sync(() => [...held.keys()])
   })
 }
 
