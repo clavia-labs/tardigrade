@@ -1,7 +1,7 @@
 import { ResponseFormat } from "@tardie/ai"
 import { Effect, Schema, Stream } from "effect"
-import { LanguageModel, Prompt, Response } from "effect/ai"
-import type { Tool, Toolkit } from "effect/ai"
+import { LanguageModel, Prompt } from "effect/ai"
+import type { Response, Tool, Toolkit } from "effect/ai"
 
 import type { StreamBounds } from "./policy"
 import { boundedStream, StreamBoundExceeded, StreamIncomplete } from "./request"
@@ -14,19 +14,8 @@ export const collectResponse = <Tools extends Record<string, Tool.Any>>(prompt: 
     Stream.tap((part) => Effect.suspend(() => onPart?.(part) ?? Effect.void)),
     Stream.runCollect,
     (effect) => bounds?.attemptMs === undefined ? effect : effect.pipe(Effect.timeoutOrElse({ duration: bounds.attemptMs, orElse: () => Effect.fail(new StreamBoundExceeded({ bound: "attemptMs" })) })),
-    Effect.tap((parts) => parts.some((part) => part.type === "finish" || (part.type === "error" && !Schema.is(ToolCallValidationError)(part.error))) ? Effect.void : Effect.fail(new StreamIncomplete())),
-    Effect.flatMap((parts) => Schema.encodeEffect(Prompt.Prompt)(Prompt.fromResponseParts(parts.map((part) => part.type === "error" && Schema.is(ToolCallValidationError)(part.error)
-      ? Response.makePart("tool-call", { id: part.error.id, name: part.error.name, params: part.error.params, providerExecuted: false, metadata: part.error.providerMetadata })
-      : part))).pipe(
+    Effect.tap((parts) => parts.some((part) => part.type === "finish" || part.type === "error") ? Effect.void : Effect.fail(new StreamIncomplete())),
+    Effect.flatMap((parts) => Schema.encodeEffect(Prompt.Prompt)(Prompt.fromResponseParts(parts)).pipe(
       Effect.map((continuation) => ({ parts, continuation }))
     ))
   )
-
-// ToolCallValidationError describes the provider patch's recoverable call outcome.
-export const ToolCallValidationError = Schema.TaggedStruct("ToolCallValidationError", {
-  id: Schema.String,
-  name: Schema.String,
-  params: Schema.Json,
-  cause: Schema.Unknown,
-  providerMetadata: Schema.Record(Schema.String, Schema.Json)
-})

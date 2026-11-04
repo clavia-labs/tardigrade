@@ -1,7 +1,6 @@
 import { Effect, Schema } from "effect"
 import { AiError, Response } from "effect/ai"
 import { type Action, type ToolCall } from "../../log/events"
-import { ToolCallValidationError } from "@clavia/tardigrade-model/stream/collect"
 import { unknownModelError } from "../error"
 
 /**
@@ -41,14 +40,7 @@ export const actionOf = (parts: ReadonlyArray<Response.AnyPart>, served: Pick<Ac
     const errors: AiError.AiError[] = []
     for (const part of parts) {
       if (part.type === "tool-call" && !part.providerExecuted) calls.push({ callId: part.id, name: part.name, arguments: part.params })
-      if (part.type === "error") {
-        if (!Schema.is(ToolCallValidationError)(part.error)) {
-          errors.push(yield* errorOf(part.error))
-          continue
-        }
-        const error = part.error
-        calls.push({ callId: error.id, name: error.name, arguments: error.params, validationError: JSON.stringify(error.cause) })
-      }
+      if (part.type === "error") errors.push(yield* errorOf(part.error))
     }
     if (errors.length > 0) return { kind: "fail", ...served, error: errors.length === 1 ? errors[0]! : unknownModelError(yield* Schema.encodeEffect(Schema.toCodecJson(Schema.Array(AiError.AiError)))(errors)), failure: { cause: "inference_error", attempts: attempts } } satisfies Action
     const finish = served.finish?.reason

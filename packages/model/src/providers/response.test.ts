@@ -1,7 +1,7 @@
 import { calls, reasoning, thinking, redacted, providerEvents } from "../testing/fixtures"
 import { expect, test } from "bun:test"
-import { Effect, Layer, Redacted, Schema, Fiber, Deferred, Exit, Stream, Result } from "effect"
-import { Prompt, Tool, Toolkit, LanguageModel } from "effect/ai"
+import { Effect, Layer, Redacted, Schema, Fiber, Deferred, Exit, Result } from "effect"
+import { Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { collectResponse } from "../stream/collect"
 import { providerLayer } from "./layer"
@@ -43,9 +43,7 @@ for (const provider of ["openai", "anthropic"] as const) {
       ? { provider, client: { apiKey: Redacted.make("test"), apiUrl: "https://fixture.invalid/v1" }, model: { model: "gpt-5", config: { store: false, reasoning: { effort: "high" } } } }
       : { provider, client: { apiKey: Redacted.make("test") }, model: { model: "claude-sonnet-4-5", config: { max_tokens: 4096, thinking: { type: "enabled", budget_tokens: 1024 } } } })
     if (malformed) {
-      const observations = []
       for (const segmented of [false, true]) {
-        const seen: Array<import("effect/ai/Response").AnyPart> = []
         const probeFetch = Object.assign(async () => {
           const probeEvents = segmented && provider === "openai" ? events.flatMap<Record<string, unknown>>((event) => event.type === "response.output_item.done" && "item" in event && event.item.type === "function_call" && "arguments" in event.item
             ? [{ type: "response.function_call_arguments.done", output_index: event.output_index, item_id: event.item.id, arguments: event.item.arguments }, event] : [event]) : events
@@ -60,44 +58,26 @@ for (const provider of ["openai", "anthropic"] as const) {
             }
           }) : new Blob(frames), { headers: { "content-type": "text/event-stream" } })
         }, { preconnect: globalThis.fetch.preconnect })
-        const outcome = await Effect.runPromise(LanguageModel.streamText({ prompt: "Read both files", toolkit, disableToolCallResolution: true }).pipe(
-          Stream.tap((part) => Effect.sync(() => { seen.push(part) })),
-          Stream.runCollect,
+        const outcome = await Effect.runPromise(collectResponse("Read both files", toolkit).pipe(
           Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer))), Effect.provideService(FetchHttpClient.Fetch, probeFetch),
           Effect.result
         ))
-        expect(Result.isSuccess(outcome)).toBe(true)
-        if (Result.isSuccess(outcome)) {
-          expect(seen.filter((part) => part.type === "tool-call").map((part) => part.id)).toEqual(["a", "c"])
-          const failure = seen.find((part) => part.type === "error")
-          expect(failure?.error).toMatchObject({ _tag: "ToolCallValidationError", id: "b", name: "read", params: { path: 123 }, cause: { reason: { _tag: "ToolParameterValidationError" } } })
-          expect(seen.some((part) => part.type === "finish")).toBe(true)
-          expect(seen.filter((part) => part.type === "error")).toHaveLength(1)
-          expect(seen.filter((part) => part.type === "tool-params-end" && part.id === "b")).toHaveLength(1)
-          expect(seen.find((part) => part.type === "finish")?.usage.outputTokens.total).toBe(5)
-          const defaultOutcome = await Effect.runPromise(LanguageModel.streamText({ prompt: "Read", toolkit: Toolkit.make(Tool.make("read", { parameters: Schema.Struct({ path: Schema.String }) })), disableToolCallResolution: true }).pipe(
-            Stream.runCollect, Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer))), Effect.provideService(FetchHttpClient.Fetch, probeFetch), Effect.result
-          ))
-          expect(Result.isFailure(defaultOutcome)).toBe(true)
-          observations.push(JSON.parse(JSON.stringify({ segmented, parts: seen })))
-        }
+        expect(Result.isFailure(outcome) ? outcome.failure : undefined).toMatchObject({ _tag: "AiError", reason: { _tag: "InvalidOutputError" } })
       }
-      await Bun.write(`/tmp/effect-validation-${provider}.json`, JSON.stringify(observations, null, 2))
+      return
     }
     const run = (prompt: Prompt.RawInput) => Effect.runPromise(collectResponse(prompt, toolkit).pipe(
       Effect.provide(layer.pipe(Layer.provide(FetchHttpClient.layer))), Effect.provideService(FetchHttpClient.Fetch, fetch)
     ))
     const first = await run("Read both files")
-    expect(first.parts.filter((part) => part.type === "tool-call").map((part) => part.id)).toEqual(malformed ? ["a", "c"] : ["a", "b", "c"])
+    expect(first.parts.filter((part) => part.type === "tool-call").map((part) => part.id)).toEqual(["a", "b", "c"])
     expect(first.parts.some((part) => part.type === "tool-result")).toBe(false)
     const finish = first.parts.find((part) => part.type === "finish")
-    if (provider === "openai") expect(finish?.metadata.openai?.usage).toMatchObject({ input_tokens: 10, output_tokens: 5, total_tokens: 15 })
     expect(finish?.usage.inputTokens.total).toBe(10)
     expect(finish?.usage.outputTokens.total).toBe(5)
-    if (malformed) expect(JSON.parse(JSON.stringify(first.parts)).filter((part: { type: string }) => part.type === "error")).toHaveLength(1)
     const restored = Schema.decodeUnknownSync(Prompt.Prompt)(JSON.parse(JSON.stringify(first.continuation)))
     expect(restored.content.flatMap((message) => message.role === "assistant" ? message.content : []).filter((part) => part.type === "tool-call").map((part) => part.id)).toEqual(["a", "b", "c"])
-    const results = Prompt.make([{ role: "tool", content: ["a", "b", "c"].map((id) => ({ type: "tool-result" as const, id, name: "read", result: malformed && id === "b" ? "Invalid path: expected string" : "contents", isFailure: malformed && id === "b" })) }])
+    const results = Prompt.make([{ role: "tool", content: ["a", "b", "c"].map((id) => ({ type: "tool-result" as const, id, name: "read", result: "contents", isFailure: false })) }])
     await run(Prompt.concat(restored, results))
     if (provider === "openai") {
       expect(requests[1]?.input).toEqual(expect.arrayContaining(reasoning))
