@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.53.0](https://github.com/clavia-labs/tardigrade/compare/v0.52.0...v0.53.0) (2026-11-04)
+
+
+### Features
+
+* **workspace:** support durable workspaces ([#839](https://github.com/clavia-labs/tardigrade/issues/839)) ([8365852](https://github.com/clavia-labs/tardigrade/commit/8365852f5b85a3732e1cf4c8b965d2ab8c54cb84))
+
+
+### Bug Fixes
+
+* **test:** separate crash scenarios ([#842](https://github.com/clavia-labs/tardigrade/issues/842)) ([b825cf7](https://github.com/clavia-labs/tardigrade/commit/b825cf7870745aa1eb179109393c2b5594fb9205))
+
 ## [0.52.0](https://github.com/clavia-labs/tardigrade/compare/v0.51.0...v0.52.0) (2026-11-02)
 
 
