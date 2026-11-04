@@ -10,7 +10,6 @@ export const ModelResponse = Schema.toEncoded(Schema.Struct({
   id: Response.ResponseMetadataPart.fields.id,
   modelId: Response.ResponseMetadataPart.fields.modelId,
   timestamp: Response.ResponseMetadataPart.fields.timestamp,
-  request: Response.ResponseMetadataPart.fields.request,
   metadata: Response.ResponseMetadataPart.fields.metadata
 }))
 export type ModelResponse = typeof ModelResponse.Type
