@@ -48,11 +48,11 @@ test("tool content persists in R2 before settlement and hydrates on model calls 
     const assertToolContent = () => {
       const messages = fixture.prompt()?.content ?? []
       const tools = messages.flatMap(message => message.role === "tool" ? message.content : [])
-      const contentResult = Schema.Struct({ type: Schema.Literal("content"), value: Schema.Array(Schema.Unknown) })
-      const results = tools.flatMap(part => part.type === "tool-result" ? [{ id: part.id, result: Schema.decodeUnknownSync(contentResult)(part.result) }] : [])
+      const results = tools.flatMap(part => part.type === "tool-result" ? [part] : [])
       expect(results.map(result => result.id)).toEqual(["capture-1", "capture-2"])
       for (const result of results) {
-        expect(result.result.value).toMatchObject([
+        expect(result.result).toBe("Screenshot captured.")
+        expect(result.modelOutput).toMatchObject([
           { type: "text", text: "Screenshot captured." },
           { type: "file", data: screenshotBytes, mediaType: "image/png", fileName: "screen.png" },
         ])

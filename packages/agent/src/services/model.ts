@@ -7,7 +7,6 @@ import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { ObjectStorage, objectKeyOf } from "@clavia/tardigrade-model/object"
 import { AiError, LanguageModel, Prompt, type Response, Tool as AiTool, Toolkit } from "effect/ai"
 import { ResponseFormat } from "@tardie/ai"
-import type { Content as ToolResultContent } from "@tardie/ai/ToolResult"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
 import { reportedCostOf } from "@clavia/tardigrade-model/providers/usage"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
@@ -198,8 +197,8 @@ export function modelServices(options: ModelServiceOptions = {}) {
           ...input.context.flatMap((message): readonly Prompt.Message[] => {
             if (message.role === "user") return [Prompt.makeMessage("user", { content: "text" in message ? [Prompt.makePart("text", { text: message.text })] : promptPartsOf(message.content, objects) })]
             if (message.role === "tool") {
-              const result: string | ToolResultContent = message.content === undefined ? message.text : { type: "content", value: promptPartsOf(message.content, objects) }
-              return [Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, result, isFailure: message.error, providerExecuted: false })] })]
+              const output = message.content === undefined ? { result: message.text } : { result: message.text, modelOutput: promptPartsOf(message.content, objects) }
+              return [Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, ...output, isFailure: message.error, providerExecuted: false })] })]
             }
             const continuation = message.continuation
             if (continuation && continuation.provider === settings.provider && continuation.protocol === settings.protocol && continuation.model === resolved.model.model_id) {
