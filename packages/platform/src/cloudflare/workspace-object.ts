@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers"
 import { Effect, Layer, ManagedRuntime, Scheduler } from "effect"
 import { FilesystemWorkspace, type WorkspaceMutationOptions, type WorkspaceReadRange } from "@clavia/tardigrade-libraries/filesystem/index"
 
-// workspaceObject uses microtask continuations across DO SQL transactions (test/workerd/workspace-idempotency.workers.ts).
+// workspaceObject uses microtask continuations across DO SQL transactions (test/workerd/workspace/lifecycle.workers.ts).
 export function workspaceObject<Env extends object = Record<string, unknown>>(layer: (ctx: DurableObjectState, env: Env) => Layer.Layer<FilesystemWorkspace, Error>) {
   return class WorkspaceObject extends DurableObject<Env> {
     private readonly runtime = ManagedRuntime.make(layer(this.ctx, this.env).pipe(Layer.provideMerge(Layer.succeed(Scheduler.Scheduler, new Scheduler.MixedScheduler("sync")))))

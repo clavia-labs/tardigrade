@@ -21,8 +21,6 @@ export interface Snapshot {
 }
 
 export type Response =
-  | { readonly type: "ready" }
   | { readonly type: "boundary"; readonly fault: Fault; readonly outcomes?: readonly Outcome[] }
   | { readonly type: "result"; readonly outcomes: readonly Outcome[] }
   | { readonly type: "snapshot"; readonly snapshot: Snapshot }
-  | { readonly type: "fatal"; readonly message: string }

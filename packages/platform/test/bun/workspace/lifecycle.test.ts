@@ -1,8 +1,9 @@
 import { test } from "bun:test"
 import { bunWorkspaceLifecycle } from "../../fixtures/workspace/bun"
-import { workspaceLifecycle } from "../../scenarios/workspace/lifecycle"
+import { workspaceScenarios } from "../../scenarios/workspace/lifecycle"
+import { WORKSPACE_SCENARIO_TIMEOUT_MS } from "../../fixtures/workspace/shared"
 
-test("an artifact and one keyed change survive a lost reply and process death", async () => {
+test.each([...workspaceScenarios])("$name", async scenario => {
   const driver = await bunWorkspaceLifecycle()
-  try { await workspaceLifecycle(driver) } finally { await driver.close() }
-})
+  try { await scenario.run(driver) } finally { await driver.close() }
+}, WORKSPACE_SCENARIO_TIMEOUT_MS)

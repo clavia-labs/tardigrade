@@ -6,28 +6,35 @@ import { FilesystemWorkspace } from "@clavia/tardigrade-libraries/filesystem/ind
 import { ObjectStorage, sqlObjectStorage } from "@clavia/tardigrade-store"
 import { localWorkspace } from "../../../src/bun/workspace"
 import { sqlIdempotencyStore } from "../../../src/shared/workspace/idempotency-store"
-import { workspaceFaultStore } from "../workspace-idempotency"
-import { lifecycleRequest, type LifecycleRequest, type LifecycleResponse } from "./shared"
+import { workspaceFaultStore } from "./idempotency"
+import type { Fault } from "./protocol"
+import { lifecycleRequest, type WorkspaceScenarioRequest, type LifecycleResponse } from "./shared"
 
 const directory = process.argv[2]!
 const send = (message: LifecycleResponse) => process.stdout.write(`${JSON.stringify(message)}\n`)
-let loseReply = false
+let fault: Fault = "none"
 const runtime = ManagedRuntime.make(Layer.unwrap(Effect.gen(function* () {
   const objects = yield* sqlObjectStorage({ chunkBytes: 7 })
   const store = yield* sqlIdempotencyStore
-  const faultStore = workspaceFaultStore(store, () => loseReply ? "afterComplete" : "none", () => Effect.sync(() => { send({ type: "boundary" }) }).pipe(Effect.andThen(Effect.never)))
+  const faultStore = workspaceFaultStore(store, () => fault, () => Effect.sync(() => { send({ type: "boundary" }) }).pipe(Effect.andThen(Effect.never)))
   return Layer.merge(localWorkspace({ directory: join(directory, "files"), contentStore: objects, idempotency: { workspaceId: "lifecycle", store: faultStore } }), Layer.succeed(ObjectStorage, objects))
 })).pipe(Layer.provide(SqliteClient.layer({ filename: join(directory, "state.sqlite") }))))
+
+async function handle(request: WorkspaceScenarioRequest): Promise<LifecycleResponse> {
+  fault = request.type === "bash" ? request.fault ?? (request.loseReply ? "afterComplete" : "none") : "none"
+  try {
+    const value = await runtime.runPromise(Effect.gen(function* () { return yield* lifecycleRequest(yield* FilesystemWorkspace, yield* ObjectStorage, request) }))
+    return { type: "result", value: value ?? null }
+  } catch (error) { return { type: "error", message: String(error) } }
+}
 
 try {
   await runtime.context()
   send({ type: "ready" })
+  let replies = Promise.resolve()
   for await (const line of createInterface({ input: process.stdin })) {
-    const request = JSON.parse(line) as LifecycleRequest
-    loseReply = request.type === "bash" && request.loseReply === true
-    try {
-      const value = await runtime.runPromise(Effect.gen(function* () { return yield* lifecycleRequest(yield* FilesystemWorkspace, yield* ObjectStorage, request) }))
-      send({ type: "result", value })
-    } catch (error) { send({ type: "error", message: String(error) }) }
+    const reply = handle(JSON.parse(line) as WorkspaceScenarioRequest)
+    replies = replies.then(async () => { send(await reply) })
   }
+  await replies
 } finally { await runtime.dispose() }
