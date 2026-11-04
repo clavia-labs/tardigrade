@@ -37,11 +37,11 @@ export function LiquidTabs<Value extends string>({ options, value, onChange, lab
   const animation = useRef<Animation | undefined>(undefined)
   const sliding = useRef(false)
   const anchor = useRef({ x: 0, width: 0 })
-  const spring = useRef({ pull: 0, velocity: 0, stretch: 0, stretchVelocity: 0, target: 0, frame: 0, time: 0 })
+  const spring = useRef({ pull: 0, velocity: 0, target: 0, frame: 0, time: 0 })
 
   const stopSpring = useCallback(() => {
     cancelAnimationFrame(spring.current.frame)
-    spring.current = { pull: 0, velocity: 0, stretch: 0, stretchVelocity: 0, target: 0, frame: 0, time: 0 }
+    spring.current = { pull: 0, velocity: 0, target: 0, frame: 0, time: 0 }
   }, [])
 
   const springTo = useCallback((pull: number) => {
@@ -56,22 +56,16 @@ export function LiquidTabs<Value extends string>({ options, value, onChange, lab
       const elapsed = Math.min((now - state.time) / 1000, .05)
       state.time = now
       const position = advanceSpring(state.pull, state.velocity, state.target, elapsed)
-      const stretchTarget = Math.abs(state.target) * .8
-      const stretch = advanceSpring(state.stretch, state.stretchVelocity, stretchTarget, elapsed)
       state.pull = position.position
       state.velocity = position.velocity
-      state.stretch = stretch.position
-      state.stretchVelocity = stretch.velocity
       const settled = Math.abs(state.pull - state.target) < .005 && Math.abs(state.velocity) < .02
-        && Math.abs(state.stretch - stretchTarget) < .005 && Math.abs(state.stretchVelocity) < .02
       if (settled) {
         state.pull = state.target
-        state.stretch = stretchTarget
       }
-      const x = anchor.current.x + state.pull - (state.pull < 0 ? state.stretch : 0)
+      const x = anchor.current.x + Math.min(state.pull, 0)
       if (pill.current) {
-        pill.current.style.width = `${anchor.current.width + state.stretch}px`
-        pill.current.style.transform = `translateX(${x}px) scaleY(${1 - state.stretch * .004})`
+        pill.current.style.width = `${anchor.current.width + Math.abs(state.pull)}px`
+        pill.current.style.transform = `translateX(${x}px)`
       }
       state.frame = settled ? 0 : requestAnimationFrame(tick)
     }
