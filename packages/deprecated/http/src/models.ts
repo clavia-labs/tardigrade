@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiBuilder } from "effect/http-api"
 import { InvalidRequest, ModelCatalogUnavailable, modelsGroup, RequestProblems } from "@clavia/tardigrade-deprecated-client/contract"
 import type { ModelConfig, ModelCredentials } from "@clavia/tardigrade-model/config"
 import type { ModelListingState } from "@clavia/tardigrade-model/catalog/schema"

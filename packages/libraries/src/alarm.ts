@@ -4,7 +4,7 @@ import { ToolError } from "./errors"
 import { Clock, Effect, Schema } from "effect"
 import { Deadline, EffectExecution, durableAtom, durablePromise } from "@clavia/tardigrade-core"
 import { Promises } from "@clavia/tardigrade-core"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { ExecutionHandle } from "@clavia/tardigrade-core"
 import { defineLibrary, MethodDescription, MethodHints, MethodExecution } from "./library"
 

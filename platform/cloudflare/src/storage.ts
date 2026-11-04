@@ -1,6 +1,6 @@
 import { Effect, Encoding, Layer } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
-import { SqlClient } from "effect/unstable/sql"
+import { KeyValueStore } from "effect/persistence"
+import { SqlClient } from "effect/sql"
 import { SqliteMigrator } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import type { AppendOptions, AppendResult, ThreadEventStore } from "@clavia/tardigrade-deprecated-core/log"

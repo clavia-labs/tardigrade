@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Stream, Schema } from "effect"
-import { AiError, LanguageModel, Prompt, Response } from "effect/unstable/ai"
+import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import { atom, createEventLog, type EffectCheckpoint, type EffectExecution, type Recorded } from "@clavia/tardigrade-core"
 import { compact } from "@clavia/tardigrade-agent/atoms/compact"
 import { infer } from "@clavia/tardigrade-agent/atoms/infer"

@@ -1,7 +1,7 @@
 import type { ExecutionUpdate, ThreadCoordinate } from "@clavia/tardigrade-core"
 import { Stream } from "effect"
-import { Sse } from "effect/unstable/encoding"
-import { HttpServerResponse } from "effect/unstable/http"
+import { Sse } from "effect/encoding"
+import { HttpServerResponse } from "effect/http"
 
 // executionStreamSse encodes live execution updates without advertising journal replay cursors (packages/platform/test/bun/execution-stream.test.ts).
 export function executionStreamSse(execution: Stream.Stream<ExecutionUpdate>, address?: ThreadCoordinate) {

@@ -1,6 +1,6 @@
 import { RetrySchedule } from "../component/infer/retry"
 import { ModelError, encodeModelError, unknownModelError } from "../model/error"
-import { AiError } from "effect/unstable/ai"
+import { AiError } from "effect/ai"
 import { upcastUsage } from "./response-upcast"
 import { Schema } from "effect"
 import { AgentMessageReceived } from "./message"

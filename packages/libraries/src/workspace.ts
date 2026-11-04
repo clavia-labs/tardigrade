@@ -1,6 +1,6 @@
 import { ToolError } from "./errors"
 import { Context, Effect, Layer, Schema } from "effect"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { defineLibrary, MethodDescription, MethodHints } from "./library"
 
 export class Workspace extends Context.Service<Workspace, {

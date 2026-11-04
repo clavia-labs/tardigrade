@@ -1,7 +1,7 @@
 import { ResponseFormat } from "@tardie/ai"
 import { Effect, Schema, Stream } from "effect"
-import { LanguageModel, Prompt, Response } from "effect/unstable/ai"
-import type { Tool, Toolkit } from "effect/unstable/ai"
+import { LanguageModel, Prompt, Response } from "effect/ai"
+import type { Tool, Toolkit } from "effect/ai"
 
 import type { StreamBounds } from "./policy"
 import { boundedStream, StreamBoundExceeded, StreamIncomplete } from "./request"

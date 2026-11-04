@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
+import { KeyValueStore } from "effect/persistence"
 import { hydrate, refs, spill, WORKSPACE_REFS } from "./store"
 
 // The spill seam over a KeyValueStore: what goes in comes back out whole, and the reserved

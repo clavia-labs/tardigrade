@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
+import { KeyValueStore } from "effect/persistence"
 import { definePackage, type Package } from "./definition"
 import { hydrate, refs } from "../storage/store"
 

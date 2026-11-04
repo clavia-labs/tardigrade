@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import { AsyncResult, Atom as NativeAtom } from "effect/unstable/reactivity"
+import { AsyncResult, Atom as NativeAtom } from "effect/reactivity"
 
 export type Atom<Value> = NativeAtom.Atom<Value>
 export type Getter = <Value>(node: Atom<Value>) => Value

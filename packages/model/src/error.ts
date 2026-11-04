@@ -1,6 +1,6 @@
 import { Redacted, Schema } from "effect"
-import { AiError } from "effect/unstable/ai"
-import { Headers } from "effect/unstable/http"
+import { AiError } from "effect/ai"
+import { Headers } from "effect/http"
 
 export const ModelError = Schema.toCodecJson(AiError.AiError)
 export type ModelError = typeof ModelError.Type

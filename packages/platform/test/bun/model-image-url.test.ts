@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Effect, Layer, Redacted } from "effect"
-import { HttpClient, HttpClientResponse } from "effect/unstable/http"
+import { HttpClient, HttpClientResponse } from "effect/http"
 import { Model, modelServices, type ModelInput, type ModelServiceOptions } from "@clavia/tardigrade-agent/services"
 import { ModelLock, modelLockOf, modelLockService } from "@clavia/tardigrade-model/lock"
 import { ObjectStorage, ObjectStorageError, makeObjectStorage, cachedObjectStorage, type ContentPart } from "@clavia/tardigrade-model/object"

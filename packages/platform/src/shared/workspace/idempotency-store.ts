@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 import { FilesystemWorkspaceError, type WorkspaceIdempotencyRequest, type WorkspaceIdempotencyStore, type WorkspaceMutationOutcome } from "@clavia/tardigrade-libraries/filesystem/index"
 
 const Outcome = Schema.Union([

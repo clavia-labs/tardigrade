@@ -2,7 +2,7 @@ import { bunHttpServices } from "@clavia/tardigrade-bun/http-threads"
 import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-deprecated-http/threads"
 import { createHost, hostBackend, type HostOptions, type Host } from "@clavia/tardigrade-bun/create-host"
 import { Context, Effect, Layer } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { createHash } from "node:crypto"
 import { watch, type FSWatcher } from "node:fs"
@@ -59,7 +59,7 @@ export interface ThreadsOptions {
   readonly allocation?: BunHostOptions<never>["allocation"]
   readonly threadAllocator?: typeof ThreadAllocator.Service
   // infer supplies model execution and its explicit ModelLock (host.test.ts).
-  readonly infer?: Layer.Layer<import("effect/unstable/ai").LanguageModel.LanguageModel>
+  readonly infer?: Layer.Layer<import("effect/ai").LanguageModel.LanguageModel>
   // inferenceObserver receives ephemeral normalized text outside the durable event log.
   readonly inferenceObserver?: InferenceObserver
   // providers interpret replies whose durable inbound link targets an external provider instance.

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Deferred, Effect, Fiber, Layer } from "effect"
-import { FetchHttpClient, type HttpClient } from "effect/unstable/http"
+import { FetchHttpClient, type HttpClient } from "effect/http"
 import { AUTH_DEFAULTS, CodexAuthError, CodexCredentials, codexOAuthLayer, credentialsFromTokens, deviceLogin, type Tokens } from "./codex-auth"
 import { oauthFixture } from "../testing/fixtures/oauth"
 

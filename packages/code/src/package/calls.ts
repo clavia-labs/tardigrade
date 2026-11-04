@@ -1,5 +1,5 @@
 import { Chunk, Clock, Effect } from "effect"
-import type { KeyValueStore } from "effect/unstable/persistence"
+import type { KeyValueStore } from "effect/persistence"
 import { component, withResponse, type ComponentOutput } from "@clavia/tardigrade-deprecated-core/actor"
 import { EventLog } from "@clavia/tardigrade-deprecated-core/log"
 import type { Event } from "@clavia/tardigrade-deprecated-core/event"

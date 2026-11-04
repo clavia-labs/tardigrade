@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { type LibraryFetch } from "./types"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { defineLibrary, MethodDescription, MethodHints } from "./library"
 
 export const DEFAULT_ARXIV_ENDPOINT = "https://export.arxiv.org/api/query"

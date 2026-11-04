@@ -1,6 +1,6 @@
 import { atomCheckpointKey } from "../services/checkpoint/atom"
 import { Context, Option, Schema } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import type { Atom } from "./atom"
 import { incrementalValidator, invalid } from "./incremental/validate"
 import { recordEvent, recordMetadata } from "../runtime/record"

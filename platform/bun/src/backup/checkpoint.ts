@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Cause, Context, Data, Effect, Exit, Layer, Scope, Semaphore } from "effect"
-import { RpcClient, RpcClientError } from "effect/unstable/rpc"
+import { RpcClient, RpcClientError } from "effect/rpc"
 import { type HostCheckpoint } from "./index"
 import { CheckpointRpcs } from "./protocol"
 

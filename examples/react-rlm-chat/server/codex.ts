@@ -1,6 +1,6 @@
 import { ConfigProvider, Effect, Layer } from "effect"
 import { BunServices } from "@effect/platform-bun"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"

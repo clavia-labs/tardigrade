@@ -1,6 +1,6 @@
 import { Layer } from "effect"
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
-import { HttpApi, HttpApiGroup, HttpApiScalar, OpenApi } from "effect/unstable/httpapi"
+import { HttpRouter, HttpServerResponse } from "effect/http"
+import { HttpApi, HttpApiGroup, HttpApiScalar, OpenApi } from "effect/http-api"
 import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-deprecated-client/contract"
 
 // UNAUTHENTICATED_PATHS names public discovery routes (apps/server/src/contract.test.ts, platform/cloudflare/test/actor.workers.ts).

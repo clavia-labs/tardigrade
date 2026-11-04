@@ -5,7 +5,7 @@ import { RuntimeError, type ExecutionHandle, type ActCancellation, durablePromis
 import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit, Option, Stream } from "effect"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { ObjectStorage, objectKeyOf } from "@clavia/tardigrade-model/object"
-import { AiError, LanguageModel, Prompt, type Response, Tool as AiTool, Toolkit } from "effect/unstable/ai"
+import { AiError, LanguageModel, Prompt, type Response, Tool as AiTool, Toolkit } from "effect/ai"
 import { ResponseFormat } from "@tardie/ai"
 import type { Content as ToolResultContent } from "@tardie/ai/ToolResult"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"

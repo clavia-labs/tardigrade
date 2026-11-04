@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
-import { SqlClient } from "effect/unstable/sql"
+import { KeyValueStore } from "effect/persistence"
+import { SqlClient } from "effect/sql"
 import { WorkspaceSql, type SqlRunner } from "@clavia/tardigrade-code/package/workspace"
 
 // The durable workspace on bun: Effect's SQL-backed KeyValueStore over the same SqlClient the log

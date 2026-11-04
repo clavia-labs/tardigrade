@@ -1,13 +1,13 @@
 import { Effect, Layer, Stream } from "effect"
 import { ProviderRequestKey } from "@clavia/tardigrade-model/settings"
 export { ProviderRequestKey } from "@clavia/tardigrade-model/settings"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 import type { OpenRouterClient, OpenRouterLanguageModel } from "@tardie/ai-openrouter"
 import type { OpenAiClient, OpenAiLanguageModel } from "@tardie/ai-openai"
 import type { OpenAiClient as CompatClient, OpenAiLanguageModel as CompatLanguageModel } from "@tardie/ai-openai-compat"
 import type { AnthropicClient, AnthropicLanguageModel } from "@tardie/ai-anthropic"
 import type { BedrockOptions } from "./bedrock-contract"
-import { LanguageModel } from "effect/unstable/ai"
+import { LanguageModel } from "effect/ai"
 import { unknownModelError } from "@clavia/tardigrade-model/error"
 
 export type ProviderOptions = { readonly unvalidatedConfig?: unknown } & (

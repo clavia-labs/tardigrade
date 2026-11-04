@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@clavia/tardigrade-code": "workspace:*",
-    "effect": "4.0.0-rc.115"
+    "effect": "4.1.2"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.1",

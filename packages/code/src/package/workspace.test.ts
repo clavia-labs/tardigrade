@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
+import { KeyValueStore } from "effect/persistence"
 import { spill, WORKSPACE_SPILL_NOTE } from "../storage/store"
 import { DEFAULT_WORKSPACE_POLICY, WORKSPACE_SQL_DESCRIPTION, workspacePackage, type SqlRunner } from "./workspace"
 

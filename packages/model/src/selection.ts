@@ -1,6 +1,6 @@
 import { ModelLock, type ModelLockData } from "./lock"
 import { Effect, Layer, Stream } from "effect"
-import { LanguageModel } from "effect/unstable/ai"
+import { LanguageModel } from "effect/ai"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
 import type { ModelRef } from "./reference"
 import type { ModelConfig, ModelCredentials } from "./config"

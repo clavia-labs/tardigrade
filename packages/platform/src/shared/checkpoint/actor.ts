@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 import { checkpointDigestSync, encodeCheckpoint, RuntimeError, type StoredCheckpoint, decodeCheckpointManifest, encodeActorCheckpointV4, LEGACY_ACTOR_CHECKPOINT_VERSION } from "@clavia/tardigrade-core"
 import { encodeCheckpointChunks, decodeCheckpointChunks, type CheckpointChunk } from "./chunks"
 import { readAtomCheckpoint, writeAtomCheckpoints, collectAtomCheckpoints } from "./atoms"

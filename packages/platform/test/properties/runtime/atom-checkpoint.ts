@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert"
 import * as fc from "fast-check"
 import { Schema } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { event, createEventLog, durableAtom, effectAtom, type Atom } from "@clavia/tardigrade-core"
 
 const Added = event({ type: "Added", amount: Schema.Int })

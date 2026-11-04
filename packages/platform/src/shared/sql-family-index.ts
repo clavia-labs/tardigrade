@@ -1,6 +1,6 @@
 import { RuntimeError, journalCall, type FamilyRecord, type JournalFamily, type Recorded } from "@clavia/tardigrade-core"
 import { Effect } from "effect"
-import type { SqlClient } from "effect/unstable/sql"
+import type { SqlClient } from "effect/sql"
 
 export const DEFAULT_FAMILY_INDEX_BATCH_SIZE = 16
 

@@ -1,6 +1,6 @@
 import { Effect, Layer, Schema } from "effect"
-import { Prompt } from "effect/unstable/ai"
-import { Rpc } from "effect/unstable/rpc"
+import { Prompt } from "effect/ai"
+import { Rpc } from "effect/rpc"
 import { defineLibrary, ToolResult, MethodExecution } from "@clavia/tardigrade-libraries"
 import { actorContext, createActor } from "@clavia/tardigrade-agent"
 import { objectStorageFromR2 } from "@clavia/tardigrade-cloudflare/object-storage/r2"

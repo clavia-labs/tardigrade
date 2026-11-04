@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { AiError, Response } from "effect/unstable/ai"
+import { AiError, Response } from "effect/ai"
 import { type Action, type ToolCall } from "../../log/events"
 import { ToolCallValidationError } from "@clavia/tardigrade-model/stream/collect"
 import { unknownModelError } from "../error"

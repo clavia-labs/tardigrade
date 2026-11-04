@@ -15,8 +15,8 @@
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-libraries": "workspace:*",
-    "effect": "4.0.0-rc.115",
-    "@tardie/ai": "0.0.5",
+    "effect": "4.1.2",
+    "@tardie/ai": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-0.2.0.tgz",
     "@clavia/tardigrade-model": "workspace:*"
   },
   "scripts": {

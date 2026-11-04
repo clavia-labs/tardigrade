@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { Response } from "effect/unstable/ai"
+import { Response } from "effect/ai"
 
 // ModelUsage preserves Effect's optional token breakdowns in the durable response (response.test.ts).
 export const ModelUsage = Schema.toEncoded(Response.Usage)

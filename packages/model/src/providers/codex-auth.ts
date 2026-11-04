@@ -1,5 +1,5 @@
 import { Clock, Context, Data, Effect, Encoding, Layer, Ref, Schema, Semaphore } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 
 export const AUTH_DEFAULTS = {
   issuer: "https://auth.openai.com",

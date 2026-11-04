@@ -1,6 +1,6 @@
 import { Effect, Option, Schema } from "effect"
 import { EffectExecution } from "@clavia/tardigrade-core"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { defineLibrary, MethodDescription, MethodHints } from "../library"
 import { FilesystemWorkspace, type FilesystemWorkspaceService } from "./service"
 import { ToolResult } from "@clavia/tardigrade-model/object/content"

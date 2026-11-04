@@ -1,6 +1,6 @@
 import { ThreadCreated, ThreadUpdated, CoreEvent, EffectRequested, EffectRef, InvocationIdentity, createInvocationLookup, hasCoreEventType } from "@clavia/tardigrade-core"
 import { Effect, ManagedRuntime, Schema, Semaphore, Exit, Cause, Fiber, type Layer } from "effect"
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 import { createScheduler, schedulerAlarm, JournalConflict, MessageMetadata, InboxMessageReceived, RuntimeError, type Recorded, type StoredCheckpoint, type Alarm, type ScheduledWake, type SchedulerPolicy, type SchedulerStorage, PendingEffectInput, effectKey, type JournalChanges } from "@clavia/tardigrade-core"
 import { initializeCheckpointSchema } from "./checkpoint/schema"
 import { writeAtomCheckpoints, readAtomCheckpoint } from "./checkpoint/atoms"

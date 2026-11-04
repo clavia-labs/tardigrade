@@ -1,7 +1,7 @@
 import { OperationScope } from "@clavia/tardigrade-deprecated-core/runtime/context"
 import { bindTransitionContext, type TransitionRef } from "@clavia/tardigrade-deprecated-core/transition/transition"
 import { Clock, Deferred, Effect, Fiber } from "effect"
-import type { KeyValueStore } from "effect/unstable/persistence"
+import type { KeyValueStore } from "effect/persistence"
 import { EventLog } from "@clavia/tardigrade-deprecated-core/log"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { transitionProjection, type TransitionProjection } from "@clavia/tardigrade-deprecated-core/transition"

@@ -1,7 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Effect, Layer } from "effect"
-import { HttpBody, HttpClient } from "effect/unstable/http"
-import { OpenApi } from "effect/unstable/httpapi"
+import { HttpBody, HttpClient } from "effect/http"
+import { OpenApi } from "effect/http-api"
 import { BunHttpServer } from "@effect/platform-bun"
 
 import { layerConfig, readConfig } from "./config"

@@ -9,11 +9,11 @@
         "typescript": "7.0.2",
       },
       "devDependencies": {
-        "@effect/platform-bun": "4.0.0-rc.115",
+        "@effect/platform-bun": "4.1.2",
         "@effect/tsgo": "0.36.5",
         "@types/bun": "^1.3.4",
         "beautiful-mermaid": "^1.1.3",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
         "knip": "^6.15.0",
         "oxc-parser": "0.143.0",
         "oxlint": "^1.69.0",
@@ -28,9 +28,9 @@
         "@clavia/tardigrade-deprecated-client": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-server": "workspace:*",
-        "@effect/platform-bun": "4.0.0-rc.115",
-        "@effect/platform-node-shared": "4.0.0-rc.115",
-        "effect": "4.0.0-rc.115",
+        "@effect/platform-bun": "4.1.2",
+        "@effect/platform-node-shared": "4.1.2",
+        "effect": "4.1.2",
         "jsonc-parser": "3.3.1",
         "tardie": "workspace:*",
       },
@@ -46,8 +46,8 @@
         "@clavia/tardigrade-deprecated-host": "workspace:*",
         "@clavia/tardigrade-deprecated-http": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
-        "@effect/platform-bun": "4.0.0-rc.115",
-        "effect": "4.0.0-rc.115",
+        "@effect/platform-bun": "4.1.2",
+        "effect": "4.1.2",
         "tardie": "workspace:*",
       },
     },
@@ -63,11 +63,11 @@
       "devDependencies": {
         "@clavia/tardigrade-deprecated-core": "workspace:*",
         "@clavia/tardigrade-server": "workspace:*",
-        "@effect/platform-bun": "4.0.0-rc.115",
+        "@effect/platform-bun": "4.1.2",
         "@types/react": "^19.2.16",
         "@types/react-dom": "^19.2.3",
         "@vitejs/plugin-react": "^6.0.2",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
         "tardie": "workspace:*",
         "vite": "^8.0.16",
       },
@@ -106,7 +106,7 @@
     "examples/react-rlm-chat/server": {
       "name": "@clavia/tardigrade-react-rlm-chat-server",
       "dependencies": {
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
         "tardie": "workspace:*",
       },
       "devDependencies": {
@@ -125,7 +125,7 @@
         "@clavia/tardigrade-ui": "workspace:*",
         "@phosphor-icons/react": "^2.1.10",
         "@tanstack/react-query": "^5.102.8",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
         "lucide-react": "^1.40.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
@@ -149,8 +149,8 @@
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-libraries": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
-        "@tardie/ai": "0.0.5",
-        "effect": "4.0.0-rc.115",
+        "@tardie/ai": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-0.2.0.tgz",
+        "effect": "4.1.2",
       },
     },
     "packages/apps/cli": {
@@ -165,8 +165,8 @@
         "@clavia/tardigrade-libraries": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-platform": "workspace:*",
-        "@effect/platform-bun": "4.0.0-rc.115",
-        "effect": "4.0.0-rc.115",
+        "@effect/platform-bun": "4.1.2",
+        "effect": "4.1.2",
       },
     },
     "packages/code": {
@@ -174,10 +174,10 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-deprecated-core": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
       "devDependencies": {
-        "@effect/platform-bun": "4.0.0-rc.115",
+        "@effect/platform-bun": "4.1.2",
         "fast-check": "^4.9.0",
       },
     },
@@ -185,7 +185,7 @@
       "name": "@clavia/tardigrade-core",
       "version": "0.0.1",
       "dependencies": {
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "fast-check": "^4.9.0",
@@ -199,7 +199,7 @@
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-deprecated-core": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
     },
     "packages/deprecated/channels": {
@@ -208,7 +208,7 @@
       "dependencies": {
         "@clavia/tardigrade-deprecated-core": "workspace:*",
         "@clavia/tardigrade-deprecated-host": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
     },
     "packages/deprecated/client": {
@@ -219,7 +219,7 @@
         "@clavia/tardigrade-deprecated-agent": "workspace:*",
         "@clavia/tardigrade-deprecated-core": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "fast-check": "^4.9.0",
@@ -229,7 +229,7 @@
       "name": "@clavia/tardigrade-deprecated-core",
       "version": "0.0.1",
       "dependencies": {
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "fast-check": "^4.9.0",
@@ -246,7 +246,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-deprecated-core": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "fast-check": "^4.9.0",
@@ -261,7 +261,7 @@
         "@clavia/tardigrade-deprecated-core": "workspace:*",
         "@clavia/tardigrade-deprecated-host": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
     },
     "packages/examples": {
@@ -273,7 +273,7 @@
         "@clavia/tardigrade-libraries": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-platform": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20260804.1",
@@ -287,7 +287,7 @@
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-store": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
     },
     "packages/model": {
@@ -295,22 +295,22 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-store": "workspace:*",
-        "@tardie/ai": "0.0.5",
-        "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.7",
-        "@tardie/ai-openai": "4.0.0-rc.113-clavia.9",
-        "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.9",
-        "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.4",
-        "effect": "4.0.0-rc.115",
+        "@tardie/ai": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-0.2.0.tgz",
+        "@tardie/ai-anthropic": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-anthropic-4.1.2-clavia.0.tgz",
+        "@tardie/ai-openai": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-openai-4.1.2-clavia.0.tgz",
+        "@tardie/ai-openai-compat": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-openai-compat-4.1.2-clavia.0.tgz",
+        "@tardie/ai-openrouter": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-openrouter-4.1.2-clavia.0.tgz",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
-        "@tardie/ai-bedrock": "0.0.10",
+        "@tardie/ai-bedrock": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-bedrock-4.1.2-clavia.0.tgz",
       },
       "peerDependencies": {
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
-        "@tardie/ai-bedrock": "0.0.10",
+        "@tardie/ai-bedrock": "4.1.2-clavia.0",
       },
       "optionalPeers": [
         "@smithy/fetch-http-handler",
@@ -330,10 +330,10 @@
         "@clavia/tardigrade-store": "workspace:*",
         "@clavia/tardigrade-worker-loader": "workspace:*",
         "@cloudflare/sandbox": "1.0.3",
-        "@effect/platform-bun": "4.0.0-rc.115",
-        "@effect/sql-sqlite-bun": "4.0.0-rc.115",
-        "@effect/sql-sqlite-do": "4.0.0-rc.115",
-        "effect": "4.0.0-rc.115",
+        "@effect/platform-bun": "4.1.2",
+        "@effect/sql-sqlite-bun": "4.1.2",
+        "@effect/sql-sqlite-do": "4.1.2",
+        "effect": "4.1.2",
         "just-bash": "3.6.0",
       },
       "devDependencies": {
@@ -352,7 +352,7 @@
       "name": "@clavia/tardigrade-store",
       "version": "0.0.1",
       "dependencies": {
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
     },
     "packages/tardie": {
@@ -377,7 +377,7 @@
         "@clavia/tardigrade-server": "workspace:*",
         "@clavia/tardigrade-store": "workspace:*",
         "@clavia/tardigrade-worker-loader": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20260804.1",
@@ -397,9 +397,9 @@
         "@clavia/tardigrade-deprecated-host": "workspace:*",
         "@clavia/tardigrade-deprecated-http": "workspace:*",
         "@clavia/tardigrade-store": "workspace:*",
-        "@effect/platform-bun": "4.0.0-rc.115",
-        "@effect/sql-sqlite-bun": "4.0.0-rc.115",
-        "effect": "4.0.0-rc.115",
+        "@effect/platform-bun": "4.1.2",
+        "@effect/sql-sqlite-bun": "4.1.2",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "fast-check": "^4.9.0",
@@ -417,8 +417,8 @@
         "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-store": "workspace:*",
         "@clavia/tardigrade-worker-loader": "workspace:*",
-        "@effect/sql-sqlite-do": "4.0.0-rc.115",
-        "effect": "4.0.0-rc.115",
+        "@effect/sql-sqlite-do": "4.1.2",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "@cloudflare/vitest-plugin": "^1.4.1",
@@ -432,7 +432,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-code": "workspace:*",
-        "effect": "4.0.0-rc.115",
+        "effect": "4.1.2",
       },
       "devDependencies": {
         "@cloudflare/vitest-plugin": "^1.4.1",
@@ -440,6 +440,9 @@
         "vitest": "^5.0.4",
       },
     },
+  },
+  "overrides": {
+    "@tardie/ai": "file:/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-0.2.0.tgz",
   },
   "packages": {
     "@aws-sdk/client-bedrock-runtime": ["@aws-sdk/client-bedrock-runtime@3.1129.0", "", { "dependencies": { "@aws-sdk/core": "^3.978.0", "@aws-sdk/credential-provider-node": "^3.972.83", "@aws-sdk/eventstream-handler-node": "^3.972.34", "@aws-sdk/middleware-eventstream": "^3.972.29", "@aws-sdk/middleware-websocket": "^3.972.53", "@aws-sdk/token-providers": "3.1129.0", "@aws-sdk/types": "^3.974.5", "@smithy/core": "^3.33.3", "@smithy/fetch-http-handler": "^5.7.2", "@smithy/node-http-handler": "^4.11.3", "@smithy/types": "^4.17.2", "tslib": "^2.6.2" } }, "sha512-wmqXkIsGf+4/K7nD2raBFgLnuQVHkRHbIczRP0P4MljAcAt6AsdcgKmYN5G1COAe0rUKb1ZTcomHtbiCVWzbbA=="],
@@ -594,13 +597,13 @@
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
-    "@effect/platform-bun": ["@effect/platform-bun@4.0.0-rc.115", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-rc.115" }, "peerDependencies": { "effect": "^4.0.0-rc.115" } }, "sha512-ilTFcs66ghInP8WHCJYa4bx/yzohYM9dRR//qjmVBBpSKu1hrCTiRWpEcc1N6zrnOEPk2kyVaKg5ykSMgiBMqQ=="],
+    "@effect/platform-bun": ["@effect/platform-bun@4.1.2", "", { "dependencies": { "@effect/platform-node-shared": "4.1.2" }, "peerDependencies": { "effect": "^4.1.2" } }, "sha512-waEAa84CITqjctgw9VdhlL9PyXRHICG3KAWTFRDPUE2XL/pfMPhO7V9oFdfx22dbAhhUzV+MHs0d9hnmy/DQ7w=="],
 
-    "@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.0-rc.115", "", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.21.3" }, "peerDependencies": { "effect": "^4.0.0-rc.115" } }, "sha512-rcBwhDIfb82akJoTv7Vwh8K5x9vC/XfuePS7JjOr+z+dORXzsmKqI1BUQF27ARCN9fTAbDh7I6YvBlWhLjnqNg=="],
+    "@effect/platform-node-shared": ["@effect/platform-node-shared@4.1.2", "", { "dependencies": { "@types/ws": "^8.18.2", "ws": "^8.22.1" }, "peerDependencies": { "effect": "^4.1.2" } }, "sha512-wSwl9A/G1hcVvF8nLI+YfB3EyOIDvWS6+lsTZBkmgDnPBL7m8YWZF+1HD+mdEsb52SUGfukip46Q3gRwSdk3QA=="],
 
-    "@effect/sql-sqlite-bun": ["@effect/sql-sqlite-bun@4.0.0-rc.115", "", { "peerDependencies": { "effect": "^4.0.0-rc.115" } }, "sha512-CypwmCPAUSOOhopcnSI9ocgpKHfpgOdERpei3GuXZm5cCGP31pk2NUETqNaYhonhr2bWd+6Rc8atctnEbIYKYQ=="],
+    "@effect/sql-sqlite-bun": ["@effect/sql-sqlite-bun@4.1.2", "", { "peerDependencies": { "effect": "^4.1.2" } }, "sha512-Cwe0fSqklOg8pjoY+i0rszSciI3WiKfauQc+k+okpcfTGqON45YZ3a9XmP4uUbk7dhim3qiPP92IjBjL6jDZgw=="],
 
-    "@effect/sql-sqlite-do": ["@effect/sql-sqlite-do@4.0.0-rc.115", "", { "peerDependencies": { "effect": "^4.0.0-rc.115" } }, "sha512-7lH9h+w4DW2tI+dus4hEac5mSCy1wgiT+uw/VvjR8YhNDemd3zEFY03NkbD81ipfOpnu2QA1YwgM58ExyPlhug=="],
+    "@effect/sql-sqlite-do": ["@effect/sql-sqlite-do@4.1.2", "", { "peerDependencies": { "effect": "^4.1.2" } }, "sha512-1qlYhIvNsvYxvfp1183FPMGnHN/9TAGtlMLsBB7OrVE5R/9bWnWyahMxGID79sJ6csW3Azeyxk3ZwRdWXLvNTQ=="],
 
     "@effect/tsgo": ["@effect/tsgo@0.36.5", "", { "optionalDependencies": { "@effect/tsgo-darwin-arm64": "0.36.5", "@effect/tsgo-darwin-x64": "0.36.5", "@effect/tsgo-linux-arm": "0.36.5", "@effect/tsgo-linux-arm64": "0.36.5", "@effect/tsgo-linux-x64": "0.36.5", "@effect/tsgo-win32-arm64": "0.36.5", "@effect/tsgo-win32-x64": "0.36.5" }, "bin": { "effect-tsgo": "dist/effect-tsgo.cjs" } }, "sha512-BHxVjeRK1/XlqYHWXkbT4W9JpOrT3sNA2wrfwQPBTojD5OSyxI2TUIltobYhWudyfuCrn770qP6uOpDjdrmghA=="],
 
@@ -1038,17 +1041,17 @@
 
     "@tanstack/virtual-file-routes": ["@tanstack/virtual-file-routes@1.162.0", "", {}, "sha512-uhOeFyxLcU41HzvrxsGpiWdcMbScY1EDgbZ5K7DVRMYInbLYWAC0EA/kx9wXAoSM8q82bUG2hRl8+EAjE6XAbA=="],
 
-    "@tardie/ai": ["@tardie/ai@0.0.5", "", { "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-K0hgWtyFbQdDynqOgIzGdb2aPVJF8Ij0v29nd8q14X71G0b2iKBmnVomDmy86/rS1NpkAUqN4l3D1ER5wlQzNg=="],
+    "@tardie/ai": ["@tardie/ai@/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-0.2.0.tgz", { "peerDependencies": { "effect": "4.1.2" } }, "sha512-DGtoLoC4WCFyVUtoFtzYg1/8BX2EY4nsXPE3FA+8SqdO6QYrZ1wtftJ7lo/9OUBEp8FZV3DUgFBF23vPYlSsGA=="],
 
-    "@tardie/ai-anthropic": ["@tardie/ai-anthropic@4.0.0-rc.113-clavia.7", "", { "dependencies": { "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-PipSrsHKfjMQnEwfz1PWi7EY7ubyd0z63DmuhBIgMWiCl3bXty+KqEd65ySOBaZUtrORhfN/3GZM9hF6oeUdOw=="],
+    "@tardie/ai-anthropic": ["@tardie/ai-anthropic@/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-anthropic-4.1.2-clavia.0.tgz", { "dependencies": { "@tardie/ai": "0.2.0" }, "peerDependencies": { "effect": "4.1.2" } }, "sha512-gD4C4cfeRzkL2Es+BonESRZj6lTAWUb4LU3NfuXmTcXp8cm3YtKn1+zh2Dp8s3p0zI7CuNhP7Gxlu+cczUiDDA=="],
 
-    "@tardie/ai-bedrock": ["@tardie/ai-bedrock@0.0.10", "", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0", "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-3sMxCwoq+mmovZHhTljZDMF+vgeS2namYrQ4KaKEle98LUFy6He8EDoCmvt9TOzjTtThcSI1Wfr0fQ72IUrH6Q=="],
+    "@tardie/ai-bedrock": ["@tardie/ai-bedrock@/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-bedrock-4.1.2-clavia.0.tgz", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0", "@tardie/ai": "0.2.0" }, "peerDependencies": { "effect": "4.1.2" } }, "sha512-OlK8gu6FMIuUz3Gjr02F0oZiSda4sh7V1rBuXY0vvhm5BIgFessPaLh5JS5JFb13aFloF92l4hBcrax0LcjZjA=="],
 
-    "@tardie/ai-openai": ["@tardie/ai-openai@4.0.0-rc.113-clavia.9", "", { "dependencies": { "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-4b8w730lR5CbqgLz92m7GaaXVMSNq3CXp/uIRlZlarG5f2VIUFcVY0F+3PAbpwln0uuK0rHx1NRPIJFP2pj9hw=="],
+    "@tardie/ai-openai": ["@tardie/ai-openai@/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-openai-4.1.2-clavia.0.tgz", { "dependencies": { "@tardie/ai": "0.2.0" }, "peerDependencies": { "effect": "4.1.2" } }, "sha512-uCrbIflvR57hqevuDioj2B7Iu2XH0ZUBT1vjLG83ChQ81rVH+kMObdC+R2RxCeiilWNlbWoKFu9oVhXI0w386Q=="],
 
-    "@tardie/ai-openai-compat": ["@tardie/ai-openai-compat@4.0.0-rc.113-clavia.9", "", { "dependencies": { "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-9u5tcXs9OQrDh+OOWqfOyBvqF09L2OlIv6rcW3ZwCZmPQx1JVjhaVSSTg7EevTpsRQnw/d4FlvkrFmJiXK4hJw=="],
+    "@tardie/ai-openai-compat": ["@tardie/ai-openai-compat@/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-openai-compat-4.1.2-clavia.0.tgz", { "dependencies": { "@tardie/ai": "0.2.0" }, "peerDependencies": { "effect": "4.1.2" } }, "sha512-56S16xRXnF8UG0qlKDX35rKEtiRP+e89DBx3sAmR4zbSPTylOMv7dqiiUoRID8foc3ZL6dn8PfpaPncpe+twAw=="],
 
-    "@tardie/ai-openrouter": ["@tardie/ai-openrouter@4.0.0-rc.113-clavia.4", "", { "dependencies": { "@tardie/ai": "0.0.5" }, "peerDependencies": { "effect": "4.0.0-rc.115" } }, "sha512-nMnZa+i5RP332ze2ajTsTjjrIXI+mmrgxGlwLVymBZxfp2cW5TAgGjcShZYaf+WHprqhony3FiKvxXsjvIpALQ=="],
+    "@tardie/ai-openrouter": ["@tardie/ai-openrouter@/Users/arjun/Documents/github/effect-4.1/artifacts/clavia/tardie-ai-openrouter-4.1.2-clavia.0.tgz", { "dependencies": { "@tardie/ai": "0.2.0" }, "peerDependencies": { "effect": "4.1.2" } }, "sha512-wyLAeYs+pPQ8zCT7ZJOTJ5RzLPhK8FM1tbLNmgTteqBg2yhWl1kzC/zEp8mH8CdzbUQonFeZuFv1YZSLCZT2LA=="],
 
     "@tokenizer/inflate": ["@tokenizer/inflate@0.4.1", "", { "dependencies": { "debug": "^4.4.3", "token-types": "^6.1.1" } }, "sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA=="],
 
@@ -1084,7 +1087,7 @@
 
     "@types/unist": ["@types/unist@3.0.3", "", {}, "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q=="],
 
-    "@types/ws": ["@types/ws@8.18.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg=="],
+    "@types/ws": ["@types/ws@8.18.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w=="],
 
     "@typescript/typescript-aix-ppc64": ["@typescript/typescript-aix-ppc64@7.0.2", "", { "os": "aix", "cpu": "ppc64" }, "sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ=="],
 
@@ -1228,7 +1231,7 @@
 
     "diff": ["diff@8.0.4", "", {}, "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="],
 
-    "effect": ["effect@4.0.0-rc.115", "", {}, "sha512-ogYulZ5ffeOzrJqQrG0XOkDO5lKn2s9KNHhoxJy/6wKUkF0i12dlVXWA9TgsgQ+zV/JzizyG0+XMPepZEQX6vw=="],
+    "effect": ["effect@4.1.2", "", {}, "sha512-d3Oah1WyKxFLFh19yWheS5IXIVaITzxZ71JkE1rkUozq/6EcJSU5nPk5bF2QrSygZ3SQoiNQB8TsxFriyMeMaQ=="],
 
     "electron-to-chromium": ["electron-to-chromium@1.5.418", "", {}, "sha512-UzS26r3AEbG5wSoGVpJKqwHIU9zwQN7LHdVIThDrJpS0I5KdlXFMEb8543fhc9dVnIIAST6ar8rhwa00AL5MlA=="],
 
@@ -1784,7 +1787,7 @@
 
     "wrappy": ["wrappy@1.0.2", "", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
 
-    "ws": ["ws@8.21.3", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw=="],
+    "ws": ["ws@8.22.1", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-oyL6OPYme/CmiFvNuGzeoxCJ4nOrZE2O1FwM9MWM1AsGri6nLXB2pg+lNA8aLeXMSav0J6eIVS1j6vUPzUtK9g=="],
 
     "xml-naming": ["xml-naming@0.3.0", "", {}, "sha512-ghig2TBE/H11aOVgmahA3MhimvkBr6JIYknH/Dhdk10nXwdbIqBJsbfMxpvFPG8bAw77gN29aQWvKpmVoPlvPQ=="],
 

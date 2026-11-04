@@ -7,7 +7,7 @@ import { InitialState } from "../../initialise"
 import { durableAtom } from "../../atoms/durable"
 import { durableAtomFamily } from "../../experimental/durable-atom-family"
 import type { Getter } from "../../atoms/atom"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { DEFAULT_SUPERVISOR_PAGE_SIZE, type SupervisorPageOptions } from "./page"
 
 

@@ -1,5 +1,5 @@
 import { Context, Data, Effect, Layer } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
+import { KeyValueStore } from "effect/persistence"
 
 // HostCheckpoint carries host-defined archive bytes and metadata for remote storage.
 export interface HostCheckpoint {

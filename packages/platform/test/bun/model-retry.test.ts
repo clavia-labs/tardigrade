@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import { Duration, Effect } from "effect"
-import { AiError } from "effect/unstable/ai"
+import { AiError } from "effect/ai"
 import { RuntimeError } from "@clavia/tardigrade-core"
 import { modelRetry } from "../../../agent/src/services/model-retry"
 
