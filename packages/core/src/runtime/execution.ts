@@ -5,13 +5,13 @@ import { createStore } from "../atoms/store"
 import { observeRecord } from "./event-source"
 import { recordEvent } from "./record"
 import { atom, type Atom } from "../atoms/atom"
-import { EventLog, ReplayContext, executionDefect } from "../services/event-log"
+import { EventLog, ReplayContext, executionDefect, eventLogService } from "../services/event-log"
 import { Scheduler } from "../services/scheduler"
 import { createInvocationLookup, selectInvocationRecords } from "../services/journal/invocation"
 import { operationSettlement, cleanupRunnable, cleanupSucceeded } from "./operation"
 import { EffectExecution, DEFAULT_ATTEMPT_TIMEOUT_MS, type AttemptOptions, type RetryOptions } from "../services/effect-execution"
 import { createExecutionStream, type ExecutionStream, type ExecutionStreamPolicy } from "../services/execution-stream"
-import { CoreEvent, EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType, type RetryScheduled, type InvocationIdentity } from "./events"
+import { CoreEvent, ObservedCoreEvent, EffectRequested, EffectSettled, EffectDied, PromiseSettled, hasCoreEventType, type RetryScheduled, type InvocationIdentity } from "./events"
 import { cancelAct, type ActCancellation } from "../atoms/act"
 import type { RuntimeEvent, JournalEvent, Journal, MessageJournal, RecordMetadata, Recorded } from "../services/journal"
 import type { ActorRuntime, ActorSetup, Requirements } from "./contracts"
@@ -54,7 +54,7 @@ export const DEFAULT_CANCELLATION_RETRY_INTERVAL_MS = 5_000
 export const DEFAULT_CHECKPOINT_POLICY: CheckpointPolicy = { mode: "threshold", options: { everyEvents: 500 } }
 
 export type ActorServices<Definition> = Definition extends ActorDefinition<infer Event, infer State, infer Services>
-  ? (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
+  ? (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error, EventLog>
   : never
 
 // createActorStore instantiates an actor definition and owns its services, journal commits, and execution lifetime.
@@ -66,7 +66,7 @@ export function createActorStore<Event extends object, State, Services, Contract
   readonly inspect?: boolean
   readonly canDrive?: Effect.Effect<boolean, Error>
   readonly actor: ActorDefinition<Event, State, Services, Contracts>
-  readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
+  readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error, EventLog>
   // actorContext selects setup capabilities explicitly; the execution context is supplied only to effect execution.
   readonly actorContext: (services: Context.Context<Requirements<{ root: Atom<NoInfer<State>> }> | Exclude<NoInfer<Services>, Scope.Scope>>) => Context.Context<Exclude<NoInfer<Services>, Scope.Scope>>
   readonly events?: readonly RuntimeEvent<Event>[]
@@ -104,7 +104,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
   readonly inspect?: boolean
   readonly canDrive?: Effect.Effect<boolean, Error>
   readonly setup: Effect.Effect<ActorSetup<Event, Atoms, Contracts>, Error, Services>
-  readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<Atoms> | Exclude<Services, Scope.Scope>, Error>
+  readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<Atoms> | Exclude<Services, Scope.Scope>, Error, EventLog>
   readonly actorContext: (services: Context.Context<Requirements<Atoms> | Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
   readonly events?: readonly RuntimeEvent<Event>[]
   readonly journalReadBatchSize?: number
@@ -154,7 +154,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }
       if (bytes > checkpointMaxBytes) throw new RuntimeError(`Checkpoint write exceeds maxBytes ${checkpointMaxBytes}: ${bytes} bytes`)
     }
-    const store = createStore(Context.make(EventLog, {
+    const eventLog = eventLogService({
+      schemas: () => [...(setup.eventSchemas ?? [setup.schema]), ObservedCoreEvent],
       replay: atom(get => get(published)?.observations() ?? { position: 0, seed: undefined, read: () => [] }),
       events: atom(get => {
         const records = get(published)?.records
@@ -172,7 +173,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       operations: () => [...(snapshot?.operations() ?? [])].map(operation => ({ ...operation, request: Object.freeze(observeRequest(operation.request)) })),
       defect: () => snapshot?.defect,
       promise: ref => snapshot?.promise(ref),
-    }))
+    }, node => store.get(node))
+    const store = createStore(Context.make(EventLog, eventLog))
     const sync = () => store.batch(() => {
       store.set(bindings, snapshot.bindings)
       store.set(published, snapshot)
@@ -400,7 +402,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       ? options.delivery.send(message).pipe(Effect.retry(Schedule.spaced(messageRetryIntervalMs)), Effect.mapError(String))
       : Effect.fail("Message delivery is unavailable"))
     function buildServices() {
-      return Layer.build(Layer.fresh(Layer.merge(options.services(runtime), deliveryLayer))).pipe(Effect.provideService(Scope.Scope, scope))
+      return Layer.build(Layer.fresh(Layer.merge(options.services(runtime), deliveryLayer).pipe(Layer.provide(Layer.succeed(EventLog, eventLog))))).pipe(Effect.provideService(Scope.Scope, scope))
     }
     const dispatched = new Set<string>()
     const watched = new Set<string>()

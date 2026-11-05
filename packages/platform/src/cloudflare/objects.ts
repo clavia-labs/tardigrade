@@ -1,3 +1,4 @@
+import type { EventLog } from "@clavia/tardigrade-core"
 import { journalCall } from "@clavia/tardigrade-core"
 import { DurableObject } from "cloudflare:workers"
 import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Scope } from "effect"
@@ -43,7 +44,7 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
   readonly version?: (env: Env) => string | undefined
   readonly actorContext?: ExecutionOptions<Event, Services, State, Contracts>["actorContext"]
   // services receives the current Durable Object storage for local cache layers.
-  readonly services: (env: Env, ...args: [...Parameters<ExecutionOptions<Event, Services, State, Contracts>["services"]>, DurableObjectStorage]) => Layer.Layer<Layer.Success<ReturnType<ExecutionOptions<Event, Services, State, Contracts>["services"]>>, Error, Supervisor | Invocation>
+  readonly services: (env: Env, ...args: [...Parameters<ExecutionOptions<Event, Services, State, Contracts>["services"]>, DurableObjectStorage]) => Layer.Layer<Layer.Success<ReturnType<ExecutionOptions<Event, Services, State, Contracts>["services"]>>, Error, Supervisor | Invocation | EventLog>
   readonly alarms?: CloudflareAlarmOptions
   readonly rpc?: CloudflareRetryOptions
   readonly scheduler?: Partial<SchedulerPolicy>

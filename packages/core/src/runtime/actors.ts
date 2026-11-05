@@ -1,3 +1,4 @@
+import type { EventLog } from "../services/event-log"
 import { journalCall } from "../services/journal"
 import { isDeepStrictEqual } from "node:util"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Random, Schema, Scope, Semaphore } from "effect"
@@ -127,7 +128,7 @@ export interface ActorExecutionOptions<Event extends object, Services, State, Co
   readonly initialStateAtoms?: readonly StatefulAtom[]
   readonly actor: ActorDefinition<Event, State, Services, Contracts>
   readonly storage: ActorStorage<Event>
-  readonly services: (coordinate: ThreadCoordinate, runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
+  readonly services: (coordinate: ThreadCoordinate, runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error, EventLog>
   readonly from: MessageMetadata["from"]
   readonly delivery: (coordinate: ThreadCoordinate) => DeliveryOptions
   readonly actorContext: (services: Context.Context<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
