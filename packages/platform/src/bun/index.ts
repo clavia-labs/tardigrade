@@ -102,5 +102,3 @@ export { virtualWorkspace, type BunVirtualWorkspaceOptions } from "./virtual-wor
 export { DEFAULT_VIRTUAL_WORKSPACE_DIRECTORY, DEFAULT_VIRTUAL_WORKSPACE_CHUNK_BYTES, DEFAULT_VIRTUAL_WORKSPACE_POLICY, DEFAULT_VIRTUAL_BASH_PROFILE, type VirtualWorkspaceOptions, type VirtualWorkspacePolicy, type VirtualWorkspaceExecutor } from "../shared/workspace/virtual/index"
 
 export { sqlIdempotencyStore } from "../shared/workspace/idempotency-store"
-
-export { bunLogSql, DEFAULT_BUN_LOG_SQL_POLICY } from "./log-sql"

@@ -46,8 +46,22 @@ export interface JournalChanges extends EffectInputChanges {
   readonly atomCheckpoints?: readonly AtomCheckpoint[]
 }
 
+export interface JournalQuery {
+  readonly sql: string
+  readonly from: number
+  readonly to: number
+  readonly limit: number
+}
+
+export interface JournalQueryResult {
+  readonly columns: readonly string[]
+  readonly rows: readonly (readonly Schema.Json[])[]
+  readonly more: boolean
+}
+
 // Journal accesses a local ordered event prefix synchronously; append commits a batch atomically or throws for a stale expected length (platform/test/properties/checkpoint/storage.ts).
 export interface Journal<Event extends object> {
+  readonly query?: (request: JournalQuery) => Effect.Effect<JournalQueryResult, Error>
   readonly readAtomCheckpoint?: ReadAtomCheckpoint
   readonly readFamily?: ReadJournalFamily<Event>
   readonly readFamilyKeys?: ReadJournalFamilyKeys
