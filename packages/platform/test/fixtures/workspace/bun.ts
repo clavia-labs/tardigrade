@@ -4,14 +4,14 @@ import { tmpdir } from "node:os"
 import { createInterface } from "node:readline"
 import { Readable } from "node:stream"
 import { join } from "node:path"
-import { testStage } from "../wait"
+import { DEFAULT_WAIT_POLICY, testStage } from "../wait"
 import type { WorkspaceScenarioRequest, LifecycleResponse, WorkspaceScenarioDriver, WorkspaceCrashPoint } from "./shared"
 
-// bunWorkspaceLifecycle hosts the workspace and SQLite content store in a killable subprocess.
-export async function bunWorkspaceLifecycle(): Promise<WorkspaceScenarioDriver> {
+// bunWorkspaceLifecycle hosts a workspace process and its SQLite state in a killable subprocess; the process receives the state directory and args.
+export async function bunWorkspaceLifecycle(entry = new URL("./bun-process.ts", import.meta.url), args: readonly string[] = [], timeoutMs = DEFAULT_WAIT_POLICY.timeoutMs): Promise<WorkspaceScenarioDriver> {
   const directory = await mkdtemp(join(tmpdir(), "tardie-workspace-lifecycle-"))
   const start = () => {
-    const child = Bun.spawn([process.execPath, new URL("./bun-process.ts", import.meta.url).pathname, directory], { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
+    const child = Bun.spawn([process.execPath, entry.pathname, directory, ...args], { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
     return { child, reader: createInterface({ input: Readable.fromWeb(child.stdout) })[Symbol.asyncIterator](), errors: new Response(child.stderr).text() }
   }
   let processState: ReturnType<typeof start> | undefined
@@ -26,7 +26,7 @@ export async function bunWorkspaceLifecycle(): Promise<WorkspaceScenarioDriver> 
   const launch = () => testStage("starting workspace lifecycle process", async () => {
     processState = start()
     assert.equal((await next()).type, "ready")
-  })
+  }, timeoutMs)
   const kill = () => testStage("stopping workspace lifecycle process", async () => {
     if (!processState) return
     processState.child.kill("SIGKILL")
@@ -34,13 +34,13 @@ export async function bunWorkspaceLifecycle(): Promise<WorkspaceScenarioDriver> 
     await processState.reader.return?.()
     await processState.errors
     processState = undefined
-  })
+  }, timeoutMs)
   const request = (input: WorkspaceScenarioRequest) => testStage(`workspace lifecycle ${input.type}`, async () => {
     assert.ok(processState)
     processState.child.stdin.write(`${JSON.stringify(input)}\n`)
     await processState.child.stdin.flush()
     return next()
-  })
+  }, timeoutMs)
   const result = async <Value>(input: WorkspaceScenarioRequest): Promise<Value> => {
     const response = await request(input)
     assert.equal(response.type, "result")

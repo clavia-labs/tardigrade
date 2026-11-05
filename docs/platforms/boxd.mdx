@@ -1,0 +1,108 @@
+---
+title: boxd
+description: Run an agent's workspace in an isolated boxd computer.
+route: /docs/platforms/boxd
+section: Platforms
+sectionOrder: 3
+order: 4
+---
+
+`boxdWorkspace` from `tardie/platform/boxd` supplies the `FilesystemWorkspace` service from a [boxd](https://boxd.sh) computer, an isolated KVM microVM with its own disk. The `bash`, `read`, `write`, and `edit` tools run in the computer. The actor, its event log, and its model calls stay on the host. It runs on Bun and Node hosts, including `createBunHost`. Commands stream over a connection that the `@boxd-sh/sdk/web` client cannot open, so Cloudflare and Celld hosts cannot use it.
+
+## Install
+
+```bash variant="single"
+bun add @boxd-sh/sdk
+```
+
+`@boxd-sh/sdk` is an optional peer dependency of `tardie`. Create an API key with `boxd auth keys create <name>` and set `BOXD_API_KEY` in the host environment. A key belongs to one org, so pass `org` when the key's org is not the account default.
+
+## Mount a workspace
+
+Replace the workspace in the generated `server.ts`:
+
+```ts title="server.ts"
+import { Boxd } from "@boxd-sh/sdk"
+import { boxdWorkspace, boxdWorkspaceName } from "tardie/platform/boxd"
+
+const boxd = new Boxd()
+
+const host = await Effect.runPromise(createBunHost({
+  actor: definition,
+  actorContext,
+  storage: ".tardigrade",
+  services: coordinate => services(config.vars.TARDIGRADE_CONFIG.models, process.env, boxdWorkspace({
+    client: boxd,
+    name: boxdWorkspaceName(coordinate),
+    network: { mode: "allowlist", hosts: ["registry.npmjs.org"] },
+    release: "retain",
+  })),
+}))
+```
+
+`name` identifies the computer within its region. `boxdWorkspaceName(coordinate)` derives a name from the actor, instance, and thread, so each thread has its own computer. It is `DEFAULT_BOXD_WORKSPACE_NAME_PREFIX` (`tardie-`) followed by 16 hex digits of a SHA-256 of the coordinate, and a second argument replaces the prefix. Commands run as the `boxd` user in `directory`, which defaults to `DEFAULT_BOXD_WORKSPACE_DIRECTORY` (`/home/boxd/workspace`).
+
+## Lifecycle
+
+The first operation creates the computer, or adopts the computer that already has the name. When `region` is omitted, adoption searches every region, and it fails when two regions hold the name or when a region that may hold it does not answer. A restarted host adopts the same computer with its files and processes. Hibernated and suspended computers wake on the next command. A stopped computer is started by the next command, which then runs once.
+
+| `release` | When the layer is released |
+| --- | --- |
+| `destroy` | The computer is deleted. This is the default. |
+| `retain` | The computer keeps its disk and is hibernated. `retained: "running"` leaves it running. `DEFAULT_BOXD_RETAINED_STATE` is `hibernated`. |
+| `unmount` | The computer keeps running. |
+
+Release covers a computer from its creation, so a first command interrupted while its computer starts leaves nothing behind under `destroy`.
+
+A command that exceeds `policy.commandTimeoutMs` is cancelled, and the cancellation stops its process in the computer. A background process started with `nohup` keeps running between commands.
+
+## Network
+
+`network` takes the `WorkspaceNetworkPolicy` that the container workspaces use, and defaults to `none`. It becomes the computer's egress allowlist at creation:
+
+| Policy | Computer egress |
+| --- | --- |
+| `none` | Nothing is reachable, including DNS. |
+| `all` | Egress is unrestricted. |
+| `allowlist` | HTTP and HTTPS reach the listed hosts, and other traffic reaches the addresses they resolve to. |
+
+The policy is fixed at creation. Adopting a computer whose allowlist differs from the requested policy fails with both lists in the error. `boxdEgress` returns the allowlist for a policy.
+
+## Isolation
+
+Every workspace computer is created isolated, and adoption refuses a computer that is not. An isolated computer joins no org network and holds no boxd credentials or integrations. The API key stays on the host.
+
+## Durable replay
+
+Pass a `WorkspaceIdempotencyStore` as `idempotency`, such as `sqlIdempotencyStore` from `tardie/platform/workspace` over the host's SQLite database. Keyed mutations then replay after a host restart under `boxdWorkspaceId({ org, name })`, so the saved outcomes follow the computer's name.
+
+## Options
+
+| Option | Effect |
+| --- | --- |
+| `client` | A `Boxd` client from `@boxd-sh/sdk`. |
+| `name` | The computer name, unique within a region. |
+| `org` | The org that owns the computer. |
+| `region` | The region for a new computer. Adoption searches every region when it is omitted. |
+| `size` | A size such as `2x8` or `4x16`. The org default applies when it is omitted. |
+| `snapshot` | A snapshot that new computers start from. |
+| `labels` | Labels for a new computer. |
+| `directory` | The absolute workspace directory. |
+| `network` | The egress policy. |
+| `idempotency` | The store for keyed mutation outcomes. |
+| `policy` | Overrides for `DEFAULT_CONTAINER_WORKSPACE_POLICY`, including `startupTimeoutMs`, `startupPollIntervalMs`, and `commandTimeoutMs`. |
+| `release` | `destroy`, `retain`, or `unmount`. |
+| `retained` | `hibernated` or `running` for a retained computer. |
+
+`contentStore`, `fileDelivery`, and `readPolicy` apply to reads as they do for the other workspaces.
+
+## Verify
+
+Start the host with `bun run dev`, then ask the agent where its shell runs:
+
+```bash
+tdg thread create --name boxd-check
+tdg call message '{"text":"Run hostname and pwd with bash and reply with the output."}' --thread boxd-check
+```
+
+The reply names the thread's computer and `/home/boxd/workspace`. `boxd machine list` shows that computer while the host runs. With `release: "retain"`, it shows the computer hibernated after the host stops.

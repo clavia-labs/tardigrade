@@ -33,6 +33,7 @@
     "./code": "./src/generated/code.ts",
     "./platform/bun": "./src/generated/platform/bun.ts",
     "./client": "./src/generated/client.ts",
+    "./platform/boxd": "./src/generated/platform/boxd.ts",
     "./platform/cloudflare": "./src/generated/platform/cloudflare.ts",
     "./platform/cloudflare/retry": "./src/generated/platform/cloudflare/retry.ts",
     "./package.json": "./package.json",

@@ -53,6 +53,16 @@ bun run --cwd packages/platform test:deployed
 
 The command deploys a uniquely named fixture Worker, runs the same thread creation and messaging flow as the local workerd tests, then deletes its Durable Object namespaces and Worker in teardown. It is outside the gate. Use `--dry-run` to check the fixture bundle without deploying. Use `--url URL` to run against an existing deployment of the same fixture, including Celld; this mode leaves that deployment in place and reads its bearer token from `FIXTURE_TOKEN`.
 
+## boxd fixture flow
+
+The boxd workspace has an opt-in suite against real boxd computers. Set `BOXD_API_KEY`, and `BOXD_ORG` for a key that belongs to another org, then run:
+
+```sh
+bun run --cwd packages/platform test:boxd
+```
+
+The suite names its computers with the `tardigrade-e2e-` prefix and deletes them in teardown. It runs the shared workspace lifecycle scenarios against a host process that is killed and restarted, plus network, retention, interruption, timeout, stopped computer, region, and 5 MiB checks. It is outside the gate. `BOXD_TEST_PREFIX`, `BOXD_TEST_TIMEOUT_MS`, and `BOXD_TEST_STAGE_MS` override the name prefix, the test timeout, and the lifecycle stage timeout. The in-memory tests in `test/bun/workspace/boxd.test.ts` run in the gate.
+
 ## Actor capabilities
 
 Actor modules propose acts and read data services. Act implementations and platform wiring own I/O. The overrides in [.oxlintrc.json](.oxlintrc.json) apply to agent atoms and contracts, CLI actor entrypoints, the supervisor, and `actors/` directories. Keep actor definitions in these locations and put implementation layers in `services/` modules or platform entrypoints. Import shared schemas from data contract modules.
