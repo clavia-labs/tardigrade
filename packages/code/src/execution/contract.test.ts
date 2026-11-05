@@ -2,7 +2,7 @@ import { transitionProjectionOf } from "../../../deprecated/core/src/component/r
 import { codeExecution } from "./code"
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
+import { KeyValueStore } from "effect/persistence"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-deprecated-core/log"
 import { settleActor } from "@clavia/tardigrade-deprecated-core/runtime"

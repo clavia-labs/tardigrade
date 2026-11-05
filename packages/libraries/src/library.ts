@@ -1,7 +1,6 @@
 import { Context, Deferred, Effect, Schema } from "effect"
-import { Rpc, RpcGroup, RpcSchema } from "effect/unstable/rpc"
-import { RequestId } from "effect/unstable/rpc/RpcMessage"
-import * as Headers from "effect/unstable/http/Headers"
+import { Rpc, RpcGroup, RpcMessage, RpcSchema } from "effect/rpc"
+import { Headers } from "effect/http"
 import { EffectExecution, ExecutionHandle } from "@clavia/tardigrade-core"
 import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
 import { ToolError } from "./errors"
@@ -79,7 +78,7 @@ export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definiti
   return { ...library, implement: (handlers, options = {}) => {
     type R = RpcGroup.HandlersServices<Rpcs[number], typeof handlers>
     const implementations = handlers as unknown as Record<string, (payload: unknown, options: {
-      readonly client: Rpc.ServerClient; readonly requestId: RequestId; readonly headers: Headers.Headers; readonly rpc: Rpc.Any
+      readonly client: Rpc.ServerClient; readonly requestId: RpcMessage.RequestId; readonly headers: Headers.Headers; readonly rpc: Rpc.Any
     }) => Effect.Effect<unknown, Rpc.Error<Rpcs[number]>, R>>
     for (const name of options.submit ?? []) if (!names.includes(name)) throw new Error(`Unknown submitted method: ${name}`)
     for (const name of Object.keys(options.cancel ?? {})) if (!names.includes(name)) throw new Error(`Unknown cancelled method: ${name}`)
@@ -89,7 +88,7 @@ export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definiti
       const run = (payload: unknown, call: ToolInvocation) => Effect.gen(function* () {
         const handler = implementations[rpc._tag]
         if (!handler) return yield* Effect.fail(new ToolError(`Missing library handler: ${rpc._tag}`))
-        const result = handler(rpc.payloadSchema === Schema.Void ? undefined : payload, { client: new Rpc.ServerClient(0), requestId: RequestId(call.callId), headers: Headers.empty, rpc })
+        const result = handler(rpc.payloadSchema === Schema.Void ? undefined : payload, { client: new Rpc.ServerClient(0), requestId: RpcMessage.RequestId(call.callId), headers: Headers.empty, rpc })
         if (!Effect.isEffect(result)) return yield* Effect.fail(new ToolError("Library handlers must return an Effect"))
         const value = yield* result
         const resolved = Deferred.isDeferred(value) ? yield* Deferred.await(value as Deferred.Deferred<unknown, Rpc.Error<Rpcs[number]>>).pipe(Effect.mapError(ToolError.from)) : value

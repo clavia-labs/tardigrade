@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
+import { KeyValueStore } from "effect/persistence"
 
 // The workspace store is Effect's KeyValueStore. Its manifest contract lives here, with spill and
 // hydrate as its writers: content bounded out of an agent's turn context lands in

@@ -1,7 +1,7 @@
 import * as ProviderLanguageModel from "@tardie/ai"
 import { expect, test } from "bun:test"
 import { Effect, Schema, Stream } from "effect"
-import { LanguageModel } from "effect/unstable/ai"
+import { LanguageModel } from "effect/ai"
 
 for (const method of ["generateText", "streamText"] as const) {
   test(`${method}: forwards response format and defaults to text`, async () => {

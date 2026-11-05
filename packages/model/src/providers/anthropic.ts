@@ -1,5 +1,5 @@
 import { validatedConfig } from "./options"
-import type { HttpClient } from "effect/unstable/http"
+import type { HttpClient } from "effect/http"
 import { Layer } from "effect"
 import { AnthropicClient, AnthropicLanguageModel } from "@tardie/ai-anthropic"
 import { requestKeys, type ProviderLayer } from "./layer"

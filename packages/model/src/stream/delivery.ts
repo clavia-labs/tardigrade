@@ -1,4 +1,4 @@
-import { IdGenerator, type Response } from "effect/unstable/ai"
+import { IdGenerator, type Response } from "effect/ai"
 import type { ModelRef } from "../reference"
 import type { InferenceIdentity } from "./observer"
 import { Cause, Effect, Fiber, Queue, Stream } from "effect"

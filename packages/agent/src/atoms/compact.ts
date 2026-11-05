@@ -4,7 +4,7 @@ import { immutableMessage, immutableConversation } from "../experimental/traject
 import type { LogModelContext } from "../contracts/model-context"
 import { type TrajectorySource } from "./durable/trajectory"
 import { Effect } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { type Conversation, ModelCalled, ModelReturned, CompactionFailed } from "../contracts/events"
 import { modelSelection } from "../compat/model"
 import { Summarize, requests, failureMessage } from "../contracts/acts"

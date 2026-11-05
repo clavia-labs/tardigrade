@@ -1,5 +1,5 @@
 import { Effect, Option, Sink, Stream } from "effect"
-import * as Mime from "effect/unstable/http/Mime"
+import { Mime } from "effect/http"
 import type { ObjectStorage } from "@clavia/tardigrade-store"
 import type { InputContentPart } from "@clavia/tardigrade-model/object/content"
 import { FilesystemWorkspaceError } from "./service"

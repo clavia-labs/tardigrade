@@ -1,5 +1,5 @@
 import { Effect, Layer, Redacted } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 import { providerLayer } from "@clavia/tardigrade-model/providers/openai"
 import { ObjectStorage } from "@clavia/tardigrade-model/object/storage"
 import { Model, modelServices } from "@clavia/tardigrade-agent/services"

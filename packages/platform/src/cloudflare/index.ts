@@ -12,7 +12,7 @@ export { sqlJournal, DEFAULT_EVENT_INLINE_BYTES, DEFAULT_INVOCATION_INDEX_BATCH_
 export { hostRoutes, errorLogFields, DEFAULT_ERROR_LOG_POLICY, type ErrorLogPolicy, type HttpHost } from "../shared/http"
 export { workerLoaderIsolate, DEFAULT_WORKER_LOADER_ISOLATE_POLICY, type WorkerLoaderIsolatePolicy } from "./isolate"
 import { hostRoutes, type ErrorLogPolicy, type HttpHost } from "../shared/http"
-import { HttpRouter } from "effect/unstable/http"
+import { HttpRouter } from "effect/http"
 
 // cloudflareJournal commits to a Durable Object SQLite database and flushes before acknowledging an append.
 export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string, options: CloudflareAlarmOptions & CheckpointChunkOptions & JournalRecordOptions = {}) {

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { Effect, FileSystem, Path } from "effect"
-import { HttpClient } from "effect/unstable/http"
+import { HttpClient } from "effect/http"
 
 import { ModelSelection } from "@clavia/tardigrade-model/settings"
 import { providerLayer } from "@clavia/tardigrade-model/providers/openai"

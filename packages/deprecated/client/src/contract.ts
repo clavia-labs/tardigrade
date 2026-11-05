@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/http-api"
 import { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { ActorInstanceId } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
 import { InvocationCoordinate } from "@clavia/tardigrade-deprecated-core/interaction"

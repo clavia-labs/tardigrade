@@ -1,6 +1,6 @@
 import { Console, Effect, Layer, Redacted, Schema, Stream } from "effect"
 import { OpenAiClient, OpenAiLanguageModel, OpenAiSchema } from "@tardie/ai-openai"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 import { unknownModelError } from "../error"
 import { requestKeys, type ProviderLayer } from "./layer"
 import { validatedConfig } from "./options"

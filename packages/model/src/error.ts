@@ -1,6 +1,6 @@
 import { Redacted, Schema } from "effect"
-import { AiError } from "effect/unstable/ai"
-import { Headers } from "effect/unstable/http"
+import { AiError } from "effect/ai"
+import { Headers } from "effect/http"
 
 export const ModelError = Schema.toCodecJson(AiError.AiError)
 export type ModelError = typeof ModelError.Type
@@ -9,7 +9,7 @@ export const DEFAULT_MODEL_ERROR_REDACTED_HEADERS: ReadonlyArray<string | RegExp
   "authorization", "proxy-authorization", "x-bf-vk", "x-api-key", "api-key", "cookie", "set-cookie", /token|secret/i,
 ])
 
-const redactHeaders = (headers: typeof AiError.HttpRequestDetails.Type["headers"], names: ReadonlyArray<string | RegExp>) =>
+const redactHeaders = (headers: NonNullable<typeof AiError.HttpContext.Type["response"]>["headers"], names: ReadonlyArray<string | RegExp>) =>
   Object.fromEntries(Object.entries(headers).map(([name, value]) => [name,
     Headers.isRedactedName(name, names) || Redacted.isRedacted(value) ? "[REDACTED]" : value,
   ]))
@@ -23,17 +23,10 @@ export const encodeModelError = (error: AiError.AiError, redactedHeaders: Readon
     const http = Schema.decodeUnknownSync(Schema.Json)(
       JSON.parse(Schema.encodeSync(Schema.fromJsonString(AiError.HttpContext))({
         ...context,
-        request: { ...context.request, headers: redactHeaders(context.request.headers, redactedHeaders) },
         ...(context.response === undefined ? {} : { response: { ...context.response, headers: redactHeaders(context.response.headers, redactedHeaders) } }),
       }))
     )
     return { ...encoded, reason: { ...Schema.decodeSync(object)(reason), http } }
-  }
-  if (error.reason._tag === "NetworkError" && Schema.is(object)(reason)) {
-    const request = Schema.encodeSync(Schema.toCodecJson(AiError.HttpRequestDetails))({
-      ...error.reason.request, headers: redactHeaders(error.reason.request.headers, redactedHeaders),
-    })
-    return { ...encoded, reason: { ...Schema.decodeSync(object)(reason), request } }
   }
   return encoded
 }

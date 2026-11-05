@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect"
-import type { Response } from "effect/unstable/ai"
-import { FetchHttpClient } from "effect/unstable/http"
+import type { Response } from "effect/ai"
+import { FetchHttpClient } from "effect/http"
 import type { ModelRef } from "../reference"
 import { BindingSettings, CurrentModel, ProviderRequestKey } from "../settings"
 import { observeResponse } from "./delivery"

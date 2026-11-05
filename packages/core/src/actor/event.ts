@@ -33,10 +33,13 @@ export function event(definition: Tagged | string, supplied?: Schema.Schema<Tagg
     constructed.set(value, schema)
     return value as DeclaredEvent<Tagged>
   }
-  return Object.assign(schema, { make,
-    from: <Args extends readonly unknown[]>(map: (...args: Args) => Payload<Tagged>): EventHandler<Tagged, Args> =>
-      Object.assign((...args: Args) => make(map(...args)), { schema }),
-  })
+  const from = <Args extends readonly unknown[]>(map: (...args: Args) => Payload<Tagged>): EventHandler<Tagged, Args> =>
+    Object.assign((...args: Args) => make(map(...args)), { schema })
+  // Schema.make is a prototype getter, so assignment cannot shadow it.
+  return Object.defineProperties(schema, {
+    make: { value: make, enumerable: true, writable: true, configurable: true },
+    from: { value: from, enumerable: true, writable: true, configurable: true },
+  }) as EventDeclaration<Tagged>
 }
 
 // constructedEvent validates a method-produced event against the declaration carried by its constructor.

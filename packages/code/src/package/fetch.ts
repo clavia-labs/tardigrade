@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 import { definePackage, type Package } from "./definition"
 
 // The fetch package: one HTTP request, made through `HttpClient` rather than through a global

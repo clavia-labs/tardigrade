@@ -1,6 +1,5 @@
 import { Effect, Stream } from "effect"
-import { SqlClient } from "effect/unstable/sql"
-import type { SqlError } from "effect/unstable/sql/SqlError"
+import { SqlClient, type SqlError } from "effect/sql"
 import { makeObjectStorage, ObjectStorage, ObjectStorageError } from "./storage"
 import { objectKeyOf, objectRefOf } from "./reference"
 import { objectStreamConfig, objectUploadId, type ObjectUpload } from "./stream"
@@ -45,7 +44,7 @@ export const sqlObjectStorage = (options: LocalObjectStorageOptions = {}) => {
           if (inserted.length) yield* sql`INSERT INTO object_storage_chunks (namespace, key, ordinal, bytes) SELECT namespace, ${key}, ordinal, bytes FROM object_storage_uploads WHERE namespace = ${namespace} AND upload_id = ${uploadId}`
         })),
         abort: sql`DELETE FROM object_storage_uploads WHERE namespace = ${namespace} AND upload_id = ${uploadId}`.pipe(Effect.asVoid),
-      } satisfies ObjectUpload<SqlError>
+      } satisfies ObjectUpload<SqlError.SqlError>
     }))
     const backing = makeObjectStorage({
       upload,

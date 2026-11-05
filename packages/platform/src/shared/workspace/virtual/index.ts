@@ -1,5 +1,5 @@
 import { Effect, Layer, Semaphore } from "effect"
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 import { FilesystemWorkspace, FilesystemWorkspaceError, workspaceIdempotency, type WorkspaceIdempotencyOptions, readWorkspaceContent, type WorkspaceReadOptions, DEFAULT_FILESYSTEM_WORKSPACE_POLICY, editWorkspaceText, workspaceText, filesystemWorkspacePolicy, type FilesystemWorkspaceService } from "@clavia/tardigrade-libraries/filesystem/index"
 import { sqliteWorkspaceStore, type VirtualWorkspaceSnapshot } from "./sqlite"
 import { workspaceNetworkPolicy, type WorkspaceNetworkPolicy } from "../network"

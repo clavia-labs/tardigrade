@@ -1,5 +1,5 @@
 import { Effect, ManagedRuntime, type Scope } from "effect"
-import type { SqlClient } from "effect/unstable/sql"
+import type { SqlClient } from "effect/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"

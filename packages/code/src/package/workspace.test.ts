@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
+import { KeyValueStore } from "effect/persistence"
 import { spill, WORKSPACE_SPILL_NOTE } from "../storage/store"
 import { DEFAULT_WORKSPACE_POLICY, WORKSPACE_SQL_DESCRIPTION, workspacePackage, type SqlRunner } from "./workspace"
 
@@ -44,7 +44,8 @@ const mapStore = (): KeyValueStore.KeyValueStore => {
     set: (key, value) => Effect.sync(() => void held.set(key, value)),
     remove: (key) => Effect.sync(() => void held.delete(key)),
     clear: Effect.sync(() => held.clear()),
-    size: Effect.sync(() => held.size)
+    size: Effect.sync(() => held.size),
+    keys: Effect.sync(() => [...held.keys()])
   })
 }
 

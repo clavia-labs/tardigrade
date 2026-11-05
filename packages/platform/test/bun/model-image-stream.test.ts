@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { Effect, Layer, Redacted } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient } from "effect/http"
 import { Model, modelServices, type ModelInput } from "@clavia/tardigrade-agent/services"
 import { ModelLock, modelLockOf, modelLockService } from "@clavia/tardigrade-model/lock"
 import { ObjectStorage, ObjectStorageError, type ContentPart } from "@clavia/tardigrade-model/object"

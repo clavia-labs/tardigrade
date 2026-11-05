@@ -1,5 +1,5 @@
 import { Context, Effect, type SchemaRepresentation } from "effect"
-import type { Response } from "effect/unstable/ai"
+import type { Response } from "effect/ai"
 import type { ModelRef } from "./reference"
 import type { ModelPricing } from "./pricing"
 import type { InferenceObserver } from "./stream/observer"

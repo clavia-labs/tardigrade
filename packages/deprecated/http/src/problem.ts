@@ -1,4 +1,4 @@
-import { HttpServerResponse } from "effect/unstable/http"
+import { HttpServerResponse } from "effect/http"
 import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, type Problem } from "@clavia/tardigrade-deprecated-client/contract"
 
 // Rendering a problem document as a response. The document's own vocabulary is the declaration's

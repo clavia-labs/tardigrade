@@ -2,7 +2,7 @@ import { toolComponent, type ToolComponent, toolConcurrencyOf, type ToolConcurre
 import { Clock, Effect } from "effect"
 import { component, legacyComponent, type ComponentRequirements } from "@clavia/tardigrade-deprecated-core/actor"
 import type { CodeComponent } from "@clavia/tardigrade-code/package/definition"
-import type { KeyValueStore } from "effect/unstable/persistence"
+import type { KeyValueStore } from "effect/persistence"
 import { tools as packageTools, type ToolsOptions } from "./packages"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { EventLog } from "@clavia/tardigrade-deprecated-core/log"

@@ -1,5 +1,5 @@
 import { Console, Effect, Option, Queue } from "effect"
-import { Command, Flag, Prompt } from "effect/unstable/cli"
+import { Command, Flag, Prompt } from "effect/cli"
 import { RuntimeError } from "@clavia/tardigrade-core"
 import { sendMessage, observeMessages } from "./chat"
 import { createPermissions, DEFAULT_PERMISSION_MODE, PERMISSION_MODES, type Permissions } from "./permissions"

@@ -1,5 +1,5 @@
 import { Effect, Option, Stream } from "effect"
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 import { FilesystemWorkspaceError } from "@clavia/tardigrade-libraries/filesystem/index"
 
 export interface VirtualWorkspaceEntry {

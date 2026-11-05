@@ -17,7 +17,7 @@ import { runSynchronous, sqlJournal } from "../shared/sql-journal"
 import { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
 import { DEFAULT_CHECKPOINT_CHUNK_BYTES, validateCheckpointChunkBytes } from "../shared/checkpoint/chunks"
 import { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
-import { HttpRouter } from "effect/unstable/http"
+import { HttpRouter } from "effect/http"
 import { hostRoutes, httpFailure, type ErrorLogPolicy } from "../shared/http"
 
 export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const

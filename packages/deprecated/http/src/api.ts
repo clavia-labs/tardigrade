@@ -1,6 +1,6 @@
 import { Context, Duration, Effect, Layer, Stream, type Schema } from "effect"
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
+import { HttpApiBuilder, type HttpApiEndpoint } from "effect/http-api"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { isForkRefused, resolveForkCheckpoint, type ForkRefused } from "@clavia/tardigrade-deprecated-host/fork"
 

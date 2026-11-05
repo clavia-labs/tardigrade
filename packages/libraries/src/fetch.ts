@@ -1,7 +1,7 @@
 import { ToolError } from "./errors"
 import { Effect, Schema } from "effect"
 import { type LibraryFetch } from "./types"
-import { Rpc } from "effect/unstable/rpc"
+import { Rpc } from "effect/rpc"
 import { defineLibrary, MethodDescription, MethodHints } from "./library"
 
 // fetch exposes complete HTTP response bodies through foreground calls.

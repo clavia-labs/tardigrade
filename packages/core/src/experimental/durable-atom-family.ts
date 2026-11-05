@@ -1,5 +1,5 @@
 import { Context, Schema } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import { makeDurableAtom, type DurableAtom, type DurableAtomOptions } from "../atoms/durable"
 import { observeRecord } from "../runtime/event-source"
 import { recordEvent } from "../runtime/record"

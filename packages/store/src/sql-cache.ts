@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { SqlClient } from "effect/unstable/sql"
+import { SqlClient } from "effect/sql"
 import { objectKeyOf, objectRefOf } from "./reference"
 import { objectCachePolicy, type ObjectCache, type ObjectCacheCapabilities, type ObjectCachePolicy } from "./cache"
 

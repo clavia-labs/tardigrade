@@ -1,5 +1,5 @@
 import { Context, Schema } from "effect"
-import { Atom as NativeAtom } from "effect/unstable/reactivity"
+import { Atom as NativeAtom } from "effect/reactivity"
 import type { Atom } from "../atoms/atom"
 import { EventLog, eventLogContext } from "../services/event-log"
 import type { FamilyRecord, JournalFamily } from "../services/journal/family"
