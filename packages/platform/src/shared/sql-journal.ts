@@ -1,3 +1,5 @@
+import { recallSelect } from "./log-sql"
+import { observeRecord, recordEvent, type JournalQuery, type JournalQueryResult } from "@clavia/tardigrade-core"
 import { ThreadCreated, ThreadUpdated, CoreEvent, EffectRequested, EffectRef, InvocationIdentity, createInvocationLookup, hasCoreEventType } from "@clavia/tardigrade-core"
 import { Effect, ManagedRuntime, Schema, Semaphore, Exit, Cause, Fiber, type Layer } from "effect"
 import { SqlClient } from "effect/sql"
@@ -218,6 +220,27 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       return readSqlJournalRecord<Event>(sql, options.actor, row)
     })
   })
+  const query = (request: JournalQuery): Effect.Effect<JournalQueryResult, Error> => Effect.gen(function* () {
+    if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit >= Number.MAX_SAFE_INTEGER) return yield* Effect.fail(new RuntimeError("Invalid query row limit"))
+    const sql = yield* client
+    const names = yield* sql<{ name: string }>`SELECT name FROM sqlite_schema UNION SELECT name FROM sqlite_temp_schema`
+    const statement = yield* journalCall(() => recallSelect(request.sql, names.map(row => row.name)))
+    const records = yield* readRange(request.from, request.to)
+    const events = records.map((stored, index) => {
+      const record = observeRecord(stored)
+      const event = recordEvent(record)
+      return { position: request.from + index, recorded_at: record.recordedAt ?? null,
+        type: typeof event === "object" && event !== null && "type" in event && typeof event.type === "string" ? event.type : null,
+        event: JSON.stringify(event), record: JSON.stringify(record) }
+    })
+    const rows = yield* sql.unsafe<Record<string, Schema.Json>>(`WITH events AS MATERIALIZED (
+      SELECT json_extract(value, '$.position') AS position, json_extract(value, '$.recorded_at') AS recorded_at,
+        json_extract(value, '$.type') AS type, json_extract(value, '$.event') AS event, json_extract(value, '$.record') AS record
+      FROM json_each(?)
+    ) ${statement}`, [JSON.stringify(events), request.limit + 1])
+    const columns = rows[0] ? Object.keys(rows[0]) : []
+    return { columns, rows: rows.slice(0, request.limit).map(row => columns.map(column => row[column]!)), more: rows.length > request.limit }
+  }).pipe(Effect.mapError(RuntimeError.from))
   const access = {
     readPosition, readRange,
     readOperation: (ref: EffectRef, position: number) => Effect.gen(function* () {
@@ -308,7 +331,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     appendWithCheckpoint: append,
   }
   return {
-    scheduler,
+    scheduler, query,
     lookupInvocation: createInvocationLookup(identity => runSynchronous(access.lookupInvocation(identity))),
     readPosition: () => runSynchronous(access.readPosition),
     readRange: (from: number, to: number) => runSynchronous(access.readRange(from, to)),

@@ -1,5 +1,12 @@
 // recallSelect confines caller SQL to one balanced subquery (packages/platform/test/scenarios/log/lifecycle.ts).
-export function recallSelect(sql: string): string {
+export function recallSelect(sql: string, privateNames: readonly string[]): string {
+  const forbidden = new Set(["dbstat", "load_extension", "readfile", "writefile", "eval", ...privateNames].map(name => name.toLowerCase()))
+  if (sql.includes("\0")) throw new Error("Recall SQL must not contain NUL")
+  for (const [token] of sql.matchAll(/--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^\]]*\]|[A-Za-z_\u0080-\uffff][A-Za-z0-9_$\u0080-\uffff]*/g)) {
+    if (token.startsWith("--") || token.startsWith("/*")) continue
+    const name = (/^['"`[]/.test(token) ? token.slice(1, -1).replace(/(['"`])\1/g, "$1") : token).toLowerCase()
+    if (forbidden.has(name) || /^(sqlite_|pragma_|__cf_)/.test(name)) throw new Error("Recall SQL can only access the public events surface")
+  }
   let depth = 0
   let quote: string | undefined
   let lineComment = false

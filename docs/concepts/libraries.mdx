@@ -77,18 +77,16 @@ export default agent({
 })
 ```
 
-Include `logTools()` in the host's `toolActs` implementations. The runtime provides the thread-scoped `EventLog` service and current actor schemas on Bun and Cloudflare. SQL execution uses `LogSql`; Bun supplies `bunLogSql`, while Cloudflare SQL hosting requires an application-provided `LogSql` implementation.
+Include `logTools()` in the host's `toolActs` implementations. The runtime provides the thread-scoped `EventLog` service and current actor schemas on Bun and Cloudflare. The service executes read-only SQL on the existing thread database on both platforms.
 
 ```ts
-import { Layer } from "effect"
 import { toolActs } from "tardie/agent/services"
 import { DEFAULT_LOG_POLICY, logTools } from "tardie/libraries"
-import { bunLogSql } from "tardie/platform/bun"
 
 export const recallActs = toolActs([logTools({
   ...DEFAULT_LOG_POLICY,
   maxResults: 10,
-})]).pipe(Layer.provide(bunLogSql()))
+})])
 ```
 
 ### Discover schemas
@@ -105,6 +103,6 @@ The input window contains at most `maxScanEvents` records starting at `from`. Re
 
 ### Configure limits
 
-`DEFAULT_LOG_POLICY` exports defaults of 20 results per page or SQL query, 500 inspected events, 4,096 characters per schema, sample, or SQL result, and two samples per event type. `logTools` accepts overrides for `maxResults`, `maxScanEvents`, `maxRecordChars`, and `maxSamples`. Each response includes the applied policy and pagination or truncation metadata.
+`DEFAULT_LOG_POLICY` exports defaults of 20 results per page or SQL query, 500 inspected events, 4,096 characters per schema, sample, or SQL result, two samples per event type, and 8,192 characters per SQL query. `logTools` accepts overrides for `maxResults`, `maxScanEvents`, `maxRecordChars`, `maxSamples`, and `maxQueryChars`. Each response includes the applied policy and pagination or truncation metadata.
 
-`bunLogSql` copies the selected snapshot into a disposable SQLite database and executes a single SELECT subquery against a read-only copy in a worker. `DEFAULT_BUN_LOG_SQL_POLICY` exports the default 2,000 ms timeout, 8,192-character query limit, and 2,000,000-character snapshot limit. `bunLogSql` accepts overrides, and SQL results include the applied `sqlPolicy`. Writes, administration statements, and multiple statements are rejected.
+`EventLog.query` uses the thread's existing SQLite connection. The journal decodes the bounded history window, including chunked records, into the public `events` surface using SQLite's `json_each`. Writes, administration statements, multiple statements, and references to private database names are rejected. Native queries run synchronously under the host platform's execution limits.
