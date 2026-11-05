@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.54.0](https://github.com/clavia-labs/tardigrade/compare/v0.53.0...v0.54.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** bump effect 4.1.2
+
+### Miscellaneous Chores
+
+* **deps:** bump effect 4.1.2 ([8b64352](https://github.com/clavia-labs/tardigrade/commit/8b6435284e380a12f6c5ddd8c828a4e876857c14))
+
 ## [0.53.0](https://github.com/clavia-labs/tardigrade/compare/v0.52.0...v0.53.0) (2026-11-04)
 
 
