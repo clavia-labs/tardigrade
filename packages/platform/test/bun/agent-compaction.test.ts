@@ -1,3 +1,4 @@
+import { eventLogService } from "@clavia/tardigrade-core"
 import { atomReplay } from "../../../core/src/runtime/atom-replay"
 import { expect, test } from "bun:test"
 import { Context, Effect } from "effect"
@@ -25,7 +26,7 @@ test("unconfigured agent setup retains summary without trajectory state", async 
 
 function project(messages: typeof Conversation.Type, options: CompactionOptions = {}) {
   const events = [{ type: "ModelConfigured", ...selection }]
-  const store = createStore(Context.make(EventLog, { events: atom<readonly unknown[]>(events), replay: atom(atomReplay(events.map(event => ({ event })))) }))
+  const store = createStore(Context.make(EventLog, eventLogService({ events: atom<readonly unknown[]>(events), replay: atom(atomReplay(events.map(event => ({ event })))) }, node => store.get(node))))
   try {
     const node = Effect.runSync(compact(atom(messages), options).pipe(Effect.provideService(ModelInfo, selection)))
     const output = store.get(node)
