@@ -10,6 +10,8 @@ export const ToolCall = Schema.Struct({ ...ProviderToolCall.fields, providerId: 
 const TokenCount = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))
 // ModelUsage is provider-reported token usage for one call; cacheRead and cacheWrite count tokens within input.
 export const ModelUsage = Schema.Struct({
+  // model identifies the model an adapter executed for this call.
+  model: Schema.optionalKey(ModelRef),
   input: Schema.optionalKey(TokenCount), output: Schema.optionalKey(TokenCount),
   cacheRead: Schema.optionalKey(TokenCount), cacheWrite: Schema.optionalKey(TokenCount),
   usd: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
