@@ -1,2 +1,0 @@
-packages/platform/src/shared/log-sql/vendor/** linguist-vendored
-packages/platform/src/shared/log-sql/vendor/sqlite3.mjs -whitespace
