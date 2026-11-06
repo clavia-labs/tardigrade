@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { rewriteComponentRuntimeImports, stageInitTemplates } from "./publish-paths"
 import publicExports from "./public-exports.json"
+import { generateLogSqlite } from "./vendor-log-sqlite"
 import { syncPublicExports } from "./public-exports"
 import { publishDependencies, publishSources } from "./publish-manifest"
 
@@ -176,6 +177,7 @@ const temporary = requestedOutput === undefined
 const stage = join(destination, "package")
 
 try {
+  await generateLogSqlite()
   await mkdir(stage, { recursive: true })
   for (const source of packages) await mkdir(join(stage, "src", source.namespace), { recursive: true })
   await Promise.all([
