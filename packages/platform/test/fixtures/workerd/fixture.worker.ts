@@ -1,4 +1,3 @@
-export { LogLifecycleDO } from "../log/worker"
 export { WorkspaceLifecycleDO } from "../workspace/worker"
 export { RegularCheckpointActorDO, RegularCheckpointThreadDO, FamilyCheckpointActorDO, FamilyCheckpointThreadDO, MixedCheckpointActorDO, MixedCheckpointThreadDO } from "./checkpoint-e2e.worker"
 import { checkpointFetch } from "./checkpoint-e2e.worker"
