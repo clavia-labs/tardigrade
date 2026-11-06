@@ -64,7 +64,7 @@ export const meeseeks = defineActor("meeseeks", Effect.gen(function* () {
 
 ## Recall event history
 
-The `log` library exposes schema discovery and read-only SQL queries for the calling thread's history, independently of its compacted conversation context.
+The `log` library exposes schema discovery, text search, and read-only SQL queries for the calling thread's history, independently of its compacted conversation context.
 
 ```ts
 import { agent } from "tardie/agent"
@@ -77,32 +77,62 @@ export default agent({
 })
 ```
 
-Include `logTools()` in the host's `toolActs` implementations. The runtime provides the thread-scoped `EventLog` service and current actor schemas on Bun and Cloudflare. The service executes read-only SQL on the existing thread database on both platforms.
+Include `logTools()` in the host's `toolActs` implementations. The runtime provides the thread-scoped `EventLog` service and current actor schemas on Bun and Cloudflare. The service evaluates SQL in a read-only WASM virtual table over the existing thread journal on both platforms; text search uses native SQLite FTS5.
 
 ```ts
 import { toolActs } from "tardie/agent/services"
-import { DEFAULT_LOG_POLICY, logTools } from "tardie/libraries"
+import { logTools } from "tardie/libraries"
 
-export const recallActs = toolActs([logTools({
-  ...DEFAULT_LOG_POLICY,
-  maxResults: 10,
-})])
+export const recallActs = toolActs([logTools({ maxResults: 10 })])
 ```
 
 ### Discover schemas
 
-`log.describe({ type?, cursor?, limit? })` is exposed to the model as `recall_describe`. Omit `type` or supply an empty string to list event types and SQL table columns. Supply an event type to retrieve its current declared JSON Schemas, observed field kinds, and samples with journal positions. `nextCursor` continues the event type inventory.
+`log.describe({ type?, cursor?, limit? })` is exposed to the model as `recall_describe`. Omit `type` or supply an empty string to list event types and SQL table columns. Supply `null` for untagged events or an event type to retrieve its current declared JSON Schemas, observed field kinds, and samples with journal positions. `nextCursor` continues the event type inventory.
 
 Current declarations and observed shapes are reported separately. Older records can have fields absent from the current schema, and observed event types can lack a current declaration. `observedThrough` is the exclusive boundary of inspected history; `observedComplete` reports whether that inspection covered the snapshot. Samples and schema text carry individual `truncated` flags. Field descriptions in the actor's schemas explain domain meaning without embedding event names or field names in the agent's system prompt.
 
+### Search history
+
+`log.search({ query, type?, from?, through?, limit? })` is exposed to the model as `recall_search`. It uses native SQLite FTS5 to search observed domain string values across the eligible thread history, independently of `maxScanEvents`. Queries support FTS5 phrases, boolean operators, and prefix terms. `type` filters the event discriminator.
+
+```ts
+log.search({ query: '"deployment failed" OR timeout' })
+```
+
+Hits contain journal positions, event types, relevance scores, snippets, and flags for additional character clipping. Snippets are excerpts bounded by the configured token count. Lower scores rank first. `more` reports additional matches beyond the applied result limit. Use a hit's position to retrieve its complete event with `log.query`, setting `from` to that position.
+
+The native index is private to the journal and excludes accepted effect inputs. Its first search backfills eligible history; later searches catch up incrementally. Each batch commits documents and its progress together. `from` and `through` bound eligible hits, while `indexedThrough` reports the corpus used for ranking. An index already built past `through` can influence ranking through its corpus statistics.
+
+`DEFAULT_LOG_SEARCH_INDEX_POLICY` exports a batch size of 64 records, a per-call indexing budget of 4,096 records, a maximum of 1,000,000 UTF-8 bytes of searchable text per event, and the `unicode61` tokenizer. Platform hosts and journal constructors accept `searchIndex` overrides. `maxIndexEvents` bounds indexing work per search call. Exhausting it returns an error with `indexedThrough`, the requested boundary, and the applied budget; retry with a new call ID to resume from committed progress. A successful search covers the entire requested prefix. Oversized events fail indexing explicitly. `maxTextBytes` applies when indexing new documents; changing it does not revalidate existing documents. Search responses include the applied index policy. Indexing can update derived search data; search text is bound to a fixed native statement and is never executed as SQL.
+
 ### Query history
 
-`log.query({ sql, from?, through? })` is exposed to the model as `recall_sql`. It accepts one read-only SQLite SELECT over `events(position, recorded_at, type, event, record)`. `type` and JSON `event` expose domain events inside inbound message envelopes; JSON `record` retains the observed envelope and metadata. Use discovery to inspect event fields before constructing JSON predicates.
+`log.query({ sql, from?, through? })` is exposed to the model as `recall_sql`. It accepts one read-only SQLite SELECT evaluated in WASM over `events(position, recorded_at, type, event, record)`. `type` and JSON `event` expose domain events inside inbound message envelopes; JSON `record` retains the observed envelope and metadata. Use discovery to inspect event fields before constructing JSON predicates.
 
-The input window contains at most `maxScanEvents` records starting at `from`. Results report `scannedThrough`, `next`, and the exclusive `through` boundary. Continue with `from: next` and the same `through` to retain the history prefix. Aggregations cover only the reported window. Results return JSON `text` containing columns and rows, a `moreRows` flag for the result count bound, and a `truncated` flag for the text bound.
+The virtual table reads pages from the captured history between `from` and the exclusive `through` boundary. Position equality predicates fetch the requested record directly, including records far outside the conversation context. The engine does not copy the entire history into another database. Aggregates cover the eligible prefix or fail explicitly on a work limit; there is no implicit input window. Results return JSON `text` containing columns and rows, `readEvents` and `readBytes` counters, the applied `queryPolicy`, a `moreRows` flag for the result count bound, and a `truncated` flag for the text bound.
 
 ### Configure limits
 
-`DEFAULT_LOG_POLICY` exports defaults of 20 results per page or SQL query, 500 inspected events, 4,096 characters per schema, sample, or SQL result, two samples per event type, and 8,192 characters per SQL query. `logTools` accepts overrides for `maxResults`, `maxScanEvents`, `maxRecordChars`, `maxSamples`, and `maxQueryChars`. Each response includes the applied policy and pagination or truncation metadata.
+`DEFAULT_LOG_POLICY` exports defaults of 20 results per page, SQL query, or search, 500 inspected events for schema discovery, 4,096 characters per schema, sample, SQL result, or search snippet, two samples per event type, 8,192 characters per SQL or search query, and 24 tokens per search snippet. `logTools` accepts overrides for `maxResults`, `maxScanEvents`, `maxRecordChars`, `maxSamples`, `maxQueryChars`, and `maxSnippetTokens` (up to the FTS5 limit of 64). Each response includes the applied policy and pagination or truncation metadata.
 
-`EventLog.query` uses the thread's existing SQLite connection. The journal decodes the bounded history window, including chunked records, into the public `events` surface using SQLite's `json_each`. Writes, administration statements, multiple statements, and references to private database names are rejected. Native queries run synchronously under the host platform's execution limits.
+`DEFAULT_LOG_QUERY_POLICY` exports the WASM query limits below. Platform hosts and journal constructors accept `logQuery` overrides. A work limit produces an explicit error instead of a partial result.
+
+| Policy | Default |
+| --- | --- |
+| `pageSize` | 64 records |
+| `maxReadEvents` | 100,000 records across all cursors |
+| `maxReadBytes` | 16,000,000 observed record bytes |
+| `maxQueryChars` | 8,192 characters |
+| `maxInstructions` | 10,000,000 SQLite VM instructions |
+| `progressEvery` | 1,000 VM instructions |
+| `maxResultBytes` | 64,000 bytes |
+| `maxValueBytes` | 1,000,000 bytes |
+| `maxColumns` | 64 columns |
+| `maxExprDepth` | 100 levels |
+| `initialHeapBytes` | 8 MiB |
+| `maxHeapBytes` | 32 MiB |
+
+The engine initializes on the first SQL query and shares its heap within a Worker isolate or Bun process. Heap settings must agree across journals in that isolate and use multiples of 65,536 bytes; changing them after initialization fails explicitly. Each query opens and closes an in-memory connection. Its virtual table supplies read callbacks without a write callback, and a default-deny SQLite authorizer permits reads of `events` and an allowlist of SQL functions. Caller SQL never reaches the native journal connection. Writes, administration statements, multiple statements, and reads of private storage are rejected.
+
+The WASM heap limit excludes JavaScript allocations. Read-byte accounting applies after record decoding, and native journal callbacks run outside the SQLite VM instruction counter. Host platform execution and memory limits still apply.

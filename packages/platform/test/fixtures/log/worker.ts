@@ -9,7 +9,7 @@ type LogEvent = Effect.Success<typeof actor.setup>["schema"]["Type"]
 
 export class LogLifecycleDO extends DurableObject {
   private readonly incarnation = crypto.randomUUID()
-  private readonly journal = cloudflareJournal<LogEvent>(this.ctx.storage, "events", { eventInlineBytes: 64, checkpointChunkBytes: 31 })
+  private readonly journal = cloudflareJournal<LogEvent>(this.ctx.storage, "events", { eventInlineBytes: 64, checkpointChunkBytes: 31, searchIndex: { batchSize: 8, maxIndexEvents: 64 } })
   private readonly store = this.ctx.blockConcurrencyWhile(() => Effect.runPromise(createActorStore({
     actor, journal: this.journal, actorContext: Context.pick(), services: () => services,
     checkpoint: { mode: "threshold", options: { everyEvents: 1 } },
