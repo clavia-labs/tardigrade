@@ -50,6 +50,7 @@ export async function bunLogLifecycle(): Promise<LogLifecycleDriver> {
     record: async (thread, fact, id) => { await result({ type: "record", thread, fact, id }) },
     describe: (thread, type) => result({ type: "recall", thread, id: `describe-${descriptionId++}`, method: "describe", input: type === undefined ? {} : { type } }),
     query: (thread, sql, id, through) => result({ type: "recall", thread, id, method: "query", input: { sql, ...(through === undefined ? {} : { through }) } }),
+    search: (thread, query, id, options) => result({ type: "recall", thread, id, method: "search", input: { query, ...options } }),
     loseReply: async (thread, sql, id) => {
       const response = await request({ type: "recall", thread, id, method: "query", input: { sql }, loseReply: true })
       assert.equal(response.type, "boundary")

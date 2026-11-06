@@ -45,7 +45,7 @@ function declaredEventSchemas(schema: Schema.Top): Array<{ type: string | null; 
 
 // describeLog separates current declarations from observed shapes within an explicit history window.
 export function describeLog(log: typeof EventLog.Service, input: { readonly type?: string | null; readonly cursor?: number | null; readonly limit?: number | null }, policy: LogPolicy) {
-  const requestedType = input.type || undefined
+  const requestedType = input.type === "" ? undefined : input.type
   const snapshot = log.snapshot()
   const types = new Map<string | null, EventType>()
   const entry = (type: string | null) => {
@@ -68,7 +68,7 @@ export function describeLog(log: typeof EventLog.Service, input: { readonly type
     }
     if (value.samples.length < policy.maxSamples) {
       const text = JSON.stringify(event)
-      value.samples.push({ position, text: text.slice(0, policy.maxRecordChars), truncated: text.length > policy.maxRecordChars })
+      value.samples.push({ position, ...clipText(text, policy.maxRecordChars) })
     }
   }
   const selected = [...types.values()].filter(value => requestedType === undefined || value.type === requestedType).sort((a, b) => (a.type ?? "").localeCompare(b.type ?? ""))
@@ -85,11 +85,16 @@ export function describeLog(log: typeof EventLog.Service, input: { readonly type
       type: value.type, declared: value.schemas.length > 0, observedCount: value.count,
       schemas: requestedType === undefined ? [] : value.schemas.map(schema => {
         const text = JSON.stringify(schema)
-        return { text: text.slice(0, policy.maxRecordChars), truncated: text.length > policy.maxRecordChars }
+        return clipText(text, policy.maxRecordChars)
       }),
       fields: value.fields, samples: value.samples,
     })),
     totalTypes: selected.length, nextCursor: cursor + page.length < selected.length ? cursor + page.length : null,
     limit, policy,
   }
+}
+
+// clipText bounds tool output and reports additional character clipping.
+export function clipText(text: string, maxChars: number) {
+  return { text: text.slice(0, maxChars), truncated: text.length > maxChars }
 }

@@ -6,7 +6,7 @@ import { bunThreadPath } from "../../../src/bun/observe"
 import type { LogRequest, LogResponse, LogStatus } from "./shared"
 
 const storage = process.argv[2]!
-const host = await Effect.runPromise(createBunHost({ actor, actorContext: Context.pick(), storage, eventInlineBytes: 64, checkpointChunkBytes: 31, services: () => services, checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } } }))
+const host = await Effect.runPromise(createBunHost({ actor, actorContext: Context.pick(), storage, searchIndex: { batchSize: 8, maxIndexEvents: 64 }, eventInlineBytes: 64, checkpointChunkBytes: 31, services: () => services, checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } } }))
 const send = (response: LogResponse) => process.stdout.write(`${JSON.stringify(response)}\n`)
 const status = async (thread: string): Promise<LogStatus> => {
   const journal = bunJournal({ filename: bunThreadPath(storage, { actor: actor.actorName, instance: "scenario", thread }), actor: "events" })

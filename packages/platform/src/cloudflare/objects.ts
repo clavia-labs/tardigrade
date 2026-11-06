@@ -1,3 +1,5 @@
+import { cloudflareLogQueryEngine } from "./log-sql"
+import type { CheckpointChunkOptions, JournalRecordOptions } from "../shared/sql-journal"
 import type { EventLog } from "@clavia/tardigrade-core"
 import { journalCall } from "@clavia/tardigrade-core"
 import { DurableObject } from "cloudflare:workers"
@@ -40,7 +42,7 @@ export interface CloudflareObjectBindings {
 }
 
 type ExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event>> = ActorExecutionOptions<Event, Services, State, Contracts>
-export type ActorObjectOptions<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Omit<ExecutionOptions<Event, Services, State, Contracts>, "storage" | "services" | "from" | "delivery" | "actorContext" | "executionStreamBus" | "version"> & Pick<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "from" | "delivery" | "transports" | "actorTransport" | "telemetry" | "defaultChildPlacement" | "provisionRetry"> & {
+export type ActorObjectOptions<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>> = Omit<ExecutionOptions<Event, Services, State, Contracts>, "storage" | "services" | "from" | "delivery" | "actorContext" | "executionStreamBus" | "version"> & Pick<Parameters<typeof createThreadHost<Event, Services, State, Contracts>>[0], "from" | "delivery" | "transports" | "actorTransport" | "telemetry" | "defaultChildPlacement" | "provisionRetry"> & CheckpointChunkOptions & JournalRecordOptions & {
   readonly version?: (env: Env) => string | undefined
   readonly actorContext?: ExecutionOptions<Event, Services, State, Contracts>["actorContext"]
   // services receives the current Durable Object storage for local cache layers.
@@ -50,10 +52,6 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
   readonly scheduler?: Partial<SchedulerPolicy>
   readonly watchdog?: { readonly policy?: Partial<WatchdogPolicy>; readonly retryable?: (error: Error) => boolean }
   readonly http?: (env: Env) => MethodHttpOptions
-  readonly checkpointChunkBytes?: number
-  readonly eventInlineBytes?: number
-  readonly familyIndexBatchSize?: number
-  readonly invocationIndexBatchSize?: number
   readonly generateName?: () => string
 }
 
@@ -61,19 +59,15 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
 export const cloudflareThreadName = (coordinate: ThreadCoordinate): string => JSON.stringify([coordinate.actor, coordinate.instance, coordinate.thread])
 
 // objectJournal commits journal records and watchdog admission in the same storage transaction (test/workerd/watchdog.workers.ts).
-export function objectJournal<Event extends object>(options: {
+export function objectJournal<Event extends object>(options: CheckpointChunkOptions & JournalRecordOptions & {
   readonly storage: DurableObjectStorage
   readonly key: string
-  readonly checkpointChunkBytes?: number | undefined
-  readonly eventInlineBytes?: number | undefined
-  readonly familyIndexBatchSize?: number | undefined
-  readonly invocationIndexBatchSize?: number | undefined
   readonly target: WatchdogTarget
   readonly alarms?: CloudflareAlarmOptions | undefined
   readonly watchdog: ReturnType<typeof createWatchdog>
 }) {
   const alarms = makeRetryingAlarms(options.storage, options.alarms)
-  return sqlJournal<Event>({ actor: options.key, limits: CLOUDFLARE_SQL_LIMITS, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, layer: SqliteClient.layer({ storage: options.storage }), transaction: work => options.storage.transactionSync(work),
+  return sqlJournal<Event>({ actor: options.key, queryEngine: cloudflareLogQueryEngine, logQuery: options.logQuery, limits: CLOUDFLARE_SQL_LIMITS, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, searchIndex: options.searchIndex, layer: SqliteClient.layer({ storage: options.storage }), transaction: work => options.storage.transactionSync(work),
     flush: alarms.sync,
     acknowledge: write => Effect.gen(function* () {
       const context = yield* Effect.context<never>()
@@ -165,7 +159,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     private supervisor(instance: string) {
       if (this.instance !== instance) throw new RuntimeError("Actor DO instance is not initialized")
       if (!this.directory) {
-        this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
+        this.journal = objectJournal({ storage: this.ctx.storage, key: JSON.stringify([options.actor.actorName, instance, "supervisor"]), logQuery: options.logQuery, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, searchIndex: options.searchIndex, target: { actor: options.actor.actorName, instance }, watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
         this.directory = createSupervisor({ actor: options.actor.actorName, journal: () => this.journal!, run: this.run,
           ...(options.journalReadBatchSize === undefined ? {} : { journalReadBatchSize: options.journalReadBatchSize }),
           ...(options.provisionRetry ? { provisionRetry: options.provisionRetry } : {}),
@@ -287,7 +281,7 @@ export function createActorObjects<Env extends object = Record<string, unknown>,
     })
     private address() { if (!this.coordinate) throw new RuntimeError("Thread DO is not provisioned"); return this.coordinate }
     private storage() {
-      if (!this.journal) this.journal = objectJournal({ storage: this.ctx.storage, key: "events", checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, target: this.address(), watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
+      if (!this.journal) this.journal = objectJournal({ storage: this.ctx.storage, key: "events", logQuery: options.logQuery, checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes, familyIndexBatchSize: options.familyIndexBatchSize, invocationIndexBatchSize: options.invocationIndexBatchSize, searchIndex: options.searchIndex, target: this.address(), watchdog: this.watchdog, ...(options.alarms ? { alarms: options.alarms } : {}) })
       return this.journal
     }
     async provision(input: ThreadCreated, initialState?: InitialState): Promise<void> {

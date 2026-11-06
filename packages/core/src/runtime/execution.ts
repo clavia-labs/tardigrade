@@ -156,6 +156,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     }
     const eventLog = eventLogService({
       ...(options.journal?.query ? { query: options.journal.query } : {}),
+      ...(options.journal?.search ? { search: options.journal.search } : {}),
       schemas: () => [...(setup.eventSchemas ?? [setup.schema]), ObservedCoreEvent],
       replay: atom(get => get(published)?.observations() ?? { position: 0, seed: undefined, read: () => [] }),
       events: atom(get => {

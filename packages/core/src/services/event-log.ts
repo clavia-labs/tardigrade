@@ -3,7 +3,7 @@ import type { ReadonlyIndex, ReadonlyLog } from "../runtime/log-view"
 import { Context, Schema, type Effect } from "effect"
 import { Atom as NativeAtom } from "effect/reactivity"
 import { atom, type Atom } from "../atoms/atom"
-import type { ObservedRecord, Recorded, JournalQuery, JournalQueryResult } from "./journal"
+import type { ObservedRecord, Recorded, Journal } from "./journal"
 import { EffectDied, type EffectRef } from "../runtime/effects"
 import type { AtomState, StatefulAtom, StateSeed } from "../initialise"
 import type { AcceptedOperation } from "../runtime/operation"
@@ -43,8 +43,7 @@ export interface EventLogSnapshot {
   readonly read: (from: number, to: number) => readonly ObservedRecord<unknown>[]
 }
 
-export class EventLog extends Context.Service<EventLog, {
-  readonly query?: (request: JournalQuery) => Effect.Effect<JournalQueryResult, Error>
+export class EventLog extends Context.Service<EventLog, Pick<Journal<object>, "query" | "search"> & {
   readonly snapshot: () => EventLogSnapshot
   readonly schemas?: () => readonly Schema.Top[]
   readonly replay: Atom<AtomReplay>

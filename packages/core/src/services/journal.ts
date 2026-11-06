@@ -54,14 +54,36 @@ export interface JournalQuery {
 }
 
 export interface JournalQueryResult {
+  readonly queryPolicy: Readonly<Record<string, number>>
+  readonly readEvents: number
+  readonly readBytes: number
   readonly columns: readonly string[]
   readonly rows: readonly (readonly Schema.Json[])[]
   readonly more: boolean
 }
 
+export interface JournalSearch {
+  readonly type?: string
+  readonly query: string
+  readonly from: number
+  readonly to: number
+  readonly limit: number
+  readonly snippetChars: number
+  readonly snippetTokens: number
+  readonly maxQueryChars: number
+}
+
+export interface JournalSearchResult {
+  readonly hits: readonly { readonly position: number; readonly type: string | null; readonly score: number; readonly snippet: string; readonly truncated: boolean }[]
+  readonly more: boolean
+  readonly indexedThrough: number
+  readonly indexPolicy: { readonly batchSize: number; readonly maxIndexEvents: number; readonly maxTextBytes: number; readonly tokenizer: string }
+}
+
 // Journal accesses a local ordered event prefix synchronously; append commits a batch atomically or throws for a stale expected length (platform/test/properties/checkpoint/storage.ts).
 export interface Journal<Event extends object> {
   readonly query?: (request: JournalQuery) => Effect.Effect<JournalQueryResult, Error>
+  readonly search?: (request: JournalSearch) => Effect.Effect<JournalSearchResult, Error>
   readonly readAtomCheckpoint?: ReadAtomCheckpoint
   readonly readFamily?: ReadJournalFamily<Event>
   readonly readFamilyKeys?: ReadJournalFamilyKeys
