@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.55.0](https://github.com/clavia-labs/tardigrade/compare/v0.54.0...v0.55.0) (2026-11-07)
+
+
+### Features
+
+* **client:** add remote methods ([#850](https://github.com/clavia-labs/tardigrade/issues/850)) ([ae61c36](https://github.com/clavia-labs/tardigrade/commit/ae61c364add81894c92d050167b5a8a1b6f5ff59))
+
 ## [0.54.0](https://github.com/clavia-labs/tardigrade/compare/v0.53.0...v0.54.0) (2026-11-05)
 
 
