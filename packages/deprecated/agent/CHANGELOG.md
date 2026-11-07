@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.0](https://github.com/clavia-labs/tardigrade/compare/v0.55.0...v0.56.0) (2026-11-07)
+
+
+### Features
+
+* **platform:** add boxd workspace ([#848](https://github.com/clavia-labs/tardigrade/issues/848)) ([6a8e225](https://github.com/clavia-labs/tardigrade/commit/6a8e2250f2efc091cb10e97127b11bce98dfac55))
+
 ## [0.55.0](https://github.com/clavia-labs/tardigrade/compare/v0.54.0...v0.55.0) (2026-11-07)
 
 
