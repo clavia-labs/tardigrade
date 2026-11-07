@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./client": "./src/client/index.ts",
     "./bun": "./src/bun/index.ts",
     "./cloudflare": "./src/cloudflare/index.ts",
     "./journal": "./src/shared/sql-journal.ts",

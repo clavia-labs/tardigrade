@@ -32,6 +32,7 @@
     "./libraries": "./src/generated/libraries.ts",
     "./code": "./src/generated/code.ts",
     "./platform/bun": "./src/generated/platform/bun.ts",
+    "./platform/client": "./src/generated/platform/client.ts",
     "./platform/cloudflare": "./src/generated/platform/cloudflare.ts",
     "./platform/cloudflare/retry": "./src/generated/platform/cloudflare/retry.ts",
     "./package.json": "./package.json",
