@@ -13,7 +13,7 @@ for (const name of ["retryCloudflareOperation", "makeRetryingRpc", "classifyDura
   if (typeof cloudflareRetry[name] !== "function") throw new Error(`Missing public Cloudflare retry API ${name}`)
 }
 const boxd = await load("tardie/platform/boxd")
-for (const name of ["boxdWorkspace", "boxdWorkspaceName", "boxdWorkspaceId", "boxdEgress"]) {
+for (const name of ["boxdWorkspace", "boxdWorkspaceName"]) {
   if (typeof boxd[name] !== "function") throw new Error(`Missing public boxd API ${name}`)
 }
 for (const [scope, name] of [[core, "defineActor"], [core, "createEventLog"], [core, "initialiseState"], [libraries, "defineLibrary"], [legacy, "actor"]] as const) {

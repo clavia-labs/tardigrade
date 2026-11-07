@@ -20,8 +20,6 @@ import VerifyingActors, { frontmatter as verifyingActorsFrontmatter } from "@doc
 import verifyingActorsMarkdown from "@docs/concepts/verifying-actors.mdx?doc-source"
 import Rlm, { frontmatter as rlmFrontmatter } from "@docs/examples/rlm.mdx"
 import rlmMarkdown from "@docs/examples/rlm.mdx?doc-source"
-import Boxd, { frontmatter as boxdFrontmatter } from "@docs/platforms/boxd.mdx"
-import boxdMarkdown from "@docs/platforms/boxd.mdx?doc-source"
 import Bun, { frontmatter as bunFrontmatter } from "@docs/platforms/bun.mdx"
 import bunMarkdown from "@docs/platforms/bun.mdx?doc-source"
 import Celld, { frontmatter as celldFrontmatter } from "@docs/platforms/celld.mdx"
@@ -85,7 +83,6 @@ const modules: ReadonlyArray<DocModule> = [
   { default: Bun, frontmatter: bunFrontmatter, markdown: bunMarkdown, source: "platforms/bun.mdx" },
   { default: Cloudflare, frontmatter: cloudflareFrontmatter, markdown: cloudflareMarkdown, source: "platforms/cloudflare.mdx" },
   { default: Celld, frontmatter: celldFrontmatter, markdown: celldMarkdown, source: "platforms/celld.mdx" },
-  { default: Boxd, frontmatter: boxdFrontmatter, markdown: boxdMarkdown, source: "platforms/boxd.mdx" },
   { default: Cli, frontmatter: cliFrontmatter, markdown: cliMarkdown, source: "references/cli.mdx" },
   { default: Sdk, frontmatter: sdkFrontmatter, markdown: sdkMarkdown, source: "references/sdk.mdx" },
   { default: Rlm, frontmatter: rlmFrontmatter, markdown: rlmMarkdown, source: "examples/rlm.mdx" },

@@ -5,7 +5,6 @@ import { actor } from "tardie/deprecated"
 import { codeMode } from "tardie/deprecated/component/code"
 import * as legacyAgent from "tardie/deprecated/agent"
 import { defineLibrary } from "tardie/libraries"
-import { boxdEgress, boxdWorkspace, boxdWorkspaceId, boxdWorkspaceName } from "tardie/platform/boxd"
 import { retryCloudflareOperation, makeRetryingRpc, classifyDurableObjectRpcError, DurableObjectRpcError, type CloudflareRetryOptions } from "tardie/platform/cloudflare/retry"
 
 test("public entrypoints expose actor and migration APIs", () => {
@@ -29,10 +28,4 @@ test("public Cloudflare retry entrypoint exposes binding helpers", () => {
   }
   const options: CloudflareRetryOptions = { retry: false }
   expect(typeof makeRetryingRpc(options).call).toBe("function")
-})
-
-test("public boxd entrypoint exposes workspace helpers", () => {
-  for (const value of [boxdWorkspace, boxdWorkspaceName, boxdWorkspaceId, boxdEgress]) {
-    expect(typeof value).toBe("function")
-  }
 })

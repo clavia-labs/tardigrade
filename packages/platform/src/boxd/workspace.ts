@@ -14,9 +14,7 @@ export interface BoxdWorkspaceClient {
   }
 }
 
-export type BoxdRetainedState = "hibernated" | "running"
 export const DEFAULT_BOXD_WORKSPACE_DIRECTORY = "/home/boxd/workspace"
-export const DEFAULT_BOXD_RETAINED_STATE: BoxdRetainedState = "hibernated"
 export const DEFAULT_BOXD_WORKSPACE_NAME_PREFIX = "tardie-"
 
 export interface BoxdWorkspaceOptions extends WorkspaceReadOptions {
@@ -32,13 +30,12 @@ export interface BoxdWorkspaceOptions extends WorkspaceReadOptions {
   readonly network?: WorkspaceNetworkPolicy
   readonly idempotency?: WorkspaceIdempotencyStore
   readonly policy?: Partial<ContainerWorkspacePolicy>
+  // release deletes, hibernates, or leaves the computer running for destroy, retain, or unmount.
   readonly release?: WorkspaceRelease
-  // retained is the state a computer is left in when the layer releases with release "retain".
-  readonly retained?: BoxdRetainedState
 }
 
 // boxdEgress maps a workspace network policy onto a boxd egress allowlist; an empty list leaves egress unrestricted.
-export function boxdEgress(policy?: WorkspaceNetworkPolicy): readonly string[] {
+function boxdEgress(policy?: WorkspaceNetworkPolicy): readonly string[] {
   const normalized = workspaceNetworkPolicy(policy)
   return normalized.mode === "none" ? ["none"] : normalized.mode === "all" ? [] : normalized.hosts
 }
@@ -61,7 +58,7 @@ function boxdWorkspaceSpec(options: Pick<BoxdWorkspaceOptions, "size" | "snapsho
 }
 
 // boxdWorkspaceId is the idempotency identity of a named computer, so replay after a host restart finds the saved outcomes.
-export const boxdWorkspaceId = (options: Pick<BoxdWorkspaceOptions, "org" | "name">): string => JSON.stringify(["boxd", options.org ?? null, options.name])
+const boxdWorkspaceId = (options: Pick<BoxdWorkspaceOptions, "org" | "name">): string => JSON.stringify(["boxd", options.org ?? null, options.name])
 
 const errorName = (cause: unknown) => cause instanceof Error ? cause.name : undefined
 const isGone = (cause: unknown) => errorName(cause) === "NotFoundError"
@@ -72,13 +69,14 @@ const sorted = (values: readonly string[]) => JSON.stringify([...values].sort())
 function channel() {
   let controller!: ReadableStreamDefaultController<Uint8Array>
   const readable = new ReadableStream<Uint8Array>({ start: value => { controller = value } })
-  return { readable, controller: () => controller }
+  return { readable, controller }
 }
 
 // boxdComputer adapts one named boxd computer to the container contract; isolation and egress are checked before a computer is used.
 function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutMs: number; readonly startupPollIntervalMs: number }) {
   const { machines } = options.client
-  const egress = boxdEgress(options.network)
+  const spec = boxdWorkspaceSpec(options)
+  const egress = sorted(spec.egress ?? [])
   let id: string | undefined
   let region = options.region
   let running = false
@@ -95,14 +93,15 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
   const wake = (computer: string) => machines.start(computer, at()).then(() => ready(computer))
   const verify = (machine: Machine) => {
     if (!machine.networking.isolated) throw new FilesystemWorkspaceError(`Computer ${machine.name} is not isolated; workspace computers run model-chosen commands`)
-    if (sorted(machine.egressAllow) !== sorted(egress)) throw new FilesystemWorkspaceError(`Workspace network policy is fixed at creation: computer ${machine.name} has egress ${sorted(machine.egressAllow)}, requested ${sorted(egress)}`)
+    const actual = sorted(machine.egressAllow)
+    if (actual !== egress) throw new FilesystemWorkspaceError(`Workspace network policy is fixed at creation: computer ${machine.name} has egress ${actual}, requested ${egress}`)
   }
   // find returns the computer with the name; it refuses to choose when the name is in two regions, or when a region that did not answer may hold it.
   const find = async () => {
     const listed = await machines.list({ ...(options.org ? { org: options.org } : {}), region: options.region ?? "all" })
     const named = listed.filter(machine => machine.name === options.name)
     if (named.length > 1) throw new FilesystemWorkspaceError(`Computer ${options.name} exists in regions ${named.map(machine => machine.region).join(" and ")}; set region to choose one`)
-    if (!named.length && listed.unavailable.length) throw new FilesystemWorkspaceError(`Regions ${listed.unavailable.join(", ")} did not answer and may hold computer ${options.name}; retry, or set region`)
+    if (listed.unavailable.length) throw new FilesystemWorkspaceError(`Regions ${listed.unavailable.join(", ")} did not answer and may hold computer ${options.name}; retry, or set region`)
     return named[0]
   }
   // call retries once after starting a stopped computer; suspended and hibernated computers wake on any call.
@@ -120,7 +119,7 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
     const known = id === undefined ? undefined : await ifPresent(machines.get(id, at()))
     const adopted = known ?? await find()
     if (adopted) verify(adopted)
-    const machine = adopted ?? await machines.create({ name: options.name, ...(options.org ? { org: options.org } : {}), ...(options.region ? { region: options.region } : {}), spec: boxdWorkspaceSpec(options) })
+    const machine = adopted ?? await machines.create({ name: options.name, ...(options.org ? { org: options.org } : {}), ...(options.region ? { region: options.region } : {}), spec })
     id = machine.id
     region = machine.region ?? region
     if (!adopted) verify(machine)
@@ -153,14 +152,14 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
               for await (const chunk of source) { emitted = true; target.enqueue(chunk) }
             }
             try {
-              const [, , code] = await Promise.race([Promise.all([forward(stream.stdout, stdout.controller()), forward(stream.stderr, stderr.controller()), stream.wait()]), aborted])
+              const [, , code] = await Promise.race([Promise.all([forward(stream.stdout, stdout.controller), forward(stream.stderr, stderr.controller), stream.wait()]), aborted])
               // A negative status means the call ended without the command reporting one, which the server returns for a deleted computer.
               if (code < 0) {
                 if (!await ifPresent(machines.get(computer, at()))) lose()
                 throw new FilesystemWorkspaceError(`Command on computer ${options.name} ended without an exit status`)
               }
-              stdout.controller().close()
-              stderr.controller().close()
+              stdout.controller.close()
+              stderr.controller.close()
               return code
             } catch (cause) {
               if (attempt === 0 && !emitted && isStopped(cause) && !signal?.aborted) { await Promise.race([wake(computer), aborted]); continue }
@@ -169,8 +168,8 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
           }
         } catch (cause) {
           if (isGone(cause)) lose()
-          stdout.controller().error(cause)
-          stderr.controller().error(cause)
+          stdout.controller.error(cause)
+          stderr.controller.error(cause)
           throw cause
         } finally { signal?.removeEventListener("abort", cancel) }
       })()
@@ -200,10 +199,10 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
     mkdir: (path, fileOptions) => call(async computer => { fileOptions?.signal?.throwIfAborted(); await machines.fs.mkdir(computer, path, at()) }),
   }
   // release applies the workspace release once a start the caller abandoned has settled; a computer that never finished starting is deleted under "destroy" and left as it is under "retain".
-  const release = async (mode: WorkspaceRelease, retained: BoxdRetainedState) => {
+  const release = async (mode: WorkspaceRelease) => {
     await starting.catch(() => undefined)
     if (mode === "destroy") await container.destroy()
-    else if (mode === "retain" && retained === "hibernated" && id !== undefined && running) {
+    else if (mode === "retain" && id !== undefined && running) {
       await ifPresent(machines.hibernate(id, at()))
       lose()
     }
@@ -215,20 +214,18 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
 export function boxdWorkspace(options: BoxdWorkspaceOptions): Layer.Layer<FilesystemWorkspace, FilesystemWorkspaceError> {
   return Layer.unwrap(Effect.try({ try: () => {
     if (typeof options.name !== "string" || !options.name.trim()) throw new FilesystemWorkspaceError("A boxd workspace requires a computer name")
-    const retained = options.retained ?? DEFAULT_BOXD_RETAINED_STATE
-    if (retained !== "hibernated" && retained !== "running") throw new FilesystemWorkspaceError("retained must be hibernated or running")
     const release = options.release ?? DEFAULT_WORKSPACE_RELEASE
     if (release !== "destroy" && release !== "retain" && release !== "unmount") throw new FilesystemWorkspaceError("release must be destroy, retain, or unmount")
     const policy = { ...DEFAULT_CONTAINER_WORKSPACE_POLICY, ...options.policy }
     const computer = boxdComputer({ ...options, startupTimeoutMs: policy.startupTimeoutMs, startupPollIntervalMs: policy.startupPollIntervalMs })
-    const { client: _client, name: _name, org: _org, region: _region, size: _size, snapshot: _snapshot, labels: _labels, network: _network, idempotency, release: _release, retained: _retained, directory, ...rest } = options
+    const { idempotency, ...rest } = options
     // The container layer keeps the computer on release and the finalizer below applies release, because a computer exists from create, before the container contract reports it running.
     const workspace = containerWorkspace({
       ...rest, release: "retain",
       container: computer.container, files: computer.files, start: computer.start,
-      directory: directory ?? DEFAULT_BOXD_WORKSPACE_DIRECTORY,
+      directory: options.directory ?? DEFAULT_BOXD_WORKSPACE_DIRECTORY,
       ...(idempotency ? { idempotency: { workspaceId: boxdWorkspaceId(options), store: idempotency } } : {}),
     })
-    return Layer.merge(workspace, Layer.effectDiscard(Effect.addFinalizer(() => Effect.tryPromise({ try: () => computer.release(release, retained), catch: FilesystemWorkspaceError.from }).pipe(Effect.orDie))))
+    return Layer.merge(workspace, Layer.effectDiscard(Effect.addFinalizer(() => Effect.tryPromise({ try: () => computer.release(release), catch: FilesystemWorkspaceError.from }).pipe(Effect.orDie))))
   }, catch: FilesystemWorkspaceError.from }))
 }

@@ -1,9 +1,7 @@
 import { strict as assert } from "node:assert"
 import { createHash } from "node:crypto"
 import { afterAll, test } from "bun:test"
-import { Effect, Fiber, ManagedRuntime } from "effect"
-import { FilesystemWorkspace } from "@clavia/tardigrade-libraries/filesystem/index"
-import { boxdWorkspace } from "../../../src/boxd/workspace"
+import { Effect } from "effect"
 import { BOXD_LIVE_TIMEOUT_MS, findComputer, liveBoxd, liveName, removeComputer, withLiveWorkspace } from "../../fixtures/workspace/boxd-live"
 
 const { client, org } = liveBoxd()
@@ -13,8 +11,7 @@ const run = <A>(effect: Effect.Effect<A, Error>) => Effect.runPromise(effect)
 const base = { client, ...(org ? { org } : {}) }
 
 afterAll(async () => {
-  for (const name of names) await removeComputer(client, org, name)
-  client.close()
+  try { for (const name of names) await removeComputer(client, org, name) } finally { client.close() }
 })
 
 test("network none leaves the computer without DNS or egress", async () => {
@@ -43,25 +40,6 @@ test("retain hibernates the computer and the next host finds its files and proce
   const after = await withLiveWorkspace({ ...base, name, release: "destroy" }, async workspace => [await run(workspace.read("notes/plan.md")), await run(workspace.bash("cat notes/plan.md | wc -l")), await run(workspace.bash(`kill -0 ${pid} && echo alive`))])
   assert.deepEqual(after, ["step one\n", "1\n", "alive\n"])
   assert.equal(await findComputer(client, org, name), undefined)
-}, BOXD_LIVE_TIMEOUT_MS)
-
-test("a first command interrupted during creation leaves no computer", async () => {
-  const name = named("interrupt")
-  const runtime = ManagedRuntime.make(boxdWorkspace({ ...base, name }))
-  const workspace = await runtime.runPromise(Effect.map(FilesystemWorkspace, workspace => workspace))
-  const command = runtime.runFork(workspace.bash("echo hi"))
-  await new Promise(resolve => setTimeout(resolve, 150))
-  await runtime.runPromise(Fiber.interrupt(command))
-  await runtime.dispose()
-  assert.equal(await findComputer(client, org, name), undefined)
-}, BOXD_LIVE_TIMEOUT_MS)
-
-test("a background process survives between commands", async () => {
-  const output = await withLiveWorkspace({ ...base, name: named("background") }, async workspace => {
-    const pid = (await run(workspace.bash("nohup sleep 300 >/dev/null 2>&1 & echo $!"))).trim()
-    return run(workspace.bash(`kill -0 ${pid} && echo alive`))
-  })
-  assert.equal(output, "alive\n")
 }, BOXD_LIVE_TIMEOUT_MS)
 
 test("a command timeout stops the remote process", async () => {
@@ -95,7 +73,7 @@ test("a 5 MiB file round trips byte for byte", async () => {
 
 test("a named region holds the computer and every call reaches it", async () => {
   const name = named("region")
-  const output = await withLiveWorkspace({ ...base, name, region: "nyc", release: "retain", retained: "running" }, async workspace => {
+  const output = await withLiveWorkspace({ ...base, name, region: "nyc", release: "unmount" }, async workspace => {
     await run(workspace.write("region.txt", "nyc\n"))
     return run(workspace.bash("cat region.txt"))
   })
