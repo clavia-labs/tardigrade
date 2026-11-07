@@ -18,6 +18,7 @@
     "wrangler": "^4.119.0"
   },
   "dependencies": {
+    "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-libraries": "workspace:*",

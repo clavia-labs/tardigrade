@@ -3,7 +3,7 @@ import { Deferred, Effect, Fiber, Layer, Schema } from "effect"
 import { ClusterSchema, Entity, TestRunner } from "effect/cluster"
 import { Rpc } from "effect/rpc"
 import { methodResult } from "@clavia/tardigrade-core"
-import { createMethodClient } from "../../src/client"
+import { createMethodClient } from "@clavia/tardigrade-client"
 import { workerdSlowActFixture } from "../fixtures/workerd/slow-act-fixture"
 import { waitFor } from "../fixtures/wait"
 

@@ -1,7 +1,7 @@
 import { Effect, Layer, Schema } from "effect"
 import { ClusterSchema, Entity, TestRunner } from "effect/cluster"
 import { Rpc } from "effect/rpc"
-import { createMethodClient } from "@clavia/tardigrade-platform/client"
+import { createMethodClient } from "@clavia/tardigrade-client"
 import { RuntimeError } from "@clavia/tardigrade-core"
 import { actor } from "./agents/inbox"
 

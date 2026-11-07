@@ -1,0 +1,16 @@
+{
+  "name": "@clavia/tardigrade-client",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Effect clients for hosted actor methods.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@clavia/tardigrade-core": "workspace:*",
+    "effect": "4.1.2"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test src"
+  }
+}

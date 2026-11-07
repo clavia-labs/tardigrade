@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { Effect, Schema } from "effect"
-import { createMethodClient } from "../../src/client"
+import { createMethodClient } from "@clavia/tardigrade-client"
 import { DEFAULT_WAIT_POLICY } from "./wait"
 
 export const DEFAULT_METHOD_CLIENT_POLICY = DEFAULT_WAIT_POLICY
