@@ -169,6 +169,14 @@
         "effect": "4.1.2",
       },
     },
+    "packages/client": {
+      "name": "@clavia/tardigrade-client",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-core": "workspace:*",
+        "effect": "4.1.2",
+      },
+    },
     "packages/code": {
       "name": "@clavia/tardigrade-code",
       "version": "0.0.1",
@@ -269,6 +277,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-agent": "workspace:*",
+        "@clavia/tardigrade-client": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-libraries": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
@@ -339,6 +348,7 @@
       "devDependencies": {
         "@cfworker/json-schema": "^4.1.1",
         "@clavia/tardigrade-agent": "workspace:*",
+        "@clavia/tardigrade-client": "workspace:*",
         "@cloudflare/vitest-plugin": "^1.4.1",
         "@cloudflare/workers-types": "5.20261102.1",
         "aws4fetch": "1.0.20",
@@ -361,6 +371,7 @@
       "dependencies": {
         "@clavia/tardigrade-agent": "workspace:*",
         "@clavia/tardigrade-bun": "workspace:*",
+        "@clavia/tardigrade-client": "workspace:*",
         "@clavia/tardigrade-cloudflare": "workspace:*",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
@@ -527,6 +538,8 @@
     "@clavia/tardigrade-bun": ["@clavia/tardigrade-bun@workspace:platform/bun"],
 
     "@clavia/tardigrade-cli": ["@clavia/tardigrade-cli@workspace:packages/apps/cli"],
+
+    "@clavia/tardigrade-client": ["@clavia/tardigrade-client@workspace:packages/client"],
 
     "@clavia/tardigrade-cloudflare": ["@clavia/tardigrade-cloudflare@workspace:platform/cloudflare"],
 

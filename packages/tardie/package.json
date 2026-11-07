@@ -32,6 +32,7 @@
     "./libraries": "./src/generated/libraries.ts",
     "./code": "./src/generated/code.ts",
     "./platform/bun": "./src/generated/platform/bun.ts",
+    "./client": "./src/generated/client.ts",
     "./platform/cloudflare": "./src/generated/platform/cloudflare.ts",
     "./platform/cloudflare/retry": "./src/generated/platform/cloudflare/retry.ts",
     "./package.json": "./package.json",
@@ -211,7 +212,8 @@
     "@clavia/tardigrade-deprecated-host": "workspace:*",
     "@clavia/tardigrade-worker-loader": "workspace:*",
     "@clavia/tardigrade-deprecated-cli": "workspace:*",
-    "@clavia/tardigrade-store": "workspace:*"
+    "@clavia/tardigrade-store": "workspace:*",
+    "@clavia/tardigrade-client": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

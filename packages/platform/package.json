@@ -25,6 +25,7 @@
     "@clavia/tardigrade-store": "workspace:*"
   },
   "devDependencies": {
+    "@clavia/tardigrade-client": "workspace:*",
     "@cfworker/json-schema": "^4.1.1",
     "@clavia/tardigrade-agent": "workspace:*",
     "@cloudflare/vitest-plugin": "^1.4.1",

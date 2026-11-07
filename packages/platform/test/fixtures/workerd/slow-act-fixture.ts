@@ -1,11 +1,12 @@
 import { strict as assert } from "node:assert"
 import { env } from "cloudflare:workers"
 import { SELF, runInDurableObject } from "cloudflare:test"
-import { Effect, Schema } from "effect"
-import { methodResult, watchdogKey } from "@clavia/tardigrade-core"
+import { Effect } from "effect"
+import { watchdogKey } from "@clavia/tardigrade-core"
+import { createMethodClient } from "@clavia/tardigrade-client"
 import { cloudflareThreadName } from "../../../src/cloudflare"
 import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
-import type { SlowActOptions } from "../slow-act"
+import { slowActor, type SlowActOptions } from "../slow-act"
 import { configureSlowAct, forgetSlowAct, logSlowAct, type SlowThreadDO } from "./slow-act-fixture.worker"
 
 export async function workerdSlowActFixture(options: SlowActOptions) {
@@ -14,14 +15,16 @@ export async function workerdSlowActFixture(options: SlowActOptions) {
   const coordinate = { actor: "slow", instance, thread: "thread" }
   const namespace = (env as unknown as { SLOW_THREADS: DurableObjectNamespace<SlowThreadDO> }).SLOW_THREADS
   let stub = namespace.getByName(cloudflareThreadName(coordinate))
-  const base = `http://test/v1/actors/${instance}/threads`
-  assert.equal((await SELF.fetch(base, { method: "POST", body: JSON.stringify({ name: "thread" }) })).status, 200)
-  const method = `${base}/thread/methods/run`
-  const resultSchema = Schema.Union([methodResult(Schema.Finite), Schema.Struct({ status: Schema.Literal("pending") })])
+  const { methods } = await Effect.runPromise(slowActor.inspect)
+  const clientOptions = { url: "http://test", instance, thread: "thread", methods, fetch: (request: Request) => SELF.fetch(request) }
+  const client = createMethodClient(clientOptions)
+  await Effect.runPromise(client.createThread())
   return {
-    start: async () => { assert.equal((await SELF.fetch(method, { method: "POST", headers: { "idempotency-key": "run" }, body: "null" })).status, 202) },
+    clientOptions,
+    records: () => stub.records(),
+    start: async () => { await Effect.runPromise(client.invoke("run", null, { id: "run" })) },
     result: async () => {
-      const result = Schema.decodeUnknownSync(resultSchema)(await (await SELF.fetch(`${method}/calls/run`)).json())
+      const result = await Effect.runPromise(client.result("run", "run"))
       return result.status === "pending" ? undefined : result
     },
     log: () => Promise.resolve(logSlowAct(instance)),
