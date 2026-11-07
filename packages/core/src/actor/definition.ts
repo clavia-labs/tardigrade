@@ -8,7 +8,7 @@ import { atom, type Atom } from "../atoms/atom"
 import type { EventValue } from "../atoms/effect"
 import type { ActorSetup } from "../runtime/contracts"
 import { createStore } from "../atoms/store"
-import { EventLog } from "../services/event-log"
+import { EventLog, eventLogService } from "../services/event-log"
 import { atomReplay } from "../runtime/atom-replay"
 
 type MethodEvents<Methods> = { readonly [Key in keyof Methods]: Methods[Key] extends ActorMethod<infer Event> ? Event : never }[keyof Methods]
@@ -53,7 +53,7 @@ export function defineActor<Value, const Name extends string, Services, const Co
     const root = atom(get => resolveOutput(get(definition.atom)))
     const catalog = eventCatalog<DomainEvents>()
     for (const method of Object.values(definition.methods ?? {})) for (const schema of method.events) catalog.add(schema)
-    const discovery = createStore(Context.make(EventLog, { events: atom<readonly unknown[]>([]), replay: atom(atomReplay([])) }))
+    const discovery = createStore(Context.make(EventLog, eventLogService({ events: atom<readonly unknown[]>([]), replay: atom(atomReplay([])) }, node => discovery.get(node))))
     let durableAtoms: ActorInspection<Contracts>["durableAtoms"]
     try {
       // TODO: Discover subscriptions first read after a branch change; setup currently registers the graph observed from initial state.
@@ -66,6 +66,7 @@ export function defineActor<Value, const Name extends string, Services, const Co
         durableAtoms,
         methods: Object.fromEntries(Object.entries(definition.methods ?? {}).map(([name, method]) => [name, { inputSchema: method.inputSchema, outputSchema: method.outputSchema }])) as ActorInspection<Contracts>["methods"],
       } satisfies ActorInspection<Contracts>,
+      eventSchemas: definition.schema ? [definition.schema] : catalog.schemas,
       schema: (definition.schema ?? catalog.schema) as Schema.Schema<DomainEvents>,
       decodeEvent: definition.schema ? historicalEventDecoder(definition.schema) : catalog.decode,
       contracts: definition.methods ?? {} as Contracts,
@@ -76,9 +77,10 @@ export function defineActor<Value, const Name extends string, Services, const Co
     const definition = yield* factory
     const root = atom(get => resolveOutput(get(definition.atom)))
     return yield* Effect.acquireUseRelease(
-      Effect.sync(() => createStore(Context.make(EventLog, {
-        events: atom<readonly unknown[]>([]), replay: atom(atomReplay([])),
-      }))),
+      Effect.sync(() => {
+        const store = createStore(Context.make(EventLog, eventLogService({ events: atom<readonly unknown[]>([]), replay: atom(atomReplay([])) }, node => store.get(node))))
+        return store
+      }),
       store => Effect.try({ try: () => store.graph({ [name]: root }), catch: RuntimeError.from }),
       store => Effect.sync(() => store.dispose()),
     )

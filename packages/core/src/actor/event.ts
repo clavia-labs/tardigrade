@@ -55,6 +55,7 @@ export function eventCatalog<Value extends object>() {
   const readers = new Map<string, Set<(input: unknown) => unknown>>()
   const migrations = new Map<string, (input: unknown) => object>()
   const registered = new WeakSet<SchemaAST.AST>()
+  const declarations: Schema.Top[] = []
   const tags = (node: SchemaAST.AST): readonly string[] => {
     if (SchemaAST.isUnion(node)) return node.types.flatMap(tags)
     if (!SchemaAST.isObjects(node)) return []
@@ -71,6 +72,7 @@ export function eventCatalog<Value extends object>() {
         migrations.set(name, read)
       }
       registered.add(ast)
+      declarations.push(schema)
       const decode = Schema.decodeUnknownSync(Schema.toType(schema), { onExcessProperty: "error" })
       const accepts = (input: unknown) => { try { decode(input); return true } catch { return false } }
       const read = historicalEventDecoder(schema)
@@ -83,6 +85,7 @@ export function eventCatalog<Value extends object>() {
         decoders.add(read)
       }
     },
+    get schemas(): readonly Schema.Top[] { return declarations.slice() },
     decode: (input: unknown): Value => {
       const causes: unknown[] = []
       if (typeof input === "object" && input !== null && "type" in input && typeof input.type === "string") {

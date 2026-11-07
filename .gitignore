@@ -50,3 +50,8 @@ packages/tardie/src/generated/
 
 # Local directory benchmark
 /packages/platform/bench/directory/
+
+# SQLite assets generated from the pinned build dependency
+/packages/platform/src/shared/log-sql/vendor/*
+!/packages/platform/src/shared/log-sql/vendor/README.md
+!/packages/platform/src/shared/log-sql/vendor/sqlite3.d.mts

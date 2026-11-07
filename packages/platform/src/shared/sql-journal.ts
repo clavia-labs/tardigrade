@@ -1,3 +1,9 @@
+import { sqlLogSearch, type LogSearchIndexPolicy } from "./log-search"
+export { DEFAULT_LOG_SEARCH_INDEX_POLICY, type LogSearchIndexPolicy } from "./log-search"
+import { bridgeQuery, logQueryPolicy } from "./log-sql/bridge"
+import type { LogQueryEngine, LogQueryPolicy } from "./log-sql/types"
+export { DEFAULT_LOG_QUERY_POLICY, type LogQueryPolicy } from "./log-sql/types"
+import type { JournalQuery } from "@clavia/tardigrade-core"
 import { ThreadCreated, ThreadUpdated, CoreEvent, EffectRequested, EffectRef, InvocationIdentity, createInvocationLookup, hasCoreEventType } from "@clavia/tardigrade-core"
 import { Effect, ManagedRuntime, Schema, Semaphore, Exit, Cause, Fiber, type Layer } from "effect"
 import { SqlClient } from "effect/sql"
@@ -48,6 +54,8 @@ const indexInvocationRecord = (sql: SqlClient.SqlClient, actor: string, seq: num
 export const DEFAULT_EVENT_INLINE_BYTES = 1_500_000
 export const DEFAULT_INVOCATION_INDEX_BATCH_SIZE = 16
 export interface JournalRecordOptions extends FamilyIndexOptions {
+  readonly logQuery?: Partial<LogQueryPolicy> | undefined
+  readonly searchIndex?: Partial<LogSearchIndexPolicy> | undefined
   readonly eventInlineBytes?: number | undefined
   readonly invocationIndexBatchSize?: number | undefined
 }
@@ -57,6 +65,7 @@ export interface SqlJournalLimits { readonly maxRowBytes: number }
 // sqlJournal owns a database with one checkpoint and commits checkpoint chunks with journal events (checkpointStorage).
 export function sqlJournal<Event extends object>(options: CheckpointChunkOptions & JournalRecordOptions & {
   readonly actor: string
+  readonly queryEngine?: LogQueryEngine
   readonly scheduler?: { readonly alarm: typeof Alarm.Service; readonly deliver: (wake: ScheduledWake) => Effect.Effect<void, Error>; readonly policy?: Partial<SchedulerPolicy> | undefined } | undefined
   readonly limits?: SqlJournalLimits
   readonly layer: Layer.Layer<SqlClient.SqlClient, Error>
@@ -218,6 +227,14 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
       return readSqlJournalRecord<Event>(sql, options.actor, row)
     })
   })
+  const queryPolicy = logQueryPolicy(options.logQuery)
+  const query = options.queryEngine ? (request: JournalQuery) => Effect.tryPromise({
+    try: async () => bridgeQuery(await options.queryEngine!(queryPolicy), {
+      readPosition: () => runSynchronous(readPosition),
+      readRange: (from, to) => runSynchronous(readRange(from, to)),
+    }, request, queryPolicy),
+    catch: RuntimeError.from,
+  }) : undefined
   const access = {
     readPosition, readRange,
     readOperation: (ref: EffectRef, position: number) => Effect.gen(function* () {
@@ -308,7 +325,7 @@ export function sqlJournal<Event extends object>(options: CheckpointChunkOptions
     appendWithCheckpoint: append,
   }
   return {
-    scheduler,
+    scheduler, ...(query ? { query } : {}), search: sqlLogSearch({ actor: options.actor, client, readPosition, readRecord: (sql, row) => readSqlJournalRecord<Event>(sql, options.actor, row), transaction, policy: options.searchIndex }),
     lookupInvocation: createInvocationLookup(identity => runSynchronous(access.lookupInvocation(identity))),
     readPosition: () => runSynchronous(access.readPosition),
     readRange: (from: number, to: number) => runSynchronous(access.readRange(from, to)),

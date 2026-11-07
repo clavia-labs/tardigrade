@@ -3,7 +3,7 @@ import type { ReadonlyIndex, ReadonlyLog } from "../runtime/log-view"
 import { Context, Schema, type Effect } from "effect"
 import { Atom as NativeAtom } from "effect/reactivity"
 import { atom, type Atom } from "../atoms/atom"
-import type { ObservedRecord, Recorded } from "./journal"
+import type { ObservedRecord, Recorded, Journal } from "./journal"
 import { EffectDied, type EffectRef } from "../runtime/effects"
 import type { AtomState, StatefulAtom, StateSeed } from "../initialise"
 import type { AcceptedOperation } from "../runtime/operation"
@@ -37,7 +37,15 @@ export interface AtomReplay {
   readonly familyKeys?: (family: JournalFamily, after: string | undefined, limit: number) => readonly string[]
 }
 
-export class EventLog extends Context.Service<EventLog, {
+// EventLogSnapshot reads a fixed journal prefix (packages/platform/test/scenarios/log/lifecycle.ts).
+export interface EventLogSnapshot {
+  readonly position: number
+  readonly read: (from: number, to: number) => readonly ObservedRecord<unknown>[]
+}
+
+export class EventLog extends Context.Service<EventLog, Pick<Journal<object>, "query" | "search"> & {
+  readonly snapshot: () => EventLogSnapshot
+  readonly schemas?: () => readonly Schema.Top[]
   readonly replay: Atom<AtomReplay>
   // events extends an immutable prefix; another history requires another source atom.
   readonly events: Atom<ReadonlyLog<unknown>>
@@ -48,6 +56,20 @@ export class EventLog extends Context.Service<EventLog, {
   readonly defect?: () => EffectDied | undefined
   readonly promise?: (ref: EffectRef) => PromiseSettled | undefined
 }>()("experimental/EventLog") {}
+
+// eventLogService binds atom projections and history reads to the same replay source.
+export function eventLogService(projections: Omit<typeof EventLog.Service, "snapshot">, get: <Value>(node: Atom<Value>) => Value): typeof EventLog.Service {
+  return { ...projections, snapshot: () => {
+    const replay = get(projections.replay)
+    return {
+      position: replay.position,
+      read: (from, to) => {
+        if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to > replay.position) throw new Error("Event log range is outside its snapshot")
+        return replay.read(from).slice(0, to - from)
+      },
+    }
+  } }
+}
 
 // ReplayContext supplies committed history during actor setup; runtime/execution.ts caches readFull for the loading attempt.
 export class ReplayContext extends Context.Service<ReplayContext, {

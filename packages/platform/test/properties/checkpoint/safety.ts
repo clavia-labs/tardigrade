@@ -1,3 +1,4 @@
+import { eventLogService } from "@clavia/tardigrade-core"
 import { atomPopulation, atomPopulationKeys, Changed, type AtomPopulationKind } from "../../fixtures/atoms/population"
 import { strict as assert } from "node:assert"
 import * as fc from "fast-check"
@@ -109,7 +110,7 @@ function windowedReplay(kind: CheckpointAtomKind, amounts: readonly number[]) {
     if (metadata.recordedAt !== position + 100) throw new Error("Range replay lost metadata or absolute position")
     return state * 2 + event.amount
   } })
-  const store = createStore(Context.make(EventLog, { events: history, replay }))
+  const store = createStore(Context.make(EventLog, eventLogService({ events: history, replay }, node => store.get(node))))
   let historical = frame(0, [])
   let historicalExpected = 0
   let expected = 0
@@ -132,11 +133,11 @@ function windowedReplay(kind: CheckpointAtomKind, amounts: readonly number[]) {
       }
     }
     if (store.get(node) !== expected) throw new Error("Atom replay lost a released batch")
-    const old = createStore(Context.make(EventLog, { events: history, replay: atom(historical) }))
+    const old = createStore(Context.make(EventLog, eventLogService({ events: history, replay: atom(historical) }, node => old.get(node))))
     try {
       if (old.get(node) !== historicalExpected) throw new Error("Historical range read included future journal events")
     } finally { old.dispose() }
-    const lazy = createStore(Context.make(EventLog, { events: history, replay: atom(frame(journal.length, [])) }))
+    const lazy = createStore(Context.make(EventLog, eventLogService({ events: history, replay: atom(frame(journal.length, [])) }, node => lazy.get(node))))
     try {
       if (lazy.get(node) !== expected) throw new Error("First atom read lost released journal batches")
     } finally { lazy.dispose() }
