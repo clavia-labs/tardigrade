@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./bun": "./src/bun/index.ts",
+    "./boxd": "./src/boxd/index.ts",
     "./cloudflare": "./src/cloudflare/index.ts",
     "./journal": "./src/shared/sql-journal.ts",
     "./workspace": "./src/shared/workspace/index.ts"
@@ -34,7 +35,8 @@
     "vitest": "^5.0.4",
     "workerd": "1.20261006.1",
     "wrangler": "4.150.0",
-    "aws4fetch": "1.0.20"
+    "aws4fetch": "1.0.20",
+    "@boxd-sh/sdk": "^0.3.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -42,6 +44,15 @@
     "test:workers": "vitest run --config vitest.config.ts && vitest run --config vitest.agent.config.ts",
     "test:workers:long": "TARDIGRADE_TEST_LONG=1 vitest run --config vitest.config.ts",
     "test:deployed": "bun run test/deployed.ts",
-    "test:workspace:heavy": "bun run test/heavy/workspace/run.ts"
+    "test:workspace:heavy": "bun run test/heavy/workspace/run.ts",
+    "test:boxd": "bun test test/boxd"
+  },
+  "peerDependencies": {
+    "@boxd-sh/sdk": "^0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@boxd-sh/sdk": {
+      "optional": true
+    }
   }
 }
