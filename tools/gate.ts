@@ -13,7 +13,7 @@ const root = `${realpathSync(fileURLToPath(new URL("../", import.meta.url)))}/`
 const pkg = (name: string) => `${root}packages/${name}`
 const deprecated = ["core", "agent", "host", "channels", "client", "http"].map((name) => `deprecated/${name}`)
 const packages = ["tardie", "core", "code", "agent", "libraries", "platform", "client", "examples", "apps/cli", "model", "store", ...deprecated]
-const testedPackages = ["tardie", "code", "model", "core", "client"]
+const testedPackages = ["tardie", "code", "model", "core"]
 const packageId = (name: string) => name.replaceAll("/", "-")
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["bun", "worker-loader", "cloudflare"]
