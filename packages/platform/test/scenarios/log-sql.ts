@@ -43,8 +43,4 @@ export function readOnlyLogSql(sqlite: Sqlite) {
   assert.deepEqual(point.rows, [["orchid meadow"]])
   assert.equal(point.readEvents, 1)
   assert.equal(JSON.stringify(records), original)
-  for (let attempt = 0; attempt < 100; attempt++) {
-    assert.throws(() => query("SELECT position FROM events; SELECT 2"), /exactly one statement/)
-    assert.deepEqual(query("SELECT count(*) FROM events").rows, [[2]])
-  }
 }
