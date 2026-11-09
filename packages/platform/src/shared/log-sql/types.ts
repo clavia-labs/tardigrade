@@ -49,7 +49,7 @@ interface Database { readonly pointer: number; exec(sql: string): void; prepare(
 
 // Sqlite describes the upstream SQLite WASM APIs used by the read-only bridge.
 export interface Sqlite {
-  readonly capi: Record<"SQLITE_OK" | "SQLITE_ERROR" | "SQLITE_DENY" | "SQLITE_SELECT" | "SQLITE_READ" | "SQLITE_FUNCTION" | "SQLITE_INDEX_CONSTRAINT_EQ" | "SQLITE_LIMIT_LENGTH" | "SQLITE_LIMIT_COLUMN" | "SQLITE_LIMIT_EXPR_DEPTH" | "SQLITE_LIMIT_SQL_LENGTH", number> & {
+  readonly capi: Record<"SQLITE_OK" | "SQLITE_ERROR" | "SQLITE_DENY" | "SQLITE_SELECT" | "SQLITE_READ" | "SQLITE_FUNCTION" | "SQLITE_RECURSIVE" | "SQLITE_INNOCUOUS" | "SQLITE_DBCONFIG_DEFENSIVE" | "SQLITE_INDEX_CONSTRAINT_EQ" | "SQLITE_LIMIT_LENGTH" | "SQLITE_LIMIT_COLUMN" | "SQLITE_LIMIT_EXPR_DEPTH" | "SQLITE_LIMIT_SQL_LENGTH", number> & {
     readonly sqlite3_module: new () => Disposable & { setupModule(options: { catchExceptions: boolean; methods: Record<string, boolean | ((...args: number[]) => number)> }): Struct }
     sqlite3_declare_vtab(db: number, schema: string): number
     sqlite3_create_module(db: number, name: string, module: Struct, aux: number): number
@@ -57,6 +57,8 @@ export interface Sqlite {
     sqlite3_result_js(context: number, value: unknown): void
     sqlite3_limit(db: number, kind: number, value: number): number
     sqlite3_set_authorizer(db: number, callback: (ctx: number, action: number, table: string | null, column: string | null) => number, ctx: number): number
+    sqlite3_db_config(db: number, option: number, value: number, output: number): number
+    sqlite3_stmt_readonly(statement: number): number
     sqlite3_progress_handler(db: number, every: number, callback: () => number, ctx: number): void
     sqlite3_prepare_v3(db: number, sql: number, length: number, flags: number, statement: number, tail: number): number
     sqlite3_finalize(statement: number): number

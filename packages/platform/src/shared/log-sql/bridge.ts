@@ -3,7 +3,6 @@ import type { Schema } from "effect"
 import { DEFAULT_LOG_QUERY_POLICY, type LogQueryPolicy, type LogQuerySource, type Sqlite } from "./types"
 
 const encoder = new TextEncoder()
-const functions = new Set(["json_extract", "json_type", "json_array_length", "count", "sum", "avg", "min", "max", "total", "coalesce", "ifnull", "lower", "upper", "length", "substr", "abs", "round", "like", "glob"])
 
 interface Cursor {
   position: number
@@ -60,6 +59,13 @@ export function bridgeQuery(sqlite: Sqlite, source: LogQuerySource, request: Jou
     readEvents += records.length
   }
   try {
+    sqlite.oo1.DB.checkRc(db, c.sqlite3_db_config(db.pointer, c.SQLITE_DBCONFIG_DEFENSIVE, 1, 0))
+    db.exec("PRAGMA trusted_schema=OFF")
+    const functions = new Set<string>()
+    // functions requires every overload to carry SQLite's side-effect classification (https://sqlite.org/c3ref/c_deterministic.html).
+    const inventory = db.prepare(`SELECT name FROM pragma_function_list GROUP BY name HAVING min((flags & ${c.SQLITE_INNOCUOUS}) != 0) = 1`)
+    try { while (inventory.step()) functions.add(String(inventory.get([])[0]).toLowerCase()) }
+    finally { inventory.finalize() }
     module = new c.sqlite3_module().setupModule({ catchExceptions: true, methods: {
       xCreate: true,
       xConnect: guarded((database, _aux, _argc, _argv, output) => {
@@ -132,7 +138,7 @@ export function bridgeQuery(sqlite: Sqlite, source: LogQuerySource, request: Jou
       if (c.sqlite3_limit(db.pointer, kind, -1) !== value) throw new RuntimeError(`Unsupported SQLite query policy: ${name} ${value}`)
     }
     sqlite.oo1.DB.checkRc(db, c.sqlite3_set_authorizer(db.pointer, (_ctx, action, table, column) => {
-      if (action === c.SQLITE_SELECT || action === c.SQLITE_READ && table === "events") return c.SQLITE_OK
+      if (action === c.SQLITE_SELECT || action === c.SQLITE_RECURSIVE || action === c.SQLITE_READ && table === "events") return c.SQLITE_OK
       if (action === c.SQLITE_FUNCTION && functions.has(String(column).toLowerCase())) return c.SQLITE_OK
       return c.SQLITE_DENY
     }, 0))
@@ -148,7 +154,12 @@ export function bridgeQuery(sqlite: Sqlite, source: LogQuerySource, request: Jou
         sqlite.oo1.DB.checkRc(db, c.sqlite3_prepare_v3(db.pointer, text, -1, 0, statementOut, tailOut))
         const statement = w.peekPtr(statementOut)
         text = w.peekPtr(tailOut)
-        if (statement) { c.sqlite3_finalize(statement); prepared++ }
+        if (statement) {
+          try {
+            if (!c.sqlite3_stmt_readonly(statement)) throw new RuntimeError("Query requires a read-only statement")
+            prepared++
+          } finally { c.sqlite3_finalize(statement) }
+        }
       }
       if (prepared !== 1) throw new RuntimeError("Query requires exactly one statement")
     } finally { w.scopedAllocPop(scope) }
