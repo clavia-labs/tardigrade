@@ -5,6 +5,7 @@
   "r2_buckets": [{ "binding": "WORKSPACE_LIFECYCLE_OBJECTS", "bucket_name": "tardigrade-workspace-lifecycle-test" }],
   "durable_objects": {
     "bindings": [
+      { "name": "LOG_LIFECYCLE", "class_name": "LogLifecycleDO" },
       { "name": "WORKSPACE_LIFECYCLE", "class_name": "WorkspaceLifecycleDO" },
       {
         "name": "EFFECT_SERVICE",
@@ -72,6 +73,7 @@
     {
       "tag": "v1",
       "new_sqlite_classes": [
+        "LogLifecycleDO",
         "WorkspaceLifecycleDO",
         "EffectServiceDO",
         "InputLifecycleDO",
