@@ -45,7 +45,7 @@ interface Statement {
   get(row: unknown[]): unknown[]
   finalize(): void
 }
-interface Database { readonly pointer: number; exec(sql: string): void; prepare(sql: string): Statement; close(): void }
+interface Database { readonly pointer: number; exec(sql: string): void; prepare(sql: string): Statement; selectValues(sql: string): unknown[]; close(): void }
 
 // Sqlite describes the upstream SQLite WASM APIs used by the read-only bridge.
 export interface Sqlite {
@@ -78,7 +78,10 @@ export interface Sqlite {
     xIndexInfo(pointer: number): IndexInfo
     xRowid(output: number, value: number): void
   }
-  readonly oo1: { readonly DB: { new (filename: string, flags: string): Database; checkRc(db: Database, code: number): void } }
+  readonly oo1: {
+    readonly DB: { new (filename: string, flags: string): Database; checkRc(db: Database, code: number): void }
+    readonly Stmt: { wrapHandle(db: Database, pointer: number, takeOwnership: boolean): Statement }
+  }
 }
 
 export type LogQueryEngine = (policy: LogQueryPolicy) => Promise<Sqlite>

@@ -21,6 +21,7 @@ export function readOnlyLogSql(sqlite: Sqlite) {
     ["SELECT date('2026-01-02'), unixepoch('1970-01-01'), typeof(3)", [["2026-01-02", 0, "integer"]]],
     ["WITH RECURSIVE sequence(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM sequence WHERE n < 4) SELECT sum(n) FROM sequence", [[10]]],
     ["WITH selected AS (SELECT position FROM events) SELECT * FROM selected UNION SELECT 2", [[0], [1], [2]]],
+    ["; /* leading ; */ SELECT 'one;two', instr('a;b', ';'); ; -- trailing SELECT 2;\n /* SELECT 3; */", [["one;two", 2]]],
   ]
   for (const [sql, expected] of cases) assert.deepEqual(query(sql).rows, expected, sql)
   assert.equal(query("SELECT length(hex(randomblob(4)))").rows[0]![0], 8)
@@ -32,7 +33,8 @@ export function readOnlyLogSql(sqlite: Sqlite) {
     "PRAGMA query_only=OFF", "PRAGMA writable_schema=ON", "PRAGMA table_info(events)",
     "SELECT * FROM sqlite_schema", "SELECT * FROM pragma_function_list", "SELECT * FROM main.experimental_events",
     "SELECT sqlite_log(1, 'side effect')", "SELECT load_extension('escape')", "SELECT writefile('escape', 'value')",
-    "SELECT 1; SELECT 2", "SELECT 1; PRAGMA query_only=OFF",
+    "SELECT 1; SELECT 2", "SELECT 1; PRAGMA query_only=OFF", "SELECT 1; /* comment */ SELECT 2", "SELECT 1; invalid SQL",
+    "", "; ; -- no statement\n /* still no statement */",
   ]) assert.throws(() => query(sql), Error, sql)
 
   assert.throws(() => query("WITH RECURSIVE sequence(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM sequence) SELECT sum(n) FROM sequence", { ...DEFAULT_LOG_QUERY_POLICY, maxInstructions: 1_000 }), /maxInstructions 1000/)
@@ -41,4 +43,8 @@ export function readOnlyLogSql(sqlite: Sqlite) {
   assert.deepEqual(point.rows, [["orchid meadow"]])
   assert.equal(point.readEvents, 1)
   assert.equal(JSON.stringify(records), original)
+  for (let attempt = 0; attempt < 100; attempt++) {
+    assert.throws(() => query("SELECT position FROM events; SELECT 2"), /exactly one statement/)
+    assert.deepEqual(query("SELECT count(*) FROM events").rows, [[2]])
+  }
 }

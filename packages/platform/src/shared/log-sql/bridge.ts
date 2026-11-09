@@ -61,11 +61,8 @@ export function bridgeQuery(sqlite: Sqlite, source: LogQuerySource, request: Jou
   try {
     sqlite.oo1.DB.checkRc(db, c.sqlite3_db_config(db.pointer, c.SQLITE_DBCONFIG_DEFENSIVE, 1, 0))
     db.exec("PRAGMA trusted_schema=OFF")
-    const functions = new Set<string>()
     // functions requires every overload to carry SQLite's side-effect classification (https://sqlite.org/c3ref/c_deterministic.html).
-    const inventory = db.prepare(`SELECT name FROM pragma_function_list GROUP BY name HAVING min((flags & ${c.SQLITE_INNOCUOUS}) != 0) = 1`)
-    try { while (inventory.step()) functions.add(String(inventory.get([])[0]).toLowerCase()) }
-    finally { inventory.finalize() }
+    const functions = new Set(db.selectValues(`SELECT name FROM pragma_function_list GROUP BY name HAVING min((flags & ${c.SQLITE_INNOCUOUS}) != 0) = 1`).map(name => String(name).toLowerCase()))
     module = new c.sqlite3_module().setupModule({ catchExceptions: true, methods: {
       xCreate: true,
       xConnect: guarded((database, _aux, _argc, _argv, output) => {
@@ -144,26 +141,7 @@ export function bridgeQuery(sqlite: Sqlite, source: LogQuerySource, request: Jou
     }, 0))
     const progressEvery = Math.min(policy.progressEvery, policy.maxInstructions)
     c.sqlite3_progress_handler(db.pointer, progressEvery, () => (instructions += progressEvery) >= policy.maxInstructions ? 1 : 0, 0)
-    const scope = w.scopedAllocPush()
-    let prepared = 0
-    try {
-      let text = w.scopedAllocCString(request.sql)
-      const [statementOut, tailOut] = w.scopedAllocPtr(2)
-      while (text && w.peek8(text)) {
-        w.pokePtr([statementOut, tailOut], 0)
-        sqlite.oo1.DB.checkRc(db, c.sqlite3_prepare_v3(db.pointer, text, -1, 0, statementOut, tailOut))
-        const statement = w.peekPtr(statementOut)
-        text = w.peekPtr(tailOut)
-        if (statement) {
-          try {
-            if (!c.sqlite3_stmt_readonly(statement)) throw new RuntimeError("Query requires a read-only statement")
-            prepared++
-          } finally { c.sqlite3_finalize(statement) }
-        }
-      }
-      if (prepared !== 1) throw new RuntimeError("Query requires exactly one statement")
-    } finally { w.scopedAllocPop(scope) }
-    const statement = db.prepare(request.sql)
+    const statement = prepareQuery(sqlite, db, request.sql)
     const columns: string[] = [], rows: Schema.Json[][] = []
     let more = false, resultBytes = 0
     try {
@@ -191,4 +169,32 @@ export function bridgeQuery(sqlite: Sqlite, source: LogQuerySource, request: Jou
     throw new RuntimeError(`${String(error)} (queryPolicy ${JSON.stringify(policy)})`)
   }
   finally { db.close(); module?.dispose() }
+}
+
+// prepareQuery returns the validated statement with ownership of its native handle (test/scenarios/log-sql.ts, readOnlyLogSql).
+function prepareQuery(sqlite: Sqlite, db: InstanceType<Sqlite["oo1"]["DB"]>, sql: string) {
+  const c = sqlite.capi, w = sqlite.wasm
+  const scope = w.scopedAllocPush()
+  let pointer = 0
+  try {
+    let text = w.scopedAllocCString(sql)
+    const [statementOut, tailOut] = w.scopedAllocPtr(2)
+    while (text && w.peek8(text)) {
+      w.pokePtr([statementOut, tailOut], 0)
+      sqlite.oo1.DB.checkRc(db, c.sqlite3_prepare_v3(db.pointer, text, -1, 0, statementOut, tailOut))
+      const next = w.peekPtr(statementOut)
+      text = w.peekPtr(tailOut)
+      if (!next) continue
+      if (pointer) { c.sqlite3_finalize(next); throw new RuntimeError("Query requires exactly one statement") }
+      pointer = next
+    }
+    if (!pointer) throw new RuntimeError("Query requires exactly one statement")
+    if (!c.sqlite3_stmt_readonly(pointer)) throw new RuntimeError("Query requires a read-only statement")
+    const statement = sqlite.oo1.Stmt.wrapHandle(db, pointer, true)
+    pointer = 0
+    return statement
+  } finally {
+    if (pointer) c.sqlite3_finalize(pointer)
+    w.scopedAllocPop(scope)
+  }
 }
