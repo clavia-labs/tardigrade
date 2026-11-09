@@ -1,3 +1,4 @@
+import { cloudflareLogQueryEngine } from "./log-sql"
 import { DEFAULT_METHOD_HTTP_INSTANCE } from "../shared/method-http"
 export { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 export { executionStreamSse } from "../shared/execution-stream-sse"
@@ -8,7 +9,7 @@ import { SqliteClient } from "@effect/sql-sqlite-do"
 import { CLOUDFLARE_SQL_LIMITS } from "./limits"
 export { CLOUDFLARE_SQL_LIMITS, CLOUDFLARE_SQLITE_MAX_ROW_BYTES, CLOUDFLARE_MAX_CHECKPOINT_CHUNK_BYTES } from "./limits"
 import { sqlJournal, type CheckpointChunkOptions, type JournalRecordOptions } from "../shared/sql-journal"
-export { sqlJournal, DEFAULT_EVENT_INLINE_BYTES, DEFAULT_INVOCATION_INDEX_BATCH_SIZE, type JournalRecordOptions, decodeSqlJournalRecord, DEFAULT_CHECKPOINT_CHUNK_BYTES, DEFAULT_FAMILY_INDEX_BATCH_SIZE, type FamilyIndexOptions, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
+export { DEFAULT_LOG_QUERY_POLICY, type LogQueryPolicy, DEFAULT_LOG_SEARCH_INDEX_POLICY, type LogSearchIndexPolicy, sqlJournal, DEFAULT_EVENT_INLINE_BYTES, DEFAULT_INVOCATION_INDEX_BATCH_SIZE, type JournalRecordOptions, decodeSqlJournalRecord, DEFAULT_CHECKPOINT_CHUNK_BYTES, DEFAULT_FAMILY_INDEX_BATCH_SIZE, type FamilyIndexOptions, type SqlJournalLimits, type CheckpointChunkOptions } from "../shared/sql-journal"
 export { hostRoutes, errorLogFields, DEFAULT_ERROR_LOG_POLICY, type ErrorLogPolicy, type HttpHost } from "../shared/http"
 export { workerLoaderIsolate, DEFAULT_WORKER_LOADER_ISOLATE_POLICY, type WorkerLoaderIsolatePolicy } from "./isolate"
 import { hostRoutes, type ErrorLogPolicy, type HttpHost } from "../shared/http"
@@ -18,11 +19,11 @@ import { HttpRouter } from "effect/http"
 export function cloudflareJournal<Event extends object>(storage: DurableObjectStorage, actor: string, options: CloudflareAlarmOptions & CheckpointChunkOptions & JournalRecordOptions = {}) {
   const alarms = makeRetryingAlarms(storage, options)
   return sqlJournal<Event>({
-    actor,
+    actor, queryEngine: cloudflareLogQueryEngine, logQuery: options.logQuery,
     limits: CLOUDFLARE_SQL_LIMITS,
     checkpointChunkBytes: options.checkpointChunkBytes, eventInlineBytes: options.eventInlineBytes,
     familyIndexBatchSize: options.familyIndexBatchSize,
-    invocationIndexBatchSize: options.invocationIndexBatchSize,
+    invocationIndexBatchSize: options.invocationIndexBatchSize, searchIndex: options.searchIndex,
     layer: SqliteClient.layer({ storage }),
     transaction: work => storage.transactionSync(work),
     flush: alarms.sync,

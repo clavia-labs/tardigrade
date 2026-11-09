@@ -10,3 +10,5 @@ export * from "./alarm"
 export * from "./errors"
 
 export { filesystem, filesystemTools, FilesystemWorkspace, FilesystemWorkspaceError, DEFAULT_FILESYSTEM_WORKSPACE_POLICY, type FilesystemWorkspaceService, type FilesystemWorkspacePolicy } from "./filesystem/index"
+
+export { log, logTools, DEFAULT_LOG_POLICY, type LogPolicy } from "./log/index"

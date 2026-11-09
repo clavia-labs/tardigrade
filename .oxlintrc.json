@@ -7,7 +7,8 @@
     "**/node_modules/**",
     "**/dist/**",
     ".context/**",
-    ".claude/**"
+    ".claude/**",
+    "packages/platform/src/shared/log-sql/vendor/**"
   ],
   "rules": {
     "eslint/require-yield": "off",

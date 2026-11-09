@@ -1,5 +1,6 @@
 import { createRequire } from "node:module"
 import { join } from "node:path"
+import { Effect } from "effect"
 
 const require = createRequire(join(process.cwd(), "package.json"))
 const load = (path: string): Promise<Record<string, unknown>> => import(require.resolve(path))
@@ -22,7 +23,14 @@ for (const [scope, name] of [[core, "defineActor"], [core, "createEventLog"], [c
 if (!("messages" in agent) || "conversation" in agent) throw new Error("Agent message projection exports failed")
 if (typeof agent.createActor !== "object") throw new Error("Missing agent actor definition")
 if (Object.keys(services).length === 0) throw new Error("Agent services entrypoint is empty")
-await load("tardie/platform/bun")
+const bun = await load("tardie/platform/bun")
+const journal = (bun.bunJournal as typeof import("../packages/platform/src/bun").bunJournal)({ filename: ":memory:", actor: "packed-recall" })
+try {
+  journal.append(0, [{ event: { type: "PackedRecall" } }])
+  if (!journal.query) throw new Error("Missing packed log query engine")
+  const result = await Effect.runPromise(journal.query({ sql: "SELECT type FROM events WHERE position=0", from: 0, to: 1, limit: 1 }))
+  if (JSON.stringify(result.rows) !== '[["PackedRecall"]]') throw new Error("Packed SQLite WASM assets failed")
+} finally { await Effect.runPromise(journal.close) }
 await load("tardie/deprecated/bun")
 await load("tardie/deprecated/client")
 await load("tardie/model")

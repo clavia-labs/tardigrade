@@ -8,7 +8,7 @@ import { observeRequest, storeRequest, matchesRequest, sameStoredRequest, DEFAUL
 import { Context, Schema } from "effect"
 import { isDeepStrictEqual } from "node:util"
 import { atom, type Atom } from "../atoms/atom"
-import { EventLog, executionDefect, type AtomReplay, type AtomCheckpointCandidate, type AtomCheckpointCodec } from "../services/event-log"
+import { EventLog, executionDefect, type AtomReplay, type AtomCheckpointCandidate, type AtomCheckpointCodec, eventLogService } from "../services/event-log"
 import { createStore } from "../atoms/store"
 import { createRecordSource, emptyRecordFrame, observeRecord, type RecordSourceFrame } from "./event-source"
 import { journalHistory, memoryHistory, type ReplayHistory } from "./history"
@@ -340,7 +340,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     const retry = (ref: EffectRef, phase = "execution") => phase === "execution" ? activeOperations.get(effectKey(ref))?.execution.retry : activeOperations.get(effectKey(ref))?.cleanup?.retry
     const effect = (ref: EffectRef) => activeOperations.get(effectKey(ref))
-    const store = createStore(Context.make(EventLog, {
+    const store = createStore(Context.make(EventLog, eventLogService({
       replay: atom(get => { get(source.records); return observations() }),
       events: atom(get => {
         get(source.records)
@@ -360,7 +360,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       operations: () => [...activeOperations.values()].map(operation => ({ ...operation, request: Object.freeze(observeRequest(operation.request)) })),
       defect: () => defect,
       promise: ref => promiseOf(effectKey(ref)),
-    }))
+    }, node => store.get(node))))
     function stateSeed() {
       if (initialState) return initialState.seed
       const prefix = seed ? [] : ranges(offset + records.length).slice(0, 2)
