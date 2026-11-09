@@ -43,13 +43,50 @@ export interface LibraryRpc extends Rpc.AnyWithProps {
   readonly errorSchema: Schema.Top & { readonly EncodingServices: never }
 }
 
-// defineLibrary names an Effect RPC group and derives its model-facing method contracts.
-export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definition: {
+export interface LibraryDefinition<Rpcs extends readonly LibraryRpc[]> {
   readonly name: string
   readonly description: string
   readonly methods: Rpcs
   readonly toolNames?: Readonly<Partial<Record<Rpcs[number]["_tag"], string>>>
-}): Library<Rpcs[number]> {
+}
+
+export type LibraryServiceShape<Rpcs extends Rpc.Any, Requirements = never> = {
+  readonly [Current in Rpcs as Current["_tag"]]: (
+    payload: Rpc.Payload<Current>,
+    options?: Parameters<Rpc.ToHandlerFn<Current>>[1],
+  ) => Effect.Effect<Rpc.Success<Current>, Rpc.Error<Current>, Requirements>
+}
+
+export type LibraryService<Self, Name extends string, Rpcs extends Rpc.Any, Requirements = never> =
+  & Context.ServiceClass<Self, Name, LibraryServiceShape<Rpcs, Requirements>>
+  & LibraryImplementation<Self | Requirements | EffectExecution>
+  & { readonly library: LibraryContract & { readonly methods: RpcGroup.RpcGroup<Rpcs> } }
+
+// Library supplies service tags whose RPC contracts also define agent tools (platform/test/bun/library-service.test.ts).
+export const Library = {
+  Service: <Self, Requirements = never>() => <const Name extends string, const Rpcs extends readonly LibraryRpc[]>(
+    key: Name,
+    definition: Omit<LibraryDefinition<Rpcs>, "name"> & { readonly name?: string },
+  ): LibraryService<Self, Name, Rpcs[number], Requirements> => {
+    const library = defineLibrary({ ...definition, name: definition.name ?? key })
+    const service = Context.Service<Self, LibraryServiceShape<Rpcs[number], Requirements>>()(key)
+    const handlers = Object.fromEntries(definition.methods.map(rpc => [rpc._tag, (
+      payload: unknown,
+      options: Parameters<Rpc.ToHandlerFn<Rpcs[number]>>[1],
+    ) => Effect.flatMap(service, value => {
+      const handler = value[rpc._tag as keyof typeof value] as (
+        payload: unknown,
+        options: Parameters<Rpc.ToHandlerFn<Rpcs[number]>>[1],
+      ) => Effect.Effect<unknown, Rpc.Error<Rpcs[number]>, Requirements>
+      return handler.call(value, payload, options)
+    })])) as unknown as RpcGroup.HandlersFrom<Rpcs[number]>
+    const implementation = library.implement(handlers) as LibraryImplementation<Self | Requirements | EffectExecution>
+    return Object.assign(service, implementation, { library })
+  },
+}
+
+// defineLibrary names an Effect RPC group and derives its model-facing method contracts.
+export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definition: LibraryDefinition<Rpcs>): Library<Rpcs[number]> {
   if (!/^[A-Za-z_$][\w$]*$/.test(definition.name)) throw new Error(`Invalid library name: ${definition.name}`)
   const names = definition.methods.map(method => method._tag)
   if (new Set(names).size !== names.length) throw new Error(`Duplicate method in ${definition.name}`)
