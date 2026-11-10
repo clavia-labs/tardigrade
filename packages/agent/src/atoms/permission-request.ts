@@ -12,7 +12,7 @@ type PermissionView<R> = ActorOutput<typeof PermissionState.Type & {
 export const DEFAULT_PERMISSION_POLICY: typeof PermissionPolicy.Type = { default: "ask", actions: {} }
 
 // permissions records its initial policy and uses logged updates for subsequent calls.
-export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: { readonly policy?: typeof PermissionPolicy.Type; readonly tools?: Atom<ActorOutput<{ readonly specs: readonly ToolSpec[] }, unknown, unknown>> } = {}): Atom<PermissionView<ActService<"agent.permission.request">>> {
+export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: { readonly policy?: typeof PermissionPolicy.Type; readonly tools?: Atom<ActorOutput<{ readonly execution?: {readonly concurrency: number} | undefined; readonly specs: readonly ToolSpec[] }, unknown, unknown>> } = {}): Atom<PermissionView<ActService<"agent.permission.request">>> {
   const initialPolicy = Schema.decodeSync(PermissionPolicy)(options.policy ?? DEFAULT_PERMISSION_POLICY)
   const request = requests(AskPermission.request)
   return effectAtom(get => {
@@ -21,7 +21,9 @@ export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: 
       view: { ...state, position: "configuring" },
       acts: {}, events: { permission: eventValue({ type: "PermissionConfigured", policy: initialPolicy } satisfies Event) },
     }
-    const call = get(pendingTools).pending
+    const pending = get(pendingTools)
+    const concurrent = options.tools && get(options.tools).view.execution
+    const call = concurrent ? pending.queue.find(item => !item.running && !state.decisions.some(value => value.action === "tool.execute" && value.requestId === item.call.callId))?.call : pending.pending
     if (!call || state.decisions.some(value => value.action === "tool.execute" && value.requestId === call.callId)) return { view: { ...state, position: "ready" }, events: {}, acts: {} }
     const hints = options.tools ? get(options.tools).view.specs.find(tool => tool.name === call.name)?.annotations : undefined
     const metadata = hints?.readOnlyHint === undefined ? undefined : { readOnly: hints.readOnlyHint }
@@ -34,6 +36,9 @@ export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: 
         type: "PermissionResolved", action: "tool.execute", requestId: call.callId, decision: { allowed: mode === "allow", reason: `Permission policy: ${mode}` },
       } satisfies Event) },
     }
+    // Interactive requests retain the sequential permission origin. Automatic
+    // policy decisions can authorize the bounded window while its head executes.
+    if (concurrent && call.callId !== pending.pending?.callId) return {view: {...state, position: "waiting"}, events: {}, acts: {}}
     return {
       view: { ...state, position: "checking" },
       events: {}, acts: { permission: request(JSON.stringify(["tool.execute", call.callId]), {

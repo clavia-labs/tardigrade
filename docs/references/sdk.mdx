@@ -83,6 +83,9 @@ const notesLive = notes.implement({
 
 `MethodExecution` accepts `"foreground"` or `"background"`; `DEFAULT_METHOD_EXECUTION` is `"foreground"`. Foreground calls wait for a result and may perform asynchronous I/O. Background calls return durable handles. For handlers that submit work to another executor, mark the RPC as background, declare `ExecutionHandle` as its success schema, and pass `{ submit: ["methodName"] }` to `implement`. Optional cancellation handlers use the same method names. Code mode accepts foreground methods.
 
+`withToolExecution(tools, { concurrency: 4 })` opts into concurrent foreground calls within each model response. The default scheduler stays sequential. The limit bounds both running calls and retained results awaiting ordered delivery. A `group(call)` callback can assign a key and its own positive integer limit; returning `undefined` makes that call an exclusive fence. Calls after a fence wait for it. Results are journaled on completion and returned to the model in its original call order. Native cancellation stops every admitted effect. Reopening a thread executes only unfinished effects. Retain the selected execution policy with the actor's execution configuration when deploying a changed graph.
+
+
 Choose how to expose the configured libraries:
 
 ```ts

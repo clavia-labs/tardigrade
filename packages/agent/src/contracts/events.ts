@@ -55,11 +55,15 @@ export type BudgetResolved = typeof BudgetResolved.Type
 export const PermissionResolved = Schema.Struct({ type: Schema.Literal("PermissionResolved"), action: PermissionAction, requestId: Schema.NonEmptyString, decision: Decision })
 export type PermissionResolved = typeof PermissionResolved.Type
 
-export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), callId: Schema.String, codeMode: Schema.optionalKey(Schema.NonEmptyString), counted: Schema.Boolean })
+export const ToolCalled = Schema.Struct({ type: Schema.Literal("ToolCalled"), callId: Schema.String, codeMode: Schema.optionalKey(Schema.NonEmptyString), counted: Schema.Boolean, admitted: Schema.optionalKey(Schema.Struct({ value: Schema.optionalKey(Schema.Json), error: Schema.optionalKey(Schema.String) })) })
 export type ToolCalled = typeof ToolCalled.Type
 
 export const ToolReturned = toolReturnedVersions.schema
 export type ToolReturned = typeof ToolReturned.Type
+
+// A foreground result is durable before its ordered delivery to the model.
+export const ToolCompleted = Schema.Struct({ type: Schema.Literal("ToolCompleted"), result: ToolReturned })
+export type ToolCompleted = typeof ToolCompleted.Type
 
 // toolReturnedOutput adapts persisted execution results to the current event payload.
 export function toolReturnedOutput(value: Schema.Json) {
@@ -123,6 +127,7 @@ export const Event = Schema.Union([
   PermissionResolved,
   ToolCalled,
   ToolReturned,
+  ToolCompleted,
   TurnRequested,
   ActorRequestReceived,
   ActorReplyReceived,
