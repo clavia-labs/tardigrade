@@ -1,3 +1,5 @@
+import Libraries, { frontmatter as librariesFrontmatter } from "@docs/libraries.mdx"
+import librariesMarkdown from "@docs/libraries.mdx?doc-source"
 import BuildAnAgent, { frontmatter as buildAnAgentFrontmatter } from "@docs/guides/build-an-agent.mdx"
 import buildAnAgentMarkdown from "@docs/guides/build-an-agent.mdx?doc-source"
 import Atoms, { frontmatter as atomsFrontmatter } from "@docs/concepts/atoms.mdx"
@@ -69,6 +71,7 @@ const modules: ReadonlyArray<DocModule> = [
   { default: Atoms, frontmatter: atomsFrontmatter, markdown: atomsMarkdown, source: "concepts/atoms.mdx" },
   { default: NotesIndex, frontmatter: notesIndexFrontmatter, markdown: notesIndexMarkdown, source: "notes/index.mdx" },
   { default: Agent, frontmatter: agentFrontmatter, markdown: agentMarkdown, source: "agent.mdx" },
+  { default: Libraries, frontmatter: librariesFrontmatter, markdown: librariesMarkdown, source: "libraries.mdx" },
   {
     default: FormsAndShadows,
     frontmatter: formsAndShadowsNote,

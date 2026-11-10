@@ -1,0 +1,179 @@
+---
+title: Libraries
+articleClass: libraries-article
+description: Declare agent capabilities as Effect services and satisfy them through layers.
+route: /docs/libraries
+section: Libraries
+sectionOrder: 2.25
+order: 1
+---
+
+A library is an Effect service with agent metadata. Libraries give agents pluggable capabilities, declared through the type system. An agent declares the capabilities it requires, and its host supplies layers that implement them.
+
+<Tip title="Service-library prototype">
+
+`Library.Service` and `agentServices` are available in the [service-library prototype](https://github.com/clavia-labs/tardigrade/pull/853). The workspace provider examples illustrate the proposed unified `Workspace` contract; the built-in providers expose `FilesystemWorkspace` in the prototype.
+
+</Tip>
+
+The interface of a library extends Effect's `Context.Service` with a name, description and tool specifications for an agent.
+
+```ts
+import type { Context } from "effect"
+import type { ToolSpec } from "tardie/libraries"
+
+interface Library<Id, Shape> extends Context.Service<Id, Shape> {
+  readonly library: {
+    readonly name: string
+    readonly description: string
+    readonly specs: readonly ToolSpec[]
+  }
+}
+```
+
+## Declare a capability
+
+An agent with a shell and file access can serve as a general purpose assistant. A workspace can implement those capabilities using a virtual filesystem or a container. The agent depends on the same interface in either case.
+
+A library describes its methods through input and output schemas, tool descriptions, and annotations. These contracts tell the model how to use the capability and let the runtime validate calls.
+
+In `workspace.ts`, define `Workspace` as an annotated Effect service exposing `bash` and `read`. The agent declares this capability through `tools: [Workspace]`. This selects the methods exposed to the model and retains the typed library selection for host wiring.
+
+```ts title="workspace.ts"
+import { Schema } from "effect"
+import { Rpc } from "effect/rpc"
+import { Library, MethodDescription, MethodHints, ToolResult } from "tardie/libraries"
+
+export class Workspace extends Library.Service<Workspace>()("Workspace", {
+  description: "Files and a shell in the agent's workspace",
+  toolNames: { bash: "bash", read: "read" },
+  methods: [
+    Rpc.make("bash", {
+      payload: Schema.Struct({ command: Schema.String }),
+      success: Schema.String,
+      error: Schema.String,
+    }).annotate(MethodDescription, "Run a shell command in the workspace"),
+    Rpc.make("read", {
+      payload: Schema.Struct({ path: Schema.String }),
+      success: ToolResult,
+      error: Schema.String,
+    })
+      .annotate(MethodDescription, "Read a file from the workspace")
+      .annotate(MethodHints, { readOnlyHint: true, openWorldHint: false }),
+  ],
+}) {}
+```
+
+## Declare an agent's requirements
+
+`tools: [Workspace]` declares the capability the agent needs and selects its model-visible methods. The host derives the adapters from this selection, so it supplies implementations without repeating the library list.
+
+```ts title="agent.ts"
+import { agent } from "tardie/agent"
+import { Workspace } from "./workspace"
+
+export const assistant = agent({
+  name: "researcher",
+  system: "Use the workspace to read files and run shell commands.",
+  tools: [Workspace],
+})
+```
+
+## Supply an implementation
+
+A service tag identifies a capability and its interface. A layer constructs an implementation of that service. Effect tracks the services a program requires in its third type parameter and resolves them from the supplied context.
+
+```ts
+Effect<Success, Error, Requirements>
+```
+
+`Workspace` is also a dependency that ordinary Effect programs can yield. Its methods take the same object-shaped arguments declared by the RPC schemas.
+
+```ts
+import { Effect } from "effect"
+import { Workspace } from "./workspace"
+
+export const listFiles = Effect.gen(function* () {
+  const workspace = yield* Workspace
+  return yield* workspace.bash({ command: "ls" })
+})
+```
+
+A backend implements `Workspace` through a layer. The provider examples below use the proposed unified `Workspace` contract: both the virtual filesystem and container providers import the service tag declared in `workspace.ts` and return a `Layer` that provides it. The backend implements `bash({ command })` and `read({ path })` with the declared results and errors.
+
+A library implementation can also depend on other services. Those dependencies remain requirements until the host supplies their layers. The agent can use the same capability with different backend implementations.
+
+<LibraryLayersDiagram />
+
+## Run with a virtual workspace
+
+A lightweight agent can use a SQLite database as a virtual filesystem inside a Durable Object. The virtual workspace runs shell commands through `just-bash`, a JavaScript implementation of Bash. It supports built-in commands without a container or arbitrary native binaries. See the [Cloudflare platform guide](/docs/platforms/cloudflare) for Worker bindings and deployment.
+
+The host supplies implementations through its `services` callback. `agentServices(assistant)` derives the tool adapters from the agent's declared libraries and preserves their implementation requirements. `Layer.provideMerge(...)` supplies the backend and keeps the model services available to the runtime. The host's types reject a layer with an unmet library requirement. Here, `modelServices(env)` represents the application's configured model layers, and `assistant` is the agent defined above.
+
+```ts title="worker.ts"
+import { Layer } from "effect"
+import { actorContext } from "tardie/agent"
+import { agentServices } from "tardie/agent/services"
+import { createActorWorker, virtualWorkspace } from "tardie/platform/cloudflare"
+import { assistant } from "./agent"
+import { modelServices, type Env } from "./model-services"
+
+const worker = createActorWorker({
+  actor: assistant,
+  actorContext,
+  services: (env: Env, _thread, _runtime, storage) => agentServices(assistant).pipe(
+    Layer.provideMerge(Layer.mergeAll(
+      modelServices(env),
+      virtualWorkspace(storage, {
+        name: "agent-workspace",
+        policy: { maxFileBytes: 8 * 1024 * 1024 },
+      }),
+    )),
+  ),
+})
+
+export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
+export default { fetch: worker.fetch }
+```
+
+## Run with a container
+
+A coding workload can use a full container with native binaries. The host can supply a [Boxd](https://boxd.sh) workspace layer while the agent keeps the same declaration.
+
+The same host can supply a Boxd workspace instead. `client` is the application's configured Boxd client; `workspaceObjectName(thread)` derives a workspace name from the thread coordinate.
+
+```ts title="worker.ts"
+import { Layer } from "effect"
+import { actorContext } from "tardie/agent"
+import { agentServices } from "tardie/agent/services"
+import { boxdWorkspace } from "tardie/platform/boxd"
+import { createActorWorker, workspaceObjectName } from "tardie/platform/cloudflare"
+import { assistant } from "./agent"
+import { client } from "./boxd-client"
+import { modelServices, type Env } from "./model-services"
+
+const worker = createActorWorker({
+  actor: assistant,
+  actorContext,
+  services: (env: Env, thread) => agentServices(assistant).pipe(
+    Layer.provideMerge(Layer.mergeAll(
+      modelServices(env),
+      boxdWorkspace({
+        client,
+        name: workspaceObjectName(thread),
+        directory: "/home/boxd/workspace",
+        network: { mode: "none" },
+        release: "retain",
+      }),
+    )),
+  ),
+})
+
+export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
+export default { fetch: worker.fetch }
+```
+
+The agent declaration is shared by both hosts. `agentServices(assistant)` derives its tool adapters, and the host supplies the workspace and model implementations. Ordinary Effect programs can depend on the same `Workspace` service. See the [Agent guide](/docs/agent) for model configuration and messaging.

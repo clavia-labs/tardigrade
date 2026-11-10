@@ -1,3 +1,4 @@
+import { LibraryLayersDiagram } from "../diagrams/LibraryLayersDiagram"
 import { WorkspaceDeploymentDiagram } from "../diagrams/WorkspaceDeploymentDiagram"
 import { AgentServicesDiagram } from "../diagrams/AgentServicesDiagram"
 import { NotesList } from "./NotesList"
@@ -46,6 +47,7 @@ import { Link, Math, Table, Tip } from "./elements"
 import { InlineMine } from "./icons"
 
 export const mdxComponents = {
+  LibraryLayersDiagram,
   NotesList,
   AuthorAvatar, Dialogue, Socrates, You, AgentViewDiagram, CaveDiagram, FlyingTardie, MergeDiagram, RussianDollDiagram, ShadowDiagram,
   EventLogWorldDiagram,
