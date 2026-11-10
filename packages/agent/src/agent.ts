@@ -11,13 +11,13 @@ import { tools as libraryTools, withPermissions, withBudget } from "./atoms/tool
 import { pendingTools } from "./atoms/durable/tools"
 import type { LibrarySource } from "@clavia/tardigrade-libraries/types"
 
-export interface AgentOptions<Methods extends ActorMethods<object> = {}> {
+export interface AgentOptions<Methods extends ActorMethods<object> = {}, Libraries extends readonly LibrarySource[] | undefined = readonly LibrarySource[] | undefined> {
   /** name identifies the actor for hosts and clients. */
   readonly name: string
   /** system supplies the model prompt. */
   readonly system: string
   /** tools selects libraries; omission offers every library the host supplies. */
-  readonly tools?: readonly LibrarySource[]
+  readonly tools?: Libraries
   /** compaction configures history summarization and retention. */
   readonly compaction?: CompactionOptions
   /** methods supplies custom actor endpoints. */
@@ -25,17 +25,21 @@ export interface AgentOptions<Methods extends ActorMethods<object> = {}> {
 }
 
 // agent composes message history, compaction, tools, and inference into an actor.
-export const agent = <const Methods extends ActorMethods<object> = {}>(options: AgentOptions<Methods>) => defineActor(options.name, Effect.gen(function* () {
-  const system = systemPrompt(options.system)
-  const tools = yield* libraryTools(options.tools)
-  const context = yield* compact(messages, options.compaction)
-  const inference = yield* infer(atom(get => ({
-    system: get(system),
-    tools: get(tools),
-    context: get(context),
-  })))
-  return { atom: inference, methods: { ...agentMethods, ...options.methods } as typeof agentMethods & Methods }
-}))
+export const agent = <const Methods extends ActorMethods<object> = {}, const Libraries extends readonly LibrarySource[] | undefined = readonly LibrarySource[] | undefined>(options: AgentOptions<Methods, Libraries> & (undefined extends Libraries ? {} : { readonly tools: Libraries })) => {
+  const libraries = options.tools as Libraries
+  const definition = defineActor(options.name, Effect.gen(function* () {
+    const system = systemPrompt(options.system)
+    const tools = yield* libraryTools(libraries)
+    const context = yield* compact(messages, options.compaction)
+    const inference = yield* infer(atom(get => ({
+      system: get(system),
+      tools: get(tools),
+      context: get(context),
+    })))
+    return { atom: inference, methods: { ...agentMethods, ...options.methods } as typeof agentMethods & Methods }
+  }))
+  return { ...definition, libraries }
+}
 
 export const createActor = defineActor("tardie", Effect.gen(function* () {
   const available = yield* libraryTools()

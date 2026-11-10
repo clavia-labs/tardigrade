@@ -9,11 +9,14 @@ import { tools } from "@clavia/tardigrade-agent/atoms/tools"
 import { codeMode } from "@clavia/tardigrade-agent/atoms/code-mode"
 import { ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
 import { Event } from "@clavia/tardigrade-agent/contracts/code-mode"
-import { toolActs } from "@clavia/tardigrade-agent/services/tools"
+import { agentServices, toolActs } from "@clavia/tardigrade-agent/services/tools"
 import { codeModeActs } from "@clavia/tardigrade-agent/services/code-mode"
 import { defineActor } from "@clavia/tardigrade-core"
-import { bunIsolate, bunJournal, virtualWorkspace } from "../../src/bun"
+import { createBunHost, bunIsolate, bunJournal, virtualWorkspace } from "../../src/bun"
 import { Notebook, notebookLayer } from "../fixtures/library-service"
+import { agent } from "@clavia/tardigrade-agent/agent"
+import { actorContext } from "@clavia/tardigrade-agent/actor/context"
+import { contentModelServices } from "../fixtures/agent"
 import { createTestStore } from "../properties/runtime/store"
 
 test("a library service shares its SQLite backend with ordinary Effects and durable agent tools", async () => {
@@ -82,4 +85,46 @@ test("a library service runs through a real code isolate with its supplied layer
     const output = JSON.parse(result.content.filter(part => part.type === "text").map(part => part.text).join("\n")) as { result: string }
     assert.equal(output.result, "One service, two callers.")
   } finally { await Effect.runPromise(store.close) }
+})
+
+test("a host derives agent tools from its requirements and recovers their SQLite writes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tardie-agent-requirements-"))
+  const assistant = agent({ name: "researcher", system: "Record research notes.", tools: [Notebook] })
+  const backend = notebookLayer(virtualWorkspace({ name: "notes", filename: join(directory, "workspace.sqlite") }))
+  let modelCalls = 0
+  const models = contentModelServices(() => { modelCalls++ }, { toolCalls: [
+    { id: "write", name: "write_note", params: { path: "research.md", text: "Written through the agent's declared capability." } },
+  ] })
+  const open = () => Effect.runPromise(createBunHost({
+    actor: assistant, actorContext, storage: join(directory, "agent"),
+    services: () => agentServices(assistant).pipe(Layer.provideMerge(Layer.merge(models, backend))),
+  }))
+  let host: Awaited<ReturnType<typeof open>> | undefined
+  try {
+    host = await open()
+    const thread = await Effect.runPromise(host.allocateRootThread({ instance: "main", name: "research" }))
+    await Effect.runPromise(thread.invoke("message", { text: "Record a finding." }, { id: "first" }))
+    await Effect.runPromise(thread.wait)
+    assert.deepEqual(await Effect.runPromise(thread.methodState("message", "first")), { status: "completed", output: { text: "ok" } })
+    const records = await Effect.runPromise(thread.records())
+    const writes = records.filter(record => record.event.type === "ToolReturned" && record.event.tool?.name === "write_note")
+    assert.equal(writes.length, 1)
+    assert.ok(writes[0]?.event.type === "ToolReturned" && writes[0].event.error === null)
+    assert.equal(await Effect.runPromise(Notebook.use(notes => notes.read({ path: "research.md" })).pipe(Effect.provide(backend))), "Written through the agent's declared capability.")
+    const callsBeforeReopen = modelCalls
+    await Effect.runPromise(host.close)
+    host = await open()
+    const reopened = await Effect.runPromise(host.getThread(thread.coordinate))
+    assert.ok(reopened)
+    await Effect.runPromise(reopened.wait)
+    assert.equal(modelCalls, callsBeforeReopen)
+    assert.deepEqual(await Effect.runPromise(reopened.methodState("message", "first")), { status: "completed", output: { text: "ok" } })
+    await Effect.runPromise(reopened.invoke("message", { text: "Continue." }, { id: "second" }))
+    await Effect.runPromise(reopened.wait)
+    assert.deepEqual(await Effect.runPromise(reopened.methodState("message", "second")), { status: "completed", output: { text: "ok" } })
+    assert.equal(modelCalls, callsBeforeReopen + 1)
+  } finally {
+    if (host) await Effect.runPromise(host.close)
+    await rm(directory, { recursive: true, force: true })
+  }
 })
