@@ -39,6 +39,8 @@ A library describes its methods through input and output schemas, tool descripti
 
 In `workspace.ts`, define `Workspace` as an annotated Effect service exposing `bash` and `read`. The agent declares this capability through `tools: [Workspace]`. This selects the methods exposed to the model and retains the typed library selection for host wiring.
 
+The RPC declarations supply the method names. `toolNames` is an optional override for model-visible names, such as `{ bash: "run_shell" }`. Without an override, the prototype qualifies tool names with the library name, producing `Workspace__bash` and `Workspace__read`.
+
 ```ts title="workspace.ts"
 import { Schema } from "effect"
 import { Rpc } from "effect/rpc"
@@ -46,7 +48,6 @@ import { Library, MethodDescription, MethodHints, ToolResult } from "tardie/libr
 
 export class Workspace extends Library.Service<Workspace>()("Workspace", {
   description: "Files and a shell in the agent's workspace",
-  toolNames: { bash: "bash", read: "read" },
   methods: [
     Rpc.make("bash", {
       payload: Schema.Struct({ command: Schema.String }),
