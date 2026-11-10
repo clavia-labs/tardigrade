@@ -19,3 +19,8 @@ export function toolActs<const L extends readonly LibraryImplementation<unknown>
     )
   }, { cancel: (input, context) => registry.get(input.call.name)?.cancel?.(context.handle, input.call) ?? Effect.void }))
 }
+
+// agentServices derives tool adapters and their requirements from the agent selection (platform/test/bun/library-service.test.ts).
+export function agentServices<const Libraries extends readonly LibraryImplementation<unknown>[]>(definition: { readonly libraries: Libraries }) {
+  return toolActs(definition.libraries)
+}

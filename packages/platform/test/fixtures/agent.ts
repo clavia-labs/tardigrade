@@ -56,7 +56,7 @@ const lock = modelLockService(modelLockOf({
   providers: { fixture: { protocol: "openai-chat-completions", baseUrl: "https://fixture.invalid", env: [] } },
   models: [{ provider: "fixture", model_id: "test", contextWindowTokens: 4096 }],
 }), { allow: "*", default: model })
-export const contentServices = (observe: (prompt: Prompt.Prompt) => void, options: {
+export const contentModelServices = (observe: (prompt: Prompt.Prompt) => void, options: {
   readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined
   readonly request?: RequestOptions
   readonly libraries?: readonly LibraryImplementation<EffectExecution>[]
@@ -91,7 +91,11 @@ export const contentServices = (observe: (prompt: Prompt.Prompt) => void, option
   return Layer.mergeAll(
     modelInfo.pipe(Layer.provide(lockLayer)),
     modelActs.pipe(Layer.provide(modelLayer)),
-    toolActs(options.libraries ?? []),
     AskPermission.layer(() => options.libraries ? Effect.succeed({ allowed: true, reason: "Fixture tool permission" }) : Effect.die("No tool permission should be requested")),
   )
 }
+
+export const contentServices = (...args: Parameters<typeof contentModelServices>) => Layer.merge(
+  contentModelServices(...args),
+  toolActs(args[1]?.libraries ?? []),
+)
