@@ -11,6 +11,7 @@
     "./workspace": "./src/shared/workspace/index.ts"
   },
   "dependencies": {
+    "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-cloudflare": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
@@ -28,7 +29,6 @@
   "devDependencies": {
     "@clavia/tardigrade-client": "workspace:*",
     "@cfworker/json-schema": "^4.1.1",
-    "@clavia/tardigrade-agent": "workspace:*",
     "@cloudflare/vitest-plugin": "^1.4.1",
     "@cloudflare/workers-types": "5.20261102.1",
     "fast-check": "^4.9.0",

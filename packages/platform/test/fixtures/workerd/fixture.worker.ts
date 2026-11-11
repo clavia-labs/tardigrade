@@ -122,3 +122,5 @@ export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByNam
     }
   }
 }
+
+export { HostLayerActorDO, HostLayerThreadDO } from "./host-layer.worker"

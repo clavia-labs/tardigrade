@@ -66,6 +66,14 @@
       {
         "name": "CHECKPOINT_MIXED_THREADS",
         "class_name": "MixedCheckpointThreadDO"
+      },
+      {
+        "name": "HOST_LAYER_ACTORS",
+        "class_name": "HostLayerActorDO"
+      },
+      {
+        "name": "HOST_LAYER_THREADS",
+        "class_name": "HostLayerThreadDO"
       }
     ]
   },
@@ -89,7 +97,9 @@
         "FamilyCheckpointActorDO",
         "FamilyCheckpointThreadDO",
         "MixedCheckpointActorDO",
-        "MixedCheckpointThreadDO"
+        "MixedCheckpointThreadDO",
+        "HostLayerActorDO",
+        "HostLayerThreadDO"
       ]
     }
   ],
@@ -100,5 +110,8 @@
   ],
   "compatibility_flags": [
     "nodejs_compat"
-  ]
+  ],
+  "vars": {
+    "LAYER_BINDING": "host-provided"
+  }
 }
