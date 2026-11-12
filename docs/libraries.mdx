@@ -1,5 +1,6 @@
 ---
 title: Libraries
+hideDescription: true
 articleClass: libraries-article
 description: Declare agent capabilities as Effect services and satisfy them through layers.
 route: /docs/libraries
@@ -9,12 +10,6 @@ order: 1
 ---
 
 In Tardigrade, a library adapts an Effect `Service` with agent metadata. You can think of them as pluggable capabilities for your agents, declared using the type system. The following example walks you through what this means using the `Workspace` library.
-
-<Tip title="Prototype API">
-
-`Library.from` and `host` are part of the [service-library prototype](https://github.com/clavia-labs/tardigrade/pull/855). The provider examples below show the proposed unified `Workspace` contract. The built-in providers expose `FilesystemWorkspace` in the prototype; supplying the custom service directly requires their interface migration.
-
-</Tip>
 
 ## Workspace
 
@@ -83,6 +78,8 @@ export const assistant = agent({
 <LibraryLayersDiagram />
 
 ## Implement using layers
+
+The provider examples below assume both backends implement `Workspace` directly. The built-in providers currently expose `FilesystemWorkspace`.
 
 Services define the contracts, libraries add agent metadata, and layers describe how to construct implementations. The same capability can be provided in different ways.
 
