@@ -50,23 +50,18 @@ export interface LibraryDefinition<Rpcs extends readonly LibraryRpc[]> {
   readonly toolNames?: Readonly<Partial<Record<Rpcs[number]["_tag"], string>>>
 }
 
-export type LibraryServiceShape<Rpcs extends Rpc.Any, Requirements = never> = {
+type ServiceMethods<Rpcs extends Rpc.Any> = {
   readonly [Current in Rpcs as Current["_tag"]]: (
     payload: Rpc.Payload<Current>,
     options?: Parameters<Rpc.ToHandlerFn<Current>>[1],
-  ) => Effect.Effect<Rpc.Success<Current>, Rpc.Error<Current>, Requirements>
+  ) => Effect.Effect<Rpc.Success<Current>, Rpc.Error<Current>, unknown>
 }
-
-export type LibraryService<Self, Name extends string, Rpcs extends Rpc.Any, Requirements = never> =
-  & Context.ServiceClass<Self, Name, LibraryServiceShape<Rpcs, Requirements>>
-  & LibraryImplementation<Self | Requirements | EffectExecution>
-  & { readonly library: LibraryContract & { readonly methods: RpcGroup.RpcGroup<Rpcs> } }
 
 type ServiceMethodRequirements<Shape, Names extends PropertyKey> = Names extends keyof Shape
   ? Shape[Names] extends (...args: never[]) => Effect.Effect<unknown, unknown, infer Requirements> ? Requirements : never
   : never
 
-function fromService<Self, const Rpcs extends readonly LibraryRpc[], Shape extends LibraryServiceShape<Rpcs[number], unknown>>(
+function fromService<Self, const Rpcs extends readonly LibraryRpc[], Shape extends ServiceMethods<Rpcs[number]>>(
   service: Context.Service<Self, Shape>,
   definition: LibraryDefinition<Rpcs>,
 ) {
@@ -87,16 +82,7 @@ function fromService<Self, const Rpcs extends readonly LibraryRpc[], Shape exten
 }
 
 // Library adapts Effect service methods to agent tools without changing the service tag (platform/test/bun/library-service.test.ts).
-export const Library = {
-  from: fromService,
-  Service: <Self, Requirements = never>() => <const Name extends string, const Rpcs extends readonly LibraryRpc[]>(
-    key: Name,
-    definition: Omit<LibraryDefinition<Rpcs>, "name"> & { readonly name?: string },
-  ): LibraryService<Self, Name, Rpcs[number], Requirements> => {
-    const service = Context.Service<Self, LibraryServiceShape<Rpcs[number], Requirements>>()(key)
-    return Object.assign(service, fromService(service, { ...definition, name: definition.name ?? key })) as LibraryService<Self, Name, Rpcs[number], Requirements>
-  },
-}
+export const Library = { from: fromService }
 
 // defineLibrary names an Effect RPC group and derives its model-facing method contracts.
 export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definition: LibraryDefinition<Rpcs>): Library<Rpcs[number]> {
