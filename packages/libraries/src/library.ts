@@ -62,26 +62,39 @@ export type LibraryService<Self, Name extends string, Rpcs extends Rpc.Any, Requ
   & LibraryImplementation<Self | Requirements | EffectExecution>
   & { readonly library: LibraryContract & { readonly methods: RpcGroup.RpcGroup<Rpcs> } }
 
-// Library supplies service tags whose RPC contracts also define agent tools (platform/test/bun/library-service.test.ts).
+type ServiceMethodRequirements<Shape, Names extends PropertyKey> = Names extends keyof Shape
+  ? Shape[Names] extends (...args: never[]) => Effect.Effect<unknown, unknown, infer Requirements> ? Requirements : never
+  : never
+
+function fromService<Self, const Rpcs extends readonly LibraryRpc[], Shape extends LibraryServiceShape<Rpcs[number], unknown>>(
+  service: Context.Service<Self, Shape>,
+  definition: LibraryDefinition<Rpcs>,
+) {
+  type Requirements = ServiceMethodRequirements<Shape, Rpcs[number]["_tag"]>
+  const library = defineLibrary(definition)
+  const handlers = Object.fromEntries(definition.methods.map(rpc => [rpc._tag, (
+    payload: unknown,
+    options: Parameters<Rpc.ToHandlerFn<Rpcs[number]>>[1],
+  ) => Effect.flatMap(service, value => {
+    const handler = value[rpc._tag as keyof typeof value] as (
+      payload: unknown,
+      options: Parameters<Rpc.ToHandlerFn<Rpcs[number]>>[1],
+    ) => Effect.Effect<unknown, Rpc.Error<Rpcs[number]>, Requirements>
+    return handler.call(value, payload, options)
+  })])) as unknown as RpcGroup.HandlersFrom<Rpcs[number]>
+  return library.implement(handlers) as LibraryImplementation<Self | Requirements | EffectExecution>
+    & { readonly library: LibraryContract & { readonly methods: RpcGroup.RpcGroup<Rpcs[number]> } }
+}
+
+// Library adapts Effect service methods to agent tools without changing the service tag (platform/test/bun/library-service.test.ts).
 export const Library = {
+  from: fromService,
   Service: <Self, Requirements = never>() => <const Name extends string, const Rpcs extends readonly LibraryRpc[]>(
     key: Name,
     definition: Omit<LibraryDefinition<Rpcs>, "name"> & { readonly name?: string },
   ): LibraryService<Self, Name, Rpcs[number], Requirements> => {
-    const library = defineLibrary({ ...definition, name: definition.name ?? key })
     const service = Context.Service<Self, LibraryServiceShape<Rpcs[number], Requirements>>()(key)
-    const handlers = Object.fromEntries(definition.methods.map(rpc => [rpc._tag, (
-      payload: unknown,
-      options: Parameters<Rpc.ToHandlerFn<Rpcs[number]>>[1],
-    ) => Effect.flatMap(service, value => {
-      const handler = value[rpc._tag as keyof typeof value] as (
-        payload: unknown,
-        options: Parameters<Rpc.ToHandlerFn<Rpcs[number]>>[1],
-      ) => Effect.Effect<unknown, Rpc.Error<Rpcs[number]>, Requirements>
-      return handler.call(value, payload, options)
-    })])) as unknown as RpcGroup.HandlersFrom<Rpcs[number]>
-    const implementation = library.implement(handlers) as LibraryImplementation<Self | Requirements | EffectExecution>
-    return Object.assign(service, implementation, { library })
+    return Object.assign(service, fromService(service, { ...definition, name: definition.name ?? key })) as LibraryService<Self, Name, Rpcs[number], Requirements>
   },
 }
 

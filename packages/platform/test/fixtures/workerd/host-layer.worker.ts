@@ -2,11 +2,11 @@ import { Context, Effect, Layer } from "effect"
 import { agent } from "@clavia/tardigrade-agent/agent"
 import type { Event } from "@clavia/tardigrade-agent/contracts/events"
 import { host, Bindings, DurableStorage, HostThread, ThreadRuntime } from "../../../src/cloudflare"
-import { Notebook } from "../library-service"
+import { Notebook, notebook as notebookLibrary } from "../library-service"
 import { contentModelServices } from "../agent"
 
 export interface HostLayerEnv { readonly LAYER_BINDING: string }
-const definition = agent({ name: "layer-agent", system: "Record a research finding.", tools: [Notebook] })
+const definition = agent({ name: "layer-agent", system: "Record a research finding.", tools: [notebookLibrary] })
 const setupIsolation: boolean[] = []
 export const layerSetupIsolation = () => setupIsolation
 const assistant = { ...definition, setup: definition.setup.pipe(Effect.tap(() => Effect.map(Effect.context<never>(), context => {

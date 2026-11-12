@@ -13,13 +13,13 @@ import { agentServices, toolActs } from "@clavia/tardigrade-agent/services/tools
 import { codeModeActs } from "@clavia/tardigrade-agent/services/code-mode"
 import { defineActor } from "@clavia/tardigrade-core"
 import { createBunHost, bunIsolate, bunJournal, virtualWorkspace } from "../../src/bun"
-import { Notebook, notebookLayer } from "../fixtures/library-service"
+import { Notebook, notebook, references, notebookLayer } from "../fixtures/library-service"
 import { agent } from "@clavia/tardigrade-agent/agent"
 import { actorContext } from "@clavia/tardigrade-agent/actor/context"
 import { contentModelServices } from "../fixtures/agent"
 import { createTestStore } from "../properties/runtime/store"
 
-test("a library service shares its SQLite backend with ordinary Effects and durable agent tools", async () => {
+test("ordinary service layers back distinct library views and durable agent tools", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tardie-library-service-"))
   const backend = virtualWorkspace({ name: "notes", filename: join(directory, "workspace.sqlite") })
   const layer = notebookLayer(backend)
@@ -29,18 +29,19 @@ test("a library service shares its SQLite backend with ordinary Effects and dura
     return yield* notes.read({ path: "research.md" })
   })
   const supplied: Effect.Effect<string, Error | string> = program.pipe(Effect.provide(layer))
-  const actor = defineActor("notes-tools", Effect.map(tools([Notebook]), atom => ({ atom, schema: Event })))
+  const libraries = [notebook, references] as const
+  const actor = defineActor("notes-tools", Effect.map(tools(libraries), atom => ({ atom, schema: Event })))
   const open = () => Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog),
     journal: bunJournal<typeof Event.Type>({ filename: join(directory, "journal.sqlite"), actor: "events" }),
-    services: () => toolActs([Notebook]).pipe(Layer.provide(layer)),
+    services: () => toolActs(libraries).pipe(Layer.provide(layer)),
   }))
   let store: Awaited<ReturnType<typeof open>> | undefined
   try {
     assert.equal(await Effect.runPromise(supplied), "A journal is durable evidence.")
     const native = Effect.scoped(Effect.gen(function* () {
-      const client = yield* RpcTest.makeClient(Notebook.library.methods)
+      const client = yield* RpcTest.makeClient(notebook.library.methods)
       return yield* client.read({ path: "research.md" })
-    })).pipe(Effect.provide(Notebook.library.methods.toLayer(Notebook).pipe(Layer.provide(layer))))
+    })).pipe(Effect.provide(notebook.library.methods.toLayer(Notebook).pipe(Layer.provide(layer))))
     assert.equal(await Effect.runPromise(native), "A journal is durable evidence.")
     store = await open()
     assert.deepEqual(store.getState().view.specs.find(spec => spec.name === "read_note")?.annotations, { readOnlyHint: true, openWorldHint: false })
@@ -58,11 +59,19 @@ test("a library service shares its SQLite backend with ordinary Effects and dura
     store = await open()
     assert.equal(store.snapshot().position, count)
     await Effect.runPromise(submit("alias", "notes__read", { path: "research.md" }))
+    await Effect.runPromise(submit("reference", "read_reference", { path: "research.md" }))
+    await Effect.runPromise(submit("reference-write", "references__write", { path: "research.md", text: "This projection cannot write." }))
     await Effect.runPromise(submit("invalid", "read_note", { path: "" }))
     const events = store.snapshot().events
     const alias = events.find(event => event.type === "ToolReturned" && event.callId === "alias")
     assert.ok(alias?.type === "ToolReturned" && alias.error === null)
     assert.deepEqual(alias.content, [{ type: "text", text: '"Tool writes reach the same service."' }])
+    const reference = events.find(event => event.type === "ToolReturned" && event.callId === "reference")
+    assert.ok(reference?.type === "ToolReturned" && reference.error === null)
+    assert.deepEqual(reference.content, [{ type: "text", text: '"Tool writes reach the same service."' }])
+    const deniedWrite = events.find(event => event.type === "ToolReturned" && event.callId === "reference-write")
+    assert.ok(deniedWrite?.type === "ToolReturned" && deniedWrite.error !== null)
+    assert.equal(await Effect.runPromise(Notebook.use(notes => notes.read({ path: "research.md" })).pipe(Effect.provide(layer))), "Tool writes reach the same service.")
     const invalid = events.find(event => event.type === "ToolReturned" && event.callId === "invalid")
     assert.ok(invalid?.type === "ToolReturned" && invalid.error !== null)
   } finally {
@@ -71,10 +80,10 @@ test("a library service shares its SQLite backend with ordinary Effects and dura
   }
 })
 
-test("a library service runs through a real code isolate with its supplied layer", async () => {
+test("an ordinary service runs through a real code isolate with its supplied layer", async () => {
   const layer = notebookLayer(virtualWorkspace({ name: "notes", filename: ":memory:" }))
-  const actor = defineActor("notes-code", Effect.map(codeMode([Notebook]), atom => ({ atom, schema: Event })))
-  const store = await Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog), services: () => codeModeActs([Notebook]).pipe(Layer.provideMerge(Layer.merge(layer, bunIsolate()))) }))
+  const actor = defineActor("notes-code", Effect.map(codeMode([notebook]), atom => ({ atom, schema: Event })))
+  const store = await Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog), services: () => codeModeActs([notebook]).pipe(Layer.provideMerge(Layer.merge(layer, bunIsolate()))) }))
   try {
     await Effect.runPromise(store.send([{ type: "ModelReturned", purpose: "inference", callId: "code-model", text: "", toolCalls: [{ callId: "code", providerId: "code", name: "execute", input: {
       code: 'await notes.write({ path: "result.md", text: "One service, two callers." }); return await notes.read({ path: "result.md" });',
@@ -87,9 +96,9 @@ test("a library service runs through a real code isolate with its supplied layer
   } finally { await Effect.runPromise(store.close) }
 })
 
-test("a host derives agent tools from its requirements and recovers their SQLite writes", async () => {
+test("a host derives library adapters for an ordinary service and recovers its SQLite writes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tardie-agent-requirements-"))
-  const assistant = agent({ name: "researcher", system: "Record research notes.", tools: [Notebook] })
+  const assistant = agent({ name: "researcher", system: "Record research notes.", tools: [notebook] })
   const backend = notebookLayer(virtualWorkspace({ name: "notes", filename: join(directory, "workspace.sqlite") }))
   let modelCalls = 0
   const models = contentModelServices(() => { modelCalls++ }, { toolCalls: [
