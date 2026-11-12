@@ -9,15 +9,11 @@ sectionOrder: 2.25
 order: 1
 ---
 
-In Tardigrade, a library adapts an Effect `Service` with agent metadata. You can think of them as pluggable capabilities for your agents, declared using the type system. The following example walks you through what this means using the `Workspace` library.
-
-## Workspace
-
-This example shows how you can give your cloud agents the capability to use the filesystem and run `bash` commands. We'll define this as a `Workspace` library built on top of a `Context.Service` and implemented using `Layer`.
+In Tardigrade, libraries are pluggable capabilities for your agents, declared using the type system. They can be built by adding agent metadata to an Effect `Service`. Once defined, they can be implemented using Effect `Layer`. The following example illustrates this by walking through an example of giving agents the capability to use a filesystem and execute commands, called the `Workspace`.
 
 ## Declare the Interface
 
-Effect services define the interface of a capability. For this example, the workspace service exposes `bash` and `read`.
+Every capability starts with the interface. Interfaces give contracts for how the capability can be used, and what inputs it accepts. This is defined using `Context.Service`. The example below exposes `bash` and `read`.
 
 ```ts title="workspace.ts"
 import { Context, Effect } from "effect"
@@ -31,13 +27,13 @@ export class Workspace extends Context.Service<Workspace, {
 
 ## Add agent metadata
 
-In `workspace-library.ts`, create your library from the `Workspace` service by adding agent metadata. This includes adding input and output schemas. You can also optionally annotate methods with descriptions and hints.
+In `library/workspace.ts`, create a library from the `Workspace` service by adding agent metadata. This includes adding input and output schemas. You can also optionally annotate methods with descriptions and hints. This is useful for clients to decide access and permissions for your agents.
 
-```ts title="workspace-library.ts"
+```ts title="library/workspace.ts"
 import { Schema } from "effect"
 import { Rpc } from "effect/rpc"
 import { Library, MethodDescription, MethodHints, ToolResult } from "tardie/libraries"
-import { Workspace } from "./workspace"
+import { Workspace } from "../workspace"
 
 export const workspace = Library.from(Workspace, {
   name: "workspace",
@@ -60,34 +56,17 @@ export const workspace = Library.from(Workspace, {
 })
 ```
 
-## Select the library
-
-The agent selects the `workspace` library. Its methods require the ordinary `Workspace` service, and the host derives the tool adapters from this declaration.
-
-```ts title="agent.ts"
-import { agent } from "tardie/agent"
-import { workspace } from "./workspace-library"
-
-export const assistant = agent({
-  name: "researcher",
-  system: "Use the workspace to read files and run shell commands.",
-  tools: [workspace],
-})
-```
-
-<LibraryLayersDiagram />
-
 ## Implement using layers
 
-The provider examples below assume both backends implement `Workspace` directly. The built-in providers currently expose `FilesystemWorkspace`.
+Services and libraries describe the contract; layers describe how to construct implementations. The same capability can be provided in different ways.
 
-Services define the contracts, libraries add agent metadata, and layers describe how to construct implementations. The same capability can be provided in different ways.
+<LibraryLayersDiagram />
 
 For example, the `Workspace` library can be implemented using a real filesystem and bash through a container. You can also implement the same capability using a virtual filesystem backed by SQLite and virtual bash using a package like `just-bash` within an isolate.
 
 ### Container workspace
 
-`client` is a configured Boxd client, and `ModelLive` supplies the model services. `HostThread` is provided by the host when it constructs the layer.
+`assistant` selects the library with `tools: [workspace]`. `ModelLive` supplies the model services, and `client` is the configured Boxd client. The provider examples assume both backends implement `Workspace` directly; the built-in providers currently expose `FilesystemWorkspace`.
 
 ```ts title="worker.ts"
 import { Effect, Layer } from "effect"
@@ -118,13 +97,11 @@ export default worker
 
 ### Virtual workspace
 
-`DurableStorage` supplies the storage of the Durable Object constructing the layer.
-
 ```ts title="worker.ts"
 import { Effect, Layer } from "effect"
 import { host, DurableStorage, virtualWorkspace } from "tardie/platform/cloudflare"
 import { assistant } from "./agent"
-import { ModelLive } from "./model-services"
+import { ModelLive } from "./services/model"
 
 const WorkspaceLive = Layer.unwrap(Effect.map(DurableStorage, storage =>
   virtualWorkspace(storage, {
