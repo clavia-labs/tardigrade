@@ -37,6 +37,13 @@ export function readOnlyLogSql(sqlite: Sqlite) {
     "", "; ; -- no statement\n /* still no statement */",
   ]) assert.throws(() => query(sql), Error, sql)
 
+  assert.throws(() => query("SELECT missing_column FROM events"), (error: unknown) => {
+    assert.ok(error instanceof Error && error.cause instanceof Error)
+    assert.match(error.message, /missing_column/)
+    assert.match(error.cause.message, /missing_column/)
+    return true
+  })
+
   assert.throws(() => query("WITH RECURSIVE sequence(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM sequence) SELECT sum(n) FROM sequence", { ...DEFAULT_LOG_QUERY_POLICY, maxInstructions: 1_000 }), /maxInstructions 1000/)
   assert.throws(() => query("SELECT hex(zeroblob(1000))", { ...DEFAULT_LOG_QUERY_POLICY, maxResultBytes: 100 }), /maxResultBytes 100/)
   const point = query("SELECT trim(json_extract(event, '$.text')) FROM events WHERE position = 0")

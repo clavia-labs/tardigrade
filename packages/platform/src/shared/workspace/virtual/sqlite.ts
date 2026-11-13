@@ -1,4 +1,5 @@
 import { Effect, Option, Stream } from "effect"
+import { workspaceStorageError } from "../sql-error"
 import { SqlClient } from "effect/sql"
 import { WorkspaceError } from "@clavia/tardigrade-libraries/workspace/index"
 
@@ -45,7 +46,7 @@ export const sqliteWorkspaceStore = (name: string, chunkBytes = DEFAULT_VIRTUAL_
         return [[chunk.payload], Option.some(ordinal + 1)] as const
       }))
       return Stream.concat(Stream.succeed(entry.content ?? new Uint8Array()), tail)
-    })).pipe(Stream.mapError(WorkspaceError.from)),
+    })).pipe(Stream.mapError(workspaceStorageError)),
     load: sql.withTransaction(Effect.gen(function* () {
       const [row] = yield* sql<{ revision: number }>`SELECT revision FROM virtual_workspaces WHERE name = ${name}`
       if (!row) return yield* Effect.fail(new WorkspaceError("Workspace revision is missing"))

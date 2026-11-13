@@ -228,6 +228,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
         toolkit,
         toolChoice: input.tools.length ? "auto" as const : "none" as const,
         disableToolCallResolution: true as const,
+        toolCallValidation: "deferred" as const,
       }
       const stream = responseFormat === undefined
         ? languageModel.streamText(request)

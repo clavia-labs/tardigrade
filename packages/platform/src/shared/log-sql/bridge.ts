@@ -165,8 +165,8 @@ export function bridgeQuery(sqlite: Sqlite, source: LogQuerySource, request: Jou
     return { columns, rows, more, queryPolicy: { ...policy }, readEvents, readBytes }
   } catch (error) {
     if (failure) throw failure
-    if (instructions >= policy.maxInstructions) throw new RuntimeError(`Query interrupted: maxInstructions ${policy.maxInstructions}`)
-    throw new RuntimeError(`${String(error)} (queryPolicy ${JSON.stringify(policy)})`)
+    if (instructions >= policy.maxInstructions) throw new RuntimeError(`Query interrupted: maxInstructions ${policy.maxInstructions}`, { cause: error })
+    throw new RuntimeError(`${String(error)} (queryPolicy ${JSON.stringify(policy)})`, { cause: error })
   }
   finally { db.close(); module?.dispose() }
 }

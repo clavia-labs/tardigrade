@@ -60,7 +60,7 @@ interface ContentModelOptions {
   readonly observeTools?: (tools: LanguageModel.ProviderOptions["tools"]) => void
   readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined
   readonly request?: RequestOptions
-  readonly toolCalls?: readonly { readonly id: string; readonly name: string; readonly params: Schema.Json }[]
+  readonly toolCalls?: readonly { readonly id: string; readonly name: string; readonly params: Schema.Json }[] | ((prompt: Prompt.Prompt) => readonly { readonly id: string; readonly name: string; readonly params: Schema.Json }[])
 }
 
 export const contentModelServices = (observe: (prompt: Prompt.Prompt) => void, options: ContentModelOptions = {}) => {
@@ -72,8 +72,9 @@ export const contentModelServices = (observe: (prompt: Prompt.Prompt) => void, o
       options.observeTools?.(input.tools)
       const failure = options.failure?.(input.prompt)
       if (failure) return Stream.fail(failure)
-      if (options.toolCalls && !input.prompt.content.some(message => message.role === "tool")) return Stream.fromIterable([
-        ...options.toolCalls.map(call => Response.makePart("tool-call", { ...call, providerExecuted: false })),
+      const toolCalls = typeof options.toolCalls === "function" ? options.toolCalls(input.prompt) : !input.prompt.content.some(message => message.role === "tool") ? options.toolCalls : undefined
+      if (toolCalls?.length) return Stream.fromIterable([
+        ...toolCalls.map(call => Response.makePart("tool-call", { ...call, providerExecuted: false })),
         Response.makePart("finish", { reason: "tool-calls", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) }),
       ])
       return Stream.make(
