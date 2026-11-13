@@ -83,14 +83,16 @@ type PatchedSlot<L, P, K extends ContextSlot> = P extends null ? never
   : ExistingSlot<L, K>
 type ContextSources<L> = ExistingSlot<L, "system"> | ExistingSlot<L, "user">
 
+type PatchedLibrary<L, P> = Omit<L, typeof LibraryContextTypeId> & {
+  readonly [LibraryContextTypeId]: { readonly [K in ContextSlot]: PatchedSlot<L, P, K> }
+}
+
 export type LibraryContextRequirements<L> = Effect.Services<ContextSources<L>>
 export type LibraryContextError<L> = Effect.Error<ContextSources<L>>
 
 // context patches lazy prompt sources; null clears a slot or the entire contribution.
 function context<const P extends LibraryContextOptions | null>(options: P) {
-  return <L extends RpcLibraryBinding>(library: L): Omit<L, typeof LibraryContextTypeId> & {
-    readonly [LibraryContextTypeId]: { readonly [K in ContextSlot]: PatchedSlot<L, P, K> }
-  } => {
+  return <L extends RpcLibraryBinding>(library: L): PatchedLibrary<L, P> => {
     const previous = Context.getOrUndefined(library.rpc.annotations, ContextAnnotation)
     const sources = {
       system: options === null ? null : options.system === undefined ? previous?.system ?? null : options.system,
@@ -99,9 +101,7 @@ function context<const P extends LibraryContextOptions | null>(options: P) {
     const rpc = RpcGroup.make(...library.rpc.requests.values()).annotateMerge(
       Context.add(library.rpc.annotations, ContextAnnotation, sources),
     )
-    const decorated = Object.create(library) as Omit<L, typeof LibraryContextTypeId> & {
-      readonly [LibraryContextTypeId]: { readonly [K in ContextSlot]: PatchedSlot<L, P, K> }
-    }
+    const decorated = Object.create(library) as PatchedLibrary<L, P>
     return Object.assign(decorated, { rpc })
   }
 }
@@ -134,14 +134,14 @@ export function libraryContextSources(libraries: readonly LibraryBinding[]) {
   })
 }
 
-// resolveLibraryContext evaluates sources sequentially in library order within the caller's runtime.
-export function resolveLibraryContext<const L extends readonly LibraryBinding[]>(libraries: L, options: { readonly dynamicOnly?: boolean } = {}): Effect.Effect<
+// resolveLibraryContext evaluates prompt effects sequentially; static strings remain in configuration.
+export function resolveLibraryContext<const L extends readonly LibraryBinding[]>(libraries: L): Effect.Effect<
   readonly LibraryContextContribution[], LibraryContextError<L[number]>, LibraryContextRequirements<L[number]>
 > {
   type E = LibraryContextError<L[number]>
   type R = LibraryContextRequirements<L[number]>
   const resolve = (source: LibraryContextSource<E, R> | null | undefined) =>
-    typeof source === "string" ? options.dynamicOnly ? Effect.void : Effect.succeed(source) : source ?? Effect.void
+    typeof source === "string" ? Effect.void : source ?? Effect.void
   return Effect.gen(function* () {
     const contributions: LibraryContextContribution[] = []
     for (const entry of libraryContextSources(libraries)) {

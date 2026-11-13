@@ -1,6 +1,5 @@
 import { effectAtom, eventValue, type ActorOutput, type ActService } from "@clavia/tardigrade-core"
 import { durableAtom } from "@clavia/tardigrade-core/experimental"
-import type { LibraryContextContribution } from "@clavia/tardigrade-libraries"
 import { type Event, type ContextResolved, type ResolvedContext } from "../contracts/events"
 import { ResolveContext, requests, failureMessage } from "../contracts/acts"
 import { agentLog } from "../experimental/trajectory-log"
@@ -10,7 +9,7 @@ import { inferenceState } from "./durable/inference"
 const contextPages = durableAtom.log(agentLog.view(["ContextResolved"]))
 
 export type ContextPreparation = ActorOutput<
-  { readonly position: "ready"; readonly system: string; readonly contributions: readonly LibraryContextContribution[] }
+  { readonly position: "ready"; readonly system: string }
     | { readonly position: "pending" } | { readonly position: "failed"; readonly reason: string },
   Event, ActService<"agent.context.resolve">
 >
@@ -22,7 +21,7 @@ export function prepareContext(configuration: ContextConfiguration) {
     const contributions = mergeContextContributions(configuration.contributions, resolved?.contributions ?? [])
     const system = [resolved?.system ?? configuration.system ?? "", contextText(contributions, "system")]
       .filter(text => text.trim()).join("\n\n")
-    return { view: { position: "ready", system, contributions }, events: {}, acts: {} }
+    return { view: { position: "ready", system }, events: {}, acts: {} }
   }
   const needsSnapshot = configuration.dynamic || contextText(configuration.contributions, "user").length > 0
   return effectAtom((get): ContextPreparation => {

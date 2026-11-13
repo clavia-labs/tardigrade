@@ -26,7 +26,7 @@ export function contextServices<const Source extends LibraryContextSource<unknow
   const dynamicSystem = isPromptEffect(system) ? system : Effect.void
   return ResolveContext.layer(() => Effect.gen(function* () {
     const resolvedSystem = yield* dynamicSystem
-    const contributions = yield* resolveLibraryContext(libraries, { dynamicOnly: true })
+    const contributions = yield* resolveLibraryContext(libraries)
     return { ...(resolvedSystem === undefined ? {} : { system: resolvedSystem }), contributions }
   }).pipe(Effect.mapError(String)))
 }
