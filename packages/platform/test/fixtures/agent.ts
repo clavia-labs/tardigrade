@@ -59,6 +59,7 @@ const lock = modelLockService(modelLockOf({
 type ContentToolCall = Pick<Response.ToolCallPart<string, Schema.Json>, "id" | "name" | "params">
 
 interface ContentModelOptions {
+  readonly beforeResponse?: (prompt: Prompt.Prompt) => Effect.Effect<void>
   readonly observeTools?: (tools: LanguageModel.ProviderOptions["tools"]) => void
   readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined
   readonly request?: RequestOptions
@@ -85,7 +86,7 @@ export const contentModelServices = (observe: (prompt: Prompt.Prompt) => void, o
         Response.makePart("text-end", { id: "reply" }),
         Response.makePart("finish", { reason: "stop", usage: Response.Usage.make({ inputTokens: {}, outputTokens: {} }) }),
       )
-    }),
+    }).pipe(Stream.onStart(Effect.suspend(() => options.beforeResponse?.(input.prompt) ?? Effect.void))),
   }))
   const modelLayer = modelServices().pipe(Layer.provide(Layer.mergeAll(
     Layer.succeed(ModelLock, lock), provider,

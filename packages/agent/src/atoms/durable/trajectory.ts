@@ -1,4 +1,5 @@
 import { ModelCalled, Trajectory, type Conversation, type ToolReturned } from "../../contracts/events"
+import { contextText, mergeLibraryContexts, UserContextConfiguration } from "../../contracts/context"
 import { Schema } from "effect"
 import { RuntimeError, type Atom, type Getter } from "@clavia/tardigrade-core"
 import { durableAtom } from "@clavia/tardigrade-core/experimental"
@@ -11,9 +12,11 @@ import { agentLog, trajectoryLog, trajectoryRevision } from "../../experimental/
 export interface TrajectoryRangeOptions extends LogReadOptions {
   readonly from?: number
   readonly to?: number
+  readonly events?: readonly string[]
 }
 
 export interface TrajectorySource<Row> {
+  readonly userContext?: UserContextConfiguration
   readonly selection?: typeof trajectoryLog.range
   // revision identifies an append-only source whose projected rows remain immutable (platform/test/properties/turn-facts.ts, trajectoryWindowCache).
   readonly revision?: (get: Getter) => { readonly source: object; readonly position: number }
@@ -31,21 +34,36 @@ function toolAttribution(get: Getter, event: ToolReturned, position: number) {
   return event.tool && event.turnId !== undefined ? { turnId: event.turnId, ...event.tool } : legacyToolAttribution(get, event.callId, position)
 }
 
-const eventPages = durableAtom.log(trajectoryLog)
+function trajectoryView(events: readonly string[]) {
+  if (!events.every(key => trajectoryLog.events.includes(key))) throw new RuntimeError("Invalid trajectory event selection")
+  return agentLog.view(events as readonly ("TurnRequested" | "ModelReturned" | "ToolReturned" | "ContextResolved")[])
+}
+const eventPages = NativeAtom.family((identity: string) => durableAtom.log(trajectoryView(JSON.parse(identity) as readonly string[])))
 const pages = NativeAtom.family((identity: string): Atom<LogReadPage<typeof Trajectory.Type[number]>> => Object.assign(NativeAtom.readable(get => {
   if (get(legacyTrajectorySeed)) throw new RuntimeError("Trajectory logs require journal history; aggregate trajectory initial state is unsupported")
-  const query = JSON.parse(identity) as TrajectoryRangeOptions
+  const query = JSON.parse(identity) as TrajectoryRangeOptions & { readonly userContext?: UserContextConfiguration }
   const source = logSource(get)
-  const selection = trajectoryLog.range({ from: query.after?.from ?? query.from ?? 0, to: query.after?.to ?? query.to ?? source.readPosition() })
+  const view = trajectoryView(query.after?.events ?? query.events ?? trajectoryLog.events)
+  const selection = view.range({ from: query.after?.from ?? query.from ?? 0, to: query.after?.to ?? query.to ?? source.readPosition() })
   const limit = query.limit ?? agentLog.pageSize
   if (!Number.isSafeInteger(limit) || limit < 1 || limit >= Number.MAX_SAFE_INTEGER) throw new RuntimeError("Invalid trajectory page limit")
   const order = query.order ?? query.after?.order ?? "asc"
   const rows: Array<{ position: number; value: typeof Trajectory.Type[number] }> = []
   let after = query.after
   while (true) {
-    const page = get(eventPages.range({ from: selection.from, to: selection.to, limit: Math.min(limit - rows.length + 1, Number.MAX_SAFE_INTEGER - 1), order, ...(after ? { after } : {}) }))
+    const page = get(eventPages(JSON.stringify(view.events)).range({ from: selection.from, to: selection.to, limit: Math.min(limit - rows.length + 1, Number.MAX_SAFE_INTEGER - 1), order, ...(after ? { after } : {}) }))
     for (const { position, value: event } of page.rows) {
-      if (event.type === "TurnRequested") rows.push({ position, value: { turnId: event.turnId, message: event.content === undefined ? { role: "user", text: event.text } : { role: "user", content: event.content } } })
+      if (event.type === "TurnRequested") {
+        const identity = query.userContext ? { turnId: event.turnId } : {}
+        const message: typeof Conversation.Type[number] = event.content === undefined
+          ? { role: "user", ...identity, text: event.text }
+          : { role: "user", ...identity, content: event.content }
+        rows.push({ position, value: { turnId: event.turnId, message } })
+      }
+      if (event.type === "ContextResolved" && event.error === null) {
+        const text = contextText(mergeLibraryContexts(query.userContext?.libraries ?? [], event.user.libraries))
+        if (text) rows.push({ position, value: { turnId: event.turnId, message: { role: "user", turnId: event.turnId, context: true, text: `\n\n${text}` } } })
+      }
       if (event.type === "ModelReturned" && event.purpose === "inference") {
         const turnId = event.turnId ?? get(modelTurns(event.callId))
         if (turnId !== undefined) rows.push({ position, value: { turnId, message: { role: "assistant", text: event.text, toolCalls: event.toolCalls, ...(event.reasoning === undefined ? {} : { reasoning: event.reasoning }), ...(event.continuation === undefined ? {} : { continuation: event.continuation }) } } })
@@ -67,9 +85,15 @@ const pages = NativeAtom.family((identity: string): Atom<LogReadPage<typeof Traj
 // trajectory pages ordered turn-owned messages; history remains in the journal (platform/test/properties/turn-facts.ts).
 export const trajectory: TrajectorySource<typeof Trajectory.Type[number]> = { revision: trajectoryRevision, legacyCursor: legacyTrajectoryCursor, range: (options = {}) => pages(JSON.stringify(options)) }
 const messagePages = NativeAtom.family((identity: string): Atom<LogReadPage<typeof Conversation.Type[number]>> => Object.assign(NativeAtom.readable(get => {
-  const page = get(trajectory.range(JSON.parse(identity) as TrajectoryRangeOptions))
+  const page = get(pages(identity))
   return { ...page, rows: page.rows.map(row => ({ position: row.position, value: row.value.message })) }
 }).pipe(NativeAtom.setIdleTTL(0)), { input: agentLog.schema }))
 
 // messages pages model messages without retaining a complete conversation array.
 export const messages: TrajectorySource<typeof Conversation.Type[number]> = { selection: trajectoryLog.range, revision: trajectoryRevision, legacyCursor: legacyTrajectoryCursor, range: (options = {}) => messagePages(JSON.stringify(options)) }
+
+// messagesWithContext projects static user sources alongside recorded library context.
+export function messagesWithContext(configuration: UserContextConfiguration): TrajectorySource<typeof Conversation.Type[number]> {
+  const userContext = Schema.decodeSync(UserContextConfiguration)(configuration)
+  return { ...messages, userContext, range: (options = {}) => messagePages(JSON.stringify({ ...options, userContext })) }
+}

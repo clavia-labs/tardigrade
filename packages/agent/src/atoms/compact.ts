@@ -1,7 +1,8 @@
 import { createCompactionState, DEFAULT_COMPACTION_MAX_CONTEXT_MESSAGES } from "./durable/compaction"
 import { RuntimeError, effectAtom, type Atom } from "@clavia/tardigrade-core"
 import { immutableMessage, immutableConversation } from "../experimental/trajectory-log"
-import type { LogModelContext } from "../contracts/model-context"
+import { modelMessageRendererV1, type LogModelContext } from "../contracts/model-context"
+import { isUserContextSuffix } from "../contracts/context"
 import { type TrajectorySource } from "./durable/trajectory"
 import { Effect } from "effect"
 import { Atom as NativeAtom } from "effect/reactivity"
@@ -14,8 +15,6 @@ export const DEFAULT_COMPACTION_POLICY = {
   toolOutputTokenLimit: 10_000, userMessageTokenLimit: 262_144,
   imageTokenEstimate: 1_200, pageSize: 64, maxContextMessages: DEFAULT_COMPACTION_MAX_CONTEXT_MESSAGES,
 } as const
-
-const TRUNCATION_MARKER = "\n[truncated]\n"
 
 export interface CompactionOptions {
   // pageSize bounds each journal page read.
@@ -45,40 +44,11 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
     || !(policy.retainRatio > 0 && policy.retainRatio < policy.triggerRatio && policy.triggerRatio < 1)) {
     throw new RuntimeError("Compaction requires positive charsPerToken, and 0 < retainRatio < triggerRatio < 1")
   }
-  const charLimit = (tokens: number) => {
-    const chars = Math.floor(tokens * policy.charsPerToken)
-    if (!Number.isSafeInteger(tokens) || tokens < 1 || !Number.isSafeInteger(chars) || chars < TRUNCATION_MARKER.length) {
-      throw new RuntimeError(`Compaction token limits must be positive safe integers and allow at least ${TRUNCATION_MARKER.length} characters for a truncation marker`)
-    }
-    return chars
+  if (![policy.toolOutputTokenLimit, policy.userMessageTokenLimit].every(tokens => Number.isSafeInteger(tokens) && tokens > 0)) {
+    throw new RuntimeError("Compaction token limits must be positive safe integers")
   }
-  const toolCharLimit = charLimit(policy.toolOutputTokenLimit)
-  const userCharLimit = charLimit(policy.userMessageTokenLimit)
-  const clip = (text: string, limit: number) => {
-    if (text.length <= limit) return text
-    const retained = limit - TRUNCATION_MARKER.length
-    const head = Math.ceil(retained / 2)
-    const tail = retained - head
-    const prefix = text.slice(0, head).replace(/[\uD800-\uDBFF]$/, "")
-    const suffix = tail ? text.slice(-tail).replace(/^[\uDC00-\uDFFF]/, "") : ""
-    return prefix + TRUNCATION_MARKER + suffix
-  }
-  const render = (messages: typeof Conversation.Type): typeof Conversation.Type => messages.map(message => {
-    if (message.role === "assistant") return message
-    if ("content" in message && message.content !== undefined) {
-      const limit = message.role === "tool" ? toolCharLimit : userCharLimit
-      const content = message.content.map(part => {
-        if (part.type !== "text") return part
-        const text = clip(part.text, limit)
-        return text === part.text ? part : { ...part, text }
-      })
-      if (content.every((part, index) => part === message.content![index])) return message
-      return message.role === "tool" ? { ...message, content, text: content.filter(part => part.type === "text").map(part => part.text).join("\n") } : { ...message, content }
-    }
-    if (!("text" in message)) return message
-    const text = clip(message.text, message.role === "tool" ? toolCharLimit : userCharLimit)
-    return text === message.text ? message : { ...message, text }
-  })
+  const renderMessage = modelMessageRendererV1(policy)
+  const render = (messages: typeof Conversation.Type): typeof Conversation.Type => messages.map(renderMessage)
   const sizeOf = (message: typeof Conversation.Type[number]) => {
     const images = "content" in message && message.content !== undefined
       ? message.content.filter(part => part.type === "file" && part.mediaType.startsWith("image/")).length : 0
@@ -134,6 +104,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
       const revision = trajectory.revision?.(get)
       if (revision && trajectory.selection) logContext = {
         version: 1, messages: trajectory.selection({ from: cursor, to: revision.position }), summary: state.summary, pageSize: policy.pageSize,
+        ...(trajectory.userContext ? { userContext: trajectory.userContext } : {}),
         render: { charsPerToken: policy.charsPerToken, toolOutputTokenLimit: policy.toolOutputTokenLimit, userMessageTokenLimit: policy.userMessageTokenLimit },
       }
       const budget = selection.contextWindowTokens * policy.charsPerToken - summarySize
@@ -177,7 +148,8 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
     const pending = new Set<string>()
     for (let index = 0; index < messages.length; index++) {
       const message = messages[index]!
-      if (index > 0 && pending.size === 0 && (message.role === "user" || (message.role === "assistant" && message.toolCalls.length > 0))) boundaries.push(index)
+      const suffix = isUserContextSuffix(message, messages[index - 1])
+      if (index > 0 && pending.size === 0 && ((message.role === "user" && !suffix) || (message.role === "assistant" && message.toolCalls.length > 0))) boundaries.push(index)
       if (message.role === "assistant") for (const call of message.toolCalls) pending.add(call.callId)
       if (message.role === "tool") pending.delete(message.callId)
     }

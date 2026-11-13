@@ -64,6 +64,48 @@ class MethodIdentity extends Context.Service<MethodIdentity, {
   readonly method: string
 }>()("tardie/library/MethodIdentity") {}
 
+export type LibraryContextSource<E = never, R = never> = string | Effect.Effect<string, E, R>
+
+export interface LibraryContextOptions {
+  readonly system?: LibraryContextSource<unknown, unknown> | null
+  readonly user?: LibraryContextSource<unknown, unknown> | null
+}
+
+class ContextAnnotation extends Context.Service<ContextAnnotation, LibraryContextOptions>()("tardie/library/Context") {}
+
+declare const LibraryContextTypeId: unique symbol
+type ContextSlot = keyof LibraryContextOptions
+type ExistingSlot<L, K extends ContextSlot> = L extends { readonly [LibraryContextTypeId]: infer Slots }
+  ? K extends keyof Slots ? Slots[K] : never
+  : never
+type PatchedSlot<L, P, K extends ContextSlot> = P extends null ? never
+  : K extends keyof P ? P[K] | ({} extends Pick<P, K> ? ExistingSlot<L, K> : never)
+  : ExistingSlot<L, K>
+type ContextSources<L> = ExistingSlot<L, "system"> | ExistingSlot<L, "user">
+
+type PatchedLibrary<L, P> = Omit<L, typeof LibraryContextTypeId> & {
+  readonly [LibraryContextTypeId]: { readonly [K in ContextSlot]: PatchedSlot<L, P, K> }
+}
+
+export type LibraryContextRequirements<L> = Effect.Services<ContextSources<L>>
+export type LibraryContextError<L> = Effect.Error<ContextSources<L>>
+
+// context patches lazy prompt sources; null clears a slot or all library context.
+function context<const P extends LibraryContextOptions | null>(options: P) {
+  return <L extends RpcLibraryBinding>(library: L): PatchedLibrary<L, P> => {
+    const previous = Context.getOrUndefined(library.rpc.annotations, ContextAnnotation)
+    const sources = {
+      system: options === null ? null : options.system === undefined ? previous?.system ?? null : options.system,
+      user: options === null ? null : options.user === undefined ? previous?.user ?? null : options.user,
+    }
+    const rpc = RpcGroup.make(...library.rpc.requests.values()).annotateMerge(
+      Context.add(library.rpc.annotations, ContextAnnotation, sources),
+    )
+    const decorated = Object.create(library) as PatchedLibrary<L, P>
+    return Object.assign(decorated, { rpc })
+  }
+}
+
 type BoundHandlers<Rpcs extends Rpc.Any, Requirements> = {
   readonly [Method in Rpcs as Method["_tag"]]: Rpc.ToHandlerFn<Method, Requirements>
 }
@@ -76,6 +118,47 @@ export interface RpcLibraryBinding<Rpcs extends LibraryRpc = LibraryRpc, Require
 
 // LibraryBinding accepts service-backed contracts and legacy handler implementations.
 export type LibraryBinding = LibraryImplementation<unknown> | RpcLibraryBinding
+
+export interface LibraryContext {
+  readonly library: string
+  readonly content: string
+}
+
+export interface LibraryContexts {
+  readonly system: { readonly libraries: readonly LibraryContext[] }
+  readonly user: { readonly libraries: readonly LibraryContext[] }
+}
+
+// libraryContextSources reads declarations without evaluating their effects.
+export function libraryContextSources(libraries: readonly LibraryBinding[]) {
+  return libraries.flatMap(library => {
+    if (!("rpc" in library)) return []
+    const sources = Context.getOrUndefined(library.rpc.annotations, ContextAnnotation)
+    return sources ? [{ library: library.name, ...sources }] : []
+  })
+}
+
+// resolveLibraryContext evaluates prompt effects sequentially; static strings remain in configuration.
+export function resolveLibraryContext<const L extends readonly LibraryBinding[]>(libraries: L): Effect.Effect<
+  LibraryContexts, LibraryContextError<L[number]>, LibraryContextRequirements<L[number]>
+> {
+  type E = LibraryContextError<L[number]>
+  type R = LibraryContextRequirements<L[number]>
+  const resolve = (source: LibraryContextSource<E, R> | null | undefined) =>
+    typeof source === "string" ? Effect.void : source ?? Effect.void
+  return Effect.gen(function* () {
+    const system: LibraryContext[] = []
+    const user: LibraryContext[] = []
+    for (const entry of libraryContextSources(libraries)) {
+      const sources = entry as { readonly [K in ContextSlot]?: LibraryContextSource<E, R> | null }
+      const systemContent = yield* resolve(sources.system)
+      const userContent = yield* resolve(sources.user)
+      if (systemContent !== undefined) system.push({ library: entry.library, content: systemContent })
+      if (userContent !== undefined) user.push({ library: entry.library, content: userContent })
+    }
+    return { system: { libraries: system }, user: { libraries: user } }
+  })
+}
 
 // libraryImplementations adapts service-backed declarations and retains existing implementations.
 export function libraryImplementations<const L extends readonly LibraryBinding[]>(libraries: L): readonly LibraryImplementation<LibraryExecutionRequirements<L[number]>>[] {
@@ -141,7 +224,7 @@ function makeLibrary<const Name extends string, const Rpcs extends readonly Libr
 }
 
 // Library constructs service-backed RPC contracts.
-export const Library = { make: makeLibrary }
+export const Library = { make: makeLibrary, context }
 
 // rpcLibraryTools connects bound RPC handlers to the durable tool execution adapter.
 function rpcLibraryTools<Rpcs extends LibraryRpc, Requirements>(binding: RpcLibraryBinding<Rpcs, Requirements>) {

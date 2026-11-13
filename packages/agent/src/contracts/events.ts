@@ -114,7 +114,21 @@ export const TurnSettled = Schema.Union([
 ])
 export type TurnSettled = typeof TurnSettled.Type
 
+export const LibraryContext = Schema.Struct({
+  library: Schema.String, content: Schema.String,
+})
+export const ResolvedContext = Schema.Struct({
+  system: Schema.Struct({ actor: Schema.optionalKey(Schema.String), libraries: Schema.Array(LibraryContext) }),
+  user: Schema.Struct({ libraries: Schema.Array(LibraryContext) }),
+})
+export const ContextResolved = Schema.Struct({
+  type: Schema.Literal("ContextResolved"), turnId: Schema.String, callId: Schema.String,
+  ...ResolvedContext.fields, error: Schema.NullOr(Schema.String),
+})
+export type ContextResolved = typeof ContextResolved.Type
+
 export const Event = Schema.Union([
+  ContextResolved,
   BudgetConfigured,
   BudgetUpdated,
   PermissionConfigured,
@@ -162,8 +176,8 @@ export function turnSource(event: TurnRequested): "user" | "agent" | "tool" {
 }
 
 const Message = Schema.Union([
-  Schema.Struct({ role: Schema.Literal("user"), text: Schema.String }),
-  Schema.Struct({ role: Schema.Literal("user"), content: MessageContent }),
+  Schema.Struct({ role: Schema.Literal("user"), text: Schema.String, turnId: Schema.optionalKey(Schema.String), context: Schema.optionalKey(Schema.Literal(true)) }),
+  Schema.Struct({ role: Schema.Literal("user"), content: MessageContent, turnId: Schema.optionalKey(Schema.String) }),
   Schema.Struct({ role: Schema.Literal("assistant"), ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
   Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, providerId: Schema.String, name: Schema.String, text: Schema.String, content: Schema.optionalKey(MessageContent), error: Schema.Boolean }),
 ])

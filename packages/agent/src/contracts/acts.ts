@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect"
 import { act } from "@clavia/tardigrade-core"
 import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ToolSpec } from "@clavia/tardigrade-libraries/types"
-import { ModelReply, ToolCall, Decision, BudgetDecision, BudgetMetric, PermissionRequest, Conversation } from "./events"
+import { ModelReply, ResolvedContext, ToolCall, Decision, BudgetDecision, BudgetMetric, PermissionRequest, Conversation } from "./events"
 import { digestInput } from "@clavia/tardigrade-core/runtime/input-digest"
 import { LogModelContext, StoredModelContext, PreparedModelContext } from "./model-context"
 
@@ -42,6 +42,11 @@ export const AskBudget = act({
   input: Schema.Struct({ metric: BudgetMetric, callId: Schema.String, amount: Schema.Finite, reason: Schema.String, used: Schema.Finite, limit: Schema.Finite }),
   success: BudgetDecision, failure: Schema.String,
 })
+export const ResolveContext = act({
+  name: "agent.context.resolve", input: Schema.Struct({ turnId: Schema.String, callId: Schema.String }),
+  success: ResolvedContext, failure: Schema.String,
+})
+
 export const ExecuteTool = act({
   name: "agent.tool.execute",
   input: Schema.Struct({ call: ToolCall, counted: Schema.Boolean, value: Schema.optionalKey(Schema.Json), error: Schema.optionalKey(Schema.String) }),
