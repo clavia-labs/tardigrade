@@ -95,3 +95,30 @@ test("concurrent alarms join one execution", async () => {
   await Promise.all([first, second])
   expect(passes).toBe(1)
 })
+
+// These red tests describe host-visible behavior. The adapter shape is local to the specification so maintainers can choose the final public surface.
+test("accepted work waits for its requested time before it runs", async () => {
+  const f = fixture()
+  const wakeAt = Date.now() + 90_000
+  let ran = false
+  const host = f.scheduler as unknown as {
+    admit(stage: () => Promise<void>, options: { wakeAt: number }): Promise<"accepted">
+    runAt(at: number): Promise<void>
+  }
+
+  await expect(host.admit(async () => { ran = true }, { wakeAt })).resolves.toBe("accepted")
+  expect(ran).toBe(false)
+  await host.runAt(wakeAt)
+  expect(ran).toBe(true)
+})
+
+test("refused work has no publication or execution", async () => {
+  const f = fixture()
+  let ran = false
+  const host = f.scheduler as unknown as {
+    admit(stage: () => Promise<void>, options: { shouldAdmit: () => boolean }): Promise<"refused">
+  }
+
+  await expect(host.admit(async () => { ran = true }, { shouldAdmit: () => false })).resolves.toBe("refused")
+  expect(ran).toBe(false)
+})
