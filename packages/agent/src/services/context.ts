@@ -1,3 +1,4 @@
+import type { PromptContent } from "@clavia/tardigrade-model/prompt"
 import { Effect } from "effect"
 import { libraryContextSources, resolveLibraryContext, type LibraryBinding, type LibraryContextSource } from "@clavia/tardigrade-libraries"
 import { ResolveContext } from "../contracts/acts"
@@ -8,16 +9,16 @@ export function contextConfiguration(system: LibraryContextSource<unknown, unkno
   const sources = libraryContextSources(libraries)
   const statics = (slot: "system" | "user") => sources.flatMap(source => {
     const content = source[slot]
-    return content == null ? [] : [{ library: source.library, content: typeof content === "string" ? content : "" }]
+    return content == null ? [] : [{ library: source.library, content: Effect.isEffect(content) ? "" : content }]
   })
   return {
-    dynamic: typeof system !== "string" || sources.some(source => Effect.isEffect(source.system) || Effect.isEffect(source.user)),
-    system: { ...(typeof system === "string" ? { actor: system } : {}), libraries: statics("system") },
+    dynamic: Effect.isEffect(system) || sources.some(source => Effect.isEffect(source.system) || Effect.isEffect(source.user)),
+    system: { ...(Effect.isEffect(system) ? {} : { actor: system }), libraries: statics("system") },
     user: { libraries: statics("user") },
   }
 }
 
-function isPromptEffect<Source extends LibraryContextSource<unknown, unknown>>(source: Source): source is Extract<Source, Effect.Effect<string, unknown, unknown>> & Effect.Effect<string, Effect.Error<Source>, Effect.Services<Source>> {
+function isPromptEffect<Source extends LibraryContextSource<unknown, unknown>>(source: Source): source is Extract<Source, Effect.Effect<PromptContent, unknown, unknown>> & Effect.Effect<PromptContent, Effect.Error<Source>, Effect.Services<Source>> {
   return Effect.isEffect(source)
 }
 

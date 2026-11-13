@@ -1,3 +1,5 @@
+import { planPromptCache } from "@clavia/tardigrade-model/prompt-cache"
+import { systemMessages, type PromptContent } from "@clavia/tardigrade-model/prompt"
 import { modelRetry } from "./model-retry"
 import type { RetryOptions } from "@clavia/tardigrade-core/services/effect-execution"
 import { isDeepStrictEqual } from "node:util"
@@ -42,7 +44,7 @@ export const modelInfo = Layer.effect(ModelInfo, resolveModel)
 export type Tool = ToolSpec
 export type ModelReply = typeof ModelReplySchema.Type
 
-export interface ModelInput { readonly model: ModelRef; readonly system: string; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type; readonly output?: OutputContract }
+export interface ModelInput { readonly model: ModelRef; readonly system: PromptContent; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type; readonly output?: OutputContract }
 
 export class Model extends Context.Service<Model, {
   readonly call: (input: ModelInput, context?: ModelCallContext) => Effect.Effect<ModelReply, Error>
@@ -206,25 +208,30 @@ export function modelServices(options: ModelServiceOptions = {}) {
           : `model ${resolved.model.model_id} cannot combine native structured output with tools`
         return yield* Effect.fail(new RuntimeError(reason))
       }
+      const renderMessage = (message: typeof Conversation.Type[number]): readonly Prompt.Message[] => {
+        if (message.role === "user" && "blocks" in message) return [Prompt.makeMessage("user", { content: message.blocks })]
+        if (message.role === "user") return [Prompt.makeMessage("user", { content: "text" in message ? [Prompt.makePart("text", { text: message.text })] : promptPartsOf(message.content, objects) })]
+        if (message.role === "tool") {
+          const output = message.content === undefined ? { result: message.text } : { result: message.text, modelOutput: promptPartsOf(message.content, objects) }
+          return [Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, ...output, isFailure: message.error, providerExecuted: false })] })]
+        }
+        const continuation = message.continuation
+        if (continuation && continuation.provider === settings.provider && continuation.protocol === settings.protocol && continuation.model === resolved.model.model_id) {
+          return Schema.decodeUnknownSync(Prompt.Prompt)(continuation.payload).content
+        }
+        return [Prompt.makeMessage("assistant", { content: [
+          ...(message.text ? [Prompt.makePart("text", { text: message.text })] : []),
+          ...message.toolCalls.map(call => Prompt.makePart("tool-call", { id: call.providerId, name: call.name, params: call.input, providerExecuted: false })),
+        ] })]
+      }
+      const messages = [
+        ...systemMessages(input.system),
+        ...mergeUserContext(input.context.flatMap(source => renderMessage(source).map(message => ({ source, message })))),
+      ]
+      const cached = settings.promptCache === undefined ? undefined : planPromptCache(messages, settings.promptCache)
+      if (cached && context) yield* context.publish({ type: "model.cache", purpose: context.purpose, model: resolved.model, provider: settings.promptCache!.provider, ...cached.plan })
       const request = {
-        prompt: Prompt.fromMessages([
-          Prompt.makeMessage("system", { content: input.system }),
-          ...mergeUserContext(input.context).flatMap((message): readonly Prompt.Message[] => {
-            if (message.role === "user") return [Prompt.makeMessage("user", { content: "text" in message ? [Prompt.makePart("text", { text: message.text })] : promptPartsOf(message.content, objects) })]
-            if (message.role === "tool") {
-              const output = message.content === undefined ? { result: message.text } : { result: message.text, modelOutput: promptPartsOf(message.content, objects) }
-              return [Prompt.makeMessage("tool", { content: [Prompt.makePart("tool-result", { id: message.providerId, name: message.name, ...output, isFailure: message.error, providerExecuted: false })] })]
-            }
-            const continuation = message.continuation
-            if (continuation && continuation.provider === settings.provider && continuation.protocol === settings.protocol && continuation.model === resolved.model.model_id) {
-              return Schema.decodeUnknownSync(Prompt.Prompt)(continuation.payload).content
-            }
-            return [Prompt.makeMessage("assistant", { content: [
-              ...(message.text ? [Prompt.makePart("text", { text: message.text })] : []),
-              ...message.toolCalls.map(call => Prompt.makePart("tool-call", { id: call.providerId, name: call.name, params: call.input, providerExecuted: false })),
-            ] })]
-          }),
-        ]),
+        prompt: Prompt.fromMessages(cached?.messages ?? messages),
         toolkit,
         toolChoice: input.tools.length ? "auto" as const : "none" as const,
         disableToolCallResolution: true as const,

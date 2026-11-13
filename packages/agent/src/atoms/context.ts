@@ -1,15 +1,16 @@
+import { promptBoundary, type PromptContent } from "@clavia/tardigrade-model/prompt"
 import { effectAtom, eventValue, type ActorOutput, type ActService } from "@clavia/tardigrade-core"
 import { durableAtom } from "@clavia/tardigrade-core/experimental"
 import { type Event, type ContextResolved, type ResolvedContext } from "../contracts/events"
 import { ResolveContext, requests, failureMessage } from "../contracts/acts"
 import { agentLog } from "../experimental/trajectory-log"
-import { contextText, mergeLibraryContexts, type ContextConfiguration } from "../contracts/context"
+import { contextParts, mergeLibraryContexts, type ContextConfiguration } from "../contracts/context"
 import { inferenceState } from "./durable/inference"
 
 const contextPages = durableAtom.log(agentLog.view(["ContextResolved"]))
 
 export type ContextPreparation = ActorOutput<
-  { readonly position: "ready"; readonly system: string }
+  { readonly position: "ready"; readonly system: PromptContent }
     | { readonly position: "pending" } | { readonly position: "failed"; readonly reason: string },
   Event, ActService<"agent.context.resolve">
 >
@@ -20,11 +21,14 @@ export function prepareContext(configuration: ContextConfiguration) {
   const empty = { system: { libraries: [] }, user: { libraries: [] } }
   const ready = (resolved?: typeof ResolvedContext.Type): ContextPreparation => {
     const libraries = mergeLibraryContexts(configuration.system.libraries, resolved?.system.libraries ?? [])
-    const system = [resolved?.system.actor ?? configuration.system.actor ?? "", contextText(libraries)]
-      .filter(text => text.trim()).join("\n\n")
+    const actor = resolved?.system.actor ?? configuration.system.actor
+    const system = [
+      ...promptBoundary(actor),
+      ...contextParts(libraries),
+    ]
     return { view: { position: "ready", system }, events: {}, acts: {} }
   }
-  const needsSnapshot = configuration.dynamic || contextText(configuration.user.libraries).length > 0
+  const needsSnapshot = configuration.dynamic || contextParts(configuration.user.libraries).length > 0
   return effectAtom((get): ContextPreparation => {
     if (!needsSnapshot) return ready()
     const state = get(inferenceState)

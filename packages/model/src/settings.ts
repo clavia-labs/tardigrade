@@ -1,3 +1,4 @@
+import type { CacheSettings } from "./prompt-cache"
 import { Context, Effect, type SchemaRepresentation } from "effect"
 import type { Response } from "effect/ai"
 import type { ModelRef } from "./reference"
@@ -8,6 +9,7 @@ import { requestPolicyOf } from "./stream/request"
 import type { RequestPolicy } from "./stream/policy"
 
 export interface BindingOptions {
+  readonly promptCache?: CacheSettings
   readonly provider: string
   readonly protocol: string
   readonly model: string

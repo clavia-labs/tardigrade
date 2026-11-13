@@ -1,3 +1,4 @@
+import { PromptContent } from "@clavia/tardigrade-model/prompt"
 import { Effect, Schema } from "effect"
 import { act } from "@clavia/tardigrade-core"
 import { ModelRef } from "@clavia/tardigrade-model/reference"
@@ -14,7 +15,7 @@ export const OutputContract = Schema.Struct({
 })
 export type OutputContract = typeof OutputContract.Type
 
-const ModelInput = Schema.Struct({ model: ModelRef, system: Schema.String, tools: Schema.Array(ToolSpec), context: Conversation, output: Schema.optionalKey(OutputContract) })
+const ModelInput = Schema.Struct({ model: ModelRef, system: PromptContent, tools: Schema.Array(ToolSpec), context: Conversation, output: Schema.optionalKey(OutputContract) })
 export type InlineModelInput = typeof ModelInput.Type
 export const Generate = act({
   name: "agent.model.generate",

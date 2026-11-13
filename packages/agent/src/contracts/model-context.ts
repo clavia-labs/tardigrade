@@ -38,6 +38,13 @@ export function modelMessageRendererV1(policy: LogModelContext["render"]) {
   return (message: typeof Conversation.Type[number]): typeof Conversation.Type[number] => {
     if (message.role === "assistant") return message
     const chars = message.role === "tool" ? toolLimit : userLimit
+    if ("blocks" in message) {
+      const blocks = message.blocks.map(part => {
+        const text = clip(part.text, chars)
+        return text === part.text ? part : { ...part, text }
+      })
+      return blocks.every((part, index) => part === message.blocks[index]) ? message : { ...message, blocks }
+    }
     if ("content" in message && message.content !== undefined) {
       const content = message.content.map(part => {
         if (part.type !== "text") return part

@@ -1,3 +1,4 @@
+import { promptParts, type PromptContent } from "@clavia/tardigrade-model/prompt"
 import { atom, type ActService, effectAtom, eventValue, cancel, effectKey, type Atom, type ActorOutput, type EventValue, type Getter } from "@clavia/tardigrade-core"
 import { Effect, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/reactivity"
@@ -16,7 +17,7 @@ export type ContextView = ActorOutput<{ readonly position: "configuring" | "comp
   readonly position: "ready"; readonly messages: typeof Conversation.Type; readonly logContext?: LogModelContext
 }, Event, ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>
 export interface AgentInput<R, ToolEvents extends object = Event, ContextServices = never> {
-  readonly system: string
+  readonly system: PromptContent
   readonly preparation?: ActorOutput<ContextPreparation["view"], Event, ContextServices>
   readonly tools: ActorOutput<Pick<ToolView<R>, "specs">, ToolEvents, R>
   readonly context: ContextView
@@ -100,7 +101,7 @@ export function infer<R, ToolEvents extends object = Event, ContextServices = ne
         inference: request(state.callId, {
           ...(input.context.view.logContext ? { logContext: input.context.view.logContext } : {}),
           ...(state.origin === null ? {} : { origin: state.origin }),
-          input: { model: selection.model, system: `${system}${correctionSystem}`, tools: input.tools.view.specs, context: messages, ...(input.output === undefined ? {} : { output: input.output }) },
+          input: { model: selection.model, system: correctionSystem ? [...promptParts(system), ...promptParts(correctionSystem)] : system, tools: input.tools.view.specs, context: messages, ...(input.output === undefined ? {} : { output: input.output }) },
           onRequested: () => [{ type: "ModelCalled", purpose: "inference", ...selection, callId: state.callId, turnId: state.turnId } satisfies ModelCalled],
           onSettled: (result, ref) => {
             if (result.status === "rejected") return [{ type: "ModelFailed", callId: state.callId, reason: failureMessage(result.reason) } satisfies typeof ModelFailed.Type]
