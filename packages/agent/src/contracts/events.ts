@@ -1,3 +1,5 @@
+import * as Prompt from "effect/ai/Prompt"
+import { PromptContent } from "@clavia/tardigrade-model/prompt"
 import { ModelRef } from "@clavia/tardigrade-model/reference"
 import { ResolutionSettled as PromiseSettled, event, type DeclaredEvent, ActorRequest, AbortRequested, InvocationRef, ExecutionHandle, EffectRef } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
@@ -115,10 +117,10 @@ export const TurnSettled = Schema.Union([
 export type TurnSettled = typeof TurnSettled.Type
 
 export const LibraryContext = Schema.Struct({
-  library: Schema.String, content: Schema.String,
+  library: Schema.String, content: PromptContent,
 })
 export const ResolvedContext = Schema.Struct({
-  system: Schema.Struct({ actor: Schema.optionalKey(Schema.String), libraries: Schema.Array(LibraryContext) }),
+  system: Schema.Struct({ actor: Schema.optionalKey(PromptContent), libraries: Schema.Array(LibraryContext) }),
   user: Schema.Struct({ libraries: Schema.Array(LibraryContext) }),
 })
 export const ContextResolved = Schema.Struct({
@@ -177,6 +179,7 @@ export function turnSource(event: TurnRequested): "user" | "agent" | "tool" {
 
 const Message = Schema.Union([
   Schema.Struct({ role: Schema.Literal("user"), text: Schema.String, turnId: Schema.optionalKey(Schema.String), context: Schema.optionalKey(Schema.Literal(true)) }),
+  Schema.Struct({ role: Schema.Literal("user"), blocks: Schema.Array(Prompt.TextPart), turnId: Schema.optionalKey(Schema.String), context: Schema.optionalKey(Schema.Literal(true)) }),
   Schema.Struct({ role: Schema.Literal("user"), content: MessageContent, turnId: Schema.optionalKey(Schema.String) }),
   Schema.Struct({ role: Schema.Literal("assistant"), ...ModelReasoning, text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
   Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, providerId: Schema.String, name: Schema.String, text: Schema.String, content: Schema.optionalKey(MessageContent), error: Schema.Boolean }),

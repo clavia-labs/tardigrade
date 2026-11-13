@@ -4,7 +4,7 @@ socialImage: /images/libraries-social.png
 socialImageAlt: Five interlocking puzzle pieces with blue outlines and a subtle blue fill.
 hideDescription: false
 articleClass: libraries-article
-description: Add typed capabilities and pluggable implementations to actors
+description: Add typed capabilities, dynamic prompts and pluggable implementations to actors
 route: /docs/concepts/libraries
 section: Concepts
 sectionOrder: 2
@@ -15,11 +15,12 @@ Often, we want to extend our actors with external capabilities so they can inter
 
 <LibraryJigsaw />
 
-A Tardigrade library is a named group of typed `Rpc` methods with annotations, and an Effect `Service` that backs them. This enables strong type level guarantees, automatic dependency injection and seamless integration with the rest of your Effect application. Once defined, application hosts provide service implementations using Effect `Layer`.
+A Tardigrade library is a named group of typed `Rpc` methods with annotations, an Effect `Service` that backs them, and dynamic model prompts. This enables strong type level guarantees, automatic dependency injection and seamless integration with the rest of your Effect application. Once defined, application hosts provide service implementations using Effect `Layer`.
 
 ```
-Library = Effect Service + RPC contract
-                ▲               ▲
+Library = Effect Service + RPC contract + Dynamic prompts
+                ▲               ▲               ▲
+                │               │               └── System and user context
                 │               └── Typed methods and annotations
                 └── Implemented through a Layer
 ```
@@ -55,9 +56,48 @@ export const workspace = Library.make(
 )
 ```
 
+## Context
+
+To steer your agents better, a library lets you append prompt chunks to the system or user prompt dynamically. For static prompts, pass a string to the system or user option of the `Library.context` method. For dynamic prompts, run an effect that resolves to the prompt string.
+
+<LibraryContextDiagram />
+
+For example, for the workspace library, the system prompt could be a static description of the tool whereas the user prompt could dynamically return the latest state of the working directory.
+
+```ts
+import { Effect } from "effect"
+import { Library } from "tardie/libraries"
+import { workspace } from "./workspace"
+
+workspace.pipe(
+  Library.context({
+    system: "Use workspace tools to inspect and modify files.",
+    user: Effect.flatMap(workspace, service =>
+      service.bash({ command: "find . -type f | sort" }),
+    ),
+  }),
+)
+```
+
+To replace only the system instructions while preserving the user context, supply just `system`.
+
+```ts
+workspace.pipe(
+  Library.context({
+    system: "Inspect files before making changes.",
+  }),
+)
+```
+
+To disable context supplied by another library, pass `null`.
+
+```ts
+workspace.pipe(Library.context(null))
+```
+
 ## Agent
 
-Once your library is defined, it can be added to the agent tools array. Your agent now declares its tools and the services required to run them. The stage is now set for hosting and running the agent program.
+Once your library is defined, it can be added to the agent tools array. Your agent now declares its tools and the services required to run them.
 
 ```ts title="agent.ts"
 import { agent } from "tardie/agent"

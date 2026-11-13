@@ -2,3 +2,4 @@ export { modelLayer, type ModelBindingOptions, type ModelHostOptions, type Model
 export { inferenceLayer } from "./services"
 export type { ModelConfig, ModelCredentials, ModelProviderConfig } from "./config"
 export { ModelLock, layerModelLock, layerFileModelLock, type ModelLockData } from "./lock"
+export { DEFAULT_PROMPT_CACHING, type PromptCaching } from "./prompt-cache"

@@ -1,3 +1,4 @@
+import type * as Prompt from "effect/ai/Prompt"
 import { LogSelection } from "@clavia/tardigrade-core/experimental"
 import { Schema } from "effect"
 import { RuntimeError, type Getter } from "@clavia/tardigrade-core"
@@ -38,17 +39,14 @@ export function resolveModelInput(input: Parameters<typeof Generate.request>[0][
 }
 
 // mergeUserContext combines adjacent input and context rows without rewriting earlier messages.
-export function mergeUserContext(messages: typeof Conversation.Type): typeof Conversation.Type {
-  const output: Array<typeof Conversation.Type[number]> = []
-  for (const message of messages) {
+export function mergeUserContext(rows: readonly { readonly source: typeof Conversation.Type[number]; readonly message: Prompt.Message }[]): readonly Prompt.Message[] {
+  const output: Array<typeof rows[number]> = []
+  for (const row of rows) {
     const index = output.length - 1
     const previous = output[index]
-    if (previous?.role === "user" && isUserContextSuffix(message, previous)) {
-      output[index] = "text" in previous ? { ...previous, text: previous.text + message.text }
-        : { ...previous, content: [...previous.content, { type: "text", text: message.text }] }
-      continue
-    }
-    output.push(message)
+    if (row.message.role === "user" && previous?.message.role === "user" && isUserContextSuffix(row.source, previous.source)) {
+      output[index] = { source: row.source, message: { ...previous.message, content: [...previous.message.content, ...row.message.content] } }
+    } else output.push(row)
   }
-  return output
+  return output.map(row => row.message)
 }

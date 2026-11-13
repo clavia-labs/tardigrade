@@ -1,3 +1,4 @@
+import type { PromptContent } from "@clavia/tardigrade-model/prompt"
 import { Context, Deferred, Effect, Layer, Schema, type Scope } from "effect"
 import { Rpc, RpcGroup, RpcMessage, RpcSchema } from "effect/rpc"
 import { Headers } from "effect/http"
@@ -64,7 +65,7 @@ class MethodIdentity extends Context.Service<MethodIdentity, {
   readonly method: string
 }>()("tardie/library/MethodIdentity") {}
 
-export type LibraryContextSource<E = never, R = never> = string | Effect.Effect<string, E, R>
+export type LibraryContextSource<E = never, R = never> = PromptContent | Effect.Effect<PromptContent, E, R>
 
 export interface LibraryContextOptions {
   readonly system?: LibraryContextSource<unknown, unknown> | null
@@ -121,7 +122,7 @@ export type LibraryBinding = LibraryImplementation<unknown> | RpcLibraryBinding
 
 export interface LibraryContext {
   readonly library: string
-  readonly content: string
+  readonly content: PromptContent
 }
 
 export interface LibraryContexts {
@@ -138,14 +139,14 @@ export function libraryContextSources(libraries: readonly LibraryBinding[]) {
   })
 }
 
-// resolveLibraryContext evaluates prompt effects sequentially; static strings remain in configuration.
+// resolveLibraryContext evaluates prompt effects sequentially; static content remains in configuration.
 export function resolveLibraryContext<const L extends readonly LibraryBinding[]>(libraries: L): Effect.Effect<
   LibraryContexts, LibraryContextError<L[number]>, LibraryContextRequirements<L[number]>
 > {
   type E = LibraryContextError<L[number]>
   type R = LibraryContextRequirements<L[number]>
   const resolve = (source: LibraryContextSource<E, R> | null | undefined) =>
-    typeof source === "string" ? Effect.void : source ?? Effect.void
+    Effect.isEffect(source) ? source : Effect.void
   return Effect.gen(function* () {
     const system: LibraryContext[] = []
     const user: LibraryContext[] = []

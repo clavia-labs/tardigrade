@@ -1401,3 +1401,23 @@
 .library-jigsaw svg { display: block; width: min(100%, 320px); height: auto; margin-inline: auto; overflow: visible; }
 .library-jigsaw svg > path { fill: #edf1ff; stroke: #2448ff; stroke-width: 1px; vector-effect: non-scaling-stroke; }
 :root[data-theme="dark"] .library-jigsaw svg > path { fill: rgb(142 165 232 / 6%); stroke: #8ea5e8; }
+
+.library-context-diagram { --context-blue: #2448ff; --context-fill: #edf1ff; margin: 32px 0; overflow-x: auto; }
+.library-context-diagram svg { display: block; width: 100%; min-width: 640px; max-width: 840px; height: auto; margin-inline: auto; }
+.library-context-diagram text { font-family: var(--font-sans, inherit); }
+.library-context-diagram .context-heading { fill: var(--ink); font-size: 16px; }
+.library-context-diagram .context-frame { fill: none; stroke: var(--hair); stroke-width: 1.2; }
+.library-context-diagram .context-library { fill: var(--context-fill); stroke: var(--context-blue); stroke-opacity: 0.55; stroke-width: 1.2; }
+.library-context-diagram .context-library-title { fill: var(--ink); font-size: 20px; }
+.library-context-diagram .context-code { fill: var(--ink-2); font-family: var(--mono); font-size: 12px; }
+.library-context-diagram .context-chunk { fill: var(--context-fill); stroke: var(--context-blue); stroke-opacity: 0.55; stroke-width: 1.2; }
+.library-context-diagram .context-slot { fill: var(--context-blue); font-family: var(--mono); font-size: 13px; }
+.library-context-diagram .context-detail { fill: var(--ink-2); font-size: 13px; }
+.library-context-diagram .context-file { fill: var(--ink-2); font-family: var(--mono); font-size: 12px; }
+.library-context-diagram .context-tree { fill: none; stroke: var(--context-blue); stroke-opacity: 0.55; stroke-width: 1; }
+.library-context-diagram .context-links, .library-context-diagram marker path { fill: none; stroke: var(--context-blue); stroke-width: 1.2; stroke-opacity: 0.65; }
+.library-context-diagram .context-label { fill: var(--ink-2); font-size: 10px; letter-spacing: 1.4px; }
+.library-context-diagram .context-base { fill: var(--bg); stroke: var(--hair); stroke-width: 1; }
+.library-context-diagram .context-body { fill: var(--ink); font-size: 14px; }
+.library-context-diagram .context-history { fill: none; stroke: var(--hair); stroke-width: 1; stroke-dasharray: 4 4; }
+:root[data-theme="dark"] .library-context-diagram { --context-blue: #8ea5e8; --context-fill: rgb(142 165 232 / 6%); }

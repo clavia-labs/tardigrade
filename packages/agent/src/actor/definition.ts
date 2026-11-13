@@ -1,3 +1,4 @@
+import type { PromptContent } from "@clavia/tardigrade-model/prompt"
 import { agentMethods } from "./methods"
 import { Effect } from "effect"
 import { atom, defineActor, type ActorMethods } from "@clavia/tardigrade-core"
@@ -18,7 +19,7 @@ export interface AgentOptions<Methods extends ActorMethods<object> = {}, Librari
   /** name identifies the actor for hosts and clients. */
   readonly name: string
   /** system supplies the model prompt. */
-  readonly system: string | Effect.Effect<string, unknown, unknown>
+  readonly system: PromptContent | Effect.Effect<PromptContent, unknown, unknown>
   /** tools selects libraries for the agent's tool runtime. */
   readonly tools?: Libraries
   /** compaction configures history summarization and retention. */

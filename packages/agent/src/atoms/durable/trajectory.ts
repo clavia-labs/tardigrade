@@ -1,5 +1,6 @@
+import * as Prompt from "effect/ai/Prompt"
 import { ModelCalled, Trajectory, type Conversation, type ToolReturned } from "../../contracts/events"
-import { contextText, mergeLibraryContexts, UserContextConfiguration } from "../../contracts/context"
+import { contextParts, mergeLibraryContexts, UserContextConfiguration } from "../../contracts/context"
 import { Schema } from "effect"
 import { RuntimeError, type Atom, type Getter } from "@clavia/tardigrade-core"
 import { durableAtom } from "@clavia/tardigrade-core/experimental"
@@ -61,8 +62,9 @@ const pages = NativeAtom.family((identity: string): Atom<LogReadPage<typeof Traj
         rows.push({ position, value: { turnId: event.turnId, message } })
       }
       if (event.type === "ContextResolved" && event.error === null) {
-        const text = contextText(mergeLibraryContexts(query.userContext?.libraries ?? [], event.user.libraries))
-        if (text) rows.push({ position, value: { turnId: event.turnId, message: { role: "user", turnId: event.turnId, context: true, text: `\n\n${text}` } } })
+        const blocks = contextParts(mergeLibraryContexts(query.userContext?.libraries ?? [], event.user.libraries))
+          .map(part => Prompt.makePart("text", { text: `\n\n${part.text}`, options: part.options }))
+        if (blocks.length) rows.push({ position, value: { turnId: event.turnId, message: { role: "user", turnId: event.turnId, context: true, blocks } } })
       }
       if (event.type === "ModelReturned" && event.purpose === "inference") {
         const turnId = event.turnId ?? get(modelTurns(event.callId))

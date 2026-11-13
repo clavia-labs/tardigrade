@@ -105,8 +105,11 @@
                   "effect/ChildProcessSpawner",
                   "effect/*",
                   "!effect/reactivity",
+                  "!effect/ai/Prompt",
                   "@clavia/tardigrade-model",
                   "@clavia/tardigrade-model/*",
+                  "!@clavia/tardigrade-model/prompt",
+                  "!@clavia/tardigrade-model/prompt-cache",
                   "!@clavia/tardigrade-model/reference",
                   "!@clavia/tardigrade-model/object/reference"
                 ],

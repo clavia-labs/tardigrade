@@ -1,3 +1,4 @@
+import type { PromptCaching } from "./prompt-cache"
 import type { ModelCredentials } from "./config"
 import { failedProviderLayer, type ProviderLayer } from "./providers/layer"
 import { protocolOptionsOf } from "./providers/options"
@@ -18,6 +19,7 @@ import type { RequestOptions } from "./stream/request"
 import { inferenceLayer } from "./services"
 
 export interface ModelSettings extends RequestOptions {
+  readonly promptCache?: false | Partial<PromptCaching>
   readonly openrouter?: Parameters<typeof OpenRouterLanguageModel.layer>[0]["config"]
   readonly reportedCostUsd?: ReportedCostReader
   readonly openai?: Parameters<typeof OpenAiLanguageModel.layer>[0]["config"]

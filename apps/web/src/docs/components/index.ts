@@ -1,4 +1,5 @@
 import { LibraryJigsaw } from "../diagrams/LibraryJigsaw"
+import { LibraryContextDiagram } from "../diagrams/LibraryContextDiagram"
 import { LibraryLayersDiagram } from "../diagrams/LibraryLayersDiagram"
 import { WorkspaceDeploymentDiagram } from "../diagrams/WorkspaceDeploymentDiagram"
 import { AgentServicesDiagram } from "../diagrams/AgentServicesDiagram"
@@ -50,6 +51,7 @@ import { InlineMine } from "./icons"
 export const mdxComponents = {
   LibraryJigsaw,
   LibraryLayersDiagram,
+  LibraryContextDiagram,
   NotesList,
   AuthorAvatar, Dialogue, Socrates, You, AgentViewDiagram, CaveDiagram, FlyingTardie, MergeDiagram, RussianDollDiagram, ShadowDiagram,
   EventLogWorldDiagram,
