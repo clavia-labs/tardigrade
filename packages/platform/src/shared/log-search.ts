@@ -1,5 +1,6 @@
 import { checkpointDigestSync, observeRecord, recordEvent, RuntimeError, journalCall, type JournalSearch, type JournalSearchResult, type Recorded } from "@clavia/tardigrade-core"
 import { Effect } from "effect"
+import { sqlErrorMessage } from "./sql-error"
 import { SqlError, type SqlClient } from "effect/sql"
 
 export interface LogSearchIndexPolicy {
@@ -86,6 +87,6 @@ export function sqlLogSearch<Event extends object>(options: {
       return { hits: rows.slice(0, request.limit).map(row => ({ ...row, snippet: row.snippet.slice(0, request.snippetChars), truncated: row.snippet.length > request.snippetChars })), more: rows.length > request.limit, indexedThrough: progress[0]?.position ?? 0, indexPolicy: policy }
     }))
   }).pipe(Effect.mapError(error => SqlError.isSqlError(error)
-    ? new RuntimeError(`Log search storage failed (${error.reason._tag}, ${error.reason.operation ?? "SQL"}): ${error.message}`, { cause: error })
+    ? new RuntimeError(`Log search storage failed ${sqlErrorMessage(error)}`, { cause: error })
     : RuntimeError.from(error)))
 }

@@ -56,11 +56,13 @@ const lock = modelLockService(modelLockOf({
   providers: { fixture: { protocol: "openai-chat-completions", baseUrl: "https://fixture.invalid", env: [] } },
   models: [{ provider: "fixture", model_id: "test", contextWindowTokens: 4096 }],
 }), { allow: "*", default: model })
+type ContentToolCall = Pick<Response.ToolCallPart<string, Schema.Json>, "id" | "name" | "params">
+
 interface ContentModelOptions {
   readonly observeTools?: (tools: LanguageModel.ProviderOptions["tools"]) => void
   readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined
   readonly request?: RequestOptions
-  readonly toolCalls?: readonly { readonly id: string; readonly name: string; readonly params: Schema.Json }[] | ((prompt: Prompt.Prompt) => readonly { readonly id: string; readonly name: string; readonly params: Schema.Json }[])
+  readonly toolCalls?: readonly ContentToolCall[] | ((prompt: Prompt.Prompt) => readonly ContentToolCall[])
 }
 
 export const contentModelServices = (observe: (prompt: Prompt.Prompt) => void, options: ContentModelOptions = {}) => {
