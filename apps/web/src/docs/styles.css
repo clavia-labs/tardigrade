@@ -835,9 +835,9 @@
 .state-space-mine { fill: none; stroke: light-dark(#60242e, #f4ced4); stroke-width: 2.5; stroke-linecap: round; }
 
 .docs-table { max-width: 100%; margin: 24px 0; overflow-x: auto; }
-.docs-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; line-height: 1.6; }
+.docs-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 18px; line-height: 1.6; }
 .docs-table th, .docs-table td { padding: 12px 16px; border-bottom: 1px solid var(--hair); vertical-align: top; }
-.docs-table th { color: var(--ink); font-weight: 600; background: var(--surface); }
+.docs-table th { color: var(--ink); font-weight: 600; }
 .docs-table td { color: var(--ink-2); }
 
 .docs-code-files { display: grid; grid-template-columns: 170px minmax(0, 1fr); margin-block: 24px; border: 1px solid rgb(var(--accent-rgb) / 28%); }
@@ -912,6 +912,7 @@
 .docs-site .guide-article { min-width: 0; padding: 48px 0 72px; }
 .docs-site .guide-article h1 { font-size: 36px; letter-spacing: -.035em; }
 .docs-site .guide-article > p:not(.guide-intro) { max-width: 760px; color: var(--ink-2); font-size: var(--docs-body-size); line-height: 1.55; }
+:root:not([data-theme="dark"]) .docs-site .guide-article > p:not(.guide-intro) { color: color-mix(in srgb, var(--ink-2) 65%, var(--ink)); }
 .docs-site .guide-article h2 { margin: 40px 0 16px; padding: 0; border: 0; font-size: 24px; font-weight: 500; letter-spacing: -.025em; }
 .docs-site .guide-article h2:not(:first-of-type) { margin-top: 40px; padding-top: 0; border: 0; }
 .docs-site .guide-article h3 { font-size: 21px; }
@@ -1395,3 +1396,8 @@
 .agent-services-node .agent-services-code { fill: var(--ink-2); font-family: var(--mono); font-size: 15px; }
 .agent-services-node .agent-services-detail { fill: var(--faint); font-size: 14px; }
 :root[data-theme="light"] .agent-services-node rect { stroke: color-mix(in srgb, var(--ink) 24%, var(--bg)); }
+
+.library-jigsaw { margin: 28px 0 36px; }
+.library-jigsaw svg { display: block; width: min(100%, 320px); height: auto; margin-inline: auto; overflow: visible; }
+.library-jigsaw svg > path { fill: #edf1ff; stroke: #2448ff; stroke-width: 1px; vector-effect: non-scaling-stroke; }
+:root[data-theme="dark"] .library-jigsaw svg > path { fill: rgb(142 165 232 / 6%); stroke: #8ea5e8; }

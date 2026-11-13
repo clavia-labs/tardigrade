@@ -1,6 +1,7 @@
 import { modelRetry } from "./model-retry"
 import type { RetryOptions } from "@clavia/tardigrade-core/services/effect-execution"
-import { ModelInfo } from "../actor/context"
+import { isDeepStrictEqual } from "node:util"
+import { ModelInfo, ToolCatalog } from "../actor/context"
 import { RuntimeError, type ExecutionHandle, type ActCancellation, durablePromise, EffectExecution } from "@clavia/tardigrade-core"
 import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit, Option, Stream } from "effect"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
@@ -167,14 +168,28 @@ export function modelServices(options: ModelServiceOptions = {}) {
     return { promiseTimeoutMs, retry, call: (input, context) => Effect.gen(function* () {
       const { resolved, settings } = yield* settingsOf(input)
       const objects = yield* resolveContentObjects(input.context, imageTransport, resolved.model)
+      const catalog = Option.getOrUndefined(yield* Effect.serviceOption(ToolCatalog))
       const toolkit = yield* Effect.try({
-        try: () => Toolkit.make(...input.tools.map(tool => AiTool.dynamic(tool.name, {
-          description: `${tool.description} Execution: ${tool.execution ?? DEFAULT_METHOD_EXECUTION}.${tool.promiseTimeoutMs === undefined ? "" : ` Promise timeout: ${tool.promiseTimeoutMs}ms.`}`,
-          parameters: Schema.toEncoded(SchemaRepresentation.fromJsonSchemaDocument(
-            JsonSchema.fromSchemaDraft07(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(tool.inputSchema)),
-            settings.schemaImport ?? DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS,
-          )),
-        }))),
+        try: () => Toolkit.make(...input.tools.map(tool => {
+          const description = `${tool.description} Execution: ${tool.execution ?? DEFAULT_METHOD_EXECUTION}.${tool.promiseTimeoutMs === undefined ? "" : ` Promise timeout: ${tool.promiseTimeoutMs}ms.`}`
+          // native preserves RPC annotations when the logged contract matches the host (platform/test/workerd/agent-content.workers.ts).
+          const native = settings.schemaImport === undefined && isDeepStrictEqual(tool, catalog?.specs.find(spec => spec.name === tool.name))
+            ? catalog?.nativeTools?.[tool.name]
+            : undefined
+          if (native) return AiTool.make(tool.name, {
+            description,
+            parameters: Schema.toEncoded(native.parametersSchema),
+            success: native.successSchema,
+            failure: native.failureSchema,
+          }).annotateMerge(native.annotations)
+          return AiTool.dynamic(tool.name, {
+            description,
+            parameters: Schema.toEncoded(SchemaRepresentation.fromJsonSchemaDocument(
+              JsonSchema.fromSchemaDraft07(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(tool.inputSchema)),
+              settings.schemaImport ?? DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS,
+            )),
+          })
+        })),
         catch: RuntimeError.from,
       })
       const responseFormat = input.output === undefined ? undefined : {

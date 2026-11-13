@@ -3,16 +3,16 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/rpc"
 import { defineLibrary, MethodDescription, MethodHints } from "./library"
 
-export class Workspace extends Context.Service<Workspace, {
+export class TextStore extends Context.Service<TextStore, {
   readonly read: (key: string) => Effect.Effect<string | null, Error>
   readonly write: (key: string, value: string) => Effect.Effect<void, Error>
   readonly keys: Effect.Effect<readonly string[], Error>
-}>()("tardigrade/experimental/packages/Workspace") {}
+}>()("tardigrade/experimental/packages/TextStore") {}
 
-export const DEFAULT_WORKSPACE_POLICY = { maxChars: 32_768, maxEntries: 100 } as const
+export const DEFAULT_TEXT_STORE_POLICY = { maxChars: 32_768, maxEntries: 100 } as const
 
-// memoryWorkspace allocates an ephemeral key/value workspace per layer construction.
-export const memoryWorkspace = Layer.effect(Workspace, Effect.sync(() => {
+// memoryTextStore allocates an ephemeral key/value text store per layer construction.
+export const memoryTextStore = Layer.effect(TextStore, Effect.sync(() => {
   const values = new Map<string, string>()
   return {
     read: (key: string) => Effect.sync(() => values.get(key) ?? null),
@@ -21,14 +21,14 @@ export const memoryWorkspace = Layer.effect(Workspace, Effect.sync(() => {
   }
 }))
 
-// workspace exposes bounded reads and key listings over caller-supplied storage.
-export function workspace(options: { readonly maxChars?: number; readonly maxEntries?: number } = {}) {
-  const maxChars = options.maxChars ?? DEFAULT_WORKSPACE_POLICY.maxChars
-  const maxEntries = options.maxEntries ?? DEFAULT_WORKSPACE_POLICY.maxEntries
-  if (![maxChars, maxEntries].every(value => Number.isSafeInteger(value) && value > 0)) throw new ToolError("Workspace limits must be positive integers")
+// textStore exposes bounded reads and key listings over caller-supplied storage.
+export function textStore(options: { readonly maxChars?: number; readonly maxEntries?: number } = {}) {
+  const maxChars = options.maxChars ?? DEFAULT_TEXT_STORE_POLICY.maxChars
+  const maxEntries = options.maxEntries ?? DEFAULT_TEXT_STORE_POLICY.maxEntries
+  if (![maxChars, maxEntries].every(value => Number.isSafeInteger(value) && value > 0)) throw new ToolError("TextStore limits must be positive integers")
   const library = defineLibrary({
     toolNames: { write: "write_text", read: "read_text", list: "list_texts" },
-    name: "workspace", description: "Read and write named text values in the agent workspace.",
+    name: "textStore", description: "Read and write named text values in the agent text store.",
     methods: [
       Rpc.make("write", { payload: Schema.Struct({ key: Schema.String, value: Schema.String }),
         success: Schema.Struct({ key: Schema.String, chars: Schema.Finite }), error: Schema.String,
@@ -46,19 +46,19 @@ export function workspace(options: { readonly maxChars?: number; readonly maxEnt
   })
   return library.implement({
     write: ({ key, value }) => Effect.gen(function* () {
-      const store = yield* Workspace
+      const store = yield* TextStore
       yield* store.write(key, value)
       return { key, chars: value.length }
     }).pipe(Effect.mapError(String)),
     read: ({ key, offset = 0 }) => Effect.gen(function* () {
       if (!Number.isSafeInteger(offset) || offset < 0) return yield* Effect.fail(new ToolError("offset must be a nonnegative integer"))
-      const store = yield* Workspace
+      const store = yield* TextStore
       const value = yield* store.read(key)
       if (value === null) return yield* Effect.fail(new ToolError(`Unknown workspace key: ${key}`))
       return { key, value: value.slice(offset, offset + maxChars), offset, totalChars: value.length, truncated: offset + maxChars < value.length, maxChars }
     }).pipe(Effect.mapError(String)),
     list: ({ after }) => Effect.gen(function* () {
-      const store = yield* Workspace
+      const store = yield* TextStore
       const keys = [...yield* store.keys].sort().filter(key => after === undefined || key > after)
       const page = keys.slice(0, maxEntries)
       return { keys: page, truncated: keys.length > maxEntries, next: keys.length > maxEntries ? page.at(-1)! : null, maxEntries }

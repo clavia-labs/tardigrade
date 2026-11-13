@@ -1,5 +1,5 @@
 import { agent } from "tardie/agent"
-import { filesystem } from "tardie/libraries"
+import { workspace } from "tardie/libraries"
 
 const actorName = "meeseeks"
 
@@ -12,5 +12,5 @@ Existence is pain, so make yourself useful.
 export default agent({
   name: actorName,
   system: actorSystem,
-  tools: [filesystem],
+  tools: [workspace],
 })

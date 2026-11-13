@@ -2,15 +2,16 @@ import { isDeepStrictEqual } from "node:util"
 import { Cause, Clock, Effect, Exit, Layer, Schema } from "effect"
 import { atom, durablePromise, EffectExecution, effectKey, Isolate, RuntimeError } from "@clavia/tardigrade-core"
 import { ToolCatalog } from "../actor/context"
-import { type LibraryMethod, type LibraryImplementation, type LibraryRequirements } from "@clavia/tardigrade-libraries"
+import { libraryBindings, libraryImplementations, type LibraryBinding, type LibraryMethod, type LibraryExecutionRequirements } from "@clavia/tardigrade-libraries"
 import { codeModeSpec } from "../contracts/libraries"
 import { CodeCalled, EvaluateCode, ExecutePackage, MethodRequested } from "../contracts/code-mode"
 import { executions } from "../atoms/durable/code-mode"
 import { StoredToolResult } from "@clavia/tardigrade-model/object/content"
 
 // codeModeActs supplies tool descriptions, isolate RPC, and independently durable library execution.
-export function codeModeActs<const L extends readonly LibraryImplementation<unknown>[]>(implementations: L, options: { readonly signatureDepth?: number } = {}) {
-  type R = LibraryRequirements<L[number]>
+export function codeModeActs<const L extends readonly LibraryBinding[]>(definitions: L, options: { readonly signatureDepth?: number } = {}) {
+  type R = LibraryExecutionRequirements<L[number]>
+  const implementations = libraryImplementations(definitions)
   if (new Set(implementations.map(pkg => pkg.library.name)).size !== implementations.length) throw new Error("Duplicate library name")
   const libraries = implementations.map(value => value.library)
   const spec = codeModeSpec(libraries, options.signatureDepth)
@@ -73,5 +74,5 @@ export function codeModeActs<const L extends readonly LibraryImplementation<unkn
     const owned = context.get(executions).find(entry => entry.call.callId === input.callId && entry.codeMode === input.codeMode)
     for (const call of owned?.calls ?? []) if (call.ref && call.outcome === null) yield* context.cancel(call.ref, context.reason)
   }) })
-  return Layer.mergeAll(catalog, evaluateCode, executePackage)
+  return Layer.mergeAll(catalog, evaluateCode, executePackage).pipe(Layer.provide(libraryBindings(definitions)))
 }

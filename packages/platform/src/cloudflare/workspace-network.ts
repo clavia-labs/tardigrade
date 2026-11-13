@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers"
-import { FilesystemWorkspaceError } from "@clavia/tardigrade-libraries/filesystem/index"
+import { WorkspaceError } from "@clavia/tardigrade-libraries/workspace/index"
 import { workspaceNetworkPolicy, type WorkspaceNetworkPolicy } from "../shared/workspace/network"
 
 interface WorkspaceNetworkProxyProps { readonly hosts: readonly string[] }
@@ -21,7 +21,7 @@ export class WorkspaceNetworkProxy extends WorkerEntrypoint<object, WorkspaceNet
 export function workspaceNetworkRoutes(container: Container, ctx: DurableObjectState, policy: WorkspaceNetworkPolicy) {
   if (policy.mode !== "allowlist") return { install: async () => {} }
   const bindings = ctx.exports as { readonly WorkspaceNetworkProxy?: (options: { readonly props: WorkspaceNetworkProxyProps }) => Fetcher }
-  if (typeof bindings.WorkspaceNetworkProxy !== "function") throw new FilesystemWorkspaceError("Allowlisted workspaces require WorkspaceNetworkProxy to be re-exported from the Worker entrypoint")
+  if (typeof bindings.WorkspaceNetworkProxy !== "function") throw new WorkspaceError("Allowlisted workspaces require WorkspaceNetworkProxy to be re-exported from the Worker entrypoint")
   const proxy = bindings.WorkspaceNetworkProxy({ props: { hosts: policy.hosts } })
   return {
     install: async () => {

@@ -1,8 +1,8 @@
 import type { BashOptions, InMemoryFs } from "just-bash/browser"
-import { FilesystemWorkspaceError, type FilesystemWorkspacePolicy } from "@clavia/tardigrade-libraries/filesystem/index"
+import { WorkspaceError, type WorkspacePolicy } from "@clavia/tardigrade-libraries/workspace/index"
 import type { VirtualWorkspaceEntry, VirtualWorkspaceSnapshot } from "./sqlite"
 
-export interface VirtualWorkspacePolicy extends FilesystemWorkspacePolicy {
+export interface VirtualWorkspacePolicy extends WorkspacePolicy {
   readonly maxFileBytes: number
   readonly maxWorkspaceBytes?: number
   readonly maxWorkspaceEntries?: number
@@ -47,10 +47,10 @@ export async function restoreVirtualFilesystem(snapshot: VirtualWorkspaceSnapsho
 
 // validateVirtualSnapshot reports configured storage limits before a snapshot is loaded or committed.
 export function validateVirtualSnapshot(snapshot: VirtualWorkspaceSnapshot, policy: VirtualWorkspacePolicy): void {
-  if (policy.maxWorkspaceEntries !== undefined && snapshot.entries.length > policy.maxWorkspaceEntries) throw new FilesystemWorkspaceError(`Workspace entry limit exceeded: ${snapshot.entries.length}, limit ${policy.maxWorkspaceEntries}`)
-  for (const entry of snapshot.entries) if (entry.content && entry.content.byteLength > policy.maxFileBytes) throw new FilesystemWorkspaceError(`File byte limit exceeded for ${entry.path}: ${entry.content.byteLength}, limit ${policy.maxFileBytes}`)
+  if (policy.maxWorkspaceEntries !== undefined && snapshot.entries.length > policy.maxWorkspaceEntries) throw new WorkspaceError(`Workspace entry limit exceeded: ${snapshot.entries.length}, limit ${policy.maxWorkspaceEntries}`)
+  for (const entry of snapshot.entries) if (entry.content && entry.content.byteLength > policy.maxFileBytes) throw new WorkspaceError(`File byte limit exceeded for ${entry.path}: ${entry.content.byteLength}, limit ${policy.maxFileBytes}`)
   const bytes = snapshot.entries.reduce((sum, entry) => sum + (entry.content?.byteLength ?? 0) + new TextEncoder().encode(entry.path + (entry.target ?? "")).byteLength, 0)
-  if (policy.maxWorkspaceBytes !== undefined && bytes > policy.maxWorkspaceBytes) throw new FilesystemWorkspaceError(`Workspace byte limit exceeded: ${bytes}, limit ${policy.maxWorkspaceBytes}`)
+  if (policy.maxWorkspaceBytes !== undefined && bytes > policy.maxWorkspaceBytes) throw new WorkspaceError(`Workspace byte limit exceeded: ${bytes}, limit ${policy.maxWorkspaceBytes}`)
 }
 
 // snapshotVirtualFilesystem preserves file identities across committed shell invocations.
@@ -71,16 +71,16 @@ export async function snapshotVirtualFilesystem(fs: InMemoryFs, revision: number
 
 // virtualWorkspacePath confines direct file tools to the workspace directory within the virtual filesystem.
 export async function virtualWorkspacePath(fs: InMemoryFs, directory: string, path: string): Promise<string> {
-  if (!path || path.includes("\0")) throw new FilesystemWorkspaceError("Path must be nonempty and contain no NUL")
+  if (!path || path.includes("\0")) throw new WorkspaceError("Path must be nonempty and contain no NUL")
   const resolved = fs.resolvePath(directory, path)
   const contained = (value: string) => {
-    if (directory !== "/" && value !== directory && !value.startsWith(`${directory}/`)) throw new FilesystemWorkspaceError("Path is outside the workspace directory")
+    if (directory !== "/" && value !== directory && !value.startsWith(`${directory}/`)) throw new WorkspaceError("Path is outside the workspace directory")
   }
   contained(resolved)
   let ancestor = resolved
   while (!(await fs.exists(ancestor))) {
     if ((await fs.readdir(ancestor.slice(0, ancestor.lastIndexOf("/")) || "/").catch(() => [] as string[])).includes(ancestor.slice(ancestor.lastIndexOf("/") + 1))) {
-      throw new FilesystemWorkspaceError("Path contains a dangling symlink")
+      throw new WorkspaceError("Path contains a dangling symlink")
     }
     ancestor = ancestor.slice(0, ancestor.lastIndexOf("/")) || "/"
   }
@@ -99,6 +99,6 @@ export const virtualBash: VirtualWorkspaceExecutor = async input => {
     executionLimits: { ...input.executionLimits, maxExecutionTimeMs: input.policy.commandTimeoutMs, maxFileSystemBytes: input.policy.maxWorkspaceBytes ?? Infinity },
   })
   const result = await bash.exec(input.command, { signal: input.signal })
-  if (input.signal.aborted) throw new FilesystemWorkspaceError(`Command timed out or cancelled: commandTimeoutMs ${input.policy.commandTimeoutMs}`)
+  if (input.signal.aborted) throw new WorkspaceError(`Command timed out or cancelled: commandTimeoutMs ${input.policy.commandTimeoutMs}`)
   return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, snapshot: await snapshotVirtualFilesystem(fs, input.snapshot.revision, input.policy) }
 }

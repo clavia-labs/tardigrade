@@ -1,10 +1,10 @@
-import { Context, Layer } from "effect"
-import { createActorWorker, type CloudflareObjectBindings } from "../../../src/cloudflare"
+import { Layer } from "effect"
+import { host, type CloudflareObjectBindings } from "../../../src/cloudflare"
 import { checkpointActor } from "../atoms/checkpoint-actor"
 import { atomPopulationKinds, type AtomPopulationKind } from "../atoms/population"
 
-const worker = (kind: AtomPopulationKind) => createActorWorker({ actor: checkpointActor(kind),
-  checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } }, actorContext: Context.pick(), services: () => Layer.empty,
+const worker = (kind: AtomPopulationKind) => host(checkpointActor(kind), {
+  checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } }, layer: Layer.empty,
 })
 const bindingsFor = (kind: AtomPopulationKind, env: CheckpointBindings) => ({
   regular: { ACTORS: env.CHECKPOINT_REGULAR_ACTORS, THREADS: env.CHECKPOINT_REGULAR_THREADS },

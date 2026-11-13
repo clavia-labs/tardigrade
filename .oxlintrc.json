@@ -21,7 +21,6 @@
         "packages/agent/src/actor/**/*.ts",
         "packages/agent/src/contracts/**/*.ts",
         "packages/agent/src/index.ts",
-        "packages/agent/src/agent.ts",
         "packages/apps/*/src/actor.ts",
         "packages/**/actors/**/*.ts",
         "packages/core/src/services/supervisor/graph.ts",

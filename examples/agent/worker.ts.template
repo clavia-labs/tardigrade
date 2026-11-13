@@ -1,5 +1,5 @@
-import { actorContext } from "tardie/agent"
-import { createActorWorker, createWorkspaceObject, remoteWorkspace, workspaceObjectName } from "tardie/platform/cloudflare"
+import { Effect, Layer } from "effect"
+import { Bindings, HostThread, host, createWorkspaceObject, remoteWorkspace, workspaceObjectName } from "tardie/platform/cloudflare"
 import definition from "./actor"
 import { services } from "./services"
 
@@ -15,10 +15,14 @@ interface Env {
   readonly [key: string]: unknown
 }
 
-const worker = createActorWorker({
-  actor: definition,
-  actorContext,
-  services: (env: Env, thread) => services((typeof env.TARDIGRADE_CONFIG === "string" ? JSON.parse(env.TARDIGRADE_CONFIG) : env.TARDIGRADE_CONFIG).models, env, remoteWorkspace(env.SANDBOX.getByName(workspaceObjectName(thread)))),
+const appLayer = Layer.unwrap(Effect.gen(function* () {
+  const env = yield* Bindings<Env>()
+  const thread = yield* HostThread
+  return services((typeof env.TARDIGRADE_CONFIG === "string" ? JSON.parse(env.TARDIGRADE_CONFIG) : env.TARDIGRADE_CONFIG).models, env, remoteWorkspace(env.SANDBOX.getByName(workspaceObjectName(thread))))
+}))
+
+const worker = host(definition, {
+  layer: appLayer,
   http: (env: Env) => ({ ...(env.TARDIGRADE_TOKEN ? { token: env.TARDIGRADE_TOKEN } : {}) }),
 })
 export const ActorDO = worker.ActorObject

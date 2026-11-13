@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { FilesystemWorkspaceService, WorkspaceReadResult } from "@clavia/tardigrade-libraries/filesystem/index"
+import type { WorkspaceBackendService, WorkspaceReadResult } from "@clavia/tardigrade-libraries/workspace/index"
 import type { ObjectRef, ObjectStorage } from "@clavia/tardigrade-store"
 
 const encodedArtifact = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7X8AAAAASUVORK5CYII="
@@ -41,7 +41,7 @@ export type LifecycleResponse =
   | { readonly type: "error"; readonly message: string }
 
 // lifecycleRequest dispatches fixture transport requests through workspace and content-store services.
-export function lifecycleRequest(workspace: FilesystemWorkspaceService, objects: typeof ObjectStorage.Service, request: WorkspaceScenarioRequest): Effect.Effect<unknown, Error> {
+export function lifecycleRequest(workspace: WorkspaceBackendService, objects: typeof ObjectStorage.Service, request: WorkspaceScenarioRequest): Effect.Effect<unknown, Error> {
   switch (request.type) {
     case "bash": return workspace.bash(request.command, { idempotencyKey: request.key })
     case "read": return workspace.read(request.path)

@@ -10,7 +10,7 @@
       "project": ["src/**/*.ts"]
     },
     "packages/platform": {
-      "entry": ["test/fixtures/workerd/fixture.worker.ts", "test/fixtures/workerd/agent-fixture.worker.ts", "test/workerd/**/*.workers.ts", "bench/image-memory.mjs", "bench/image-memory.worker.ts", "test/heavy/workspace/lifecycle.ts", "test/fixtures/workspace/container/worker.ts"],
+      "entry": ["test/fixtures/workerd/fixture.worker.ts", "test/fixtures/workerd/agent-fixture.worker.ts", "test/workerd/**/*.workers.ts", "test/types/**/*.test.ts", "bench/image-memory.mjs", "bench/image-memory.worker.ts", "test/heavy/workspace/lifecycle.ts", "test/fixtures/workspace/container/worker.ts"],
       "project": ["src/**/*.ts!", "test/**/*.ts", "bench/image-memory*"],
       "ignoreIssues": {
         "src/cloudflare/index.ts": ["duplicates"],

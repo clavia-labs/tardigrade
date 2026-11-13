@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers"
 import { test, expect } from "vitest"
 import { DEFAULT_R2_OBJECT_PREFIX } from "@clavia/tardigrade-cloudflare/object-storage/r2"
-import { Schema } from "effect"
+import { Context, Schema } from "effect"
 import { objectKeyOf, StoredToolResult } from "@clavia/tardigrade-model/object"
-import { screenshotBytes, type AgentEnv } from "../fixtures/workerd/agent-fixture.worker"
+import { MethodHints } from "@clavia/tardigrade-libraries"
+import { observedTools, screenshotBytes, screenCaptureCount, type AgentEnv } from "../fixtures/workerd/agent-fixture.worker"
 import { contentScenarios } from "../properties/content/hydration"
 import { workerdContentFixture } from "../fixtures/workerd/content-fixture"
 
@@ -15,8 +16,12 @@ for (const scenario of contentScenarios) test(scenario.name, async () => {
 test("tool content persists in R2 before settlement and hydrates on model calls after eviction", async () => {
   const fixture = await workerdContentFixture({ tools: "files" })
   const bucket = (env as unknown as AgentEnv).OBJECTS
+  const captures = screenCaptureCount()
   try {
     expect(await fixture.message([{ type: "text", text: "Take two screenshots." }], "screenshots")).toEqual({ status: "completed", output: { text: "ok" } })
+    const captureTool = observedTools.find(tool => tool.name === "screen__capture")
+    expect(captureTool).toBeDefined()
+    expect(Context.getOrUndefined(captureTool!.annotations, MethodHints)).toEqual({ readOnlyHint: true })
     const records = await fixture.records()
     const settledContent = Schema.Struct({ type: Schema.Literal("value"), value: StoredToolResult })
     const results = records.flatMap(record => {
@@ -28,6 +33,7 @@ test("tool content persists in R2 before settlement and hydrates on model calls 
     for (const result of results) expect(result.content.find(part => part.type === "file")).toMatchObject({ byteSize: screenshotBytes.byteLength })
     const returned = records.flatMap(record => record.event.type === "ToolReturned" ? [record.event] : [])
     expect(returned).toHaveLength(2)
+    expect(screenCaptureCount()).toBe(captures + 2)
     for (const event of returned) {
       expect(event).not.toHaveProperty("output")
       expect(event).toHaveProperty("content")
@@ -66,6 +72,7 @@ test("tool content persists in R2 before settlement and hydrates on model calls 
     expect(fixture.calls()).toBeGreaterThan(calls)
     assertToolContent()
     expect((await fixture.records()).slice(0, records.length)).toEqual(records)
+    expect(screenCaptureCount()).toBe(captures + 2)
   } finally { await fixture.close() }
 })
 

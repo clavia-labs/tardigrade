@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect"
 import { ObjectStorage } from "@clavia/tardigrade-store"
-import { FilesystemWorkspaceError, type WorkspaceReadOptions } from "@clavia/tardigrade-libraries/filesystem/index"
+import { WorkspaceError, type WorkspaceReadOptions } from "@clavia/tardigrade-libraries/workspace/index"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { workspaceNetworkPolicy, type WorkspaceNetworkPolicy } from "../shared/workspace/network"
 import { sqlIdempotencyStore } from "../shared/workspace/idempotency-store"
@@ -87,14 +87,14 @@ export function createWorkspaceObject<Env extends object = Record<string, unknow
     const container = ctx.container
     if (!container) throw new Error("WorkspaceObject requires a configured container")
     const inactivityTimeoutMs = options.inactivityTimeoutMs ?? DEFAULT_WORKSPACE_INACTIVITY_TIMEOUT_MS
-    if (!Number.isSafeInteger(inactivityTimeoutMs) || inactivityTimeoutMs < 1) throw new FilesystemWorkspaceError("inactivityTimeoutMs must be a positive safe integer")
+    if (!Number.isSafeInteger(inactivityTimeoutMs) || inactivityTimeoutMs < 1) throw new WorkspaceError("inactivityTimeoutMs must be a positive safe integer")
     if (container.running) void ctx.blockConcurrencyWhile(() => container.setInactivityTimeout(inactivityTimeoutMs))
     const network = workspaceNetworkPolicy(options.network)
     const routes = workspaceNetworkRoutes(container, ctx, network)
     const start = async () => {
       const startup = options.start(env, container)
       const enableInternet = network.mode === "all"
-      if (startup.enableInternet !== undefined && startup.enableInternet !== enableInternet) throw new FilesystemWorkspaceError("Container startup enableInternet conflicts with the workspace network policy")
+      if (startup.enableInternet !== undefined && startup.enableInternet !== enableInternet) throw new WorkspaceError("Container startup enableInternet conflicts with the workspace network policy")
       await routes.install()
       container.start({ ...startup, enableInternet })
       await container.setInactivityTimeout(inactivityTimeoutMs)
@@ -105,13 +105,13 @@ export function createWorkspaceObject<Env extends object = Record<string, unknow
         const retained = await storage.get<WorkspaceNetworkPolicy>("tardie/workspace/network")
         if (retained !== undefined) {
           const saved = workspaceNetworkPolicy(retained)
-          if (JSON.stringify(saved) !== JSON.stringify(network)) throw new FilesystemWorkspaceError(`Workspace network policy is fixed at creation: stored ${JSON.stringify(saved)}, requested ${JSON.stringify(network)}`)
+          if (JSON.stringify(saved) !== JSON.stringify(network)) throw new WorkspaceError(`Workspace network policy is fixed at creation: stored ${JSON.stringify(saved)}, requested ${JSON.stringify(network)}`)
           return
         }
-        if (container.running) throw new FilesystemWorkspaceError("A running container without a stored workspace network policy must be stopped before a network policy can be established")
+        if (container.running) throw new WorkspaceError("A running container without a stored workspace network policy must be stopped before a network policy can be established")
         await storage.put("tardie/workspace/network", network)
-      }), catch: FilesystemWorkspaceError.from })
-      yield* Effect.tryPromise({ try: routes.install, catch: FilesystemWorkspaceError.from })
+      }), catch: WorkspaceError.from })
+      yield* Effect.tryPromise({ try: routes.install, catch: WorkspaceError.from })
       const store = options.idempotency ? yield* sqlIdempotencyStore : undefined
       const { idempotency: _idempotency, contentStore: _contentStore, mount: _mount, mounts: _mounts, ...readOptions } = options
       const mounts = [...(options.mounts?.(container, ctx, env) ?? []), ...(options.mount ? [options.mount(container, ctx, env)] : [])]

@@ -1,0 +1,54 @@
+---
+title: Log
+hideDescription: true
+articleClass: libraries-article
+description: Discover, search, and query an agent's durable event history.
+route: /docs/libraries/log
+section: Libraries
+sectionOrder: 2.25
+order: 2
+---
+
+The log library lets an agent run sql queries on its own event log.
+
+## Methods
+
+| Method | Inputs | Description |
+| --- | --- | --- |
+| `describe` | `type?`, `cursor?`, `limit?` | Discover columns, event types, schemas, and observed fields. |
+| `search` | `query`, `type?`, `from?`, `through?`, `limit?` | Find events using full-text search. |
+| `query` | `sql`, `from?`, `through?` | Query event history using read-only SQL. |
+
+## Agent usage
+
+Select the log library in the agent's tools:
+
+```ts title="agent.ts"
+import { agent } from "tardie/agent"
+import { log } from "tardie/libraries"
+
+export const assistant = agent({
+  name: "assistant",
+  system: "Use the log tools to find relevant information in your event history.",
+  tools: [log],
+})
+```
+
+## Host wiring
+
+Supply the journal implementation through the host layer. The host provides the current thread's `EventLog`:
+
+```ts title="worker.ts"
+import { Layer } from "effect"
+import { host, journal } from "tardie/platform/cloudflare"
+import { assistant } from "./agent"
+import { model } from "./model"
+
+const worker = host(assistant, {
+  layer: Layer.mergeAll(model, journal()),
+})
+
+export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
+export default worker
+```

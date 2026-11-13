@@ -1,6 +1,6 @@
 import { Effect, Option, Stream } from "effect"
 import { SqlClient } from "effect/sql"
-import { FilesystemWorkspaceError } from "@clavia/tardigrade-libraries/filesystem/index"
+import { WorkspaceError } from "@clavia/tardigrade-libraries/workspace/index"
 
 export interface VirtualWorkspaceEntry {
   readonly path: string
@@ -20,7 +20,7 @@ export const DEFAULT_VIRTUAL_WORKSPACE_CHUNK_BYTES = 1024 * 1024
 
 // sqliteWorkspaceStore commits complete snapshots only when their revision is current.
 export const sqliteWorkspaceStore = (name: string, chunkBytes = DEFAULT_VIRTUAL_WORKSPACE_CHUNK_BYTES) => Effect.gen(function* () {
-  if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1) return yield* Effect.fail(new FilesystemWorkspaceError("storageChunkBytes must be a positive safe integer"))
+  if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1) return yield* Effect.fail(new WorkspaceError("storageChunkBytes must be a positive safe integer"))
   const sql = yield* SqlClient.SqlClient
   yield* sql`CREATE TABLE IF NOT EXISTS virtual_workspaces (name TEXT PRIMARY KEY, revision INTEGER NOT NULL)`
   yield* sql`CREATE TABLE IF NOT EXISTS virtual_workspace_entries (
@@ -37,24 +37,24 @@ export const sqliteWorkspaceStore = (name: string, chunkBytes = DEFAULT_VIRTUAL_
     metadata: sql<VirtualWorkspaceEntry>`SELECT path, kind, NULL AS content, target, mode, mtime FROM virtual_workspace_entries WHERE workspace = ${name} ORDER BY path`,
     content: (path: string) => Stream.unwrap(Effect.gen(function* () {
       const [entry] = yield* sql<{ kind: string; content: Uint8Array | null }>`SELECT kind, content FROM virtual_workspace_entries WHERE workspace = ${name} AND path = ${path}`
-      if (!entry || entry.kind !== "file") return yield* Effect.fail(new FilesystemWorkspaceError("Read requires a file"))
+      if (!entry || entry.kind !== "file") return yield* Effect.fail(new WorkspaceError("Read requires a file"))
       const tail = Stream.paginate(1, ordinal => Effect.gen(function* () {
         const [chunk] = yield* sql<{ ordinal: number; payload: Uint8Array }>`SELECT ordinal, payload FROM virtual_workspace_file_chunks WHERE workspace = ${name} AND path = ${path} AND ordinal >= ${ordinal} ORDER BY ordinal LIMIT 1`
         if (!chunk) return [[], Option.none<number>()] as const
-        if (chunk.ordinal !== ordinal) return yield* Effect.fail(new FilesystemWorkspaceError(`Invalid file chunk sequence for ${path}`))
+        if (chunk.ordinal !== ordinal) return yield* Effect.fail(new WorkspaceError(`Invalid file chunk sequence for ${path}`))
         return [[chunk.payload], Option.some(ordinal + 1)] as const
       }))
       return Stream.concat(Stream.succeed(entry.content ?? new Uint8Array()), tail)
-    })).pipe(Stream.mapError(FilesystemWorkspaceError.from)),
+    })).pipe(Stream.mapError(WorkspaceError.from)),
     load: sql.withTransaction(Effect.gen(function* () {
       const [row] = yield* sql<{ revision: number }>`SELECT revision FROM virtual_workspaces WHERE name = ${name}`
-      if (!row) return yield* Effect.fail(new FilesystemWorkspaceError("Workspace revision is missing"))
+      if (!row) return yield* Effect.fail(new WorkspaceError("Workspace revision is missing"))
       const entries = yield* sql<VirtualWorkspaceEntry>`SELECT path, kind, content, target, mode, mtime FROM virtual_workspace_entries WHERE workspace = ${name} ORDER BY path`
       const chunks = yield* sql<{ path: string; ordinal: number; payload: Uint8Array }>`SELECT path, ordinal, payload FROM virtual_workspace_file_chunks WHERE workspace = ${name} ORDER BY path, ordinal`
       const byPath = new Map<string, Uint8Array[]>()
       for (const chunk of chunks) {
         const parts = byPath.get(chunk.path) ?? []
-        if (chunk.ordinal !== parts.length + 1) return yield* Effect.fail(new FilesystemWorkspaceError(`Invalid file chunk sequence for ${chunk.path}`))
+        if (chunk.ordinal !== parts.length + 1) return yield* Effect.fail(new WorkspaceError(`Invalid file chunk sequence for ${chunk.path}`))
         parts.push(chunk.payload)
         byPath.set(chunk.path, parts)
       }
@@ -70,7 +70,7 @@ export const sqliteWorkspaceStore = (name: string, chunkBytes = DEFAULT_VIRTUAL_
     })),
     commit: (snapshot: VirtualWorkspaceSnapshot) => sql.withTransaction(Effect.gen(function* () {
       const updated = yield* sql<{ revision: number }>`UPDATE virtual_workspaces SET revision = revision + 1 WHERE name = ${name} AND revision = ${snapshot.revision} RETURNING revision`
-      if (updated.length !== 1) return yield* Effect.fail(new FilesystemWorkspaceError(`Workspace ${name} changed during execution; retry the operation`))
+      if (updated.length !== 1) return yield* Effect.fail(new WorkspaceError(`Workspace ${name} changed during execution; retry the operation`))
       yield* sql`DELETE FROM virtual_workspace_file_chunks WHERE workspace = ${name}`
       yield* sql`DELETE FROM virtual_workspace_entries WHERE workspace = ${name}`
       for (const entry of snapshot.entries) {

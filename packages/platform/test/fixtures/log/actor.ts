@@ -1,6 +1,7 @@
-import { Effect, Schema } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { act, actorMethod, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
-import { logTools } from "@clavia/tardigrade-libraries"
+import { log, libraryBindings, libraryImplementations } from "@clavia/tardigrade-libraries"
+import { journal } from "../../../src/shared/log"
 
 const Fact = Schema.Struct({ account: Schema.String, code: Schema.String, change: Schema.Int.annotate({ description: "Signed adjustment to the account balance." }) })
 const BalanceRecorded = event({ type: "BalanceRecorded", ...Fact.fields })
@@ -48,6 +49,6 @@ export const actor = defineActor("log-lifecycle", Effect.sync(() => {
     },
   }
 }))
-const library = logTools({ maxScanEvents: 64 })
+const library = libraryImplementations([log])[0]!
 const methods = new Map(library.methods.map((method, index) => [library.library.specs[index]!.method, method]))
-export const services = Run.layer((request, context) => methods.get(request.method)!.invoke(request.input, { callId: String(context.ref.seq), name: request.method, input: request.input }).pipe(Effect.mapError(String)))
+export const services = Run.layer((request, context) => methods.get(request.method)!.invoke(request.input, { callId: String(context.ref.seq), name: request.method, input: request.input }).pipe(Effect.mapError(String))).pipe(Layer.provide(libraryBindings([log]).pipe(Layer.provide(journal({ maxScanEvents: 64 })))))

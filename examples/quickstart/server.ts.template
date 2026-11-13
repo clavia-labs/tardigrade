@@ -1,19 +1,17 @@
-import { Context, Effect } from "effect"
-import { createBunHost, methodHttp } from "tardie/platform/bun"
+import { Effect } from "effect"
+import { host, methodHttp } from "tardie/platform/bun"
 import definition, { notifyLayer } from "./actor"
 
-const host = await Effect.runPromise(createBunHost({
-  actor: definition,
-  actorContext: Context.pick(),
+const runtime = await Effect.runPromise(host(definition, {
   storage: process.env.TARDIGRADE_ACTOR_DATA ?? ".tardigrade",
-  services: () => notifyLayer,
+  layer: notifyLayer,
 }))
 
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: Number(process.env.PORT ?? 4242),
   idleTimeout: 0,
-  fetch: methodHttp(host, { ...(process.env.TARDIGRADE_TOKEN ? { token: process.env.TARDIGRADE_TOKEN } : {}) }),
+  fetch: methodHttp(runtime, { ...(process.env.TARDIGRADE_TOKEN ? { token: process.env.TARDIGRADE_TOKEN } : {}) }),
 })
 console.log(`Listening on ${server.url}`)
 
@@ -23,4 +21,4 @@ await new Promise<void>(resolve => {
   process.once("SIGTERM", stop)
 })
 await server.stop(true)
-await Effect.runPromise(host.close)
+await Effect.runPromise(runtime.close)
