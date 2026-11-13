@@ -1,4 +1,4 @@
-import { Context } from "effect"
+import { Context, HashSet } from "effect"
 import { machineOf } from "../component/runtime"
 import { CancellationRequested, CancellationInput, CancellationResult, type CancellationDispatched, type InvocationCancellation } from "./events"
 import { Cause, Clock, Effect, Schema } from "effect"
@@ -280,7 +280,8 @@ interface ActorCancellationProjectionState {
   readonly links: ReadonlyArray<ProjectedChildLink>
   readonly settledCalls: ReadonlySet<string>
   readonly dispatchedCancellations: ReadonlySet<string>
-  readonly recorded: ReadonlySet<string>
+  // recorded gains a key at most events, so it is a HashSet that shares structure with the prior state.
+  readonly recorded: HashSet.HashSet<string>
 }
 
 const projectedChildSettled = (state: { readonly settledCalls: ReadonlySet<string>; readonly requests: ReadonlyArray<{ readonly cancellation: InvocationCancellation }> }, link: ProjectedChildLink): boolean =>
@@ -330,7 +331,7 @@ export const actorCancellationProjection = <R>(
     links: [],
     settledCalls: new Set(),
     dispatchedCancellations: new Set(),
-    recorded: new Set()
+    recorded: HashSet.empty()
   })
   const reduce = (state: ActorCancellationProjectionState, event: Event): ActorCancellationProjectionState => {
     const request = cancellationRequestedOf(event)
@@ -351,19 +352,16 @@ export const actorCancellationProjection = <R>(
     const componentsState = components.map((component, index) =>
       machineOf(component).step(state.components[index], event)
     )
-    const links = [...state.links]
+    // reduce shares every collection the event does not add to.
     const link = childLinkOf(event)
-    if (link !== undefined) links.push(link)
-    const settledCalls = new Set(state.settledCalls)
+    const links = link === undefined ? state.links : [...state.links, link]
     const terminal = terminalInvocationRefOf(event)
-    if (terminal !== undefined) settledCalls.add(invocationCoordinateKey(terminal))
-    const dispatchedCancellations = new Set(state.dispatchedCancellations)
-    if (event.type === "CancellationDispatched") {
-      dispatchedCancellations.add(String((event as { readonly request?: unknown }).request))
-    }
-    const recorded = new Set(state.recorded)
+    const settledCalls = terminal === undefined ? state.settledCalls : new Set(state.settledCalls).add(invocationCoordinateKey(terminal))
+    const dispatchedCancellations = event.type === "CancellationDispatched"
+      ? new Set(state.dispatchedCancellations).add(String((event as { readonly request?: unknown }).request))
+      : state.dispatchedCancellations
     const key = transitionKeyOf(event) ?? keyOf(event)
-    if (key !== undefined) recorded.add(key)
+    const recorded = key === undefined ? state.recorded : HashSet.add(state.recorded, key)
     return {
       methods: methodsState,
       components: componentsState,
@@ -408,7 +406,7 @@ export const actorCancellationProjection = <R>(
       const component = components.flatMap((entry, index) =>
         machineOf(entry).output(state.components[index]).interactions?.cancel?.(cancellation) ?? []
       )
-      const outstanding = [...child, ...component].filter((transition) => !state.recorded.has(transition.key))
+      const outstanding = [...child, ...component].filter((transition) => !HashSet.has(state.recorded, transition.key))
       if (outstanding.length === 0 && cancellationOf(state, cancellation.invocation) === "running") terminals.push(terminalTransitionOf(cancellation, methods, event))
       else obligations.push(...outstanding)
     }

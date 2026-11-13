@@ -231,28 +231,31 @@ export const reduceMethodTimeoutState = (
   state: MethodTimeoutProjectionState,
   event: Event
 ): MethodTimeoutProjectionState => {
-  const dispatches = new Map(state.dispatches)
+  // reduceMethodTimeoutState shares every collection the event does not add to.
+  let dispatches = state.dispatches
   for (const dispatch of dispatchesOf([event])) {
     const key = invocationCoordinateKey(dispatch.reference)
-    if (!dispatches.has(key)) dispatches.set(key, dispatch)
+    if (!dispatches.has(key)) dispatches = new Map(dispatches).set(key, dispatch)
   }
-  const terminalCalls = new Set(state.terminalCalls)
   const terminal = terminalInvocationRefOf(event)
-  if (terminal !== undefined) terminalCalls.add(invocationCoordinateKey(terminal))
-  const deadlines = new Map(state.deadlines)
+  const terminalCalls = terminal === undefined ? state.terminalCalls : new Set(state.terminalCalls).add(invocationCoordinateKey(terminal))
+  let deadlines = state.deadlines
   for (const deadline of invocationDeadlinesOf([event])) {
     const key = invocationKey(deadline.invocation)
-    if (!deadlines.has(key)) deadlines.set(key, deadline)
+    if (!deadlines.has(key)) deadlines = new Map(deadlines).set(key, deadline)
   }
-  const settledInvocations = new Set(state.settledInvocations)
+  let settledInvocations = state.settledInvocations
+  const settle = (key: string): void => {
+    if (!settledInvocations.has(key)) settledInvocations = new Set(settledInvocations).add(key)
+  }
   const cancellation = cancellationRequestedOf(event)
-  if (cancellation !== undefined) settledInvocations.add(invocationKey(cancellation.invocation))
+  if (cancellation !== undefined) settle(invocationKey(cancellation.invocation))
   if (event.type === "ResponseDelivered") {
     const method = String((event as { readonly method?: unknown }).method ?? "")
     const id = String((event as { readonly call?: unknown }).call ?? "")
     for (const deadline of deadlines.values()) {
       if (sameInvocation(deadline.invocation, { method, id, epoch: (event.epoch as number | undefined) ?? 0 })) {
-        settledInvocations.add(invocationKey(deadline.invocation))
+        settle(invocationKey(deadline.invocation))
       }
     }
   }
