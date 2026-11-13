@@ -4,14 +4,14 @@ socialImage: /images/libraries-social.png
 socialImageAlt: Five interlocking puzzle pieces with blue outlines and a subtle blue fill.
 hideDescription: false
 articleClass: libraries-article
-description: Learn about Tardigrade libraries and how to define one
+description: Add typed capabilities and pluggable implementations to actors
 route: /docs/concepts/libraries
 section: Concepts
 sectionOrder: 2
 order: 5
 ---
 
-Often, we want to extend our actors with external capabilities so they can interact with the world and accomplish goals. In Tardigrade, these capabilities are defined using `libraries`.
+Often, we want to extend our actors with external capabilities so they can interact with the world and accomplish goals. In Tardigrade, these are defined using `libraries`. You can think of them as an Effect native plugin system for agents, giving them typed capabilities with pluggable implementations.
 
 <LibraryJigsaw />
 
@@ -24,7 +24,7 @@ Library = Effect Service + RPC contract
                 └── Implemented through a Layer
 ```
 
-The following example illustrates this through a workspace capability that lets an agent use filesystem and execute bash commands. This capability is also provided as a <a href="/docs/libraries/workspace" target="_blank" rel="noopener noreferrer">first-party library</a>.
+The following example illustrates this through a workspace capability that lets an agent use a filesystem and execute bash commands. This capability is also provided as a <a href="/docs/libraries/workspace" target="_blank" rel="noopener noreferrer">first-party library</a>.
 
 ## Contract
 
@@ -72,7 +72,7 @@ export const assistant = agent({
 
 ## Hosting
 
-If services and libraries describe the contract, layers describe how they can be implemented in reality. This is illustrative especially when the same capability could be provided in different ways.
+If services and libraries describe the contract, layers describe how they can be implemented in reality. This matters when the same capability can be implemented in different ways.
 
 <LibraryLayersDiagram />
 
