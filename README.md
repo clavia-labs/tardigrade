@@ -170,14 +170,11 @@ Effect layers supply model configuration, inference, and tool implementations. F
 Host each actor instance with an ActorDO for its supervisor directory and a separate SQLite-backed ThreadDO for each thread on Cloudflare or a self-hosted [Celld fleet](https://github.com/denoland/celld/blob/main/docs/README.md). The same Worker entrypoint runs on both.
 
 ```ts
-import { createActorWorker } from "tardie/platform/cloudflare"
-import { actor, actorContext } from "./actor"
-import { services } from "./services"
+import { host } from "tardie/platform/cloudflare"
+import { counter, notifyLayer } from "./actor"
 
-const worker = createActorWorker({
-  actor,
-  actorContext,
-  services: () => services(),
+const worker = host(counter, {
+  layer: notifyLayer,
 })
 
 export const ActorDO = worker.ActorObject
