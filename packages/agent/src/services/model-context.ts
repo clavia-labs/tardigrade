@@ -1,10 +1,11 @@
+import { LogSelection } from "@clavia/tardigrade-core/experimental"
 import { Schema } from "effect"
 import { RuntimeError, type Getter } from "@clavia/tardigrade-core"
 import { digestInput } from "@clavia/tardigrade-core/runtime/input-digest"
 import type { Generate } from "../contracts/acts"
 import type { Conversation } from "../contracts/events"
 import type { StoredModelContext } from "../contracts/model-context"
-import { messages } from "../atoms/durable/trajectory"
+import { messages, messagesWithContext } from "../atoms/durable/trajectory"
 import { immutableMessage, trajectoryLog } from "../experimental/trajectory-log"
 import type { ModelInput } from "./model"
 
@@ -30,7 +31,9 @@ function renderMessageV1(message: typeof Conversation.Type[number], policy: Stor
 export function resolveModelInput(input: Parameters<typeof Generate.request>[0]["input"], get: Getter, prepared?: typeof Conversation.Type): ModelInput {
   const recipe = input.context
   if (!("messages" in recipe)) return { ...input, context: recipe }
-  const selection = Schema.decodeSync(trajectoryLog.Range)(recipe.messages)
+  const selection = Schema.decodeSync(LogSelection)(recipe.messages)
+  if (!selection.events.every(key => trajectoryLog.events.includes(key))) throw new RuntimeError("Invalid trajectory event selection")
+  const source = recipe.userContext ? messagesWithContext(recipe.userContext) : messages
   const resolved = (context: typeof Conversation.Type): ModelInput => ({ ...input, context })
   const matches = (value: ModelInput) => {
     const digest = digestInput(value as unknown as Schema.Json)
@@ -39,13 +42,31 @@ export function resolveModelInput(input: Parameters<typeof Generate.request>[0][
   if (prepared && matches(resolved(prepared))) return resolved(prepared)
   const context: Array<typeof Conversation.Type[number]> = []
   if (recipe.summary) context.push(immutableMessage(renderMessageV1({ role: "user", text: `Earlier conversation summary (compaction applied):\n${recipe.summary}` }, recipe.render)))
-  let page = get(messages.range({ from: selection.from, to: selection.to, limit: recipe.pageSize }))
+  let page = get(source.range({ from: selection.from, to: selection.to, events: selection.events, limit: recipe.pageSize }))
   while (true) {
     for (const row of page.rows) context.push(immutableMessage(renderMessageV1(row.value, recipe.render)))
     if (!page.next) break
-    page = get(messages.range({ after: page.next, limit: recipe.pageSize }))
+    page = get(source.range({ after: page.next, limit: recipe.pageSize }))
   }
   const value = resolved(context)
   if (!matches(value)) throw new RuntimeError("Log model input hash mismatch")
   return value
+}
+
+// mergeUserContext combines adjacent input and context rows without rewriting earlier messages.
+export function mergeUserContext(messages: typeof Conversation.Type): typeof Conversation.Type {
+  const output: Array<typeof Conversation.Type[number]> = []
+  for (const message of messages) {
+    if (message.role === "user" && "context" in message && message.context) {
+      const index = output.length - 1
+      const previous = output[index]
+      if (previous?.role === "user" && previous.turnId === message.turnId && !("context" in previous && previous.context)) {
+        output[index] = "text" in previous ? { ...previous, text: previous.text + message.text }
+          : { ...previous, content: [...previous.content, { type: "text", text: message.text }] }
+        continue
+      }
+    }
+    output.push(message)
+  }
+  return output
 }

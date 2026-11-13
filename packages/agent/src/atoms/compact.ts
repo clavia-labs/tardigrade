@@ -134,6 +134,7 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
       const revision = trajectory.revision?.(get)
       if (revision && trajectory.selection) logContext = {
         version: 1, messages: trajectory.selection({ from: cursor, to: revision.position }), summary: state.summary, pageSize: policy.pageSize,
+        ...(trajectory.userContext ? { userContext: trajectory.userContext } : {}),
         render: { charsPerToken: policy.charsPerToken, toolOutputTokenLimit: policy.toolOutputTokenLimit, userMessageTokenLimit: policy.userMessageTokenLimit },
       }
       const budget = selection.contextWindowTokens * policy.charsPerToken - summarySize
@@ -177,7 +178,10 @@ export function compact(trajectory: Atom<typeof Conversation.Type> | TrajectoryS
     const pending = new Set<string>()
     for (let index = 0; index < messages.length; index++) {
       const message = messages[index]!
-      if (index > 0 && pending.size === 0 && (message.role === "user" || (message.role === "assistant" && message.toolCalls.length > 0))) boundaries.push(index)
+      const previous = messages[index - 1]
+      const suffix = message.role === "user" && "context" in message && message.context && previous?.role === "user"
+        && previous.turnId === message.turnId && !("context" in previous && previous.context)
+      if (index > 0 && pending.size === 0 && ((message.role === "user" && !suffix) || (message.role === "assistant" && message.toolCalls.length > 0))) boundaries.push(index)
       if (message.role === "assistant") for (const call of message.toolCalls) pending.add(call.callId)
       if (message.role === "tool") pending.delete(message.callId)
     }

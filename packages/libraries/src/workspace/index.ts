@@ -1,4 +1,4 @@
-import { Context, Schema } from "effect"
+import { Context, Effect, Schema } from "effect"
 import { Rpc } from "effect/rpc"
 import { Library, MethodDescription, MethodHints } from "../library"
 import { ToolResult } from "@clavia/tardigrade-model/object/content"
@@ -9,7 +9,7 @@ export const ReadInput = Schema.Struct({ path: Schema.String, offset: Schema.opt
 export const WriteInput = Schema.Struct({ path: Schema.String, content: Schema.String })
 export const EditInput = Schema.Struct({ path: Schema.String, oldText: Schema.String, newText: Schema.String })
 
-export const workspace = Library.make("workspace",
+const workspaceContract = Library.make("workspace",
   Rpc.make("bash", { payload: BashInput, success: Schema.String, error: Schema.String })
     .annotate(MethodDescription, "Run a shell command in the workspace and return stdout, stderr, and any nonzero exit code"),
   Rpc.make("read", { payload: ReadInput, success: ToolResult, error: Schema.String })
@@ -20,6 +20,16 @@ export const workspace = Library.make("workspace",
   Rpc.make("edit", { payload: EditInput, success: Schema.String, error: Schema.String })
     .annotate(MethodDescription, "Replace one exact nonempty occurrence of oldText in a workspace file"),
 )
+
+export const DEFAULT_WORKSPACE_SYSTEM = "Use workspace tools to inspect and modify files and run shell commands. Paths are relative to the workspace. The file listing is a snapshot taken before the current model call; use tools to inspect later changes."
+export const DEFAULT_WORKSPACE_FILE_LIST_COMMAND = "find . -type f | sort"
+
+export const workspace = workspaceContract.pipe(Library.context({
+  system: DEFAULT_WORKSPACE_SYSTEM,
+  user: Effect.flatMap(workspaceContract, service => service.bash({ command: DEFAULT_WORKSPACE_FILE_LIST_COMMAND })).pipe(
+    Effect.map(files => `Current workspace files:\n${files}`),
+  ),
+}))
 
 export type Workspace = Context.Service.Identifier<typeof workspace>
 

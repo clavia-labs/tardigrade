@@ -5,6 +5,7 @@ import { type Conversation, Event, TurnRequested, ModelCalled, ModelFailed, Mode
 import { ModelInfo } from "../actor/context"
 import { modelSelection } from "../compat/model"
 import { generateRequest, requests, failureMessage } from "../contracts/acts"
+import type { ContextPreparation } from "./context"
 import type { LogModelContext } from "../contracts/model-context"
 import type { OutputContract } from "../contracts/acts"
 import { inferenceState } from "./durable/inference"
@@ -14,14 +15,15 @@ import { type ToolView } from "./tools"
 export type ContextView = ActorOutput<{ readonly position: "configuring" | "compacting" } | { readonly position: "failed"; readonly reason: string } | {
   readonly position: "ready"; readonly messages: typeof Conversation.Type; readonly logContext?: LogModelContext
 }, Event, ActService<"agent.model.generate"> | ActService<"agent.model.summarize">>
-export interface AgentInput<R, ToolEvents extends object = Event> {
+export interface AgentInput<R, ToolEvents extends object = Event, ContextServices = never> {
   readonly system: string
+  readonly preparation?: ActorOutput<ContextPreparation["view"], Event, ContextServices>
   readonly tools: ActorOutput<Pick<ToolView<R>, "specs">, ToolEvents, R>
   readonly context: ContextView
   readonly output?: OutputContract
 }
 
-export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInput<R, ToolEvents>> | ((get: Getter) => AgentInput<R, ToolEvents>)) {
+export function infer<R, ToolEvents extends object = Event, ContextServices = never>(agent: Atom<AgentInput<R, ToolEvents, ContextServices>> | ((get: Getter) => AgentInput<R, ToolEvents, ContextServices>)) {
   const agentAtom = typeof agent === "function" ? atom(agent) : agent
   const request = requests(generateRequest, { latestOnly: true })
 
@@ -70,12 +72,21 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
       events: { ...proposals.events, inference: eventValue({ type: "TurnSettled", turnId: state.turnId, outcome: "completed", callId: state.turns.find(turn => turn.turnId === state.turnId)!.answerCallId! } satisfies TurnSettled) },
     }
     if (!state.needsReply) return { view: { position: "idle" as const }, ...proposals }
-    if (!state.waiting && input.context.view.position === "failed") return {
+    if (state.waiting) return { view: { position: "waiting" as const }, events: proposals.events, acts: input.tools.acts }
+    const preparation = input.preparation
+    if (preparation && preparation.view.position !== "ready") return {
+      view: { position: "preparing" as const }, acts: preparation.acts,
+      events: preparation.view.position === "failed" ? {
+        inference: eventValue({ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: preparation.view.reason } satisfies TurnSettled),
+      } : preparation.events,
+    }
+    const system = preparation?.view.position === "ready" ? preparation.view.system : input.system
+    if (input.context.view.position === "failed") return {
       view: { position: "settling" as const },
       acts: proposals.acts,
       events: { ...proposals.events, inference: eventValue({ type: "TurnSettled", turnId: state.turnId, outcome: "failed", reason: input.context.view.reason } satisfies TurnSettled) },
     }
-    if (state.waiting || input.context.view.position !== "ready") return { view: { position: "waiting" as const }, ...proposals }
+    if (input.context.view.position !== "ready") return { view: { position: "waiting" as const }, ...proposals }
     const messages = input.context.view.messages
     const rejection = turn?.rejection
     const correctionSystem = rejection === null || rejection === undefined || rejection.attempt >= rejection.maxCorrections ? "" :
@@ -89,7 +100,7 @@ export function infer<R, ToolEvents extends object = Event>(agent: Atom<AgentInp
         inference: request(state.callId, {
           ...(input.context.view.logContext ? { logContext: input.context.view.logContext } : {}),
           ...(state.origin === null ? {} : { origin: state.origin }),
-          input: { model: selection.model, system: `${input.system}${correctionSystem}`, tools: input.tools.view.specs, context: messages, ...(input.output === undefined ? {} : { output: input.output }) },
+          input: { model: selection.model, system: `${system}${correctionSystem}`, tools: input.tools.view.specs, context: messages, ...(input.output === undefined ? {} : { output: input.output }) },
           onRequested: () => [{ type: "ModelCalled", purpose: "inference", ...selection, callId: state.callId, turnId: state.turnId } satisfies ModelCalled],
           onSettled: (result, ref) => {
             if (result.status === "rejected") return [{ type: "ModelFailed", callId: state.callId, reason: failureMessage(result.reason) } satisfies typeof ModelFailed.Type]

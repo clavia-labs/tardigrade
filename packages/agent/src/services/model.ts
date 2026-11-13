@@ -17,7 +17,7 @@ import { type Conversation, MessageContentPart, ModelReply as ModelReplySchema }
 import type { OutputContract } from "../contracts/acts"
 import { Generate, Summarize } from "../contracts/acts"
 import { PreparedModelContext } from "../contracts/model-context"
-import { resolveModelInput } from "./model-context"
+import { resolveModelInput, mergeUserContext } from "./model-context"
 import { collectModelStream, type ModelCallContext } from "./model-stream"
 
 export { type ModelCallContext, type ModelDelta } from "./model-stream"
@@ -209,7 +209,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const request = {
         prompt: Prompt.fromMessages([
           Prompt.makeMessage("system", { content: input.system }),
-          ...input.context.flatMap((message): readonly Prompt.Message[] => {
+          ...mergeUserContext(input.context).flatMap((message): readonly Prompt.Message[] => {
             if (message.role === "user") return [Prompt.makeMessage("user", { content: "text" in message ? [Prompt.makePart("text", { text: message.text })] : promptPartsOf(message.content, objects) })]
             if (message.role === "tool") {
               const output = message.content === undefined ? { result: message.text } : { result: message.text, modelOutput: promptPartsOf(message.content, objects) }

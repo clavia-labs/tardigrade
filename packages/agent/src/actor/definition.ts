@@ -1,10 +1,12 @@
 import { agentMethods } from "./methods"
 import { Effect } from "effect"
 import { atom, defineActor, type ActorMethods } from "@clavia/tardigrade-core"
-import { messages } from "../atoms/durable/index"
+import { messages, messagesWithContext } from "../atoms/durable/index"
 import { toolBudget } from "../atoms/budget-request"
 import { compact, type CompactionOptions } from "../atoms/compact"
 import { infer } from "../atoms/infer"
+import { prepareContext } from "../atoms/context"
+import type { ContextConfiguration } from "../contracts/context"
 import { permissions } from "../atoms/permission-request"
 import { systemPrompt } from "../atoms/system"
 import { tools as libraryTools, withPermissions, withBudget } from "../atoms/tools"
@@ -16,7 +18,7 @@ export interface AgentOptions<Methods extends ActorMethods<object> = {}, Librari
   /** name identifies the actor for hosts and clients. */
   readonly name: string
   /** system supplies the model prompt. */
-  readonly system: string
+  readonly system: string | Effect.Effect<string, unknown, unknown>
   /** tools selects libraries for the agent's tool runtime. */
   readonly tools?: Libraries
   /** compaction configures history summarization and retention. */
@@ -29,14 +31,18 @@ type DeclaredMethods<Options> = Options extends { readonly methods?: infer Metho
 type DeclaredLibraries<Options> = Options extends { readonly tools?: infer Libraries extends readonly LibraryBinding[] } ? Libraries : readonly []
 
 // agent composes message history, compaction, tools, and inference into an actor.
-export const agentDefinition = <const Options extends AgentOptions<ActorMethods<object>>>(options: Options) => {
+export const agentDefinition = <const Options extends AgentOptions<ActorMethods<object>>>(options: Options, configuration: ContextConfiguration) => {
   const libraries = (options.tools ?? []) as DeclaredLibraries<Options>
   const actor = defineActor(options.name, Effect.gen(function* () {
-    const system = systemPrompt(options.system)
+    const preparation = prepareContext(configuration)
     const tools = yield* libraryTools(options.tools)
-    const context = yield* compact(messages, options.compaction)
+    const history = configuration.contributions.length ? messagesWithContext({
+      contributions: configuration.contributions.map(source => ({ library: source.library, ...(source.user === undefined ? {} : { user: source.user }) })),
+    }) : messages
+    const context = yield* compact(history, options.compaction)
     const inference = yield* infer(atom(get => ({
-      system: get(system),
+      system: "",
+      preparation: get(preparation),
       tools: get(tools),
       context: get(context),
     })))

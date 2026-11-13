@@ -8,7 +8,7 @@ import { Conversation, Event } from "../contracts/events"
 export const agentLog = Log.make({ schema: Event })
 
 // trajectoryLog exposes chronological conversation events without materializing the trajectory array (platform/test/properties/turn-facts.ts).
-export const trajectoryLog = agentLog.view(["TurnRequested", "ModelReturned", "ToolReturned"])
+export const trajectoryLog = agentLog.view(["TurnRequested", "ModelReturned", "ToolReturned", "ContextResolved"])
 
 // trajectoryRevision identifies an append-only journal prefix for bounded window reuse (platform/test/properties/turn-facts.ts, trajectoryWindowCache).
 export function trajectoryRevision(get: Getter) {

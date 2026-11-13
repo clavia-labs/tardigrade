@@ -1,12 +1,14 @@
 import { Context, Schema } from "effect"
 import { InputDigest } from "@clavia/tardigrade-core"
 import { LogSelection } from "@clavia/tardigrade-core/experimental"
+import { UserContextConfiguration } from "./context"
 import type { Conversation } from "./events"
 
 const Positive = Schema.Finite.check(Schema.isGreaterThan(0))
 
 export const LogModelContext = Schema.Struct({
   version: Schema.Literal(1), messages: LogSelection, summary: Schema.String,
+  userContext: Schema.optionalKey(UserContextConfiguration),
   pageSize: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   render: Schema.Struct({ charsPerToken: Positive, toolOutputTokenLimit: Positive, userMessageTokenLimit: Positive }),
 })
