@@ -121,8 +121,12 @@ export type LibraryBinding = LibraryImplementation<unknown> | RpcLibraryBinding
 
 export interface LibraryContext {
   readonly library: string
-  readonly system?: string
-  readonly user?: string
+  readonly content: string
+}
+
+export interface LibraryContexts {
+  readonly system: { readonly libraries: readonly LibraryContext[] }
+  readonly user: { readonly libraries: readonly LibraryContext[] }
 }
 
 // libraryContextSources reads declarations without evaluating their effects.
@@ -136,26 +140,23 @@ export function libraryContextSources(libraries: readonly LibraryBinding[]) {
 
 // resolveLibraryContext evaluates prompt effects sequentially; static strings remain in configuration.
 export function resolveLibraryContext<const L extends readonly LibraryBinding[]>(libraries: L): Effect.Effect<
-  readonly LibraryContext[], LibraryContextError<L[number]>, LibraryContextRequirements<L[number]>
+  LibraryContexts, LibraryContextError<L[number]>, LibraryContextRequirements<L[number]>
 > {
   type E = LibraryContextError<L[number]>
   type R = LibraryContextRequirements<L[number]>
   const resolve = (source: LibraryContextSource<E, R> | null | undefined) =>
     typeof source === "string" ? Effect.void : source ?? Effect.void
   return Effect.gen(function* () {
-    const resolved: LibraryContext[] = []
+    const system: LibraryContext[] = []
+    const user: LibraryContext[] = []
     for (const entry of libraryContextSources(libraries)) {
       const sources = entry as { readonly [K in ContextSlot]?: LibraryContextSource<E, R> | null }
-      const system = yield* resolve(sources.system)
-      const user = yield* resolve(sources.user)
-      if (system === undefined && user === undefined) continue
-      resolved.push({
-        library: entry.library,
-        ...(system === undefined ? {} : { system }),
-        ...(user === undefined ? {} : { user }),
-      })
+      const systemContent = yield* resolve(sources.system)
+      const userContent = yield* resolve(sources.user)
+      if (systemContent !== undefined) system.push({ library: entry.library, content: systemContent })
+      if (userContent !== undefined) user.push({ library: entry.library, content: userContent })
     }
-    return resolved
+    return { system: { libraries: system }, user: { libraries: user } }
   })
 }
 

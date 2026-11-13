@@ -61,7 +61,7 @@ const pages = NativeAtom.family((identity: string): Atom<LogReadPage<typeof Traj
         rows.push({ position, value: { turnId: event.turnId, message } })
       }
       if (event.type === "ContextResolved" && event.error === null) {
-        const text = contextText(mergeLibraryContexts(query.userContext?.libraries ?? [], event.libraries), "user")
+        const text = contextText(mergeLibraryContexts(query.userContext?.libraries ?? [], event.user.libraries))
         if (text) rows.push({ position, value: { turnId: event.turnId, message: { role: "user", turnId: event.turnId, context: true, text: `\n\n${text}` } } })
       }
       if (event.type === "ModelReturned" && event.purpose === "inference") {

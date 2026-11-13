@@ -1,30 +1,23 @@
-import type { Conversation } from "./events"
-import { Schema } from "effect"
+import { ResolvedContext, type Conversation } from "./events"
 import type { LibraryContext } from "@clavia/tardigrade-libraries"
 
-export interface ContextConfiguration {
-  readonly system: string | undefined
-  readonly dynamic: boolean
-  readonly libraries: readonly LibraryContext[]
-}
+export type ContextConfiguration = typeof ResolvedContext.Type & { readonly dynamic: boolean }
 
 // contextText labels library context while retaining declaration order.
-export function contextText(libraries: readonly LibraryContext[], slot: "system" | "user"): string {
+export function contextText(libraries: readonly LibraryContext[]): string {
   return libraries.flatMap(context => {
-    const text = context[slot]
+    const text = context.content
     return text?.trim() ? [`<library-context name="${context.library}">\n${text}\n</library-context>`] : []
   }).join("\n\n")
 }
 
-export const UserContextConfiguration = Schema.Struct({
-  libraries: Schema.Array(Schema.Struct({ library: Schema.String, user: Schema.optionalKey(Schema.String) })),
-})
+export const UserContextConfiguration = ResolvedContext.fields.user
 export type UserContextConfiguration = typeof UserContextConfiguration.Type
 
 // mergeLibraryContexts overlays resolved slots without discarding recorded libraries.
 export function mergeLibraryContexts(statics: readonly LibraryContext[], resolved: readonly LibraryContext[]): readonly LibraryContext[] {
   return [
-    ...statics.map(source => ({ ...source, ...resolved.find(value => value.library === source.library) })),
+    ...statics.map(source => resolved.find(value => value.library === source.library) ?? source),
     ...resolved.filter(value => !statics.some(source => source.library === value.library)),
   ]
 }

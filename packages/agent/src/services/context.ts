@@ -6,14 +6,14 @@ import type { ContextConfiguration } from "../contracts/context"
 // contextConfiguration retains static sources and identifies declarations requiring resolution.
 export function contextConfiguration(system: LibraryContextSource<unknown, unknown>, libraries: readonly LibraryBinding[]): ContextConfiguration {
   const sources = libraryContextSources(libraries)
+  const statics = (slot: "system" | "user") => sources.flatMap(source => {
+    const content = source[slot]
+    return content == null ? [] : [{ library: source.library, content: typeof content === "string" ? content : "" }]
+  })
   return {
-    system: typeof system === "string" ? system : undefined,
     dynamic: typeof system !== "string" || sources.some(source => Effect.isEffect(source.system) || Effect.isEffect(source.user)),
-    libraries: sources.map(source => ({
-      library: source.library,
-      ...(typeof source.system === "string" ? { system: source.system } : {}),
-      ...(typeof source.user === "string" ? { user: source.user } : {}),
-    })),
+    system: { ...(typeof system === "string" ? { actor: system } : {}), libraries: statics("system") },
+    user: { libraries: statics("user") },
   }
 }
 
@@ -27,6 +27,9 @@ export function contextServices<const Source extends LibraryContextSource<unknow
   return ResolveContext.layer(() => Effect.gen(function* () {
     const resolvedSystem = yield* dynamicSystem
     const resolvedLibraries = yield* resolveLibraryContext(libraries)
-    return { ...(resolvedSystem === undefined ? {} : { system: resolvedSystem }), libraries: resolvedLibraries }
+    return {
+      ...resolvedLibraries,
+      system: { ...resolvedLibraries.system, ...(resolvedSystem === undefined ? {} : { actor: resolvedSystem }) },
+    }
   }).pipe(Effect.mapError(String)))
 }

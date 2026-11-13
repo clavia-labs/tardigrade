@@ -17,13 +17,14 @@ export type ContextPreparation = ActorOutput<
 // prepareContext projects the current model call's resolution from journal pages.
 export function prepareContext(configuration: ContextConfiguration) {
   const request = requests(ResolveContext.request, { latestOnly: true })
+  const empty = { system: { libraries: [] }, user: { libraries: [] } }
   const ready = (resolved?: typeof ResolvedContext.Type): ContextPreparation => {
-    const libraries = mergeLibraryContexts(configuration.libraries, resolved?.libraries ?? [])
-    const system = [resolved?.system ?? configuration.system ?? "", contextText(libraries, "system")]
+    const libraries = mergeLibraryContexts(configuration.system.libraries, resolved?.system.libraries ?? [])
+    const system = [resolved?.system.actor ?? configuration.system.actor ?? "", contextText(libraries)]
       .filter(text => text.trim()).join("\n\n")
     return { view: { position: "ready", system }, events: {}, acts: {} }
   }
-  const needsSnapshot = configuration.dynamic || contextText(configuration.libraries, "user").length > 0
+  const needsSnapshot = configuration.dynamic || contextText(configuration.user.libraries).length > 0
   return effectAtom((get): ContextPreparation => {
     if (!needsSnapshot) return ready()
     const state = get(inferenceState)
@@ -40,14 +41,14 @@ export function prepareContext(configuration: ContextConfiguration) {
     }
     if (!configuration.dynamic) return {
       view: { position: "pending" }, acts: {},
-      events: { context: eventValue({ type: "ContextResolved", turnId, callId, libraries: [], error: null } satisfies ContextResolved) },
+      events: { context: eventValue({ type: "ContextResolved", turnId, callId, ...empty, error: null } satisfies ContextResolved) },
     }
     return { view: { position: "pending" }, events: {}, acts: {
       context: request(callId, {
         ...(state.origin === null ? {} : { origin: state.origin }), input: { turnId, callId },
         // TODO: Reference EffectSettled through a typed act-result lookup instead of copying its payload.
         onSettled: result => [{ type: "ContextResolved", turnId, callId,
-          ...(result.status === "fulfilled" ? result.value : { libraries: [] }),
+          ...(result.status === "fulfilled" ? result.value : empty),
           error: result.status === "fulfilled" ? null : failureMessage(result.reason),
         } satisfies ContextResolved],
       }),

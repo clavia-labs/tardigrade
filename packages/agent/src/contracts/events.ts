@@ -115,10 +115,11 @@ export const TurnSettled = Schema.Union([
 export type TurnSettled = typeof TurnSettled.Type
 
 export const LibraryContext = Schema.Struct({
-  library: Schema.String, system: Schema.optionalKey(Schema.String), user: Schema.optionalKey(Schema.String),
+  library: Schema.String, content: Schema.String,
 })
 export const ResolvedContext = Schema.Struct({
-  system: Schema.optionalKey(Schema.String), libraries: Schema.Array(LibraryContext),
+  system: Schema.Struct({ actor: Schema.optionalKey(Schema.String), libraries: Schema.Array(LibraryContext) }),
+  user: Schema.Struct({ libraries: Schema.Array(LibraryContext) }),
 })
 export const ContextResolved = Schema.Struct({
   type: Schema.Literal("ContextResolved"), turnId: Schema.String, callId: Schema.String,

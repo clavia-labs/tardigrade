@@ -36,9 +36,7 @@ export const agentDefinition = <const Options extends AgentOptions<ActorMethods<
   const actor = defineActor(options.name, Effect.gen(function* () {
     const preparation = prepareContext(configuration)
     const tools = yield* libraryTools(options.tools)
-    const history = configuration.libraries.length ? messagesWithContext({
-      libraries: configuration.libraries.map(source => ({ library: source.library, ...(source.user === undefined ? {} : { user: source.user }) })),
-    }) : messages
+    const history = configuration.user.libraries.length ? messagesWithContext(configuration.user) : messages
     const context = yield* compact(history, options.compaction)
     const inference = yield* infer(atom(get => ({
       system: "",
