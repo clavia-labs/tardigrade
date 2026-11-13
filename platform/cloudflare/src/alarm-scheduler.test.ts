@@ -83,6 +83,21 @@ test("a completed pass restores a future method deadline", async () => {
   expect(f.alarm()).toBe(deadline)
 })
 
+test("an alarm that joins a pass does not spend a mid-pass admission", async () => {
+  const f = fixture()
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  await f.scheduler.admit(async () => {})
+  const first = f.fire(async () => { started.resolve(); await release.promise })
+  await started.promise
+  await f.scheduler.admit(async () => {})
+  const joined = f.fire(async () => {})
+  release.resolve()
+  await Promise.all([first, joined])
+  expect(f.alarm()).toBeLessThanOrEqual(Date.now())
+  expect(f.persisted()).toBe(true)
+})
+
 test("concurrent alarms join one execution", async () => {
   const f = fixture()
   const started = Promise.withResolvers<void>()
