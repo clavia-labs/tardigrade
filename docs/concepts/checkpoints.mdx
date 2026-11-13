@@ -19,15 +19,13 @@ family member ┘
 ## Configure checkpointing
 
 ```ts
-import { Context, Effect, Layer } from "effect"
-import { createBunHost } from "tardie/platform/bun"
+import { Effect, Layer } from "effect"
+import { host } from "tardie/platform/bun"
 import { meeseeks } from "./actor"
 
-const host = await Effect.runPromise(createBunHost({
-  actor: meeseeks,
+const runtime = await Effect.runPromise(host(meeseeks, {
   storage: ".tardigrade",
-  actorContext: Context.pick(),
-  services: () => Layer.empty,
+  layer: Layer.empty,
   checkpointPolicy: {
     mode: "threshold",
     options: { everyEvents: 100 },

@@ -19,11 +19,11 @@ tdg init meeseeks --template agent
 
 ## Definition
 
-Customise your agent with a name, system prompt, and tools. This example uses the `filesystem` library, imported as `workspace`, to declare `bash`, `read`, `write`, and `edit` tools.
+Customise your agent with a name, system prompt, and tools. This example uses the `workspace` library to declare `bash`, `read`, `write`, and `edit` tools.
 
 ```ts title="actor.ts"
 import { agent } from "tardie/agent"
-import { filesystem as workspace } from "tardie/libraries"
+import { workspace } from "tardie/libraries"
 
 const actorName = "meeseeks"
 
@@ -51,18 +51,16 @@ The agent requires model configuration, inference, and tool implementations. The
 ```ts title="services.ts"
 import { providerLayer } from "./generated/providers"
 import { Layer } from "effect"
-import { filesystemTools as workspaceTools, type FilesystemWorkspace } from "tardie/libraries"
-import { liveModelServices, modelActs, modelInfo, toolActs } from "tardie/agent/services"
+import { liveModelServices, modelActs, modelInfo } from "tardie/agent/services"
 import { modelConfigOf, modelCredentialsFrom } from "tardie/model/config"
 import { layerModelLock } from "tardie/model/lock"
 import modelLock from "./models.lock.json"
 
-export function services(models: unknown, env: Readonly<Record<string, unknown>>, workspace: Layer.Layer<FilesystemWorkspace, Error>) {
+export function services<Provided>(models: unknown, env: Readonly<Record<string, unknown>>, workspace: Layer.Layer<Provided, Error>) {
   const config = modelConfigOf(models)
   const lock = layerModelLock(modelLock, config)
   const model = liveModelServices({ providerLayer, credentials: modelCredentialsFrom(config, env) }).pipe(Layer.provideMerge(lock))
-  const tools = toolActs([workspaceTools]).pipe(Layer.provide(workspace))
-  return Layer.mergeAll(modelInfo, modelActs, tools).pipe(Layer.provide(model))
+  return Layer.mergeAll(modelInfo, modelActs).pipe(Layer.provide(model), Layer.merge(workspace))
 }
 ```
 
@@ -74,8 +72,7 @@ On Bun, choose `localWorkspace` for the host filesystem and shell, or `virtualWo
 
 ```ts title="server.ts"
 import { Effect, Schema } from "effect"
-import { actorContext } from "tardie/agent"
-import { createBunHost, localWorkspace, methodHttp } from "tardie/platform/bun"
+import { host, localWorkspace, methodHttp } from "tardie/platform/bun"
 import agent from "./actor"
 import { services } from "./services"
 
@@ -84,17 +81,15 @@ const config = Schema.decodeUnknownSync(Config)(Bun.JSONC.parse(await Bun.file("
 
 const workspace = localWorkspace({ directory: "." })
 
-const host = await Effect.runPromise(createBunHost({
-  actor: agent,
-  actorContext,
+const runtime = await Effect.runPromise(host(agent, {
   storage: ".tardigrade",
-  services: () => services(config.vars.TARDIGRADE_CONFIG.models, process.env, workspace),
+  layer: services(config.vars.TARDIGRADE_CONFIG.models, process.env, workspace),
 }))
 
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 4242,
-  fetch: methodHttp(host),
+  fetch: methodHttp(runtime),
 })
 console.log(`Listening on ${server.url}`)
 
@@ -104,7 +99,7 @@ await new Promise<void>(resolve => {
   process.once("SIGTERM", stop)
 })
 await server.stop(true)
-await Effect.runPromise(host.close)
+await Effect.runPromise(runtime.close)
 ```
 
 For a virtual workspace, replace the `workspace` layer above:
@@ -176,8 +171,8 @@ export const Sandbox = createWorkspaceObject({
 Wire it into the Worker entrypoint:
 
 ```ts title="worker.ts"
-import { actorContext } from "tardie/agent"
-import { createActorWorker, remoteWorkspace, workspaceObjectName } from "tardie/platform/cloudflare"
+import { Effect, Layer } from "effect"
+import { Bindings, HostThread, host, remoteWorkspace, workspaceObjectName } from "tardie/platform/cloudflare"
 import agent from "./actor"
 import { Sandbox } from "./sandbox"
 import { services } from "./services"
@@ -191,10 +186,14 @@ interface Env {
 
 const models = (env: Env) => (typeof env.TARDIGRADE_CONFIG === "string" ? JSON.parse(env.TARDIGRADE_CONFIG) : env.TARDIGRADE_CONFIG).models
 
-const worker = createActorWorker({
-  actor: agent,
-  actorContext,
-  services: (env: Env, thread) => services(models(env), env, remoteWorkspace(env.SANDBOX.getByName(workspaceObjectName(thread)))),
+const appLayer = Layer.unwrap(Effect.gen(function* () {
+  const env = yield* Bindings<Env>()
+  const thread = yield* HostThread
+  return services(models(env), env, remoteWorkspace(env.SANDBOX.getByName(workspaceObjectName(thread))))
+}))
+
+const worker = host(agent, {
+  layer: appLayer,
   http: (env: Env) => ({ ...(env.TARDIGRADE_TOKEN ? { token: env.TARDIGRADE_TOKEN } : {}) }),
 })
 export const ActorDO = worker.ActorObject

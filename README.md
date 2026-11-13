@@ -148,7 +148,7 @@ The batteries-included `agent` constructor combines the agent atoms and methods.
 
 ```ts
 import { agent } from "tardie/agent"
-import { filesystem as workspace } from "tardie/libraries"
+import { workspace } from "tardie/libraries"
 
 const actorName = "meeseeks"
 

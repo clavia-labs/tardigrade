@@ -1,6 +1,6 @@
 import { Boxd } from "@boxd-sh/sdk"
 import { Effect, ManagedRuntime } from "effect"
-import { FilesystemWorkspace, type FilesystemWorkspaceService } from "@clavia/tardigrade-libraries/filesystem/index"
+import { WorkspaceBackend, type WorkspaceBackendService } from "@clavia/tardigrade-libraries/workspace/index"
 import { boxdWorkspace, type BoxdWorkspaceOptions } from "../../../src/boxd/workspace"
 
 const BOXD_LIVE_PREFIX = process.env.BOXD_TEST_PREFIX ?? "tardigrade-e2e-"
@@ -29,7 +29,7 @@ export async function findComputer(client: Boxd, org: string | undefined, name: 
 }
 
 // withLiveWorkspace runs one layer lifetime, so release runs before it returns.
-export async function withLiveWorkspace<A>(options: BoxdWorkspaceOptions, run: (workspace: FilesystemWorkspaceService) => Promise<A>): Promise<A> {
+export async function withLiveWorkspace<A>(options: BoxdWorkspaceOptions, run: (workspace: WorkspaceBackendService) => Promise<A>): Promise<A> {
   const runtime = ManagedRuntime.make(boxdWorkspace(options))
-  try { return await run(await runtime.runPromise(Effect.map(FilesystemWorkspace, workspace => workspace))) } finally { await runtime.dispose() }
+  try { return await run(await runtime.runPromise(Effect.map(WorkspaceBackend, workspace => workspace))) } finally { await runtime.dispose() }
 }

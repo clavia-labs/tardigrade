@@ -1,3 +1,9 @@
+import WorkspaceLibrary, { frontmatter as workspaceLibraryFrontmatter } from "@docs/libraries/workspace.mdx"
+import workspaceLibraryMarkdown from "@docs/libraries/workspace.mdx?doc-source"
+import LogLibrary, { frontmatter as logLibraryFrontmatter } from "@docs/libraries/log.mdx"
+import logLibraryMarkdown from "@docs/libraries/log.mdx?doc-source"
+import Libraries, { frontmatter as librariesFrontmatter } from "@docs/concepts/libraries.mdx"
+import librariesMarkdown from "@docs/concepts/libraries.mdx?doc-source"
 import BuildAnAgent, { frontmatter as buildAnAgentFrontmatter } from "@docs/guides/build-an-agent.mdx"
 import buildAnAgentMarkdown from "@docs/guides/build-an-agent.mdx?doc-source"
 import Atoms, { frontmatter as atomsFrontmatter } from "@docs/concepts/atoms.mdx"
@@ -65,10 +71,13 @@ type DocModule = {
 }
 
 const modules: ReadonlyArray<DocModule> = [
+  { default: WorkspaceLibrary, frontmatter: workspaceLibraryFrontmatter, markdown: workspaceLibraryMarkdown, source: "libraries/workspace.mdx" },
+  { default: LogLibrary, frontmatter: logLibraryFrontmatter, markdown: logLibraryMarkdown, source: "libraries/log.mdx" },
   { default: BuildAnAgent, frontmatter: buildAnAgentFrontmatter, markdown: buildAnAgentMarkdown, source: "guides/build-an-agent.mdx" },
   { default: Atoms, frontmatter: atomsFrontmatter, markdown: atomsMarkdown, source: "concepts/atoms.mdx" },
   { default: NotesIndex, frontmatter: notesIndexFrontmatter, markdown: notesIndexMarkdown, source: "notes/index.mdx" },
   { default: Agent, frontmatter: agentFrontmatter, markdown: agentMarkdown, source: "agent.mdx" },
+  { default: Libraries, frontmatter: librariesFrontmatter, markdown: librariesMarkdown, source: "concepts/libraries.mdx" },
   {
     default: FormsAndShadows,
     frontmatter: formsAndShadowsNote,

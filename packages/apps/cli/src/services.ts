@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { liveModelServices, modelInfo, modelActs } from "@clavia/tardigrade-agent/services/model"
 import { askPermission } from "@clavia/tardigrade-agent/services/decisions"
-import { fetch, workspace, memoryWorkspace } from "@clavia/tardigrade-libraries"
+import { fetch, textStore, memoryTextStore } from "@clavia/tardigrade-libraries"
 import { bunPromises, bunIsolate } from "@clavia/tardigrade-platform/bun"
 import { ModelLock, lockedModelConfigOf, modelLockService, parseModelLock, MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelCredentialsFrom } from "@clavia/tardigrade-model/config"
@@ -42,9 +42,9 @@ export const services = (options: { readonly permissions?: Permissions; readonly
   const platform = Layer.mergeAll(
     modelServices,
     bunIsolate(),
-    memoryWorkspace,
+    memoryTextStore,
     permissions.layer(host, options.label ?? "Code agent"),
     bunPromises(host, { deliver: settlement => host.deliver(settlement.ref, [settlement]) }),
   )
-  return Layer.mergeAll(modelInfo, modelActs, askPermission, codeModeActs([fetch(), workspace()])).pipe(Layer.provideMerge(platform))
+  return Layer.mergeAll(modelInfo, modelActs, askPermission, codeModeActs([fetch(), textStore()])).pipe(Layer.provideMerge(platform))
 }

@@ -64,11 +64,10 @@ These notes explain what Tardigrade is doing behind the scenes. You can skip the
 Within `actor.ts`, you will see the following code:
 
 ```ts expanded
-import { Effect, Schema } from "effect"
+import { Schema } from "effect"
 import { Rpc } from "effect/rpc"
-import { atom, defineActor } from "tardie/core"
-import { agentMethods, compact, infer, messages, tools as libraryTools } from "tardie/agent"
-import { defineLibrary, MethodDescription, MethodHints } from "tardie/libraries"
+import { agent } from "tardie/agent"
+import { Library, MethodDescription, MethodHints } from "tardie/libraries"
 
 const actorName = "meeseeks"
 
@@ -77,42 +76,51 @@ Answer questions about the weather.
 Use the weather tool for current conditions.
 `.trim()
 
-export const weather = defineLibrary({
-  name: "weather",
-  description: "Weather information",
-  toolNames: { current: "get_weather" },
-  methods: [Rpc.make("current", {
-    payload: Schema.Struct({ city: Schema.String }),
-    success: Schema.Struct({ city: Schema.String, temperature: Schema.Finite }),
-  })
-    .annotate(MethodDescription, "Get example weather data for a city")
-    .annotate(MethodHints, { readOnlyHint: true, openWorldHint: false })],
-})
+export const WeatherInput = Schema.Struct({ city: Schema.String })
+export const WeatherOutput = Schema.Struct({ city: Schema.String, temperature: Schema.Finite })
 
-export default defineActor(actorName, Effect.gen(function* () {
-  const system = atom(actorInstructions)
-  const tools = yield* libraryTools([weather])
-  const context = yield* compact(messages)
-  const agent = yield* infer(get => ({
-    system: get(system),
-    tools: get(tools),
-    context: get(context),
-  }))
-  return { atom: agent, methods: agentMethods }
-}))
+export const weather = Library.make(
+  "weather",
+  Rpc.make("current", { payload: WeatherInput, success: WeatherOutput })
+    .annotate(MethodDescription, "Get example weather data for a city")
+    .annotate(MethodHints, { readOnlyHint: true, openWorldHint: false }),
+)
+
+export default agent({
+  name: actorName,
+  system: actorInstructions,
+  tools: [weather],
+})
 ```
 
 `messages` derives message history from the event log. `compact` prepares model context, and `infer` proposes model calls. The actor composes these atoms and exposes `agentMethods`.
 
 The weather library declares a typed method with Effect RPC. Its implementation belongs in `services.ts`:
 
-```ts
-const tools = weather.implement({
+```ts title="services.ts"
+import { providerLayer } from "./generated/providers"
+import { Effect, Layer } from "effect"
+import { weather } from "./actor"
+import { liveModelServices, modelActs, modelInfo } from "tardie/agent/services"
+import { modelConfigOf, modelCredentialsFrom } from "tardie/model/config"
+import { layerModelLock } from "tardie/model/lock"
+import modelLock from "./models.lock.json"
+
+export const weatherLayer = Layer.succeed(weather, {
   current: ({ city }) => Effect.succeed({ city, temperature: 21 }),
 })
+
+export function services<Provided>(models: unknown, env: Readonly<Record<string, unknown>>, workspace: Layer.Layer<Provided, Error>) {
+  const config = modelConfigOf(models)
+  const lock = layerModelLock(modelLock, config)
+  const model = liveModelServices({ providerLayer, credentials: modelCredentialsFrom(config, env) }).pipe(Layer.provideMerge(lock))
+  return Layer.mergeAll(modelInfo, modelActs).pipe(Layer.provide(model), Layer.merge(workspace), Layer.merge(weatherLayer))
+}
 ```
 
 The example returns dummy weather data. Replace the handler with your weather service. `toolActs([tools])` supplies the handler to the runtime; the actor sees its method schema and annotations.
+
+[API note: The agent constructor attaches its tool runtime layer. Supply `weatherLayer` through the application layer passed to `host`.]
 
 ### Running it locally
 

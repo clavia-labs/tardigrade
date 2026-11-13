@@ -94,25 +94,23 @@ Your converter owns source formats and schema versions. For a real actor, includ
 Register the destination atoms in `initialStateAtoms`, then pass the map during creation:
 
 ```ts
-import { Context, Layer } from "effect"
-import { createBunHost } from "tardie/platform/bun"
+import { Effect, Layer } from "effect"
+import { host } from "tardie/platform/bun"
 
-const host = await Effect.runPromise(createBunHost({
-  actor,
-  actorContext: () => Context.empty(),
-  services: () => Layer.empty,
+const runtime = await Effect.runPromise(host(actor, {
+  layer: Layer.empty,
   storage: ".tardigrade/counter",
   initialStateAtoms: [counter],
 }))
 
-const thread = await Effect.runPromise(host.allocateRootThread({
+const thread = await Effect.runPromise(runtime.allocateRootThread({
   instance: "destination",
   name: "migrated",
   initialState,
 }))
 
 console.log(thread.getState()) // { count: 5 }
-await Effect.runPromise(host.close)
+await Effect.runPromise(runtime.close)
 ```
 
 `createThreadHost` and `createActorWorker` accept the same `initialStateAtoms` option. Child allocation also accepts `initialState`. Unknown atom names, duplicate destination names, and incompatible state fail before allocation is recorded. Identical named retries reuse the thread; conflicting state fails.

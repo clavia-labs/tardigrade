@@ -22,7 +22,7 @@ export interface LibraryContract {
   readonly description: string
   readonly specs: readonly (ToolSpec & { readonly method: string })[]
 }
-export type LibrarySource = LibraryContract | { readonly library: LibraryContract }
+export type LibrarySource = Pick<LibraryContract, "name"> | { readonly library: LibraryContract }
 
 export const ToolSpec = Schema.Struct({ name: Schema.String, description: Schema.String, inputSchema: Schema.Json, outputSchema: Schema.optionalKey(Schema.Json), annotations: Schema.optionalKey(MethodAnnotations), execution: Schema.optionalKey(ExecutionMode), promiseTimeoutMs: Schema.optionalKey(Schema.Int) })
 export type ToolSpec = typeof ToolSpec.Type

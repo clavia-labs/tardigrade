@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { SqlClient } from "effect/sql"
-import { FilesystemWorkspaceError, type WorkspaceIdempotencyRequest, type WorkspaceIdempotencyStore, type WorkspaceMutationOutcome } from "@clavia/tardigrade-libraries/filesystem/index"
+import { WorkspaceError, type WorkspaceIdempotencyRequest, type WorkspaceIdempotencyStore, type WorkspaceMutationOutcome } from "@clavia/tardigrade-libraries/workspace/index"
 
 const Outcome = Schema.Union([
   Schema.TaggedStruct("Success", { value: Schema.Union([Schema.String, Schema.Null]) }),
@@ -20,11 +20,11 @@ export const sqlIdempotencyStore = Effect.gen(function* () {
   )`
   const validate = (request: WorkspaceIdempotencyRequest) => Effect.try({ try: () => {
     for (const value of [request.workspaceId, request.key, request.inputDigest]) {
-      if (typeof value !== "string" || !value.trim()) throw new FilesystemWorkspaceError("Workspace identity, key, and digest must be nonempty")
+      if (typeof value !== "string" || !value.trim()) throw new WorkspaceError("Workspace identity, key, and digest must be nonempty")
     }
-  }, catch: FilesystemWorkspaceError.from })
-  const load = (request: WorkspaceIdempotencyRequest) => sql<Row>`SELECT input_digest, outcome FROM workspace_idempotency WHERE workspace_id = ${request.workspaceId} AND caller_key = ${request.key}`.pipe(Effect.flatMap(rows => rows[0] ? Effect.succeed(rows[0]) : Effect.fail(new FilesystemWorkspaceError("Workspace idempotency record is missing"))))
-  const decode = (text: string) => Schema.decodeEffect(Schema.fromJsonString(Outcome))(text).pipe(Effect.mapError(FilesystemWorkspaceError.from))
+  }, catch: WorkspaceError.from })
+  const load = (request: WorkspaceIdempotencyRequest) => sql<Row>`SELECT input_digest, outcome FROM workspace_idempotency WHERE workspace_id = ${request.workspaceId} AND caller_key = ${request.key}`.pipe(Effect.flatMap(rows => rows[0] ? Effect.succeed(rows[0]) : Effect.fail(new WorkspaceError("Workspace idempotency record is missing"))))
+  const decode = (text: string) => Schema.decodeEffect(Schema.fromJsonString(Outcome))(text).pipe(Effect.mapError(WorkspaceError.from))
   return {
     claim: request => sql.withTransaction(Effect.gen(function* () {
       yield* validate(request)
@@ -34,17 +34,17 @@ export const sqlIdempotencyStore = Effect.gen(function* () {
       if (row.input_digest !== request.inputDigest) return { _tag: "Conflict" as const }
       if (row.outcome === null) return { _tag: "Pending" as const }
       return { _tag: "Completed" as const, outcome: yield* decode(row.outcome) }
-    })).pipe(Effect.mapError(FilesystemWorkspaceError.from)),
+    })).pipe(Effect.mapError(WorkspaceError.from)),
     complete: (request, outcome) => sql.withTransaction(Effect.gen(function* () {
       yield* validate(request)
-      const checked = yield* Schema.decodeEffect(Outcome)(outcome).pipe(Effect.mapError(FilesystemWorkspaceError.from))
+      const checked = yield* Schema.decodeEffect(Outcome)(outcome).pipe(Effect.mapError(WorkspaceError.from))
       const encoded = encode(checked)
       const updated = yield* sql<{ caller_key: string }>`UPDATE workspace_idempotency SET outcome = ${encoded} WHERE workspace_id = ${request.workspaceId} AND caller_key = ${request.key} AND input_digest = ${request.inputDigest} AND outcome IS NULL RETURNING caller_key`
       if (updated.length) return
       const row = yield* load(request)
-      if (row.input_digest !== request.inputDigest || row.outcome === null) return yield* Effect.fail(new FilesystemWorkspaceError("Workspace idempotency completion conflicts with its claim"))
+      if (row.input_digest !== request.inputDigest || row.outcome === null) return yield* Effect.fail(new WorkspaceError("Workspace idempotency completion conflicts with its claim"))
       const saved: WorkspaceMutationOutcome = yield* decode(row.outcome)
-      if (encode(saved) !== encoded) return yield* Effect.fail(new FilesystemWorkspaceError("Workspace idempotency outcome cannot change"))
-    })).pipe(Effect.mapError(FilesystemWorkspaceError.from)),
+      if (encode(saved) !== encoded) return yield* Effect.fail(new WorkspaceError("Workspace idempotency outcome cannot change"))
+    })).pipe(Effect.mapError(WorkspaceError.from)),
   } satisfies WorkspaceIdempotencyStore
-}).pipe(Effect.mapError(FilesystemWorkspaceError.from))
+}).pipe(Effect.mapError(WorkspaceError.from))

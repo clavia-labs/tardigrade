@@ -46,6 +46,10 @@ export type ActorObjectOptions<Env extends object, Event extends object, Service
   readonly version?: (env: Env) => string | undefined
   readonly actorContext?: ExecutionOptions<Event, Services, State, Contracts>["actorContext"]
   // services receives the current Durable Object storage for local cache layers.
+  /**
+   * services constructs implementations for a thread runtime.
+   * @deprecated Supply the application layer through host(actor, { layer }).
+   */
   readonly services: (env: Env, ...args: [...Parameters<ExecutionOptions<Event, Services, State, Contracts>["services"]>, DurableObjectStorage]) => Layer.Layer<Layer.Success<ReturnType<ExecutionOptions<Event, Services, State, Contracts>["services"]>>, Error, Supervisor | Invocation | EventLog>
   readonly alarms?: CloudflareAlarmOptions
   readonly rpc?: CloudflareRetryOptions

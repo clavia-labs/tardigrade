@@ -56,17 +56,20 @@ const lock = modelLockService(modelLockOf({
   providers: { fixture: { protocol: "openai-chat-completions", baseUrl: "https://fixture.invalid", env: [] } },
   models: [{ provider: "fixture", model_id: "test", contextWindowTokens: 4096 }],
 }), { allow: "*", default: model })
-export const contentServices = (observe: (prompt: Prompt.Prompt) => void, options: {
+interface ContentModelOptions {
+  readonly observeTools?: (tools: LanguageModel.ProviderOptions["tools"]) => void
   readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined
   readonly request?: RequestOptions
-  readonly libraries?: readonly LibraryImplementation<EffectExecution>[]
   readonly toolCalls?: readonly { readonly id: string; readonly name: string; readonly params: Schema.Json }[]
-} = {}) => {
+}
+
+export const contentModelServices = (observe: (prompt: Prompt.Prompt) => void, options: ContentModelOptions = {}) => {
   const settings = { ...binding, policy: requestPolicyOf(options.request ?? {}) }
   const provider = Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
-    generateText: input => Effect.suspend(() => { observe(input.prompt); const failure = options.failure?.(input.prompt); return failure ? Effect.fail(failure) : Effect.succeed([Response.makePart("text", { text: "ok" })]) }),
+    generateText: input => Effect.suspend(() => { observe(input.prompt); options.observeTools?.(input.tools); const failure = options.failure?.(input.prompt); return failure ? Effect.fail(failure) : Effect.succeed([Response.makePart("text", { text: "ok" })]) }),
     streamText: input => Stream.suspend((): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> => {
       observe(input.prompt)
+      options.observeTools?.(input.tools)
       const failure = options.failure?.(input.prompt)
       if (failure) return Stream.fail(failure)
       if (options.toolCalls && !input.prompt.content.some(message => message.role === "tool")) return Stream.fromIterable([
@@ -91,7 +94,13 @@ export const contentServices = (observe: (prompt: Prompt.Prompt) => void, option
   return Layer.mergeAll(
     modelInfo.pipe(Layer.provide(lockLayer)),
     modelActs.pipe(Layer.provide(modelLayer)),
-    toolActs(options.libraries ?? []),
-    AskPermission.layer(() => options.libraries ? Effect.succeed({ allowed: true, reason: "Fixture tool permission" }) : Effect.die("No tool permission should be requested")),
   )
 }
+
+export const contentServices = (observe: (prompt: Prompt.Prompt) => void, options: ContentModelOptions & {
+  readonly libraries?: readonly LibraryImplementation<EffectExecution>[]
+} = {}) => Layer.mergeAll(
+  contentModelServices(observe, options),
+  toolActs(options.libraries ?? []),
+  AskPermission.layer(() => options.libraries ? Effect.succeed({ allowed: true, reason: "Fixture tool permission" }) : Effect.die("No tool permission should be requested")),
+)

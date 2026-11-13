@@ -1,63 +1,112 @@
 ---
 title: Libraries
+socialImage: /images/libraries-social.png
+socialImageAlt: Five interlocking puzzle pieces with blue outlines and a subtle blue fill.
+hideDescription: false
 articleClass: libraries-article
-description: Define reusable, typed capabilities for actors.
-route: /docs/libraries
+description: Learn about Tardigrade libraries and how to define one
+route: /docs/concepts/libraries
 section: Concepts
 sectionOrder: 2
 order: 5
 ---
 
-## Declare a library
+Often, we want to extend our actors with external capabilities so they can interact with the world and accomplish goals. In Tardigrade, these capabilities are defined using `libraries`.
 
-```ts
+<LibraryJigsaw />
+
+A Tardigrade library is a named group of typed `Rpc` methods with annotations, and an Effect `Service` that backs them. This enables strong type level guarantees, automatic dependency injection and seamless integration with the rest of your Effect application. Once defined, application hosts provide service implementations using Effect `Layer`.
+
+```
+Library = Effect Service + RPC contract
+                ▲               ▲
+                │               └── Typed methods and annotations
+                └── Implemented through a Layer
+```
+
+The following example illustrates this through a workspace capability that lets an agent use filesystem and execute bash commands. This capability is also provided as a <a href="/docs/libraries/workspace" target="_blank" rel="noopener noreferrer">first-party library</a>.
+
+## Contract
+
+Every capability starts with an interface. Interfaces provide contracts for how a capability can be used. For the workspace library, we start by writing the Rpc contracts for `bash`, `read`, `write` and `edit` methods. Tardigrade’s `Library.make` derives an Effect service tag and its method types from annotated Rpc contracts.
+
+```ts title="workspace.ts"
 import { Schema } from "effect"
 import { Rpc } from "effect/rpc"
-import { defineLibrary, MethodDescription } from "tardie/libraries"
+import { Library, MethodDescription } from "tardie/libraries"
 
-export const calculator = defineLibrary({
-  name: "calculator",
-  description: "Arithmetic tools",
-  toolNames: { multiply: "multiply" },
-  methods: [Rpc.make("multiply", {
-    payload: Schema.Struct({ left: Schema.Finite, right: Schema.Finite }),
-    success: Schema.Finite,
-  }).annotate(MethodDescription, "Multiply two numbers")],
+// BashInput and BashOutput define the command schema.
+export const BashInput = Schema.Struct({ command: Schema.String })
+export const BashOutput = Schema.String
+// Other method schemas omitted.
+
+// WorkspaceError is shared by all methods.
+export const WorkspaceError = Schema.String
+
+// workspace defines the RPC contract and its Effect service tag.
+export const workspace = Library.make(
+  "workspace",
+  Rpc.make("bash", {
+    payload: BashInput,
+    success: BashOutput,
+    error: WorkspaceError,
+  }).annotate(MethodDescription, "Run a shell command in the workspace"),
+  // read, write, and edit omitted.
+)
+```
+
+## Agent
+
+Once your library is defined, it can be added to the agent tools array. Your agent now declares its tools and the services required to run them. The stage is now set for hosting and running the agent program.
+
+```ts title="agent.ts"
+import { agent } from "tardie/agent"
+import { workspace } from "./workspace"
+
+export const assistant = agent({
+  name: "assistant",
+  system: "Use the workspace to read and edit files and run shell commands.",
+  tools: [workspace],
 })
 ```
 
-## Implement the methods
+## Hosting
 
-```ts
-import { Effect } from "effect"
-import { toolActs } from "tardie/agent/services"
-import { calculator } from "./calculator"
+If services and libraries describe the contract, layers describe how they can be implemented in reality. This is illustrative especially when the same capability could be provided in different ways.
 
-const calculatorLive = calculator.implement({
-  multiply: ({ left, right }) => Effect.succeed(left * right),
+<LibraryLayersDiagram />
+
+For example, one way to implement the `Workspace` library is using a real filesystem and bash through a container. The same library can also be implemented using virtual filesystem and bash, backed by SQLite. This can be done by simply swapping the layer when hosting. Tardigrade provides <a href="/docs/libraries/workspace#real-filesystem" target="_blank" rel="noopener noreferrer">platform layers</a> for local filesystems, Cloudflare containers, and SQLite-backed virtual filesystems.
+
+To create your own platform layer, map the effect service methods to their corresponding implementations.
+
+```ts title="layers/workspace.ts"
+import { Effect, Layer } from "effect"
+import { workspace } from "../workspace"
+import { MyFilesystem, filesystemLayer } from "../filesystem"
+
+export const workspaceLayer = Layer.effect(workspace,
+  Effect.map(MyFilesystem, fs => ({
+    bash: ({ command }) => fs.execute(command),
+    // read, write, and edit omitted.
+  })),
+).pipe(Layer.provide(filesystemLayer))
+```
+
+Supply your implementation layers to the platform host through its layer option. Missing service requirements are caught at compile time.
+
+```ts title="worker.ts"
+import { Layer } from "effect"
+import { host } from "tardie/platform/cloudflare"
+import { assistant } from "./agent"
+import { modelLayer } from "./layers/model"
+import { workspaceLayer } from "./layers/workspace"
+
+const worker = host(assistant, {
+  layer: Layer.mergeAll(modelLayer, workspaceLayer),
 })
-
-export const calculatorActs = toolActs([calculatorLive])
 ```
 
-## Use a library in an actor
+### Next steps
 
-```ts
-import { Effect } from "effect"
-import { atom, defineActor } from "tardie/core"
-import { agentMethods, compact, infer, messages, tools } from "tardie/agent"
-import { calculator } from "./calculator"
-
-export const meeseeks = defineActor("meeseeks", Effect.gen(function* () {
-  const system = atom("Use the calculator for arithmetic.")
-  const arithmetic = yield* tools([calculator])
-  const context = yield* compact(messages)
-  const agent = yield* infer(get => ({
-    system: get(system),
-    tools: get(arithmetic),
-    context: get(context),
-  }))
-
-  return { atom: agent, methods: agentMethods }
-}))
-```
+Now that you know the basic concepts behind libraries, you are ready to create your own capabilities. Tardigrade also comes with a few native libraries that you can easily plug into your agent. <a href="/docs/libraries/workspace" target="_blank" rel="noopener noreferrer">Check them here</a>.

@@ -1,5 +1,6 @@
 import { cloudflareLogQueryEngine } from "./log-sql"
-import { DEFAULT_METHOD_HTTP_INSTANCE } from "../shared/method-http"
+export { host, Bindings, DurableStorage, HostThread } from "./host"
+export { journal } from "../shared/log"
 export { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
 export { executionStreamSse } from "../shared/execution-stream-sse"
 import type { ActorMethods } from "@clavia/tardigrade-core"
@@ -35,7 +36,7 @@ export const cloudflareHandler = (host: HttpHost, errorLog?: Partial<ErrorLogPol
 
 export { createActorObjects, cloudflareThreadName, CLOUDFLARE_CHILD_PLACEMENTS, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT } from "./objects"
 export type { ActorObjectOptions, CloudflareObjectBindings, ActorDirectoryStub, ThreadRuntimeStub } from "./objects"
-import { createActorObjects, type ActorObjectOptions, type CloudflareObjectBindings } from "./objects"
+import { createActorObjects, type ActorObjectOptions } from "./objects"
 
 // createActorObject owns an instance directory whose registered threads execute in separate DOs (test/workerd/thread-layout.workers.ts).
 export function createActorObject<Env extends object = Record<string, unknown>, Event extends object = object, Services = never, State = unknown, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorObjectOptions<Env, Event, Services, State, Contracts>) {
@@ -47,17 +48,7 @@ export function createThreadObject<Env extends object = Record<string, unknown>,
   return createActorObjects(options).ThreadObject
 }
 
-// createActorWorker routes instance requests to a directory DO and exports its thread DO class (test/workerd/thread-layout.workers.ts).
-export function createActorWorker<Env extends object = Record<string, unknown>, Event extends object = object, Services = never, State = unknown, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: ActorObjectOptions<Env, Event, Services, State, Contracts>) {
-  const objects = createActorObjects(options)
-  return {
-    ...objects,
-    fetch(request: Request, env: Env & CloudflareObjectBindings) {
-      const instance = /^\/v1\/actors\/([^/]+)\/threads(?:\/|$)/.exec(new URL(request.url).pathname)?.[1]
-      return env.ACTORS.getByName(instance === undefined ? options.http?.(env).instance ?? DEFAULT_METHOD_HTTP_INSTANCE : decodeURIComponent(instance)).fetch(request)
-    },
-  }
-}
+export { createActorWorker } from "./worker"
 export { cloudflarePromises, createCloudflarePromiseResolver, PromiseResolverCompletion, PromiseResolverNotification, type PromiseResolverStub } from "./promise-resolver"
 
 export { httpMessageTransport } from "../shared/http-message"

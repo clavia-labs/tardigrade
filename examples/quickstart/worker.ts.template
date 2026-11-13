@@ -1,11 +1,8 @@
-import { Context } from "effect"
-import { createActorWorker } from "tardie/platform/cloudflare"
+import { host } from "tardie/platform/cloudflare"
 import definition, { notifyLayer } from "./actor"
 
-const worker = createActorWorker({
-  actor: definition,
-  actorContext: Context.pick(),
-  services: () => notifyLayer,
+const worker = host(definition, {
+  layer: notifyLayer,
   http: (env: { readonly TARDIGRADE_TOKEN?: string }) => ({ ...(env.TARDIGRADE_TOKEN ? { token: env.TARDIGRADE_TOKEN } : {}) }),
 })
 

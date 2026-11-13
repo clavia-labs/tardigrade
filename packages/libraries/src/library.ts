@@ -1,13 +1,13 @@
-import { Context, Deferred, Effect, Schema } from "effect"
+import { Context, Deferred, Effect, Layer, Schema, type Scope } from "effect"
 import { Rpc, RpcGroup, RpcMessage, RpcSchema } from "effect/rpc"
 import { Headers } from "effect/http"
-import { EffectExecution, ExecutionHandle } from "@clavia/tardigrade-core"
+import { EffectExecution, ExecutionHandle, RuntimeError } from "@clavia/tardigrade-core"
 import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
 import { ToolError } from "./errors"
 import { StoredToolResult, isToolResultSchema } from "@clavia/tardigrade-model/object/content"
 import { persistToolResult } from "@clavia/tardigrade-model/object/tool-result"
 import { tool, promiseTool, type AgentTool, type ToolInvocation } from "./tool"
-import { MethodAnnotations, ExecutionMode, DEFAULT_METHOD_EXECUTION, type LibraryContract, type ToolSpec } from "./types"
+import { MethodAnnotations, ExecutionMode, DEFAULT_METHOD_EXECUTION, type LibraryContract, type LibrarySource, type ToolSpec } from "./types"
 
 // MethodDescription describes a library method to models and RPC clients.
 export class MethodDescription extends Context.Service<MethodDescription, string>()("tardie/library/MethodDescription") {}
@@ -18,8 +18,16 @@ export class MethodExecution extends Context.Service<MethodExecution, ExecutionM
 // MethodPromiseTimeout sets the background promise waiting budget in milliseconds; omission inherits the host policy.
 export class MethodPromiseTimeout extends Context.Service<MethodPromiseTimeout, number>()("tardie/library/MethodPromiseTimeout") {}
 
-export interface Library<Rpcs extends Rpc.Any = Rpc.Any> extends LibraryContract {
+/**
+ * LibraryDefinition describes a library whose handlers are bound explicitly.
+ * @deprecated Use Library.make to derive a service tag from RPC contracts.
+ */
+export interface LibraryDefinition<Rpcs extends Rpc.Any = Rpc.Any> extends LibraryContract {
   readonly methods: RpcGroup.RpcGroup<Rpcs>
+  /**
+   * implement binds handlers to the library contract.
+   * @deprecated Supply implementations through Layer.succeed or Layer.effect with the library tag.
+   */
   readonly implement: <Handlers extends RpcGroup.HandlersFrom<Rpcs>>(handlers: Handlers, options?: {
     readonly submit?: readonly Rpcs["_tag"][]
     readonly cancel?: Partial<Record<Rpcs["_tag"], (handle: ExecutionHandle | undefined, call: ToolInvocation) => Effect.Effect<void, Error, Exclude<RpcGroup.HandlersServices<Rpcs, Handlers>, EffectExecution>>>>
@@ -34,7 +42,12 @@ export interface LibraryMethod<R = never> extends AgentTool<R> {
   readonly contentResult: boolean
   readonly invoke: (input: unknown, call: ToolInvocation) => Effect.Effect<Schema.Json, Error, R>
 }
-export type LibraryRequirements<L> = L extends LibraryImplementation<infer R> ? R : never
+export type LibraryRequirements<L> = L extends LibraryImplementation<infer R> ? R
+  : L extends { readonly rpcLayer: infer Binding extends Layer.Any } ? Layer.Services<Binding> | EffectExecution
+  : never
+export type LibraryExecutionRequirements<L> = L extends LibraryImplementation<infer R> ? R
+  : L extends { readonly rpcLayer: infer Binding extends Layer.Any } ? Layer.Success<Binding> | EffectExecution
+  : never
 
 // LibraryRpc restricts adapters to schemas that decode requests and encode responses without services.
 export interface LibraryRpc extends Rpc.AnyWithProps {
@@ -43,13 +56,127 @@ export interface LibraryRpc extends Rpc.AnyWithProps {
   readonly errorSchema: Schema.Top & { readonly EncodingServices: never }
 }
 
-// defineLibrary names an Effect RPC group and derives its model-facing method contracts.
+// MethodIdentity retains the library and method names before RPC qualification.
+class MethodIdentity extends Context.Service<MethodIdentity, {
+  readonly library: string
+  readonly method: string
+}>()("tardie/library/MethodIdentity") {}
+
+type BoundHandlers<Rpcs extends Rpc.Any, Requirements> = {
+  readonly [Method in Rpcs as Method["_tag"]]: Rpc.ToHandlerFn<Method, Requirements>
+}
+
+export interface RpcLibraryBinding<Rpcs extends LibraryRpc = LibraryRpc, Requirements = unknown> {
+  readonly name: string
+  readonly rpc: Pick<RpcGroup.RpcGroup<Rpcs>, "requests" | "annotations">
+  readonly rpcLayer: Layer.Layer<never, never, Requirements>
+}
+
+export type BindableLibrary = LibraryImplementation<unknown> | RpcLibraryBinding
+
+function isImplementedLibrary(source: LibrarySource): source is BindableLibrary {
+  return "rpc" in source || ("library" in source && "methods" in source && Array.isArray(source.methods))
+}
+
+// libraryImplementations adapts service-backed declarations and retains existing implementations.
+export function libraryImplementations<const L extends readonly LibrarySource[]>(libraries: L): readonly LibraryImplementation<LibraryExecutionRequirements<L[number]>>[] {
+  return libraries.map(library => {
+    if (!isImplementedLibrary(library)) throw new RuntimeError(`Library requires an implementation: ${"library" in library ? library.library.name : library.name}`)
+    return "rpc" in library ? rpcLibraryTools(library) : library
+  }) as readonly LibraryImplementation<LibraryExecutionRequirements<L[number]>>[]
+}
+
+// libraryBindings installs RPC handlers in the owning runtime scope (platform/test/bun/library-scope.test.ts).
+export function libraryBindings<const L extends readonly LibrarySource[]>(libraries: L) {
+  type Bound = Extract<L[number], { readonly rpcLayer: Layer.Layer<never, never, LibraryRequirements<L[number]>> }>
+  type Output = Layer.Success<Bound["rpcLayer"]>
+  type Input = Layer.Services<Bound["rpcLayer"]>
+  const layers = libraries.flatMap(library => {
+    if (!("rpcLayer" in library)) return []
+    const binding = library as { readonly rpcLayer: Layer.Layer<Output, never, Input> }
+    return [binding.rpcLayer]
+  })
+  return Layer.mergeAll(Layer.empty, ...layers)
+}
+
+declare const LibraryIdentityTypeId: unique symbol
+interface LibraryIdentity<Name extends string, Rpcs extends Rpc.Any> {
+  readonly [LibraryIdentityTypeId]: { readonly name: Name; readonly methods: Rpcs }
+}
+
+type LibraryService<Rpcs extends Rpc.Any> = {
+  readonly [Method in Rpcs as Method["_tag"]]: (
+    input: Rpc.Payload<Method>,
+    request?: Parameters<Rpc.ToHandlerFn<Method>>[1],
+  ) => Effect.Effect<Rpc.Success<Method>, Rpc.Error<Method>, Scope.Scope>
+}
+
+export interface Library<Name extends string = string, Rpcs extends Rpc.Any = Rpc.Any>
+  extends Context.Service<LibraryIdentity<Name, Rpcs>, LibraryService<Rpcs>> {
+  readonly name: Name
+  readonly rpc: RpcGroup.RpcGroup<Rpc.Prefixed<Rpcs, `${Name}__`>>
+  readonly rpcLayer: Layer.Layer<Rpc.ToHandler<Rpc.Prefixed<Rpcs, `${Name}__`>>, never, LibraryIdentity<Name, Rpcs> | RpcGroup.HandlersServices<Rpc.Prefixed<Rpcs, `${Name}__`>, BoundHandlers<Rpc.Prefixed<Rpcs, `${Name}__`>, Scope.Scope>>>
+}
+
+// makeLibrary derives an Effect service tag and RPC bindings from a named contract.
+function makeLibrary<const Name extends string, const Rpcs extends readonly LibraryRpc[]>(
+  name: Name,
+  ...methods: Rpcs
+): Library<Name, Rpcs[number]> {
+  if (!/^[A-Za-z_$][\w$]*$/.test(name)) throw new Error(`Invalid library name: ${name}`)
+  if (name.includes("__")) throw new Error(`Library name contains reserved separator "__": ${name}`)
+  if (name.endsWith("_")) throw new Error(`Library name ends with reserved boundary "_": ${name}`)
+  const names = methods.map(method => method._tag)
+  if (new Set(names).size !== names.length) throw new Error(`Duplicate method in ${name}`)
+  const groups = methods.map((method: Rpcs[number]) => {
+    if (!/^[A-Za-z_$][\w$]*$/.test(method._tag)) throw new Error(`Invalid method name: ${method._tag}`)
+    if (method._tag.includes("__")) throw new Error(`Method name contains reserved separator "__": ${method._tag}`)
+    if (method._tag.startsWith("_")) throw new Error(`Method name starts with reserved boundary "_": ${method._tag}`)
+    if (method.middlewares.size || RpcSchema.isStreamSchema(method.successSchema)) throw new Error("Library adapters require unary RPCs without middleware")
+    return RpcGroup.make(method).annotateRpcs(MethodIdentity, { library: name, method: method._tag })
+  })
+  type Qualified = Rpc.Prefixed<Rpcs[number], `${Name}__`>
+  const rpc: RpcGroup.RpcGroup<Qualified> = RpcGroup.make().merge(...groups).prefix(`${name}__`)
+  const service: Context.Service<LibraryIdentity<Name, Rpcs[number]>, LibraryService<Rpcs[number]>> = Context.Service<LibraryIdentity<Name, Rpcs[number]>, LibraryService<Rpcs[number]>>()(`tardie/library/${name}`)
+  const handlers = Effect.map(service, implementation => Object.fromEntries(
+    Array.from(rpc.requests.values(), method => {
+      const identity = Context.getUnsafe(method.annotations, MethodIdentity)
+      const handler = implementation[identity.method as keyof typeof implementation] as Rpc.ToHandlerFn<Rpcs[number], Scope.Scope>
+      return [method._tag, handler.bind(implementation)]
+    }),
+  ) as unknown as BoundHandlers<Qualified, Scope.Scope>)
+  const named = Object.defineProperty(service, "name", { value: name, configurable: true }) as typeof service & { readonly name: Name }
+  return Object.assign(named, { rpc, rpcLayer: rpc.toLayer(handlers) })
+}
+
+// Library constructs service-backed RPC contracts.
+export const Library = { make: makeLibrary }
+
+// rpcLibraryTools connects bound RPC handlers to the durable tool execution adapter.
+function rpcLibraryTools<Rpcs extends LibraryRpc, Requirements>(binding: RpcLibraryBinding<Rpcs, Requirements>) {
+  const methods = Array.from(binding.rpc.requests.values())
+  const rpc = RpcGroup.make(...methods).annotateMerge(binding.rpc.annotations)
+  const contract = defineLibrary({ name: binding.name, description: binding.name, methods })
+  const handlers = Object.fromEntries(methods.map(method => [method._tag, (
+    payload: Rpc.Payload<Rpcs>, options: Parameters<Rpc.ToHandlerFn<Rpcs>>[1],
+  ) => Effect.flatMap(rpc.accessHandler(method._tag), handler => {
+    const result = handler(payload, options)
+    if (!Effect.isEffect(result)) return Effect.die(new ToolError("Library adapters require unary RPC handlers"))
+    return result.pipe(Effect.mapError(error => error as Rpc.Error<Rpcs>))
+  })])) as unknown as BoundHandlers<Rpcs, Rpc.ToHandler<Rpcs>>
+  return contract.implement(handlers)
+}
+
+/**
+ * defineLibrary names an Effect RPC group and derives its model-facing method contracts.
+ * @deprecated Use Library.make and supply implementations through an Effect layer.
+ */
 export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definition: {
   readonly name: string
   readonly description: string
   readonly methods: Rpcs
   readonly toolNames?: Readonly<Partial<Record<Rpcs[number]["_tag"], string>>>
-}): Library<Rpcs[number]> {
+}): LibraryDefinition<Rpcs[number]> {
   if (!/^[A-Za-z_$][\w$]*$/.test(definition.name)) throw new Error(`Invalid library name: ${definition.name}`)
   const names = definition.methods.map(method => method._tag)
   if (new Set(names).size !== names.length) throw new Error(`Duplicate method in ${definition.name}`)
@@ -64,10 +191,12 @@ export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definiti
     const promiseTimeoutMs = Context.getOrUndefined(rpc.annotations, MethodPromiseTimeout)
     if (promiseTimeoutMs !== undefined && (!Number.isSafeInteger(promiseTimeoutMs) || promiseTimeoutMs < 1)) throw new Error("MethodPromiseTimeout must be a positive safe integer")
     if (promiseTimeoutMs !== undefined && execution !== "background") throw new Error("MethodPromiseTimeout requires background execution")
-    const name = definition.toolNames?.[rpc._tag as Rpcs[number]["_tag"]] ?? `${definition.name}__${rpc._tag}`
+    const identity = Context.getOrUndefined(rpc.annotations, MethodIdentity)
+    const method = identity?.method ?? rpc._tag
+    const name = definition.toolNames?.[rpc._tag as Rpcs[number]["_tag"]] ?? `${definition.name}__${method}`
     if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) throw new Error(`Invalid tool name: ${name}`)
     return {
-      name, method: rpc._tag, description,
+      name, method, description,
       inputSchema: jsonSchemaOf(rpc.payloadSchema === Schema.Void ? Schema.Struct({}) : rpc.payloadSchema, { onExcessProperty: "error" }),
       outputSchema: jsonSchemaOf(rpc.successSchema === Schema.Void ? Schema.Null : rpc.successSchema),
       ...(annotations ? { annotations } : {}), execution, ...(promiseTimeoutMs === undefined ? {} : { promiseTimeoutMs }),
@@ -115,7 +244,7 @@ export function defineLibrary<const Rpcs extends readonly LibraryRpc[]>(definiti
           ...(spec.annotations ? { annotations: spec.annotations } : {}),
         }) }
       }
-      return { invoke, contentResult, ...tool({ name: rpc._tag, description, input,
+      return { invoke, contentResult, ...tool({ name: spec.method, description, input,
         run: (payload, call) => output(payload, call).pipe(Effect.flatMap(value => contentResult
           ? Schema.decodeUnknownEffect(StoredToolResult)(value)
           : Effect.succeed({ content: [{ type: "text" as const, text: JSON.stringify(value) }] }))),

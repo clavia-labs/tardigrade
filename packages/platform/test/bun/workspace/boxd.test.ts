@@ -1,15 +1,15 @@
 import { strict as assert } from "node:assert"
 import { test } from "bun:test"
 import { Effect, Fiber, ManagedRuntime } from "effect"
-import { FilesystemWorkspace, type FilesystemWorkspaceService } from "@clavia/tardigrade-libraries/filesystem/index"
+import { WorkspaceBackend, type WorkspaceBackendService } from "@clavia/tardigrade-libraries/workspace/index"
 import { boxdWorkspace, type BoxdWorkspaceOptions } from "../../../src/boxd/workspace"
 import { fakeBoxd } from "../../fixtures/workspace/boxd"
 import { waitFor } from "../../fixtures/wait"
 
-async function withWorkspace<A>(options: Omit<BoxdWorkspaceOptions, "client"> & { readonly fake: ReturnType<typeof fakeBoxd> }, run: (workspace: FilesystemWorkspaceService) => Promise<A>): Promise<A> {
+async function withWorkspace<A>(options: Omit<BoxdWorkspaceOptions, "client"> & { readonly fake: ReturnType<typeof fakeBoxd> }, run: (workspace: WorkspaceBackendService) => Promise<A>): Promise<A> {
   const { fake, ...rest } = options
   const runtime = ManagedRuntime.make(boxdWorkspace({ ...rest, client: fake.client }))
-  try { return await run(await runtime.runPromise(Effect.map(FilesystemWorkspace, workspace => workspace))) } finally { await runtime.dispose() }
+  try { return await run(await runtime.runPromise(Effect.map(WorkspaceBackend, workspace => workspace))) } finally { await runtime.dispose() }
 }
 const run = <A>(effect: Effect.Effect<A, Error>) => Effect.runPromise(effect)
 const statuses = (fake: ReturnType<typeof fakeBoxd>) => [...fake.computers.values()].map(computer => computer.status)
@@ -51,7 +51,7 @@ test("release reaches a computer whose creation outlived an interrupted command"
     const creation = Promise.withResolvers<void>()
     fake.before.create = () => creation.promise
     const runtime = ManagedRuntime.make(boxdWorkspace({ client: fake.client, name: "agent-1", release }))
-    const workspace = await runtime.runPromise(Effect.map(FilesystemWorkspace, workspace => workspace))
+    const workspace = await runtime.runPromise(Effect.map(WorkspaceBackend, workspace => workspace))
     const command = runtime.runFork(workspace.bash("echo hi"))
     await called(fake, "create")
     await runtime.runPromise(Fiber.interrupt(command))

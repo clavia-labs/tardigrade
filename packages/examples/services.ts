@@ -1,10 +1,10 @@
 import { modelActs, modelInfo, liveModelServices } from "@clavia/tardigrade-agent/services/model"
-import { toolActs } from "@clavia/tardigrade-agent/services/tools"
+import { libraryServices } from "@clavia/tardigrade-agent/services/tools"
 import { RuntimeError } from "@clavia/tardigrade-core"
 import { Effect, Layer, Schema } from "effect"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { memoryWorkspace, fetch, workspace } from "@clavia/tardigrade-libraries"
+import { memoryTextStore, fetch, textStore } from "@clavia/tardigrade-libraries"
 import { ModelLock, lockedModelConfigOf, modelLockService, parseModelLock, MODEL_LOCK_FILE } from "@clavia/tardigrade-model/lock"
 import { modelCredentialsFrom } from "@clavia/tardigrade-model/config"
 
@@ -30,11 +30,11 @@ const modelServices = Layer.unwrap(Effect.gen(function* () {
       const lock = Layer.succeed(ModelLock, modelLockService(definitions, policy))
       return Layer.merge(
         liveModelServices({ credentials: modelCredentialsFrom(config, env) }).pipe(Layer.provideMerge(lock)),
-        memoryWorkspace,
+        memoryTextStore,
       )
     },
     catch: RuntimeError.from,
   })
 }))
 
-export const services = Layer.mergeAll(modelInfo, modelActs, toolActs([fetch(), workspace()])).pipe(Layer.provide(modelServices))
+export const services = Layer.mergeAll(modelInfo, modelActs, libraryServices([fetch(), textStore()])).pipe(Layer.provide(modelServices))

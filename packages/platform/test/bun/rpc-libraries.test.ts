@@ -7,7 +7,7 @@ import { DEFAULT_SCHEMA_IMPORT_OPTIONS, DEFAULT_TOOL_SCHEMA_IMPORT_OPTIONS } fro
 import { Validator } from "@cfworker/json-schema"
 import { Rpc, RpcTest } from "effect/rpc"
 import { defineLibrary, MethodDescription, MethodExecution, MethodHints, toolsFromLibraries } from "@clavia/tardigrade-libraries"
-import { arxiv, workspace, memoryWorkspace } from "@clavia/tardigrade-libraries"
+import { arxiv, textStore, memoryTextStore } from "@clavia/tardigrade-libraries"
 import { ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
 import { toolActs } from "@clavia/tardigrade-agent/services/tools"
 import { codeModeActs } from "@clavia/tardigrade-agent/services/code-mode"
@@ -218,21 +218,21 @@ describe("RPC libraries", () => {
     } finally { await Effect.runPromise(store.close) }
   })
 
-  test("runs arXiv and workspace methods through a real Bun code isolate", async () => {
-    const libraries = [arxiv({ fetch: async () => new Response("<feed><entry><title>Durable agents</title></entry></feed>") }), workspace()]
+  test("runs arXiv and textStore methods through a real Bun code isolate", async () => {
+    const libraries = [arxiv({ fetch: async () => new Response("<feed><entry><title>Durable agents</title></entry></feed>") }), textStore()]
     const actor = defineActor("research", Effect.map(codeMode(libraries), atom => ({ atom, schema: Event })))
     const store = await Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog),
-      services: () => codeModeActs(libraries).pipe(Layer.provideMerge(Layer.merge(bunIsolate(), memoryWorkspace))),
+      services: () => codeModeActs(libraries).pipe(Layer.provideMerge(Layer.merge(bunIsolate(), memoryTextStore))),
     }))
     try {
-      const code = 'const papers = await arxiv.search({ query: "all:agents", maxResults: 1 }); await workspace.write({ key: "research", value: papers.feed }); return await workspace.read({ key: "research" });'
+      const code = 'const papers = await arxiv.search({ query: "all:agents", maxResults: 1 }); await textStore.write({ key: "research", value: papers.feed }); return await textStore.read({ key: "research" });'
       await Effect.runPromise(store.send([{ type: "ModelReturned", purpose: "inference", callId: "model", text: "", toolCalls: [{ callId: "research", providerId: "provider", name: "execute", input: { code } }] }]))
       await Effect.runPromise(store.wait.pipe(Effect.timeout(5_000)))
       const returned = store.snapshot().events.find(event => event.type === "ToolReturned" && event.callId === "research")
       expect(returned).toMatchObject({ error: null })
       if (!returned || returned.type !== "ToolReturned") throw new Error("Research result was not recorded")
       expect(JSON.parse(returned.content.filter(part => part.type === "text").map(part => part.text).join("\n")).result.value).toContain("Durable agents")
-      expect(store.snapshot().events.filter(event => event.type === "MethodRequested").map(event => `${event.package}.${event.method}`)).toEqual(["arxiv.search", "workspace.write", "workspace.read"])
+      expect(store.snapshot().events.filter(event => event.type === "MethodRequested").map(event => `${event.package}.${event.method}`)).toEqual(["arxiv.search", "textStore.write", "textStore.read"])
     } finally { await Effect.runPromise(store.close) }
   })
 

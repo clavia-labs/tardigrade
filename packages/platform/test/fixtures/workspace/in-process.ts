@@ -1,7 +1,7 @@
 import { Effect, ManagedRuntime } from "effect"
 import { SqlClient } from "effect/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { editWorkspaceText, FilesystemWorkspaceError, workspaceIdempotency, WorkspaceIdempotencyError, type FilesystemWorkspaceService } from "@clavia/tardigrade-libraries/filesystem/index"
+import { editWorkspaceText, WorkspaceError, workspaceIdempotency, WorkspaceIdempotencyError, type WorkspaceBackendService } from "@clavia/tardigrade-libraries/workspace/index"
 import { sqlIdempotencyStore } from "../../../src/shared/workspace/idempotency-store"
 import { workspaceFaultStore } from "./idempotency"
 import type { Fault, Outcome, Request, Response, Snapshot } from "./protocol"
@@ -23,16 +23,16 @@ export async function inProcessWorkspaceIdempotency() {
       read: () => Effect.sync(() => files[index] ?? ""),
       write: (_path, content) => Effect.sync(() => { files[index] = content }),
       edit: (_path, oldText, newText) => Effect.try({
-        try: () => { files[index] = editWorkspaceText(files[index] ?? "", oldText, newText) }, catch: FilesystemWorkspaceError.from,
+        try: () => { files[index] = editWorkspaceText(files[index] ?? "", oldText, newText) }, catch: WorkspaceError.from,
       }),
-    } satisfies FilesystemWorkspaceService, { workspaceId: String(index), store: interrupted }, ["in-process"], (method, args) => {
-      if (method !== "bash" && args[0] !== "file.txt") throw new FilesystemWorkspaceError("Path is outside the workspace directory")
+    } satisfies WorkspaceBackendService, { workspaceId: String(index), store: interrupted }, ["in-process"], (method, args) => {
+      if (method !== "bash" && args[0] !== "file.txt") throw new WorkspaceError("Path is outside the workspace directory")
     }))
     let workspaces = restore()
     const failure = (error: unknown): Outcome => ({
       status: "error", message: error instanceof Error ? error.message : String(error),
       reason: error instanceof WorkspaceIdempotencyError ? error.reason
-        : error instanceof FilesystemWorkspaceError && error.outcome === "terminal" ? "terminal" : "storage",
+        : error instanceof WorkspaceError && error.outcome === "terminal" ? "terminal" : "storage",
     })
     return {
       request: async (input: Request): Promise<Response> => {

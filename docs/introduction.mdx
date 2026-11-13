@@ -16,7 +16,7 @@ import tardie from "../assets/mascot/tardie-curious-right.svg"
 
 ## How it works
 
-Every event is written to an append-only log. Durable atoms reduce those events into state. Effect atoms propose effects based on current state. The runtime executes those effects and appends new events to the log.
+Every event is written to an append-only log. Durable atoms reduce those events into state. Effect atoms propose effects based on current state. The runtime executes effects and appends new events to the log.
 
 <EventLogWorldDiagram />
 
@@ -166,21 +166,19 @@ Run Tardigrade locally or host it in a cloud of your choice as durable objects.
 Run Tardigrade as a HTTP server by providing a storage location and service implementation for the actor's requirements.
 
 ```ts title="server.ts"
-import { Context, Effect } from "effect"
-import { createBunHost, methodHttp } from "tardie/platform/bun"
+import { Effect } from "effect"
+import { host, methodHttp } from "tardie/platform/bun"
 import { counter, notifyLayer } from "./actor"
 
-const host = await Effect.runPromise(createBunHost({
-  actor: counter,
-  actorContext: Context.pick(),
+const runtime = await Effect.runPromise(host(counter, {
   storage: ".tardigrade",
-  services: () => notifyLayer,
+  layer: notifyLayer,
 }))
 
 Bun.serve({
   hostname: "127.0.0.1",
   port: 4242,
-  fetch: methodHttp(host),
+  fetch: methodHttp(runtime),
 })
 ```
 
@@ -193,14 +191,11 @@ bun run server.ts
 Run Tardigrade actors as Durable Objects on [Cloudflare](/docs/platforms/cloudflare) or self-host on your own cloud using [Celld](/docs/platforms/celld). Both use the same Worker entrypoint and configuration.
 
 ```ts title="worker.ts"
-import { Context } from "effect"
-import { createActorWorker } from "tardie/platform/cloudflare"
+import { host } from "tardie/platform/cloudflare"
 import { counter, notifyLayer } from "./actor"
 
-const worker = createActorWorker({
-  actor: counter,
-  actorContext: Context.pick(),
-  services: () => notifyLayer,
+const worker = host(counter, {
+  layer: notifyLayer,
 })
 
 export const ActorDO = worker.ActorObject

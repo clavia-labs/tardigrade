@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { FilesystemWorkspaceError, type WorkspaceIdempotencyStore } from "@clavia/tardigrade-libraries/filesystem/index"
+import { WorkspaceError, type WorkspaceIdempotencyStore } from "@clavia/tardigrade-libraries/workspace/index"
 import type { Fault } from "./protocol"
 
 // workspaceFaultStore applies shared failure boundaries around a real idempotency store.
@@ -7,7 +7,7 @@ export function workspaceFaultStore(store: WorkspaceIdempotencyStore, readFault:
   return {
     claim: request => Effect.gen(function* () {
       const fault = readFault()
-      if (fault === "claimFailure") return yield* Effect.fail(new FilesystemWorkspaceError("Injected claim storage failure"))
+      if (fault === "claimFailure") return yield* Effect.fail(new WorkspaceError("Injected claim storage failure"))
       const claim = yield* store.claim(request)
       if (claim._tag === "Acquired" && fault === "afterClaim") return yield* interrupt(fault)
       return claim

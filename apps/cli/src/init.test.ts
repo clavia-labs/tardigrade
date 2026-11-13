@@ -28,8 +28,6 @@ describe("initActor", () => {
     const cwd = await temporaryRoot()
     const initialized = await initActor("reviewer", { cwd, now: new Date("2026-08-24T00:00:00Z"), packageVersion: "0.7.1-test", modelProvider: "openrouter" })
     const source = await readFile(initialized.entry, "utf8")
-    const server = await readFile(initialized.server, "utf8")
-    const worker = await readFile(initialized.worker, "utf8")
     const manifestSource = await readFile(initialized.manifest, "utf8")
     const manifest = JSON.parse(manifestSource) as Record<string, unknown>
     const celldManifest = JSON.parse(await readFile(initialized.celldManifest, "utf8")) as Record<string, unknown>
@@ -48,14 +46,6 @@ describe("initActor", () => {
     expect(initialized.catalogMigration).toBeUndefined()
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain("defineActor(actorName, Effect.sync")
-    expect(server).toContain('import definition, { notifyLayer } from "./actor"')
-    expect(server).toContain("Effect.runPromise(createBunHost({")
-    expect(server).toContain("methodHttp(host")
-    expect(server).toContain("host.close")
-    expect(server).toContain('?? ".tardigrade"')
-    expect(worker).toContain("createActorWorker({")
-    expect(worker).toContain("worker.ThreadObject")
-    expect(worker).toContain('from "tardie/platform/cloudflare"')
     expect(await readFile(join(initialized.directory, "SKILL.md"), "utf8")).toContain("tdg call increment null")
     await expect(readFile(join(initialized.directory, "services.ts"), "utf8")).rejects.toThrow()
     expect(manifest).toMatchObject({

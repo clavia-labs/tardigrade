@@ -72,22 +72,20 @@ export const meeseeks = defineActor("meeseeks", Effect.sync(() => {
 A host runs the actor and owns its storage, threads, and message delivery. Save this as `host.ts`:
 
 ```ts
-import { Context, Effect, Layer } from "effect"
-import { createBunHost } from "tardie/platform/bun"
+import { Effect, Layer } from "effect"
+import { host } from "tardie/platform/bun"
 import { meeseeks } from "./actor"
 
-export const openHost = () => Effect.runPromise(createBunHost({
-  actor: meeseeks,
+export const openHost = () => Effect.runPromise(host(meeseeks, {
   storage: ".tardigrade",
-  actorContext: Context.pick(),
-  services: () => Layer.empty,
+  layer: Layer.empty,
 }))
 ```
 
 Open it in your application:
 
 ```ts
-const host = await openHost()
+const runtime = await openHost()
 ```
 
 Host operations return Effects. Run them with `Effect.runPromise` at the application boundary, or compose them with `Effect.gen`. Close the host with `await Effect.runPromise(host.close)` when the application finishes.
@@ -95,6 +93,8 @@ Host operations return Effects. Run them with `Effect.runPromise` at the applica
 ### Supply atom requirements
 
 `actorContext` selects the services visible while constructing the actor graph. `services(coordinate, runtime)` supplies the implementations used by its atoms and actions. This actor needs no additional services, so it uses `Context.pick()` and `Layer.empty`. The [Build an agent](/docs/build-an-agent) guide shows model and tool service implementations.
+
+[API note: With `host(actor, { layer })`, setup-context selection belongs to the actor definition.]
 
 ## Allocate threads
 
@@ -111,10 +111,10 @@ An instance scopes the actor's threads. For example, `"rick"` can identify Rick'
 The caller supplies a name within the actor instance. The host assigns the thread identity and returns a reference.
 
 ```ts
-const rickMain = await Effect.runPromise(host.allocateRootThread({ instance: "rick", name: "main" }))
-const rickLab = await Effect.runPromise(host.allocateRootThread({ instance: "rick", name: "lab" }))
-const mortyMain = await Effect.runPromise(host.allocateRootThread({ instance: "morty", name: "main" }))
-const mortyLab = await Effect.runPromise(host.allocateRootThread({ instance: "morty", name: "lab" }))
+const rickMain = await Effect.runPromise(runtime.allocateRootThread({ instance: "rick", name: "main" }))
+const rickLab = await Effect.runPromise(runtime.allocateRootThread({ instance: "rick", name: "lab" }))
+const mortyMain = await Effect.runPromise(runtime.allocateRootThread({ instance: "morty", name: "main" }))
+const mortyLab = await Effect.runPromise(runtime.allocateRootThread({ instance: "morty", name: "lab" }))
 ```
 
 Rick and Morty each have two threads, `"main"` and `"lab"`. They can reuse these names because their instances provide separate scopes.
@@ -126,12 +126,12 @@ Rick and Morty each have two threads, `"main"` and `"lab"`. They can reuse these
 A thread can create another logical thread in the same actor instance. For example, Rick's `"main"` thread can create a `"researcher"` thread. It lives alongside `"main"` and `"lab"` as another thread in Rick's instance. The parent-child relationship determines its naming scope.
 
 ```ts
-const researcher = await Effect.runPromise(host.allocateChildThread({
+const researcher = await Effect.runPromise(runtime.allocateChildThread({
   parent: rickMain.coordinate,
   name: "researcher",
 }))
 
-const factChecker = await Effect.runPromise(host.allocateChildThread({
+const factChecker = await Effect.runPromise(runtime.allocateChildThread({
   parent: researcher.coordinate,
   name: "fact-checker",
 }))
@@ -152,8 +152,8 @@ The [supervisor log](#supervisor-log) records each thread's parent and depth, so
 Omit `name` to let the host assign a name. By default, generated names are friendly slugs such as `quiet-fox-k7m2`, made from an adjective, a noun, and a short random token. The host can change the word lists and token length or supply its own name generator. It checks for collisions, retries if a name is already taken, and stores the assignment for reuse.
 
 ```ts
-const root = await Effect.runPromise(host.allocateRootThread({ instance: "rick" }))
-const child = await Effect.runPromise(host.allocateChildThread({ parent: root.coordinate }))
+const root = await Effect.runPromise(runtime.allocateRootThread({ instance: "rick" }))
+const child = await Effect.runPromise(runtime.allocateChildThread({ parent: root.coordinate }))
 ```
 
 ## Invoke a thread
@@ -180,7 +180,7 @@ Expose the host to other processes with an HTTP server. The host continues to ow
 ```ts
 import { serve } from "tardie/platform/bun"
 
-const server = await Effect.runPromise(serve(host, { port: 4242 }))
+const server = await Effect.runPromise(serve(runtime, { port: 4242 }))
 ```
 
 Call Rick's thread from another process, replacing `$THREAD_ID` with `rickMain.coordinate.thread`:
@@ -204,13 +204,13 @@ This script opens the host, allocates threads for Rick and Morty, invokes their 
 import { Effect } from "effect"
 import { openHost } from "./host"
 
-const host = await openHost()
+const runtime = await openHost()
 try {
   const rickMain = await Effect.runPromise(
-    host.allocateRootThread({ instance: "rick", name: "main" })
+    runtime.allocateRootThread({ instance: "rick", name: "main" })
   )
   const mortyMain = await Effect.runPromise(
-    host.allocateRootThread({ instance: "morty", name: "main" })
+    runtime.allocateRootThread({ instance: "morty", name: "main" })
   )
 
   const rickResponse = await Effect.runPromise(rickMain.methods.message({
@@ -222,7 +222,7 @@ try {
 
   console.log({ rickResponse, mortyResponse })
 } finally {
-  await Effect.runPromise(host.close)
+  await Effect.runPromise(runtime.close)
 }
 ```
 

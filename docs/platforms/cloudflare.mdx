@@ -10,22 +10,41 @@ order: 2
 Each actor instance has an `ActorDO` with its supervisor database. Each thread has a separate `ThreadDO` with its own SQLite database, runtime, checkpoint, and recovery alarm. Bun uses the same database boundaries with SQLite files. The Worker routes an instance ID to its directory, which forwards thread requests to their owning objects:
 
 ```ts title="worker.ts"
-import { actorContext } from "tardie/agent"
-import { createActorWorker } from "tardie/platform/cloudflare"
+import { Effect, Layer } from "effect"
+import { Bindings, HostThread, host, createWorkspaceObject, remoteWorkspace, workspaceObjectName } from "tardie/platform/cloudflare"
 import definition from "./actor"
 import { services } from "./services"
 
-const worker = createActorWorker({
-  actor: definition,
-  actorContext,
-  services: () => services(),
+export const Sandbox = createWorkspaceObject({
+  directory: "/workspace",
+  start: (_env, container) => ({ image: container.images.current!, enableInternet: false }),
+})
+
+interface Env {
+  readonly TARDIGRADE_CONFIG: { readonly models: unknown } | string
+  readonly TARDIGRADE_TOKEN?: string
+  readonly SANDBOX: DurableObjectNamespace<InstanceType<typeof Sandbox>>
+  readonly [key: string]: unknown
+}
+
+const appLayer = Layer.unwrap(Effect.gen(function* () {
+  const env = yield* Bindings<Env>()
+  const thread = yield* HostThread
+  return services((typeof env.TARDIGRADE_CONFIG === "string" ? JSON.parse(env.TARDIGRADE_CONFIG) : env.TARDIGRADE_CONFIG).models, env, remoteWorkspace(env.SANDBOX.getByName(workspaceObjectName(thread))))
+}))
+
+const worker = host(definition, {
+  layer: appLayer,
+  http: (env: Env) => ({ ...(env.TARDIGRADE_TOKEN ? { token: env.TARDIGRADE_TOKEN } : {}) }),
 })
 export const ActorDO = worker.ActorObject
 export const ThreadDO = worker.ThreadObject
-export default worker
+export default { fetch: worker.fetch }
 ```
 
 `services` comes from the generated `services.ts` and supplies model and tool implementations. `actorContext` selects the services visible to agent setup. `createActorWorker` supplies the Worker router, `ActorObject` directory class, and `ThreadObject` runtime class. Export both classes and bind both namespaces. `createActorObject` and `createThreadObject` supply the classes separately for custom Worker routing. Thread object names encode the full actor, instance, and thread coordinate through `cloudflareThreadName`.
+
+[API note: `host` supplies the Worker router and Durable Object classes. Application layers use `Bindings`, `HostThread`, and `DurableStorage` for host capabilities; the actor definition carries its setup-context selection.]
 
 ## Verify locally
 
@@ -85,8 +104,8 @@ Effect and promise settlements advance the progress cursor and reset consecutive
 Configure recovery at Worker construction:
 
 ```ts
-createActorWorker({
-  // actor, services, actorContext
+host(actor, {
+  layer: appLayer,
   watchdog: {
     policy: {
       attemptTimeoutMs: 30_000,
@@ -116,8 +135,8 @@ Supply `version(env)` to identify the interpreter running an actor. Cloudflare e
 ```ts
 type Env = { CF_VERSION_METADATA: { id: string } }
 
-createActorWorker({
-  // actor, services, actorContext
+host(actor, {
+  layer: appLayer,
   version: (env: Env) => env.CF_VERSION_METADATA.id,
 })
 ```

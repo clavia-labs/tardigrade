@@ -2,7 +2,7 @@ import { eventCatalog } from "./event"
 import { historicalEventDecoder } from "../event/versioned"
 import type { ActorMethods, ActorMethod } from "./method"
 import { RuntimeError } from "../runtime/effects"
-import { Context, Effect, Schema, type Scope } from "effect"
+import { Context, Effect, Schema, type Layer, type Scope } from "effect"
 import { AsyncResult } from "effect/reactivity"
 import { atom, type Atom } from "../atoms/atom"
 import type { EventValue } from "../atoms/effect"
@@ -29,7 +29,10 @@ export interface ActorInspection<Contracts extends ActorMethods<object> = ActorM
   readonly methods: { readonly [Name in keyof Contracts]: Pick<Contracts[Name], "inputSchema" | "outputSchema"> }
 }
 
-export interface ActorDefinition<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+export interface ActorDefinition<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>, Provided = never, Required = never> {
+  // layer supplies definition-owned runtime services and declares their dependencies.
+  readonly layer?: Layer.Layer<Provided, Error, Required>
+  readonly actorContext?: (services: Context.Context<Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
   readonly actorName: string
   readonly inspect: Effect.Effect<ActorInspection<Contracts>, Error, Exclude<Services, Scope.Scope>>
   readonly setup: Effect.Effect<ActorSetup<Event, Readonly<Record<string, Atom<State>>>, Contracts> & { readonly root: Atom<State> }, Error, Services>

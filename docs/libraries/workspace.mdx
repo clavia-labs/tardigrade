@@ -1,0 +1,149 @@
+---
+title: Workspace
+hideDescription: true
+articleClass: libraries-article
+description: Filesystem and shell capabilities for agents.
+route: /docs/libraries/workspace
+section: Libraries
+sectionOrder: 2.25
+order: 1
+---
+
+The workspace library gives an agent access to files and shell commands. Its implementation can use a virtual filesystem or a real computer.
+
+## Methods
+
+| Method | Inputs | Description |
+| --- | --- | --- |
+| `bash` | `command` | Execute a shell command. |
+| `read` | `path`, `offset?`, `limit?` | Read file content or a range of lines. |
+| `write` | `path`, `content` | Create or overwrite a file. |
+| `edit` | `path`, `oldText`, `newText` | Replace one exact occurrence of text. |
+
+## Agent usage
+
+```ts title="agent.ts"
+import { agent } from "tardie/agent"
+import { workspace } from "tardie/libraries"
+
+export const assistant = agent({
+  name: "assistant",
+  system: "Use the workspace to read files and run commands.",
+  tools: [workspace],
+})
+```
+
+## Local
+
+### Real filesystem
+
+Use Bun with the local filesystem and shell:
+
+```ts title="workspace.ts"
+import { localWorkspace } from "tardie/platform/bun"
+
+export const workspace = localWorkspace({
+  directory: "./workspace",
+  policy: {
+    commandTimeoutMs: 30_000,
+    maxOutputChars: 32_768,
+    maxReadChars: 32_768,
+  },
+})
+```
+
+### Virtual filesystem
+
+Use Bun to persist a virtual filesystem in SQLite:
+
+```ts title="workspace.ts"
+import { virtualWorkspace } from "tardie/platform/bun"
+
+export const workspace = virtualWorkspace({
+  filename: ".tardigrade/workspace.sqlite",
+  name: "agent-workspace",
+  directory: "/workspace",
+  network: { mode: "none" },
+  policy: { maxFileBytes: 8 * 1024 * 1024 },
+})
+```
+
+## Remote
+
+### Virtual filesystem
+
+Use the current Cloudflare Durable Object's SQLite storage for a virtual workspace:
+
+```ts title="workspace.ts"
+import { Effect, Layer } from "effect"
+import { DurableStorage, virtualWorkspace } from "tardie/platform/cloudflare"
+
+export const workspace = Layer.unwrap(Effect.map(DurableStorage, storage =>
+  virtualWorkspace(storage, {
+    name: "agent-workspace",
+    directory: "/workspace",
+    network: { mode: "none" },
+    policy: { maxFileBytes: 8 * 1024 * 1024 },
+  }),
+))
+```
+
+### Real filesystem
+
+Use a Cloudflare container, with a sandbox named for the current thread:
+
+```ts title="sandbox.ts"
+import { createWorkspaceObject } from "tardie/platform/cloudflare"
+
+export const Sandbox = createWorkspaceObject({
+  directory: "/workspace",
+  network: { mode: "none" },
+  start: (_env, container) => ({ image: container.images.current! }),
+})
+```
+
+```ts title="workspace.ts"
+import { Effect, Layer } from "effect"
+import { Bindings, HostThread, remoteWorkspace, workspaceObjectName } from "tardie/platform/cloudflare"
+import type { Sandbox } from "./sandbox"
+
+interface Env {
+  readonly SANDBOX: DurableObjectNamespace<InstanceType<typeof Sandbox>>
+}
+
+export const workspace = Layer.unwrap(Effect.gen(function* () {
+  const env = yield* Bindings<Env>()
+  const thread = yield* HostThread
+  return remoteWorkspace(env.SANDBOX.getByName(workspaceObjectName(thread)))
+}))
+```
+
+See [container workspace setup](/docs/agent#container-workspace) for the image and Wrangler bindings.
+
+## Host wiring
+
+Supply the chosen workspace layer alongside your model layer:
+
+```ts title="worker.ts"
+import { Layer } from "effect"
+import { host } from "tardie/platform/cloudflare"
+import { assistant } from "./agent"
+import { model } from "./model"
+import { workspace } from "./workspace"
+
+const worker = host(assistant, {
+  layer: Layer.mergeAll(model, workspace),
+})
+
+export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
+export default worker
+```
+
+For the container backend, also export the sandbox from the Worker entrypoint:
+
+```ts title="worker.ts"
+export { Sandbox } from "./sandbox"
+```
+
+For Bun host wiring, see [Run locally](/docs/agent#run-locally). To define your own service and library, see the [concept walkthrough](/docs/concepts/libraries).

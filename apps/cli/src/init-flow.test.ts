@@ -135,7 +135,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated agent lifec
     } } })
     modelCalls++
     if (hold) await new Promise<void>(resolve => request.signal.addEventListener("abort", () => resolve(), { once: true }))
-    const body = await request.json() as { messages: Array<{ role: string }>; stream?: boolean }
+    const body = await request.json() as { messages: Array<{ role: string; content?: unknown }>; stream?: boolean }
     if (new URL(request.url).pathname.endsWith("/messages")) {
       expect(request.headers.get("x-api-key")).toBe("fixture-secret")
       const message = { id: "anthropic-fixture", type: "message", role: "assistant", model: "claude-fixture",
@@ -154,12 +154,14 @@ test.each(["registry", "custom", "interactive"] as const)("generated agent lifec
       ]
       return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } })
     }
+    const toolResult = body.messages.find(message => message.role === "tool")
+    if (toolResult) expect(toolResult.content).toBe("Fixture workspace README")
     if (!("stream" in body) || !body.stream) {
       const tool = !body.messages.some(message => message.role === "tool")
-      return Response.json({ id: "chat-fixture", object: "chat.completion", model: "test", created: 1, choices: [{ index: 0, finish_reason: tool ? "tool_calls" : "stop", message: { role: "assistant", content: tool ? null : "Hello from the fixture.", ...(tool ? { tool_calls: [{ id: "workspace-read", type: "function", function: { name: "read", arguments: '{"path":"README.md"}' } }] } : {}) } }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })
+      return Response.json({ id: "chat-fixture", object: "chat.completion", model: "test", created: 1, choices: [{ index: 0, finish_reason: tool ? "tool_calls" : "stop", message: { role: "assistant", content: tool ? null : "Hello from the fixture.", ...(tool ? { tool_calls: [{ id: "workspace-read", type: "function", function: { name: "workspace__read", arguments: '{"path":"README.md"}' } }] } : {}) } }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })
     }
     if (!body.messages.some((message) => message.role === "tool")) return new Response([
-      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "workspace-read", type: "function", function: { name: "read", arguments: '{"path":"README.md"}' } }] } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "workspace-read", type: "function", function: { name: "workspace__read", arguments: '{"path":"README.md"}' } }] } }] },
       { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
     ].map((event) => `data: ${JSON.stringify({ id: "chat-fixture", model: "test", created: 1, ...event })}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } })
     return new Response('data: {"id":"chat-fixture","model":"test","created":1,"choices":[{"delta":{"content":"Hello from the fixture."},"index":0}]}\n\ndata: {"id":"chat-fixture","model":"test","created":1,"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
@@ -251,7 +253,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated agent lifec
     await writeFile(actorPath, actorSource
       .replace('import { agent } from "tardie/agent"', 'import { agent } from "tardie/agent"\nimport { Schema } from "effect"\nimport { actorMethod, event } from "tardie/core"')
       .replace('const actorName =', 'const Echoed = event({ type: "Echoed", text: Schema.String })\n\nconst actorName =')
-      .replace('  tools: [filesystem],\n', `  tools: [filesystem],
+      .replace('  tools: [workspace],\n', `  tools: [workspace],
   methods: { echo: actorMethod({
     inputSchema: Schema.String, outputSchema: Schema.String,
     onReceive: Echoed.from(text => ({ text })),
@@ -259,7 +261,7 @@ test.each(["registry", "custom", "interactive"] as const)("generated agent lifec
   }) },
 `), "utf8")
     await bundleEntry(cwd)
-    expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("createActorWorker")
+    expect(await readFile(join(cwd, "worker.ts"), "utf8")).toContain("host(definition,")
     await run("lint", "actor.ts", "--json")
     expect(JSON.parse(await run("build", join(cwd, "actor.ts"), "--out", join(cwd, "artifact"), "--json"))).toMatchObject({ manifest: { name: "tardie-agent" } })
     const catalogCallsAfterInit = catalogCalls

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto"
 import type { Boxd, Machine, MachineSize, MachineSpec } from "@boxd-sh/sdk"
 import { Effect, Layer } from "effect"
-import { FilesystemWorkspaceError, type FilesystemWorkspace, type WorkspaceIdempotencyStore, type WorkspaceReadOptions } from "@clavia/tardigrade-libraries/filesystem/index"
+import type { Workspace } from "@clavia/tardigrade-libraries/workspace/index"
+import { WorkspaceError, type WorkspaceBackend, type WorkspaceIdempotencyStore, type WorkspaceReadOptions } from "@clavia/tardigrade-libraries/workspace/index"
 import { containerWorkspace, DEFAULT_CONTAINER_WORKSPACE_POLICY, DEFAULT_WORKSPACE_RELEASE, type ContainerWorkspacePolicy, type WorkspaceContainer, type WorkspaceFiles, type WorkspaceRelease } from "../shared/workspace/container"
 import { workspaceNetworkPolicy, type WorkspaceNetworkPolicy } from "../shared/workspace/network"
 
@@ -86,22 +87,22 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
   const at = () => region ? { region } : {}
   const lose = () => { running = false; stopped() }
   const current = () => {
-    if (id === undefined) throw new FilesystemWorkspaceError(`Computer ${options.name} has not started`)
+    if (id === undefined) throw new WorkspaceError(`Computer ${options.name} has not started`)
     return id
   }
   const ready = (computer: string) => machines.waitUntilReady(computer, { ...at(), timeout: options.startupTimeoutMs, pollInterval: options.startupPollIntervalMs })
   const wake = (computer: string) => machines.start(computer, at()).then(() => ready(computer))
   const verify = (machine: Machine) => {
-    if (!machine.networking.isolated) throw new FilesystemWorkspaceError(`Computer ${machine.name} is not isolated; workspace computers run model-chosen commands`)
+    if (!machine.networking.isolated) throw new WorkspaceError(`Computer ${machine.name} is not isolated; workspace computers run model-chosen commands`)
     const actual = sorted(machine.egressAllow)
-    if (actual !== egress) throw new FilesystemWorkspaceError(`Workspace network policy is fixed at creation: computer ${machine.name} has egress ${actual}, requested ${egress}`)
+    if (actual !== egress) throw new WorkspaceError(`Workspace network policy is fixed at creation: computer ${machine.name} has egress ${actual}, requested ${egress}`)
   }
   // find returns the computer with the name; it refuses to choose when the name is in two regions, or when a region that did not answer may hold it.
   const find = async () => {
     const listed = await machines.list({ ...(options.org ? { org: options.org } : {}), region: options.region ?? "all" })
     const named = listed.filter(machine => machine.name === options.name)
-    if (named.length > 1) throw new FilesystemWorkspaceError(`Computer ${options.name} exists in regions ${named.map(machine => machine.region).join(" and ")}; set region to choose one`)
-    if (listed.unavailable.length) throw new FilesystemWorkspaceError(`Regions ${listed.unavailable.join(", ")} did not answer and may hold computer ${options.name}; retry, or set region`)
+    if (named.length > 1) throw new WorkspaceError(`Computer ${options.name} exists in regions ${named.map(machine => machine.region).join(" and ")}; set region to choose one`)
+    if (listed.unavailable.length) throw new WorkspaceError(`Regions ${listed.unavailable.join(", ")} did not answer and may hold computer ${options.name}; retry, or set region`)
     return named[0]
   }
   // call retries once after starting a stopped computer; suspended and hibernated computers wake on any call.
@@ -123,7 +124,7 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
     id = machine.id
     region = machine.region ?? region
     if (!adopted) verify(machine)
-    if (machine.status === "failed" || machine.status === "destroyed") throw new FilesystemWorkspaceError(`Computer ${machine.name} is ${machine.status}`)
+    if (machine.status === "failed" || machine.status === "destroyed") throw new WorkspaceError(`Computer ${machine.name} is ${machine.status}`)
     if (machine.status === "stopped") await wake(machine.id)
     else if (machine.status === "pending" || machine.status === "starting") await ready(machine.id)
     running = true
@@ -156,7 +157,7 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
               // A negative status means the call ended without the command reporting one, which the server returns for a deleted computer.
               if (code < 0) {
                 if (!await ifPresent(machines.get(computer, at()))) lose()
-                throw new FilesystemWorkspaceError(`Command on computer ${options.name} ended without an exit status`)
+                throw new WorkspaceError(`Command on computer ${options.name} ended without an exit status`)
               }
               stdout.controller.close()
               stderr.controller.close()
@@ -211,11 +212,11 @@ function boxdComputer(options: BoxdWorkspaceOptions & { readonly startupTimeoutM
 }
 
 // boxdWorkspace supplies file and shell operations in an isolated boxd computer; release "retain" keeps the computer and its disk for the next host.
-export function boxdWorkspace(options: BoxdWorkspaceOptions): Layer.Layer<FilesystemWorkspace, FilesystemWorkspaceError> {
+export function boxdWorkspace(options: BoxdWorkspaceOptions): Layer.Layer<Workspace | WorkspaceBackend, WorkspaceError> {
   return Layer.unwrap(Effect.try({ try: () => {
-    if (typeof options.name !== "string" || !options.name.trim()) throw new FilesystemWorkspaceError("A boxd workspace requires a computer name")
+    if (typeof options.name !== "string" || !options.name.trim()) throw new WorkspaceError("A boxd workspace requires a computer name")
     const release = options.release ?? DEFAULT_WORKSPACE_RELEASE
-    if (release !== "destroy" && release !== "retain" && release !== "unmount") throw new FilesystemWorkspaceError("release must be destroy, retain, or unmount")
+    if (release !== "destroy" && release !== "retain" && release !== "unmount") throw new WorkspaceError("release must be destroy, retain, or unmount")
     const policy = { ...DEFAULT_CONTAINER_WORKSPACE_POLICY, ...options.policy }
     const computer = boxdComputer({ ...options, startupTimeoutMs: policy.startupTimeoutMs, startupPollIntervalMs: policy.startupPollIntervalMs })
     const { idempotency, ...rest } = options
@@ -226,6 +227,6 @@ export function boxdWorkspace(options: BoxdWorkspaceOptions): Layer.Layer<Filesy
       directory: options.directory ?? DEFAULT_BOXD_WORKSPACE_DIRECTORY,
       ...(idempotency ? { idempotency: { workspaceId: boxdWorkspaceId(options), store: idempotency } } : {}),
     })
-    return Layer.merge(workspace, Layer.effectDiscard(Effect.addFinalizer(() => Effect.tryPromise({ try: () => computer.release(release), catch: FilesystemWorkspaceError.from }).pipe(Effect.orDie))))
-  }, catch: FilesystemWorkspaceError.from }))
+    return Layer.merge(workspace, Layer.effectDiscard(Effect.addFinalizer(() => Effect.tryPromise({ try: () => computer.release(release), catch: WorkspaceError.from }).pipe(Effect.orDie))))
+  }, catch: WorkspaceError.from }))
 }
