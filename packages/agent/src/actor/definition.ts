@@ -17,7 +17,7 @@ export interface AgentOptions<Methods extends ActorMethods<object> = {}, Librari
   readonly name: string
   /** system supplies the model prompt. */
   readonly system: string
-  /** tools selects libraries; omission offers every library the host supplies. */
+  /** tools selects libraries for the agent's tool runtime. */
   readonly tools?: Libraries
   /** compaction configures history summarization and retention. */
   readonly compaction?: CompactionOptions
