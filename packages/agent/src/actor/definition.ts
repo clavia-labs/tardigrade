@@ -9,10 +9,10 @@ import { permissions } from "../atoms/permission-request"
 import { systemPrompt } from "../atoms/system"
 import { tools as libraryTools, withPermissions, withBudget } from "../atoms/tools"
 import { pendingTools } from "../atoms/durable/tools"
-import type { BindableLibrary } from "@clavia/tardigrade-libraries"
+import type { LibraryBinding } from "@clavia/tardigrade-libraries"
 import { actorContext } from "./context"
 
-export interface AgentOptions<Methods extends ActorMethods<object> = {}, Libraries extends readonly BindableLibrary[] = readonly BindableLibrary[]> {
+export interface AgentOptions<Methods extends ActorMethods<object> = {}, Libraries extends readonly LibraryBinding[] = readonly LibraryBinding[]> {
   /** name identifies the actor for hosts and clients. */
   readonly name: string
   /** system supplies the model prompt. */
@@ -26,7 +26,7 @@ export interface AgentOptions<Methods extends ActorMethods<object> = {}, Librari
 }
 
 type DeclaredMethods<Options> = Options extends { readonly methods?: infer Methods extends ActorMethods<object> } ? Methods : {}
-type DeclaredLibraries<Options> = Options extends { readonly tools?: infer Libraries extends readonly BindableLibrary[] } ? Libraries : readonly []
+type DeclaredLibraries<Options> = Options extends { readonly tools?: infer Libraries extends readonly LibraryBinding[] } ? Libraries : readonly []
 
 // agent composes message history, compaction, tools, and inference into an actor.
 export const agentDefinition = <const Options extends AgentOptions<ActorMethods<object>>>(options: Options) => {

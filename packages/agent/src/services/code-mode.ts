@@ -2,14 +2,14 @@ import { isDeepStrictEqual } from "node:util"
 import { Cause, Clock, Effect, Exit, Layer, Schema } from "effect"
 import { atom, durablePromise, EffectExecution, effectKey, Isolate, RuntimeError } from "@clavia/tardigrade-core"
 import { ToolCatalog } from "../actor/context"
-import { libraryBindings, libraryImplementations, type BindableLibrary, type LibraryMethod, type LibraryExecutionRequirements } from "@clavia/tardigrade-libraries"
+import { libraryBindings, libraryImplementations, type LibraryBinding, type LibraryMethod, type LibraryExecutionRequirements } from "@clavia/tardigrade-libraries"
 import { codeModeSpec } from "../contracts/libraries"
 import { CodeCalled, EvaluateCode, ExecutePackage, MethodRequested } from "../contracts/code-mode"
 import { executions } from "../atoms/durable/code-mode"
 import { StoredToolResult } from "@clavia/tardigrade-model/object/content"
 
 // codeModeActs supplies tool descriptions, isolate RPC, and independently durable library execution.
-export function codeModeActs<const L extends readonly BindableLibrary[]>(definitions: L, options: { readonly signatureDepth?: number } = {}) {
+export function codeModeActs<const L extends readonly LibraryBinding[]>(definitions: L, options: { readonly signatureDepth?: number } = {}) {
   type R = LibraryExecutionRequirements<L[number]>
   const implementations = libraryImplementations(definitions)
   if (new Set(implementations.map(pkg => pkg.library.name)).size !== implementations.length) throw new Error("Duplicate library name")

@@ -1,12 +1,12 @@
 import { Effect, Layer, Schema } from "effect"
 import { RuntimeError } from "@clavia/tardigrade-core"
-import { libraryBindings, libraryImplementations, toolkitFromRpc, toolsFromLibraries, type BindableLibrary } from "@clavia/tardigrade-libraries"
+import { libraryBindings, libraryImplementations, toolkitFromRpc, toolsFromLibraries, type LibraryBinding } from "@clavia/tardigrade-libraries"
 import { ToolSpec } from "@clavia/tardigrade-libraries/types"
 import { ExecuteTool } from "../contracts/acts"
 import { ToolCatalog } from "../actor/context"
 
 // libraryServices supplies the catalog and durable execution adapter for declared libraries.
-export function libraryServices<const L extends readonly BindableLibrary[]>(libraries: L, additional: readonly ToolSpec[] = []) {
+export function libraryServices<const L extends readonly LibraryBinding[]>(libraries: L, additional: readonly ToolSpec[] = []) {
   const implementations = libraryImplementations(libraries)
   const methods = toolsFromLibraries(implementations)
   const registry = new Map(methods.flatMap(method => [method.spec.name, ...(method.aliases ?? [])].map(name => [name, method] as const)))
@@ -26,8 +26,7 @@ export function libraryServices<const L extends readonly BindableLibrary[]>(libr
 
 /**
  * toolActs supplies the catalog and execution adapter for explicitly configured libraries.
+ * @alias libraryServices
  * @deprecated Declare libraries in agent tools and supply implementations through the host layer.
  */
-export function toolActs<const L extends readonly BindableLibrary[]>(libraries: L, additional: readonly ToolSpec[] = []) {
-  return libraryServices(libraries, additional)
-}
+export const toolActs = libraryServices
