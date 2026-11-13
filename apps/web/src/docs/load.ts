@@ -4,8 +4,6 @@ import LogLibrary, { frontmatter as logLibraryFrontmatter } from "@docs/librarie
 import logLibraryMarkdown from "@docs/libraries/log.mdx?doc-source"
 import Libraries, { frontmatter as librariesFrontmatter } from "@docs/concepts/libraries.mdx"
 import librariesMarkdown from "@docs/concepts/libraries.mdx?doc-source"
-import BuildAnAgent, { frontmatter as buildAnAgentFrontmatter } from "@docs/guides/build-an-agent.mdx"
-import buildAnAgentMarkdown from "@docs/guides/build-an-agent.mdx?doc-source"
 import Atoms, { frontmatter as atomsFrontmatter } from "@docs/concepts/atoms.mdx"
 import atomsMarkdown from "@docs/concepts/atoms.mdx?doc-source"
 import NotesIndex, { frontmatter as notesIndexFrontmatter } from "@docs/notes/index.mdx"
@@ -26,14 +24,8 @@ import VerifyingActors, { frontmatter as verifyingActorsFrontmatter } from "@doc
 import verifyingActorsMarkdown from "@docs/concepts/verifying-actors.mdx?doc-source"
 import Rlm, { frontmatter as rlmFrontmatter } from "@docs/examples/rlm.mdx"
 import rlmMarkdown from "@docs/examples/rlm.mdx?doc-source"
-import Bun, { frontmatter as bunFrontmatter } from "@docs/platforms/bun.mdx"
-import bunMarkdown from "@docs/platforms/bun.mdx?doc-source"
 import Celld, { frontmatter as celldFrontmatter } from "@docs/platforms/celld.mdx"
 import celldMarkdown from "@docs/platforms/celld.mdx?doc-source"
-import Cloudflare, { frontmatter as cloudflareFrontmatter } from "@docs/platforms/cloudflare.mdx"
-import cloudflareMarkdown from "@docs/platforms/cloudflare.mdx?doc-source"
-import Sdk, { frontmatter as sdkFrontmatter } from "@docs/references/sdk.mdx"
-import sdkMarkdown from "@docs/references/sdk.mdx?doc-source"
 import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/introduction.mdx"
 import welcomeMarkdown from "@docs/introduction.mdx?doc-source"
 import Why, { frontmatter as whyFrontmatter } from "@docs/notes/why-tardigrade.mdx"
@@ -73,7 +65,6 @@ type DocModule = {
 const modules: ReadonlyArray<DocModule> = [
   { default: WorkspaceLibrary, frontmatter: workspaceLibraryFrontmatter, markdown: workspaceLibraryMarkdown, source: "libraries/workspace.mdx" },
   { default: LogLibrary, frontmatter: logLibraryFrontmatter, markdown: logLibraryMarkdown, source: "libraries/log.mdx" },
-  { default: BuildAnAgent, frontmatter: buildAnAgentFrontmatter, markdown: buildAnAgentMarkdown, source: "guides/build-an-agent.mdx" },
   { default: Atoms, frontmatter: atomsFrontmatter, markdown: atomsMarkdown, source: "concepts/atoms.mdx" },
   { default: NotesIndex, frontmatter: notesIndexFrontmatter, markdown: notesIndexMarkdown, source: "notes/index.mdx" },
   { default: Agent, frontmatter: agentFrontmatter, markdown: agentMarkdown, source: "agent.mdx" },
@@ -89,11 +80,8 @@ const modules: ReadonlyArray<DocModule> = [
   { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "notes/why-tardigrade.mdx" },
   { default: Actors, frontmatter: actorsFrontmatter, markdown: actorsMarkdown, source: "concepts/actors.mdx" },
   { default: VerifyingActors, frontmatter: verifyingActorsFrontmatter, markdown: verifyingActorsMarkdown, source: "concepts/verifying-actors.mdx" },
-  { default: Bun, frontmatter: bunFrontmatter, markdown: bunMarkdown, source: "platforms/bun.mdx" },
-  { default: Cloudflare, frontmatter: cloudflareFrontmatter, markdown: cloudflareMarkdown, source: "platforms/cloudflare.mdx" },
   { default: Celld, frontmatter: celldFrontmatter, markdown: celldMarkdown, source: "platforms/celld.mdx" },
   { default: Cli, frontmatter: cliFrontmatter, markdown: cliMarkdown, source: "references/cli.mdx" },
-  { default: Sdk, frontmatter: sdkFrontmatter, markdown: sdkMarkdown, source: "references/sdk.mdx" },
   { default: Rlm, frontmatter: rlmFrontmatter, markdown: rlmMarkdown, source: "examples/rlm.mdx" },
   { default: StateInitialisation, frontmatter: stateInitialisationFrontmatter, markdown: stateInitialisationMarkdown, source: "migration/state-initialisation.mdx" }
 ]

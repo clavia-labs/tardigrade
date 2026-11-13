@@ -24,7 +24,7 @@ Similarly, in Tardigrade, actors hold information that is private to them. This 
 
 An actor definition describes its methods and behavior. Defining an actor does not start a runtime.
 
-This example defines a `meeseeks` actor that records messages and answers with its private portal code. Save it as `actor.ts`. Model calls and tools can be composed into an actor using the atoms shown in the [Build an agent](/docs/build-an-agent) guide.
+This example defines a `meeseeks` actor that records messages and answers with its private portal code. Save it as `actor.ts`. Model calls and tools can be composed into an actor using the atoms shown in the [Agent](/docs/agent) guide.
 
 ```ts
 import { Effect, Schema } from "effect"
@@ -92,7 +92,7 @@ Host operations return Effects. Run them with `Effect.runPromise` at the applica
 
 ### Supply atom requirements
 
-`actorContext` selects the services visible while constructing the actor graph. `services(coordinate, runtime)` supplies the implementations used by its atoms and actions. This actor needs no additional services, so it uses `Context.pick()` and `Layer.empty`. The [Build an agent](/docs/build-an-agent) guide shows model and tool service implementations.
+`actorContext` selects the services visible while constructing the actor graph. `services(coordinate, runtime)` supplies the implementations used by its atoms and actions. This actor needs no additional services, so it uses `Context.pick()` and `Layer.empty`. The [Agent](/docs/agent) guide shows model and tool service implementations.
 
 [API note: With `host(actor, { layer })`, setup-context selection belongs to the actor definition.]
 

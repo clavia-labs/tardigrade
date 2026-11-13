@@ -199,7 +199,7 @@ ActorWorker -> ActorDO [supervisor DB]
 
 The [introduction](docs/introduction.mdx#cloud) shows a complete counter deployment with Durable Object bindings and migrations.
 
-Run locally with `bunx wrangler dev`; see [local setup](docs/platforms/cloudflare.mdx#verify-locally).
+Run locally with `bunx wrangler dev`; see [local setup](docs/agent.mdx#deploy).
 
 [Cloudflare](https://developers.cloudflare.com/workers/wrangler/commands/#deploy):
 
@@ -213,7 +213,7 @@ Or deploy to a Celld fleet, using its storage bucket:
 celld deploy --config celld.jsonc --bucket s3://actors
 ```
 
-See the [Cloudflare](docs/platforms/cloudflare.mdx) and [Celld](docs/platforms/celld.mdx) guides for configuration and credentials. For a Bun process, see the [Bun example](packages/examples/bun.ts) and [service wiring](packages/examples/services.ts).
+See the [Cloudflare](docs/agent.mdx#deploy) and [Celld](docs/platforms/celld.mdx) guides for configuration and credentials. For a Bun process, see the [Bun example](packages/examples/bun.ts) and [service wiring](packages/examples/services.ts).
 
 ## Contributing
 
