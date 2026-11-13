@@ -1,5 +1,5 @@
 import { ModelCalled, Trajectory, type Conversation, type ToolReturned } from "../../contracts/events"
-import { contextText, mergeContextContributions, UserContextConfiguration } from "../../contracts/context"
+import { contextText, mergeLibraryContexts, UserContextConfiguration } from "../../contracts/context"
 import { Schema } from "effect"
 import { RuntimeError, type Atom, type Getter } from "@clavia/tardigrade-core"
 import { durableAtom } from "@clavia/tardigrade-core/experimental"
@@ -61,7 +61,7 @@ const pages = NativeAtom.family((identity: string): Atom<LogReadPage<typeof Traj
         rows.push({ position, value: { turnId: event.turnId, message } })
       }
       if (event.type === "ContextResolved" && event.error === null) {
-        const text = contextText(mergeContextContributions(query.userContext?.contributions ?? [], event.contributions), "user")
+        const text = contextText(mergeLibraryContexts(query.userContext?.libraries ?? [], event.libraries), "user")
         if (text) rows.push({ position, value: { turnId: event.turnId, message: { role: "user", turnId: event.turnId, context: true, text: `\n\n${text}` } } })
       }
       if (event.type === "ModelReturned" && event.purpose === "inference") {
@@ -92,7 +92,7 @@ const messagePages = NativeAtom.family((identity: string): Atom<LogReadPage<type
 // messages pages model messages without retaining a complete conversation array.
 export const messages: TrajectorySource<typeof Conversation.Type[number]> = { selection: trajectoryLog.range, revision: trajectoryRevision, legacyCursor: legacyTrajectoryCursor, range: (options = {}) => messagePages(JSON.stringify(options)) }
 
-// messagesWithContext projects static user sources alongside recorded dynamic contributions.
+// messagesWithContext projects static user sources alongside recorded library context.
 export function messagesWithContext(configuration: UserContextConfiguration): TrajectorySource<typeof Conversation.Type[number]> {
   const userContext = Schema.decodeSync(UserContextConfiguration)(configuration)
   return { ...messages, userContext, range: (options = {}) => messagePages(JSON.stringify({ ...options, userContext })) }

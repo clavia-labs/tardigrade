@@ -9,7 +9,7 @@ export function contextConfiguration(system: LibraryContextSource<unknown, unkno
   return {
     system: typeof system === "string" ? system : undefined,
     dynamic: typeof system !== "string" || sources.some(source => Effect.isEffect(source.system) || Effect.isEffect(source.user)),
-    contributions: sources.map(source => ({
+    libraries: sources.map(source => ({
       library: source.library,
       ...(typeof source.system === "string" ? { system: source.system } : {}),
       ...(typeof source.user === "string" ? { user: source.user } : {}),
@@ -26,7 +26,7 @@ export function contextServices<const Source extends LibraryContextSource<unknow
   const dynamicSystem = isPromptEffect(system) ? system : Effect.void
   return ResolveContext.layer(() => Effect.gen(function* () {
     const resolvedSystem = yield* dynamicSystem
-    const contributions = yield* resolveLibraryContext(libraries)
-    return { ...(resolvedSystem === undefined ? {} : { system: resolvedSystem }), contributions }
+    const resolvedLibraries = yield* resolveLibraryContext(libraries)
+    return { ...(resolvedSystem === undefined ? {} : { system: resolvedSystem }), libraries: resolvedLibraries }
   }).pipe(Effect.mapError(String)))
 }

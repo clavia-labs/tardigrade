@@ -3,7 +3,7 @@ import { durableAtom } from "@clavia/tardigrade-core/experimental"
 import { type Event, type ContextResolved, type ResolvedContext } from "../contracts/events"
 import { ResolveContext, requests, failureMessage } from "../contracts/acts"
 import { agentLog } from "../experimental/trajectory-log"
-import { contextText, mergeContextContributions, type ContextConfiguration } from "../contracts/context"
+import { contextText, mergeLibraryContexts, type ContextConfiguration } from "../contracts/context"
 import { inferenceState } from "./durable/inference"
 
 const contextPages = durableAtom.log(agentLog.view(["ContextResolved"]))
@@ -18,12 +18,12 @@ export type ContextPreparation = ActorOutput<
 export function prepareContext(configuration: ContextConfiguration) {
   const request = requests(ResolveContext.request, { latestOnly: true })
   const ready = (resolved?: typeof ResolvedContext.Type): ContextPreparation => {
-    const contributions = mergeContextContributions(configuration.contributions, resolved?.contributions ?? [])
-    const system = [resolved?.system ?? configuration.system ?? "", contextText(contributions, "system")]
+    const libraries = mergeLibraryContexts(configuration.libraries, resolved?.libraries ?? [])
+    const system = [resolved?.system ?? configuration.system ?? "", contextText(libraries, "system")]
       .filter(text => text.trim()).join("\n\n")
     return { view: { position: "ready", system }, events: {}, acts: {} }
   }
-  const needsSnapshot = configuration.dynamic || contextText(configuration.contributions, "user").length > 0
+  const needsSnapshot = configuration.dynamic || contextText(configuration.libraries, "user").length > 0
   return effectAtom((get): ContextPreparation => {
     if (!needsSnapshot) return ready()
     const state = get(inferenceState)
@@ -40,14 +40,14 @@ export function prepareContext(configuration: ContextConfiguration) {
     }
     if (!configuration.dynamic) return {
       view: { position: "pending" }, acts: {},
-      events: { context: eventValue({ type: "ContextResolved", turnId, callId, contributions: [], error: null } satisfies ContextResolved) },
+      events: { context: eventValue({ type: "ContextResolved", turnId, callId, libraries: [], error: null } satisfies ContextResolved) },
     }
     return { view: { position: "pending" }, events: {}, acts: {
       context: request(callId, {
         ...(state.origin === null ? {} : { origin: state.origin }), input: { turnId, callId },
         // TODO: Reference EffectSettled through a typed act-result lookup instead of copying its payload.
         onSettled: result => [{ type: "ContextResolved", turnId, callId,
-          ...(result.status === "fulfilled" ? result.value : { contributions: [] }),
+          ...(result.status === "fulfilled" ? result.value : { libraries: [] }),
           error: result.status === "fulfilled" ? null : failureMessage(result.reason),
         } satisfies ContextResolved],
       }),

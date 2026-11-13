@@ -90,7 +90,7 @@ type PatchedLibrary<L, P> = Omit<L, typeof LibraryContextTypeId> & {
 export type LibraryContextRequirements<L> = Effect.Services<ContextSources<L>>
 export type LibraryContextError<L> = Effect.Error<ContextSources<L>>
 
-// context patches lazy prompt sources; null clears a slot or the entire contribution.
+// context patches lazy prompt sources; null clears a slot or all library context.
 function context<const P extends LibraryContextOptions | null>(options: P) {
   return <L extends RpcLibraryBinding>(library: L): PatchedLibrary<L, P> => {
     const previous = Context.getOrUndefined(library.rpc.annotations, ContextAnnotation)
@@ -119,7 +119,7 @@ export interface RpcLibraryBinding<Rpcs extends LibraryRpc = LibraryRpc, Require
 // LibraryBinding accepts service-backed contracts and legacy handler implementations.
 export type LibraryBinding = LibraryImplementation<unknown> | RpcLibraryBinding
 
-export interface LibraryContextContribution {
+export interface LibraryContext {
   readonly library: string
   readonly system?: string
   readonly user?: string
@@ -136,26 +136,26 @@ export function libraryContextSources(libraries: readonly LibraryBinding[]) {
 
 // resolveLibraryContext evaluates prompt effects sequentially; static strings remain in configuration.
 export function resolveLibraryContext<const L extends readonly LibraryBinding[]>(libraries: L): Effect.Effect<
-  readonly LibraryContextContribution[], LibraryContextError<L[number]>, LibraryContextRequirements<L[number]>
+  readonly LibraryContext[], LibraryContextError<L[number]>, LibraryContextRequirements<L[number]>
 > {
   type E = LibraryContextError<L[number]>
   type R = LibraryContextRequirements<L[number]>
   const resolve = (source: LibraryContextSource<E, R> | null | undefined) =>
     typeof source === "string" ? Effect.void : source ?? Effect.void
   return Effect.gen(function* () {
-    const contributions: LibraryContextContribution[] = []
+    const resolved: LibraryContext[] = []
     for (const entry of libraryContextSources(libraries)) {
       const sources = entry as { readonly [K in ContextSlot]?: LibraryContextSource<E, R> | null }
       const system = yield* resolve(sources.system)
       const user = yield* resolve(sources.user)
       if (system === undefined && user === undefined) continue
-      contributions.push({
+      resolved.push({
         library: entry.library,
         ...(system === undefined ? {} : { system }),
         ...(user === undefined ? {} : { user }),
       })
     }
-    return contributions
+    return resolved
   })
 }
 

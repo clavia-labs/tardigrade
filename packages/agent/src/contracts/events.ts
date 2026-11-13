@@ -114,11 +114,11 @@ export const TurnSettled = Schema.Union([
 ])
 export type TurnSettled = typeof TurnSettled.Type
 
-export const ContextContribution = Schema.Struct({
+export const LibraryContext = Schema.Struct({
   library: Schema.String, system: Schema.optionalKey(Schema.String), user: Schema.optionalKey(Schema.String),
 })
 export const ResolvedContext = Schema.Struct({
-  system: Schema.optionalKey(Schema.String), contributions: Schema.Array(ContextContribution),
+  system: Schema.optionalKey(Schema.String), libraries: Schema.Array(LibraryContext),
 })
 export const ContextResolved = Schema.Struct({
   type: Schema.Literal("ContextResolved"), turnId: Schema.String, callId: Schema.String,
