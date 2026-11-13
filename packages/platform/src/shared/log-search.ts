@@ -1,6 +1,7 @@
 import { checkpointDigestSync, observeRecord, recordEvent, RuntimeError, journalCall, type JournalSearch, type JournalSearchResult, type Recorded } from "@clavia/tardigrade-core"
 import { Effect } from "effect"
-import type { SqlClient } from "effect/sql"
+import { sqlErrorMessage } from "./sql-error"
+import { SqlError, type SqlClient } from "effect/sql"
 
 export interface LogSearchIndexPolicy {
   readonly batchSize: number
@@ -80,8 +81,12 @@ export function sqlLogSearch<Event extends object>(options: {
     }
     return yield* options.transaction(sql, Effect.gen(function* () {
       const progress = yield* sql<{ position: number }>`SELECT position FROM experimental_log_search_index WHERE name = ${table}`
-      const rows = yield* sql.unsafe<{ position: number; type: string | null; score: number; snippet: string }>(`SELECT rowid AS position, type, bm25(${table}) AS score, substr(snippet(${table}, 1, '', '', '...', ?), 1, ?) AS snippet FROM ${table} WHERE ${table} MATCH ? AND rowid >= ? AND rowid < ? AND (? IS NULL OR type = ?) ORDER BY score, rowid LIMIT ?`, [request.snippetTokens, request.snippetChars + 1, request.query, request.from, request.to, request.type ?? null, request.type ?? null, request.limit + 1])
+      const rows = yield* sql.unsafe<{ position: number; type: string | null; score: number; snippet: string }>(`SELECT rowid AS position, type, bm25(${table}) AS score, substr(snippet(${table}, 1, '', '', '...', ?), 1, ?) AS snippet FROM ${table} WHERE ${table} MATCH ? AND rowid >= ? AND rowid < ? AND (? IS NULL OR type = ?) ORDER BY score, rowid LIMIT ?`, [request.snippetTokens, request.snippetChars + 1, request.query, request.from, request.to, request.type ?? null, request.type ?? null, request.limit + 1]).pipe(Effect.mapError(error => new RuntimeError(
+        `FTS5 search failed: ${error.reason.cause instanceof Error ? error.reason.cause.message : error.message}. For literal text containing punctuation, use a double-quoted phrase, for example "some-term".`, { cause: error },
+      )))
       return { hits: rows.slice(0, request.limit).map(row => ({ ...row, snippet: row.snippet.slice(0, request.snippetChars), truncated: row.snippet.length > request.snippetChars })), more: rows.length > request.limit, indexedThrough: progress[0]?.position ?? 0, indexPolicy: policy }
     }))
-  }).pipe(Effect.mapError(RuntimeError.from))
+  }).pipe(Effect.mapError(error => SqlError.isSqlError(error)
+    ? new RuntimeError(`Log search storage failed ${sqlErrorMessage(error)}`, { cause: error })
+    : RuntimeError.from(error)))
 }

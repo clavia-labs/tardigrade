@@ -3,6 +3,7 @@ import { Workspace } from "@clavia/tardigrade-libraries/workspace/index"
 import { workspaceService } from "../library"
 import { SqlClient } from "effect/sql"
 import { WorkspaceBackend, WorkspaceError, workspaceIdempotency, type WorkspaceIdempotencyOptions, readWorkspaceContent, type WorkspaceReadOptions, DEFAULT_WORKSPACE_POLICY, editWorkspaceText, workspaceText, workspacePolicy, type WorkspaceBackendService } from "@clavia/tardigrade-libraries/workspace/index"
+import { workspaceStorageError } from "../sql-error"
 import { sqliteWorkspaceStore, type VirtualWorkspaceSnapshot } from "./sqlite"
 import { workspaceNetworkPolicy, type WorkspaceNetworkPolicy } from "../network"
 import { sqlIdempotencyStore } from "../idempotency-store"
@@ -53,7 +54,7 @@ export function virtualWorkspace(options: VirtualWorkspaceOptions): Layer.Layer<
         yield* store.commit(next)
       }
       return result.value
-    }).pipe(Effect.mapError(WorkspaceError.from)))
+    }).pipe(Effect.mapError(workspaceStorageError)))
     type Files = Awaited<ReturnType<typeof restoreVirtualFilesystem>>
     const file = <Value>(path: string, run: (fs: Files, path: string) => Promise<Value>) => operation(async snapshot => {
       const fs = await restoreVirtualFilesystem(snapshot, policy)
@@ -80,7 +81,7 @@ export function virtualWorkspace(options: VirtualWorkspaceOptions): Layer.Layer<
         }
       }),
       read: (path, range) => lock.withPermit(Effect.gen(function* () {
-        const entries = yield* store.metadata.pipe(Effect.mapError(WorkspaceError.from))
+        const entries = yield* store.metadata.pipe(Effect.mapError(workspaceStorageError))
         const target = yield* Effect.tryPromise({ try: async () => {
           const fs = await restoreVirtualFilesystem({ revision: 0, entries }, policy)
           await fs.mkdir(directory, { recursive: true })
@@ -103,5 +104,5 @@ export function virtualWorkspace(options: VirtualWorkspaceOptions): Layer.Layer<
       }
       if (method === "write" && new TextEncoder().encode(args[1]!).byteLength > policy.maxFileBytes) throw new WorkspaceError(`File byte limit exceeded: limit ${policy.maxFileBytes}`)
     })
-  }).pipe(Effect.mapError(WorkspaceError.from)))))
+  }).pipe(Effect.mapError(workspaceStorageError)))))
 }

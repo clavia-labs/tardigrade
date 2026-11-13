@@ -12,10 +12,20 @@ const rows = (page: LogQueryResult) => {
 
 // logLifecycle checks discovery, read-only recall, isolation, and saved replies across a checkpointed process death.
 export async function logLifecycle(driver: LogLifecycleDriver) {
-  const code = "orchid meadow " + "é".repeat(32)
+  const code = "orchid meadow lantern-8472 " + "é".repeat(32)
   await driver.record("main", { account: "Cedar", code, change: 7 }, "credit")
   await driver.record("main", { account: "Cedar", code, change: -2 }, "debit")
   await driver.record("other", { account: "Cedar", code: "private", change: 99 }, "private-credit")
+
+  await assert.rejects(() => driver.search("main", "lantern-8472", "invalid-phrase"), (error: unknown) => {
+    assert.ok(error instanceof Error && error.cause instanceof Error)
+    assert.match(error.cause.message, /FTS5 search failed:.*8472/)
+    assert.match(error.cause.message, /double-quoted phrase/)
+    return true
+  })
+  const corrected = await driver.search("main", '"lantern-8472"', "corrected-phrase", { type: "BalanceRecorded" })
+  assert.equal(corrected.hits.length, 2)
+  assert.ok(corrected.hits.every(hit => hit.snippet.includes("lantern")))
 
   const found = await driver.search("main", '"orchid meadow"', "find-code", { type: "BalanceRecorded" })
   assert.equal(found.hits.length, 2)

@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect"
+import { workspaceStorageError } from "./sql-error"
 import { SqlClient } from "effect/sql"
 import { WorkspaceError, type WorkspaceIdempotencyRequest, type WorkspaceIdempotencyStore, type WorkspaceMutationOutcome } from "@clavia/tardigrade-libraries/workspace/index"
 
@@ -34,7 +35,7 @@ export const sqlIdempotencyStore = Effect.gen(function* () {
       if (row.input_digest !== request.inputDigest) return { _tag: "Conflict" as const }
       if (row.outcome === null) return { _tag: "Pending" as const }
       return { _tag: "Completed" as const, outcome: yield* decode(row.outcome) }
-    })).pipe(Effect.mapError(WorkspaceError.from)),
+    })).pipe(Effect.mapError(workspaceStorageError)),
     complete: (request, outcome) => sql.withTransaction(Effect.gen(function* () {
       yield* validate(request)
       const checked = yield* Schema.decodeEffect(Outcome)(outcome).pipe(Effect.mapError(WorkspaceError.from))
@@ -45,6 +46,6 @@ export const sqlIdempotencyStore = Effect.gen(function* () {
       if (row.input_digest !== request.inputDigest || row.outcome === null) return yield* Effect.fail(new WorkspaceError("Workspace idempotency completion conflicts with its claim"))
       const saved: WorkspaceMutationOutcome = yield* decode(row.outcome)
       if (encode(saved) !== encoded) return yield* Effect.fail(new WorkspaceError("Workspace idempotency outcome cannot change"))
-    })).pipe(Effect.mapError(WorkspaceError.from)),
+    })).pipe(Effect.mapError(workspaceStorageError)),
   } satisfies WorkspaceIdempotencyStore
-}).pipe(Effect.mapError(WorkspaceError.from))
+}).pipe(Effect.mapError(workspaceStorageError))
