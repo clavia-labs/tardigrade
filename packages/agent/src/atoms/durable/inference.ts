@@ -4,6 +4,7 @@ import { TurnRequested, ModelCalled, ModelFailed, ModelReturned, OutputRejected,
 
 const Turn = Schema.Struct({
   turnId: Schema.String, invocationRef: Schema.NullOr(InvocationRef), settlement: Schema.NullOr(Schema.Literals(["completed", "failed", "cancelled"])), answer: Schema.NullOr(Schema.String), answerCallId: Schema.NullOr(Schema.String),
+  outputLimit: Schema.optionalKey(Schema.NullOr(Schema.Int)),
   rejection: Schema.optionalKey(Schema.NullOr(Schema.Struct({ contract: Schema.String, errors: Schema.Array(Schema.String), attempt: Schema.Finite, maxCorrections: Schema.Finite }))),
   calls: Schema.Array(Schema.Struct({ callId: Schema.String, returned: Schema.Boolean })),
   outstanding: Schema.Array(Schema.String),
@@ -53,8 +54,8 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Obs
     if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
     if (new Set(event.toolCalls.map(call => call.callId)).size !== event.toolCalls.length) throw new RuntimeError("Duplicate tool call IDs in model reply")
     turns = updateTurn(turns, turn => turn.calls.some(call => call.callId === event.callId), turn => ({
-      ...turn, answer: event.toolCalls.length === 0 ? event.text : null, rejection: null,
-      answerCallId: event.toolCalls.length === 0 ? event.callId : null,
+      ...turn, answer: event.toolCalls.length === 0 && event.outputLimit === undefined ? event.text : null, rejection: null, outputLimit: event.outputLimit ?? null,
+      answerCallId: event.toolCalls.length === 0 && event.outputLimit === undefined ? event.callId : null,
       calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call),
       outstanding: event.toolCalls.map(call => call.callId),
     }))
