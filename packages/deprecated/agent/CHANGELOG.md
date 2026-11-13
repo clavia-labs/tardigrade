@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.57.0](https://github.com/clavia-labs/tardigrade/compare/v0.56.0...v0.57.0) (2026-11-13)
+
+
+### Features
+
+* simplify libraries and hosting ([#856](https://github.com/clavia-labs/tardigrade/issues/856)) ([13214a5](https://github.com/clavia-labs/tardigrade/commit/13214a51db599007d36e6668f82b4da59edc5030))
+
 ## [0.56.0](https://github.com/clavia-labs/tardigrade/compare/v0.55.0...v0.56.0) (2026-11-09)
 
 
