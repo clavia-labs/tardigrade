@@ -92,9 +92,7 @@ Host operations return Effects. Run them with `Effect.runPromise` at the applica
 
 ### Supply atom requirements
 
-`actorContext` selects the services visible while constructing the actor graph. `services(coordinate, runtime)` supplies the implementations used by its atoms and actions. This actor needs no additional services, so it uses `Context.pick()` and `Layer.empty`. The [Agent](/docs/agent) guide shows model and tool service implementations.
-
-[API note: With `host(actor, { layer })`, setup-context selection belongs to the actor definition.]
+Supply the services required by the actor’s setup, atoms, and actions through the host’s `layer` option. This actor has no additional requirements, so it uses `Layer.empty`. The [Agent](/docs/agent) guide shows model and tool implementations.
 
 ## Allocate threads
 
