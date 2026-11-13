@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.58.0](https://github.com/clavia-labs/tardigrade/compare/v0.57.0...v0.58.0) (2026-11-13)
+
+
+### Features
+
+* add dynamic agent context ([#862](https://github.com/clavia-labs/tardigrade/issues/862)) ([a63d11c](https://github.com/clavia-labs/tardigrade/commit/a63d11c49d64a9b320303e9f7063be87badcbe25))
+* preserve native prompt blocks ([#863](https://github.com/clavia-labs/tardigrade/issues/863)) ([9f8132b](https://github.com/clavia-labs/tardigrade/commit/9f8132b692ac80493ff6cbd2ce29433c59466ea6))
+
+
+### Bug Fixes
+
+* improve tool error recovery ([#860](https://github.com/clavia-labs/tardigrade/issues/860)) ([29589b0](https://github.com/clavia-labs/tardigrade/commit/29589b0f3f78e508d99bac73037098bb087e2686))
+
 ## [0.57.0](https://github.com/clavia-labs/tardigrade/compare/v0.56.0...v0.57.0) (2026-11-13)
 
 
