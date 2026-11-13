@@ -58,6 +58,8 @@ export const guestBindings = (bindings: Bindings): Readonly<Record<string, unkno
 export interface Ambient {
   readonly at: number
   readonly seed: string
+  // replayed counts the leading calls the log already answered; it varies by attempt and stays hidden from the body, so a replaying sandbox uses it only to skip timers an earlier attempt waited out.
+  readonly replayed?: number
 }
 
 // Sandbox is the seam that runs one code body with the bindings in scope. The platform binds an isolate;

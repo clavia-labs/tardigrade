@@ -185,6 +185,86 @@ const sameCall = (left, right) =>
   left.method === right.method &&
   canonicalJson(left.args) === canonicalJson(right.args);
 
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
+// replayClock runs timers on virtual time until the body issues its last answered call, then gives each pending timer its remaining delay in real time (replayed-timers.workers.ts). Non-timer async work (crypto.subtle, streams, node:timers) stays off the clock and can lose a race to a replayed timer.
+const replayClock = (replaying) => {
+  const timers = new Map();
+  let now = 0;
+  let next = 0;
+  let ticking = false;
+  let live = false;
+  const fire = (id) => {
+    const timer = timers.get(id);
+    if (timer === undefined) return;
+    if (timer.every === undefined) timers.delete(id);
+    else {
+      timer.due += timer.every;
+      if (live) timer.handle = realSetTimeout(() => fire(id), timer.every);
+    }
+    timer.callback.apply(globalThis, timer.args);
+  };
+  const sync = () => {
+    if (live || replaying()) return;
+    live = true;
+    for (const [id, timer] of timers) timer.handle = realSetTimeout(() => fire(id), timer.due - now);
+  };
+  const tick = () => {
+    ticking = false;
+    sync();
+    if (live || timers.size === 0) return;
+    let earliest;
+    for (const [id, timer] of timers) if (earliest === undefined || timer.due < timers.get(earliest).due) earliest = id;
+    now = timers.get(earliest).due;
+    try {
+      fire(earliest);
+    } finally {
+      schedule();
+    }
+  };
+  const schedule = () => {
+    if (ticking || live || timers.size === 0) return;
+    ticking = true;
+    realSetTimeout(tick, 0);
+  };
+  const add = (callback, ms, args, repeat) => {
+    const id = ++next;
+    const delay = Math.max(repeat ? 1 : 0, Number(ms) || 0);
+    const timer = { due: now + delay, every: repeat ? delay : undefined, callback: typeof callback === "function" ? callback : () => undefined, args };
+    sync();
+    timers.set(id, timer);
+    if (live) timer.handle = realSetTimeout(() => fire(id), delay);
+    else schedule();
+    return id;
+  };
+  const clear = (id) => {
+    const timer = timers.get(id);
+    if (timer === undefined) return realClearTimeout(id);
+    timers.delete(id);
+    if (timer.handle !== undefined) realClearTimeout(timer.handle);
+  };
+  const install = () => {
+    globalThis.setTimeout = (callback, ms, ...args) => add(callback, ms, args, false);
+    globalThis.setInterval = (callback, ms, ...args) => add(callback, ms, args, true);
+    globalThis.clearTimeout = clear;
+    globalThis.clearInterval = clear;
+    AbortSignal.timeout = (ms) => {
+      const controller = new AbortController();
+      add(() => controller.abort(new DOMException("The operation timed out.", "TimeoutError")), ms, [], false);
+      return controller.signal;
+    };
+    if (typeof globalThis.scheduler?.wait === "function") {
+      globalThis.scheduler.wait = (ms, options) => new Promise((resolve, reject) => {
+        const signal = options?.signal;
+        if (signal?.aborted) return reject(signal.reason);
+        const id = add(resolve, ms, [], false);
+        signal?.addEventListener("abort", () => { clear(id); reject(signal.reason); }, { once: true });
+      });
+    }
+  };
+  return { sync, install };
+};
+
 export default {
   async fetch(request) {
     const input = await request.json();
@@ -194,8 +274,11 @@ export default {
     let finishBoundary;
     const boundary = new Promise((resolve) => { finishBoundary = resolve; });
     const never = () => new Promise(() => undefined);
+    const clock = replayClock(() => ordinal < Math.max(input.ambient?.replayed ?? 0, input.replay.length));
+    clock.install();
     const call = (packageName, method, args) => {
       const requested = { ordinal: ordinal++, packageName, method, args };
+      clock.sync();
       const recorded = input.replay[requested.ordinal];
       if (recorded !== undefined) {
         if (!sameCall(recorded.call, requested)) {
