@@ -12,7 +12,7 @@ import { replayProjection } from "@clavia/tardigrade-deprecated-core/projection"
 import type { TransitionProjection } from "@clavia/tardigrade-deprecated-core/transition"
 import { messageKeys } from "@clavia/tardigrade-deprecated-core/interaction/provider-message"
 import { definePackage, type Package } from "../package/definition"
-import { guestBindings, Sandbox, type Bindings } from "../sandbox/service"
+import { guestBindings, Sandbox, type Ambient, type Bindings } from "../sandbox/service"
 import { DEFAULT_PACKAGE_CALL_POLICY, packageCallPolicyOf } from "./policy"
 import { codeKeys } from "./events"
 
@@ -495,6 +495,44 @@ test("execution refs isolate package replay and spill storage when payload IDs r
     { _tag: "Some", value: { type: "transition", ref: { seq: 4, component: "package.counter", tag: "invoke" } } },
     { _tag: "Some", value: { type: "transition", ref: { seq: 7, component: "package.counter", tag: "invoke" } } }
   ])
+})
+
+// replayed counts the leading answered calls of this execution and stops at the first gap.
+describe("the replayed-call count", () => {
+  const replayedFor = async (calls: ReadonlyArray<Event>): Promise<number | undefined> => {
+    let replayed: number | undefined
+    const recording = Layer.succeed(Sandbox, {
+      run: (_code: string, _bindings: Bindings, ambient?: Ambient) => Effect.sync(() => {
+        replayed = ambient?.replayed
+        return { result: null }
+      })
+    })
+    const log: Event[] = [
+      { type: "MessageReceived", id: "t1", text: "go", at: 1 },
+      { type: "CodeDispatched", execId: "e1", code: "return null", turn: "t1", at: 2 },
+      ...calls
+    ]
+    await Effect.runPromise(
+      settleActor({ projections: [executionFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
+        .pipe(Effect.provide(Layer.mergeAll(memoryLog(log), recording, KeyValueStore.layerMemory))) as Effect.Effect<unknown>
+    )
+    return replayed
+  }
+  const called = (ordinal: number): Event => ({ type: "PackageCalled", callId: `e1.${ordinal}`, name: "world.read", arguments: {}, turn: "t1", at: 3 + ordinal })
+  const returned = (ordinal: number): Event => ({ type: "PackageReturned", callId: `e1.${ordinal}`, result: { ok: "read" }, turn: "t1", at: 3 + ordinal })
+
+  test("counts the leading calls the log answered for this execution", async () => {
+    expect(await replayedFor([])).toBe(0)
+    expect(await replayedFor([called(0), returned(0), called(1), returned(1)])).toBe(2)
+  })
+
+  test("stops at the first ordinal the log did not answer", async () => {
+    expect(await replayedFor([called(0), returned(0), called(2), returned(2)])).toBe(1)
+  })
+
+  test("ignores answers keyed to another execution", async () => {
+    expect(await replayedFor([{ ...called(0), callId: "e2.0" }, { ...returned(0), callId: "e2.0" }])).toBe(0)
+  })
 })
 
 const executionFor = <const P extends ReadonlyArray<import("../package/definition").CodeComponent<unknown>>>(policy: Partial<CodePolicy>, children: P) => {
