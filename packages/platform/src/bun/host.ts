@@ -1,4 +1,4 @@
-import { Layer } from "effect"
+import { Layer, type Scope } from "effect"
 import type { ActorDefinition, ActorMethods, EventLog, Invocation, Supervisor } from "@clavia/tardigrade-core"
 import { createBunHost } from "./runtime"
 
@@ -9,7 +9,7 @@ type HostServices<Event extends object, Services, State, Contracts extends Actor
 export function host<Event extends object, Services, State, Contracts extends ActorMethods<Event>, Provided = never, Required = never>(
   actor: ActorDefinition<Event, State, Services, Contracts, Provided, Required>,
   options: Omit<HostOptions<Event, Services, State, Contracts>, "actor" | "services" | "actorContext"> & {
-    readonly layer: Layer.Layer<Exclude<HostServices<Event, Services, State, Contracts>, NoInfer<Provided>> | NoInfer<Required>, Error, Supervisor | Invocation | EventLog>
+    readonly layer: Layer.Layer<Exclude<HostServices<Event, Services, State, Contracts>, NoInfer<Provided>> | NoInfer<Required> | Exclude<NoInfer<Services>, Scope.Scope>, Error, Supervisor | Invocation | EventLog>
   },
 ) {
   const { layer, ...settings } = options

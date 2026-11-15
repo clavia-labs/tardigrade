@@ -100,14 +100,23 @@ workspace.pipe(Library.context(null))
 Once your library is defined, it can be added to the agent tools array. Your agent now declares its tools and the services required to run them.
 
 ```ts title="agent.ts"
-import { agent } from "tardie/agent"
+import { Effect } from "effect"
+import { Agent } from "tardie/agent"
+import { defineActor } from "tardie/core"
 import { workspace } from "./workspace"
 
-export const assistant = agent({
-  name: "assistant",
-  system: "Use the workspace to read and edit files and run shell commands.",
-  tools: [workspace],
+const program = Effect.gen(function* () {
+  const tools = yield* Agent.tools([workspace])
+  const context = yield* Agent.compact(Agent.messages)
+
+  return yield* Agent.make({
+    system: "Use the workspace to read and edit files and run shell commands.",
+    tools,
+    context,
+  })
 })
+
+export const assistant = defineActor("assistant", program)
 ```
 
 ## Hosting

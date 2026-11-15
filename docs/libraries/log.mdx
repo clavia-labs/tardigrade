@@ -24,14 +24,23 @@ The log library lets an agent run sql queries on its own event log.
 Select the log library in the agent's tools:
 
 ```ts title="agent.ts"
-import { agent } from "tardie/agent"
+import { Effect } from "effect"
+import { Agent } from "tardie/agent"
+import { defineActor } from "tardie/core"
 import { log } from "tardie/libraries"
 
-export const assistant = agent({
-  name: "assistant",
-  system: "Use the log tools to find relevant information in your event history.",
-  tools: [log],
+const program = Effect.gen(function* () {
+  const tools = yield* Agent.tools([log])
+  const context = yield* Agent.compact(Agent.messages)
+
+  return yield* Agent.make({
+    system: "Use the log tools to find relevant information in your event history.",
+    tools,
+    context,
+  })
 })
+
+export const assistant = defineActor("assistant", program)
 ```
 
 ## Host wiring

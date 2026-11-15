@@ -2,7 +2,7 @@ import { eventCatalog } from "./event"
 import { historicalEventDecoder } from "../event/versioned"
 import type { ActorMethods, ActorMethod } from "./method"
 import { RuntimeError } from "../runtime/effects"
-import { Context, Effect, Schema, type Layer, type Scope } from "effect"
+import { Context, Effect, Layer, Schema, type Scope } from "effect"
 import { AsyncResult } from "effect/reactivity"
 import { atom, type Atom } from "../atoms/atom"
 import type { EventValue } from "../atoms/effect"
@@ -31,7 +31,7 @@ export interface ActorInspection<Contracts extends ActorMethods<object> = ActorM
 
 export interface ActorDefinition<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>, Provided = never, Required = never> {
   // layer supplies definition-owned runtime services and declares their dependencies.
-  readonly layer?: Layer.Layer<Provided, Error, Required>
+  readonly layer?: Layer.Layer<Provided, Error, Required | Exclude<Services, Scope.Scope>>
   readonly actorContext?: (services: Context.Context<Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
   readonly actorName: string
   readonly inspect: Effect.Effect<ActorInspection<Contracts>, Error, Exclude<Services, Scope.Scope>>
@@ -39,10 +39,11 @@ export interface ActorDefinition<Event extends object, State, Services, Contract
 }
 
 // defineActor assembles a reactive graph, event contract, and typed methods for instantiation by a host.
-export function defineActor<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never>(name: Name, factory: Effect.Effect<{
+export function defineActor<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never, Provided = never, Required = never>(name: Name, factory: Effect.Effect<{
   readonly atom: Atom<Value>
   readonly schema?: Schema.Schema<Event>
   readonly methods?: Contracts
+  readonly layer?: Layer.Layer<Provided, Error, Required>
 }, Error, Services>) {
   if (!name || name.includes("/")) throw new RuntimeError("Actor name must be nonempty and contain no slash")
   type DomainEvents = Event | MethodEvents<Contracts> | ProjectionEvents<Resolved<Value>>
@@ -90,5 +91,6 @@ export function defineActor<Value, const Name extends string, Services, const Co
   }))
   // inspect reports initial graph declarations; conditional branches may be absent.
   const inspect = Effect.scoped(setup.pipe(Effect.map(setup => setup.inspection)))
-  return { actorName: name, setup, graph, inspect }
+  const layer = Layer.unwrap(factory.pipe(Effect.map(definition => Layer.mergeAll(Layer.empty, ...(definition.layer ? [definition.layer] : [])))))
+  return { actorName: name, setup, graph, inspect, layer }
 }

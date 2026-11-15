@@ -1,3 +1,4 @@
+export * as Agent from "./composable"
 export { agent, createActor, type AgentOptions } from "./agent"
 export * from "./actor/methods"
 export * from "./actor/context"

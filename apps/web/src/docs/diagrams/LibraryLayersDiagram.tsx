@@ -13,7 +13,7 @@ export const LibraryLayersDiagram = (): ReactElement => {
       <g className="agent-services-node">
         <rect x="8" y="87" width="210" height="78" rx="8" />
         <text x="113" y="117">Agent</text>
-        <text className="agent-services-code" x="113" y="142">tools: [workspace]</text>
+        <text className="agent-services-code" x="113" y="142">Agent.tools([workspace])</text>
         <rect x="304" y="87" width="164" height="78" rx="8" />
         <text x="386" y="117">Workspace</text>
         <text className="agent-services-detail" x="386" y="142">Effect service</text>

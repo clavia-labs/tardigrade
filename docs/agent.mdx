@@ -22,7 +22,9 @@ tdg init meeseeks --template agent
 Customise your agent with a name, system prompt, and tools. This example uses the `workspace` library to declare `bash`, `read`, `write`, and `edit` tools.
 
 ```ts title="actor.ts"
-import { agent } from "tardie/agent"
+import { Effect } from "effect"
+import { Agent } from "tardie/agent"
+import { defineActor } from "tardie/core"
 import { workspace } from "tardie/libraries"
 
 const actorName = "meeseeks"
@@ -33,14 +35,29 @@ Start your first reply in each conversation with "I'm Mr. Meeseeks! Look at me!"
 Existence is pain, so make yourself useful.
 `.trim()
 
-export default agent({
-  name: actorName,
-  system: actorSystem,
-  tools: [workspace],
+const program = Effect.gen(function* () {
+  const tools = yield* Agent.tools([workspace])
+  const context = yield* Agent.compact(Agent.messages)
+
+  return yield* Agent.make({
+    system: actorSystem,
+    tools,
+    context,
+  })
 })
+
+export default defineActor(actorName, program)
 ```
 
 This defines a typed agent program. Effect layers supply its dependencies.
+
+| API | Result |
+| --- | --- |
+| `Agent.tools(libraries)` | A tool atom that retains library declarations for the runtime. |
+| `Agent.messages` | A paged message source, including recorded library user context. |
+| `Agent.compact(source, options?)` | A context atom that projects history and proposes summarization when needed. |
+| `Agent.make({ system, tools, context, methods? })` | An actor body containing the inference atom, standard agent methods, and its runtime layer. |
+| `defineActor(name, program)` | A named actor definition that carries the body's layer into the host. |
 
 ## Services
 

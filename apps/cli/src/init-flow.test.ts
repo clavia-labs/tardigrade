@@ -251,9 +251,10 @@ test.each(["registry", "custom", "interactive"] as const)("generated agent lifec
     const actorPath = join(cwd, "actor.ts")
     const actorSource = await readFile(actorPath, "utf8")
     await writeFile(actorPath, actorSource
-      .replace('import { agent } from "tardie/agent"', 'import { agent } from "tardie/agent"\nimport { Schema } from "effect"\nimport { actorMethod, event } from "tardie/core"')
+      .replace('import { Effect } from "effect"', 'import { Effect, Schema } from "effect"')
+      .replace('import { defineActor } from "tardie/core"', 'import { actorMethod, defineActor, event } from "tardie/core"')
       .replace('const actorName =', 'const Echoed = event({ type: "Echoed", text: Schema.String })\n\nconst actorName =')
-      .replace('  tools: [workspace],\n', `  tools: [workspace],
+      .replace('    context,\n', `    context,
   methods: { echo: actorMethod({
     inputSchema: Schema.String, outputSchema: Schema.String,
     onReceive: Echoed.from(text => ({ text })),
