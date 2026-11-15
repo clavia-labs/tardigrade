@@ -39,7 +39,7 @@ export const agentMethods = {
   }),
 }
 
-// mergeAgentMethods replaces standard contracts with declared overrides (platform/test/types/agent-composition.test.ts).
+// mergeAgentMethods combines standard agent methods with declared methods.
 export function mergeAgentMethods<const Methods extends ActorMethods<object> = {}>(methods?: Methods): Omit<typeof agentMethods, keyof Methods> & Methods
 export function mergeAgentMethods(methods: ActorMethods<object> = {}): ActorMethods<object> {
   return { ...agentMethods, ...methods }

@@ -2,7 +2,8 @@ import { Effect, Layer, Schema } from "effect"
 import { Prompt, type LanguageModel } from "effect/ai"
 import { Rpc } from "effect/rpc"
 import { Library, ToolResult, MethodExecution, MethodHints } from "@clavia/tardigrade-libraries"
-import { agent } from "@clavia/tardigrade-agent"
+import { Agent } from "@clavia/tardigrade-agent"
+import { defineActor } from "@clavia/tardigrade-core"
 import { objectStorageFromR2 } from "@clavia/tardigrade-cloudflare/object-storage/r2"
 import { Bindings, DurableStorage, HostThread, host } from "../../../src/cloudflare"
 import { retryServices } from "../retry-provider"
@@ -31,7 +32,11 @@ const screenshots = Library.make("screen",
   Rpc.make("captureBackground", { payload: CaptureInput, success: ToolResult, error: Schema.String }).annotate(MethodExecution, "background"),
 )
 const screenLayer = Layer.succeed(screenshots, { capture, captureBackground: capture })
-const assistant = agent({ name: "tardie", system: "You are a friendly assistant.", tools: [screenshots] })
+const assistant = defineActor("tardie", Effect.gen(function* () {
+  const tools = yield* Agent.tools([screenshots])
+  const context = yield* Agent.compact(Agent.messages)
+  return yield* Agent.make({ system: "You are a friendly assistant.", tools, context })
+}))
 const toolContent = contentModelServices(prompt => { providerCalls++; observedPrompt = prompt }, {
   observeTools: tools => { observedTools = tools },
   toolCalls: [{ id: "capture-1", name: "screen__capture", params: { screen: "main" } }, { id: "capture-2", name: "screen__capture", params: { screen: "main" } }],

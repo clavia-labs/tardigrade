@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/rpc"
-import { agent, agentMethods } from "@clavia/tardigrade-agent"
+import { Agent, agentMethods } from "@clavia/tardigrade-agent"
 import { act, atom, defineActor, effectAtom } from "@clavia/tardigrade-core"
 import { Library } from "@clavia/tardigrade-libraries"
 import { host as bunHost } from "../../src/bun"
@@ -13,13 +13,16 @@ const reader = Library.make("reader", Rpc.make("read", {
 
 export function inferredMethodsRetainLibraryRequirements() {
   const methods = { inspectNotes: agentMethods.message }
-  const assistant = agent({
-    name: "inferred-methods",
-    system: "Read notes.",
-    methods,
-    tools: [reader],
+  const available = Agent.tools([reader])
+  const assistant = defineActor("inferred-methods", Effect.gen(function* () {
+    const tools = yield* available
+    const context = yield* Agent.compact(Agent.messages)
+    return yield* Agent.make({ system: "Read notes.", tools, context, methods })
+  }))
+  const libraries = Effect.map(available, tools => {
+    const declarations: readonly [typeof reader] = tools.libraries
+    return declarations
   })
-  const libraries: readonly [typeof reader] = assistant.libraries
   const contract = Effect.map(assistant.inspect, inspection => {
     const input: typeof methods.inspectNotes.inputSchema = inspection.methods.inspectNotes.inputSchema
     return input
@@ -40,8 +43,8 @@ export function inferredMethodsRetainLibraryRequirements() {
 
 export function agentsRequireBindableLibraries() {
   // @ts-expect-error Agent construction requires bindings for its automatically installed libraries.
-  const unbound = agent({ name: "unbound", system: "Read notes.", tools: [{ name: "reader" }] })
-  return unbound
+  const unbound = Agent.tools([{ name: "reader" }])
+  return { unbound }
 }
 
 const other = Library.make("other", Rpc.make("read", {
@@ -53,7 +56,11 @@ class Storage extends Context.Service<Storage, {
 }>()("library-api/Storage") {}
 
 export function generatedServicesRetainIdentityAndDependencies() {
-  const assistant = agent({ name: "reader", system: "Read notes.", tools: [reader] })
+  const assistant = defineActor("reader", Effect.gen(function* () {
+    const tools = yield* Agent.tools([reader])
+    const context = yield* Agent.compact(Agent.messages)
+    return yield* Agent.make({ system: "Read notes.", tools, context })
+  }))
   const model = contentModelServices(() => {})
   const readerLayer = Layer.effect(reader, Effect.map(Storage, storage => ({
     read: ({ key }) => storage.get(key),

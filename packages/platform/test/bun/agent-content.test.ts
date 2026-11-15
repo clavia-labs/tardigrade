@@ -6,7 +6,8 @@ import { Deferred, Effect, Layer, Schema } from "effect"
 import { Prompt } from "effect/ai"
 import { Rpc } from "effect/rpc"
 import { contextProvider, type ContextRequest, type WireBlock } from "../fixtures/context-provider"
-import { agent } from "@clavia/tardigrade-agent"
+import { Agent } from "@clavia/tardigrade-agent"
+import { defineActor } from "@clavia/tardigrade-core"
 import { DEFAULT_WORKSPACE_SYSTEM, Library, log, workspace } from "@clavia/tardigrade-libraries"
 import { host, journal, localWorkspace } from "../../src/bun"
 import { contentModelServices } from "../fixtures/agent"
@@ -47,7 +48,12 @@ test("an agent corrects invalid tool arguments after receiving a tool failure", 
     feedback.push(results.at(-1)!)
     return results.length === 1 ? [{ id: "corrected", name: "log__search", params: { query: "orchid", type: "TurnRequested" } }] : []
   } })
-  const runtime = await Effect.runPromise(host(agent({ name: "tool-recovery", system: "Search event history.", tools: [log] }), {
+  const assistant = defineActor("tool-recovery", Effect.gen(function* () {
+    const tools = yield* Agent.tools([log])
+    const context = yield* Agent.compact(Agent.messages)
+    return yield* Agent.make({ system: "Search event history.", tools, context })
+  }))
+  const runtime = await Effect.runPromise(host(assistant, {
     storage, layer: Layer.merge(model, observedJournal),
   }))
   try {
@@ -138,13 +144,18 @@ test(`${provider}: workspace context and cache boundaries survive mutation and r
     ? { openai: { promptCacheBreakpoint: { mode: "explicit" as const } } }
     : provider === "anthropic" ? { anthropic: { cacheControl: { type: "ephemeral" as const, ttl: "1h" as const } } }
     : { openrouter: { cacheControl: { type: "ephemeral" as const, ttl: "1h" as const } } } : {}
-  const assistant = agent({
-    name: "workspace-context", tools: [projectContext, workspace], compaction: { pageSize: 1 },
-    system: Effect.sync(() => {
-      instructionRuns++
-      return [Prompt.makePart("text", { text: "Maintain the workspace." }), Prompt.makePart("text", { text: "Follow project instructions.", options: manual })]
-    }),
-  })
+  const assistant = defineActor("workspace-context", Effect.gen(function* () {
+    const tools = yield* Agent.tools([projectContext, workspace])
+    const context = yield* Agent.compact(Agent.messages, { pageSize: 1 })
+    return yield* Agent.make({
+      system: Effect.sync(() => {
+        instructionRuns++
+        return [Prompt.makePart("text", { text: "Maintain the workspace." }), Prompt.makePart("text", { text: "Follow project instructions.", options: manual })]
+      }),
+      tools,
+      context,
+    })
+  }))
   const open = () => host(assistant, {
     storage: join(root, "host"), layer: Layer.mergeAll(model, observedWorkspace, projectLayer),
     checkpointPolicy: { mode: "threshold", options: { everyEvents: 1 } },
@@ -252,9 +263,12 @@ test("disabling workspace user context skips file listings and preserves system 
     ...implementation,
     bash: (input, request) => Effect.sync(() => { listings++ }).pipe(Effect.andThen(implementation.bash(input, request))),
   } satisfies typeof workspace.Service))).pipe(Layer.provide(localWorkspace({ directory: join(root, "workspace") })))
-  const runtime = await Effect.runPromise(host(agent({
-    name: "workspace-context-disabled", system: "Maintain the workspace.", tools: [workspace.pipe(Library.context({ user: null }))],
-  }), { storage: join(root, "host"), layer: Layer.merge(contentModelServices(value => { prompt = value }), observedWorkspace) }))
+  const assistant = defineActor("workspace-context-disabled", Effect.gen(function* () {
+    const tools = yield* Agent.tools([workspace.pipe(Library.context({ user: null }))])
+    const context = yield* Agent.compact(Agent.messages)
+    return yield* Agent.make({ system: "Maintain the workspace.", tools, context })
+  }))
+  const runtime = await Effect.runPromise(host(assistant, { storage: join(root, "host"), layer: Layer.merge(contentModelServices(value => { prompt = value }), observedWorkspace) }))
   try {
     const thread = await Effect.runPromise(runtime.allocateRootThread({ instance: "main", name: "thread" }))
     await Effect.runPromise(thread.invoke("message", { text: "Hello" }, { id: "hello" }))

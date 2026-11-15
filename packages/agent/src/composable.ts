@@ -37,7 +37,7 @@ export function withBudget<R, B, const Libraries extends readonly LibraryBinding
   return Object.assign(budgetedTools<R, B>(tools, budget, options), { libraries: tools.libraries })
 }
 
-// make constructs an agent graph and declares its runtime without executing handlers (platform/test/bun/agent-composition.test.ts).
+// make constructs an agent graph and declares its runtime without executing handlers (platform/test/bun/agent-content.test.ts).
 export function make<R, const Libraries extends readonly LibraryBinding[], const Source extends LibraryContextSource<unknown, unknown>, const Methods extends ActorMethods<object> = {}>(options: {
   readonly system: Source
   readonly tools: BoundTools<R, Libraries>
