@@ -30,7 +30,7 @@ export type { JournalFamily, FamilyRecord, ReadJournalFamily, ReadJournalFamilyK
 export * from "./atoms/act"
 
 export { Isolate, type IsolateCall, type IsolateInput, type IsolateResult } from "./services/isolate"
-export * from "./services/actor-dispatch"
+export * from "./services/actor-client"
 export * from "./actor/thread"
 
 export { MessageReceived as InboxMessageReceived, MessageMetadata, MessageSender, MessageConflict, InvalidMessage, InvocationNotFound, isMessageReceived, MessageReceipt, MessageAddress, TransportAddress, MessageDelivered } from "./actor/message"

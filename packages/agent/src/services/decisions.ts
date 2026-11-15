@@ -1,4 +1,4 @@
-import { EffectExecution, ExecutionHandle, RuntimeError, durablePromise, type ActorCaller, ActorDispatch } from "@clavia/tardigrade-core"
+import { EffectExecution, ExecutionHandle, RuntimeError, durablePromise, type ActorCaller, ActorClient } from "@clavia/tardigrade-core"
 import { Cause, Context, Effect, Exit, Layer, Schema } from "effect"
 import { BudgetReply, ToolBudgetAmount } from "../contracts/budget"
 import { BudgetDecision, Decision, type PermissionRequest } from "../contracts/events"
@@ -75,7 +75,7 @@ export const grantBudget = tool({
   description: "Grant additional tool calls to a child with an outstanding budget request. Use handle and requestId from its message. This grant does not consume tool budget.",
   input: Schema.Struct({ handle: ExecutionHandle, requestId: Schema.NonEmptyString, amount: ToolBudgetAmount }),
   run: ({ handle, requestId, amount }) => Effect.gen(function* () {
-    const runtime = yield* ActorDispatch
+    const runtime = yield* ActorClient
     yield* runtime.reply(handle, requestId, { allowed: true, amount })
     return { content: [{ type: "text" as const, text: JSON.stringify({ handle, requestId, granted: amount }) }] }
   }),

@@ -15,8 +15,8 @@ export interface ActorCaller {
   readonly request: (request: ActorRequest) => Effect.Effect<Schema.Json, Error>
 }
 
-// ActorDispatch invokes addressed methods and addresses their results, cancellation, and request replies through execution handles.
-export class ActorDispatch extends Context.Service<ActorDispatch, {
+// ActorClient invokes addressed methods and addresses their results, cancellation, and request replies through execution handles.
+export class ActorClient extends Context.Service<ActorClient, {
   readonly invoke: (call: ActorCall) => Effect.Effect<ExecutionHandle, Error>
   readonly poll: (handle: ExecutionHandle) => Effect.Effect<PromiseState<Schema.Json, string>, Error>
   // cancel fences invocation by call identity when the handle has not yet been retained.
