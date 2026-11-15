@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.0](https://github.com/clavia-labs/tardigrade/compare/v0.58.0...v0.59.0) (2026-11-15)
+
+
+### Features
+
+* compose actor programs ([#864](https://github.com/clavia-labs/tardigrade/issues/864)) ([baee75a](https://github.com/clavia-labs/tardigrade/commit/baee75ad934f3fc7b3b3e40ef3e49e22cf422934))
+
 ## [0.58.0](https://github.com/clavia-labs/tardigrade/compare/v0.57.0...v0.58.0) (2026-11-13)
 
 
