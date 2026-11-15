@@ -1,7 +1,7 @@
 import type { PromptContent } from "@clavia/tardigrade-model/prompt"
-import { agentMethods } from "./methods"
+import { agentMethods, mergeAgentMethods } from "./methods"
 import { Effect } from "effect"
-import { atom, defineActor, type ActorMethods } from "@clavia/tardigrade-core"
+import { atom, Actor, type ActorMethods } from "@clavia/tardigrade-core"
 import { messages, messagesWithContext } from "../atoms/durable/index"
 import { toolBudget } from "../atoms/budget-request"
 import { compact, type CompactionOptions } from "../atoms/compact"
@@ -13,7 +13,7 @@ import { systemPrompt } from "../atoms/system"
 import { tools as libraryTools, withPermissions, withBudget } from "../atoms/tools"
 import { pendingTools } from "../atoms/durable/tools"
 import type { LibraryBinding } from "@clavia/tardigrade-libraries"
-import { actorContext } from "./context"
+import { actorContext, ToolCatalog } from "./context"
 
 export interface AgentOptions<Methods extends ActorMethods<object> = {}, Libraries extends readonly LibraryBinding[] = readonly LibraryBinding[]> {
   /** name identifies the actor for hosts and clients. */
@@ -32,9 +32,9 @@ type DeclaredMethods<Options> = Options extends { readonly methods?: infer Metho
 type DeclaredLibraries<Options> = Options extends { readonly tools?: infer Libraries extends readonly LibraryBinding[] } ? Libraries : readonly []
 
 // agent composes message history, compaction, tools, and inference into an actor.
-export const agentDefinition = <const Options extends AgentOptions<ActorMethods<object>>>(options: Options, configuration: ContextConfiguration) => {
+export const agentDefinition = <const Options extends AgentOptions<ActorMethods<object>>>(options: Options, configuration: ContextConfiguration, catalog: typeof ToolCatalog.Service) => {
   const libraries = (options.tools ?? []) as DeclaredLibraries<Options>
-  const actor = defineActor(options.name, Effect.gen(function* () {
+  const actor = Actor.make(options.name, Effect.gen(function* () {
     const preparation = prepareContext(configuration)
     const tools = yield* libraryTools(options.tools)
     const history = configuration.user.libraries.length ? messagesWithContext(configuration.user) : messages
@@ -45,8 +45,8 @@ export const agentDefinition = <const Options extends AgentOptions<ActorMethods<
       tools: get(tools),
       context: get(context),
     })))
-    return { atom: inference, methods: { ...agentMethods, ...options.methods } as typeof agentMethods & DeclaredMethods<Options> }
-  }))
+    return { atom: inference, methods: mergeAgentMethods(options.methods as DeclaredMethods<Options>) }
+  }).pipe(Effect.provideService(ToolCatalog, catalog)))
   return {
     ...actor,
     actorContext,
@@ -54,7 +54,7 @@ export const agentDefinition = <const Options extends AgentOptions<ActorMethods<
   }
 }
 
-export const createActor = defineActor("tardie", Effect.gen(function* () {
+export const createActor = Actor.make("tardie", Effect.gen(function* () {
   const available = yield* libraryTools()
   const permission = permissions(pendingTools, { tools: available })
   const permitted = withPermissions(available, permission)

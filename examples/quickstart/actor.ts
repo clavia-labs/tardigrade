@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { act, actorMethod, defineActor, durableAtom, effectAtom, event, type Atom } from "tardie/core"
+import { act, actorMethod, Actor, durableAtom, effectAtom, event, type Atom } from "tardie/core"
 
 const actorName = "counter"
 
@@ -54,7 +54,7 @@ const counterMethods = (count: Atom<number>) => ({
   }),
 })
 
-const counter = defineActor(actorName, Effect.sync(() => {
+const counter = Actor.make(actorName, Effect.sync(() => {
   const count = makeCount()
   const notifications = notify(count)
 

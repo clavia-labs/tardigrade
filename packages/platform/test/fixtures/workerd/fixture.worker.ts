@@ -23,7 +23,7 @@ import { DurableObject } from "cloudflare:workers"
 export class TestPromiseResolver extends DurableObject { alarm(): Promise<void> { return Promise.resolve() } }
 
 import { Context, Effect, Layer, Schema } from "effect"
-import { act, createActorStore, defineActor, effectAtom, Promises, RuntimeError, Scheduler, createWatchdog, createScheduler, effectKey, type EffectRef, type WatchdogEntry } from "@clavia/tardigrade-core"
+import { act, createActorStore, Actor, effectAtom, Promises, RuntimeError, Scheduler, createWatchdog, createScheduler, effectKey, type EffectRef, type WatchdogEntry } from "@clavia/tardigrade-core"
 import { objectJournal } from "../../../src/cloudflare/objects"
 import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
 import { cloudflareSchedulerStorage } from "../../../src/cloudflare/scheduler"
@@ -58,7 +58,7 @@ export class InputLifecycleDO extends DurableObject<{ EFFECT_SERVICE: { getByNam
 
   private createStore(input: string, mode: "pending" | "deferred" | "complete", cleanup: "retry" | "success", attemptTimeoutMs?: number | null) {
     return Effect.runPromise(createActorStore({
-      actor: defineActor("native-input", Effect.sync(() => {
+      actor: Actor.make("native-input", Effect.sync(() => {
         const request = NativeJob.request({ input, onSettled: completion.onSettled })
         return { schema: NativeEvent, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(completion.state).status === "pending" ? { job: request } : {} })) }
       })), journal: this.journal, effectInput: { digestMinBytes: 0 }, checkpoint: { mode: "manual" }, cancellation: { retryIntervalMs: 250 }, actorContext: Context.pick(), ...(attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs }),

@@ -29,7 +29,7 @@ describe("actorTemplate", () => {
     expect(DEFAULT_INIT_TEMPLATE).toBe("quickstart")
     expect(INIT_TEMPLATES).toEqual(["quickstart", "agent", "rlm"])
     expect(source).toContain('const actorName = "reviewer"')
-    expect(source).toContain("defineActor(actorName, Effect.sync")
+    expect(source).toContain("Actor.make(actorName, Effect.sync")
     expect(source).toContain("Incremented")
     expect(source).toContain("Decremented")
   })

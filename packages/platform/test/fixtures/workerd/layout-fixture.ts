@@ -1,5 +1,5 @@
 import { Context, Deferred, Effect, Schema } from "effect"
-import { act, actorMethod, defineActor, durableAtom, effectAtom, event, Invocation, Supervisor, ThreadCoordinate, EffectExecution, durablePromise, DEFAULT_PROVISION_RETRY, type ThreadCreated, type InitialState } from "@clavia/tardigrade-core"
+import { act, actorMethod, Actor, durableAtom, effectAtom, event, Invocation, Supervisor, ThreadCoordinate, EffectExecution, durablePromise, DEFAULT_PROVISION_RETRY, type ThreadCreated, type InitialState } from "@clavia/tardigrade-core"
 import { cloudflareWatchdogStorage } from "../../../src/cloudflare/watchdog"
 import { createActorWorker, cloudflareThreadName } from "../../../src/cloudflare"
 
@@ -15,7 +15,7 @@ const spawns = durableAtom({ name: "layout.spawns", input: Schema.Union([SpawnRe
     : state.map(entry => entry.id === event.id ? { ...entry, child: event.child } : entry),
 })
 const Spawn = act({ name: "layout.spawn", input: Schema.Struct({ id: Schema.String, value: Schema.Finite }), success: ThreadCoordinate, failure: Schema.String })
-const actor = defineActor("layout", Effect.sync(() => {
+const actor = Actor.make("layout", Effect.sync(() => {
   const requests = new Map<string, ReturnType<typeof Spawn.request>>()
   return { schema: Event, atom: effectAtom(get => {
     const pending = get(spawns)

@@ -1,6 +1,6 @@
 import { completionState } from "./completion-state"
 import { Clock, Deferred, Effect, Schema } from "effect"
-import { act, actorMethod, defineActor, durableAtom, durablePromise, effectAtom, EffectExecution, event } from "@clavia/tardigrade-core"
+import { act, actorMethod, Actor, durableAtom, durablePromise, effectAtom, EffectExecution, event } from "@clavia/tardigrade-core"
 
 const RunRequested = event({ type: "RunRequested" })
 const requested = durableAtom({ name: "slow.requested", input: RunRequested, schema: Schema.Boolean, initial: false, reduce: () => true })
@@ -9,7 +9,7 @@ const Event = Schema.Union([RunRequested, completion.event])
 export type SlowEvent = typeof Event.Type
 const Job = act({ name: "slow.job", input: Schema.Null, success: Schema.Finite, failure: Schema.String })
 
-export const slowActor = defineActor("slow", Effect.sync(() => {
+export const slowActor = Actor.make("slow", Effect.sync(() => {
   const job = Job.request({ input: null, onSettled: completion.onSettled })
   return { schema: Event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(requested) && get(completion.state).status === "pending" ? { job } : {} })), methods: {
     run: actorMethod({ inputSchema: Schema.Null, outputSchema: Schema.Finite, onReceive: RunRequested.from(() => ({})), result: (_, get) => {

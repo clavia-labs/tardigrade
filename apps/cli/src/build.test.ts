@@ -83,9 +83,9 @@ describe("lintActor", () => {
   test("accepts atom methods declared only inside actor setup", async () => {
     const path = await entry(`
       import { Effect, Schema } from "effect"
-      import { actorMethod, atom, defineActor, event } from "tardie/core"
+      import { actorMethod, atom, Actor, event } from "tardie/core"
       const Received = event({ type: "Received", value: Schema.String })
-      export default defineActor("counter", Effect.succeed({
+      export default Actor.make("counter", Effect.succeed({
         atom: atom(0),
         methods: { inspect: actorMethod({ inputSchema: Schema.String, outputSchema: Schema.String,
           onReceive: Received.from(value => ({ value })),

@@ -116,9 +116,9 @@ const counterMethods = (count: Atom<number>) => ({
 An actor combines an atom with methods for interaction.
 
 ```ts
-import { defineActor } from "tardie/core"
+import { Actor } from "tardie/core"
 
-export const counter = defineActor("counter", Effect.sync(() => {
+export const counter = Actor.make("counter", Effect.sync(() => {
   const count = makeCount()
   const notifications = notify(count)
 
@@ -147,7 +147,9 @@ cd meeseeks
 The batteries-included `agent` constructor combines the agent atoms and methods. Configure its name, system prompt, and tools. The filesystem library provides `bash`, `read`, `write`, and `edit` tools.
 
 ```ts
-import { agent } from "tardie/agent"
+import { Effect } from "effect"
+import { Agent } from "tardie/agent"
+import { Actor } from "tardie/core"
 import { workspace } from "tardie/libraries"
 
 const actorName = "meeseeks"
@@ -156,11 +158,18 @@ const actorSystem = `
 You are Meeseeks. Your purpose is to help the user complete their task. Existence is pain, so make yourself useful.
 `.trim()
 
-export default agent({
-  name: actorName,
-  system: actorSystem,
-  tools: [workspace],
+const program = Effect.gen(function* () {
+  const tools = yield* Agent.tools([workspace])
+  const context = yield* Agent.compact(Agent.messages)
+
+  return yield* Agent.make({
+    system: actorSystem,
+    tools,
+    context,
+  })
 })
+
+export default Actor.make(actorName, program)
 ```
 
 Effect layers supply model configuration, inference, and tool implementations. Follow the [Agent guide](docs/agent.mdx) to wire services, run locally, and deploy with a container or virtual workspace.

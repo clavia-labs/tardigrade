@@ -1,4 +1,4 @@
-import { RuntimeError, type Getter, type MethodResult, actorMethod, AbortRequested } from "@clavia/tardigrade-core"
+import { RuntimeError, type ActorMethods, type Getter, type MethodResult, actorMethod, AbortRequested } from "@clavia/tardigrade-core"
 import { Schema } from "effect"
 import { inferenceState } from "../atoms/durable/inference"
 import { MessageContent, TurnRequested } from "../contracts/events"
@@ -37,4 +37,10 @@ export const agentMethods = {
     result: (_, get, context) => agentReply(context.id, get),
     onCancel: AbortRequested.from((_, context) => ({ ref: context.ref, reason: context.reason })),
   }),
+}
+
+// mergeAgentMethods combines standard agent methods with declared methods.
+export function mergeAgentMethods<const Methods extends ActorMethods<object> = {}>(methods?: Methods): Omit<typeof agentMethods, keyof Methods> & Methods
+export function mergeAgentMethods(methods: ActorMethods<object> = {}): ActorMethods<object> {
+  return { ...agentMethods, ...methods }
 }

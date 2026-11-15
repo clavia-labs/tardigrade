@@ -7,12 +7,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Schedule } from "effect"
 import { KeyValueStore } from "effect/persistence"
-import { defineActor } from "@clavia/tardigrade-deprecated-core/actor"
+import { actor as legacyActor } from "@clavia/tardigrade-deprecated-core/actor"
 import { RemoteBackup, RemoteBackupError, captureHostCheckpoint, remoteBackupFromKeyValueStore, restoreHostCheckpoint, type HostCheckpoint } from "./index"
 import { bunBackupRunner } from "./runner"
 import { createBunHost, hostBackend } from "../create-host"
 
-const actor = defineActor("backup-test", {}, [])
+const actor = legacyActor({ name: "backup-test", methods: {}, components: [] })
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 const waitFor = async (ready: () => boolean): Promise<void> => {
   for (let attempt = 0; attempt < 200; attempt++) {

@@ -1,5 +1,5 @@
 import { Effect, Layer, Schema } from "effect"
-import { act, actorMethod, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
+import { act, actorMethod, Actor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
 import { log, libraryBindings, libraryImplementations } from "@clavia/tardigrade-libraries"
 import { journal } from "../../../src/shared/log"
 
@@ -15,7 +15,7 @@ const Pending = Schema.Struct({ status: Schema.Literal("pending"), origin: Schem
 const Completed = Schema.Struct({ status: Schema.Literal("completed"), output: Schema.Json })
 const Failed = Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String })
 
-export const actor = defineActor("log-lifecycle", Effect.sync(() => {
+export const actor = Actor.make("log-lifecycle", Effect.sync(() => {
   const calls = durableAtom({
     name: "fixture.calls", input: Schema.Union([Requested, Returned]),
     schema: Schema.Record(Schema.String, Schema.Union([Pending, Completed, Failed])), initial: {},

@@ -1,5 +1,5 @@
 import type { ActorMethods } from "../actor/method"
-import type { Effect, Schema } from "effect"
+import type { Effect, Layer, Schema } from "effect"
 import type { Atom } from "../atoms/atom"
 import type { RuntimeEvent } from "../services/journal"
 import type { Proposed, ServicesOf, EffectExecution } from "../atoms/effect"
@@ -30,7 +30,8 @@ export interface ActorRuntime<Event extends object> {
   readonly cancel: (ref: EffectRef, reason: Schema.Json) => Effect.Effect<void, Error>
 }
 
-export interface ActorSetup<Event extends object, Atoms extends Readonly<Record<string, Atom<unknown>>>, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+export interface ActorSetup<Event extends object, Atoms extends Readonly<Record<string, Atom<unknown>>>, Contracts extends ActorMethods<Event> = ActorMethods<Event>, Services = never, Provided = never> {
+  readonly layer?: Layer.Layer<Provided, Error, Services>
   readonly schema: Schema.Schema<Event>
   readonly eventSchemas?: readonly Schema.Top[]
   readonly decodeEvent?: (input: unknown) => Event

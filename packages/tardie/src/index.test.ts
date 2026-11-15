@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { createActor } from "tardie/agent"
-import { AtomState, createEventLog, defineActor, initialiseState } from "tardie/core"
+import { AtomState, createEventLog, Actor, defineActor, initialiseState } from "tardie/core"
 import { actor } from "tardie/deprecated"
 import { codeMode } from "tardie/deprecated/component/code"
 import * as legacyAgent from "tardie/deprecated/agent"
@@ -8,9 +8,10 @@ import { defineLibrary } from "tardie/libraries"
 import { retryCloudflareOperation, makeRetryingRpc, classifyDurableObjectRpcError, DurableObjectRpcError, type CloudflareRetryOptions } from "tardie/platform/cloudflare/retry"
 
 test("public entrypoints expose actor and migration APIs", () => {
-  for (const value of [createEventLog, defineActor, initialiseState, defineLibrary, actor]) {
+  for (const value of [createEventLog, Actor.make, defineActor, initialiseState, defineLibrary, actor]) {
     expect(typeof value).toBe("function")
   }
+  expect(defineActor).toBe(Actor.make)
   expect(typeof AtomState).toBe("symbol")
   expect(createActor.actorName).toBe("tardie")
   expect(codeMode).toBe(legacyAgent.codeMode)

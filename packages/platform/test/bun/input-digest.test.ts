@@ -4,7 +4,7 @@ import { Schema } from "effect"
 import { atom, EventLog, act, durableAtom, effectAtom, createEventLog, encodeCheckpoint, decodeCheckpoint } from "@clavia/tardigrade-core"
 import { requests } from "@clavia/tardigrade-agent/contracts/acts"
 import { Context, Effect } from "effect"
-import { defineActor } from "@clavia/tardigrade-core"
+import { Actor } from "@clavia/tardigrade-core"
 import { eventLogContext } from "../../../core/src/services/event-log"
 import { createTestStore } from "../properties/runtime/store"
 const Started = Schema.Struct({ type: Schema.Literal("Started"), text: Schema.String })
@@ -125,7 +125,7 @@ test("deferred and cancelled work blocks checkpoints and recovers from journal",
 
 test("runtime threshold overrides preserve executable inputs", async () => {
   for (const digestMinBytes of [0, 1_000_000]) {
-    const definition = defineActor("digest-policy", Effect.sync(() => {
+    const definition = Actor.make("digest-policy", Effect.sync(() => {
       const config = setup()
       return { atom: config.atoms.root, schema: Events }
     }))

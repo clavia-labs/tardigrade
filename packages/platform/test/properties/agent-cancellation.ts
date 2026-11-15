@@ -2,7 +2,7 @@ import { createTestStore } from "./runtime/store"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/rpc"
 import * as fc from "fast-check"
-import { defineActor, atom, abortRequested as cancel, Isolate, RuntimeError, type CoreEvent, Promises } from "@clavia/tardigrade-core"
+import { Actor, atom, abortRequested as cancel, Isolate, RuntimeError, type CoreEvent, Promises } from "@clavia/tardigrade-core"
 import { infer } from "@clavia/tardigrade-agent/atoms/infer"
 import { codeMode } from "@clavia/tardigrade-agent/atoms/code-mode"
 import { pendingTools } from "@clavia/tardigrade-agent/atoms/durable/tools"
@@ -65,7 +65,7 @@ export const agentTurnCancellation = fc.asyncProperty(fc.record({
 }), options => Effect.runPromise(Effect.gen(function* () {
   const entered = yield* Deferred.make<void>()
   let generated = 0
-  const definition = defineActor("turn-cancellation", Effect.gen(function* () {
+  const definition = Actor.make("turn-cancellation", Effect.gen(function* () {
     const available = yield* libraryTools()
     const governed = withPermissions(available, permissions(pendingTools, { policy: { default: options.phase === "permission" ? "ask" : "allow", actions: {} } }))
     const tools = withBudget(governed, toolBudget(pendingTools, { maxCalls: options.phase === "budget" ? 0 : options.calls, requestTool: "request_budget" }))
@@ -138,7 +138,7 @@ export const agentTurnCancellation = fc.asyncProperty(fc.record({
 
 // agentCancellationRecovery checks nextTurnProgress from core/quint/terminalDelivery.qnt.
 export const agentCancellationRecovery = fc.asyncProperty(fc.record({ reason: fc.string({ maxLength: 20 }), duplicates: fc.integer({ min: 0, max: 3 }) }), options => Effect.runPromise(Effect.gen(function* () {
-  const definition = defineActor("agent-cancellation", Effect.gen(function* () {
+  const definition = Actor.make("agent-cancellation", Effect.gen(function* () {
     const node = yield* infer<never>(atom(() => ({ system: "", tools: { view: { specs: [] }, events: {}, acts: {} }, context: { view: { position: "ready" as const, messages: [] }, events: {}, acts: {} } })))
     return { atom: node, schema: AgentEvent }
   }))
@@ -175,7 +175,7 @@ export const codeModeCancellationRecovery = fc.asyncProperty(fc.record({ reason:
     }
     return options.value
   }).pipe(Effect.mapError(String)) })]
-  const definition = defineActor("code-cancellation", Effect.gen(function* () {
+  const definition = Actor.make("code-cancellation", Effect.gen(function* () {
     const node = yield* codeMode({ name: "code" })
     return { atom: node, schema: Event }
   }))

@@ -3,7 +3,7 @@ import { memoryJournalReads } from "../../fixtures/memory-journal"
 import { strict as assert } from "node:assert"
 import { Context, Deferred, Effect, Schema } from "effect"
 import * as fc from "fast-check"
-import { act, defineActor, durableAtom, effectAtom, effectKey, RuntimeError, EffectRef, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
+import { act, Actor, durableAtom, effectAtom, effectKey, RuntimeError, EffectRef, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
 import { createEventLog } from "@clavia/tardigrade-core/runtime/replay"
 import { createTestStore } from "./store"
 import { checkpointDigest, encodeCheckpoint } from "../../../../core/src/services/checkpoint"
@@ -44,7 +44,7 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
   let request!: ReturnType<typeof Job.request>
   const executions: EffectRef[] = []
   const executionCount = () => executions.length
-  const actor = defineActor("acceptance", Effect.sync(() => {
+  const actor = Actor.make("acceptance", Effect.sync(() => {
     const state = durableAtom({ name: "test.acceptance", input: Event, schema: State,
       initial: { invocation: 0, pending: false, updates: 0, completed: [], origin: null },
       reduce: (state, event, _metadata, position) => event.type === "Queued" ? { ...state, invocation: event.invocation, pending: true, origin: position }

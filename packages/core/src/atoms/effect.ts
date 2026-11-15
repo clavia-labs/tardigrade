@@ -73,6 +73,7 @@ export interface IdentifiedEffectValue<Services = never> extends EffectWork<Serv
   readonly ref: EffectRef
 }
 type Proposal = EventValue<unknown> | ActRequest<Schema.Json, Schema.Json, unknown> | CancelRequest
-type CollectedProposals<Value> = Value extends { readonly events: infer Events; readonly acts: infer Acts } ? Events[keyof Events] | Acts[keyof Acts] : never
+type ProposalValues<Value> = Value extends unknown ? Value[keyof Value] : never
+type CollectedProposals<Value> = Value extends { readonly events: infer Events; readonly acts: infer Acts } ? ProposalValues<Events> | ProposalValues<Acts> : never
 export type Proposed<Value> = Extract<NonNullable<CollectedProposals<Value>>, Proposal>
 export type ServicesOf<P> = P extends ActRequest<Schema.Json, Schema.Json, infer Services> ? Services | EffectExecution : never

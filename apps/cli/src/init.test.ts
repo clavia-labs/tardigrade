@@ -45,7 +45,7 @@ describe("initActor", () => {
     expect(initialized.modelLock).toBe(join(cwd, "reviewer", DEFAULT_MODEL_LOCK))
     expect(initialized.catalogMigration).toBeUndefined()
     expect(source).toContain('const actorName = "reviewer"')
-    expect(source).toContain("defineActor(actorName, Effect.sync")
+    expect(source).toContain("Actor.make(actorName, Effect.sync")
     expect(await readFile(join(initialized.directory, "SKILL.md"), "utf8")).toContain("tdg call increment null")
     await expect(readFile(join(initialized.directory, "services.ts"), "utf8")).rejects.toThrow()
     expect(manifest).toMatchObject({

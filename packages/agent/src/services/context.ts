@@ -1,8 +1,9 @@
 import type { PromptContent } from "@clavia/tardigrade-model/prompt"
 import { Effect } from "effect"
-import { libraryContextSources, resolveLibraryContext, type LibraryBinding, type LibraryContextSource } from "@clavia/tardigrade-libraries"
+import { libraryContextSources, resolveLibraryContext, type LibraryBinding, type LibraryContextSource, type LibraryContextRequirements } from "@clavia/tardigrade-libraries"
+import type { ResolvedContext } from "../contracts/events"
 import { ResolveContext } from "../contracts/acts"
-import type { ContextConfiguration } from "../contracts/context"
+import { mergeLibraryContexts, type ContextConfiguration } from "../contracts/context"
 
 // contextConfiguration retains static sources and identifies declarations requiring resolution.
 export function contextConfiguration(system: LibraryContextSource<unknown, unknown>, libraries: readonly LibraryBinding[]): ContextConfiguration {
@@ -23,14 +24,17 @@ function isPromptEffect<Source extends LibraryContextSource<unknown, unknown>>(s
 }
 
 // contextServices binds actor and library prompt effects to the durable resolution act.
-export function contextServices<const Source extends LibraryContextSource<unknown, unknown>, const L extends readonly LibraryBinding[]>(system: Source, libraries: L) {
+export function contextServices<const Source extends LibraryContextSource<unknown, unknown>, const L extends readonly LibraryBinding[]>(system: Source, libraries: L, options: { readonly recordUserContext?: boolean } = {}) {
+  const user = options.recordUserContext ? contextConfiguration(system, libraries).user : undefined
   const dynamicSystem = isPromptEffect(system) ? system : Effect.void
-  return ResolveContext.layer(() => Effect.gen(function* () {
+  const resolve: Effect.Effect<typeof ResolvedContext.Type, string, Effect.Services<Source> | LibraryContextRequirements<L[number]>> = Effect.gen(function* () {
     const resolvedSystem = yield* dynamicSystem
-    const resolvedLibraries = yield* resolveLibraryContext(libraries)
+    const resolvedLibraries = yield* resolveLibraryContext<L>(libraries)
     return {
       ...resolvedLibraries,
+      ...(user ? { user: { libraries: mergeLibraryContexts(user.libraries, resolvedLibraries.user.libraries) } } : {}),
       system: { ...resolvedLibraries.system, ...(resolvedSystem === undefined ? {} : { actor: resolvedSystem }) },
     }
-  }).pipe(Effect.mapError(String)))
+  }).pipe(Effect.mapError(String))
+  return ResolveContext.layer(() => resolve)
 }

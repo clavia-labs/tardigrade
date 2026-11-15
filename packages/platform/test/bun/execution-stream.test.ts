@@ -8,7 +8,7 @@ import { Context, Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { Response } from "effect/ai"
 import { HttpServerResponse } from "effect/http"
-import { act, actorMethod, createActorStore, createExecutionStream, DEFAULT_ATTEMPT_TIMEOUT_MS, DEFAULT_STREAM_TIMEOUT, defineActor, durableAtom, EffectExecution, effectAtom, event, StreamTimedOut, withStreamTimeout, type ActorRuntime, type ExecutionUpdate } from "@clavia/tardigrade-core"
+import { act, actorMethod, createActorStore, createExecutionStream, DEFAULT_ATTEMPT_TIMEOUT_MS, DEFAULT_STREAM_TIMEOUT, Actor, durableAtom, EffectExecution, effectAtom, event, StreamTimedOut, withStreamTimeout, type ActorRuntime, type ExecutionUpdate } from "@clavia/tardigrade-core"
 import { createBunHost, methodHttp } from "../../src/bun"
 import { Generate } from "@clavia/tardigrade-agent/contracts/acts"
 import { DEFAULT_MODEL_TIMEOUT_MS, generate, Model } from "@clavia/tardigrade-agent/services/model"
@@ -49,7 +49,7 @@ test("runtime execution updates are ephemeral and stops publishing after cancell
   const started = durableAtom({ name: "progress.started", input: Start, schema: Schema.Boolean, initial: false, reduce: () => true })
   const completion = completionState(Job.name, Schema.Null)
   const Event = Schema.Union([Start, completion.event])
-  const actor = defineActor(address.actor, Effect.sync(() => {
+  const actor = Actor.make(address.actor, Effect.sync(() => {
     const request = Job.request({ input: null, onSettled: completion.onSettled })
     return { schema: Event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(started) && get(completion.state).status === "pending" ? { job: request } : {} })) }
   }))
@@ -90,7 +90,7 @@ test("model generation publishes through execution and preserves the durable rep
   const started = durableAtom({ name: "model.progress.started", input: Start, schema: Schema.Boolean, initial: false, reduce: () => true })
   const completion = completionState("model.progress", ModelReply)
   const Event = Schema.Union([Start, completion.event])
-  const actor = defineActor(address.actor, Effect.sync(() => {
+  const actor = Actor.make(address.actor, Effect.sync(() => {
     const request = Generate.request({ onSettled: completion.onSettled, input: { model, system: "", tools: [], context: [] } })
     return { schema: Event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(started) && get(completion.state).status === "pending" ? { generate: request } : {} })) }
   }))
@@ -139,7 +139,7 @@ test("host SSE identifies the thread and client disconnect leaves execution runn
   const started = durableAtom({ name: "progress.http.started", input: Start, schema: Schema.Boolean, initial: false, reduce: () => true })
   const completion = completionState(Job.name, Schema.Null)
   const Event = Schema.Union([Start, completion.event])
-  const actor = defineActor(address.actor, Effect.sync(() => {
+  const actor = Actor.make(address.actor, Effect.sync(() => {
     const request = Job.request({ input: null, onSettled: completion.onSettled })
     return {
       schema: Event,
@@ -187,7 +187,7 @@ for (const mode of ["direct", "submit", "fork"] as const) {
     test(`${mode} work uses the framework deadline (${timeoutMs}ms)`, () => Effect.runPromise(Effect.gen(function* () {
       const Job = act({ name: "test.default-deadline", input: Schema.Null, success: Schema.Null, failure: Schema.Struct({ code: Schema.String }) })
       const completion = completionState("default-deadline", Schema.Null)
-      const actor = defineActor("default-deadline", Effect.sync(() => {
+      const actor = Actor.make("default-deadline", Effect.sync(() => {
         const request = Job.request({ input: null, onSettled: completion.onSettled })
         return { schema: completion.event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(completion.state).status === "pending" ? { job: request } : {} })) }
       }))
@@ -222,7 +222,7 @@ for (const mode of ["call", "submit"] as const) {
       const entered = yield* Deferred.make<void>()
       const pending = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
       const completion = completionState("inference-deadline", ModelReply)
-      const actor = defineActor("inference-deadline", Effect.sync(() => {
+      const actor = Actor.make("inference-deadline", Effect.sync(() => {
         const request = Generate.request({ onSettled: completion.onSettled, input: { model: { provider: "fixture", model_id: "timeout" }, system: "", tools: [], context: [] } })
         return { schema: completion.event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(completion.state).status === "pending" ? { generate: request } : {} })) }
       }))

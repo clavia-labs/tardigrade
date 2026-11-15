@@ -18,7 +18,7 @@ export const AgentServicesDiagram = (): ReactElement => {
       {[
         { y: 6, title: "Model configuration", code: "modelInfo", source: "Model lock" },
         { y: 123, title: "Model inference", code: "modelActs", source: "Provider + credentials" },
-        { y: 240, title: "Workspace tools", code: "tools: [workspace]", source: "localWorkspace / remoteWorkspace" },
+        { y: 240, title: "Workspace tools", code: "Agent.tools([workspace])", source: "localWorkspace / remoteWorkspace" },
       ].map(node => <g className="agent-services-node" key={node.code}>
         <rect x="364" y={node.y} width="372" height="76" rx="8" />
         <text x="550" y={node.y + 29}>{node.title}</text>

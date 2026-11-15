@@ -2,7 +2,7 @@ import type { EventLog } from "../services/event-log"
 import { journalCall } from "../services/journal"
 import { isDeepStrictEqual } from "node:util"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Random, Schema, Scope, Semaphore } from "effect"
-import { Actor, ActorRequest, ActorCall, type ActorCaller } from "../services/actor"
+import { ActorClient, ActorRequest, ActorCall, type ActorCaller } from "../services/actor-client"
 import { atom, type Atom } from "../atoms/atom"
 import { InvalidMessage, InvocationNotFound, type MessageMetadata, type MessageReceipt } from "../actor/message"
 import { resolveMethodResult, MethodFailed, MethodCancelled, type ActorMethods, type MethodInput, type MethodOutput, type MethodResult } from "../actor/method"
@@ -28,7 +28,7 @@ export function localActors(options: {
   readonly onReply: (handle: ExecutionHandle, requestId: string, result: Schema.Json) => Effect.Effect<void, Error>
   readonly onMessage: (handle: ExecutionHandle, message: Schema.Json) => Effect.Effect<void, Error>
 }) {
-  return Layer.effect(Actor, Effect.gen(function* () {
+  return Layer.effect(ActorClient, Effect.gen(function* () {
     const scope = yield* Scope.Scope
     const endpoint = (yield* Effect.all(Array.from({ length: 4 }, () => Random.nextInt))).join(":")
     const entries = new Map<string, { call: ActorCall; result: ResolutionState; cancelled: boolean; fiber?: Fiber.Fiber<void, never> }>()
@@ -91,7 +91,7 @@ export function localActors(options: {
         yield* options.onReply(handle, requestId, value)
         yield* Deferred.succeed(pending, value)
       }),
-    } satisfies typeof Actor.Service
+    } satisfies typeof ActorClient.Service
   }))
 }
 

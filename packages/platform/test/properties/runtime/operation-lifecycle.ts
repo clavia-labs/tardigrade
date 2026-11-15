@@ -6,7 +6,7 @@ import { strict as assert } from "node:assert"
 import * as fc from "fast-check"
 import { Cause, Clock, Context, Deferred, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { act, ActorCommitError, AttemptTimedOut, DEFAULT_ATTEMPT_TIMEOUT_MS, createActorStore, createWatchdog, defineActor, effectAtom, EffectExecution, ExecutionResult, Promises, RuntimeError, StreamTimedOut, withStreamTimeout, effectKey, watchdogKey, WatchdogTerminalError, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
+import { act, ActorCommitError, AttemptTimedOut, DEFAULT_ATTEMPT_TIMEOUT_MS, createActorStore, createWatchdog, Actor, effectAtom, EffectExecution, ExecutionResult, Promises, RuntimeError, StreamTimedOut, withStreamTimeout, effectKey, watchdogKey, WatchdogTerminalError, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
 import { memoryWatchdog } from "../../fixtures/watchdog"
 import { waitFor } from "../../fixtures/wait"
 
@@ -39,7 +39,7 @@ export async function operationLifecycle(journal: Journal<typeof Event.Type>, sc
       let childRef: EffectRef | undefined
       let producer = false
       const open = () => createActorStore({
-        actor: defineActor("lifecycle", Effect.sync(() => {
+        actor: Actor.make("lifecycle", Effect.sync(() => {
           const job = Job.request({ input: version === 1 ? scenario.input : "replacement proposal", onSettled: completion.onSettled })
           const sibling = Sibling.request({ input: null, onSettled: siblingCompletion.onSettled })
           const child = Child.request({ input: version === 1 ? scenario.input : "replacement child proposal", onSettled: childCompletion.onSettled })
@@ -237,7 +237,7 @@ export async function defaultAttemptDeadline(journal: Journal<typeof Event.Type>
     return yield* Effect.gen(function* () {
       let decideCalls = 0
       const store = yield* createActorStore({
-        actor: defineActor("unanswered", Effect.sync(() => {
+        actor: Actor.make("unanswered", Effect.sync(() => {
           const job = Job.request({ input: "withheld-response", onSettled: completion.onSettled })
           return { schema: Event, atom: effectAtom(get => ({ view: null, events: {}, acts: get(completion.state).status === "pending" ? { job } : {} })) }
         })), journal, effectInput: { digestMinBytes: 0 }, checkpoint: { mode: "manual" }, actorContext: Context.pick(),
@@ -333,7 +333,7 @@ export async function attemptDeadlineLifecycle(journal: Journal<typeof Event.Typ
         }),
       }
       const open = () => createActorStore({
-        actor: defineActor("deadline", Effect.sync(() => {
+        actor: Actor.make("deadline", Effect.sync(() => {
           const job = Job.request({ input: version === 0 ? scenario.input : "replacement proposal", onSettled: completion.onSettled })
           return { schema: Event, atom: effectAtom(get => ({ view: null, events: {}, acts: get(completion.state).status === "pending" ? { job } : {} })) }
         })), journal, effectInput: { digestMinBytes: 0 }, checkpoint: { mode: "manual" }, actorContext: Context.pick(),
@@ -442,7 +442,7 @@ export async function streamDeadlineLifecycle(journal: Journal<typeof Event.Type
     yield* Effect.gen(function* () {
       let version = 0
       const received: { index: number; input: string }[][] = []
-      const open = () => createActorStore({ actor: defineActor("stream-deadline", Effect.sync(() => {
+      const open = () => createActorStore({ actor: Actor.make("stream-deadline", Effect.sync(() => {
         const request = Job.request({ input: version === 0 ? scenario.input : "replacement proposal", onSettled: completion.onSettled })
         return { schema: Event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(completion.state).status === "pending" ? { job: request } : {} })) }
       })), journal, checkpoint: { mode: "manual" }, effectInput: { digestMinBytes: 0 }, actorContext: Context.pick(), services: () => Job.layer((input, { ref }) => Effect.gen(function* () {
@@ -559,7 +559,7 @@ export async function operationRace(journal: Journal<typeof Event.Type>, service
         }))),
       }
       const open = () => createActorStore({
-        actor: defineActor("operation-race", Effect.sync(() => {
+        actor: Actor.make("operation-race", Effect.sync(() => {
           const job = Job.request({ input: version === 0 ? original : "replacement proposal", onSettled: completion.onSettled })
           return { schema: Event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(completion.state).status === "pending" ? { job } : {} })) }
         })), journal: gated, effectInput: { digestMinBytes: 0 }, checkpoint: { mode: "manual" }, actorContext: Context.pick(), cancellation: { attemptTimeoutMs: timeoutMs },

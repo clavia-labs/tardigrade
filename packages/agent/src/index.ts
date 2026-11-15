@@ -1,4 +1,6 @@
-export { agent, createActor, type AgentOptions } from "./agent"
+export * as Agent from "./agent"
+export { agent } from "./compat/agent"
+export { createActor, type AgentOptions } from "./actor/definition"
 export * from "./actor/methods"
 export * from "./actor/context"
 export * from "./contracts/events"

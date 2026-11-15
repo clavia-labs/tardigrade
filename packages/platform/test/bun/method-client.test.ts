@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Schema } from "effect"
-import { actorMethod, defineActor, durableAtom, event } from "@clavia/tardigrade-core"
+import { actorMethod, Actor, durableAtom, event } from "@clavia/tardigrade-core"
 import { createBunHost, methodHttp } from "../../src/bun"
 import { createMethodClient } from "@clavia/tardigrade-client"
 
@@ -11,7 +11,7 @@ test("method clients retain pending calls after local deadlines and cancel expli
   const Requested = event({ type: "Requested", id: Schema.String })
   const Cancelled = event({ type: "Cancelled", id: Schema.String, reason: Schema.String })
   const cancelled = durableAtom({ name: "client.cancelled", input: Cancelled, schema: Schema.Record(Schema.String, Schema.String), initial: {}, reduce: (state, e) => ({ ...state, [e.id]: e.reason }) })
-  const actor = defineActor("client", Effect.succeed({ atom: cancelled, methods: {
+  const actor = Actor.make("client", Effect.succeed({ atom: cancelled, methods: {
     run: actorMethod({ inputSchema: Schema.Null, outputSchema: Schema.String,
       onReceive: Requested.from((_, context) => ({ id: context.id })),
       onCancel: Cancelled.from((_, context) => ({ id: context.id, reason: context.reason })),

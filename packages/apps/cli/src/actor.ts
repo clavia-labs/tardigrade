@@ -1,10 +1,10 @@
 import { agentMethods } from "@clavia/tardigrade-agent/actor/methods"
-import { atom, defineActor, effectAtom, eventValue, type ActService } from "@clavia/tardigrade-core"
+import { atom, Actor, effectAtom, eventValue, type ActService } from "@clavia/tardigrade-core"
 import { compact, infer, systemPrompt, messages, permissions, pendingTools, codeMode } from "@clavia/tardigrade-agent/atoms"
 import { Effect } from "effect"
 import { Event } from "@clavia/tardigrade-agent/contracts/code-mode"
 
-export const actor = defineActor("tardie", Effect.gen(function* () {
+export const actor = Actor.make("tardie", Effect.gen(function* () {
   const available = yield* codeMode({ name: "agent.code-mode" })
   const permission = permissions(pendingTools, { tools: available })
   const tools = effectAtom(get => {

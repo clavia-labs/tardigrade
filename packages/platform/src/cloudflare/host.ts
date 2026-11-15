@@ -1,4 +1,4 @@
-import { Context, Layer } from "effect"
+import { Context, Layer, type Scope } from "effect"
 import type { DurableObjectStorage } from "@cloudflare/workers-types"
 import type { ActorDefinition, ActorMethods, EventLog, Invocation, Supervisor, ThreadCoordinate } from "@clavia/tardigrade-core"
 import { createActorWorker } from "./worker"
@@ -21,10 +21,10 @@ export class HostThread extends Context.Service<HostThread, ThreadCoordinate>()(
 type Platform<Env extends object> = Supervisor | Invocation | EventLog | Bindings<Env> | DurableStorage | HostThread
 
 // host constructs an actor's services within each runtime's lifetime.
-export function host<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>, Provided = never, Required = never>(
-  actor: ActorDefinition<Event, State, Services, Contracts, Provided, Required>,
+export function host<Env extends object, Event extends object, Services, State, Contracts extends ActorMethods<Event>, Provided = never, Required = never, SetupProvided = never>(
+  actor: ActorDefinition<Event, State, Services, Contracts, Provided, Required, SetupProvided>,
   options: Omit<ActorObjectOptions<Env, Event, Services, State, Contracts>, "actor" | "services" | "actorContext"> & {
-    readonly layer: Layer.Layer<Exclude<HostServices<Env, Event, Services, State, Contracts>, NoInfer<Provided>> | NoInfer<Required>, Error, Platform<Env>>
+    readonly layer: Layer.Layer<Exclude<HostServices<Env, Event, Services, State, Contracts>, NoInfer<Provided | SetupProvided>> | NoInfer<Required> | Exclude<NoInfer<Services>, Scope.Scope>, Error, Platform<Env>>
   },
 ) {
   const { layer, ...settings } = options

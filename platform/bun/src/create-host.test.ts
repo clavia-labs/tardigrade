@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Schema } from "effect"
-import { defineActor, legacyComponent } from "@clavia/tardigrade-deprecated-core/actor"
+import { actor as legacyActor, legacyComponent } from "@clavia/tardigrade-deprecated-core/actor"
 import { legacyActorMethod } from "@clavia/tardigrade-deprecated-core/actor/method-compat"
 import { effect } from "@clavia/tardigrade-deprecated-core/effect"
 import { allocateRootThread } from "@clavia/tardigrade-deprecated-core/actor/allocation"
@@ -35,7 +35,7 @@ const responder = legacyComponent({
     }).pipe(Effect.orDie)
   })) })
 })
-const actor = defineActor("tardie", { message }, [responder])
+const actor = legacyActor({ name: "tardie", methods: { message }, components: [responder] })
 
 test("local and HTTP references preserve allocations and results across restart", async () => {
   const storage = await mkdtemp(join(tmpdir(), "tardie-sdk-"))

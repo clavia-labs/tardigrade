@@ -5,8 +5,8 @@ import { ToolSpec } from "@clavia/tardigrade-libraries/types"
 import { ExecuteTool } from "../contracts/acts"
 import { ToolCatalog } from "../actor/context"
 
-// libraryServices supplies the catalog and durable execution adapter for declared libraries.
-export function libraryServices<const L extends readonly LibraryBinding[]>(libraries: L, additional: readonly ToolSpec[] = []) {
+// libraryCatalog derives construction data without invoking library handlers.
+export function libraryCatalog<const L extends readonly LibraryBinding[]>(libraries: L, additional: readonly ToolSpec[] = []) {
   const implementations = libraryImplementations(libraries)
   const methods = toolsFromLibraries(implementations)
   const registry = new Map(methods.flatMap(method => [method.spec.name, ...(method.aliases ?? [])].map(name => [name, method] as const)))
@@ -14,7 +14,16 @@ export function libraryServices<const L extends readonly LibraryBinding[]>(libra
     ? Object.entries(toolkitFromRpc(library.rpc).tools)
     : []))
   const data = Schema.decodeSync(Schema.Struct({ specs: Schema.Array(ToolSpec), names: Schema.Array(Schema.String) }))(structuredClone({ specs: [...methods.map(method => method.spec), ...additional], names: [...registry.keys(), ...additional.map(spec => spec.name)] }))
-  return Layer.merge(Layer.succeed(ToolCatalog, { ...data, nativeTools, libraries: implementations.map(value => value.library) }), ExecuteTool.layer(input => {
+  return { ...data, nativeTools, libraries: implementations.map(value => value.library) }
+}
+
+// libraryServices supplies the catalog and durable execution adapter for declared libraries.
+export function libraryServices<const L extends readonly LibraryBinding[]>(libraries: L, additional: readonly ToolSpec[] = []) {
+  const implementations = libraryImplementations(libraries)
+  const methods = toolsFromLibraries(implementations)
+  const registry = new Map(methods.flatMap(method => [method.spec.name, ...(method.aliases ?? [])].map(name => [name, method] as const)))
+  const catalog = libraryCatalog(libraries, additional)
+  return Layer.merge(Layer.succeed(ToolCatalog, catalog), ExecuteTool.layer(input => {
     if (input.error !== undefined) return Effect.fail(input.error)
     if (input.value !== undefined) return Effect.succeed(input.value)
     const method = registry.get(input.call.name)

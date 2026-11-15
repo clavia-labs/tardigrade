@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert"
 import { memoryJournalReads } from "../fixtures/memory-journal"
 import { Clock, Context, Effect, Layer, Option, Schema } from "effect"
 import * as fc from "fast-check"
-import { atom, createEventLog, journalCommit, StateInitialised, defineActor, effectAtom, RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
+import { atom, createEventLog, journalCommit, StateInitialised, Actor, effectAtom, RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-core"
 import { createTestStore } from "./runtime/store"
 import { trajectory, messages, timeSpend } from "@clavia/tardigrade-agent/atoms/durable"
 import { compact } from "@clavia/tardigrade-agent/atoms/compact"
@@ -40,7 +40,7 @@ export const turnFactRecovery = fc.asyncProperty(fc.record({
       checkpoint = value
     },
   }
-  const actor = defineActor("turn-facts", Effect.sync(() => ({
+  const actor = Actor.make("turn-facts", Effect.sync(() => ({
     atom: effectAtom(get => ({
       view: { trajectory: get(trajectory.range({ limit: 100 })).rows.map(row => row.value), messages: get(messages.range({ limit: 100 })).rows.map(row => row.value), timeSpend: get(timeSpend) }, events: {}, acts: {},
     })), schema: Event
@@ -274,7 +274,7 @@ export const modelContextRecipes = () => {
 // modelContextRecovery resumes both inline and log-backed Generate inputs after defaults change and checks live prepared reuse.
 export async function modelContextRecovery(open: () => Journal<Event> & { readonly close: Effect.Effect<void, Error> }, inline: boolean) {
   const selection = { model: { provider: "test", model_id: "test" }, contextWindowTokens: 1_000_000 }
-  const makeActor = (userMessageTokenLimit: number, legacy = false) => defineActor("model-context", Effect.gen(function* () {
+  const makeActor = (userMessageTokenLimit: number, legacy = false) => Actor.make("model-context", Effect.gen(function* () {
     const source = legacy ? atom(get => get(messages.range({ limit: 64 })).rows.map(row => row.value)) : messages
     const context = yield* compact(source, { userMessageTokenLimit })
     const node = yield* infer<never>(atom(get => ({ system: "system", tools: { view: { specs: [] }, events: {}, acts: {} }, context: get(context) })))

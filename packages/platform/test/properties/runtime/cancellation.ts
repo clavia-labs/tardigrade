@@ -2,7 +2,7 @@ import { memoryJournalReads } from "../../fixtures/memory-journal"
 import { completionState } from "../../fixtures/completion-state"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
-import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, type RuntimeEvent, type StoredCheckpoint } from "@clavia/tardigrade-core"
+import { act, Actor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, type RuntimeEvent, type StoredCheckpoint } from "@clavia/tardigrade-core"
 import { createTestStore } from "./store"
 import { Promises } from "../../../../core/src/services/promises"
 
@@ -13,7 +13,7 @@ const batchCompletions = [completionState("batch.left", Schema.Finite), completi
 const Event = Schema.Union([Started, Returned, completion.event, ...batchCompletions.map(completion => completion.event)])
 type Event = typeof Event.Type
 const Job = act({ name: "test.cancellation", input: Schema.Finite, success: Schema.Finite, failure: Schema.String })
-const actor = (id: number) => defineActor("cancellation", Effect.sync(() => {
+const actor = (id: number) => Actor.make("cancellation", Effect.sync(() => {
   const started = durableAtom({ name: "test.cancellation", input: Event, schema: Schema.Boolean, initial: false, reduce: (state, event) => state || event.type === "Started" })
   const request = Job.request({ input: id, onSettled: outcome => [...completion.onSettled(outcome), { type: "Returned" }] })
   return { atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(started) && get(completion.state).status === "pending" ? { job: request } : {} })), schema: Event }
@@ -206,7 +206,7 @@ export const cancellationBatchIsolation = fc.asyncProperty(fc.record({
   cancelled: fc.integer({ min: 0, max: 1 }), reverse: fc.boolean(), value: fc.integer({ min: -100, max: 100 }), duplicates: fc.integer({ min: 0, max: 3 }),
 }), options => Effect.runPromise(Effect.gen(function* () {
   let runtime!: ActorRuntime<Event>
-  const definition = defineActor("batch-cancellation", Effect.sync(() => {
+  const definition = Actor.make("batch-cancellation", Effect.sync(() => {
     const started = durableAtom({ name: "test.batch-cancellation", input: Event, schema: Schema.Array(Schema.Finite), initial: [], reduce: (state, event, _metadata, position) => event.type === "Started" ? [...state, position] : state })
     const requests = [0, 1].map(id => Job.request({ origin: id, input: id, onSettled: outcome => [...batchCompletions[id]!.onSettled(outcome), { type: "Returned" }] }))
     return { atom: effectAtom(get => ({ view: batchCompletions.map(completion => get(completion.state)), events: {}, acts: get(started).length === 2 ? Object.fromEntries(requests.flatMap((request, index) => get(batchCompletions[index]!.state).status === "pending" ? [[String(index), request]] : [])) : {} })), schema: Event }

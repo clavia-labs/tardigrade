@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/rpc"
-import { agent, agentMethods } from "@clavia/tardigrade-agent"
-import { act, atom, defineActor, effectAtom } from "@clavia/tardigrade-core"
+import { Agent, agentMethods } from "@clavia/tardigrade-agent"
+import { act, atom, Actor, effectAtom } from "@clavia/tardigrade-core"
 import { Library } from "@clavia/tardigrade-libraries"
 import { host as bunHost } from "../../src/bun"
 import { host as cloudflareHost } from "../../src/cloudflare"
@@ -13,13 +13,16 @@ const reader = Library.make("reader", Rpc.make("read", {
 
 export function inferredMethodsRetainLibraryRequirements() {
   const methods = { inspectNotes: agentMethods.message }
-  const assistant = agent({
-    name: "inferred-methods",
-    system: "Read notes.",
-    methods,
-    tools: [reader],
+  const available = Agent.tools([reader])
+  const assistant = Actor.make("inferred-methods", Effect.gen(function* () {
+    const tools = yield* available
+    const context = yield* Agent.compact(Agent.messages)
+    return yield* Agent.make({ system: "Read notes.", tools, context, methods })
+  }))
+  const libraries = Effect.map(available, tools => {
+    const declarations: readonly [typeof reader] = tools.libraries
+    return declarations
   })
-  const libraries: readonly [typeof reader] = assistant.libraries
   const contract = Effect.map(assistant.inspect, inspection => {
     const input: typeof methods.inspectNotes.inputSchema = inspection.methods.inspectNotes.inputSchema
     return input
@@ -40,8 +43,8 @@ export function inferredMethodsRetainLibraryRequirements() {
 
 export function agentsRequireBindableLibraries() {
   // @ts-expect-error Agent construction requires bindings for its automatically installed libraries.
-  const unbound = agent({ name: "unbound", system: "Read notes.", tools: [{ name: "reader" }] })
-  return unbound
+  const unbound = Agent.tools([{ name: "reader" }])
+  return { unbound }
 }
 
 const other = Library.make("other", Rpc.make("read", {
@@ -53,7 +56,11 @@ class Storage extends Context.Service<Storage, {
 }>()("library-api/Storage") {}
 
 export function generatedServicesRetainIdentityAndDependencies() {
-  const assistant = agent({ name: "reader", system: "Read notes.", tools: [reader] })
+  const assistant = Actor.make("reader", Effect.gen(function* () {
+    const tools = yield* Agent.tools([reader])
+    const context = yield* Agent.compact(Agent.messages)
+    return yield* Agent.make({ system: "Read notes.", tools, context })
+  }))
   const model = contentModelServices(() => {})
   const readerLayer = Layer.effect(reader, Effect.map(Storage, storage => ({
     read: ({ key }) => storage.get(key),
@@ -84,7 +91,7 @@ export function generatedServicesRetainIdentityAndDependencies() {
 
 export function ordinaryActorsDeclareSetupAndExecutionRequirements() {
   const Notify = act({ name: "notify", input: Schema.String, success: Schema.Null, failure: Schema.String })
-  const counter = defineActor("counter", Effect.map(Storage, storage => ({
+  const counter = Actor.make("counter", Effect.map(Storage, storage => ({
     atom: effectAtom(() => ({ view: storage, events: {}, acts: { notify: Notify.request({ input: "ready" }) } })),
   })))
   const layer = Layer.merge(
@@ -93,7 +100,7 @@ export function ordinaryActorsDeclareSetupAndExecutionRequirements() {
   )
   const runtime = bunHost(counter, { storage: ".unused", layer })
   const worker = cloudflareHost(counter, { layer })
-  const empty = defineActor("empty", Effect.succeed({ atom: atom(0) }))
+  const empty = Actor.make("empty", Effect.succeed({ atom: atom(0) }))
   const emptyRuntime = bunHost(empty, { storage: ".unused", layer: Layer.empty })
   const emptyWorker = cloudflareHost(empty, { layer: Layer.empty })
 

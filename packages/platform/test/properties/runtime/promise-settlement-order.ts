@@ -2,7 +2,7 @@ import { journalCall } from "@clavia/tardigrade-core"
 import { memoryJournalReads } from "../../fixtures/memory-journal"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
-import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, PromiseNotReady, RuntimeError, type ActorRuntime, type Journal, type PromiseSettled, type Recorded } from "@clavia/tardigrade-core"
+import { act, Actor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, PromiseNotReady, RuntimeError, type ActorRuntime, type Journal, type PromiseSettled, type Recorded } from "@clavia/tardigrade-core"
 import { createTestStore } from "./store"
 import { Promises } from "../../../../core/src/services/promises"
 
@@ -55,7 +55,7 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
     }))),
     appendWithCheckpoint: () => { throw new RuntimeError("Unexpected checkpoint") },
   }
-  const actor = defineActor("delivery", Effect.sync(() => {
+  const actor = Actor.make("delivery", Effect.sync(() => {
     const state = durableAtom({ name: "test.delivery", input: Event, schema: State,
       initial: { started: false, results: [], markers: [] },
       reduce: (state, event) => event.type === "Started" ? { ...state, started: true }
