@@ -103,7 +103,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
   readonly executionStreamBus?: typeof ExecutionStream.Service
   readonly inspect?: boolean
   readonly canDrive?: Effect.Effect<boolean, Error>
-  readonly setup: Effect.Effect<ActorSetup<Event, Atoms, Contracts>, Error, Services>
+  readonly setup: Effect.Effect<ActorSetup<Event, Atoms, Contracts, Services>, Error, Services>
   readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<Atoms> | Exclude<Services, Scope.Scope>, Error, EventLog>
   readonly actorContext: (services: Context.Context<Requirements<Atoms> | Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
   readonly events?: readonly RuntimeEvent<Event>[]
@@ -127,7 +127,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     if (executionAttemptTimeoutMs !== undefined && executionAttemptTimeoutMs !== null && (!Number.isSafeInteger(executionAttemptTimeoutMs) || executionAttemptTimeoutMs < 1)) return yield* Effect.fail(new RuntimeError("Attempt timeoutMs must be a positive safe integer"))
     const deliveryRetryIntervalMs = options.promiseDelivery?.retryIntervalMs ?? DEFAULT_PROMISE_POLICY.retryIntervalMs
     if (!Number.isSafeInteger(deliveryRetryIntervalMs) || deliveryRetryIntervalMs < 1) return yield* Effect.fail(new RuntimeError("Promise delivery retryIntervalMs must be a positive safe integer"))
-    let setup: ActorSetup<Event, Atoms, Contracts>
+    let setup: ActorSetup<Event, Atoms, Contracts, Services>
     type RuntimeAtoms = Atoms & { readonly "host.message.replies": ReturnType<typeof messageReplies<Event>> }
     let definition: ReturnType<typeof createEventLog<Event, RuntimeAtoms>>
     let snapshot: ReturnType<typeof definition.replay>
@@ -838,6 +838,12 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         yield* Effect.try({ try: sync, catch: RuntimeError.from })
         if (options.journal?.acknowledge) yield* options.journal.acknowledge()
       }).pipe(Effect.withSpan("actor.replay"))
+      if (setup.layer) {
+        const owned = yield* Layer.build(Layer.fresh(setup.layer)).pipe(
+          Effect.provideService(Scope.Scope, scope), Effect.provide(services),
+        )
+        services = Context.merge(services, owned)
+      }
       if (!options.inspect) {
         yield* Deferred.succeed(ready, undefined)
         for (const recover of recovery) yield* recover

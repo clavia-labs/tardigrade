@@ -2,7 +2,7 @@ import { eventCatalog } from "./event"
 import { historicalEventDecoder } from "../event/versioned"
 import type { ActorMethods, ActorMethod } from "./method"
 import { RuntimeError } from "../runtime/effects"
-import { Context, Effect, Layer, Schema, type Scope } from "effect"
+import { Context, Effect, Schema, type Layer, type Scope } from "effect"
 import { AsyncResult } from "effect/reactivity"
 import { atom, type Atom } from "../atoms/atom"
 import type { EventValue } from "../atoms/effect"
@@ -29,27 +29,35 @@ export interface ActorInspection<Contracts extends ActorMethods<object> = ActorM
   readonly methods: { readonly [Name in keyof Contracts]: Pick<Contracts[Name], "inputSchema" | "outputSchema"> }
 }
 
-export interface ActorDefinition<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>, Provided = never, Required = never> {
+export interface ActorDefinition<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>, Provided = never, Required = never, SetupProvided = never> {
   // layer supplies definition-owned runtime services and declares their dependencies.
   readonly layer?: Layer.Layer<Provided, Error, Required | Exclude<Services, Scope.Scope>>
   readonly actorContext?: (services: Context.Context<Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
   readonly actorName: string
   readonly inspect: Effect.Effect<ActorInspection<Contracts>, Error, Exclude<Services, Scope.Scope>>
-  readonly setup: Effect.Effect<ActorSetup<Event, Readonly<Record<string, Atom<State>>>, Contracts> & { readonly root: Atom<State> }, Error, Services>
+  readonly setup: Effect.Effect<ActorSetup<Event, Readonly<Record<string, Atom<State>>>, Contracts, Services, SetupProvided> & { readonly root: Atom<State> }, Error, Services>
 }
 
-// make assembles a reactive graph, event contract, and typed methods for instantiation by a host.
-export function make<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never, Provided = never, Required = never>(name: Name, factory: Effect.Effect<{
+interface ActorBody<Value, Contracts extends ActorMethods<object>, Event extends object, Provided, Required> {
   readonly atom: Atom<Value>
   readonly schema?: Schema.Schema<Event>
   readonly methods?: Contracts
   readonly layer?: Layer.Layer<Provided, Error, Required>
-}, Error, Services>) {
+}
+
+// make assembles a reactive graph, event contract, and typed methods for instantiation by a host.
+export function make<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never, Provided = never, Required = never>(name: Name, factory: Effect.Effect<ActorBody<Value, Contracts, Event, Provided, Required> & { readonly layer: Layer.Layer<Provided, Error, Required> }, Error, Services>): ReturnType<typeof buildActor<Value, Name, Services, Contracts, Event, Provided, Required>>
+export function make<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never, Required = never>(name: Name, factory: Effect.Effect<ActorBody<Value, Contracts, Event, never, Required>, Error, Services>): ReturnType<typeof buildActor<Value, Name, Services, Contracts, Event, never, Required>>
+export function make<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never, Required = never>(name: Name, factory: Effect.Effect<ActorBody<Value, Contracts, Event, never, Required>, Error, Services>) {
+  return buildActor(name, factory)
+}
+
+function buildActor<Value, const Name extends string, Services, const Contracts extends ActorMethods<object>, Event extends object, Provided, Required>(name: Name, factory: Effect.Effect<ActorBody<Value, Contracts, Event, Provided, Required>, Error, Services>) {
   if (!name || name.includes("/")) throw new RuntimeError("Actor name must be nonempty and contain no slash")
   type DomainEvents = Event | MethodEvents<Contracts> | ProjectionEvents<Resolved<Value>>
   type Output = Resolved<Value>
   type Atoms = { readonly [Key in Name]: Atom<Output> }
-  const setup = factory.pipe(Effect.map(definition => {
+  const construct = factory.pipe(Effect.map(definition => {
     for (const [name, method] of Object.entries(definition.methods ?? {})) {
       if (!name) throw new RuntimeError("Actor method name must be nonempty")
       if (!Schema.isSchema(method.inputSchema) || !Schema.isSchema(method.outputSchema) || typeof method.onReceive !== "function" || typeof method.result !== "function" || (method.onCancel !== undefined && typeof method.onCancel !== "function")) throw new RuntimeError(`Invalid actor method contract: ${name}`)
@@ -65,6 +73,7 @@ export function make<Value, const Name extends string, Services, const Contracts
       durableAtoms = discovery.durableAtoms({ [name]: root })
     } finally { discovery.dispose() }
     return {
+      ...(definition.layer ? { layer: definition.layer } : {}),
       root,
       inspection: {
         durableAtoms,
@@ -89,8 +98,8 @@ export function make<Value, const Name extends string, Services, const Contracts
       store => Effect.sync(() => store.dispose()),
     )
   }))
+  const setup: Effect.Effect<Effect.Success<typeof construct>, Error, Services | Required> = construct
   // inspect reports initial graph declarations; conditional branches may be absent.
-  const inspect = Effect.scoped(setup.pipe(Effect.map(setup => setup.inspection)))
-  const layer = Layer.unwrap(factory.pipe(Effect.map(definition => Layer.mergeAll(Layer.empty, ...(definition.layer ? [definition.layer] : [])))))
-  return { actorName: name, setup, graph, inspect, layer }
+  const inspect = Effect.scoped(construct.pipe(Effect.map(setup => setup.inspection)))
+  return { actorName: name, setup, graph, inspect }
 }
