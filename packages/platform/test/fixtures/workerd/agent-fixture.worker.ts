@@ -3,7 +3,7 @@ import { Prompt, type LanguageModel } from "effect/ai"
 import { Rpc } from "effect/rpc"
 import { Library, ToolResult, MethodExecution, MethodHints } from "@clavia/tardigrade-libraries"
 import { Agent } from "@clavia/tardigrade-agent"
-import { defineActor } from "@clavia/tardigrade-core"
+import { Actor } from "@clavia/tardigrade-core"
 import { objectStorageFromR2 } from "@clavia/tardigrade-cloudflare/object-storage/r2"
 import { Bindings, DurableStorage, HostThread, host } from "../../../src/cloudflare"
 import { retryServices } from "../retry-provider"
@@ -32,7 +32,7 @@ const screenshots = Library.make("screen",
   Rpc.make("captureBackground", { payload: CaptureInput, success: ToolResult, error: Schema.String }).annotate(MethodExecution, "background"),
 )
 const screenLayer = Layer.succeed(screenshots, { capture, captureBackground: capture })
-const assistant = defineActor("tardie", Effect.gen(function* () {
+const assistant = Actor.make("tardie", Effect.gen(function* () {
   const tools = yield* Agent.tools([screenshots])
   const context = yield* Agent.compact(Agent.messages)
   return yield* Agent.make({ system: "You are a friendly assistant.", tools, context })

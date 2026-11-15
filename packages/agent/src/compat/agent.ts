@@ -6,7 +6,7 @@ import type { ActorMethods } from "@clavia/tardigrade-core"
 
 /**
  * agent supplies tool and context runtimes through the actor definition's layer.
- * @deprecated Compose Agent.tools, Agent.compact, and Agent.make inside defineActor.
+ * @deprecated Compose Agent.tools, Agent.compact, and Agent.make inside Actor.make.
  */
 export const agent = <const Options extends AgentOptions<ActorMethods<object>>>(options: Options) => {
   const definition = agentDefinition(options, contextConfiguration(options.system, options.tools ?? []), libraryCatalog(options.tools ?? []))

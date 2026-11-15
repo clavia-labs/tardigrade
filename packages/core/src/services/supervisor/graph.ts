@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect"
 import { act } from "../../atoms/act"
 import { effectAtom } from "../../atoms/effect"
 import { ChildPlacement, ThreadDepth, ThreadCoordinate } from "../../actor/thread"
-import { defineActor } from "../../actor/definition"
+import * as Actor from "../../actor/definition"
 import { InitialState } from "../../initialise"
 import { durableAtom } from "../../atoms/durable"
 import { durableAtomFamily } from "../../experimental/durable-atom-family"
@@ -145,7 +145,7 @@ export const threads = durableAtom({ name: "host.supervisor.threads",
 
 export const Provision = act({ name: "host.thread.provision", input: Allocation, success: Schema.Null, failure: Schema.String })
 
-export const familySupervisorActor = defineActor("supervisor", Effect.sync(() => {
+export const familySupervisorActor = Actor.make("supervisor", Effect.sync(() => {
   const requests = new Map<string, ReturnType<typeof Provision.request>>()
   const supervisor = effectAtom(get => {
     get(identity)
@@ -193,7 +193,7 @@ export const familySupervisorActor = defineActor("supervisor", Effect.sync(() =>
 }))
 
 // supervisorActor retains the full-directory view for explicit actor consumers. Hosted supervisors use familySupervisorActor.
-export const supervisorActor = defineActor("supervisor", Effect.sync(() => {
+export const supervisorActor = Actor.make("supervisor", Effect.sync(() => {
   const requests = new Map<string, ReturnType<typeof Provision.request>>()
   const supervisor = effectAtom(get => {
     const directory = get(threads)

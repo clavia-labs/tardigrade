@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/rpc"
-import { defineActor, ExecutionResult, type PromiseSettled } from "@clavia/tardigrade-core"
+import { Actor, ExecutionResult, type PromiseSettled } from "@clavia/tardigrade-core"
 import { Library, MethodExecution } from "@clavia/tardigrade-libraries"
 import { tools } from "@clavia/tardigrade-agent/atoms/tools"
 import { ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
@@ -34,7 +34,7 @@ test("background RPC keeps its scoped file open after returning a handle", async
       return yield* Effect.tryPromise({ try: () => file.readFile("utf8"), catch: String })
     }),
   })
-  const actor = defineActor("library-scope", Effect.map(tools([reader]), atom => ({ atom })))
+  const actor = Actor.make("library-scope", Effect.map(tools([reader]), atom => ({ atom })))
   const store = await Effect.runPromise(createTestStore({
     actor, actorContext: Context.pick(ToolCatalog),
     services: () => libraryServices([reader]).pipe(Layer.provide(implementation)),

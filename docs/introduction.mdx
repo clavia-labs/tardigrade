@@ -144,9 +144,9 @@ const counterMethods = (count: Atom<number>) => ({
 Return the composed atom along with methods for interaction to define your actor.
 
 ```ts
-import { defineActor } from "tardie/core"
+import { Actor } from "tardie/core"
 
-export const counter = defineActor("counter", Effect.sync(() => {
+export const counter = Actor.make("counter", Effect.sync(() => {
   const count = makeCount()
   const notifications = notify(count)
 

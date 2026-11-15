@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/rpc"
 import { Agent, agentMethods } from "@clavia/tardigrade-agent"
-import { act, atom, defineActor, effectAtom } from "@clavia/tardigrade-core"
+import { act, atom, Actor, effectAtom } from "@clavia/tardigrade-core"
 import { Library } from "@clavia/tardigrade-libraries"
 import { host as bunHost } from "../../src/bun"
 import { host as cloudflareHost } from "../../src/cloudflare"
@@ -14,7 +14,7 @@ const reader = Library.make("reader", Rpc.make("read", {
 export function inferredMethodsRetainLibraryRequirements() {
   const methods = { inspectNotes: agentMethods.message }
   const available = Agent.tools([reader])
-  const assistant = defineActor("inferred-methods", Effect.gen(function* () {
+  const assistant = Actor.make("inferred-methods", Effect.gen(function* () {
     const tools = yield* available
     const context = yield* Agent.compact(Agent.messages)
     return yield* Agent.make({ system: "Read notes.", tools, context, methods })
@@ -56,7 +56,7 @@ class Storage extends Context.Service<Storage, {
 }>()("library-api/Storage") {}
 
 export function generatedServicesRetainIdentityAndDependencies() {
-  const assistant = defineActor("reader", Effect.gen(function* () {
+  const assistant = Actor.make("reader", Effect.gen(function* () {
     const tools = yield* Agent.tools([reader])
     const context = yield* Agent.compact(Agent.messages)
     return yield* Agent.make({ system: "Read notes.", tools, context })
@@ -91,7 +91,7 @@ export function generatedServicesRetainIdentityAndDependencies() {
 
 export function ordinaryActorsDeclareSetupAndExecutionRequirements() {
   const Notify = act({ name: "notify", input: Schema.String, success: Schema.Null, failure: Schema.String })
-  const counter = defineActor("counter", Effect.map(Storage, storage => ({
+  const counter = Actor.make("counter", Effect.map(Storage, storage => ({
     atom: effectAtom(() => ({ view: storage, events: {}, acts: { notify: Notify.request({ input: "ready" }) } })),
   })))
   const layer = Layer.merge(
@@ -100,7 +100,7 @@ export function ordinaryActorsDeclareSetupAndExecutionRequirements() {
   )
   const runtime = bunHost(counter, { storage: ".unused", layer })
   const worker = cloudflareHost(counter, { layer })
-  const empty = defineActor("empty", Effect.succeed({ atom: atom(0) }))
+  const empty = Actor.make("empty", Effect.succeed({ atom: atom(0) }))
   const emptyRuntime = bunHost(empty, { storage: ".unused", layer: Layer.empty })
   const emptyWorker = cloudflareHost(empty, { layer: Layer.empty })
 

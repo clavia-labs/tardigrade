@@ -1,7 +1,7 @@
 import type { PromptContent } from "@clavia/tardigrade-model/prompt"
 import { agentMethods, mergeAgentMethods } from "./methods"
 import { Effect } from "effect"
-import { atom, defineActor, type ActorMethods } from "@clavia/tardigrade-core"
+import { atom, Actor, type ActorMethods } from "@clavia/tardigrade-core"
 import { messages, messagesWithContext } from "../atoms/durable/index"
 import { toolBudget } from "../atoms/budget-request"
 import { compact, type CompactionOptions } from "../atoms/compact"
@@ -34,7 +34,7 @@ type DeclaredLibraries<Options> = Options extends { readonly tools?: infer Libra
 // agent composes message history, compaction, tools, and inference into an actor.
 export const agentDefinition = <const Options extends AgentOptions<ActorMethods<object>>>(options: Options, configuration: ContextConfiguration, catalog: typeof ToolCatalog.Service) => {
   const libraries = (options.tools ?? []) as DeclaredLibraries<Options>
-  const actor = defineActor(options.name, Effect.gen(function* () {
+  const actor = Actor.make(options.name, Effect.gen(function* () {
     const preparation = prepareContext(configuration)
     const tools = yield* libraryTools(options.tools)
     const history = configuration.user.libraries.length ? messagesWithContext(configuration.user) : messages
@@ -54,7 +54,7 @@ export const agentDefinition = <const Options extends AgentOptions<ActorMethods<
   }
 }
 
-export const createActor = defineActor("tardie", Effect.gen(function* () {
+export const createActor = Actor.make("tardie", Effect.gen(function* () {
   const available = yield* libraryTools()
   const permission = permissions(pendingTools, { tools: available })
   const permitted = withPermissions(available, permission)

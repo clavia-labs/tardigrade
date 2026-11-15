@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { Agent } from "tardie/agent"
-import { defineActor } from "tardie/core"
+import { Actor } from "tardie/core"
 import { workspace } from "tardie/libraries"
 
 const actorName = "meeseeks"
@@ -21,4 +21,4 @@ const program = Effect.gen(function* () {
   })
 })
 
-export default defineActor(actorName, program)
+export default Actor.make(actorName, program)

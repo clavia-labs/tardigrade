@@ -14,7 +14,9 @@ export { AtomState, InitialState, type StatefulAtom, type StateSeed } from "./in
 export { initialiseState, StateInitialisationError } from "./runtime/initialisation"
 export * from "./runtime/event-source"
 export { recordEvent } from "./runtime/record"
-export * from "./actor/definition"
+export * as Actor from "./actor"
+export type { ActorDefinition, ActorInspection } from "./actor/definition"
+export { defineActor } from "./compat/actor"
 export * from "./actor/method"
 export { event, type EventDeclaration, type DeclaredEvent, type EventHandler } from "./actor/event"
 export { versionedEvent, type VersionedEvent } from "./event/versioned"
@@ -28,7 +30,7 @@ export type { JournalFamily, FamilyRecord, ReadJournalFamily, ReadJournalFamilyK
 export * from "./atoms/act"
 
 export { Isolate, type IsolateCall, type IsolateInput, type IsolateResult } from "./services/isolate"
-export * from "./services/actor"
+export * from "./services/actor-dispatch"
 export * from "./actor/thread"
 
 export { MessageReceived as InboxMessageReceived, MessageMetadata, MessageSender, MessageConflict, InvalidMessage, InvocationNotFound, isMessageReceived, MessageReceipt, MessageAddress, TransportAddress, MessageDelivered } from "./actor/message"

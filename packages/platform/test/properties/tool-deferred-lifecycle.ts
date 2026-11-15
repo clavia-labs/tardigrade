@@ -3,7 +3,7 @@ import { createTestStore } from "./runtime/store"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/rpc"
 import * as fc from "fast-check"
-import { defineActor, durablePromise, effectKey, EffectExecution, ExecutionHandle, ExecutionResult, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, Promises } from "@clavia/tardigrade-core"
+import { Actor, durablePromise, effectKey, EffectExecution, ExecutionHandle, ExecutionResult, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded, Promises } from "@clavia/tardigrade-core"
 import { defineLibrary, MethodExecution, MethodPromiseTimeout } from "@clavia/tardigrade-libraries"
 import { tools as libraryTools } from "@clavia/tardigrade-agent/atoms/tools"
 import { ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
@@ -43,7 +43,7 @@ export const toolDeferredLifecycle = fc.asyncProperty(cases, options => Effect.r
     if (options.rejected) return yield* Effect.fail(new RuntimeError("Job failed"))
     return value.value
   }).pipe(Effect.mapError(String)) }, { submit: options.executor === "remote" ? ["job"] : [] })]
-  const actor = defineActor("tool-recovery", Effect.gen(function* () {
+  const actor = Actor.make("tool-recovery", Effect.gen(function* () {
     const tools = yield* libraryTools()
     return { atom: tools, schema: Event }
   }))

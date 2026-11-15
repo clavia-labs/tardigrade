@@ -20,6 +20,9 @@ for (const name of ["boxdWorkspace", "boxdWorkspaceName"]) {
 for (const [scope, name] of [[core, "defineActor"], [core, "createEventLog"], [core, "initialiseState"], [libraries, "defineLibrary"], [legacy, "actor"]] as const) {
   if (typeof scope[name] !== "function") throw new Error(`Missing public API ${name}`)
 }
+const Actor = core.Actor
+if (typeof Actor !== "object" || Actor === null || !("make" in Actor) || typeof Actor.make !== "function") throw new Error("Missing public Actor.make API")
+if (core.defineActor !== Actor.make) throw new Error("Actor constructor alias differs from Actor.make")
 if (!("messages" in agent) || "conversation" in agent) throw new Error("Agent message projection exports failed")
 if (typeof agent.createActor !== "object") throw new Error("Missing agent actor definition")
 if (Object.keys(services).length === 0) throw new Error("Agent services entrypoint is empty")

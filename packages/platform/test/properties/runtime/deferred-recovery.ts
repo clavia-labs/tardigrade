@@ -1,7 +1,7 @@
 import { memoryJournalReads } from "../../fixtures/memory-journal"
 import { Context, Deferred, Effect, Layer, Schema } from "effect"
 import * as fc from "fast-check"
-import { act, defineActor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, ExecutionHandle, EffectRef as EffectRefSchema, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
+import { act, Actor, durableAtom, durablePromise, effectAtom, effectKey, EffectExecution, ExecutionHandle, EffectRef as EffectRefSchema, RuntimeError, type ActorRuntime, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
 import { createTestStore } from "./store"
 import { Promises } from "../../../../core/src/services/promises"
 import { strict as assert } from "node:assert"
@@ -46,7 +46,7 @@ const runRecoveryScenario = (executor: "local" | "remote", options: RecoveryCase
     },
     appendWithCheckpoint: () => { throw new RuntimeError("Unexpected checkpoint") },
   }
-  const actor = defineActor("recovery", Effect.sync(() => {
+  const actor = Actor.make("recovery", Effect.sync(() => {
     const state = durableAtom({ name: "test.deferred-recovery", input: Event, schema: State,
       initial: { queued: false, running: false, updates: 0, submissions: [], results: [] },
       reduce: (state, event) => event.type === "Queued" ? { ...state, queued: true }
@@ -130,7 +130,7 @@ export const externalProducerObservation = fc.asyncProperty(recoveryCases, optio
 export const orphanedProducerHealth = fc.asyncProperty(fc.integer({ min: 0, max: 1 }), lost => Effect.runPromise(Effect.gen(function* () {
   let runtime!: ActorRuntime<Event>
   const requests = [0, 1].map(value => Job.request({ origin: value, input: { value } }))
-  const actor = defineActor("orphaned-producer", Effect.succeed({ schema: Event,
+  const actor = Actor.make("orphaned-producer", Effect.succeed({ schema: Event,
     atom: effectAtom(() => ({ view: null, events: {}, acts: { left: requests[0]!, right: requests[1]! } })),
   }))
   const store = yield* createTestStore({ actor, events: [{ type: "Queued" }, { type: "Updated" }], actorContext: () => Context.empty(), services: current => {

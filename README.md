@@ -116,9 +116,9 @@ const counterMethods = (count: Atom<number>) => ({
 An actor combines an atom with methods for interaction.
 
 ```ts
-import { defineActor } from "tardie/core"
+import { Actor } from "tardie/core"
 
-export const counter = defineActor("counter", Effect.sync(() => {
+export const counter = Actor.make("counter", Effect.sync(() => {
   const count = makeCount()
   const notifications = notify(count)
 
@@ -149,7 +149,7 @@ The batteries-included `agent` constructor combines the agent atoms and methods.
 ```ts
 import { Effect } from "effect"
 import { Agent } from "tardie/agent"
-import { defineActor } from "tardie/core"
+import { Actor } from "tardie/core"
 import { workspace } from "tardie/libraries"
 
 const actorName = "meeseeks"
@@ -169,7 +169,7 @@ const program = Effect.gen(function* () {
   })
 })
 
-export default defineActor(actorName, program)
+export default Actor.make(actorName, program)
 ```
 
 Effect layers supply model configuration, inference, and tool implementations. Follow the [Agent guide](docs/agent.mdx) to wire services, run locally, and deploy with a container or virtual workspace.

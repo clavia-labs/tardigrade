@@ -4,13 +4,13 @@ import { TestClock } from "effect/testing"
 import { Promises } from "../../../../core/src/services/promises"
 import { waitFor } from "../../fixtures/wait"
 import { isDeepStrictEqual } from "node:util"
-import { act, createActorStore, defineActor, durableAtom, effectAtom, EffectExecution, Scheduler, checkpointDigest, type EffectCheckpoint, effectKey, RuntimeError, ActorCommitError, ActorReplayError, type StoredOperation, type EffectRef, type Journal } from "@clavia/tardigrade-core"
+import { act, createActorStore, Actor, durableAtom, effectAtom, EffectExecution, Scheduler, checkpointDigest, type EffectCheckpoint, effectKey, RuntimeError, ActorCommitError, ActorReplayError, type StoredOperation, type EffectRef, type Journal } from "@clavia/tardigrade-core"
 
 const Finished = Schema.Struct({ type: Schema.Literal("Finished") })
 type Event = typeof Finished.Type
 const Job = act({ name: "test.accepted-input", input: Schema.String, success: Schema.String, failure: Schema.String })
 const original = "accepted-v1".repeat(1_024)
-const actor = (input: string) => defineActor("accepted-input", Effect.sync(() => {
+const actor = (input: string) => Actor.make("accepted-input", Effect.sync(() => {
   const done = durableAtom({ name: "accepted-input.done", input: Finished, schema: Schema.Boolean, initial: false, reduce: () => true })
   const request = Job.request({ input, onSettled: () => [{ type: "Finished" }] })
   return { schema: Finished, atom: effectAtom(get => ({ view: get(done), events: {}, acts: get(done) ? {} : { job: request } })) }
@@ -184,7 +184,7 @@ export async function stoppedInputRecovery(fixture: CleanupFixture, failCleanupC
   let executions = 0
   let cleanups = 0
   const open = (version: number) => Effect.runPromise(createActorStore({
-    actor: defineActor(name, Effect.sync(() => {
+    actor: Actor.make(name, Effect.sync(() => {
       const input = version === 1 ? original : "changed"
       const job = Job.request({ input })
       const dying = Dying.request({ input })

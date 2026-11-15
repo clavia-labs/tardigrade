@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers"
 import { runInDurableObject } from "cloudflare:test"
 import { expect, test } from "vitest"
 import { Context, Deferred, Effect, Layer, Logger, References, Schema } from "effect"
-import { act, actorMethod, createActorStore, createWatchdog, defineActor, durableAtom, effectAtom, event, RuntimeError, watchdogKey, WatchdogTerminalError, DEFAULT_WATCHDOG_POLICY } from "@clavia/tardigrade-core"
+import { act, actorMethod, createActorStore, createWatchdog, Actor, durableAtom, effectAtom, event, RuntimeError, watchdogKey, WatchdogTerminalError, DEFAULT_WATCHDOG_POLICY } from "@clavia/tardigrade-core"
 import { initializeThread, updateThreadVersion } from "@clavia/tardigrade-core/services/journal/thread"
 import { createActorObjects, objectJournal, type CloudflareObjectBindings } from "../../src/cloudflare/objects"
 import { cloudflareWatchdogStorage } from "../../src/cloudflare/watchdog"
@@ -15,7 +15,7 @@ const Requested = event({ type: "Requested", value: Schema.Finite })
 const value = durableAtom({ name: "versioned.value", input: Requested, schema: Schema.NullOr(Schema.Finite), initial: null, reduce: (_, event) => event.value })
 const Work = act({ name: "versioned.work", input: Schema.Finite, success: Schema.Finite, failure: Schema.String })
 const completion = completionState("versioned.completion", Schema.Finite)
-const actor = defineActor("versioned", Effect.sync(() => {
+const actor = Actor.make("versioned", Effect.sync(() => {
   let request: ReturnType<typeof Work.request> | undefined
   return { schema: Schema.Union([Requested, completion.event]), atom: effectAtom(get => {
     const input = get(value)
@@ -26,7 +26,7 @@ const actor = defineActor("versioned", Effect.sync(() => {
     onReceive: Requested.from(value => ({ value })), result: () => undefined,
   }) } }
 }))
-const brokenActor = defineActor("versioned", Effect.succeed({ schema: Schema.Struct({ type: Schema.Literal("Requested") }), atom: effectAtom(() => ({ view: null, events: {}, acts: {} })) }))
+const brokenActor = Actor.make("versioned", Effect.succeed({ schema: Schema.Struct({ type: Schema.Literal("Requested") }), atom: effectAtom(() => ({ view: null, events: {}, acts: {} })) }))
 
 test("a fixed interpreter recovers a blocked inline effect", async () => {
   await runInDurableObject(namespace.getByName("interpreter-versioned"), async (_object, state) => {

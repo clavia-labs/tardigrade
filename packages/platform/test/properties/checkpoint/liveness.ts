@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert"
 import { Context, Effect, Layer, Schema } from "effect"
-import { actorMethod, atom, atomCheckpointKey, event, createActorStore, createEventLog, decodeCheckpoint, defineActor, effectAtom, RuntimeError, type MessageJournal, type Recorded } from "@clavia/tardigrade-core"
+import { actorMethod, atom, atomCheckpointKey, event, createActorStore, createEventLog, decodeCheckpoint, Actor, effectAtom, RuntimeError, type MessageJournal, type Recorded } from "@clavia/tardigrade-core"
 import { checkpointAtom } from "../../fixtures/atoms/atom"
 import { atomPopulation, Changed, type AtomPopulationKind } from "../../fixtures/atoms/population"
 
@@ -16,7 +16,7 @@ export async function atomCheckpointLiveness(kind: AtomPopulationKind, fixture: 
   const { members, expected } = population
   const records: Recorded<Changed>[] = []
   const visible = checkpointAtom(members[0]!.kind, { name: "liveness.visible", input: Shown, schema: Schema.Boolean, initial: false, reduce: () => true })
-  const actor = defineActor("checkpoint-liveness", Effect.succeed({ schema: PopulationEvent, methods: {
+  const actor = Actor.make("checkpoint-liveness", Effect.succeed({ schema: PopulationEvent, methods: {
     change: actorMethod({ inputSchema: Schema.Struct({ id: Schema.String, amount: Schema.Int }), outputSchema: Schema.Null,
       onReceive: Changed.from((input: { readonly id: string; readonly amount: number }) => input), result: () => ({ status: "completed", output: null }),
     }),

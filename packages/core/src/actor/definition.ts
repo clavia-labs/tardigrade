@@ -38,8 +38,8 @@ export interface ActorDefinition<Event extends object, State, Services, Contract
   readonly setup: Effect.Effect<ActorSetup<Event, Readonly<Record<string, Atom<State>>>, Contracts> & { readonly root: Atom<State> }, Error, Services>
 }
 
-// defineActor assembles a reactive graph, event contract, and typed methods for instantiation by a host.
-export function defineActor<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never, Provided = never, Required = never>(name: Name, factory: Effect.Effect<{
+// make assembles a reactive graph, event contract, and typed methods for instantiation by a host.
+export function make<Value, const Name extends string, Services, const Contracts extends ActorMethods<object> = {}, Event extends object = never, Provided = never, Required = never>(name: Name, factory: Effect.Effect<{
   readonly atom: Atom<Value>
   readonly schema?: Schema.Schema<Event>
   readonly methods?: Contracts

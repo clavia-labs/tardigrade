@@ -3,7 +3,7 @@ import { ModelReply } from "@clavia/tardigrade-agent/contracts/events"
 import { expect, test } from "bun:test"
 import { Context, Effect, Layer, Schema } from "effect"
 import { Rpc } from "effect/rpc"
-import { defineActor, effectAtom, ExecutionHandle, ExecutionResult } from "@clavia/tardigrade-core"
+import { Actor, effectAtom, ExecutionHandle, ExecutionResult } from "@clavia/tardigrade-core"
 import { defineLibrary, MethodExecution, MethodPromiseTimeout, toolsFromLibraries } from "@clavia/tardigrade-libraries"
 import { tools } from "@clavia/tardigrade-agent/atoms/tools"
 import { ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
@@ -23,7 +23,7 @@ test("library promise timeout validates annotations and survives tool compilatio
 
 test("inference promise uses its model waiting budget", async () => {
   const completion = completionState("inference-timeout", ModelReply)
-  const actor = defineActor("inference-timeout", Effect.sync(() => {
+  const actor = Actor.make("inference-timeout", Effect.sync(() => {
     const request = Generate.request({ onSettled: completion.onSettled, input: { model: { provider: "openrouter", model_id: "test" }, system: "", tools: [], context: [] } })
     return { schema: completion.event, atom: effectAtom(get => {
       const view = get(completion.state)
@@ -47,7 +47,7 @@ for (const executor of ["local", "remote"] as const) test(`${executor} library p
   const library = defineLibrary({ name: "jobs", description: "", methods: [rpc] }).implement({ job: () => executor === "remote"
     ? Effect.succeed({ executor: "remote", id: "job" })
     : Effect.sleep(80).pipe(Effect.as("done")) }, { submit: executor === "remote" ? ["job"] : [] })
-  const actor = defineActor("method-timeout", Effect.map(tools(), atom => ({ atom })))
+  const actor = Actor.make("method-timeout", Effect.map(tools(), atom => ({ atom })))
   const store = await Effect.runPromise(createTestStore({ actor, promises: { timeoutMs: 10, pollIntervalMs: 5 }, actorContext: Context.pick(ToolCatalog),
     services: runtime => Layer.merge(toolActs([library]), bunPromises(runtime, {
       poll: () => Effect.succeed(Date.now() - startedAt < 80 ? { status: "pending" as const } : { status: "fulfilled" as const, value: "done" }),

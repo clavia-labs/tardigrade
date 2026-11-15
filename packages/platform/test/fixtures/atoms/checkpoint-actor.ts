@@ -1,5 +1,5 @@
 import { Effect, Random, Schema } from "effect"
-import { actorMethod, defineActor, effectAtom, event } from "@clavia/tardigrade-core"
+import { actorMethod, Actor, effectAtom, event } from "@clavia/tardigrade-core"
 import { atomPopulation, Changed, type AtomPopulationKind } from "./population"
 
 export const CHECKPOINT_E2E_ACTOR = "checkpoint-e2e"
@@ -12,7 +12,7 @@ export interface CheckpointDiagnostics {
 }
 
 // checkpointActor keeps dormant counters resident across checkpoint writes (properties/checkpoint/e2e.ts).
-export const checkpointActor = (kind: AtomPopulationKind) => defineActor(CHECKPOINT_E2E_ACTOR, Effect.gen(function* () {
+export const checkpointActor = (kind: AtomPopulationKind) => Actor.make(CHECKPOINT_E2E_ACTOR, Effect.gen(function* () {
   const population = atomPopulation(kind, "checkpoint.e2e", { idleTTL: Infinity })
   const instance = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
   const member = (id: string) => {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Schema } from "effect"
 import { Validator } from "@cfworker/json-schema"
-import { act, actorMethod, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
+import { act, actorMethod, Actor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
 import { createBunHost, methodHttp } from "@clavia/tardigrade-platform/bun"
 import { Generate, requestBudget } from "@clavia/tardigrade-agent"
 
@@ -19,7 +19,7 @@ test("HTTP discovers and invokes actor-owned methods without opening a durable t
   let recoveries = 0
   let releases = 0
   const count = durableAtom({ name: "http.count", input: Added, schema: Schema.Finite, initial: 0, reduce: (state, event) => state + event.amount })
-  const actor = defineActor("counter", Effect.gen(function* () {
+  const actor = Actor.make("counter", Effect.gen(function* () {
     const name = yield* ContractName
     const request = External.request({ input: null })
     return {
@@ -72,7 +72,7 @@ test("HTTP discovery retains named and nested method schemas", async () => {
   const Output = Schema.Struct({ result: Place }).annotate({ identifier: "EchoOutput" })
   const Received = event({ type: "Received", place: Place })
   const place = durableAtom({ name: "http.place", input: Received, schema: Place, initial: { city: "" }, reduce: (_, event) => event.place })
-  const actor = defineActor("echo", Effect.succeed({
+  const actor = Actor.make("echo", Effect.succeed({
     atom: effectAtom(get => ({ view: get(place), events: {}, acts: {} })),
     methods: { echo: actorMethod({ inputSchema: Input, outputSchema: Output,
       onReceive: Received.from(input => input), result: (_, get) => ({ status: "completed", output: { result: get(place) } }),

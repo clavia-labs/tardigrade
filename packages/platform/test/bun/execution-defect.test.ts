@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Deferred, Effect, Fiber, Layer, Schema } from "effect"
-import { act, actorMethod, createActorStore, defineActor, durableAtom, effectAtom, event, EffectExecution, RuntimeError, WatchdogTerminalError, ActorCommitError, type Journal, type Recorded, type RuntimeEvent, type MessageDelivery } from "@clavia/tardigrade-core"
+import { act, actorMethod, createActorStore, Actor, durableAtom, effectAtom, event, EffectExecution, RuntimeError, WatchdogTerminalError, ActorCommitError, type Journal, type Recorded, type RuntimeEvent, type MessageDelivery } from "@clavia/tardigrade-core"
 import { bunJournal, createBunHost, methodHttp } from "../../src/bun"
 
 const Mode = Schema.Literals(["success", "failure", "defect", "interrupt"])
@@ -17,7 +17,7 @@ const starts = durableAtom({ name: "defect.starts", input: Schema.Union([Started
   schema: Schema.Array(Schema.Struct({ id: Schema.String, mode: Mode, origin: Schema.Finite })), initial: [],
   reduce: (state, entry, _, origin) => entry.type === "Started" ? [...state, { id: entry.id, mode: entry.mode, origin }] : state.filter(active => active.id !== entry.id),
 })
-const actor = defineActor("execution-defect", Effect.sync(() => {
+const actor = Actor.make("execution-defect", Effect.sync(() => {
   const requests = new WeakMap<object, ReturnType<typeof Job.request>>()
   const requestFor = (entry: { readonly id: string; readonly mode: typeof Mode.Type; readonly origin: number }) => {
     let request = requests.get(entry)
@@ -178,7 +178,7 @@ test("a deferred producer death interrupts inline work and durably fails its cal
   const entered = Deferred.makeUnsafe<void>()
   const die = Deferred.makeUnsafe<void>()
   const Inline = act({ name: "test.death.inline", input: Schema.Null, success: Schema.Null, failure: Schema.String })
-  const running = defineActor("producer-death", Effect.sync(() => {
+  const running = Actor.make("producer-death", Effect.sync(() => {
     const producer = Job.request({ input: "defect" })
     const inline = Inline.request({ input: null })
     return { schema: Started, atom: effectAtom(() => ({ view: null, events: {}, acts: { producer, inline } })),

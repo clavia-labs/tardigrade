@@ -2,7 +2,7 @@ import { memoryJournalReads } from "../fixtures/memory-journal"
 import { completionState } from "../fixtures/completion-state"
 import { expect, test } from "bun:test"
 import { Context, Deferred, Effect, Schema } from "effect"
-import { act, defineActor, durablePromise, effectAtom, EffectExecution, ExecutionResult, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
+import { act, Actor, durablePromise, effectAtom, EffectExecution, ExecutionResult, type EffectRef, type Journal, type Recorded } from "@clavia/tardigrade-core"
 import { createTestStore } from "../properties/runtime/store"
 
 test("reopening retries the local effect and recreates its producer with the original deadline", async () => {
@@ -10,7 +10,7 @@ test("reopening retries the local effect and recreates its producer with the ori
   const Event = completion.event
   type Event = typeof Event.Type
   const Job = act({ name: "producer.retry", input: Schema.Null, success: Schema.String, failure: Schema.String })
-  const actor = defineActor("producer-retry", Effect.sync(() => {
+  const actor = Actor.make("producer-retry", Effect.sync(() => {
     const request = Job.request({ input: null, onSettled: completion.onSettled })
     return { schema: Event, atom: effectAtom(get => {
       const view = get(completion.state)

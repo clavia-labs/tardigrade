@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert"
 import { Context, Effect, Layer, Schema } from "effect"
-import { actorMethod, createActorStore, defineActor, effectAtom, event, decodeCheckpoint, encodeCheckpointManifest, encodeAtomCheckpoint, DEFAULT_CHECKPOINT_MAX_BYTES } from "@clavia/tardigrade-core"
+import { actorMethod, createActorStore, Actor, effectAtom, event, decodeCheckpoint, encodeCheckpointManifest, encodeAtomCheckpoint, DEFAULT_CHECKPOINT_MAX_BYTES } from "@clavia/tardigrade-core"
 import { durableAtom } from "@clavia/tardigrade-core/experimental"
 import type { sqlJournal } from "../../../src/shared/sql-journal"
 
@@ -17,7 +17,7 @@ export async function checkpointLimits(fixture: { readonly open: () => ReturnTyp
   const members = durableAtom.family({ name: "limits.members", input: Stored, schema: Schema.String, initial,
     key: event => event.value.startsWith("family:") ? "rick" : undefined, reduce: (_state, event) => event.value.slice("family:".length),
   })
-  const actor = defineActor("checkpoint-limits", Effect.succeed({ schema: Stored, methods: {
+  const actor = Actor.make("checkpoint-limits", Effect.succeed({ schema: Stored, methods: {
     store: actorMethod({ inputSchema: Schema.String, outputSchema: Schema.Null,
       onReceive: Stored.from((value: string) => ({ value })), result: () => ({ status: "completed", output: null }),
     }),

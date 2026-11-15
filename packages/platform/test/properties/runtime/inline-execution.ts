@@ -2,7 +2,7 @@ import { completionState } from "../../fixtures/completion-state"
 import { strict as assert } from "node:assert"
 import { Clock, Context, Deferred, Effect, Schema } from "effect"
 import * as fc from "fast-check"
-import { act, createWatchdog, defineActor, durableAtom, effectAtom, EffectExecution, RetryScheduled, watchdogKey } from "@clavia/tardigrade-core"
+import { act, createWatchdog, Actor, durableAtom, effectAtom, EffectExecution, RetryScheduled, watchdogKey } from "@clavia/tardigrade-core"
 import { memoryWatchdog } from "../../fixtures/watchdog"
 import { waitFor } from "../../fixtures/wait"
 import { createTestStore } from "./store"
@@ -18,7 +18,7 @@ export const inlineExecutionSupervision = fc.asyncProperty(cases, options => Eff
   const Job = act({ name: "test.inline-supervision", input: Schema.Null, success: Schema.Finite, failure: Schema.String })
   const completion = completionState("inline.completion", Schema.Finite)
   const Event = Schema.Union([Start, completion.event])
-  const actor = defineActor("inline-supervision", Effect.sync(() => {
+  const actor = Actor.make("inline-supervision", Effect.sync(() => {
     const started = durableAtom({ name: "inline.started", input: Start, schema: Schema.Boolean, initial: false, reduce: () => true })
     const job = Job.request({ input: null, onSettled: completion.onSettled })
     return { schema: Event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(started) && get(completion.state).status === "pending" ? { job } : {} })) }

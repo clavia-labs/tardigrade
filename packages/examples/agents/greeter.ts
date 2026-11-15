@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { act, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
+import { act, Actor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
 
 export const Greet = act({
   name: "greet",
@@ -16,7 +16,7 @@ const greetingState = durableAtom({ name: "greeter.greeting", input: Event,
   initial: { status: "pending" }, reduce: (_, entry) => entry.type === "Greeted" ? { status: "fulfilled" as const, value: entry.message } : { status: "rejected" as const, reason: entry.reason },
 })
 
-export const greeter = defineActor("greeter", Effect.sync(() => {
+export const greeter = Actor.make("greeter", Effect.sync(() => {
   const greeting = Greet.request({ input: { name: "Arjun" },
     onSettled: result => result.status === "fulfilled" ? [Greeted.make({ message: result.value })] : [GreetingFailed.make({ reason: result.reason })],
   })

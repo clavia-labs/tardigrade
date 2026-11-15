@@ -5,13 +5,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import { Context, Deferred, Effect, Fiber, Layer, Logger, Schema } from "effect"
-import { actorMethod, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
+import { actorMethod, Actor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
 import { initializeThread, updateThreadVersion } from "@clavia/tardigrade-core/services/journal/thread"
 import { bunJournal, createBunHost } from "../../src/bun"
 
 const Changed = event({ type: "Changed", done: Schema.Boolean })
 const done = durableAtom({ name: "recovery.done", input: Changed, schema: Schema.Boolean, initial: false, reduce: (_, event) => event.done })
-const actor = defineActor("retained-reference", Effect.succeed({
+const actor = Actor.make("retained-reference", Effect.succeed({
   atom: effectAtom(get => ({ view: get(done), events: {}, acts: {} })),
   methods: { set: actorMethod({
     inputSchema: Schema.Boolean, outputSchema: Schema.Boolean,

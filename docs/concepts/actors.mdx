@@ -28,7 +28,7 @@ This example defines a `meeseeks` actor that records messages and answers with i
 
 ```ts
 import { Effect, Schema } from "effect"
-import { actorMethod, atom, defineActor, durableAtom, event } from "tardie/core"
+import { actorMethod, atom, Actor, durableAtom, event } from "tardie/core"
 
 const MessageReceived = event({
   type: "MessageReceived",
@@ -36,7 +36,7 @@ const MessageReceived = event({
   text: Schema.String,
 })
 
-export const meeseeks = defineActor("meeseeks", Effect.sync(() => {
+export const meeseeks = Actor.make("meeseeks", Effect.sync(() => {
   const portalCode = atom("C-137")
   const received = durableAtom({
     name: "received",

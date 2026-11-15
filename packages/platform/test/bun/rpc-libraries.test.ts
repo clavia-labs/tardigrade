@@ -12,7 +12,7 @@ import { ToolCatalog } from "@clavia/tardigrade-agent/actor/context"
 import { toolActs } from "@clavia/tardigrade-agent/services/tools"
 import { codeModeActs } from "@clavia/tardigrade-agent/services/code-mode"
 import { tools } from "@clavia/tardigrade-agent/atoms/tools"
-import { defineActor, Isolate } from "@clavia/tardigrade-core"
+import { Actor, Isolate } from "@clavia/tardigrade-core"
 import { codeMode } from "@clavia/tardigrade-agent/atoms/code-mode"
 import { bunIsolate } from "@clavia/tardigrade-platform/bun"
 import { Event } from "@clavia/tardigrade-agent/contracts/code-mode"
@@ -31,7 +31,7 @@ const notes = defineLibrary({ name: "notes", description: "Research notes", meth
 
 
 async function invoke(implementation: LibraryImplementation<import("@clavia/tardigrade-core").EffectExecution>, input: Schema.Json, name = call.name) {
-  const actor = defineActor("library-test", Effect.map(tools(), atom => ({ atom })))
+  const actor = Actor.make("library-test", Effect.map(tools(), atom => ({ atom })))
   const store = await Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog), services: () => toolActs([implementation]) }))
   try {
     await Effect.runPromise(store.send([{ type: "ModelReturned", purpose: "inference", callId: "model", text: "", toolCalls: [{ callId: call.callId, providerId: "provider", name, input }] }]))
@@ -184,7 +184,7 @@ describe("RPC libraries", () => {
       Rpc.make("read", { payload: Schema.Struct({}), success: Schema.String }),
     ] }).implement({ read: () => Effect.succeed("other") })
     const implementation = notes.implement({ read: () => Effect.succeed("note") })
-    const actor = defineActor("selected", Effect.map(tools([notes]), atom => ({ atom })))
+    const actor = Actor.make("selected", Effect.map(tools([notes]), atom => ({ atom })))
     const store = await Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog), services: () => toolActs([implementation, other]) }))
     try {
       expect(store.getState().view.specs.map(spec => spec.name)).toEqual(["notes__read"])
@@ -198,7 +198,7 @@ describe("RPC libraries", () => {
       Rpc.make("read", { payload: Schema.Struct({}), success: Schema.String }),
     ] }).implement({ read: () => Effect.succeed("other") })
     let namespaces: string[] = []
-    const actor = defineActor("selected-code", Effect.map(codeMode([notes]), atom => ({ atom, schema: Event })))
+    const actor = Actor.make("selected-code", Effect.map(codeMode([notes]), atom => ({ atom, schema: Event })))
     const store = await Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog),
       services: () => codeModeActs([implementation, other]).pipe(Layer.provideMerge(Layer.succeed(Isolate, {
         run: (input, onCall) => {
@@ -220,7 +220,7 @@ describe("RPC libraries", () => {
 
   test("runs arXiv and textStore methods through a real Bun code isolate", async () => {
     const libraries = [arxiv({ fetch: async () => new Response("<feed><entry><title>Durable agents</title></entry></feed>") }), textStore()]
-    const actor = defineActor("research", Effect.map(codeMode(libraries), atom => ({ atom, schema: Event })))
+    const actor = Actor.make("research", Effect.map(codeMode(libraries), atom => ({ atom, schema: Event })))
     const store = await Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog),
       services: () => codeModeActs(libraries).pipe(Layer.provideMerge(Layer.merge(bunIsolate(), memoryTextStore))),
     }))
@@ -242,7 +242,7 @@ describe("RPC libraries", () => {
       const implementation = defineLibrary({ name: "media", description: "", methods: [
         Rpc.make("capture", { payload: Schema.Struct({}), success: contentResult ? ToolResult : Schema.Struct({ content: Content }) }),
       ] }).implement({ capture: () => Effect.succeed(result) })
-      const actor = defineActor("code-media", Effect.map(codeMode([implementation]), atom => ({ atom, schema: Event })))
+      const actor = Actor.make("code-media", Effect.map(codeMode([implementation]), atom => ({ atom, schema: Event })))
       const store = await Effect.runPromise(createTestStore({ actor, actorContext: Context.pick(ToolCatalog), services: () => codeModeActs([implementation]).pipe(Layer.provideMerge(bunIsolate())) }))
       try {
         await Effect.runPromise(store.send([{ type: "ModelReturned", purpose: "inference", callId: "model", text: "", toolCalls: [{ callId: "code", providerId: "provider", name: "execute", input: { code: 'console.log("captured"); return await media.capture({});' } }] }]))

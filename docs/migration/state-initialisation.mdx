@@ -44,7 +44,7 @@ The destination counter stores `{ count }` and accepts a different event shape:
 
 ```ts
 import { Effect } from "effect"
-import { AtomState, actorMethod, defineActor, durableAtom, event, type InitialState } from "tardie/core"
+import { AtomState, actorMethod, Actor, durableAtom, event, type InitialState } from "tardie/core"
 
 const Added = event({ type: "Added", amount: Schema.Finite })
 const CounterState = Schema.Struct({ count: Schema.Finite })
@@ -57,7 +57,7 @@ const counter = durableAtom({
   reduce: (state, event) => ({ count: state.count + event.amount }),
 })
 
-const actor = defineActor("counter", Effect.succeed({
+const actor = Actor.make("counter", Effect.succeed({
   atom: counter,
   methods: {
     add: actorMethod({

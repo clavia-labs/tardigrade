@@ -1,6 +1,6 @@
 import { completionState } from "./completion-state"
 import { Clock, Effect, Schema } from "effect"
-import { act, actorMethod, defineActor, durableAtom, effectAtom, event, EffectExecution, RuntimeError, durablePromise } from "@clavia/tardigrade-core"
+import { act, actorMethod, Actor, durableAtom, effectAtom, event, EffectExecution, RuntimeError, durablePromise } from "@clavia/tardigrade-core"
 
 const RunRequested = event({ type: "RunRequested" })
 const requested = durableAtom({ name: "retry.requested", input: RunRequested, schema: Schema.Boolean, initial: false, reduce: () => true })
@@ -8,7 +8,7 @@ const completion = completionState("retry.completion", Schema.Finite)
 const Event = Schema.Union([RunRequested, completion.event])
 const Job = act({ name: "retry.direct", input: Schema.Null, success: Schema.Finite, failure: Schema.String })
 
-export const retryActor = defineActor("direct-retry", Effect.sync(() => {
+export const retryActor = Actor.make("direct-retry", Effect.sync(() => {
   const job = Job.request({ input: null, onSettled: completion.onSettled })
   return { schema: Event, atom: effectAtom(get => ({ view: get(completion.state), events: {}, acts: get(requested) && get(completion.state).status === "pending" ? { job } : {} })), methods: {
     run: actorMethod({ inputSchema: Schema.Null, outputSchema: Schema.Finite, onReceive: RunRequested.from(() => ({})), result: (_, get) => {

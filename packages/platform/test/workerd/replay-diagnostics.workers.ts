@@ -1,12 +1,12 @@
 import { expect, test } from "vitest"
 import { Context, Effect, Layer, Logger, References, Schema } from "effect"
-import { ActorReplayError, actorMethod, createActorStore, defineActor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
+import { ActorReplayError, actorMethod, createActorStore, Actor, durableAtom, effectAtom, event } from "@clavia/tardigrade-core"
 import { cloudflareHandler, type HttpHost } from "../../src/cloudflare"
 
 test("Cloudflare HTTP logs native aggregate decoder evidence and returns a fixed replay response", async () => {
   const Received = event({ type: "BuilderRevisionRequested", value: Schema.String })
   const value = durableAtom({ name: "replay.value", input: Received, schema: Schema.String, initial: "", reduce: (_, event) => event.value })
-  const actor = defineActor("replay", Effect.succeed({
+  const actor = Actor.make("replay", Effect.succeed({
     atom: effectAtom(get => ({ view: get(value), events: {}, acts: {} })),
     methods: { receive: actorMethod({ inputSchema: Schema.String, outputSchema: Schema.String, onReceive: Received.from(value => ({ value })), result: () => undefined }) },
   }))

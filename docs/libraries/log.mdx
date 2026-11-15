@@ -26,7 +26,7 @@ Select the log library in the agent's tools:
 ```ts title="agent.ts"
 import { Effect } from "effect"
 import { Agent } from "tardie/agent"
-import { defineActor } from "tardie/core"
+import { Actor } from "tardie/core"
 import { log } from "tardie/libraries"
 
 const program = Effect.gen(function* () {
@@ -40,7 +40,7 @@ const program = Effect.gen(function* () {
   })
 })
 
-export const assistant = defineActor("assistant", program)
+export const assistant = Actor.make("assistant", program)
 ```
 
 ## Host wiring

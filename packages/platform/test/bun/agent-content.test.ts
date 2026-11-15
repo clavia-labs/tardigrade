@@ -7,7 +7,7 @@ import { Prompt } from "effect/ai"
 import { Rpc } from "effect/rpc"
 import { contextProvider, type ContextRequest, type WireBlock } from "../fixtures/context-provider"
 import { Agent } from "@clavia/tardigrade-agent"
-import { defineActor } from "@clavia/tardigrade-core"
+import { Actor } from "@clavia/tardigrade-core"
 import { DEFAULT_WORKSPACE_SYSTEM, Library, log, workspace } from "@clavia/tardigrade-libraries"
 import { host, journal, localWorkspace } from "../../src/bun"
 import { contentModelServices } from "../fixtures/agent"
@@ -48,7 +48,7 @@ test("an agent corrects invalid tool arguments after receiving a tool failure", 
     feedback.push(results.at(-1)!)
     return results.length === 1 ? [{ id: "corrected", name: "log__search", params: { query: "orchid", type: "TurnRequested" } }] : []
   } })
-  const assistant = defineActor("tool-recovery", Effect.gen(function* () {
+  const assistant = Actor.make("tool-recovery", Effect.gen(function* () {
     const tools = yield* Agent.tools([log])
     const context = yield* Agent.compact(Agent.messages)
     return yield* Agent.make({ system: "Search event history.", tools, context })
@@ -144,7 +144,7 @@ test(`${provider}: workspace context and cache boundaries survive mutation and r
     ? { openai: { promptCacheBreakpoint: { mode: "explicit" as const } } }
     : provider === "anthropic" ? { anthropic: { cacheControl: { type: "ephemeral" as const, ttl: "1h" as const } } }
     : { openrouter: { cacheControl: { type: "ephemeral" as const, ttl: "1h" as const } } } : {}
-  const assistant = defineActor("workspace-context", Effect.gen(function* () {
+  const assistant = Actor.make("workspace-context", Effect.gen(function* () {
     const tools = yield* Agent.tools([projectContext, workspace])
     const context = yield* Agent.compact(Agent.messages, { pageSize: 1 })
     return yield* Agent.make({
@@ -263,7 +263,7 @@ test("disabling workspace user context skips file listings and preserves system 
     ...implementation,
     bash: (input, request) => Effect.sync(() => { listings++ }).pipe(Effect.andThen(implementation.bash(input, request))),
   } satisfies typeof workspace.Service))).pipe(Layer.provide(localWorkspace({ directory: join(root, "workspace") })))
-  const assistant = defineActor("workspace-context-disabled", Effect.gen(function* () {
+  const assistant = Actor.make("workspace-context-disabled", Effect.gen(function* () {
     const tools = yield* Agent.tools([workspace.pipe(Library.context({ user: null }))])
     const context = yield* Agent.compact(Agent.messages)
     return yield* Agent.make({ system: "Maintain the workspace.", tools, context })

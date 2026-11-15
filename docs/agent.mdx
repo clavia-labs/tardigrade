@@ -24,7 +24,7 @@ Customise your agent with a name, system prompt, and tools. This example uses th
 ```ts title="actor.ts"
 import { Effect } from "effect"
 import { Agent } from "tardie/agent"
-import { defineActor } from "tardie/core"
+import { Actor } from "tardie/core"
 import { workspace } from "tardie/libraries"
 
 const actorName = "meeseeks"
@@ -46,7 +46,7 @@ const program = Effect.gen(function* () {
   })
 })
 
-export default defineActor(actorName, program)
+export default Actor.make(actorName, program)
 ```
 
 This defines a typed agent program. Effect layers supply its dependencies.
@@ -57,7 +57,7 @@ This defines a typed agent program. Effect layers supply its dependencies.
 | `Agent.messages` | A paged message source, including recorded library user context. |
 | `Agent.compact(source, options?)` | A context atom that projects history and proposes summarization when needed. |
 | `Agent.make({ system, tools, context, methods? })` | An actor body containing the inference atom, standard agent methods, and its runtime layer. |
-| `defineActor(name, program)` | A named actor definition that carries the body's layer into the host. |
+| `Actor.make(name, program)` | A named actor definition that carries the body's layer into the host. |
 
 ## Services
 

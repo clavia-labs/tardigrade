@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { actorMethod, event, atom, defineActor, durableAtom } from "@clavia/tardigrade-core"
+import { actorMethod, event, atom, Actor, durableAtom } from "@clavia/tardigrade-core"
 
 const Message = event({ type: "NoteReceived", id: Schema.String, text: Schema.String })
 const messages = durableAtom({ name: "examples.inbox.messages",
@@ -8,7 +8,7 @@ const messages = durableAtom({ name: "examples.inbox.messages",
   initial: [],
   reduce: (state, event: typeof Message.Type) => [...state, { id: event.id, text: event.text }],
 })
-export const actor = defineActor("inbox", Effect.succeed({
+export const actor = Actor.make("inbox", Effect.succeed({
   atom: atom(get => ({ messages: get(messages) })), methods: {
     message: actorMethod({
       inputSchema: Schema.Struct({ text: Schema.String }), outputSchema: Schema.String,

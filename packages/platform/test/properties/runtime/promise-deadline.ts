@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert"
 import { Clock, Context, Deferred, Effect, Layer, Schema } from "effect"
 import { TestClock } from "effect/testing"
 import * as fc from "fast-check"
-import { act, cancel, defineActor, durableAtom, durablePromise, effectAtom, EffectExecution, EffectRef, ExecutionResult, PromiseTimedOut, RuntimeError, Scheduler, type WakeRequest } from "@clavia/tardigrade-core"
+import { act, cancel, Actor, durableAtom, durablePromise, effectAtom, EffectExecution, EffectRef, ExecutionResult, PromiseTimedOut, RuntimeError, Scheduler, type WakeRequest } from "@clavia/tardigrade-core"
 import { createTestStore } from "./store"
 
 // promiseDeadline checks hung local work expires once and late completion cannot replace the terminal result.
@@ -11,7 +11,7 @@ export const promiseDeadline = () => Effect.runPromise(Effect.gen(function* () {
   const Done = Schema.Struct({ type: Schema.Literal("Done"), timedOut: Schema.Boolean })
   const Event = Schema.Union([Start, Done])
   const Job = act({ name: "test.deadline", input: Schema.Struct({}), success: Schema.String, failure: Schema.String })
-  const actor = defineActor("deadline", Effect.sync(() => {
+  const actor = Actor.make("deadline", Effect.sync(() => {
     const state = durableAtom({ name: "deadline", input: Event, schema: Schema.Struct({ started: Schema.Boolean, done: Schema.Boolean, timedOut: Schema.Boolean }), initial: { started: false, done: false, timedOut: false }, reduce: (s, e) => e.type === "Start" ? { ...s, started: true } : { ...s, done: true, timedOut: e.timedOut } })
     const job = Job.request({ input: {}, onSettled: result => [{ type: "Done", timedOut: result.status === "rejected" && Schema.is(PromiseTimedOut)(result.reason) }] })
     return { schema: Event, atom: effectAtom(get => { const view = get(state); return { view, events: {}, acts: view.started && !view.done ? { job } : {} } }) }
@@ -49,7 +49,7 @@ export const deadlineProgress = fc.asyncProperty(fc.boolean(), fc.integer({ min:
     const Event = Schema.Union([Start, Accepted, Expired])
     const Deadline = act({ name: "test.deadline-progress", input: Schema.Null, success: Schema.Null, failure: Schema.String })
     const Hang = act({ name: "test.deadline-hang", input: Schema.Null, success: Schema.Null, failure: Schema.String })
-    const actor = defineActor("deadline-progress", Effect.sync(() => {
+    const actor = Actor.make("deadline-progress", Effect.sync(() => {
       const state = durableAtom({ name: "deadline-progress", input: Event,
         schema: Schema.Struct({ started: Schema.Boolean, done: Schema.Boolean, timedOut: Schema.Boolean, ref: Schema.NullOr(EffectRef) }),
         initial: { started: false, done: false, timedOut: false, ref: null },
