@@ -66,7 +66,10 @@ export class AlarmScheduler {
       })
       await execute()
       await this.serialize(async () => {
-        if (version === this.version) await synchronize()
+        if (version === this.version) return synchronize()
+        // A mid-pass admission's wake may have joined this pass, so re-arm it (tla/AlarmScheduler.tla, Complete; alarm-scheduler.test.ts).
+        await Effect.runPromise(this.alarms.set(Date.now()))
+        await Effect.runPromise(this.alarms.sync)
       })
       for (const [admitted, waiter] of this.waiters) {
         if (admitted <= version) { waiter.resolve(); this.waiters.delete(admitted) }
