@@ -7,6 +7,9 @@ import "../styles.css"
 
 const THEME_SCRIPT = `const saved=localStorage.getItem("tardigrade-theme");document.documentElement.dataset.theme=saved==="dark"||(saved===null&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"`
 
+// LETTER_SCRIPT is the Letter tag; it runs synchronously in the head of every page.
+const LETTER_SCRIPT = `(function(w,d){var h=null;try{var l=w.localStorage,p=JSON.parse(l.getItem("lv:vp:"+"lv_pub_9jnkid6ilifkf81ggzof3qul")||"[]"),q=(location.pathname||"/").replace(/\\/{2,}/g,"/").replace(/(.)\\/+$/,"$1");if(p.indexOf(q)>=0){w.__lvHeld=1;h=d.createElement("style");h.textContent="html{opacity:0!important}";d.head.appendChild(h)}}catch(e){}w.__lvReveal=function(){if(h&&h.parentNode)h.parentNode.removeChild(h);h=null};setTimeout(function(){if(h)w.__lvLate=1;w.__lvReveal()},300);var s=d.createElement("script");s.src="https://lettervisit.com/v.js?k=lv_pub_9jnkid6ilifkf81ggzof3qul";s.async=true;s.setAttribute("data-key","lv_pub_9jnkid6ilifkf81ggzof3qul");s.onerror=w.__lvReveal;d.head.appendChild(s)})(window,document)`
+
 export const Route = createRootRoute({
   head: () => ({
     meta: [
@@ -50,7 +53,7 @@ function Root(): ReactElement {
 
 const Document = ({ children }: { readonly children: ReactNode }): ReactElement => (
   <html lang="en" suppressHydrationWarning>
-    <head><HeadContent /><script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} /></head>
+    <head><HeadContent /><script dangerouslySetInnerHTML={{ __html: LETTER_SCRIPT }} /><script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} /></head>
     <body>{children}<Scripts /></body>
   </html>
 )
