@@ -108,18 +108,6 @@
         "src/**/*.{ts,tsx}!",
         "dev/**/*.ts"
       ]
-    },
-    "apps/web": {
-      "entry": [
-        "src/**/*.test.ts",
-        "../../docs/**/*.mdx",
-        "../../notes/**/*.mdx"
-      ],
-      "project": [
-        "src/**/*.{ts,tsx}!",
-        "../../docs/**/*.mdx",
-        "../../notes/**/*.mdx"
-      ]
     }
   }
 }
