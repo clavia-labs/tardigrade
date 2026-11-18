@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as DocsSplatRouteImport } from './routes/docs.$'
 import { Route as NotesIndexRouteImport } from './routes/notes.index'
@@ -37,6 +38,11 @@ const LlmsDottxtRoute = LlmsDottxtRouteImport.update({
 const RobotsDottxtRoute = RobotsDottxtRouteImport.update({
   id: '/robots.txt',
   path: '/robots.txt',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DocsIndexRoute = DocsIndexRouteImport.update({
@@ -71,6 +77,7 @@ export interface FileRoutesByFullPath {
   '/console': typeof ConsoleRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/docs/$': typeof DocsSplatRoute
   '/notes/$': typeof NotesSplatRoute
   '/notes/telling-forms-from-their-shadows': typeof NotesTellingFormsFromTheirShadowsRoute
@@ -82,6 +89,7 @@ export interface FileRoutesByTo {
   '/console': typeof ConsoleRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/docs/$': typeof DocsSplatRoute
   '/notes/$': typeof NotesSplatRoute
   '/notes/telling-forms-from-their-shadows': typeof NotesTellingFormsFromTheirShadowsRoute
@@ -94,6 +102,7 @@ export interface FileRoutesById {
   '/console': typeof ConsoleRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/robots.txt': typeof RobotsDottxtRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
   '/docs/$': typeof DocsSplatRoute
   '/notes/$': typeof NotesSplatRoute
   '/notes/telling-forms-from-their-shadows': typeof NotesTellingFormsFromTheirShadowsRoute
@@ -107,6 +116,7 @@ export interface FileRouteTypes {
     | '/console'
     | '/llms.txt'
     | '/robots.txt'
+    | '/sitemap.xml'
     | '/docs/$'
     | '/notes/$'
     | '/notes/telling-forms-from-their-shadows'
@@ -118,6 +128,7 @@ export interface FileRouteTypes {
     | '/console'
     | '/llms.txt'
     | '/robots.txt'
+    | '/sitemap.xml'
     | '/docs/$'
     | '/notes/$'
     | '/notes/telling-forms-from-their-shadows'
@@ -129,6 +140,7 @@ export interface FileRouteTypes {
     | '/console'
     | '/llms.txt'
     | '/robots.txt'
+    | '/sitemap.xml'
     | '/docs/$'
     | '/notes/$'
     | '/notes/telling-forms-from-their-shadows'
@@ -141,6 +153,7 @@ export interface RootRouteChildren {
   ConsoleRoute: typeof ConsoleRoute
   LlmsDottxtRoute: typeof LlmsDottxtRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
+  SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   DocsSplatRoute: typeof DocsSplatRoute
   NotesSplatRoute: typeof NotesSplatRoute
   NotesTellingFormsFromTheirShadowsRoute: typeof NotesTellingFormsFromTheirShadowsRoute
@@ -176,6 +189,13 @@ declare module '@tanstack/react-router' {
       path: '/robots.txt'
       fullPath: '/robots.txt'
       preLoaderRoute: typeof RobotsDottxtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/docs/': {
@@ -221,6 +241,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConsoleRoute: ConsoleRoute,
   LlmsDottxtRoute: LlmsDottxtRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
+  SitemapDotxmlRoute: SitemapDotxmlRoute,
   DocsSplatRoute: DocsSplatRoute,
   NotesSplatRoute: NotesSplatRoute,
   NotesTellingFormsFromTheirShadowsRoute:
