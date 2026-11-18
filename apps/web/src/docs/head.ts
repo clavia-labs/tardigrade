@@ -1,4 +1,7 @@
-import { docAt } from "./load"
+import { DEFAULT_DOC_ROUTE, docAt } from "./load"
+
+// The default doc is also served at the site root, which is its canonical URL.
+export const canonicalUrl = (route: string): string => `https://tardigrade.sh${route === DEFAULT_DOC_ROUTE ? "/" : route}`
 
 export const docHead = (pathname: string) => {
   const doc = docAt(pathname)
@@ -9,7 +12,7 @@ export const docHead = (pathname: string) => {
     { name: "description", content: description },
     { property: "og:title", content: `${title} | Tardigrade` },
     { property: "og:description", content: description },
-    { property: "og:url", content: `https://tardigrade.sh${route}` },
+    { property: "og:url", content: canonicalUrl(route) },
     { name: "twitter:title", content: `${title} | Tardigrade` },
     { name: "twitter:description", content: description },
     ...(socialImage === undefined ? [] : [
@@ -18,5 +21,5 @@ export const docHead = (pathname: string) => {
       { name: "twitter:image", content: new URL(socialImage, "https://tardigrade.sh").href },
       { name: "twitter:image:alt", content: socialImageAlt ?? title }
     ])
-  ] }
+  ], links: [{ rel: "canonical", href: canonicalUrl(route) }] }
 }
