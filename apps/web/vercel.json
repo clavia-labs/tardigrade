@@ -3,6 +3,16 @@
   "framework": "tanstack-start",
   "redirects": [
     {
+      "source": "/agent.mdx",
+      "destination": "/docs/agent",
+      "permanent": true
+    },
+    {
+      "source": "/platforms/celld.mdx",
+      "destination": "/docs/platforms/celld",
+      "permanent": true
+    },
+    {
       "source": "/docs/why",
       "destination": "/notes/why-tardigrade",
       "permanent": true
