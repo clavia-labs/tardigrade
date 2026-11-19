@@ -8,6 +8,8 @@ import type { ComponentMachine } from "./machine"
 const registration: unique symbol = Symbol("component.registration")
 const machines = new WeakMap<object, ComponentMachine<unknown, unknown, never>>()
 type Registered = { readonly [registration]?: object }
+// accepted is shared by every registered component, since a parent's view carries its children's view objects and views are immutable snapshots (properties.md).
+const accepted = new WeakSet<object>()
 
 // registerComponent keeps lifecycle machinery outside the public declaration (runtime.test.ts).
 export const registerComponent = <Fields extends { readonly name: string }, View, Requirements, Result, Interactions>(
@@ -16,7 +18,6 @@ export const registerComponent = <Fields extends { readonly name: string }, View
 ): Fields & Component<View, Requirements, Result, Interactions> => {
   const token = Object.freeze({})
   const validated = new WeakMap<object, ComponentOutput<View, Requirements, Result, Interactions>>()
-  const accepted = new WeakSet<object>()
   machines.set(token, { ...machine, output: state => {
     const output = machine.output(state)
     const cached = validated.get(output)
