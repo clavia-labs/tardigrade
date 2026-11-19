@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Chunk, HashMap, Option } from "effect"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import { initialTurnProjection, reduceTurnProjection, trajectoryFrom, turnViewFrom } from "./turn-projection"
@@ -115,4 +116,20 @@ test("event types preserve turn attribution regardless of waits, ID suffixes, an
       }
     }
   ), { numRuns: 200 })
+})
+
+const nodesOf = (chunk: Chunk.Chunk<unknown>): number =>
+  chunk.backing._tag === "IConcat" ? 1 + nodesOf(chunk.left) + nodesOf(chunk.right) : 1
+
+test("keeps log-sized chunks flat after a replay", () => {
+  const log: ReadonlyArray<Event> = [
+    { type: "MessageReceived", id: "m0" } as Event,
+    ...Array.from({ length: 5_000 }, (_, ordinal) => eventOf(ordinal % 3, "m0", 0, ordinal))
+  ]
+  const state = log.reduce(reduceTurnProjection, initialTurnProjection())
+  const events = Option.getOrThrow(HashMap.get(state.turns, "m0")).events
+  for (const chunk of [state.trajectory, events]) {
+    expect(chunk.length).toBeGreaterThan(log.length / 2)
+    expect(nodesOf(chunk)).toBeLessThanOrEqual(40 + chunk.length / 2)
+  }
 })
