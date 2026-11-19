@@ -85,24 +85,13 @@ const invocationDeadlinesOf = (log: ReadonlyArray<Event>): ReadonlyArray<Invocat
   })
 }
 
-const deadlineAlreadyCrossed = (log: ReadonlyArray<Event>, deadlineAt: number): boolean =>
-  log.some((event) => event.type === "AlarmFired" && typeof event.at === "number" && event.at >= deadlineAt)
-
-const invocationSettled = (
-  log: ReadonlyArray<Event>,
-  invocation: InvocationRef,
-  methods?: ActorMethods
-): boolean => {
-  if (log.some((event) => {
-    const cancelled = cancellationRequestedOf(event)?.invocation
-    if (cancelled !== undefined && sameInvocation(cancelled, invocation)) return true
-    return event.type === "ResponseDelivered" && sameInvocation({
-      method: String(event.method), id: String(event.call), epoch: (event.epoch as number | undefined) ?? 0
-    }, invocation)
-  })) return true
-  const state = methods?.[invocation.method]?.state(log, invocation)
-  return state !== undefined && state.status !== "pending"
-}
+const settledInvocationsOf = (log: ReadonlyArray<Event>): ReadonlySet<string> => new Set(log.flatMap((event) => {
+  const cancelled = cancellationRequestedOf(event)?.invocation
+  if (cancelled !== undefined) return [invocationKey(cancelled)]
+  return event.type === "ResponseDelivered"
+    ? [invocationKey({ method: String(event.method), id: String(event.call), epoch: (event.epoch as number | undefined) ?? 0 })]
+    : []
+}))
 
 // earliestDeadlineOf projects the next physical wake from unresolved durable method calls.
 export const earliestDeadlineOf = (log: ReadonlyArray<Event>, methods?: ActorMethods): number | undefined => {
@@ -112,8 +101,24 @@ export const earliestDeadlineOf = (log: ReadonlyArray<Event>, methods?: ActorMet
     if (terminal.has(invocationCoordinateKey(dispatch.reference))) continue
     earliest = earliest === undefined ? dispatch.terminal.deadlineAt : Math.min(earliest, dispatch.terminal.deadlineAt)
   }
+  const settled = settledInvocationsOf(log)
+  const latestAlarmAt = latestAlarmAtOf(log)
+  // actorMethod defines state(log, invocation) as this replay, so one replay per method serves every invocation.
+  const views = new Map<string, ActorMethodView<unknown>>()
+  const methodSettled = (invocation: InvocationRef): boolean => {
+    const method = methods?.[invocation.method]
+    if (method === undefined) return false
+    let view = views.get(invocation.method)
+    if (view === undefined) {
+      view = replayProjection(method.projection, log)
+      views.set(invocation.method, view)
+    }
+    const state = view.invocationState(invocation)
+    return state !== undefined && state.status !== "pending"
+  }
   for (const deadline of invocationDeadlinesOf(log)) {
-    if (invocationSettled(log, deadline.invocation, methods) || deadlineAlreadyCrossed(log, deadline.deadlineAt)) continue
+    if (settled.has(invocationKey(deadline.invocation)) || methodSettled(deadline.invocation)) continue
+    if (latestAlarmAt !== undefined && latestAlarmAt >= deadline.deadlineAt) continue
     earliest = earliest === undefined ? deadline.deadlineAt : Math.min(earliest, deadline.deadlineAt)
   }
   return earliest
@@ -121,6 +126,11 @@ export const earliestDeadlineOf = (log: ReadonlyArray<Event>, methods?: ActorMet
 
 const alarmsOf = (events: ReadonlyArray<Event>): ReadonlyArray<AlarmFired> => events.flatMap((event) =>
   event.type === "AlarmFired" && typeof event.at === "number" ? [event as AlarmFired] : [])
+
+const latestAlarmAtOf = (log: ReadonlyArray<Event>): number | undefined => alarmsOf(log).reduce<number | undefined>(
+  (latest, alarm) => latest === undefined ? alarm.at : Math.max(latest, alarm.at),
+  undefined
+)
 
 const alarmFor = (alarms: ReadonlyArray<AlarmFired>, deadlineAt: number): AlarmFired | undefined => {
   let earliest: AlarmFired | undefined
@@ -149,10 +159,11 @@ const deadlineCancellationsAt = (
   at: number
 ): ReadonlyArray<InvocationDeadline> => {
   const views = new Map<string, ActorMethodView<unknown>>()
+  const settled = settledInvocationsOf(log)
   return invocationDeadlinesOf(log).flatMap(({ owner, invocation, deadlineAt }) => {
     if (deadlineAt > at) return []
     const method = methods[invocation.method]
-    if (method === undefined || method.cancellation === undefined || invocationSettled(log, invocation)) return []
+    if (method === undefined || method.cancellation === undefined || settled.has(invocationKey(invocation))) return []
     let view = views.get(invocation.method)
     if (view === undefined) {
       view = replayProjection(method.projection, log)
@@ -193,10 +204,7 @@ export const methodTimeoutDerivation: CompleteTransitionDerivation = (events) =>
 // methodDeadlineCancellationDerivation repairs missing cancellations from recorded alarms (timeout.test.ts, "legacy recovery derives an alarm's missing cancellation exactly once").
 export const methodDeadlineCancellationDerivation = (methods: ActorMethods): CompleteTransitionDerivation => (events) => {
   const log = events.map((event, index) => eventAt(event, eventPositionOf(event) ?? index + 1))
-  const latestAlarmAt = alarmsOf(log).reduce<number | undefined>(
-    (latest, alarm) => latest === undefined ? alarm.at : Math.max(latest, alarm.at),
-    undefined
-  )
+  const latestAlarmAt = latestAlarmAtOf(log)
   if (latestAlarmAt === undefined) return []
   return deadlineCancellationsAt(log, methods, latestAlarmAt)
     .map(deadlineCancellationTransition)
