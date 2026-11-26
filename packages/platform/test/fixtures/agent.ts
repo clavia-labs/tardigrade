@@ -62,6 +62,7 @@ interface ContentModelOptions {
   readonly beforeResponse?: (prompt: Prompt.Prompt) => Effect.Effect<void>
   readonly observeTools?: (tools: LanguageModel.ProviderOptions["tools"]) => void
   readonly failure?: (prompt: Prompt.Prompt) => AiError.AiError | undefined
+  readonly stream?: (prompt: Prompt.Prompt) => Stream.Stream<Response.StreamPartEncoded, AiError.AiError> | undefined
   readonly request?: RequestOptions
   readonly toolCalls?: readonly ContentToolCall[] | ((prompt: Prompt.Prompt) => readonly ContentToolCall[])
 }
@@ -75,6 +76,8 @@ export const contentModelServices = (observe: (prompt: Prompt.Prompt) => void, o
       options.observeTools?.(input.tools)
       const failure = options.failure?.(input.prompt)
       if (failure) return Stream.fail(failure)
+      const scripted = options.stream?.(input.prompt)
+      if (scripted) return scripted
       const toolCalls = typeof options.toolCalls === "function" ? options.toolCalls(input.prompt) : !input.prompt.content.some(message => message.role === "tool") ? options.toolCalls : undefined
       if (toolCalls?.length) return Stream.fromIterable([
         ...toolCalls.map(call => Response.makePart("tool-call", { ...call, providerExecuted: false })),
