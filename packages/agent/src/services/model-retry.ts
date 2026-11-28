@@ -7,7 +7,6 @@ import type { RetryPolicy } from "@clavia/tardigrade-model/stream/policy"
 import { StreamBoundExceeded, StreamIncomplete } from "@clavia/tardigrade-model/stream/request"
 import { retryDelayOf } from "@clavia/tardigrade-model/stream/retry"
 
-// streamFailureOf encodes a stalled or early-ended provider stream; an attemptMs bound stays terminal (platform/test/bun/model-retry.test.ts).
 const streamFailureOf = (error: unknown): Schema.Json | undefined => {
   if (error instanceof StreamTimedOut) return { _tag: error._tag, bound: error.bound, timeoutMs: error.timeoutMs }
   if (error instanceof StreamIncomplete) return { _tag: error._tag }
