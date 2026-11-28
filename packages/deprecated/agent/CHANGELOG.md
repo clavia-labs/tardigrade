@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.1](https://github.com/clavia-labs/tardigrade/compare/v0.59.0...v0.59.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **agent:** retry stream gaps ([#875](https://github.com/clavia-labs/tardigrade/issues/875)) ([8bd5862](https://github.com/clavia-labs/tardigrade/commit/8bd5862f2a44b27b098a0dcbc560651fdc8bffaa))
+
 ## [0.59.0](https://github.com/clavia-labs/tardigrade/compare/v0.58.0...v0.59.0) (2026-11-15)
 
 
